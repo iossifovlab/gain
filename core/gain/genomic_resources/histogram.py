@@ -1113,10 +1113,13 @@ def truncated_histogram_filename(histogram_filename: str) -> str:
     """Return the truncated-sidecar filename for a histogram filename.
 
     ``statistics/histogram_cell.json`` maps to
-    ``statistics/histogram_cell_truncated.json``.
+    ``statistics/truncated/histogram_cell.json``: a directory rather
+    than a name suffix, because the score-id part of the histogram
+    filename is arbitrary (a score may itself be named
+    ``foo_truncated``) while no score id can contain ``/``.
     """
-    root, _, ext = histogram_filename.rpartition(".")
-    return f"{root}_truncated.{ext}"
+    directory, sep, basename = histogram_filename.rpartition("/")
+    return f"{directory}{sep}truncated/{basename}"
 
 
 def save_histogram(

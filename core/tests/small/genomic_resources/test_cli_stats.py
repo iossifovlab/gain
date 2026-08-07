@@ -630,7 +630,7 @@ def test_stats_categorical_past_limit_writes_truncated_sidecar(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     sidecar = json.loads(
-        (tmp_path / "statistics" / "histogram_cell_truncated.json")
+        (tmp_path / "statistics" / "truncated" / "histogram_cell.json")
         .read_text())
     assert sidecar["truncated"] is True
     assert sidecar["unique_values"] == CATEGORIES_PAST_LIMIT
@@ -657,7 +657,46 @@ def test_stats_categorical_past_limit_manifests_the_sidecar(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     manifest = (tmp_path / ".MANIFEST").read_text()
-    assert "statistics/histogram_cell_truncated.json" in manifest
+    assert "statistics/truncated/histogram_cell.json" in manifest
+
+
+def test_stats_sidecar_never_clobbers_a_score_named_foo_truncated(
+        tmp_path: pathlib.Path) -> None:
+    """The sidecar lives in its own directory, outside the score namespace.
+
+    A resource declaring scores ``foo_truncated`` and ``foo`` must keep
+    ``foo_truncated``'s full histogram intact while ``foo``'s sidecar is
+    written -- a suffix-named sidecar would overwrite it.  Declaration
+    order matters: histograms are saved in it, so ``foo_truncated``
+    first puts the sidecar write last, where a suffix name overwrites.
+    """
+    data_rows = "\n".join(
+        f"1 {10 + i} {10 + i} w{i % 2} v{i:03d}"
+        for i in range(CATEGORIES_PAST_LIMIT))
+    (
+        a_position_score()
+        .with_score("foo_truncated", "str")
+        .with_histogram(
+            {"type": "categorical", "value_order": []},
+            score_id="foo_truncated")
+        .with_score("foo", "str")
+        .with_histogram(
+            {"type": "categorical", "value_order": []}, score_id="foo")
+        .with_data("chrom pos_begin pos_end foo_truncated foo\n" + data_rows)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    full = json.loads(
+        (tmp_path / "statistics" / "histogram_foo_truncated.json")
+        .read_text())
+    assert set(full) == {"config", "values"}
+    sidecar = json.loads(
+        (tmp_path / "statistics" / "truncated" / "histogram_foo.json")
+        .read_text())
+    assert sidecar["truncated"] is True
 
 
 def test_stats_categorical_within_limit_writes_no_sidecar(
@@ -679,7 +718,7 @@ def test_stats_categorical_within_limit_writes_no_sidecar(
 
     assert (tmp_path / "statistics" / "histogram_cell.json").exists()
     assert not (
-        tmp_path / "statistics" / "histogram_cell_truncated.json").exists()
+        tmp_path / "statistics" / "truncated" / "histogram_cell.json").exists()
 
 
 def test_get_score_histogram_truncated_reads_the_sidecar(
@@ -753,7 +792,7 @@ def test_get_score_histogram_truncated_falls_back_when_sidecar_missing(
     # Prime the manifest cache while the sidecar is still manifested, then
     # remove the file: the sidecar is now listed but unreadable.
     score.get_score_histogram("cell", truncated=True)
-    (tmp_path / "statistics" / "histogram_cell_truncated.json").unlink()
+    (tmp_path / "statistics" / "truncated" / "histogram_cell.json").unlink()
 
     hist = score.get_score_histogram("cell", truncated=True)
 
@@ -813,8 +852,8 @@ def test_stats_rebuild_below_limit_removes_the_stale_sidecar(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     assert not (
-        tmp_path / "statistics" / "histogram_cell_truncated.json").exists()
-    assert "histogram_cell_truncated.json" not in (
+        tmp_path / "statistics" / "truncated" / "histogram_cell.json").exists()
+    assert "truncated/histogram_cell.json" not in (
         tmp_path / ".MANIFEST").read_text()
 
 
