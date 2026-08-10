@@ -1,5 +1,6 @@
 """Provides group genomic resources repository."""
 
+import operator
 from collections.abc import Generator
 
 from gain import logging
@@ -9,6 +10,7 @@ from .repository import (
     GenomicResourceRepo,
     SearchIndexUnavailableError,
     SearchTermError,
+    _map_relaying_skips,
 )
 from .resource_query import ResourceQuery
 
@@ -131,7 +133,7 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
         search_term: str | None = None,
         resource_type: str | None = None,
         resource_query: str | None = None,
-    ) -> Generator[GenomicResource, None, None]:
+    ) -> Generator[GenomicResource, None, list[tuple[str, str]]]:
         if resource_query:
             # Parsed and discarded: a malformed query must fail when the
             # call is made rather than when the first child is reached,
@@ -147,7 +149,10 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
         search_term: str | None = None,
         resource_type: str | None = None,
         resource_query: str | None = None,
-    ) -> Generator[tuple[GenomicResourceRepo, GenomicResource], None, None]:
+    ) -> Generator[
+        tuple[GenomicResourceRepo, GenomicResource], None,
+        list[tuple[str, str]],
+    ]:
         """Search, pairing each hit with the child repository serving it.
 
         The pair names the repository that actually holds the resource: a
@@ -156,7 +161,10 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
 
         This is where a child that cannot answer the filter is skipped, and
         :meth:`search_resources` is its projection -- the two cannot drift,
-        because there is only one loop.
+        because there is only one loop. The skips of a search that still
+        answered are the generator's return value (gain#686); a ``for``
+        loop discards them, which is exactly right for the callers that
+        already hear about them from the log.
         """
         if resource_query:
             # Eagerly, exactly as `search_resources` does: this method is
@@ -171,17 +179,20 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
         search_term: str | None,
         resource_type: str | None,
         resource_query: str | None,
-    ) -> Generator[GenomicResource, None, None]:
-        for _, res in self._search_by_child(
-                search_term, resource_type, resource_query):
-            yield res
+    ) -> Generator[GenomicResource, None, list[tuple[str, str]]]:
+        return _map_relaying_skips(
+            self._search_by_child(search_term, resource_type, resource_query),
+            operator.itemgetter(1))
 
     def _search_by_child(
         self,
         search_term: str | None,
         resource_type: str | None,
         resource_query: str | None,
-    ) -> Generator[tuple[GenomicResourceRepo, GenomicResource], None, None]:
+    ) -> Generator[
+        tuple[GenomicResourceRepo, GenomicResource], None,
+        list[tuple[str, str]],
+    ]:
         answered = False
         skipped: list[tuple[str, str]] = []
         unreadable = False
@@ -198,8 +209,18 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
                 # Asked for pairs, not resources: a child that is itself a
                 # group answers with its own leaves, so the holder that
                 # reaches the caller is never an intermediate group.
-                for holder, res in child_repo.search_resources_by_child(
-                        search_term, resource_type, resource_query):
+                pairs = child_repo.search_resources_by_child(
+                    search_term, resource_type, resource_query)
+                while True:
+                    try:
+                        holder, res = next(pairs)
+                    except StopIteration as stop:
+                        # A child that is itself a group may have skipped
+                        # leaves of its own while still answering; its
+                        # return value carries them, and a `for` loop
+                        # would have thrown them away (gain#686).
+                        skipped.extend(stop.value or [])
+                        break
                     yielded += 1
                     yield holder, res
             except (SearchTermError, SearchIndexUnavailableError) as err:
@@ -231,6 +252,9 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
             # was searched.
             raise self._nothing_could_answer(
                 search_term, skipped, unreadable=unreadable)
+        # Deliberately PEP 380 (gain#686): a `for` loop discards this, and
+        # the one caller that presents totals drains by hand to catch it.
+        return skipped  # noqa: B901
 
     def _nothing_could_answer(
         self, search_term: str | None,

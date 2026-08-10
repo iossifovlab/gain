@@ -189,19 +189,17 @@ buy the has-this-label test back.
 
 ## Consequences
 
-- **A search can now return incomplete results, and a warning is the only
-  signal.** This is the price of the rule and it is not small: a group whose
-  every child is mid-repair answers with whatever the healthy children hold.
-  The warning names the child and the repair command; nothing else marks the
-  result as partial.
-- **The web API reports a truncated total as though it were complete.**
-  `SearchResources` drains the search into a list and computes `pages` and
-  `total_resources` from it, so a skipped child shortens the page while the
-  payload still presents an authoritative count, and the warning goes only to
-  the server log. This decision accepts that for now rather than changing the
-  response schema the web UI consumes; carrying the skips in the payload is
-  gain#686. The CLI has no such gap — its warning lands in the terminal beside
-  the rows.
+- **A search can now return incomplete results, and the caller decides
+  whether to say so.** This is the price of the rule and it is not small: a
+  group whose every child is mid-repair answers with whatever the healthy
+  children hold. The warning names the child and the repair command; beyond
+  it, the skips ride the search generator's return value as leaf-level
+  `(repository id, reason)` pairs (gain#686), which a `for` loop discards —
+  the right default for the CLI, whose warning lands in the terminal beside
+  the rows. `SearchResources`, which presents `pages` and `total_resources`
+  as authoritative, drains by hand and answers an always-present
+  `incomplete` list, so a truncated total no longer looks complete; the web
+  UI may ignore the field until it is ready to render a banner.
 - **A stale index loses resources here in a way `-q` does not.** gain#634 and
   gain#646 could re-ask a label clause of each resource the statement yields,
   because a `LabelClause` is `fnmatch` over a rendered value, which Python can
