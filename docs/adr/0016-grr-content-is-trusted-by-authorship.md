@@ -10,7 +10,9 @@
   [gain#699](https://github.com/iossifovlab/gain/issues/699) (closed `wontfix`,
   [PR#691](https://github.com/iossifovlab/gain/pull/691) unmerged),
   [gain#728](https://github.com/iossifovlab/gain/issues/728) (this record),
-  [gain#731](https://github.com/iossifovlab/gain/issues/731) (the characterization test)
+  [gain#731](https://github.com/iossifovlab/gain/issues/731) (the characterization test),
+  [gain#684](https://github.com/iossifovlab/gain/issues/684) (closed `wontfix`;
+  the published search index)
 - **Related:** [0013](0013-symlink-resolution-is-not-contained.md), which applied this
   boundary to symlink resolution before it had a record of its own, and cited gain#572's
   closing comment as the source. 0013's "Why the trust boundary settles it" section is the
@@ -41,6 +43,11 @@ Everything a genomic resource carries: its `genomic_resource.yaml` — `desc`, `
 histogram configuration, score definitions — and every file in the resource directory,
 reaching GAIn through any of the GRR protocols. Its author is whoever has commit access to
 the repository the GRR is built from.
+
+The repository-level artefacts are the same content with the same author:
+`.CONTENTS.json.gz` and the `.CONTENTS.sqlite3.gz` search index are built by `grr_manage`
+and published from the repository by whoever controls it. A served index is exactly as
+trustworthy as the resources it indexes — no more, and no less.
 
 ## Decision
 
@@ -98,6 +105,29 @@ allowed tag that was never closed, and an attribute allowlist no test reached.
 **A guard that names a boundary it does not hold is worse than no guard.** That is the
 lesson gain#467 already paid for, and it is the reason this decision is "none" rather than
 "some".
+
+### A lying published index is conceded; a stale one is not the same question (gain#684)
+
+gain#684 is the surface that makes the repository-level sentence in the definition worth
+its place. `search_resources` answers the id glob and the `type` filter out of the index's
+recorded columns and resolves each row back to a real resource through its `full_id`, so a
+fabricated row whose `full_id` is truthful and whose `id` lies returns a resource the glob
+did not match. Conceded, by the capability test above: an author who can serve a lying
+`.CONTENTS.sqlite3.gz` can serve a lying resource outright, and already holds the `exec`
+capability in the first row of the table. Re-checking the glob against the resolved
+resource would harden the narrower door again.
+
+What keeps this from swallowing gain#646's label re-check: that fix is not hardening
+against a hostile index, it is correctness under a **trusted** one. A curator edits a
+label and no rebuild runs; index and resource then disagree with nobody lying, and both
+search routes must still agree on the live value. The `id`/`full_id` split has no such
+innocent route — `build_content_file` writes both columns from the same resource object,
+so they agree in every index GAIn builds, however stale, and a resource renamed or
+re-versioned since the build leaves a row whose `full_id` resolves nothing at all, which
+the read loop already tolerates (gain#467). Divergence between the two columns of one row
+is a forgery, not a lag — and forgery is what this record declines to defend against. How
+the filters still answered from the index behave when it merely lags its resources is
+[ADR 0007](0007-resource-query-pushdown.md)'s subject, not this one's.
 
 ### Where the boundary actually sits
 
