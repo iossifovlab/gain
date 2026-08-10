@@ -1554,7 +1554,7 @@ class PositionScore(GenomicScore):
         pos_end: int | None = None,
         scores: list[str] | None = None,
     ) -> Generator[
-            tuple[list[ScoreValue] | None, int], None, None]:
+            tuple[list[ScoreValue], int], None, None]:
         """Yield ``(values, weight)`` for every record touching the region.
 
         The weight of a position-score record is the number of base pairs

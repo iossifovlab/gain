@@ -297,14 +297,11 @@ phastCons, phyloP, FitCons2, etc.
         """
         raw: dict[str, WeightedValues] = {
             source: WeightedValues() for source in sources}
-        fetch = self.position_score.fetch_region_weighted_values(
+        for values, weight in self.position_score.fetch_region_weighted_values(
             chrom, pos_begin, pos_end, sources,
-        )
-        for values, weight in fetch:
-            if values is None:
-                continue
-            for i, source in enumerate(sources):
-                raw[source].add(values[i], weight)
+        ):
+            for source, value in zip(sources, values, strict=True):
+                raw[source].add(value, weight)
         return raw
 
     def _do_annotate(
