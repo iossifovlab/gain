@@ -291,8 +291,9 @@ def test_forgotten_password_response_does_not_reveal_registration(
 def failing_send_email() -> Iterator[None]:
     """Make every mail send raise, the shape of a real SMTP outage.
 
-    send_email is patched where utils resolves it, so the reset code is
-    still created and only the SMTP-level send raises.
+    send_email is patched where utils resolves it, so the verification
+    code -- reset or account confirmation -- is still created and only
+    the SMTP-level send raises.
     """
     with mock.patch(
         "web_annotation.utils.send_email",
@@ -340,6 +341,87 @@ def test_forgotten_password_mail_failure_is_logged(
         r for r in caplog.records
         if r.message == "failed to create or send the reset mail"
     ]
+    assert record.exc_info is not None
+    assert record.exc_info[0] is SMTPException
+
+
+@pytest.mark.django_db
+def test_register_succeeds_when_the_confirmation_mail_cannot_be_sent(
+    client: Client,
+    failing_send_email: None,
+) -> None:
+    """A mail outage answers exactly as a successful registration does."""
+    response = client.post(
+        "/api/register",
+        {
+            "email": "outage@example.com",
+            "password": "secret",
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert response.content == b""
+
+
+@pytest.mark.django_db
+def test_account_registered_during_a_mail_outage_can_log_in(
+    client: Client,
+    failing_send_email: None,
+) -> None:
+    """Answering 200 is only honest if the account behind it works.
+
+    USERS_ACTIVATED_BY_DEFAULT leaves the new user active, so the
+    confirmation mail is informational and its loss must not keep the
+    owner out of the account they just created.
+    """
+    client.post(
+        "/api/register",
+        {
+            "email": "outage@example.com",
+            "password": "secret",
+        },
+        content_type="application/json",
+    )
+
+    response = client.post(
+        "/api/login",
+        {
+            "email": "outage@example.com",
+            "password": "secret",
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "email": "outage@example.com",
+        "isAdmin": False,
+    }
+
+
+@pytest.mark.django_db
+def test_register_mail_failure_is_logged(
+    client: Client,
+    failing_send_email: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The log is how operators learn the confirmation mail was lost."""
+    with caplog.at_level("ERROR", logger="web_annotation.views"):
+        client.post(
+            "/api/register",
+            {
+                "email": "outage@example.com",
+                "password": "secret",
+            },
+            content_type="application/json",
+        )
+
+    [record] = [
+        r for r in caplog.records
+        if r.message == "failed to create or send the confirmation mail"
+    ]
+    assert record.name == "web_annotation.views"
     assert record.exc_info is not None
     assert record.exc_info[0] is SMTPException
 
