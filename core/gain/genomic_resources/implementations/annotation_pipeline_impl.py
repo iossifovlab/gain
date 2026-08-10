@@ -3,8 +3,6 @@ from pathlib import Path
 from typing import Any, ClassVar
 from urllib.parse import quote
 
-from markdown2 import markdown
-
 from gain import logging
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
@@ -19,6 +17,7 @@ from gain.genomic_resources.resource_implementation import (
 )
 from gain.task_graph.graph import TaskDesc
 from gain.templates import get_template
+from gain.templates.markdown_support import render_markdown as markdown
 
 logger = logging.getLogger(__name__)
 

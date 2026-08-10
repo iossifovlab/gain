@@ -7,11 +7,11 @@ from typing import Any, ClassVar, cast
 
 import apsw
 from cerberus import Validator
-from markdown2 import markdown
 
 from gain import logging
 from gain.task_graph.graph import TaskDesc
 from gain.templates import get_template
+from gain.templates.markdown_support import render_markdown as markdown
 from gain.utils.helpers import convert_size
 
 from .dvc import is_dvc_sidecar
