@@ -889,8 +889,9 @@ class Quota(models.Model):
 
     A new quota starts at the limits configured for its type. The counter
     fields still declare a zero default, because that is what the database
-    column carries for rows written outside the model, but no quota built
-    through this class reaches the database holding it -- see ``__init__``.
+    column carries for rows written outside the model, but a quota built the
+    ordinary way -- by keyword -- never reaches the database holding it. See
+    ``__init__``.
     """
     daily_jobs = models.IntegerField(default=0)
     monthly_jobs = models.IntegerField(default=0)
@@ -932,10 +933,11 @@ class Quota(models.Model):
         ``get_or_create``, plain construction -- inserts a usable row in one
         statement, with no window and no follow-up reset.
 
-        Counters named by the caller are left alone; passing zeros is how a
-        caller asks for an exhausted quota. Rows loaded from the database are
-        untouched: Django loads them positionally, so ``args`` tells a load
-        apart from a construction.
+        Each counter the caller names is left alone, so naming every one of
+        them with a zero is how to build an exhausted quota; the counters not
+        named still start at their limit. Rows loaded from the database are
+        untouched, whatever they hold: Django loads them positionally, so
+        ``args`` is what tells a load apart from a construction.
         """
         super().__init__(*args, **kwargs)
         if args:

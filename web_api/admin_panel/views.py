@@ -23,11 +23,9 @@ _EXTRA_QUOTA_FIELDS = {
     "attributes": "extra_attributes",
 }
 
-_CURRENT_QUOTA_FIELDS = {
-    "daily_jobs", "monthly_jobs",
-    "daily_variants", "monthly_variants",
-    "daily_attributes", "monthly_attributes",
-}
+#: The counters this panel can set directly, as opposed to the extra units
+#: above. They are exactly the counters a quota starts at its limit.
+_CURRENT_QUOTA_FIELDS = frozenset(Quota.COUNTER_FIELDS)
 
 
 def _get_or_create_user_quota(user: User) -> UserQuota:
