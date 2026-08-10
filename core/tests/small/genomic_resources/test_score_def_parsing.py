@@ -394,7 +394,7 @@ def test_a_score_at_column_zero_can_be_read() -> None:
     with score.open():
         assert score.score_definitions["s"].col_index == 0
         assert score.score_definitions["s"].score_index == 0
-        values = list(score.fetch_region_values("chr1", 10, 22, ["s"]))
+        values = list(score.fetch_region_segment_scores("chr1", 10, 22, ["s"]))
 
     assert [value[2] for value in values] == [[0.5], [0.75]]
 

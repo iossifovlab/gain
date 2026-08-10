@@ -1,8 +1,9 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """``GenomicScore.aggregate_region``: a region reduced to one value per score.
 
-The aggregating counterpart of ``fetch_region_values``.  What these pin is
-mostly its agreement with things that already exist -- the annotators, and
+The aggregating counterpart of ``fetch_region_segment_scores``.  What these
+pin is mostly its agreement with things that already exist -- the annotators,
+and
 the per-type weighting rule ``WeightedValues`` documents -- because a helper
 that answers a region differently from the annotator would be worse than no
 helper at all.

@@ -47,7 +47,10 @@ ALLOWED_PUBLIC_METHODS = {
 # Listed explicitly so a regression reads as intent, not a set-difference.
 FORBIDDEN_ON_BASE = {
     "open", "close", "is_open", "__enter__", "__exit__",
-    "fetch_records", "fetch_region", "fetch_region_values",
+    "fetch_records", "fetch_region", "fetch_region_segment_scores",
+    # The deprecated alias of ``fetch_region_segment_scores`` -- still a
+    # live public method until gain#730 deletes it, so still pinned here.
+    "fetch_region_values",
     "fetch_position_scores", "fetch_allele_scores", "fetch_fragment_scores",
     "fetch_scores_agg", "get_all_chromosomes",
 }

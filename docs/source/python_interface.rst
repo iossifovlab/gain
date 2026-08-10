@@ -139,11 +139,10 @@ combined to extract and visualize signal over a biologically meaningful region.
 
     xs = []
     ys = []
-    for pos_begin, pos_end, values in score.fetch_region_values(chrom, start, end):
-        if values is not None:
-            for p in range(pos_begin, pos_end + 1):
-                xs.append(p)
-                ys.append(values[0])
+    for pos_begin, pos_end, values in score.fetch_region_segment_scores(chrom, start, end):
+        for p in range(pos_begin, pos_end + 1):
+            xs.append(p)
+            ys.append(values[0])
 
     import matplotlib.pyplot as plt
     plt.figure(figsize=(10, 4))

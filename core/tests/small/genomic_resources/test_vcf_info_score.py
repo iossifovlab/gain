@@ -115,10 +115,11 @@ def test_clinvar_fetch_region(
     begin: int,
     end: int,
     scores: list[str],
-    expected: list[tuple[int, int, list[ScoreValue] | None]],
+    expected: list[tuple[int, int, list[ScoreValue]]],
 ) -> None:
     vcf_info_clinvar.open()
-    result = vcf_info_clinvar.fetch_region_values(chrom, begin, end, scores)
+    result = vcf_info_clinvar.fetch_region_segment_scores(
+        chrom, begin, end, scores)
     assert list(result) == expected
 
 
@@ -408,9 +409,9 @@ def test_gnomad_vcf_fetch_region(
     start: int,
     end: int,
     scores: list[str],
-    expected: list[tuple[int, int, list[ScoreValue] | None]],
+    expected: list[tuple[int, int, list[ScoreValue]]],
 ) -> None:
-    result = list(vcf_info_gnomad.fetch_region_values(
+    result = list(vcf_info_gnomad.fetch_region_segment_scores(
         chrom, start, end, scores))
     assert result == expected
 
