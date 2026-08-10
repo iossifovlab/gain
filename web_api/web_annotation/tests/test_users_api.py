@@ -1,6 +1,9 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import re
+from collections.abc import Iterator
 from importlib.metadata import version
+from smtplib import SMTPException
+from unittest import mock
 
 import pytest
 from django.core import mail
@@ -282,6 +285,63 @@ def test_forgotten_password_response_does_not_reveal_registration(
 
     assert unregistered_response.status_code == registered_response.status_code
     assert unregistered_response.content == registered_response.content
+
+
+@pytest.fixture
+def failing_send_email() -> Iterator[None]:
+    """Make every mail send raise, the shape of a real SMTP outage.
+
+    send_email is patched where utils resolves it, so the reset code is
+    still created and only the SMTP-level send raises.
+    """
+    with mock.patch(
+        "web_annotation.utils.send_email",
+        side_effect=SMTPException("connection refused"),
+    ):
+        yield
+
+
+@pytest.mark.django_db
+def test_forgotten_password_mail_failure_does_not_reveal_registration(
+    client: Client,
+    failing_send_email: None,
+) -> None:
+    """A mail outage must not reopen the oracle the uniform response closes."""
+    registered_response = client.post(
+        "/api/forgotten_password",
+        {"email": "user@example.com"},
+    )
+
+    User.objects.filter(email="user@example.com").delete()
+
+    unregistered_response = client.post(
+        "/api/forgotten_password",
+        {"email": "user@example.com"},
+    )
+
+    assert registered_response.status_code == unregistered_response.status_code
+    assert registered_response.content == unregistered_response.content
+
+
+@pytest.mark.django_db
+def test_forgotten_password_mail_failure_is_logged(
+    client: Client,
+    failing_send_email: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The swallowed mail error is how operators learn of the outage."""
+    with caplog.at_level("ERROR", logger="web_annotation.views"):
+        client.post(
+            "/api/forgotten_password",
+            {"email": "user@example.com"},
+        )
+
+    [record] = [
+        r for r in caplog.records
+        if r.message == "failed to create or send the reset mail"
+    ]
+    assert record.exc_info is not None
+    assert record.exc_info[0] is SMTPException
 
 
 @pytest.mark.django_db

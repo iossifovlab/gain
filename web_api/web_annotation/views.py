@@ -326,7 +326,13 @@ class ForgotPassword(HtmlThrottledAPIView, FirstRefusalThrottledAPIView):
         # is conditional.
         user = User.objects.filter(email=email).first()
         if user is not None:
-            reset_password(user)
+            try:
+                reset_password(user)
+            except Exception:  # pylint: disable=broad-exception-caught
+                # Swallowing is the point: a mail outage must not
+                # produce a 500 here while unregistered addresses get
+                # 200 - that difference is the enumeration oracle.
+                logger.exception("failed to create or send the reset mail")
 
         return render(
             cast(HttpRequest, request),
