@@ -1205,7 +1205,8 @@ def test_csi_indexed_score_fetches_the_same_region_as_its_tbi_twin(
     def fetch_first_region(resource_id: str) -> list:
         score = build_score_from_resource(repo.get_resource(resource_id))
         with score.open():
-            return list(score.fetch_region_values("chr1", 11, 20, ["value"]))
+            return list(score.fetch_region_segment_scores(
+                "chr1", 11, 20, ["value"]))
 
     assert fetch_first_region("csi_score") == [(11, 20, [0.1])]
     assert fetch_first_region("csi_score") == fetch_first_region("tbi_score")
@@ -1433,7 +1434,8 @@ def test_csi_indexed_vcf_score_reads_back_like_its_tbi_twin(
         with score.open():
             return (
                 score.get_all_chromosomes(),
-                list(score.fetch_region_values("chr1", 10, 10, ["value"])),
+                list(score.fetch_region_segment_scores(
+                    "chr1", 10, 10, ["value"])),
             )
 
     impl = build_score_implementation_from_resource(repo.get_resource(

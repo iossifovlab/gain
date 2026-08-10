@@ -429,7 +429,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         end: int | None,
         score_ids: list[str],
     ) -> Generator[
-            tuple[int, int, list[ScoreValue] | None], None, None]:
+            tuple[int, int, list[ScoreValue]], None, None]:
         """Read a region the way the statistics scan reads it.
 
         Every per-record pass reads here, so validation is composed in the

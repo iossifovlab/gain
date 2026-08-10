@@ -378,7 +378,7 @@ def test_region_fetch_empty_region_unknown_score_raises(
         1      10         0.5      hello
     """)
     with score, pytest.raises(ValueError, match="does not define"):
-        list(score.fetch_region_values(
+        list(score.fetch_region_segment_scores(
             "1", 5000, 5001, scores=["NOPE"]))
 
 
@@ -390,7 +390,7 @@ def test_region_fetch_nonempty_region_unknown_score_raises(
         1      10         0.5      hello
     """)
     with score, pytest.raises(ValueError, match="does not define"):
-        list(score.fetch_region_values("1", 10, 10, scores=["NOPE"]))
+        list(score.fetch_region_segment_scores("1", 10, 10, scores=["NOPE"]))
 
 
 def test_point_fetch_empty_region_unknown_score_raises(

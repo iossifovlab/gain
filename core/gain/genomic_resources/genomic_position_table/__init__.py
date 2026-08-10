@@ -359,11 +359,13 @@ so the two region reads now agree.
 --region-size 0`` computes statistics in a single pass -- but it is expressed
 by ITERATING contigs, in ``_do_noregion_histograms``, rather than by handing a
 null contig down.  No member of the region-read family takes ``chrom=None``:
-``GenomicScore.fetch_records`` and ``fetch_region_values`` both require a
-contig, and a caller that wants every record of a table asks the table
-(``get_all_records()``).
+``GenomicScore.fetch_records`` and ``fetch_region_segment_scores`` both
+require a contig, and a caller that wants every record of a table asks the
+table (``get_all_records()``).
 
-**``GenomicScore.fetch_region`` is gone; use ``fetch_region_values``.**  There
+**``GenomicScore.fetch_region`` is gone; use ``fetch_region_segment_scores``.**
+(The replacement was named ``fetch_region_values`` when this entry was
+written; the rename is its own entry below.)  There
 were two of them and they meant opposite things: on ``PositionScore``
 ``fetch_region`` was a pure alias of ``fetch_region_values``, while on
 ``AlleleScore`` it was the real read and ``fetch_region_values`` the adapter
@@ -453,6 +455,31 @@ uniform: it is not a mode, and there is no flag to turn it off -- a resource
 whose index filters on one span while its records are read through another
 returns records that are fetched and then dropped without a trace, and no
 caller has any use for that.
+
+**``GenomicScore.fetch_region_values`` is renamed
+``fetch_region_segment_scores``; the old name survives as a deprecated alias**
+(gain#729).  The method yields one tuple per underlying RECORD -- a segment,
+with that record's own clipped ``(begin, end)`` -- not one value per position,
+and "values" is exactly what made callers read it as the latter.  Living on
+the shared base, the rename covers ``PositionScore``, ``AlleleScore`` and
+``FragmentScore`` at once; ``region_values_from_records`` keeps its name, the
+statistics scan composing through it unchanged (ADR 0008).
+
+Unlike ``fetch_region`` above, the old name is NOT gone yet: no in-tree and no
+known cross-repo caller used it, but the published
+``docs/source/python_interface.rst`` showed it to external readers, so it
+stays as a thin forwarder raising ``DeprecationWarning`` until gain#730 -- a
+dated removal, per the precedent of gain#343 -- deletes it.
+
+The return type narrowed with the rename: the values slot was
+``list[ScoreValue] | None`` and no code path could yield ``None`` there --
+both producers end in ``get_score_values_from_record``, which is typed
+``list[ScoreValue]`` -- so the new name promises ``list[ScoreValue]`` and the
+narrowing runs down the private chain (``region_values_from_records``,
+``_clipped_score_values``, ``_allele_point_values``).  A caller's ``None``
+guard on a yielded values slot is dead code now, as ``aggregate_region``'s
+was.  ``fetch_position_scores`` keeps its ``| None``: that one is real, and
+means "no record covers this position".
 """
 from .line import LineBuffer
 from .table import ContigExtent

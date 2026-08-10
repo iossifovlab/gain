@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import enum
+import warnings
 from abc import abstractmethod
 from collections.abc import Generator, Iterator
 from itertools import starmap
@@ -199,7 +200,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         A kind whose records read as something other than the span they
         cover states that ONCE, by overriding:
         - region_values_from_records(): what a region's raw records mean for
-          this kind.  ``fetch_region_values`` is it applied to
+          this kind.  ``fetch_region_segment_scores`` is it applied to
           ``fetch_records``, and the statistics scan is it applied to
           ``validate_records(fetch_records(...))`` -- so a kind states its
           reading once and both consumers get it (ADR 0008).
@@ -1030,13 +1031,14 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         pos_end: int | None = None,
         scores: list[str] | None = None,
     ) -> Generator[
-            tuple[int, int, list[ScoreValue] | None], None, None]:
+            tuple[int, int, list[ScoreValue]], None, None]:
         """Extract this kind's ``(begin, end, values)`` from raw records.
 
         The region read expressed as a function OF a record stream, which is
         what lets the two consumers of a region differ by what they COMPOSE
-        rather than by a flag: :meth:`fetch_region_values` is this applied to
-        :meth:`fetch_records`, and the statistics scan is this applied to
+        rather than by a flag: :meth:`fetch_region_segment_scores` is this
+        applied to :meth:`fetch_records`, and the statistics scan is this
+        applied to
         ``validate_records(fetch_records(...))``.  Neither can quietly
         acquire the other's behaviour, and no argument travels down to say
         which of the two is reading (ADR 0008).
@@ -1087,7 +1089,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         pos_end: int | None,
         score_defs: list[GenomicScoreDef],
     ) -> Generator[
-            tuple[int, int, list[ScoreValue] | None], None, None]:
+            tuple[int, int, list[ScoreValue]], None, None]:
         """Stream the clipped spans of an already-checked region request.
 
         A record ending before the query is dropped rather than clipped.
@@ -1172,22 +1174,23 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """
         raise NotImplementedError
 
-    def fetch_region_values(
+    def fetch_region_segment_scores(
         self,
         chrom: str,
         pos_begin: int | None = None,
         pos_end: int | None = None,
         scores: list[str] | None = None,
     ) -> Generator[
-            tuple[int, int, list[ScoreValue] | None], None, None]:
-        """Return score values - either all available or in a specific region.
+            tuple[int, int, list[ScoreValue]], None, None]:
+        """Yield ``(begin, end, values)`` per record touching the region.
 
-        The region's records, read as this kind means them.  A plain read: it
-        checks nothing.  The statistics scan reads the same records through
-        the same transform with :meth:`validate_records` composed in front,
-        and that extra link -- visible at the consumer, in
-        ``genomic_scores_impl.py`` -- is the whole of the difference between
-        the two (ADR 0008).
+        One tuple per underlying RECORD -- a segment, with that record's own
+        clipped span -- not one value per position.  The region's records,
+        read as this kind means them.  A plain read: it checks nothing.  The
+        statistics scan reads the same records through the same transform
+        with :meth:`validate_records` composed in front, and that extra link
+        -- visible at the consumer, in ``genomic_scores_impl.py`` -- is the
+        whole of the difference between the two (ADR 0008).
 
         One body per kind, in :meth:`region_values_from_records`, rather than
         one per kind per consumer: two that had to agree is how the paths
@@ -1195,6 +1198,36 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """
         return self.region_values_from_records(
             self.fetch_records(chrom, pos_begin, pos_end),
+            chrom, pos_begin, pos_end, scores)
+
+    def fetch_region_values(
+        self,
+        chrom: str,
+        pos_begin: int | None = None,
+        pos_end: int | None = None,
+        scores: list[str] | None = None,
+    ) -> Generator[
+            tuple[int, int, list[ScoreValue]], None, None]:
+        """Yield ``(begin, end, values)`` per record touching the region.
+
+        .. deprecated::
+            Use :meth:`fetch_region_segment_scores` instead -- the same
+            read under a name that says it yields one tuple per record
+            (a segment), not one value per position.  Retained as a thin
+            compatibility alias only because the published
+            ``docs/source/python_interface.rst`` showed this name to
+            external readers; no in-tree or known cross-repo caller
+            remains.  Removal is tracked as gain#730.
+        """
+        warnings.warn(
+            "GenomicScore.fetch_region_values is deprecated; use "
+            "fetch_region_segment_scores instead. It is retained only "
+            "for readers of the published documentation, until gain#730 "
+            "removes it.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.fetch_region_segment_scores(
             chrom, pos_begin, pos_end, scores)
 
     @classmethod
@@ -1236,8 +1269,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     ) -> list[ScoreValue]:
         """Reduce a region to one value per requested score.
 
-        The aggregating counterpart of :meth:`fetch_region_values`, which it
-        is built on: that method yields one entry per record, this one folds
+        The aggregating counterpart of :meth:`fetch_region_segment_scores`,
+        which it is built on: that method yields one entry per record, this
+        one folds
         those entries into a single value per request.
 
         Each request is either a score id -- aggregated with the resource's
@@ -1281,10 +1315,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 aggregators, requests, strict=True)
         ]
 
-        for left, right, values in self.fetch_region_values(
+        for left, right, values in self.fetch_region_segment_scores(
                 chrom, pos_begin, pos_end, score_ids):
-            if values is None:
-                continue
             weight = self._record_weight(left, right)
             if weight <= 0:
                 continue
@@ -1376,9 +1408,9 @@ class PositionScore(GenomicScore):
         ...     # Fetch scores at a specific position
         ...     values = score.fetch_position_scores("chr1", 12345)
         ...     # Fetch scores across a region
-        ...     for pos_begin, pos_end, scores in score.fetch_region_values(
-        ...         "chr1", 10000, 20000
-        ...     ):
+        ...     region = score.fetch_region_segment_scores(
+        ...         "chr1", 10000, 20000)
+        ...     for pos_begin, pos_end, scores in region:
         ...         print(f"{pos_begin}-{pos_end}: {scores}")
 
     Aggregating those values over the region is the *annotator's* job, not the
@@ -1395,7 +1427,8 @@ class PositionScore(GenomicScore):
 
     Key Methods:
         fetch_position_scores: Get score values at a specific position
-        fetch_region_values: Iterate over score values in a genomic region
+        fetch_region_segment_scores: Iterate over score segments in a
+            genomic region
         fetch_region_weighted_values: Iterate over ``(values, weight)`` pairs
             in a genomic region, for a caller that aggregates it
     """
@@ -1522,7 +1555,7 @@ class PositionScore(GenomicScore):
         aggregating a region never re-clips a record nor materialises one
         copy of a value per base pair.
         """
-        for left, right, values in self.fetch_region_values(
+        for left, right, values in self.fetch_region_segment_scores(
             chrom, pos_begin, pos_end, scores,
         ):
             weight = self._record_weight(left, right)
@@ -1628,7 +1661,8 @@ class AlleleScore(GenomicScore):
 
     Key Methods:
         fetch_allele_scores: Get score values for a specific variant
-        fetch_region_values: Iterate over allele scores in a genomic region
+        fetch_region_segment_scores: Iterate over allele scores in a
+            genomic region
         substitutions_mode: Check if operating in SUBSTITUTIONS mode
         alleles_mode: Check if operating in ALLELES mode
 
@@ -1652,7 +1686,7 @@ class AlleleScore(GenomicScore):
     }
 
     # Several records share a position -- one per ref/alt pair -- and each
-    # weighs 1.  Structurally so: :meth:`fetch_region_values` yields
+    # weighs 1.  Structurally so: :meth:`fetch_region_segment_scores` yields
     # ``(pos, pos, values)``, collapsing the record to a point however wide an
     # optional ``pos_end`` column reaches, so a span weight would not merely be
     # a different choice, it would disagree with the per-record read.
@@ -1831,7 +1865,7 @@ class AlleleScore(GenomicScore):
         pos_end: int | None = None,  # noqa: ARG002
         scores: list[str] | None = None,
     ) -> Generator[
-            tuple[int, int, list[ScoreValue] | None], None, None]:
+            tuple[int, int, list[ScoreValue]], None, None]:
         """Read each allele record as the point it sits at.
 
         Several records legitimately share a position -- one per ref/alt pair
@@ -1860,7 +1894,7 @@ class AlleleScore(GenomicScore):
         records: Iterator[Record],
         score_defs: list[GenomicScoreDef],
     ) -> Generator[
-            tuple[int, int, list[ScoreValue] | None], None, None]:
+            tuple[int, int, list[ScoreValue]], None, None]:
         """Stream one point per allele record, for a checked request."""
         for record in records:
             # Through ``_record_to_begin_end`` rather than the POS_BEGIN slot

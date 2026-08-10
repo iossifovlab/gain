@@ -250,7 +250,7 @@ def test_position_score_multiple_values_for_position() -> None:
     score = PositionScore(res)
     score.open()
 
-    assert list(score.fetch_region_values("1", 10, 20, ["score"])) == [
+    assert list(score.fetch_region_segment_scores("1", 10, 20, ["score"])) == [
         (10, 15, [0.1]),
         (12, 18, [0.2]),
     ]
@@ -338,7 +338,7 @@ def test_allele_score_fetch_region_spanning_record() -> None:
     score = AlleleScore(res)
     score.open()
 
-    assert list(score.fetch_region_values("1", 10, 20, ["freq"])) \
+    assert list(score.fetch_region_segment_scores("1", 10, 20, ["freq"])) \
         == [(10, 10, [0.02])]
     # The nucleotides come off the record, not the values stream.
     assert [(r[POS_BEGIN], r[REF], r[ALT])
@@ -373,7 +373,7 @@ def test_allele_score_fetch_region_overlapping_positions() -> None:
 
     # Two records share position 10 -- the same ref/alt at that -- and both
     # are yielded rather than one being collapsed away.
-    result = list(score.fetch_region_values("1", 10, 11, ["freq"]))
+    result = list(score.fetch_region_segment_scores("1", 10, 11, ["freq"]))
     assert len(result) == 2
 
 
@@ -676,7 +676,7 @@ def test_position_score_fetch_region_all() -> None:
     result = [
         rec
         for chrom in score.get_all_chromosomes()
-        for rec in score.fetch_region_values(chrom, None, None)
+        for rec in score.fetch_region_segment_scores(chrom, None, None)
     ]
     assert len(result) == 4
 
@@ -717,6 +717,6 @@ def test_allele_score_fetch_region_all() -> None:
     result = [
         rec
         for chrom in score.get_all_chromosomes()
-        for rec in score.fetch_region_values(chrom, None, None)
+        for rec in score.fetch_region_segment_scores(chrom, None, None)
     ]
     assert len(result) == 9

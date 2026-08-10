@@ -92,12 +92,12 @@ def test_allele_score_fetch_region() -> None:
     # The in-mem table will sort the records. In this example it will sort
     # the alternatives column (previous columns are the same). That is why
     # the scores (freq) appear out of order
-    assert list(score.fetch_region_values("1", 10, 11, ["freq"])) == \
+    assert list(score.fetch_region_segment_scores("1", 10, 11, ["freq"])) == \
         [(10, 10, [0.04]),
          (10, 10, [0.03]),
          (10, 10, [0.02])]
 
-    assert list(score.fetch_region_values("1", 10, 16, ["freq"])) == \
+    assert list(score.fetch_region_segment_scores("1", 10, 16, ["freq"])) == \
         [(10, 10, [0.04]),
          (10, 10, [0.03]),
          (10, 10, [0.02]),
@@ -105,7 +105,8 @@ def test_allele_score_fetch_region() -> None:
          (16, 16, [0.04]),
          (16, 16, [0.03])]
 
-    assert list(score.fetch_region_values("2", None, None, ["freq"])) == [
+    assert list(score.fetch_region_segment_scores(
+        "2", None, None, ["freq"])) == [
         (16, 16, [0.05]),
         (16, 16, [None]),
         (16, 16, [0.03]),
@@ -288,7 +289,7 @@ def test_allele_score_fetch_region_spanning_record_at_pos_begin() -> None:
     score = AlleleScore(res)
     score.open()
 
-    assert list(score.fetch_region_values("1", 10, 12, ["freq"])) \
+    assert list(score.fetch_region_segment_scores("1", 10, 12, ["freq"])) \
         == [(10, 10, [0.02])]
     # The nucleotides come off the record, not the values stream.
     assert [(r[POS_BEGIN], r[REF], r[ALT])

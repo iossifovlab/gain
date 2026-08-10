@@ -1319,7 +1319,7 @@ def test_build_genomic_score_from_resource_id() -> None:
     score = build_score_from_resource_id("example_score", grr)
     score.open()
     assert score is not None
-    assert list(score.fetch_region_values("1", 10, None, ["s1"])) == [
+    assert list(score.fetch_region_segment_scores("1", 10, None, ["s1"])) == [
         (10, 10, [0.02])]
 
 
@@ -1473,19 +1473,19 @@ def test_get_histogram_image_public_url() -> None:
     assert url != score.get_histogram_image_url("score")
 
 
-def test_fetch_region_values_requires_open() -> None:
+def test_fetch_region_segment_scores_requires_open() -> None:
     score = build_score_from_resource(build_simple_position_score_resource())
 
     with pytest.raises(ValueError, match="is not open"):
-        score.fetch_region_values("1", 10, 10)
+        score.fetch_region_segment_scores("1", 10, 10)
 
 
-def test_fetch_region_values_checks_available_chromosomes() -> None:
+def test_fetch_region_segment_scores_checks_available_chromosomes() -> None:
     score = build_score_from_resource(build_simple_position_score_resource())
     score.open()
 
     with pytest.raises(ValueError, match="not among the available"):
-        score.fetch_region_values("2", 10, 10)
+        score.fetch_region_segment_scores("2", 10, 10)
 
 
 def test_record_to_begin_end_validates_order() -> None:
@@ -1609,16 +1609,15 @@ def test_bigwig_position_score_fetch_records(
         lines[1], "score") == pytest.approx(0.2)
 
 
-def test_bigwig_position_score_fetch_region_values(
+def test_bigwig_position_score_fetch_region_segment_scores(
     bigwig_position_score: GenomicScore,
 ) -> None:
     result = list(
-        bigwig_position_score.fetch_region_values("chr1", 1, 20, ["score"]),
+        bigwig_position_score.fetch_region_segment_scores(
+            "chr1", 1, 20, ["score"]),
     )
     assert len(result) == 2
-    assert result[0][2] is not None
     assert result[0][2][0] == pytest.approx(0.1)
-    assert result[1][2] is not None
     assert result[1][2][0] == pytest.approx(0.2)
 
 

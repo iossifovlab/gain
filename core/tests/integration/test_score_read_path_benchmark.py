@@ -7,8 +7,8 @@ of the two hot read paths that two upcoming optimisations target:
 * a **raw table scan** -- iterating records straight off the tabix-backed
   ``GenomicPositionTable`` (``table.get_all_records()``), and
 * a **score-layer region fetch** -- pulling parsed score values through
-  ``GenomicScore.fetch_region_values``, which wraps every record in a score
-  line and calls ``get_score`` per declared score.
+  ``GenomicScore.fetch_region_segment_scores``, which wraps every record in a
+  score line and calls ``get_score`` per declared score.
 
 Both are measured against two resource shapes, because the two follow-up
 optimisations help them very differently:
@@ -267,7 +267,7 @@ def _fetch_pass(
     """
     def run() -> int:
         count = 0
-        for _left, _right, values in score.fetch_region_values(
+        for _left, _right, values in score.fetch_region_segment_scores(
             _CHROM, 1, n_rows,
         ):
             count += 1

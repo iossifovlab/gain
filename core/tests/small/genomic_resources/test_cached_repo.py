@@ -2166,7 +2166,8 @@ def test_cache_resources_fetches_a_csi_index_and_the_cached_score_opens(
         "data.txt.gz", "data.txt.gz.csi"}
     score = build_score_from_resource(cache_repo.get_resource("csi_score"))
     with score.open():
-        assert list(score.fetch_region_values("chr1", 11, 20, ["value"])) == [
+        assert list(score.fetch_region_segment_scores(
+            "chr1", 11, 20, ["value"])) == [
             (11, 20, [0.1])]
 
 
@@ -2195,7 +2196,8 @@ def test_cache_resources_fetches_a_csi_index_of_a_vcf_score(
         cache_repo.get_resource("csi_vcf_score"))
     with score.open():
         assert score.get_all_chromosomes() == ["chr1"]
-        assert list(score.fetch_region_values("chr1", 10, 10, ["value"])) == [
+        assert list(score.fetch_region_segment_scores(
+            "chr1", 10, 10, ["value"])) == [
             (10, 10, [pytest.approx(0.1)])]
 
 

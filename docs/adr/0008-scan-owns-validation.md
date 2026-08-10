@@ -66,7 +66,8 @@ express more than the one rule it does.
 
 ## Decision
 
-**1. Reads never validate.** `fetch_records`, `fetch_region_values`, the point
+**1. Reads never validate.** `fetch_records`, `fetch_region_segment_scores`
+(named `fetch_region_values` when this was written), the point
 reads and the annotators do no checking at all. There is no `validate_ordering`
 flag and no opt-out; the capability is removed rather than defaulted.
 

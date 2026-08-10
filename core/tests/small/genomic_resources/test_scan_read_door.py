@@ -2,7 +2,7 @@
 
 The scan reads a region as ``region_values_from_records`` over
 ``validate_records(fetch_records(...))``; every plain read -- ``fetch_records``,
-``fetch_region_values``, ``fetch_region_weighted_values``,
+``fetch_region_segment_scores``, ``fetch_region_weighted_values``,
 ``fetch_position_scores`` -- is the same transform over the same records with
 that middle link left out, and checks nothing.  These tests pin both halves of
 the split, because either half alone is quietly undoable: a scan that stops
@@ -100,7 +100,7 @@ def test_the_region_read_is_the_transform_over_the_record_stream(
         chr1   21         30       0.3
     """)
 
-    assert list(score.fetch_region_values("chr1", 5, 25)) == list(
+    assert list(score.fetch_region_segment_scores("chr1", 5, 25)) == list(
         score.region_values_from_records(
             score.fetch_records("chr1", 5, 25), "chr1", 5, 25))
 
@@ -126,7 +126,7 @@ def test_reading_a_position_score_whose_records_touch_yields_them_all(
     # records, clipped, in table order.
     score = _position_score(tmp_path, "touching", TOUCHING_RECORDS)
 
-    assert list(score.fetch_region_values("chr1", 1, 10)) == [
+    assert list(score.fetch_region_segment_scores("chr1", 1, 10)) == [
         (1, 5, [0.1]),
         (5, 9, [0.2]),
     ]
@@ -414,7 +414,8 @@ def test_reading_that_same_fragment_score_raises_nothing(
     # the region read still does not use it -- every record comes back.
     score = _fragment_score_reading_backwards(tmp_path, monkeypatch)
 
-    assert len(list(score.fetch_region_values("chr1", 1, 30, ["s"]))) == 2
+    assert len(list(score.fetch_region_segment_scores(
+        "chr1", 1, 30, ["s"]))) == 2
 
 
 def test_the_fragment_read_of_that_same_score_raises_nothing(
@@ -461,7 +462,7 @@ def test_a_region_read_clips_every_record_to_the_query(
         chr1   21         30       0.3
     """)
 
-    assert list(score.fetch_region_values("chr1", 5, 25)) == [
+    assert list(score.fetch_region_segment_scores("chr1", 5, 25)) == [
         (5, 10, [0.1]),
         (11, 20, [0.2]),
         (21, 25, [0.3]),
@@ -553,7 +554,7 @@ def test_the_scan_measures_a_well_formed_region_exactly_as_a_reader_reads_it(
 
     assert list(GenomicScoreImplementation._scan_region(
         score, "chr1", 5, 25, ["s"])) == \
-        list(score.fetch_region_values("chr1", 5, 25, ["s"]))
+        list(score.fetch_region_segment_scores("chr1", 5, 25, ["s"]))
 
 
 def test_an_allele_score_reads_each_record_as_the_point_it_sits_at(
@@ -583,10 +584,10 @@ def test_an_allele_score_reads_each_record_as_the_point_it_sits_at(
 
     assert list(score.region_values_from_records(
         score.fetch_records("chr1", 1, 20), "chr1", 1, 20, ["s"])) == \
-        list(score.fetch_region_values("chr1", 1, 20, ["s"]))
+        list(score.fetch_region_segment_scores("chr1", 1, 20, ["s"]))
     # Two records share position 10 -- which is what an allele score IS --
     # and the in-memory backend hands them back ordered by their alleles.
-    assert list(score.fetch_region_values("chr1", 1, 20, ["s"])) == [
+    assert list(score.fetch_region_segment_scores("chr1", 1, 20, ["s"])) == [
         (10, 10, [0.2]),
         (10, 10, [0.1]),
         (16, 16, [0.3]),
@@ -618,7 +619,7 @@ def test_the_position_rule_compares_raw_spans_not_clipped_ones(
     # what the read hands on holds no overlap at all -- a rule reading these
     # spans could not find one, which is the whole reason the validator sits
     # in front of the transform rather than behind it.
-    assert list(score.fetch_region_values("chr1", 120, 200, ["s"])) == [
+    assert list(score.fetch_region_segment_scores("chr1", 120, 200, ["s"])) == [
         (120, 150, [0.2]),
     ]
     with pytest.raises(MalformedResourceError) as excinfo:
