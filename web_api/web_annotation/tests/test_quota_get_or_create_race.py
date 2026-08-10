@@ -60,7 +60,7 @@ def test_get_quota_resilient_to_existing_quota_rows() -> None:
     assert UserQuota.objects.filter(user=user).count() == 1
 
 
-def test_lazily_created_user_quota_allows_a_single_allele_query() -> None:
+def test_a_created_user_quota_allows_a_single_allele_query() -> None:
     """A quota row must be usable the moment it exists.
 
     The row used to be inserted carrying the model's zero field defaults and
@@ -87,6 +87,31 @@ def test_lazily_creating_a_user_quota_writes_the_row_once() -> None:
         user.get_quota()
 
     assert len(_row_writes(captured)) == 1
+
+
+def test_an_exhausted_user_quota_still_refuses_a_single_allele_query() -> None:
+    """All-zero has to keep meaning exhausted.
+
+    Starting a new quota at its limits is what makes an all-zero row
+    unambiguous; a quota that reached zero by being spent must not be
+    mistaken for one that was never initialised and quietly healed.
+    """
+    user = User.objects.get(email="user@example.com")
+    UserQuota.objects.create(user=user)
+    UserQuota.objects.filter(user=user).update(
+        **dict.fromkeys(UserQuota.COUNTER_FIELDS, 0))
+
+    assert not user.get_quota().single_allele_allowed(1)
+
+
+def test_lazily_creating_anonymous_quotas_writes_each_row_once() -> None:
+    """The session and the IP quota are each written once, like the user's."""
+    anonymous = WebAnnotationAnonymousUser(session_id="sess-4", ip="10.0.0.5")
+
+    with CaptureQueriesContext(connection) as captured:
+        anonymous.get_quota()
+
+    assert len(_row_writes(captured)) == 2
 
 
 def test_lazily_created_anonymous_quotas_allow_a_single_allele_query() -> None:
