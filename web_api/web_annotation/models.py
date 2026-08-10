@@ -887,11 +887,11 @@ class AccountConfirmationCode(BaseVerificationCode):
 class Quota(models.Model):
     """Model for tracking user quotas.
 
-    A new quota starts at the limits configured for its type. The counter
-    fields still declare a zero default, because that is what the database
-    column carries for rows written outside the model, but a quota built the
-    ordinary way -- by keyword -- never reaches the database holding it. See
-    ``__init__``.
+    A new quota starts at the limits configured for its type; see
+    ``__init__``. The counter fields keep their zero default because the
+    column is NOT NULL and the migrations are written against that default,
+    not because zero is ever a sensible starting value -- it is precisely the
+    value that means "exhausted".
     """
     daily_jobs = models.IntegerField(default=0)
     monthly_jobs = models.IntegerField(default=0)
@@ -939,12 +939,9 @@ class Quota(models.Model):
         untouched, whatever they hold: Django loads them positionally, so
         ``args`` is what tells a load apart from a construction.
         """
+        if not args:
+            kwargs = {**self._initial_counters(), **kwargs}
         super().__init__(*args, **kwargs)
-        if args:
-            return
-        for name, value in self.initial_counters().items():
-            if name not in kwargs:
-                setattr(self, name, value)
 
     @classmethod
     @abstractmethod
@@ -953,18 +950,14 @@ class Quota(models.Model):
         raise NotImplementedError
 
     @classmethod
-    def initial_counters(cls) -> dict[str, int]:
+    def _initial_counters(cls) -> dict[str, int]:
         """Return the counter values a new quota of this type starts from."""
         config = cls._quota_config()
         return {name: cast(int, config[name]) for name in cls.COUNTER_FIELDS}
 
     @classmethod
     def get_or_create_for(cls, **lookup: Any) -> Self:
-        """Return the quota identified by ``lookup``, creating it if absent.
-
-        A quota is created ready to use, so there is nothing to initialise
-        afterwards and the row is written exactly once.
-        """
+        """Return the quota identified by ``lookup``, creating it if absent."""
         quota, _ = cls._default_manager.get_or_create(**lookup)
         return quota
 

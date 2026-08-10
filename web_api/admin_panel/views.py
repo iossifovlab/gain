@@ -23,26 +23,19 @@ _EXTRA_QUOTA_FIELDS = {
     "attributes": "extra_attributes",
 }
 
-#: The counters this panel can set directly, as opposed to the extra units
-#: above. They are exactly the counters a quota starts at its limit.
-_CURRENT_QUOTA_FIELDS = frozenset(Quota.COUNTER_FIELDS)
-
-
-def _get_or_create_user_quota(user: User) -> UserQuota:
-    return UserQuota.get_or_create_for(user=user)
+#: The counters this panel accepts as a ``quota_type``. Deliberately spelled
+#: out rather than derived from the model: this is the HTTP contract, and a
+#: counter gaining a column should not become settable by accident.
+_CURRENT_QUOTA_FIELDS = {
+    "daily_jobs", "monthly_jobs",
+    "daily_variants", "monthly_variants",
+    "daily_attributes", "monthly_attributes",
+}
 
 
 def _quota_snapshot_response(quota: Quota) -> Response:
     snapshot = QuotaSnapshot.from_quota(quota)
     return Response(dataclasses.asdict(snapshot))
-
-
-def _get_or_create_session_quota(session_id: str) -> SessionQuota:
-    return SessionQuota.get_or_create_for(session_id=session_id)
-
-
-def _get_or_create_ip_quota(ip: str) -> AnonymousUserQuota:
-    return AnonymousUserQuota.get_or_create_for(ip=ip)
 
 
 class AdminPanelView(APIView):
@@ -93,7 +86,7 @@ class SetExtraQuotaView(AdminPanelView):
                 f"User '{user_email}' not found.",
                 status=status.HTTP_404_NOT_FOUND)
 
-        quota = _get_or_create_user_quota(user)
+        quota = UserQuota.get_or_create_for(user=user)
         setattr(quota, _EXTRA_QUOTA_FIELDS[quota_type], amount_int)
         quota.save()
 
@@ -132,7 +125,7 @@ class SetCurrentQuotaView(AdminPanelView):
                 f"User '{user_email}' not found.",
                 status=status.HTTP_404_NOT_FOUND)
 
-        quota = _get_or_create_user_quota(user)
+        quota = UserQuota.get_or_create_for(user=user)
         setattr(quota, quota_type, amount_int)
         quota.save()
 
@@ -169,7 +162,7 @@ class SetSessionQuotaView(AdminPanelView):
                 "amount must be an integer.",
                 status=status.HTTP_400_BAD_REQUEST)
 
-        quota = _get_or_create_session_quota(session_id)
+        quota = SessionQuota.get_or_create_for(session_id=session_id)
         setattr(quota, quota_type, amount_int)
         quota.save()
 
@@ -213,7 +206,7 @@ class SetIpQuotaView(AdminPanelView):
                 "amount must be an integer.",
                 status=status.HTTP_400_BAD_REQUEST)
 
-        quota = _get_or_create_ip_quota(ip)
+        quota = AnonymousUserQuota.get_or_create_for(ip=ip)
         setattr(quota, quota_type, amount_int)
         quota.save()
 

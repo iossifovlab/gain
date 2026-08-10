@@ -95,6 +95,13 @@ def test_an_exhausted_user_quota_still_refuses_a_single_allele_query() -> None:
     Starting a new quota at its limits is what makes an all-zero row
     unambiguous; a quota that reached zero by being spent must not be
     mistaken for one that was never initialised and quietly healed.
+
+    This is also the only test that loads an all-zero quota back out of the
+    database, so it is what pins the guard in ``Quota.__init__`` that starts
+    counters at their limits on construction but leaves a load alone. Keep a
+    case that reads spent counters from the database: without one, a quota
+    healing itself on load would go unnoticed, and it fails open -- every
+    exhausted quota silently becomes full again.
     """
     user = User.objects.get(email="user@example.com")
     UserQuota.objects.create(user=user)
@@ -114,7 +121,7 @@ def test_lazily_creating_anonymous_quotas_writes_each_row_once() -> None:
     assert len(_row_writes(captured)) == 2
 
 
-def test_lazily_created_anonymous_quotas_allow_a_single_allele_query() -> None:
+def test_created_anonymous_quotas_allow_a_single_allele_query() -> None:
     """Both quotas an anonymous user is measured against must be usable.
 
     The snapshot is the field-wise minimum of the session and the IP quota,
