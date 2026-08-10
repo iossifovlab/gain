@@ -898,7 +898,13 @@ class AccountConfirmationCode(BaseVerificationCode):
 
 
 class Quota(models.Model):
-    """Model for tracking user quotas."""
+    """Model for tracking user quotas.
+
+    A new quota starts at the limits configured for its type. The counter
+    fields still declare a zero default, because that is what the database
+    column carries for rows written outside the model, but no quota built
+    through this class reaches the database holding it -- see ``__init__``.
+    """
     daily_jobs = models.IntegerField(default=0)
     monthly_jobs = models.IntegerField(default=0)
 
@@ -915,14 +921,53 @@ class Quota(models.Model):
     extra_variants = models.IntegerField(default=0)
     extra_attributes = models.IntegerField(default=0)
 
+    #: Counters that a new quota starts at its configured limit. The
+    #: timestamps and the extra-unit fields are not among them: their zero
+    #: default is already the correct starting value.
+    COUNTER_FIELDS: ClassVar[tuple[str, ...]] = (
+        "daily_jobs", "monthly_jobs",
+        "daily_variants", "monthly_variants",
+        "daily_attributes", "monthly_attributes",
+    )
+
     class Meta:  # pylint: disable=too-few-public-methods
         """Meta class for quota model."""
         abstract = True
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Build a quota, starting a new one at its configured limits.
+
+        An all-zero quota row is indistinguishable from a legitimately
+        exhausted one, so a quota must never be *created* holding the zero
+        field defaults and raised to its limits afterwards: any reader
+        arriving in between would be refused although nothing was consumed.
+        Starting at the limits here means every creation path -- ``create``,
+        ``get_or_create``, plain construction -- inserts a usable row in one
+        statement, with no window and no follow-up reset.
+
+        Counters named by the caller are left alone; passing zeros is how a
+        caller asks for an exhausted quota. Rows loaded from the database are
+        untouched: Django loads them positionally, so ``args`` tells a load
+        apart from a construction.
+        """
+        super().__init__(*args, **kwargs)
+        if args:
+            return
+        for name, value in self.initial_counters().items():
+            if name not in kwargs:
+                setattr(self, name, value)
+
+    @classmethod
     @abstractmethod
-    def _quota_config(self) -> dict:
+    def _quota_config(cls) -> dict:
         """Return the settings QUOTAS sub-dict for this quota type."""
         raise NotImplementedError
+
+    @classmethod
+    def initial_counters(cls) -> dict[str, int]:
+        """Return the counter values a new quota of this type starts from."""
+        config = cls._quota_config()
+        return {name: cast(int, config[name]) for name in cls.COUNTER_FIELDS}
 
     def get_daily_job_max(self) -> int:
         """Get the maximum number of daily jobs allowed."""
@@ -1213,7 +1258,8 @@ class AnonymousUserQuota(Quota):
         """Meta class for anonymous user quotas."""
         db_table = "anonymous_user_quotas"
 
-    def _quota_config(self) -> dict:
+    @classmethod
+    def _quota_config(cls) -> dict:
         return cast(dict, settings.QUERY_QUOTAS["anonymous"])
 
 
@@ -1226,7 +1272,8 @@ class SessionQuota(Quota):
         """Meta class for session quotas."""
         db_table = "session_quotas"
 
-    def _quota_config(self) -> dict:
+    @classmethod
+    def _quota_config(cls) -> dict:
         return cast(dict, settings.QUERY_QUOTAS["anonymous"])
 
 
@@ -1243,7 +1290,8 @@ class UserQuota(Quota):
         """Meta class for user quotas."""
         db_table = "user_quotas"
 
-    def _quota_config(self) -> dict:
+    @classmethod
+    def _quota_config(cls) -> dict:
         return cast(dict, settings.QUERY_QUOTAS["user"])
 
 
