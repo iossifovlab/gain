@@ -41,6 +41,18 @@ _MULTIOME_FEATURES = """
     PEAK002  chr2:1-99  Peaks             GRCh38  chr2:1-99
 """
 
+# Two distinct accessions carrying the same symbol, the ordinary reason a
+# real 10x feature table has a non-unique variable index (#715).  The
+# repeats are not adjacent, so an assertion on the realized datasets can
+# see that file order survived.
+_DUPLICATE_SYMBOLS = """
+    gene     gene_name  feature_type      genome  interval
+    ENSG001  TBCE       Gene||Expression  GRCh38  chr1:1-99
+    ENSG002  GAPDH      Gene||Expression  GRCh38  chr1:200-299
+    ENSG003  TBCE       Gene||Expression  GRCh38  chr17:100-199
+    PEAK001  chr1:1-99  Peaks             GRCh38  chr1:1-99
+"""
+
 # One genome still, but not the default one -- which is what makes an
 # authored ``genome`` column distinguishable from the value that stands
 # in for it.
@@ -183,6 +195,33 @@ def test_the_features_group_carries_the_metadata_a_read_copies_into_var(
             "chr1:2001-3000",
             "chr1:3001-4000",
         ]
+
+
+def test_a_repeated_gene_symbol_is_realized_as_authored(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A non-unique variable index is what EVERY real ``10x_h5`` resource
+    # has, and the reader tests that pin gain's handling of one are all
+    # built on a block like this (#715).  Those tests would catch a
+    # builder that uniquified or reordered the symbols -- they assert the
+    # index they expect, so they would simply fail.  They would just
+    # blame the reader for it.  This says which half is at fault, in the
+    # tier that reads the realized bytes directly, and it is where the
+    # ``with_var`` contract belongs: an authored block is realized as
+    # authored, repeats and order included.
+    path = _realize(
+        an_ann_data().with_format("10x_h5").with_var(_DUPLICATE_SYMBOLS),
+        tmp_path)
+
+    with h5py.File(path, "r") as h5:
+        features = h5["matrix/features"]
+
+        assert _strings(features["name"]) == [
+            "TBCE", "GAPDH", "TBCE", "chr1:1-99"]
+        # The accessions that make the two TBCE rows two features, each
+        # still beside the symbol it was authored against.
+        assert _strings(features["id"]) == [
+            "ENSG001", "ENSG002", "ENSG003", "PEAK001"]
 
 
 def test_all_tag_keys_names_the_metadata_datasets(
