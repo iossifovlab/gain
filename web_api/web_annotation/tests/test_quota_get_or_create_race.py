@@ -39,6 +39,21 @@ def test_get_quota_resilient_to_existing_quota_rows() -> None:
     assert UserQuota.objects.filter(user=user).count() == 1
 
 
+def test_lazily_created_user_quota_allows_a_single_allele_query() -> None:
+    """A quota row must be usable the moment it exists.
+
+    The row used to be inserted carrying the model's zero field defaults and
+    only afterwards raised to its configured limits by two further saves. A
+    reader arriving in between found the row present, skipped the reset that
+    only the creating caller performs, and read an all-zero quota -- refusing
+    a user who had consumed nothing.
+    """
+    user = User.objects.get(email="user@example.com")
+    UserQuota.objects.create(user=user)
+
+    assert user.get_quota().single_allele_allowed(1)
+
+
 def test_anonymous_ip_quota_is_unique() -> None:
     """A second AnonymousUserQuota for the same IP must be DB-rejected."""
     AnonymousUserQuota.objects.create(ip="10.0.0.1")
