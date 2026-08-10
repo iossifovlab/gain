@@ -6,6 +6,7 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     SearchIndexUnavailableError,
     SearchTermError,
+    drain_search,
 )
 from gain.genomic_resources.resource_query import (
     MAX_RESOURCE_QUERY_LENGTH as MAX_RESOURCE_QUERY_LENGTH_CORE,
@@ -171,12 +172,18 @@ class SearchResources(ResourcesAPIView):
             # Drained inside the guard, not after it: `search_term` is the
             # other half of the story above. FTS5 reads it when the
             # statement is first stepped, which is here rather than at the
-            # call, so a malformed term raises out of this `list` -- and
+            # call, so a malformed term raises out of this drain -- and
             # used to leave the endpoint with an unhandled 500 (gain#632).
-            resources = list(filter(
-                lambda r: r.get_type() in self.SUPPORTED_RESOURCE_TYPES,
-                found,
-            ))
+            #
+            # `drain_search` rather than `list`: the generator's return
+            # value carries the children a group skipped while still
+            # answering (gain#686), and this endpoint presents totals, so
+            # it is the caller that must not discard them.
+            rows, skips = drain_search(found)
+            resources = [
+                res for res in rows
+                if res.get_type() in self.SUPPORTED_RESOURCE_TYPES
+            ]
         except SearchIndexUnavailableError as err:
             # Not a bad request: the caller supplied nothing wrong and has
             # no repair to make. Ahead of the arm below, which it would
@@ -214,4 +221,11 @@ class SearchResources(ResourcesAPIView):
             "pages": (len(resources) + page_size - 1) // page_size,
             "total_resources": len(resources),
             "resources": resource_details,
+            # Always present, so a client branches on the content rather
+            # than the existence: the repositories a group skipped while
+            # answering, i.e. how the totals above fall short (gain#686).
+            "incomplete": [
+                {"repo": repo_id, "reason": reason}
+                for repo_id, reason in skips
+            ],
         }, status=status.HTTP_200_OK)

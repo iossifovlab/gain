@@ -1,10 +1,20 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import pathlib
+
 import pytest
 import pytest_mock
 from django.test import Client
+from gain.genomic_resources.cli import _create_contents_db
+from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
+    GenomicResourceProtocolRepo,
     GenomicResourceRepo,
     SearchIndexUnavailableError,
+)
+from gain.genomic_resources.testing import build_filesystem_test_protocol
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_position_score,
 )
 
 from web_annotation.resources.views import SearchResources
@@ -20,6 +30,7 @@ from web_annotation.resources.views import SearchResources
                 "page": 0,
                 "pages": 1,
                 "total_resources": 10,
+                "incomplete": [],
                 "resources": {
                     "hg38/GRCh38-hg38/genome",
                     "scores/allele1",
@@ -40,6 +51,7 @@ from web_annotation.resources.views import SearchResources
                 "page": 0,
                 "pages": 1,
                 "total_resources": 2,
+                "incomplete": [],
                 "resources": {
                     "hg38/GRCh38-hg38/genome",
                     "t4c8/t4c8_genome",
@@ -52,6 +64,7 @@ from web_annotation.resources.views import SearchResources
                  "page": 0,
                  "pages": 1,
                  "total_resources": 1,
+                 "incomplete": [],
                  "resources": {
                     "t4c8/gene_sets/main",
                  },
@@ -63,6 +76,7 @@ from web_annotation.resources.views import SearchResources
                  "page": 0,
                  "pages": 1,
                  "total_resources": 3,
+                 "incomplete": [],
                  "resources": {
                     "scores/pos1",
                     "scores/pos2",
@@ -76,6 +90,7 @@ from web_annotation.resources.views import SearchResources
                  "page": 0,
                  "pages": 1,
                  "total_resources": 1,
+                 "incomplete": [],
                  "resources": {
                     "t4c8/genomic_scores/score_one",
                  },
@@ -87,6 +102,7 @@ from web_annotation.resources.views import SearchResources
                  "page": 0,
                  "pages": 1,
                  "total_resources": 1,
+                 "incomplete": [],
                  "resources": {
                     "t4c8/genomic_scores/score_one",
                  },
@@ -98,6 +114,7 @@ from web_annotation.resources.views import SearchResources
                  "page": 0,
                  "pages": 1,
                  "total_resources": 5,
+                 "incomplete": [],
                  "resources": {
                     "t4c8/gene_scores/t4c8_score",
                     "t4c8/gene_sets/main",
@@ -124,6 +141,7 @@ from web_annotation.resources.views import SearchResources
                  "page": 0,
                  "pages": 1,
                  "total_resources": 5,
+                 "incomplete": [],
                  "resources": {
                     "scores/allele1",
                     "scores/pos1",
@@ -139,6 +157,7 @@ from web_annotation.resources.views import SearchResources
                  "page": 0,
                  "pages": 1,
                  "total_resources": 1,
+                 "incomplete": [],
                  "resources": {
                     "scores/allele1",
                  },
@@ -166,6 +185,64 @@ def test_get_resources(
     result = response.json()
     result["resources"] = {res["resource_id"] for res in result["resources"]}
     assert result == expected
+
+
+def test_a_complete_search_answers_incomplete_empty(
+    clients: dict[str, Client],
+) -> None:
+    """The payload says the totals are whole, not merely implies it.
+
+    ``incomplete`` is always present so a client branches on its content,
+    never on its existence (gain#686).
+    """
+    response = clients["anonymous"].get(
+        "/api/resources/search", query_params={"search": "scores"})
+
+    assert response.status_code == 200
+    assert response.json()["incomplete"] == []
+
+
+def test_a_search_a_child_could_not_answer_says_how_totals_fall_short(
+    clients: dict[str, Client],
+    mocker: pytest_mock.MockFixture,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A skipped child is in the payload, not only in the server log.
+
+    Without it, "1 of 1 resources" over a half-skipped group is wrong in
+    a way that looks right (gain#686).
+    """
+    group = GenomicResourceGroupRepo([
+        _an_indexed_child(tmp_path / "one", "scores/a", {"assay": "atac"}),
+        _an_indexed_child(tmp_path / "two", "scores/b", {"unrelated": "x"}),
+    ])
+    mocker.patch("web_annotation.annotation_base_view.GRR", group)
+
+    response = clients["anonymous"].get(
+        "/api/resources/search", query_params={"search": 'assay: "atac"'})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_resources"] == 1
+    assert [res["resource_id"] for res in payload["resources"]] == ["scores/a"]
+    [entry] = payload["incomplete"]
+    assert entry["repo"] == group.children[1].repo_id
+    assert "assay" in entry["reason"]
+
+
+def _an_indexed_child(
+    root: pathlib.Path,
+    resource_id: str,
+    labels: dict[str, str],
+) -> GenomicResourceProtocolRepo:
+    """Realize a one-resource GRR at ``root``, index included."""
+    repo = (
+        a_grr()
+        .with_resource(resource_id, a_position_score().with_labels(**labels))
+        .build_repo(root)
+    )
+    _create_contents_db(build_filesystem_test_protocol(root))
+    return repo
 
 
 def test_resource_query_selects_by_id_glob(clients: dict[str, Client]) -> None:
@@ -281,6 +358,7 @@ def test_resource_query_cannot_select_an_unsupported_resource_type(
         "page": 0,
         "pages": 0,
         "total_resources": 0,
+        "incomplete": [],
         "resources": [],
     }
 

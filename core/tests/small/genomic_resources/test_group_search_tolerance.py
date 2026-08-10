@@ -27,6 +27,7 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
     SearchIndexUnavailableError,
     SearchTermError,
+    drain_search,
 )
 from gain.genomic_resources.testing import build_filesystem_test_protocol
 from gain.genomic_resources.testing.builders import (
@@ -345,3 +346,105 @@ def test_a_nested_group_reports_the_leaves_not_the_group_between(
     assert inner_leaf.repo_id in message
     assert outer_leaf.repo_id in message
     assert "the_middle_group" not in message
+
+
+def test_a_partial_answer_reports_the_skips_to_the_caller(
+    disjoint_group: GenomicResourceGroupRepo,
+) -> None:
+    """The skips of a search that still answered are the generator's value.
+
+    The warning reaches the server log and nothing else, so a caller that
+    presents totals -- the web API -- has no way to say the result is
+    incomplete (gain#686).
+    """
+    rows, skips = drain_search(
+        disjoint_group.search_resources(search_term='assay: "atac"'))
+
+    assert {res.resource_id for res in rows} == {"scores/a"}
+    skipped_child = disjoint_group.children[1]
+    assert [repo for repo, _ in skips] == [skipped_child.repo_id]
+    assert all(reason for _, reason in skips)
+
+
+def test_a_search_every_child_answered_reports_no_skips(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A complete answer says so: the skips drain to an empty list."""
+    group = GenomicResourceGroupRepo([
+        _build_child(tmp_path / "one", "scores/a", {"assay": "atac"}),
+        _build_child(tmp_path / "two", "scores/b", {"assay": "atac"}),
+    ])
+
+    rows, skips = drain_search(
+        group.search_resources(search_term='assay: "atac"'))
+
+    assert {res.resource_id for res in rows} == {"scores/a", "scores/b"}
+    assert skips == []
+
+
+def test_a_nested_partial_answer_carries_the_leaf_skips_to_the_top(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A child group's own skips surface at the top, named by leaf.
+
+    The exception path already flattens leaf reasons; a *partial* answer
+    inside a nested group must not lose them just because the child as a
+    whole answered.
+    """
+    inner_skipping = _build_child(
+        tmp_path / "one", "scores/a", {"unrelated": "x"})
+    inner_answering = _build_child(
+        tmp_path / "two", "scores/b", {"assay": "atac"})
+    group = GenomicResourceGroupRepo([
+        GenomicResourceGroupRepo(
+            [inner_answering, inner_skipping], repo_id="the_middle_group"),
+        _build_child(tmp_path / "three", "scores/c", {"assay": "atac"}),
+    ])
+
+    rows, skips = drain_search(
+        group.search_resources(search_term='assay: "atac"'))
+
+    assert {res.resource_id for res in rows} == {"scores/b", "scores/c"}
+    assert [repo for repo, _ in skips] == [inner_skipping.repo_id]
+
+
+def test_a_cached_group_reports_the_skips_too(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A ``cache_dir`` on a group definition must not swallow the skips.
+
+    The deployed shape: the web tier's GRR is the group wrapped in a
+    cache, so this wrapper is exactly where the report would get lost.
+    """
+    group = GenomicResourceGroupRepo([
+        _build_child(tmp_path / "one", "scores/a", {"assay": "atac"}),
+        _build_child(tmp_path / "two", "scores/b", {"unrelated": "x"}),
+    ])
+    cached = GenomicResourceCachedRepo(group, str(tmp_path / "cache"))
+
+    rows, skips = drain_search(
+        cached.search_resources(search_term='assay: "atac"'))
+
+    assert {res.resource_id for res in rows} == {"scores/a"}
+    assert [repo for repo, _ in skips] == [group.children[1].repo_id]
+
+
+def test_a_cached_group_search_by_child_carries_the_same_skips(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The pairing projection is not a second vocabulary for the skips.
+
+    ``search_resources_by_child`` on a wrapper reaches the group through
+    the base implementation's loop, which must hand the return value on.
+    """
+    group = GenomicResourceGroupRepo([
+        _build_child(tmp_path / "one", "scores/a", {"assay": "atac"}),
+        _build_child(tmp_path / "two", "scores/b", {"unrelated": "x"}),
+    ])
+    cached = GenomicResourceCachedRepo(group, str(tmp_path / "cache"))
+
+    pairs, skips = drain_search(
+        cached.search_resources_by_child(search_term='assay: "atac"'))
+
+    assert {res.resource_id for _, res in pairs} == {"scores/a"}
+    assert [repo for repo, _ in skips] == [group.children[1].repo_id]

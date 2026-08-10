@@ -2446,6 +2446,52 @@ def collect_dvc_entries(
     return result
 
 
+def _map_relaying_skips[
+    HitT, MappedT, SkipsT: list[tuple[str, str]] | None,
+](
+    hits: Generator[HitT, None, SkipsT],
+    transform: Callable[[HitT], MappedT],
+) -> Generator[MappedT, None, SkipsT]:
+    """Yield ``transform(hit)`` per hit, relaying the skips return value.
+
+    ``yield from`` relays a generator's return value natively but cannot
+    transform the hits on the way; a ``for`` loop transforms and relays
+    nothing. Every search wrapper that maps its hits threads through
+    here, so the skips promise (gain#686) is kept in one place.
+    """
+    while True:
+        try:
+            hit = next(hits)
+        except StopIteration as stop:
+            # Deliberately PEP 380: the return value is how a search
+            # reports the children a group skipped while answering
+            # (gain#686), so B901's accidental shape this is not.
+            skips: SkipsT = stop.value
+            return skips  # noqa: B901
+        yield transform(hit)
+
+
+def drain_search[HitT](
+    hits: Generator[HitT, None, list[tuple[str, str]] | None],
+) -> tuple[list[HitT], list[tuple[str, str]]]:
+    """Exhaust a search, answering its rows and its skips.
+
+    The consumption idiom for a caller that presents totals: a ``for``
+    loop silently discards the skips a group reports on its generator's
+    return value (gain#686). ``None`` and ``[]`` both arrive as ``[]``,
+    so the dual spelling ends here.
+    """
+    rows: list[HitT] = []
+    while True:
+        try:
+            rows.append(next(hits))
+        except StopIteration as stop:
+            # `list(...)` rather than an Optional-annotated local:
+            # astroid does not narrow `x or []` past the annotation and
+            # would call every consumer's unpacking non-iterable (E1133).
+            return rows, list(stop.value or [])
+
+
 class GenomicResourceRepo(abc.ABC):
     """Abstract base class for genomic resource repositories.
 
@@ -2546,10 +2592,16 @@ class GenomicResourceRepo(abc.ABC):
         search_term: str | None = None,
         resource_type: str | None = None,
         resource_query: str | None = None,
-    ) -> Generator[GenomicResource, None, None]:
+    ) -> Generator[GenomicResource, None, list[tuple[str, str]] | None]:
         """Search resources by FTS term, type and/or wildcard query.
 
         All supplied filters conjoin.
+
+        The generator's return value carries the ``(repository id, reason)``
+        pairs of the children a group skipped while still answering (ADR
+        0012, gain#686); ``None`` and ``[]`` both mean nothing was skipped.
+        A ``for`` loop discards it, which is exactly right for a caller
+        that does not present totals.
         """
 
     def search_resources_by_child(
@@ -2558,7 +2610,8 @@ class GenomicResourceRepo(abc.ABC):
         resource_type: str | None = None,
         resource_query: str | None = None,
     ) -> Generator[
-        tuple[GenomicResourceRepo, GenomicResource], None, None,
+        tuple[GenomicResourceRepo, GenomicResource], None,
+        list[tuple[str, str]] | None,
     ]:
         """Search, pairing each hit with the repository that serves it.
 
@@ -2569,11 +2622,12 @@ class GenomicResourceRepo(abc.ABC):
         every row -- does not have to take a group apart to find out.
 
         The filters mean exactly what they mean for
-        :meth:`search_resources`, which is the projection of this.
+        :meth:`search_resources`, which is the projection of this -- and
+        the return value carries the same skips.
         """
-        for res in self.search_resources(
-                search_term, resource_type, resource_query):
-            yield self, res
+        return _map_relaying_skips(
+            self.search_resources(search_term, resource_type, resource_query),
+            lambda res: (self, res))
 
     @abc.abstractmethod
     def get_all_resources(self) -> Generator[GenomicResource, None, None]:

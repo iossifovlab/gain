@@ -26,6 +26,7 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
     Manifest,
     ReadOnlyRepositoryProtocol,
+    _map_relaying_skips,
     escape_unsafe_characters,
     is_safe_repo_id,
     resolve_tabix_index_filename_for_read,
@@ -429,17 +430,11 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         search_term: str | None = None,
         resource_type: str | None = None,
         resource_query: str | None = None,
-    ) -> Generator[GenomicResource, None, None]:
-        # The child is called HERE rather than inside the generator below,
-        # so that it validates the query when this call is made instead of
-        # on the first iteration.
-        return self._to_cache_resources(
-            self.child.search_resources(
-                search_term, resource_type, resource_query))
-
-    def _to_cache_resources(
-        self, remote_resources: Iterable[GenomicResource],
-    ) -> Generator[GenomicResource, None, None]:
+    ) -> Generator[GenomicResource, None, list[tuple[str, str]] | None]:
+        # The child is called HERE rather than inside the mapping
+        # generator, so that it validates the query when this call is made
+        # instead of on the first iteration.
+        #
         # Resolving each hit costs no extra remote enumeration: the FTS
         # search already builds the remote's resource dict to resolve its
         # own hits.
@@ -447,8 +442,10 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         # The query is evaluated by the child, on the remote resource,
         # before the cache wrapping: both carry the same id and the same
         # labels, and the remote is what the child already has in hand.
-        for remote_resource in remote_resources:
-            yield self._to_cache_resource(remote_resource)
+        return _map_relaying_skips(
+            self.child.search_resources(
+                search_term, resource_type, resource_query),
+            self._to_cache_resource)
 
     def _check_cache_dir_is_the_id_under_the_cache_url(
         self, proto_id: str, cache_dir_path: str,
