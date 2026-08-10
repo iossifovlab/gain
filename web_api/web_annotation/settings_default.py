@@ -339,11 +339,43 @@ REST_FRAMEWORK = {
     # see the GPFWA_NUM_PROXIES block above.
     "NUM_PROXIES": _NUM_PROXIES,
     "DEFAULT_THROTTLE_RATES": {
-        "user": "10/minute",
+        # Named after the endpoint it reaches, not after DRF's global "user"
+        # scope: nothing installs UserRateThrottle globally here, so this rate
+        # only ever budgeted the single-allele annotate view (gain#694).
+        "annotate": "10/minute",
         # The pipeline editor validates as the user edits, so this bucket is
         # sized for a keystroke cadence, not for expensive work -- see
         # web_annotation.pipelines.throttling.
         "pipeline_validate": "120/minute",
+
+        # The authentication surface (gain#694). Every family gets its own
+        # bucket: a login attempt and a password-reset mail have entirely
+        # different costs. See web_annotation.throttling for which endpoint
+        # each scope reaches.
+        #
+        # Login: ten a minute is well above a human mistyping a password and
+        # far below anything that makes credential stuffing worthwhile.
+        "auth_login": "10/minute",
+        # Registration and password reset both end in an outbound mail, so
+        # they are budgeted per hour rather than per minute. Three an hour
+        # only leaves room for a legitimate user because the reset throttle
+        # charges the POSTs and not the GET that renders the form -- see
+        # web_annotation.throttling.PasswordResetRateThrottle.
+        "auth_register": "5/hour",
+        "auth_password_reset": "3/hour",
+        # Redeeming a code from a mail: a user follows the link once, maybe
+        # reloads. The bucket only has to bound code guessing.
+        "auth_confirm": "20/hour",
+
+        # The per-submitted-address axis of the dual key. Deliberately looser
+        # than the matching per-IP rate above -- a tight identifier bucket is
+        # a lockout denial-of-service, because anyone who knows an address
+        # could burn that user's budget from anywhere. It is sized to catch
+        # distributed spraying (many hosts, one account), which needs far more
+        # attempts than one legitimate user makes, not to be the primary
+        # limit. Each is three times its per-IP counterpart.
+        "auth_login_identifier": "30/minute",
+        "auth_password_reset_identifier": "9/hour",
     },
 }
 

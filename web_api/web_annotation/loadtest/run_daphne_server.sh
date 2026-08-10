@@ -58,7 +58,7 @@ echo "[run_daphne_server] port:        ${PORT}"
 
 python -m django migrate --noinput >/dev/null
 
-# An unlimited user lets the harness bypass the anonymous UserRateThrottle
+# An unlimited user lets the harness bypass the anonymous annotate throttle
 # (10/min) and the single-allele quota, so all K requests reach the build wait.
 LOADTEST_USER="${LOADTEST_USER:-loadtest@example.com}"
 LOADTEST_PASS="${LOADTEST_PASS:-secret}"

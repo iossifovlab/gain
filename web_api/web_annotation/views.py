@@ -2,7 +2,7 @@
 """View classes for web annotation."""
 import pathlib
 from importlib.metadata import version
-from typing import ClassVar, cast
+from typing import Any, ClassVar, cast
 
 from django import forms
 from django.conf import settings
@@ -26,6 +26,17 @@ from rest_framework.response import Response
 
 from web_annotation.authentication import WebAnnotationAuthentication
 from web_annotation.serializers import UserSerializer
+from web_annotation.throttling import (
+    AccountConfirmRateThrottle,
+    FirstRefusalThrottledAPIView,
+    HtmlThrottledAPIView,
+    LoginIdentifierRateThrottle,
+    LoginRateThrottle,
+    PasswordResetIdentifierRateThrottle,
+    PasswordResetRateThrottle,
+    RegisterRateThrottle,
+    throttled_message,
+)
 from web_annotation.utils import (
     PasswordForgottenForm,
     ResetPasswordForm,
@@ -128,11 +139,20 @@ class Logout(views.APIView):
         return Response(views.status.HTTP_204_NO_CONTENT)
 
 
-class Login(views.APIView):
+class Login(FirstRefusalThrottledAPIView):
     """View for logging in."""
     parser_classes: ClassVar = [JSONParser]
 
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
+    # Both axes are checked, and exceeding either answers 429: one host
+    # spraying many accounts is stopped by the first, many hosts spraying one
+    # account by the second (gain#694). The per-IP axis is listed first and
+    # the check stops at the first refusal, so a request this host is already
+    # not allowed to make does not also spend the victim's per-address
+    # budget -- see FirstRefusalThrottledAPIView.
+    throttle_classes: ClassVar = [
+        LoginRateThrottle, LoginIdentifierRateThrottle,
+    ]
 
     def post(self, request: Request) -> Response:
         """Log in a user."""
@@ -175,6 +195,7 @@ class Registration(views.APIView):
     """Registration related view."""
     parser_classes: ClassVar = [JSONParser]
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
+    throttle_classes: ClassVar = [RegisterRateThrottle]
 
     def post(self, request: Request) -> Response:
         """Register a new user."""
@@ -207,8 +228,9 @@ class Registration(views.APIView):
         return Response(status=views.status.HTTP_200_OK)
 
 
-class ConfirmAccount(views.APIView):  # USE
-    """View for forgotten password."""
+class ConfirmAccount(HtmlThrottledAPIView):  # USE
+    """View for confirming a new account from its emailed code."""
+    throttle_classes: ClassVar = [AccountConfirmRateThrottle]
     verification_code_model = cast(
         BaseVerificationCode, AccountConfirmationCode,
     )
@@ -242,10 +264,29 @@ class ConfirmAccount(views.APIView):  # USE
         return HttpResponseRedirect(redirect_uri)
 
 
-class ForgotPassword(views.APIView):
+class ForgotPassword(HtmlThrottledAPIView, FirstRefusalThrottledAPIView):
     """View for forgotten password."""
 
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
+    # Dual-keyed like login, and for the same reason -- except that here every
+    # served request also sends a mail, so the per-IP bucket is the tightest
+    # of the five (gain#694). Per-IP first, and the check stops there: an
+    # hourly per-address bucket charged by refused requests would lock a
+    # mailbox out of the reset for the rest of the hour.
+    throttle_classes: ClassVar = [
+        PasswordResetRateThrottle, PasswordResetIdentifierRateThrottle,
+    ]
+
+    throttled_template = "forgotten-password.html"
+
+    def get_throttled_context(self, wait: float | None) -> dict[str, Any]:
+        """Re-render this page's own form alongside the refusal."""
+        return {
+            "form": PasswordForgottenForm(),
+            "message": throttled_message(wait),
+            "message_type": "warn",
+            "show_form": True,
+        }
 
     def get(self, request: Request) -> HttpResponse:
         form = PasswordForgottenForm()
@@ -299,12 +340,17 @@ class ForgotPassword(views.APIView):
         )
 
 
-class PasswordReset(views.APIView):
+class PasswordReset(HtmlThrottledAPIView):
     """Reset password view."""
+
+    # Shares the confirm_account bucket on purpose: same activity (redeeming
+    # a single-use code from a mail), same code space (gain#694).
+    throttle_classes: ClassVar = [AccountConfirmRateThrottle]
 
     verification_code_model = cast(BaseVerificationCode, ResetPasswordCode)
 
     template = "reset-password.html"
+    throttled_template = template
     form = cast(forms.Form, ResetPasswordForm)
     code_type = "reset"
 

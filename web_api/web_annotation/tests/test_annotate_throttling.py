@@ -12,6 +12,17 @@ from web_annotation.single_allele_annotation.throttling import (
 from web_annotation.single_allele_annotation.views import SingleAnnotation
 
 
+class _DrfKeyedThrottle(UserRateThrottle):
+    """DRF's own keying, on the annotate scope, for parity assertions.
+
+    Plain ``UserRateThrottle`` cannot be instantiated here: its ``user`` scope
+    has no rate since gain#694 renamed it. Only the keying is under test, so
+    the scope is aligned and the key prefixes stay comparable.
+    """
+
+    scope = "annotate"
+
+
 def _request(
     *,
     authenticated: bool = False,
@@ -81,7 +92,7 @@ def test_session_scoped_bucket_ignores_forwarded_for(
         _request(session_key="sess-A", x_forwarded_for="b, c, 203.0.113.7"),
         view=None)
 
-    assert key_a == "throttle_user_sess-A"
+    assert key_a == "throttle_annotate_sess-A"
     assert key_b == key_a
 
 
@@ -92,7 +103,7 @@ def test_flag_off_keys_anonymous_by_ip_like_userratethrottle(
     # exactly as DRF's UserRateThrottle, regardless of session.
     settings.E2E_SESSION_SCOPED_THROTTLE = False
     throttle = AnnotateUserRateThrottle()
-    baseline = UserRateThrottle()
+    baseline = _DrfKeyedThrottle()
 
     request = _request(session_key="sess-A", ip="203.0.113.7")
     assert (
@@ -130,13 +141,24 @@ def test_anon_without_session_falls_back_to_ip(
     # back to the IP bucket (today's behavior).
     settings.E2E_SESSION_SCOPED_THROTTLE = True
     throttle = AnnotateUserRateThrottle()
-    baseline = UserRateThrottle()
+    baseline = _DrfKeyedThrottle()
 
     request = _request(session_key=None, ip="198.51.100.4")
     assert (
         throttle.get_cache_key(request, view=None)
         == baseline.get_cache_key(request, view=None)
     )
+
+
+def test_annotate_scope_is_named_after_the_endpoint_it_reaches() -> None:
+    # ``user`` is the scope DRF's UserRateThrottle uses when installed
+    # globally, so the settings block read as an API-wide 10/minute cap that
+    # never existed -- the rate reaches this one endpoint (gain#694). The rate
+    # itself does not change: this is a rename, not a retune.
+    throttle = AnnotateUserRateThrottle()
+
+    assert throttle.scope == "annotate"
+    assert throttle.THROTTLE_RATES["annotate"] == "10/minute"
 
 
 def test_single_annotation_view_uses_session_scoped_throttle() -> None:
