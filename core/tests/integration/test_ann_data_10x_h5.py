@@ -50,6 +50,21 @@ _MULTIOME_FEATURES = """
     PEAK002  chr2:1-99  Peaks             GRCh38  chr2:1-99
 """
 
+# Two distinct accessions carrying the same symbol -- the shape EVERY real
+# ``10x_h5`` resource is in, and the one axis where "gain reads it the way
+# scanpy did" is worth holding against the live scanpy rather than
+# asserting from memory (#715).  ``TBCE`` is one of the ten symbols that
+# repeat in ``anndata/zemke2024Epigenetic``.  The repeats are not
+# adjacent, so file order is visible; the ``Peaks`` row keeps the block a
+# multiome, as the real files are.
+_DUPLICATE_SYMBOLS = """
+    gene     gene_name  feature_type      genome  interval
+    ENSG001  TBCE       Gene||Expression  GRCh38  chr1:1-99
+    ENSG002  GAPDH      Gene||Expression  GRCh38  chr1:200-299
+    ENSG003  TBCE       Gene||Expression  GRCh38  chr17:100-199
+    PEAK001  chr1:1-99  Peaks             GRCh38  chr1:1-99
+"""
+
 
 def _realize(
     builder: AnnDataBuilder, tmp_path: pathlib.Path,
@@ -160,6 +175,60 @@ def test_the_matrix_free_read_describes_what_scanpy_reads(
     # And the one thing it deliberately does NOT reproduce.
     assert lean.X.nnz == 0
     assert theirs.X.nnz > 0
+
+
+@pytest.mark.parametrize(
+    ("params", "expected_var_names"),
+    [
+        pytest.param(
+            {"gex_only": False}, ["TBCE", "GAPDH", "TBCE", "chr1:1-99"],
+            id="all-feature-types"),
+        pytest.param(
+            {"gex_only": True}, ["TBCE", "GAPDH", "TBCE"], id="gex-only"),
+    ],
+)
+def test_neither_reader_de_duplicates_a_repeated_gene_symbol(
+    tmp_path: pathlib.Path,
+    params: dict[str, Any],
+    expected_var_names: list[str],
+) -> None:
+    """The claim gain's non-de-duplication rests on, against the oracle.
+
+    ``scanpy.read_10x_h5`` has no ``make_unique`` parameter and never
+    de-duplicated, so a reader replacing it must not either -- doing so
+    would rename the second ``TBCE`` and hand every consumer of a 10x
+    resource a different gene index than the one it has been reading.
+    The small tier owns the regression: it pins what gain reads
+    (``TestANonUniqueVariableIndex``).  This settles the other half, and
+    only the live scanpy can -- that gain has not quietly parted company
+    with the reader it replaced.  A red here means UPSTREAM moved, and
+    someone has to decide whether gain follows (ADR 0014).
+
+    Both ``gex_only`` settings, because filtering re-checks the index:
+    that is the step at which a reader that de-duplicated on subset --
+    rather than on construction -- would diverge, and only from the
+    filtering path.  The default is left out on purpose; it is the one
+    axis the two readers disagree on deliberately (ADR 0015).
+    """
+    resource, path = _realize(
+        an_ann_data().with_var(_DUPLICATE_SYMBOLS).with_parameters(params),
+        tmp_path)
+
+    ours = load_ann_data_from_resource(resource)
+
+    theirs = _scanpy_read(path, **params)
+    # Stated outright as well as compared, so a green run says what the
+    # answer was and not merely that two readers agreed on something --
+    # but stated of SCANPY's read, as every other literal in this file
+    # is.  A literal pinned on gain's read would put the "did gain
+    # regress?" question in the tier that answers "did upstream move?",
+    # and the small tier already owns gain's index order.
+    assert list(theirs.var_names) == expected_var_names
+    assert list(ours.var_names) == list(theirs.var_names)
+    assert ours.var.equals(theirs.var)
+    assert (ours.X != theirs.X).nnz == 0
+    # The rendering the ``describe_ann_data.txt`` statistic is made of.
+    assert str(ours) == str(theirs)
 
 
 def test_the_loader_reads_a_10x_h5_resource(tmp_path: pathlib.Path) -> None:

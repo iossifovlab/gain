@@ -9,6 +9,7 @@ question (did upstream move?) in the one tier that installs it.
 """
 import logging
 import pathlib
+import warnings
 from typing import Any
 
 import h5py
@@ -55,6 +56,33 @@ _MULTIOME_FEATURES = """
     PEAK001  chr1:1-99  Peaks             GRCh38  chr1:1-99
     PEAK002  chr2:1-99  Peaks             GRCh38  chr2:1-99
 """
+
+# Two distinct accessions carrying the same symbol -- the ordinary reason
+# a 10x feature table has a non-unique variable index, and the shape EVERY
+# real ``10x_h5`` resource we have is in: ``TBCE`` is one of the ten
+# symbols that repeat in ``anndata/zemke2024Epigenetic`` (#715).
+#
+# A block of its own rather than a repeat added to ``_MULTIOME_FEATURES``,
+# which the byte-exact statistics pin at the end of this file is written
+# against: moving that record for an unrelated reason invites re-blessing
+# its bytes, which is the failure these tests exist to make loud.
+#
+# The repeats are deliberately NOT adjacent, so that "in file order" is
+# something the assertions can see -- a reader that grouped them together
+# would still keep both.  The ``Peaks`` row keeps the block a multiome,
+# as the real files are, and gives ``gex_only`` something to actually
+# drop: setting the parameter is what takes the filtering path, but a
+# filter that removed nothing would be a poor witness for what happens
+# to the index when one does.  ``||`` escapes a space.
+_DUPLICATE_SYMBOLS = """
+    gene     gene_name  feature_type      genome  interval
+    ENSG001  TBCE       Gene||Expression  GRCh38  chr1:1-99
+    ENSG002  GAPDH      Gene||Expression  GRCh38  chr1:200-299
+    ENSG003  TBCE       Gene||Expression  GRCh38  chr17:100-199
+    PEAK001  chr1:1-99  Peaks             GRCh38  chr1:1-99
+"""
+
+_NOT_UNIQUE = r"Variable names are not unique"
 
 
 def test_reads_a_10x_h5_without_scanpy(tmp_path: pathlib.Path) -> None:
@@ -537,3 +565,166 @@ def test_the_statistics_of_a_default_build_are_pinned(
     assert sorted(
         entry.name for entry in (path.parent / "statistics").iterdir()
     ) == ["describe_ann_data.txt", "describe_var.csv"]
+
+
+class TestANonUniqueVariableIndex:
+    """gain does NOT de-duplicate a repeated gene symbol (#715).
+
+    Every real ``10x_h5`` resource has one: a gene symbol carried by two
+    Ensembl accessions is ordinary data, not a malformed resource.  The
+    reader indexes the variables by symbol and leaves the repeats alone,
+    which is what ``scanpy.read_10x_h5`` did -- it has no ``make_unique``
+    parameter and never de-duplicated either.
+
+    ``anndata`` says so once per read, from the constructor.  Both
+    filtering helpers subset ``var``, and a subset re-checks the index;
+    each silences the identical re-warn deliberately, so what a reader of
+    the log gets is one line per resource rather than one per filter step.
+
+    The behaviour is correct and this pins it -- nothing here asks for a
+    change.  Today the warning could be silenced, or
+    ``var_names_make_unique`` called, and the rest of the suite would stay
+    green: ``describe_var.csv`` describes ``var``'s COLUMNS, and the
+    repeated symbol is its INDEX, so no stored statistic of any resource
+    would move.  :meth:`test_both_accessions_survive_under_one_symbol` is
+    the assertion that fails instead -- NOT
+    :meth:`test_the_statistics_of_such_a_resource_are_pinned`, whatever
+    #715 says.
+    """
+
+    def test_both_accessions_survive_under_one_symbol(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        resource = (
+            an_ann_data()
+            .with_format("10x_h5")
+            .with_var(_DUPLICATE_SYMBOLS)
+            .build_resource(tmp_path)
+        )
+
+        # The notice this read emits is a behaviour of its own, with its
+        # own tests below; silenced here so that this one asserts the
+        # index and nothing else.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            ann_data = load_ann_data_from_resource(resource)
+
+        # Both entries, under the same symbol, in the order the file
+        # lists them -- not de-duplicated (which would rename the second
+        # to ``TBCE-1``) and not grouped (which would move it up beside
+        # the first).
+        assert list(ann_data.var_names) == [
+            "TBCE", "GAPDH", "TBCE", "chr1:1-99"]
+        # And they stay tellable apart, because the accession that makes
+        # them two genes is a column of its own.
+        assert list(ann_data.var["gene_ids"]) == [
+            "ENSG001", "ENSG002", "ENSG003", "PEAK001"]
+
+    def test_the_read_says_the_index_is_not_unique(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        # Emitted, not swallowed: a resource whose variable index cannot
+        # address its own genes unambiguously is worth one line in the
+        # log of whatever run reads it, and the reader has no business
+        # deciding otherwise on the resource's behalf.
+        #
+        # #715 describes this as a divergence -- scanpy suppressing the
+        # notice and gain letting it through.  It is not one.  Measured
+        # against scanpy 1.12.3 on this very fixture, ``read_10x_h5``
+        # emits exactly one such warning on every path, default included:
+        # it silences only its own ``copy()``, which is the same re-warn
+        # the two helpers here silence.  What is pinned is therefore the
+        # behaviour both readers have, and no change of gain's.
+        resource = (
+            an_ann_data()
+            .with_format("10x_h5")
+            .with_var(_DUPLICATE_SYMBOLS)
+            .build_resource(tmp_path)
+        )
+
+        with pytest.warns(UserWarning, match=_NOT_UNIQUE):
+            load_ann_data_from_resource(resource)
+
+    @pytest.mark.parametrize(
+        "parameters",
+        [
+            pytest.param({"gex_only": True}, id="gex-only"),
+            pytest.param({"genome": "GRCh38"}, id="genome"),
+        ],
+    )
+    def test_it_says_so_once_per_read_not_once_per_filter(
+        self, tmp_path: pathlib.Path, parameters: dict[str, Any],
+    ) -> None:
+        # Only a read that FILTERS can tell the two apart: ``gex_only``
+        # defaults to false for a 10x_h5 (ADR 0015), so a default read
+        # subsets nothing and would emit exactly one warning whether or
+        # not the suppression existed.
+        #
+        # One case per filter, because each silences the re-warn in its
+        # own ``catch_warnings`` block and either could be dropped without
+        # the other noticing.  Setting both together is left out: it fails
+        # exactly when one of these two does, so it discriminates nothing.
+        resource = (
+            an_ann_data()
+            .with_format("10x_h5")
+            .with_var(_DUPLICATE_SYMBOLS)
+            .with_parameters(parameters)
+            .build_resource(tmp_path)
+        )
+
+        with pytest.warns(UserWarning, match=_NOT_UNIQUE) as caught:
+            load_ann_data_from_resource(resource)
+
+        # The COUNT, not the wording.  Which words anndata chooses is
+        # upstream's to change and the drift tier's to notice; a
+        # regression tier that pinned them would go red for a reason gain
+        # is not answerable for.
+        assert len([
+            warning for warning in caught
+            if _NOT_UNIQUE in str(warning.message)
+        ]) == 1
+
+    def test_the_statistics_of_such_a_resource_are_pinned(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        """The golden record for a resource whose var index repeats.
+
+        What a statistics build writes for the shape every deployed
+        ``10x_h5`` resource is in: a duplicate index neither breaks the
+        build nor changes how ``var`` describes itself.  It is NOT the
+        guard against de-duplication, for the reason the class docstring
+        gives.
+        """
+        resource, path = _realize(
+            an_ann_data().with_var(_DUPLICATE_SYMBOLS), tmp_path)
+
+        impl = AnnDataResourceImplementation(resource)
+        graph = TaskGraph()
+        graph.add_tasks(impl.create_statistics_build_tasks())
+        # The build reads the resource, so it emits the same notice; it
+        # has its own tests, and leaking it from here would put a
+        # UserWarning in the suite's summary for a test about bytes.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            task_graph_run(graph, SequentialExecutor())
+
+        assert resource.get_file_content(_DESCRIBE_ANN_DATA) == (
+            # The MULTIPLICATION SIGN is anndata's, as above.
+            "AnnData object with n_obs × n_vars = 3 × 4\n"  # noqa: RUF001
+            "    var: 'gene_ids', 'feature_types', 'genome', 'interval'\n"
+            "    layers: None (.X)\n"
+        )
+        assert resource.get_file_content(_DESCRIBE_VAR) == (
+            ",gene_ids,feature_types,genome,interval\n"
+            "count,4,4,4,4\n"
+            # ``gene_ids`` is 4 of 4 unique: the two TBCE rows carry
+            # different accessions.
+            "unique,4,2,1,3\n"
+            "top,ENSG001,Gene Expression,GRCh38,chr1:1-99\n"
+            "freq,1,3,4,2\n"
+        )
+        # Asserted against the DIRECTORY, not the manifest, for the
+        # reason the default-build pin above gives.
+        assert sorted(
+            entry.name for entry in (path.parent / "statistics").iterdir()
+        ) == ["describe_ann_data.txt", "describe_var.csv"]
