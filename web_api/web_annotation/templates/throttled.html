@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+    {% load static %}
+
+    <head>
+        <meta charset="utf-8" />
+        <title>
+            GAIn Too many requests
+        </title>
+        <meta content="width=device-width, initial-scale=1, shrink-to-fit=no" name="viewport" />
+        <link href="https://fonts.googleapis.com/css?family=Roboto:400,500,700&amp;subset=latin-ext" rel="stylesheet">
+        <link href="{% static 'gain-logo.png' %}" rel="icon" type="image/x-icon">
+        <link href="{% static 'styles.css' %}" rel="stylesheet">
+        <link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
+    </head>
+
+    <body>
+        <div class="login-container">
+            <div class="logo-header">
+                <img class="logo" src="{% static 'gain-logo.png' %}">
+                <label class="header-text">GAIn: Genomic Annotation Infrastructure</label>
+            </div>
+
+            {% if message != None %}
+            <div class="message warn">{{ message }}</div>
+            {% endif %}
+        </div>
+    </body>
+</html>

@@ -67,12 +67,16 @@ multi-worker support needs; until then, one process is a load-bearing
 deployment invariant.
 """
 import hashlib
+import math
 from typing import Any, cast
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
-from rest_framework.exceptions import APIException
+from django.http import HttpRequest, HttpResponse
+from django.shortcuts import render
+from rest_framework import status
+from rest_framework.exceptions import APIException, Throttled
 from rest_framework.permissions import SAFE_METHODS
 from rest_framework.throttling import (
     BaseThrottle,
@@ -116,6 +120,52 @@ class FirstRefusalThrottledAPIView(APIView):
         for throttle in self.get_throttles():
             if not throttle.allow_request(request, self):
                 self.throttled(request, throttle.wait())
+
+
+THROTTLED_MESSAGE = "Too many requests. Please try again later."
+
+
+class HtmlThrottledAPIView(APIView):
+    """An APIView that answers a throttled request with the app's own page.
+
+    DRF refuses a throttled request before the view runs, and renders that
+    refusal through content negotiation. These views configure no renderer,
+    so a browser's ``Accept: text/html`` selects DRF's
+    ``BrowsableAPIRenderer`` and the user meets a framework debug page
+    titled "... - Django REST framework". On ``confirm_account`` that page
+    is what a user gets for clicking a link in their own mail, and the
+    endpoint could not answer 429 at all before iossifovlab/gain#694 added
+    these throttles -- so the debug page is a regression this change would
+    otherwise have shipped.
+
+    Subclasses point ``throttled_template`` at the page they already render
+    and override ``get_throttled_context`` if that page needs more than a
+    message; the default is a standalone page for the views that redirect on
+    every other path and so have none of their own.
+
+    ``Retry-After`` is re-applied by hand because it is set by the exception
+    handler this bypasses, and it is the only machine-readable part of a 429.
+    """
+
+    throttled_template = "throttled.html"
+
+    def get_throttled_context(self) -> dict[str, Any]:
+        """Return the template context for a throttled response."""
+        return {"message": THROTTLED_MESSAGE}
+
+    def handle_exception(self, exc: Exception) -> HttpResponse:
+        if not isinstance(exc, Throttled):
+            return cast("HttpResponse", super().handle_exception(exc))
+
+        response = render(
+            cast(HttpRequest, self.request),
+            self.throttled_template,
+            self.get_throttled_context(),
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+        if exc.wait is not None:
+            response["Retry-After"] = f"{math.ceil(exc.wait)}"
+        return response
 
 
 class SessionScopedUserRateThrottle(UserRateThrottle):

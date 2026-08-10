@@ -2,7 +2,7 @@
 """View classes for web annotation."""
 import pathlib
 from importlib.metadata import version
-from typing import ClassVar, cast
+from typing import Any, ClassVar, cast
 
 from django import forms
 from django.conf import settings
@@ -27,8 +27,10 @@ from rest_framework.response import Response
 from web_annotation.authentication import WebAnnotationAuthentication
 from web_annotation.serializers import UserSerializer
 from web_annotation.throttling import (
+    THROTTLED_MESSAGE,
     AccountConfirmRateThrottle,
     FirstRefusalThrottledAPIView,
+    HtmlThrottledAPIView,
     LoginIdentifierRateThrottle,
     LoginRateThrottle,
     PasswordResetIdentifierRateThrottle,
@@ -226,7 +228,7 @@ class Registration(views.APIView):
         return Response(status=views.status.HTTP_200_OK)
 
 
-class ConfirmAccount(views.APIView):  # USE
+class ConfirmAccount(HtmlThrottledAPIView):  # USE
     """View for forgotten password."""
     throttle_classes: ClassVar = [AccountConfirmRateThrottle]
     verification_code_model = cast(
@@ -262,7 +264,7 @@ class ConfirmAccount(views.APIView):  # USE
         return HttpResponseRedirect(redirect_uri)
 
 
-class ForgotPassword(FirstRefusalThrottledAPIView):
+class ForgotPassword(HtmlThrottledAPIView, FirstRefusalThrottledAPIView):
     """View for forgotten password."""
 
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
@@ -274,6 +276,17 @@ class ForgotPassword(FirstRefusalThrottledAPIView):
     throttle_classes: ClassVar = [
         PasswordResetRateThrottle, PasswordResetIdentifierRateThrottle,
     ]
+
+    throttled_template = "forgotten-password.html"
+
+    def get_throttled_context(self) -> dict[str, Any]:
+        """Re-render this page's own form alongside the refusal."""
+        return {
+            "form": PasswordForgottenForm(),
+            "message": THROTTLED_MESSAGE,
+            "message_type": "warn",
+            "show_form": True,
+        }
 
     def get(self, request: Request) -> HttpResponse:
         form = PasswordForgottenForm()
@@ -327,7 +340,7 @@ class ForgotPassword(FirstRefusalThrottledAPIView):
         )
 
 
-class PasswordReset(views.APIView):
+class PasswordReset(HtmlThrottledAPIView):
     """Reset password view."""
 
     # Shares the confirm_account bucket on purpose: same activity (redeeming
@@ -337,6 +350,7 @@ class PasswordReset(views.APIView):
     verification_code_model = cast(BaseVerificationCode, ResetPasswordCode)
 
     template = "reset-password.html"
+    throttled_template = template
     form = cast(forms.Form, ResetPasswordForm)
     code_type = "reset"
 

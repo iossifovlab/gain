@@ -569,3 +569,103 @@ def test_settings_e2e_disables_the_identifier_axis() -> None:
     # daphne server runs under); pytest runs under test_settings, so assert
     # on the settings_e2e module object directly.
     assert settings_e2e.E2E_DISABLE_IDENTIFIER_THROTTLE is True
+
+
+@pytest.mark.django_db
+def test_a_throttled_reset_answers_with_the_app_page(
+    anonymous_client: Client,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A 429 a browser can reach must not be DRF's debug page.
+
+    These endpoints render HTML for a browser, but a throttled request is
+    refused by DRF before the view runs, and the refusal goes through
+    content negotiation. With no renderer configured that selects
+    BrowsableAPIRenderer, so a rate-limited user meets a framework debug
+    page titled "... - Django REST framework" instead of the app.
+    """
+    mocker.patch.dict(
+        PasswordResetRateThrottle.THROTTLE_RATES,
+        {"auth_password_reset": "1/hour"},
+    )
+    _forgotten_password(anonymous_client, "user@example.com")
+
+    response = anonymous_client.post(
+        FORGOTTEN_PASSWORD,
+        {"email": "user@example.com"},
+        REMOTE_ADDR="10.0.0.1",
+        HTTP_ACCEPT="text/html",
+    )
+
+    assert response.status_code == 429
+    body = response.content.decode()
+    assert "Django REST framework" not in body
+    assert "GAIn Reset password" in body
+
+
+@pytest.mark.django_db
+def test_a_throttled_reset_still_says_when_to_retry(
+    anonymous_client: Client,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Rendering our own page must not drop DRF's Retry-After.
+
+    The header is the only machine-readable part of a 429, and it is set by
+    the exception handler that rendering our own response bypasses.
+    """
+    mocker.patch.dict(
+        PasswordResetRateThrottle.THROTTLE_RATES,
+        {"auth_password_reset": "1/hour"},
+    )
+    _forgotten_password(anonymous_client, "user@example.com")
+
+    response = anonymous_client.post(
+        FORGOTTEN_PASSWORD,
+        {"email": "user@example.com"},
+        REMOTE_ADDR="10.0.0.1",
+        HTTP_ACCEPT="text/html",
+    )
+
+    assert response["Retry-After"] == "3600"
+
+
+@pytest.mark.django_db
+def test_a_throttled_reset_password_answers_with_the_app_page(
+    anonymous_client: Client,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The page a mail's reset link lands on, refused the same way."""
+    mocker.patch.dict(
+        AccountConfirmRateThrottle.THROTTLE_RATES, {"auth_confirm": "1/hour"},
+    )
+    anonymous_client.get(RESET_PASSWORD, HTTP_ACCEPT="text/html")
+
+    response = anonymous_client.get(RESET_PASSWORD, HTTP_ACCEPT="text/html")
+
+    assert response.status_code == 429
+    body = response.content.decode()
+    assert "Django REST framework" not in body
+    assert "GAIn New password" in body
+
+
+@pytest.mark.django_db
+def test_a_throttled_confirm_account_answers_with_the_app_page(
+    anonymous_client: Client,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The worst of the three to get wrong: a link from a user's mail.
+
+    Every other outcome of this endpoint is a redirect into the SPA, so it
+    has no page of its own to re-render -- it gets the shared one.
+    """
+    mocker.patch.dict(
+        AccountConfirmRateThrottle.THROTTLE_RATES, {"auth_confirm": "1/hour"},
+    )
+    anonymous_client.get(CONFIRM_ACCOUNT, HTTP_ACCEPT="text/html")
+
+    response = anonymous_client.get(CONFIRM_ACCOUNT, HTTP_ACCEPT="text/html")
+
+    assert response.status_code == 429
+    body = response.content.decode()
+    assert "Django REST framework" not in body
+    assert "Too many requests" in body
