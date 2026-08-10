@@ -344,6 +344,90 @@ def test_forgotten_password_mail_failure_is_logged(
     assert record.exc_info[0] is SMTPException
 
 
+def _assert_code_not_logged(
+    caplog: pytest.LogCaptureFixture, link_path: str,
+) -> None:
+    """The single-use code from the sent mail is absent from every record.
+
+    The strict 36-char match pins the entire code: if the body format
+    ever wraps or re-encodes the link, this fails loudly instead of
+    silently weakening the absence check to a truncated prefix.
+    """
+    message = mail.outbox[0].message().get_payload()
+    code_match = re.search(rf"{link_path}\?code=([0-9a-f-]{{36}})", message)
+    assert code_match is not None
+
+    code = code_match.group(1)
+    leaked = [r for r in caplog.records if code in r.getMessage()]
+    assert leaked == []
+
+
+@pytest.mark.django_db
+def test_mail_send_still_logs_recipient_and_subject(
+    client: Client,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Dropping the body from the logs must not drop the audit trail."""
+    with caplog.at_level("INFO", logger="web_annotation.mail"):
+        response = client.post(
+            "/api/forgotten_password",
+            {"email": "user@example.com"},
+        )
+    assert response.status_code == 200
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("user@example.com" in m for m in messages)
+    assert any("Password reset request" in m for m in messages)
+
+
+@pytest.mark.django_db
+def test_register_confirmation_code_is_not_logged(
+    client: Client,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The single-use confirmation code must never reach the log stream.
+
+    Captured unscoped at DEBUG on purpose: the code must be absent from
+    every logger at every level, not just the mail logger.
+    """
+    mail.outbox.clear()
+
+    with caplog.at_level("DEBUG"):
+        response = client.post(
+            "/api/register",
+            {
+                "email": "temp@example.com",
+                "password": "secret",
+            },
+            content_type="application/json",
+        )
+    assert response.status_code == 200
+
+    _assert_code_not_logged(caplog, "confirm_account")
+
+
+@pytest.mark.django_db
+def test_forgotten_password_reset_code_is_not_logged(
+    client: Client,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The single-use reset code must never reach the log stream.
+
+    Captured unscoped at DEBUG on purpose: the code must be absent from
+    every logger at every level, not just the mail logger.
+    """
+    mail.outbox.clear()
+
+    with caplog.at_level("DEBUG"):
+        response = client.post(
+            "/api/forgotten_password",
+            {"email": "user@example.com"},
+        )
+    assert response.status_code == 200
+
+    _assert_code_not_logged(caplog, "reset_password")
+
+
 @pytest.mark.django_db
 def test_reset_password_email(
     client: Client,
