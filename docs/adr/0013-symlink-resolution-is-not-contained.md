@@ -5,6 +5,13 @@
 - **Issues:** [gain#483](https://github.com/iossifovlab/gain/issues/483)
   (closed `wontfix`), [gain#572](https://github.com/iossifovlab/gain/issues/572),
   [seqpipe/infra#83](https://github.com/seqpipe/infra/issues/83)
+- **Superseded as the record of the trust boundary by**
+  [0016](0016-grr-content-is-trusted-by-authorship.md). This ADR's decision — that symlink
+  resolution is not contained — stands unchanged. What moved is the *premise* it argues
+  from: "a GRR resource is trusted by authorship" was stated here, and sourced from
+  gain#572's closing comment, because it had no record of its own. It now has one, and 0016
+  is where a reader should go for the boundary itself, its reachability facts, and the
+  conditions that would reopen everything decided under it.
 
 ## Context
 
@@ -57,7 +64,9 @@ the front door stands deliberately open.
 
 ### Why the trust boundary settles it
 
-gain#572 established the boundary, closing `wontfix` a confirmed arbitrary
+gain#572 established the boundary — now recorded in its own right as
+[0016](0016-grr-content-is-trusted-by-authorship.md), which generalizes the
+argument below past symlinks — closing `wontfix` a confirmed arbitrary
 code execution: a histogram's `plot_function` names a Python file inside the
 resource, whose source is `exec`'d with full builtins by six `grr_manage`
 commands, on dask workers under a cluster. Its closing note states the
