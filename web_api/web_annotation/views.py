@@ -224,7 +224,14 @@ class Registration(views.APIView):
             is_active=settings.USERS_ACTIVATED_BY_DEFAULT,
         )
         user.save()
-        verify_user(user)
+        try:
+            verify_user(user)
+        except Exception:  # pylint: disable=broad-exception-caught
+            # Swallowing is the point: the user row is already committed
+            # and the account is usable, so a mail outage must not answer
+            # a completed registration with a 500 the caller can only
+            # retry into "This email is already in use".
+            logger.exception("failed to create or send the confirmation mail")
         return Response(status=views.status.HTTP_200_OK)
 
 
