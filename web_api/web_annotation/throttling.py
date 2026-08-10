@@ -122,7 +122,22 @@ class FirstRefusalThrottledAPIView(APIView):
                 self.throttled(request, throttle.wait())
 
 
-THROTTLED_MESSAGE = "Too many requests. Please try again later."
+def throttled_message(wait: float | None) -> str:
+    """Say how long the client has to wait, not merely that it was refused.
+
+    ``Retry-After`` carries the delay for machines; this carries it for the
+    person reading the page. On the reset bucket the wait can be an hour, and
+    "try again later" gives them no way to tell that from a minute. Rounded
+    up, and never to "0 minutes".
+    """
+    if wait is None:
+        return "Too many requests. Please try again later."
+    minutes = math.ceil(wait / 60)
+    if minutes <= 1:
+        return "Too many requests. Please try again in about a minute."
+    return (
+        f"Too many requests. Please try again in about {minutes} minutes."
+    )
 
 
 class HtmlThrottledAPIView(APIView):
@@ -149,9 +164,9 @@ class HtmlThrottledAPIView(APIView):
 
     throttled_template = "throttled.html"
 
-    def get_throttled_context(self) -> dict[str, Any]:
+    def get_throttled_context(self, wait: float | None) -> dict[str, Any]:
         """Return the template context for a throttled response."""
-        return {"message": THROTTLED_MESSAGE}
+        return {"message": throttled_message(wait)}
 
     def handle_exception(self, exc: Exception) -> HttpResponse:
         if not isinstance(exc, Throttled):
@@ -160,7 +175,7 @@ class HtmlThrottledAPIView(APIView):
         response = render(
             cast(HttpRequest, self.request),
             self.throttled_template,
-            self.get_throttled_context(),
+            self.get_throttled_context(exc.wait),
             status=status.HTTP_429_TOO_MANY_REQUESTS,
         )
         if exc.wait is not None:

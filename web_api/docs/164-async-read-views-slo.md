@@ -79,8 +79,8 @@ still synchronous.
 
 Params: injected build delay **0.4 s**, per-request timeout / SLO threshold
 **30 s**, cheap-endpoint sample interval **0.1 s**, K ∈ {8, 16, 32}, fresh
-cold-pipeline server per K, unlimited user (bypasses the 10/min `UserRateThrottle`
-and the single-allele quota so every request reaches the build wait).
+cold-pipeline server per K, unlimited user (bypasses the 10/min `annotate`
+throttle and the single-allele quota so every request reaches the build wait).
 
 ---
 

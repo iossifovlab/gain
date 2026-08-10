@@ -145,10 +145,10 @@ async def _login(
     """Obtain a session cookie via POST /api/login.
 
     Logging in as an *unlimited* user (``set_unlimited``) is what removes the
-    anonymous ``UserRateThrottle`` (10/min) and the single-allele quota from the
-    measurement, so every one of the ``K`` requests actually reaches the build
-    wait instead of short-circuiting with 429/quota. The cookie is stored on the
-    session's cookie jar and carried by every later request.
+    anonymous ``annotate`` throttle (10/min) and the single-allele quota from
+    the measurement, so every one of the ``K`` requests actually reaches the
+    build wait instead of short-circuiting with 429/quota. The cookie is
+    stored on the session's cookie jar and carried by every later request.
     """
     url = f"{base_url}{LOGIN_PATH}"
     async with session.post(

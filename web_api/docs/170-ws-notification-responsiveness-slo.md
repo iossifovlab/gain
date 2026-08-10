@@ -85,7 +85,7 @@ python -m web_annotation.loadtest.ws_notification_slo \
 
 Params: injected build delay **0.4 s**, sustained-load window **10 s**, WS ping
 cadence **0.1 s**, K ∈ {8, 16, 32}, unlimited user (bypasses the 10/min
-`UserRateThrottle` + single-allele quota so every request reaches the build
+`annotate` throttle + single-allele quota so every request reaches the build
 wait). Machine: Linux, `PYTHONHASHSEED=0`.
 
 > The `run_ws_matrix.sh` wrapper produces the same records; here each K was

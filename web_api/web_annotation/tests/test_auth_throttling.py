@@ -630,6 +630,57 @@ def test_a_throttled_reset_still_says_when_to_retry(
 
 
 @pytest.mark.django_db
+def test_a_throttled_page_says_how_long_to_wait(
+    anonymous_client: Client,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """"Later" is useless on an hourly bucket -- name the delay.
+
+    Retry-After carries the number for machines; the page has to carry it
+    for the human, or a user refused by the 3/hour reset bucket has no way
+    to tell a minute from an hour.
+    """
+    mocker.patch.dict(
+        PasswordResetRateThrottle.THROTTLE_RATES,
+        {"auth_password_reset": "1/hour"},
+    )
+    _forgotten_password(anonymous_client, "user@example.com")
+
+    response = anonymous_client.post(
+        FORGOTTEN_PASSWORD,
+        {"email": "user@example.com"},
+        REMOTE_ADDR="10.0.0.1",
+        HTTP_ACCEPT="text/html",
+    )
+
+    assert "60 minutes" in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_a_short_throttle_reads_as_a_minute_not_zero_minutes(
+    anonymous_client: Client,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A sub-minute wait must not round down to "0 minutes"."""
+    mocker.patch.dict(
+        PasswordResetRateThrottle.THROTTLE_RATES,
+        {"auth_password_reset": "1/minute"},
+    )
+    _forgotten_password(anonymous_client, "user@example.com")
+
+    response = anonymous_client.post(
+        FORGOTTEN_PASSWORD,
+        {"email": "user@example.com"},
+        REMOTE_ADDR="10.0.0.1",
+        HTTP_ACCEPT="text/html",
+    )
+
+    body = response.content.decode()
+    assert "about a minute" in body
+    assert "0 minutes" not in body
+
+
+@pytest.mark.django_db
 def test_a_throttled_reset_password_answers_with_the_app_page(
     anonymous_client: Client,
     mocker: pytest_mock.MockerFixture,

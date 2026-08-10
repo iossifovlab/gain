@@ -27,7 +27,6 @@ from rest_framework.response import Response
 from web_annotation.authentication import WebAnnotationAuthentication
 from web_annotation.serializers import UserSerializer
 from web_annotation.throttling import (
-    THROTTLED_MESSAGE,
     AccountConfirmRateThrottle,
     FirstRefusalThrottledAPIView,
     HtmlThrottledAPIView,
@@ -36,6 +35,7 @@ from web_annotation.throttling import (
     PasswordResetIdentifierRateThrottle,
     PasswordResetRateThrottle,
     RegisterRateThrottle,
+    throttled_message,
 )
 from web_annotation.utils import (
     PasswordForgottenForm,
@@ -229,7 +229,7 @@ class Registration(views.APIView):
 
 
 class ConfirmAccount(HtmlThrottledAPIView):  # USE
-    """View for forgotten password."""
+    """View for confirming a new account from its emailed code."""
     throttle_classes: ClassVar = [AccountConfirmRateThrottle]
     verification_code_model = cast(
         BaseVerificationCode, AccountConfirmationCode,
@@ -279,11 +279,11 @@ class ForgotPassword(HtmlThrottledAPIView, FirstRefusalThrottledAPIView):
 
     throttled_template = "forgotten-password.html"
 
-    def get_throttled_context(self) -> dict[str, Any]:
+    def get_throttled_context(self, wait: float | None) -> dict[str, Any]:
         """Re-render this page's own form alongside the refusal."""
         return {
             "form": PasswordForgottenForm(),
-            "message": THROTTLED_MESSAGE,
+            "message": throttled_message(wait),
             "message_type": "warn",
             "show_form": True,
         }
