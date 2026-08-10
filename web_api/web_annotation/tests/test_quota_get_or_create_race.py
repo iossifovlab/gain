@@ -1,13 +1,34 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pytest
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
+from django.test.utils import CaptureQueriesContext
 
 from web_annotation.models import (
     AnonymousUserQuota,
+    Quota,
+    SessionQuota,
     User,
     UserQuota,
     WebAnnotationAnonymousUser,
 )
+
+
+def _row_writes(captured: CaptureQueriesContext) -> list[str]:
+    """Return the INSERT/UPDATE statements among the captured queries."""
+    return [
+        query["sql"] for query in captured.captured_queries
+        if query["sql"].lstrip().upper().startswith(("INSERT", "UPDATE"))
+    ]
+
+
+def _assert_at_limits(quota: Quota) -> None:
+    """Assert every counter of ``quota`` sits at its configured maximum."""
+    assert quota.daily_jobs == quota.get_daily_job_max()
+    assert quota.monthly_jobs == quota.get_monthly_job_max()
+    assert quota.daily_variants == quota.get_daily_variant_max()
+    assert quota.monthly_variants == quota.get_monthly_variant_max()
+    assert quota.daily_attributes == quota.get_daily_attribute_max()
+    assert quota.monthly_attributes == quota.get_monthly_attribute_max()
 
 
 def test_user_quota_user_is_unique() -> None:
@@ -52,6 +73,54 @@ def test_lazily_created_user_quota_allows_a_single_allele_query() -> None:
     UserQuota.objects.create(user=user)
 
     assert user.get_quota().single_allele_allowed(1)
+
+
+def test_lazily_creating_a_user_quota_writes_the_row_once() -> None:
+    """Lazy creation must leave no window for a concurrent reader.
+
+    Every write after the insert publishes a second committed state that
+    another request can read; the quota has to arrive complete instead.
+    """
+    user = User.objects.get(email="user@example.com")
+
+    with CaptureQueriesContext(connection) as captured:
+        user.get_quota()
+
+    assert len(_row_writes(captured)) == 1
+
+
+def test_lazily_created_anonymous_quotas_allow_a_single_allele_query() -> None:
+    """Both quotas an anonymous user is measured against must be usable.
+
+    The snapshot is the field-wise minimum of the session and the IP quota,
+    so either one arriving empty is enough to refuse the request.
+    """
+    anonymous = WebAnnotationAnonymousUser(session_id="sess-2", ip="10.0.0.3")
+    SessionQuota.objects.create(session_id="sess-2")
+    AnonymousUserQuota.objects.create(ip="10.0.0.3")
+
+    assert anonymous.get_quota().single_allele_allowed(1)
+
+
+def test_a_created_user_quota_is_stored_at_its_limits() -> None:
+    """What reaches the database -- not just the instance -- is usable."""
+    user = User.objects.get(email="user@example.com")
+
+    UserQuota.objects.create(user=user)
+
+    _assert_at_limits(UserQuota.objects.get(user=user))
+
+
+def test_a_created_ip_quota_is_stored_at_its_limits() -> None:
+    AnonymousUserQuota.objects.create(ip="10.0.0.4")
+
+    _assert_at_limits(AnonymousUserQuota.objects.get(ip="10.0.0.4"))
+
+
+def test_a_created_session_quota_is_stored_at_its_limits() -> None:
+    SessionQuota.objects.create(session_id="sess-3")
+
+    _assert_at_limits(SessionQuota.objects.get(session_id="sess-3"))
 
 
 def test_anonymous_ip_quota_is_unique() -> None:
