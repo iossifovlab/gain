@@ -858,32 +858,29 @@ This validates the resource for annotation and generates an HTML summary page wi
   Partial screen shot of the summary html page created for ``my_genesets`` resource.
 
 
-12: Toy CNV collection
+12: Toy fragment score
 ^^^^^^^^^^^^^^^^^^^^^^
 
-Copy-number variants (CNVs) are deletions or duplications of genomic segments. 
-In practice, CNV resources summarize previously observed gains and losses so you can contextualize a query locus by 
-interval overlap. In GAIn, CNV collections are represented as tabular files plus a small YAML definition that 
-declares which columns should be exposed as annotation attributes.
+Copy-number variants (CNVs) are deletions or duplications of genomic segments. In GAIn, CNV data can be represented using fragment score resources, which consist of a tabular file and a YAML definition specifying the genomic intervals and associated annotation attributes.
 
 Create a new folder for the resource and move into it:
 
 .. code-block:: bash
 
-    mkdir my_miniCNVcollection
-    cd my_miniCNVcollection
+    mkdir my_minifragmentscore
+    cd my_minifragmentscore
 
-Run the following command to create a tab-separated CNV collection file called my_miniCNVcollection.txt. The file has six columns: chromosome name, start position, end position, CNV name, deletion/duplication class, and frequency.
+Run the following command to create a tab-separated file called my_minifragmentscore.txt. The file has six columns: chromosome name, start position, end position, CNV name, deletion/duplication class, and frequency.
 
 .. code-block:: bash
 
-    cat <<'EOF' | awk 'BEGIN{OFS="\t"} {print $1,$2,$3,$4,$5,$6}' > my_miniCNVcollection.txt
+    cat <<'EOF' | awk 'BEGIN{OFS="\t"} {print $1,$2,$3,$4,$5,$6}' > my_minifragmentscore.txt
     chrom   pos_beg pos_end CNV_name          deletion_duplication frequency
     chr1    3       15      Chr1_duplication  Duplication           0.1
     chr2    5       15      Chr2_duplication  Deletion              0.2
     EOF
 
-This file defines two example CNVs. Each row specifies an interval (``chrom``, ``pos_beg``, ``pos_end``), a CNV identifier (``CNV_name``), the CNV type (``deletion_duplication``) and ``frequency``.
+This file defines two example fragments, corresponding to CNVs. Each row specifies an interval (``chrom``, ``pos_beg``, ``pos_end``), a CNV identifier (``CNV_name``), the CNV type (``deletion_duplication``) and ``frequency``.
 
 Next, create a ``genomic_resource.yaml`` file in the same directory with this content:
 
@@ -891,7 +888,7 @@ Next, create a ``genomic_resource.yaml`` file in the same directory with this co
 
     type: fragment_score
     table:
-      filename: my_miniCNVcollection.txt
+      filename: my_minifragmentscore.txt
 
     scores:
     - id: CNV type
@@ -904,26 +901,25 @@ Next, create a ``genomic_resource.yaml`` file in the same directory with this co
       desc: CNV frequency
 
     meta:
-      summary: CNV collection resource
+      summary: toy fragment score resource
 
 
-In this resource, the interval columns (``chrom``, ``pos_beg``, ``pos_end``) are stored in the table and used for overlap queries, 
-while the two fields listed under scores (CNV type and CNV frequency) are exposed as attributes that can be emitted in annotation output.
+In this resource, the interval columns (``chrom``, ``pos_beg``, ``pos_end``) are stored in the table and used for overlap queries, while the two fields listed under scores (CNV type and CNV frequency) are exposed as attributes that can be emitted in annotation output.
 
-Finally, while still in the ``my_miniCNVcollection`` directory, run:
+Finally, while still in the ``my_minifragmentscore`` directory, run:
 
 .. code-block:: bash
 
     grr_manage resource-repair
 
 
-This command checks that the resource is usable for annotation and produces an HTML summary file with basic descriptions for the CNV collection resource.
+This command checks that the resource is usable for annotation and produces an HTML summary file with basic descriptions for the fragment score resource.
 
 .. figure:: figures/example12_resource.png
     :scale: 50 %
     :align: center
 
-    Summary html page created for ``my_miniCNVcollection`` resource.
+    Summary HTML page created for ``my_minifragmentscore`` resource.
 
 
 13: CNV collection (Iossifov 2021)
