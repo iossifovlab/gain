@@ -83,6 +83,36 @@ export class PipelineEditor {
     await this.newPipelineButton.click();
   }
 
+  /**
+   * Start a new (empty) pipeline and wait for the validation round trip the
+   * click triggers, so callers can assert on validation-gated UI (e.g. the
+   * Create button) without racing the request. The wait matches only the
+   * cleared editor's validation (its request body carries an empty config),
+   * so a still-in-flight validation of the previous editor text cannot
+   * satisfy it. Use this only where the click actually validates: with
+   * unsaved changes it opens a confirmation popover instead, and on an
+   * already-empty editor with no pipeline selected it is a no-op -- keep
+   * using newPipeline() in both cases.
+   *
+   * Throws when validation answers non-2xx (the server sheds validations
+   * with a 503 when its bounded pool is full, iossifovlab/gain#659), so a
+   * shed request fails distinctly instead of as a disabled-button timeout
+   * in the caller's next assertion.
+   */
+  public async newPipelineValidated(): Promise<void> {
+    const [validateResponse] = await Promise.all([
+      this.page.waitForResponse(resp =>
+        resp.url().includes('api/pipelines/validate')
+          && (resp.request().postDataJSON() as {config?: string} | null)?.config === '',
+      { timeout: 30000 }),
+      this.newPipeline(),
+    ]);
+    if (!validateResponse.ok()) {
+      throw new Error(
+        `pipeline validation after New pipeline answered ${validateResponse.status()}`);
+    }
+  }
+
   /** Save the current user pipeline. */
   public async save(): Promise<void> {
     await this.saveButton.click();

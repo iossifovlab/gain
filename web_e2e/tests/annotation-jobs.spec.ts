@@ -40,7 +40,7 @@ test.describe('Create job tests', () => {
     await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
     await expect(jobs.createButton).toBeEnabled();
 
-    await new PipelineEditor(page).newPipeline();
+    await new PipelineEditor(page).newPipelineValidated();
     await expect(jobs.createButton).toBeEnabled();
   });
 
