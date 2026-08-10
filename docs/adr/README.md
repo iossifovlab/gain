@@ -77,6 +77,7 @@ of one decision will drift.
 | [0013](0013-symlink-resolution-is-not-contained.md) | Symlink resolution inside a resource is not contained | accepted |
 | [0014](0014-gain-owns-the-10x-readers.md) | gain owns the 10x readers, and the statistics build never reads the data matrix | accepted; `gex_only` clause superseded by 0015 |
 | [0015](0015-a-10x-read-returns-the-whole-resource.md) | A 10x read returns the whole resource by default | accepted |
+| [0016](0016-grr-content-is-trusted-by-authorship.md) | GRR content is trusted by authorship | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;
