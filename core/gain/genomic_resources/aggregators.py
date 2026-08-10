@@ -9,7 +9,10 @@ import re
 from collections import Counter
 from collections.abc import Callable, Generator, Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
+
+if TYPE_CHECKING:
+    from gain.genomic_resources.score_def import ScoreValue
 
 
 class WeightedValues:
@@ -654,6 +657,22 @@ class AggregatorDefinition:
 
 
 AggregatorSource = AggregatorDefinition | str | dict[str, Any]
+
+
+@dataclass(frozen=True)
+class PositionScoreAggregationQuery:
+    """One score's reduction request on the logical read plane (gain#727).
+
+    ``aggregator`` of ``None`` resolves to the score's own default from its
+    definition.  ``none_value_replacement`` substitutes for every null the
+    per-position expansion holds -- uncovered and covered-but-NA alike --
+    before the aggregator sees it; unset, nulls stay inert for every
+    aggregator, all of which already skip ``None``.
+    """
+
+    score: str
+    aggregator: str | None = None
+    none_value_replacement: ScoreValue | None = None
 
 
 NUMERIC_ONLY_AGGREGATORS = {"max", "min", "mean", "median"}
