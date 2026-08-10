@@ -41,6 +41,7 @@ requirements:
     - docker-py >=7.1
     - filelock >=3.19
     - fsspec >=2026.2
+    - h5py >=3.11
     - intervaltree
     - jinja2 >=3.1
     - lark >=1.2
@@ -59,6 +60,7 @@ requirements:
     - python-box >=7.1
     - pyyaml >=6
     - s3fs >=2026.2
+    - scipy >=1.14
     - tqdm >=4.66
 
 about:
