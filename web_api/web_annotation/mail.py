@@ -24,9 +24,10 @@ def send_email(
         fail_silently=fail_silently,
     )
 
+    # The body is deliberately not logged: reset and confirmation mails
+    # embed live single-use codes (gain#701).
     logger.info("email sent: to:      <%s>", recipient_list)
     logger.info("email sent: from:    <%s>", from_email)
     logger.info("email sent: subject:  %s", subject)
-    logger.info("email sent: message:  %s", message)
 
     return mail
