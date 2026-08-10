@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """Architecture tests for gain package using pytestarch."""
 import ast
+import functools
 import os
 import pathlib
 
@@ -221,8 +222,43 @@ def test_the_grr_does_not_import_the_annotation_layer(
     )
 
 
+def test_markdown_rendering_goes_through_the_one_wrapper_module() -> None:
+    """Every gain-core module renders Markdown through ``render_markdown``.
+
+    ``gain.templates.markdown_support`` post-processes markdown2's output
+    so documentation prose survives a bogus tag -- ``values <thresh are
+    dropped`` reaches the reader whole instead of being swallowed by the
+    browser (gain#736).  A module importing ``markdown2`` directly
+    re-opens that defect at its own sink; within ``core/gain`` -- the
+    fence this test can see -- only the wrapper module itself may touch
+    the library.  ``web_api`` sits outside it and still imports markdown2
+    for the same template (``web_annotation/pipelines/views.py``); that
+    sink is a known gap, not covered here.
+    """
+    allowed = {
+        pathlib.Path(GAIN_SRC) / "templates" / "markdown_support.py",
+    }
+    offenders = [
+        f"{py.relative_to(GAIN_SRC)}: {imported}"
+        for py in pathlib.Path(GAIN_SRC).rglob("*.py")
+        if py not in allowed
+        for imported in sorted(_imported_modules(py))
+        if imported == "markdown2" or imported.startswith("markdown2.")
+    ]
+    assert offenders == [], (
+        f"these gain modules import markdown2 directly instead of "
+        f"`from gain.templates.markdown_support import render_markdown`: "
+        f"{offenders}. Direct markdown2 output leaves prose like "
+        f"'values <thresh are dropped' to be eaten as a bogus tag (#736)"
+    )
+
+
+@functools.cache
 def _imported_modules(py: pathlib.Path) -> set[str]:
     """Absolute dotted names ``py`` imports, however it spells them.
+
+    Cached per file: several rules here sweep the whole package, and the
+    sources do not change within a test run.
 
     Resolved from the AST rather than matched against the source text, so
     that ``from gain import annotation``, a relative ``from ..annotation

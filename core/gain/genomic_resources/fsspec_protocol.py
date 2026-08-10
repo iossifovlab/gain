@@ -37,7 +37,6 @@ import pyBigWig
 import pysam
 import yaml
 from filelock import FileLock
-from markdown2 import markdown
 
 from gain import logging
 from gain.genomic_resources.dvc import (
@@ -70,6 +69,7 @@ from gain.genomic_resources.repository import (
     validate_resource_id,
 )
 from gain.templates import get_template
+from gain.templates.markdown_support import render_markdown as markdown
 from gain.utils.helpers import convert_size
 
 # Silence the spurious "[W::hts_idx_load3] The index file is older than the

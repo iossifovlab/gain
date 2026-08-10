@@ -7,7 +7,6 @@ import json
 from typing import Any, ClassVar
 
 import pandas as pd
-from markdown2 import markdown
 
 from gain import logging
 from gain.genomic_resources.data_frame_resource import (
@@ -19,6 +18,7 @@ from gain.genomic_resources.resource_implementation import (
     InfoImplementationMixin,
 )
 from gain.task_graph.graph import TaskDesc, TaskGraph
+from gain.templates.markdown_support import render_markdown as markdown
 
 logger = logging.getLogger(__name__)
 

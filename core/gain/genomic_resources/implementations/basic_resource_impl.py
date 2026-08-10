@@ -5,14 +5,13 @@ from __future__ import annotations
 import copy
 from typing import Any, ClassVar
 
-from markdown2 import markdown
-
 from gain import logging
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
     InfoImplementationMixin,
 )
 from gain.task_graph.graph import TaskDesc
+from gain.templates.markdown_support import render_markdown as markdown
 
 logger = logging.getLogger(__name__)
 

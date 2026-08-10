@@ -3,8 +3,6 @@ import json
 from collections import Counter
 from typing import Any, ClassVar
 
-from markdown2 import markdown
-
 from gain.gene_sets.gene_set import build_gene_set_collection_from_resource
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
@@ -22,6 +20,7 @@ from gain.genomic_resources.resource_implementation import (
     ResourceConfigValidationMixin,
 )
 from gain.task_graph.graph import TaskDesc, TaskGraph
+from gain.templates.markdown_support import render_markdown as markdown
 
 
 class GeneSetCollectionImpl(

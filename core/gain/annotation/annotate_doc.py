@@ -5,8 +5,6 @@ import os
 import sys
 from pathlib import Path
 
-from markdown2 import markdown
-
 from gain import logging
 from gain.annotation.annotation_genomic_context_cli import (
     get_context_pipeline,
@@ -19,6 +17,7 @@ from gain.genomic_resources.genomic_context import (
 from gain.genomic_resources.genomic_scores import GenomicScore
 from gain.genomic_resources.repository import GenomicResource
 from gain.templates import get_template
+from gain.templates.markdown_support import render_markdown as markdown
 from gain.utils.verbosity_configuration import VerbosityConfiguration
 
 logger = logging.getLogger("annotate_doc")
