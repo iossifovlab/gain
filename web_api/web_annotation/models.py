@@ -9,7 +9,7 @@ import time
 import uuid
 from abc import abstractmethod
 from datetime import timedelta
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, Self, cast
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, AnonymousUser
@@ -374,11 +374,7 @@ class User(AbstractUser):
         return not len(jobs_made) >= cast(int, settings.QUOTAS["daily_jobs"])
 
     def _get_or_create_user_quota(self) -> UserQuota:
-        quota, created = UserQuota.objects.get_or_create(user=self)
-        if created:
-            quota.reset_daily()
-            quota.reset_monthly()
-        return quota
+        return UserQuota.get_or_create_for(user=self)
 
     def get_quota(self) -> QuotaSnapshot:
         """Get a snapshot of the current quota state for this user."""
@@ -480,19 +476,10 @@ class WebAnnotationAnonymousUser(BaseUser, AnonymousUser):
         return not len(jobs_made) >= cast(int, settings.QUOTAS["daily_jobs"])
 
     def _get_or_create_session_quota(self) -> SessionQuota:
-        quota, created = SessionQuota.objects.get_or_create(
-            session_id=self.session_id)
-        if created:
-            quota.reset_daily()
-            quota.reset_monthly()
-        return quota
+        return SessionQuota.get_or_create_for(session_id=self.session_id)
 
     def _get_or_create_ip_quota(self) -> AnonymousUserQuota:
-        quota, created = AnonymousUserQuota.objects.get_or_create(ip=self.ip)
-        if created:
-            quota.reset_daily()
-            quota.reset_monthly()
-        return quota
+        return AnonymousUserQuota.get_or_create_for(ip=self.ip)
 
     def get_quota(self) -> QuotaSnapshot:
         """Get the more restrictive of the session and IP quota snapshots."""
@@ -968,6 +955,16 @@ class Quota(models.Model):
         """Return the counter values a new quota of this type starts from."""
         config = cls._quota_config()
         return {name: cast(int, config[name]) for name in cls.COUNTER_FIELDS}
+
+    @classmethod
+    def get_or_create_for(cls, **lookup: Any) -> Self:
+        """Return the quota identified by ``lookup``, creating it if absent.
+
+        A quota is created ready to use, so there is nothing to initialise
+        afterwards and the row is written exactly once.
+        """
+        quota, _ = cls._default_manager.get_or_create(**lookup)
+        return quota
 
     def get_daily_job_max(self) -> int:
         """Get the maximum number of daily jobs allowed."""
