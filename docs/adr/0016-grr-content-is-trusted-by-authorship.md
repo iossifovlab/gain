@@ -51,7 +51,7 @@ following are conceded, not defects:
 
 | exposure | mechanism | decided in |
 | --- | --- | --- |
-| **arbitrary code execution** | a histogram's `plot_function` names a Python file inside the resource; its source is `exec`'d with full builtins (`histogram.py:1152`) by `draw_score_histograms` and five `grr_manage` commands, on dask workers under a cluster | gain#572 |
+| **arbitrary code execution** | a histogram's `plot_function` names a Python file inside the resource; its source is `exec`'d with full builtins (`histogram.py:1152`) by six `grr_manage` commands and by `draw_score_histograms`, on dask workers under a cluster | gain#572 |
 | **arbitrary filesystem reach** | a symlink inside a resource resolves anywhere — out-of-root read, overwrite, delete, and enumeration of an outside tree as resources | gain#483, [0013](0013-symlink-resolution-is-not-contained.md) |
 | **arbitrary markup** | resource-supplied prose rendered `markdown(...)\|safe` into generated pages — script tags, `on*` handlers, `javascript:` URLs | gain#623, gain#699 |
 
