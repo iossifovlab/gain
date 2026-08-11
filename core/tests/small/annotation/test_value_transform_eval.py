@@ -84,6 +84,13 @@ def test_evaluates_legitimate_transform(
     assert transform(value) == expected
 
 
+def test_rejects_chained_multiplication_blowup() -> None:
+    # Each literal is under the per-literal bound, but the product explodes
+    # into a ~100 MB string (gain#767).
+    with pytest.raises(ValueError, match="oversized result"):
+        compile_value_transform("'ab' * 99 * 99 * 99 * 99")
+
+
 def test_transform_runs_with_empty_builtins() -> None:
     # Defense in depth behind the gate: the namespace the materialised callable
     # runs in exposes no builtins, so __import__/open/exec are unreachable even
