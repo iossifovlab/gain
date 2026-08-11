@@ -23,7 +23,7 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
 )
 from gain.templates import get_template
-from markdown2 import markdown
+from gain.templates.markdown_support import render_markdown as markdown
 from rest_framework import views
 from rest_framework.request import MultiValueDict
 from rest_framework.views import Request, Response

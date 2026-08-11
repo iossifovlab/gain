@@ -24,7 +24,9 @@ Do not "fix" these tests to make a sanitizer pass.
 ``annotate_doc_pipeline_template.jinja`` and the two renderers of it that a
 ``core`` test can reach.  Deliberately *not* covered: the third renderer
 (``web_api/web_annotation/pipelines/views.py``, a separate package with its own
-CI image), ``resource_template.jinja``'s ``meta.description`` sink, and the
+CI image -- it pins the same boundary in its own suite, see
+``web_api/web_annotation/tests/test_pipeline_doc_bogus_tag_rescue.py``),
+``resource_template.jinja``'s ``meta.description`` sink, and the
 ``about.md`` render in ``fsspec_protocol.py`` that ADR 0016 lists as unfiled.
 Green here is not a statement about those.
 
