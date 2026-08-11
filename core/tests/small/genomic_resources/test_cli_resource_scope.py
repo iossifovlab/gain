@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import logging
 import pathlib
 from typing import Any
 
@@ -98,6 +99,47 @@ def test_resource_repair_ignores_an_unrelated_resource_it_cannot_index(
     cli_manage([
         "resource-repair", "-R", str(settled_repo), "-r", "sub/one",
         "-j", "1"])
+
+
+def test_a_resource_repair_that_wrote_notes_the_stale_repository_index(
+    settled_repo: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    touch_resource_config(settled_repo, "sub/one")
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage([
+            "resource-repair", "-R", str(settled_repo), "-r", "sub/one",
+            "-j", "1"])
+
+    assert "repo-index" in caplog.text
+
+
+def test_a_resource_repair_with_nothing_to_do_does_not_note_the_index(
+    settled_repo: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage([
+            "resource-repair", "-R", str(settled_repo), "-r", "sub/one",
+            "-j", "1"])
+
+    assert "repo-index" not in caplog.text
+
+
+def test_a_dry_run_resource_repair_does_not_note_the_index(
+    settled_repo: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    touch_resource_config(settled_repo, "sub/one")
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"), \
+            pytest.raises(SystemExit):
+        cli_manage([
+            "resource-repair", "-R", str(settled_repo), "-r", "sub/one",
+            "-n", "-j", "1"])
+
+    assert "repo-index" not in caplog.text
 
 
 def test_resource_manifest_leaves_the_repository_globals_untouched(
