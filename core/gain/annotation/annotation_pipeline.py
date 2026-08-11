@@ -19,6 +19,7 @@ from gain.annotation.annotation_config import (
     Attribute,
     RawPipelineConfig,
 )
+from gain.annotation.value_transform_eval import compile_value_transform
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
@@ -686,16 +687,8 @@ class ValueTransformAnnotatorDecorator(AnnotatorDecorator):
         for attr in child.attributes:
             if "value_transform" in attr.parameters:
                 transform_str = attr.parameters["value_transform"]
-                try:
-                    # pylint: disable=eval-used
-                    transform = eval(  # noqa: S307
-                        f"lambda value: {transform_str}",
-                    )
-                except Exception as error:
-                    raise ValueError(
-                        f"The value trasform |{transform_str}| is "
-                        f"sytactically invalid.", error) from error
-                value_transformers[attr.name] = transform
+                value_transformers[attr.name] = compile_value_transform(
+                    transform_str)
                 # pylint: disable=protected-access
                 attr._documentation = (  # noqa: SLF001
                     f"{attr.documentation}\n\n"
