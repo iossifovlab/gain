@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import asyncio
 import logging
+import textwrap
 import threading
 import time
 from collections.abc import Iterator
@@ -131,6 +132,30 @@ async def test_async_validate_reports_an_invalid_config_unchanged() -> None:
 
     assert response.status_code == 200, response.content
     assert response.json() == {"errors": INVALID_CONFIG_ERRORS}
+
+
+# A config that builds against the fixture GRR but carries a value_transform
+# calling arbitrary Python. Before gain#764 this validated clean, because the
+# build only compiled the transform lambda and never called it.
+RCE_CONFIG = textwrap.dedent("""
+    - position_score:
+        attributes:
+          - source: pos1
+            value_transform: "__import__('os').system('id') or value"
+        resource_id: scores/pos1
+""")
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_async_validate_rejects_a_value_transform_rce() -> None:
+    """An anonymous config whose value_transform calls arbitrary Python is
+    rejected at build (gain#764), not silently accepted."""
+    client = AsyncClient()
+    response = await client.post(VALIDATE_URL, {"config": RCE_CONFIG})
+
+    assert response.status_code == 200, response.content
+    assert "disallowed" in response.json()["errors"]
 
 
 @pytest.mark.asyncio

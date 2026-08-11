@@ -683,7 +683,7 @@ def test_value_transform_decorator_invalid_transform() -> None:
         ],
     )
 
-    with pytest.raises(ValueError, match="sytactically invalid"):
+    with pytest.raises(ValueError, match="not valid Python"):
         ValueTransformAnnotatorDecorator.decorate(annotator)
 
 
@@ -732,3 +732,17 @@ def test_value_transform_decorator_annotate(tmp_path: pathlib.Path) -> None:
 
     assert result["doubled"] == 10  # 5 * 2
     assert result["normal"] == 10  # unchanged
+
+
+def test_value_transform_rejects_arbitrary_code() -> None:
+    """A value_transform calling arbitrary Python is rejected at build."""
+    annotator = DummyAnnotator(
+        attributes=[
+            make_attr(
+                "attr1",
+                value_transform="__import__('os').system('id') or value"),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="disallowed"):
+        ValueTransformAnnotatorDecorator.decorate(annotator)
