@@ -156,7 +156,7 @@ def test_label_key_cannot_inject_sql_into_the_index(
     assert failed == {"evil"}
 
     # The injected statement must not have run.
-    conn = proto.open_repository_sqlite3_metadata_db()
+    conn = proto.open_repository_metadata()
     with conn:
         row = conn.execute(
             "SELECT value FROM contents_metadata "

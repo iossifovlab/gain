@@ -310,8 +310,8 @@ class CachingProtocol(ReadOnlyRepositoryProtocol):
         self.refresh_cached_resource_file(resource, GR_CONF_FILE_NAME)
         return self.remote_protocol.load_manifest(resource)
 
-    def open_repository_sqlite3_metadata_db(self) -> apsw.Connection:
-        return self.remote_protocol.open_repository_sqlite3_metadata_db()
+    def open_repository_metadata(self) -> apsw.Connection:
+        return self.remote_protocol.open_repository_metadata()
 
 
 class GenomicResourceCachedRepo(GenomicResourceRepo):

@@ -611,8 +611,8 @@ def test_each_search_opens_its_own_metadata_connection(
     because no two searches share a connection.
     """
     proto = labelled_grr.proto
-    first = proto.open_repository_sqlite3_metadata_db()
-    second = proto.open_repository_sqlite3_metadata_db()
+    first = proto.open_repository_metadata()
+    second = proto.open_repository_metadata()
 
     assert first is not second
 
