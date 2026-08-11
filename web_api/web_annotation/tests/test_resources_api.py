@@ -522,6 +522,88 @@ def test_pagination(
     assert response_json["page"] == 0
 
 
+@pytest.mark.parametrize("page_size", [0, -1])
+def test_a_non_positive_page_size_is_a_bad_request(
+    anonymous_client: Client,
+    page_size: int,
+) -> None:
+    """``page_size<1`` is refused up front, not a ZeroDivisionError.
+
+    Asked as the anonymous caller for the same reason as the malformed
+    search term above: an unauthenticated caller is exactly who reaches
+    this endpoint (gain#631).
+    """
+    response = anonymous_client.get(
+        "/api/resources/search", query_params={"page_size": page_size})
+
+    assert response.status_code == 400
+    message = response.json()["error"]
+    # Same contract as the malformed `query` above: the message names the
+    # parameter and its value, so a caller with several of them knows
+    # which was rejected.
+    assert "page_size" in message
+    assert str(page_size) in message
+
+
+@pytest.mark.parametrize("param", ["page", "page_size"])
+def test_a_non_integer_page_parameter_is_a_bad_request(
+    anonymous_client: Client,
+    param: str,
+) -> None:
+    """A non-integer ``page``/``page_size`` names itself in the refusal.
+
+    The 400 itself predates gain#631; the error body naming the rejected
+    parameter is the same contract as the range refusals below.
+    """
+    response = anonymous_client.get(
+        "/api/resources/search", query_params={param: "abc"})
+
+    assert response.status_code == 400
+    message = response.json()["error"]
+    assert param in message
+    if param == "page":
+        # `page` alone would also match a misattributed `page_size`.
+        assert "page_size" not in message
+    assert "abc" in message
+
+
+@pytest.mark.parametrize("param", ["page", "page_size"])
+def test_a_bound_past_the_maximal_slice_index_is_a_bad_request(
+    anonymous_client: Client,
+    param: str,
+) -> None:
+    """Bounds ``islice`` cannot address are refused, not a 500 (gain#631).
+
+    ``islice`` accepts indices only up to ``sys.maxsize``; a request past
+    that bound -- through either parameter -- used to surface the
+    resulting ValueError as an unhandled 500.
+    """
+    value = 99999999999999999999
+
+    response = anonymous_client.get(
+        "/api/resources/search", query_params={param: value})
+
+    assert response.status_code == 400
+    message = response.json()["error"]
+    assert param in message
+    assert str(value) in message
+
+
+def test_a_negative_page_is_a_bad_request(
+    anonymous_client: Client,
+) -> None:
+    """A negative ``page`` is refused, not handed to ``islice`` (gain#631)."""
+    response = anonymous_client.get(
+        "/api/resources/search", query_params={"page": -1})
+
+    assert response.status_code == 400
+    message = response.json()["error"]
+    # `page` alone would also match a misattributed `page_size` message.
+    assert "page" in message
+    assert "page_size" not in message
+    assert "-1" in message
+
+
 @pytest.mark.parametrize("current_client", ["admin", "user", "anonymous"])
 def test_get_resource_types(
     current_client: str, clients: dict[str, Client],

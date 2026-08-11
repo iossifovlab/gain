@@ -1,3 +1,4 @@
+import sys
 from collections.abc import Iterable
 from itertools import islice
 from typing import ClassVar
@@ -140,17 +141,47 @@ class SearchResources(ResourcesAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        page = query_params.get("page", 0)
-
+        raw_page = query_params.get("page", "0")
         try:
-            page = int(query_params.get("page", 0))
+            page = int(raw_page)
         except ValueError:
-            return Response(status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": f"page must be an integer: {raw_page}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
+        if page < 0:
+            return Response(
+                {"error": f"page must be non-negative: {page}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        raw_page_size = query_params.get("page_size", "50")
         try:
-            page_size = int(query_params.get("page_size", 50))
+            page_size = int(raw_page_size)
         except ValueError:
-            return Response(status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": f"page_size must be an integer: {raw_page_size}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if page_size < 1:
+            return Response(
+                {"error": f"page_size must be positive: {page_size}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # `islice` refuses indices past `sys.maxsize` with a ValueError,
+        # which neither this view nor DRF would turn into a 4xx.
+        if (page + 1) * page_size > sys.maxsize:
+            return Response(
+                {"error": (
+                    f"page {page} at page_size {page_size} addresses "
+                    f"positions past the maximal supported index "
+                    f"{sys.maxsize}"
+                )},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # `resource_type` is passed straight down: `search_resources`
         # expands equivalent spellings itself, in SQL.  An earlier revision
@@ -200,8 +231,8 @@ class SearchResources(ResourcesAPIView):
 
         resource_page = islice(
             resources,
-            int(page) * int(page_size),
-            (int(page) + 1) * int(page_size),
+            page * page_size,
+            (page + 1) * page_size,
         )
 
         resource_details = [
@@ -217,7 +248,7 @@ class SearchResources(ResourcesAPIView):
         ]
 
         return Response({
-            "page": int(page),
+            "page": page,
             "pages": (len(resources) + page_size - 1) // page_size,
             "total_resources": len(resources),
             "resources": resource_details,
