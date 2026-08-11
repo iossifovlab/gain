@@ -1,12 +1,14 @@
 # pylint: disable=C0114,C0116,W0621
 import importlib
 from collections.abc import Generator
+from types import ModuleType
 
 import pytest
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
-from web_annotation import settings_default
+from web_annotation import settings_default, test_settings
+from web_annotation.models import Quota
 
 
 @pytest.fixture
@@ -144,3 +146,26 @@ def test_quota_reset_timezone_reads_environment(
     importlib.reload(settings_default)
 
     assert settings_default.QUOTA_RESET_TIMEZONE == "America/New_York"
+
+
+@pytest.mark.parametrize(
+    "module",
+    [settings_default, test_settings],
+    ids=["settings_default", "test_settings"],
+)
+def test_query_quotas_name_exactly_the_counter_fields(
+    module: ModuleType,
+) -> None:
+    # settings_default is read as a MODULE, deliberately, rather than through
+    # django.conf.settings. Tests run under DJANGO_SETTINGS_MODULE=
+    # web_annotation.test_settings, whose QUERY_QUOTAS is a separate dict --
+    # so asserting through the configured settings pins the test fixture and
+    # says nothing about what production ships. That is how
+    # daily_allele_queries / monthly_allele_queries survived for two
+    # migrations after the columns were dropped (gain#749): nothing reads a
+    # surplus key, so it costs nothing until someone believes it. The test
+    # fixture is pinned too -- if it disagreed with the model, every other
+    # quota test would be asserting against a shape production does not have.
+    assert set(module.QUERY_QUOTAS) == {"anonymous", "user"}
+    for quota_type, configured in module.QUERY_QUOTAS.items():
+        assert set(configured) == set(Quota.COUNTER_FIELDS), quota_type

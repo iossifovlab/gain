@@ -3,6 +3,7 @@ import copy
 from typing import cast
 
 import pytest
+from django.conf import settings
 
 from web_annotation.models import (
     AnonymousUserQuota,
@@ -13,6 +14,22 @@ from web_annotation.models import (
     UserQuota,
     WebAnnotationAnonymousUser,
 )
+
+#: The extra-unit fields, which belong to neither period and so are refreshed
+#: by neither reset. Declared here rather than on the model: gain#749 scoped
+#: itself to the counters, and giving the extras a tuple of their own belongs
+#: with the code that would consume it.
+EXTRA_UNIT_FIELDS = ("extra_jobs", "extra_variants", "extra_attributes")
+
+
+def _seed_sentinels(
+    quota: Quota, fields: tuple[str, ...],
+) -> dict[str, int]:
+    """Set each field to a distinct value no configured limit can equal."""
+    sentinels = {field: index for index, field in enumerate(fields, start=1)}
+    for field, sentinel in sentinels.items():
+        setattr(quota, field, sentinel)
+    return sentinels
 
 
 @pytest.fixture
@@ -51,40 +68,91 @@ def test_user_quota_max_values(user_quota: UserQuota) -> None:
     assert user_quota.get_monthly_attribute_max() == 100_000_000
 
 
-def test_reset_daily_sets_all_fields(
+def test_no_counter_is_declared_in_both_periods() -> None:
+    # A field in both tuples would be refreshed by both resets, and would
+    # appear twice in the concatenated COUNTER_FIELDS -- where the dict
+    # comprehension in _initial_counters would silently swallow the repeat.
+    repeated = [
+        field for field in Quota.COUNTER_FIELDS
+        if Quota.COUNTER_FIELDS.count(field) > 1
+    ]
+    assert not repeated
+
+
+def test_every_declared_counter_is_a_real_model_field() -> None:
+    # Names which counter is wrong. _initial_counters feeds this tuple into
+    # Model.__init__, so a name no column backs already fails loudly on every
+    # quota construction -- this says why.
+    model_fields = {
+        field.name for field in AnonymousUserQuota._meta.get_fields()
+    }
+    assert set(Quota.COUNTER_FIELDS) <= model_fields
+
+
+def test_reset_daily_refreshes_every_declared_daily_counter(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
-    anonymous_quota.daily_jobs = 0
-    anonymous_quota.daily_variants = 0
-    anonymous_quota.daily_attributes = 0
+    # Driven off the declared tuple rather than a hand-written list, so that
+    # adding a counter to DAILY_COUNTER_FIELDS and forgetting to refresh it
+    # fails here instead of silently never refreshing (gain#749).
+    configured = settings.QUERY_QUOTAS["anonymous"]
+    for field in Quota.DAILY_COUNTER_FIELDS:
+        setattr(anonymous_quota, field, 0)
     anonymous_quota.save()
 
     anonymous_quota.reset_daily()
 
-    assert anonymous_quota.daily_jobs == \
-        anonymous_quota.get_daily_job_max()
-    assert anonymous_quota.daily_variants == \
-        anonymous_quota.get_daily_variant_max()
-    assert anonymous_quota.daily_attributes == \
-        anonymous_quota.get_daily_attribute_max()
+    for field in Quota.DAILY_COUNTER_FIELDS:
+        assert getattr(anonymous_quota, field) == configured[field], field
 
 
-def test_reset_monthly_sets_all_fields(
+def test_reset_monthly_refreshes_every_declared_monthly_counter(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
-    anonymous_quota.monthly_jobs = 0
-    anonymous_quota.monthly_variants = 0
-    anonymous_quota.monthly_attributes = 0
+    configured = settings.QUERY_QUOTAS["anonymous"]
+    for field in Quota.MONTHLY_COUNTER_FIELDS:
+        setattr(anonymous_quota, field, 0)
     anonymous_quota.save()
 
     anonymous_quota.reset_monthly()
 
-    assert anonymous_quota.monthly_jobs == \
-        anonymous_quota.get_monthly_job_max()
-    assert anonymous_quota.monthly_variants == \
-        anonymous_quota.get_monthly_variant_max()
-    assert anonymous_quota.monthly_attributes == \
-        anonymous_quota.get_monthly_attribute_max()
+    for field in Quota.MONTHLY_COUNTER_FIELDS:
+        assert getattr(anonymous_quota, field) == configured[field], field
+
+
+def test_reset_daily_leaves_the_monthly_counters_and_extras_untouched(
+    anonymous_quota: AnonymousUserQuota,
+) -> None:
+    # A shared reset handed the wrong tuple would refresh the other period
+    # too, silently handing back monthly quota every night. Seeded off the
+    # tuple so a counter added to a period stays covered here.
+    untouched = _seed_sentinels(
+        anonymous_quota, Quota.MONTHLY_COUNTER_FIELDS + EXTRA_UNIT_FIELDS)
+    anonymous_quota.save()
+    monthly_stamp_before = anonymous_quota.last_monthly_reset
+
+    anonymous_quota.reset_daily()
+
+    refreshed = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
+    for field, sentinel in untouched.items():
+        assert getattr(refreshed, field) == sentinel, field
+    assert refreshed.last_monthly_reset == monthly_stamp_before
+
+
+def test_reset_monthly_leaves_the_daily_counters_and_extras_untouched(
+    anonymous_quota: AnonymousUserQuota,
+) -> None:
+    untouched = _seed_sentinels(
+        anonymous_quota, Quota.DAILY_COUNTER_FIELDS + EXTRA_UNIT_FIELDS)
+    anonymous_quota.save()
+    daily_stamp_before = anonymous_quota.last_daily_reset
+
+    anonymous_quota.reset_monthly()
+
+    refreshed = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
+    for field, sentinel in untouched.items():
+        assert getattr(refreshed, field) == sentinel, field
+    assert refreshed.last_daily_reset == daily_stamp_before
 
 
 def test_reset_daily_updates_timestamp(

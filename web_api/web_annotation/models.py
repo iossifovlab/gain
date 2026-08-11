@@ -920,13 +920,22 @@ class Quota(models.Model):
     extra_variants = models.IntegerField(default=0)
     extra_attributes = models.IntegerField(default=0)
 
+    #: The counters ``reset_daily`` refreshes, and the settings keys their
+    #: limits are configured under -- the two are the same names on purpose.
+    DAILY_COUNTER_FIELDS: ClassVar[tuple[str, ...]] = (
+        "daily_jobs", "daily_variants", "daily_attributes",
+    )
+
+    #: The counters ``reset_monthly`` refreshes.
+    MONTHLY_COUNTER_FIELDS: ClassVar[tuple[str, ...]] = (
+        "monthly_jobs", "monthly_variants", "monthly_attributes",
+    )
+
     #: Counters that a new quota starts at its configured limit. The
     #: timestamps and the extra-unit fields are not among them: their zero
     #: default is already the correct starting value.
     COUNTER_FIELDS: ClassVar[tuple[str, ...]] = (
-        "daily_jobs", "monthly_jobs",
-        "daily_variants", "monthly_variants",
-        "daily_attributes", "monthly_attributes",
+        *DAILY_COUNTER_FIELDS, *MONTHLY_COUNTER_FIELDS,
     )
 
     class Meta:  # pylint: disable=too-few-public-methods
@@ -963,8 +972,7 @@ class Quota(models.Model):
     @classmethod
     def _initial_counters(cls) -> dict[str, int]:
         """Return the counter values a new quota of this type starts from."""
-        config = cls._quota_config()
-        return {name: cast(int, config[name]) for name in cls.COUNTER_FIELDS}
+        return {name: cls._max_for(name) for name in cls.COUNTER_FIELDS}
 
     @classmethod
     def get_or_create_for(cls, **lookup: Any) -> Self:
@@ -972,47 +980,59 @@ class Quota(models.Model):
         quota, _ = cls._default_manager.get_or_create(**lookup)
         return quota
 
+    @classmethod
+    def _max_for(cls, field: str) -> int:
+        """Return the configured limit the named counter refreshes to."""
+        return cast(int, cls._quota_config()[field])
+
     def get_daily_job_max(self) -> int:
         """Get the maximum number of daily jobs allowed."""
-        return cast(int, self._quota_config()["daily_jobs"])
+        return self._max_for("daily_jobs")
 
     def get_monthly_job_max(self) -> int:
         """Get the maximum number of monthly jobs allowed."""
-        return cast(int, self._quota_config()["monthly_jobs"])
+        return self._max_for("monthly_jobs")
 
     def get_daily_variant_max(self) -> int:
         """Get the maximum number of daily variants allowed."""
-        return cast(int, self._quota_config()["daily_variants"])
+        return self._max_for("daily_variants")
 
     def get_monthly_variant_max(self) -> int:
         """Get the maximum number of monthly variants allowed."""
-        return cast(int, self._quota_config()["monthly_variants"])
+        return self._max_for("monthly_variants")
 
     def get_daily_attribute_max(self) -> int:
         """Get the maximum number of daily attributes allowed."""
-        return cast(int, self._quota_config()["daily_attributes"])
+        return self._max_for("daily_attributes")
 
     def get_monthly_attribute_max(self) -> int:
         """Get the maximum number of monthly attributes allowed."""
-        return cast(int, self._quota_config()["monthly_attributes"])
+        return self._max_for("monthly_attributes")
+
+    def _reset(self, fields: tuple[str, ...], stamp_field: str) -> None:
+        """Refresh one period's counters and stamp when it was refreshed.
+
+        Every counter named in ``fields`` is overwritten with its configured
+        limit, so a counter added to the period's tuple refreshes without a
+        second edit here. Counters of the *other* period, and the extra-unit
+        fields, are left untouched.
+
+        Writes the whole row, as both callers always have -- see the class
+        docstring for why that is safe for an overwrite and gain#768 for the
+        separate defect it nonetheless causes.
+        """
+        for field in fields:
+            setattr(self, field, self._max_for(field))
+        setattr(self, stamp_field, timezone.now())
+        self.save()
 
     def reset_daily(self) -> None:
         """Reset all daily quota counts."""
-        now = timezone.now()
-        self.daily_jobs = self.get_daily_job_max()
-        self.daily_variants = self.get_daily_variant_max()
-        self.daily_attributes = self.get_daily_attribute_max()
-        self.last_daily_reset = now
-        self.save()
+        self._reset(self.DAILY_COUNTER_FIELDS, "last_daily_reset")
 
     def reset_monthly(self) -> None:
         """Reset all monthly quota counts."""
-        now = timezone.now()
-        self.monthly_jobs = self.get_monthly_job_max()
-        self.monthly_variants = self.get_monthly_variant_max()
-        self.monthly_attributes = self.get_monthly_attribute_max()
-        self.last_monthly_reset = now
-        self.save()
+        self._reset(self.MONTHLY_COUNTER_FIELDS, "last_monthly_reset")
 
     def add_units(self) -> None:
         """Add extra units to the quota."""
