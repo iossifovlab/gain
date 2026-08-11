@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import contextlib
 import json
+import logging
 import textwrap
 from unittest.mock import MagicMock
 
@@ -277,6 +278,88 @@ def test_save_user_pipeline_rejects_malformed_yaml(
 
     assert response.status_code == 400
     assert Pipeline.objects.count() == 0
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("forged", [
+    # A wildcard payload -- the failure is raised by the config parser.
+    '- position_score: "*\\nERROR 2026-08-04 forged.module: forged record"',
+    # A minimal-form payload whose annotator type does not exist -- the
+    # failure is raised deep in the pipeline *build*, not the parser, and
+    # reaches the log sinks by a different route (the tail this issue's
+    # acceptance names).
+    '- "no_such_annotator\\nERROR 2026-08-04 forged.module: forged record"',
+])
+def test_anonymous_pipeline_save_cannot_forge_a_log_record(
+    anonymous_client: Client,
+    test_grr: GenomicResourceRepo,
+    mocker: pytest_mock.MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+    forged: str,
+) -> None:
+    """A config body's newlines must not survive into any log record.
+
+    An anonymous caller may save a temporary pipeline, and a structurally
+    valid config still fails deep validation on the background loader.
+    That failure is logged twice -- at ERROR by the executor and at
+    WARNING by the loader's fail callback -- so the assertion spans both
+    levels; a ``\\n`` in the config would otherwise emit a second,
+    fully-formed-looking record of the caller's choosing
+    (iossifovlab/gain#655).
+    """
+    cache = LRUPipelineCache(test_grr, 16)
+    mocker.patch(
+        "web_annotation.pipelines.views.UserPipeline.lru_cache", new=cache)
+
+    params = {"config": ContentFile(forged)}
+
+    with caplog.at_level(logging.WARNING):
+        response = anonymous_client.post("/api/pipelines/user", params)
+        assert response.status_code == 200
+
+        # Both records are emitted by the loader's done-callback, which
+        # runs on the worker thread *after* the future resolves. wait_all
+        # blocks until the executor's pending set is empty, and the
+        # callback empties it last of all -- after logging -- so this is
+        # the sync point, not Future.result().
+        cache._load_executor.wait_all(10.0)
+
+    forged_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "forged record" in record.getMessage()
+    ]
+    # The payload does reach the log -- escaped onto one line. An empty
+    # list here would mean the test lost the path to the sink, not that
+    # the sink is safe.
+    assert forged_messages
+    assert all("\n" not in message for message in forged_messages)
+
+
+@pytest.mark.django_db
+def test_deferred_build_error_is_escaped_before_it_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The re-logged build error must not carry caller newlines either.
+
+    ``_build_error_to_drf`` runs on every later fetch of an unbuildable
+    saved pipeline, so an un-escaped forged config would forge a record
+    per fetch, not once (iossifovlab/gain#655).
+    """
+    forged = ValueError(
+        "unsupported annotator type: no_such\n"
+        "ERROR 2026-08-04 forged.module: forged record")
+
+    with caplog.at_level(logging.WARNING):
+        AnnotationMixin._build_error_to_drf(forged)
+
+    forged_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "forged record" in record.getMessage()
+    ]
+    assert forged_messages
+    assert all("\n" not in message for message in forged_messages)
 
 
 @pytest.mark.django_db

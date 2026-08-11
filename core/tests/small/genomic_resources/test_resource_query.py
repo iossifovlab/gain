@@ -39,6 +39,28 @@ def test_an_unparsable_query_is_rejected() -> None:
         ResourceQuery.parse('hg38/scores/*[unclosed="x"')
 
 
+def test_an_unparsable_query_is_not_echoed_raw_into_the_error() -> None:
+    """Control characters in the query must not survive into the message.
+
+    The parser is reachable with caller text -- the annotation config's
+    wildcard expansion and the REST search endpoint both feed it -- and
+    the raised message is logged. A query carrying a newline would
+    otherwise forge a log record, both through the query echo and
+    through Lark's own message, which quotes a context line of the input
+    (iossifovlab/gain#655).
+    """
+    payload = "bad query\nERROR forged.module: forged record"
+
+    with pytest.raises(ResourceQueryParseError) as excinfo:
+        ResourceQuery.parse(payload)
+
+    message = str(excinfo.value)
+    assert "\n" not in message
+    # Escaped, not dropped: the visible text is retained so the caller can
+    # still see what was rejected, with only the newline neutralised.
+    assert "forged record" in message
+
+
 def test_an_overlong_query_is_refused_before_the_grammar_runs() -> None:
     """The grammar is ambiguous, so Earley costs ~O(n^3) in the query length.
 

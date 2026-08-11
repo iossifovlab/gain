@@ -21,6 +21,7 @@ from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
+from gain.utils.log_safety import escape_unsafe_characters
 from rest_framework import views
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.request import MultiValueDict
@@ -331,8 +332,12 @@ class AnnotationMixin:
             # only signal that the config is bad -- surface it with an
             # actionable reason (#155) instead of a bare status that is
             # indistinguishable from a delete.
+            # ``exc`` is a build failure that can interpolate the caller's
+            # config text; this WARNING lands in the same file sink as the
+            # executor's ERROR, so escape it too (iossifovlab/gain#655).
             logger.warning(
-                "background load of pipeline %s failed: %s", pipeline_id, exc)
+                "background load of pipeline %s failed: %s",
+                pipeline_id, escape_unsafe_characters(str(exc)))
             notify_function(pipeline_id, "failed", error=format_config_error(
                 exc))
 
@@ -365,7 +370,13 @@ class AnnotationMixin:
         4xx client error instead of letting it escape as a 500. Returns the
         exception so the caller can ``raise ... from`` with the original cause.
         """
-        logger.warning("pipeline failed to build: %s", build_error)
+        # Escaped for the same reason as the deferred-load WARNING: this
+        # replays on every later fetch of an unbuildable saved pipeline, so
+        # one forged config would forge a record per fetch otherwise
+        # (iossifovlab/gain#655).
+        logger.warning(
+            "pipeline failed to build: %s",
+            escape_unsafe_characters(str(build_error)))
         return ValidationError(
             f"Pipeline could not be loaded: {build_error}")
 

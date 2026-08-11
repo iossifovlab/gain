@@ -80,6 +80,10 @@ from gain.genomic_resources.dvc import (
 )
 from gain.genomic_resources.resource_query import LabelClause, ResourceQuery
 from gain.genomic_resources.resource_types import equivalent_resource_types
+from gain.utils.log_safety import (
+    UNSAFE_CHARACTER_RE,
+    escape_unsafe_characters,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -163,65 +167,26 @@ def is_generated_info_page(name: str) -> bool:
     return name in GR_GENERATED_INFO_PAGES
 
 
-# Serves three consumers, so the range is drawn for the widest of them.
+# A resource NAME is refused if it carries any log-unsafe character (the
+# range and its log-line rationale live in ``gain.utils.log_safety``). One
+# consumer here is sharper than a log line and is why refusal, not just
+# escaping, is needed: a cache path. ``urllib.parse.urlsplit`` DELETES
+# ASCII tab, CR and LF from anywhere in a url, and a repository id is
+# joined onto a url that is then re-parsed to derive the cache path. An id
+# carrying one therefore reads as a single segment while resolving to a
+# DIFFERENT one: ``"..\\n"`` becomes ``..`` (one level above the cache
+# directory) and ``"a\\nb"`` becomes ``ab``, silently sharing the cache
+# directory of a genuinely different id. A NUL is a filesystem problem
+# instead -- it reaches the ``mkdir`` call and dies there with a message
+# about nothing the operator wrote.
 #
-# A cache path: ``urllib.parse.urlsplit`` DELETES ASCII tab, CR and LF from
-# anywhere in a url, and a repository id is joined onto a url that is then
-# re-parsed to derive the cache path. An id carrying one of them therefore
-# reads as a single segment while resolving to a DIFFERENT one: ``"..\\n"``
-# becomes ``..`` (one level above the cache directory) and ``"a\\nb"``
-# becomes ``ab``, silently sharing the cache directory of a genuinely
-# different id. A NUL is not a url problem but a filesystem one -- it
-# reaches the ``mkdir`` call and dies there with a message about nothing
-# the operator wrote.
-#
-# A log line: a resource id and a manifest entry name are read verbatim out
-# of remote GRR content and rendered into log messages unescaped, so a
-# newline in one emits a second, fully-formed-looking record that can
-# assert the opposite of what the run found (gain#642). An ANSI escape
-# reaches the operator's terminal the same way.
-#
-# The whole C0/C1 range goes rather than the handful that bite today: none
-# of them belongs in a resource name, and a list tuned to one url parser's
-# or one terminal's current quirks is one change away from a hole.
-#
-# U+2028 and U+2029 join them because a line break is not only ``\\n``:
-# ``str.splitlines`` breaks on both, so anything that post-processes a
-# captured log splits there, and a UAX #14 consumer (an html log viewer)
-# renders them as mandatory breaks. U+0085 NEL is already in the C1 range.
-_UNSAFE_NAME_CHARACTER_RE = re.compile(
-    r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
-
-
-def _escape_one_character(match: re.Match[str]) -> str:
-    code = ord(match.group())
-    if code <= 0xFF:
-        return f"\\x{code:02x}"
-    return f"\\u{code:04x}"
-
-
-def escape_unsafe_characters(name: str) -> str:
-    """Render an untrusted name safe to interpolate into ONE log line.
-
-    Refusing a name that carries a control character is not by itself
-    enough, because the refusal *names* it: the drop warning, the two
-    ``validate_*`` messages and the manifest-entry warning all interpolate
-    the very name they are rejecting. A newline in it then emits the second
-    record the refusal exists to prevent -- and the refusal path is the one
-    place a crafted name is still guaranteed to be rendered.
-
-    So the two halves are complementary, not alternatives. Refusal keeps
-    the name away from the many call sites that log a resource id or an
-    entry name in passing; this keeps the handful that report the refusal
-    itself on one line.
-
-    ``\\xNN``/``\\uNNNN`` rather than ``repr``: it leaves every other
-    character untouched, so an operator still reads the name they wrote,
-    with only the invisible part made visible. The two widths matter --
-    ``\\x2028`` for U+2028 would read as ``\\x20`` followed by the literal
-    text ``28``, which is a different (and legitimate) name.
-    """
-    return _UNSAFE_NAME_CHARACTER_RE.sub(_escape_one_character, name)
+# Refusal and ``escape_unsafe_characters`` are complementary: the refusal
+# *names* the name it rejects -- the drop warning, the two ``validate_*``
+# messages and the manifest-entry warning all interpolate it -- so without
+# escaping, the refusal path would emit the very record it exists to
+# prevent. Refusal keeps the name away from the many sites that log an id
+# in passing; escaping keeps the few that report the refusal on one line.
+_UNSAFE_NAME_CHARACTER_RE = UNSAFE_CHARACTER_RE
 
 
 def _escaping_path_reason(candidate: str, container: str) -> str | None:

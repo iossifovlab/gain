@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING, Any
 
 from lark import Lark, LarkError, Token, Tree
 
+from gain.utils.log_safety import escape_unsafe_characters
+
 if TYPE_CHECKING:
     from gain.genomic_resources.repository import GenomicResource
 
@@ -232,9 +234,15 @@ class ResourceQuery:
         except LarkError as err:
             # Lark's own message carries the position and what it expected;
             # dropping it would leave the user with only their own input
-            # echoed back.
+            # echoed back. Both halves are escaped: the query is caller
+            # text -- the annotation config's wildcard expansion and the
+            # REST search endpoint both feed it -- and Lark quotes a
+            # context line of that same input, so either can smuggle a
+            # line break into a logged message (iossifovlab/gain#655).
             raise ResourceQueryParseError(
-                f"Unparsable resource query '{query}': {err}",
+                f"Unparsable resource query "
+                f"'{escape_unsafe_characters(query)}': "
+                f"{escape_unsafe_characters(str(err))}",
             ) from err
 
         assert len(tree.children) == 2

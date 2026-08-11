@@ -24,6 +24,7 @@ from gain.genomic_resources.resource_query import (
     ResourceQueryParseError,
 )
 from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
+from gain.utils.log_safety import escape_unsafe_characters
 
 if TYPE_CHECKING:
     from gain.annotation.annotation_pipeline import AttributeSpec
@@ -380,6 +381,13 @@ class AnnotationConfigParser:
         accepted_types = annotator_resources_map.get(
             annotator_type, frozenset())
 
+        # Both reach the logged messages below as caller text -- the
+        # annotator type is a YAML mapping key and can carry anything -- so
+        # both are escaped to one line (iossifovlab/gain#655).
+        safe_pattern = escape_unsafe_characters(
+            parsed_query.resource_id_pattern)
+        safe_type = escape_unsafe_characters(annotator_type)
+
         selected_resources: set[str] = set()
         result: list[str] = []
         for resource in grr.get_all_resources():
@@ -393,16 +401,14 @@ class AnnotationConfigParser:
                     raise AnnotationConfigurationError(
                         f"Too many resources ({len(result)}/"
                         f"{AnnotationConfigParser.WILDCARD_LIMIT}) "
-                        "match the wildcard "
-                        f"'{parsed_query.resource_id_pattern}' "
-                        f"for annotator '{annotator_type}'.",
+                        f"match the wildcard '{safe_pattern}' "
+                        f"for annotator '{safe_type}'.",
                     )
 
         if len(result) == 0:
             raise AnnotationConfigurationError(
-                f"No resources match the wildcard "
-                f"'{parsed_query.resource_id_pattern}' "
-                f"for annotator type '{annotator_type}'.",
+                f"No resources match the wildcard '{safe_pattern}' "
+                f"for annotator type '{safe_type}'.",
             )
         return result
 
@@ -565,6 +571,12 @@ class AnnotationConfigParser:
                         raw_cfg, idx, grr,
                     ))
                     continue
+            # ``raw_cfg`` is caller data, but line-safe without escaping:
+            # a str reaches parse_minimal above, so what lands here is a
+            # dict/list/scalar whose f-string rendering goes through
+            # ``repr`` (control characters escaped) or is a number
+            # (none). Switching this to interpolate a str field would
+            # reopen the log-forging hole (iossifovlab/gain#655).
             raise AnnotationConfigurationError(dedent(f"""
                 Incorrect annotator configuation form: {raw_cfg}.
                 The allowed forms are:
@@ -602,9 +614,14 @@ class AnnotationConfigParser:
                     error.problem_mark.column + 1,
                 )
             if source_file_name is None:
+                # The caller's text stays out of the message: this branch
+                # is reachable with anonymous request bodies whose
+                # exception is logged, so echoing the content -- newlines
+                # intact -- lets the caller forge log records
+                # (iossifovlab/gain#655). The error mark carries the
+                # position instead.
                 raise AnnotationConfigurationError(
-                    f"The pipeline configuration {content} "
-                    f"is an invalid yaml string.",
+                    "The pipeline configuration is an invalid yaml string.",
                     error_mark=error_mark,
                 ) from error
             raise AnnotationConfigurationError(
@@ -632,6 +649,9 @@ class AnnotationConfigParser:
         source = attribute_config.get("source")
 
         if name is None and source is None:
+            # A dict renders through ``repr``, so caller newlines are
+            # line-safe without an explicit escape (see the ``raw_cfg``
+            # note above), unlike the string ``source`` fields below.
             raise ValueError(f"The raw attribute configuraion "
                              f"{attribute_config} has neigther "
                              "name nor source.")
@@ -641,9 +661,13 @@ class AnnotationConfigParser:
 
         internal = attribute_config.get("internal")
         if internal is not None and not isinstance(internal, bool):
+            # The source is caller text and the exception is logged, so
+            # it is escaped to one line (iossifovlab/gain#655) -- as in
+            # the aggregator-conflict message below.
             raise TypeError(
-                "The 'internal' field in "
-                f"attribute {source} is not a boolean!",
+                "The 'internal' field in attribute "
+                f"{escape_unsafe_characters(str(source))} "
+                "is not a boolean!",
             )
         assert source is not None
         if not isinstance(name, str):
@@ -665,7 +689,8 @@ class AnnotationConfigParser:
             if aggregator is not None:
                 raise ValueError(
                     f"Cannot specify both 'aggregator' and '{old_name}' "
-                    f"for attribute '{source}'")
+                    f"for attribute "
+                    f"'{escape_unsafe_characters(str(source))}'")
             logger.warning(
                 "'%s' is deprecated in attribute config; use 'aggregator'",
                 old_name)
