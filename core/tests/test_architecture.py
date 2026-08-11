@@ -222,6 +222,105 @@ def test_the_grr_does_not_import_the_annotation_layer(
     )
 
 
+#: Names that reach markdown2's un-rescued output.  The second is the
+#: wrapper module's own re-export: it renders *through* the library, so it
+#: binds the raw function under the bare name ``markdown``, and importing
+#: that is one word away from importing the wrapper.  Since gain#751 the
+#: template package itself imports the wrapper, so that slip would leave
+#: every template in the stack rendering un-rescued.
+#:
+#: Note that ``_imported_names`` reports every string constant in a module
+#: as well, so that dynamic imports are seen.  A ``gain`` module naming
+#: the second entry in a docstring or a constant is therefore reported as
+#: an offender; spell it in two pieces if one ever needs to.
+_UNWRAPPED = frozenset({
+    "markdown2",
+    "gain.templates.markdown_support.markdown",
+})
+
+
+def _renders_markdown_unwrapped(dotted: str) -> bool:
+    """Does importing ``dotted`` reach markdown2 without the rescue?
+
+    Compared on dotted segments rather than characters, so a package that
+    merely starts with the same letters (``markdown2_extras``) is not
+    swept up, while a submodule (``markdown2.markdown``) is.
+    """
+    return any(
+        dotted == name or dotted.startswith(f"{name}.")
+        for name in _UNWRAPPED
+    )
+
+
+@pytest.mark.parametrize(("dotted", "unwrapped"), [
+    ("markdown2", True),
+    ("markdown2.markdown", True),
+    # The wrapper's own re-export -- see _UNWRAPPED.
+    ("gain.templates.markdown_support.markdown", True),
+    ("gain.templates.markdown_support.render_markdown", False),
+    ("gain.templates.markdown_support", False),
+    ("gain.templates", False),
+    # Prefix-matching must be on dotted segments, not on characters.
+    ("markdown2_extras", False),
+    ("mymarkdown2", False),
+])
+def test_which_imports_count_as_rendering_markdown_unwrapped(
+    dotted: str, *, unwrapped: bool,
+) -> None:
+    """The rule the sweep applies, stated on its own.
+
+    Table-driven rather than by planting modules: extraction and judgement
+    are separate jobs, and a bug in the judgement is invisible in an empty
+    offender list.
+    """
+    assert _renders_markdown_unwrapped(dotted) is unwrapped
+
+
+@pytest.mark.parametrize("source", [
+    "import markdown2",
+    "import markdown2 as md",
+    "from markdown2 import markdown",
+    "from markdown2 import markdown as _m",
+    "from markdown2.extras import thing",
+    "import importlib\nx = importlib.import_module('markdown2')",
+    "from gain.templates.markdown_support import markdown",
+    "from gain.templates.markdown_support import markdown as render_markdown",
+])
+def test_the_sweep_sees_every_spelling_that_reaches_the_library(
+    source: str,
+) -> None:
+    """The other half of the fence: extraction, not judgement.
+
+    A correct predicate over names the extractor never produces polices
+    nothing, and says so with an empty offender list -- green, and
+    vacuous.  The last two rows are the ones this pins: the wrapper's
+    re-export is caught only because the extractor emits the imported
+    *name* alongside its module, and renaming it on the way in must not
+    launder it.
+    """
+    imported = _imported_names(source, package=["gain", "templates"])
+
+    assert any(_renders_markdown_unwrapped(name) for name in imported), (
+        f"not caught: {source!r} -> {sorted(imported)}")
+
+
+def test_the_wrapper_module_itself_is_what_the_sweep_exempts() -> None:
+    """The allow-list entry must name a file that is really there.
+
+    ``allowed`` is compared by path, so a moved or renamed wrapper would
+    silently stop being exempt -- and the fence would then fail on the one
+    module that is *supposed* to import the library, sending the next
+    reader after the wrong thing.
+    """
+    wrapper = pathlib.Path(GAIN_SRC) / "templates" / "markdown_support.py"
+
+    assert wrapper.is_file()
+    assert any(
+        _renders_markdown_unwrapped(name)
+        for name in _imported_modules(wrapper)
+    ), "the wrapper no longer imports markdown2 -- has the rescue moved?"
+
+
 def test_markdown_rendering_goes_through_the_one_wrapper_module() -> None:
     """Every gain-core module renders Markdown through ``render_markdown``.
 
@@ -239,6 +338,9 @@ def test_markdown_rendering_goes_through_the_one_wrapper_module() -> None:
     widening the sweep below to reach it would match no files in the
     ``core`` CI image, which copies only ``core/`` -- collecting no
     offenders and passing while policing nothing.
+
+    What the rule forbids is *reaching markdown2's un-rescued output*,
+    which is wider than "imports markdown2" -- see ``_UNWRAPPED``.
     """
     allowed = {
         pathlib.Path(GAIN_SRC) / "templates" / "markdown_support.py",
@@ -248,12 +350,12 @@ def test_markdown_rendering_goes_through_the_one_wrapper_module() -> None:
         for py in pathlib.Path(GAIN_SRC).rglob("*.py")
         if py not in allowed
         for imported in sorted(_imported_modules(py))
-        if imported == "markdown2" or imported.startswith("markdown2.")
+        if _renders_markdown_unwrapped(imported)
     ]
     assert offenders == [], (
-        f"these gain modules import markdown2 directly instead of "
-        f"`from gain.templates.markdown_support import render_markdown`: "
-        f"{offenders}. Direct markdown2 output leaves prose like "
+        f"these gain modules reach markdown2's un-rescued output instead "
+        f"of `from gain.templates.markdown_support import render_markdown`: "
+        f"{offenders}. Un-rescued output leaves prose like "
         f"'values <thresh are dropped' to be eaten as a bogus tag (#736)"
     )
 
@@ -271,10 +373,21 @@ def _imported_modules(py: pathlib.Path) -> set[str]:
     all seen -- a text scan for ``from gain.annotation`` catches none of
     the three, and matches a line inside a docstring that imports nothing.
     """
-    tree = ast.parse(py.read_text(encoding="utf8"))
     # The package that contains this module, as a dotted path: `gain` plus
     # the directories between GAIN_SRC and the file.
     package = ["gain", *py.relative_to(GAIN_SRC).parts[:-1]]
+    return _imported_names(py.read_text(encoding="utf8"), package)
+
+
+def _imported_names(source: str, package: list[str]) -> set[str]:
+    """``_imported_modules`` over a source string in a known package.
+
+    Split out so the extraction can be exercised on a literal source
+    rather than on a file planted inside the very tree the sweeps walk:
+    this suite runs under ``pytest -n 10``, where such a file would race
+    the sweeps and fail them from another worker.
+    """
+    tree = ast.parse(source)
 
     imported: set[str] = set()
     for node in ast.walk(tree):

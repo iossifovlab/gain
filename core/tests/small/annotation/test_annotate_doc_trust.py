@@ -59,6 +59,7 @@ from gain.genomic_resources.testing.builders import (
     a_position_score,
     a_reference_genome,
 )
+from gain.templates import get_jinja_env
 from gain.testing.foobar_import import foobar_genes, foobar_genome
 
 #: Unique to these tests, so an assertion cannot be satisfied by markup the
@@ -158,9 +159,12 @@ def _realize_score_grr(root_path: pathlib.Path, score_desc: str) -> None:
 def _run_doc_cli(root_path: pathlib.Path, output_file: pathlib.Path) -> str:
     """Run the annotate_doc CLI over the GRR realized under ``root_path``.
 
-    Called through the module rather than an imported ``cli`` name so that
-    the sink census below can monkeypatch ``annotate_doc.markdown`` and have
-    the CLI pick it up.
+    Called through the module rather than an imported ``cli`` name, which
+    is how the CLI is reached everywhere else in this file.  The sink
+    census below no longer needs that -- since gain#751 it patches the
+    shared environment's ``markdown`` global, which the CLI shares with
+    every other renderer -- but keeping one spelling of the call keeps the
+    helpers here uniform.
     """
     annotate_doc.cli([
         str(root_path / "pipeline_config.yaml"),
@@ -391,15 +395,29 @@ def test_the_template_funnels_documentation_through_two_markdown_calls(
     template reaches ``markdown`` exactly twice, once with the score's
     ``desc`` and once with the annotator's own documentation.  A new call
     site makes it three and lands the reader in this file.
+
+    The spy is installed on the shared environment's ``globals`` because
+    that is where the template resolves the name since gain#751.  That
+    also makes this the guard on both halves of that change *for the
+    renderer it drives*: a render kwarg shadows a global, so if the
+    ``annotate_doc`` CLI went back to passing ``markdown=`` the spy would
+    be bypassed and the census would read zero rather than two.
+
+    Only that one renderer, though -- ``render_doc_page`` runs the CLI.
+    A kwarg re-added at one of the other former call sites would not show
+    up here.  That is a coverage limit and not a hole: a kwarg bound to
+    the wrapper renders identically, and one bound to markdown2's raw
+    output is refused by the architecture fence.
     """
     seen: list[str] = []
-    real_markdown = annotate_doc.markdown
+    env = get_jinja_env()
+    real_markdown = env.globals["markdown"]
 
     def spy(text: str, *args: object, **kwargs: object) -> str:
         seen.append(text)
         return real_markdown(text, *args, **kwargs)
 
-    monkeypatch.setattr(annotate_doc, "markdown", spy)
+    monkeypatch.setitem(env.globals, "markdown", spy)
 
     render_doc_page(tmp_path, f"DESC {MARKER}")
 
