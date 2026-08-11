@@ -337,6 +337,42 @@ def test_anonymous_pipeline_save_cannot_forge_a_log_record(
 
 
 @pytest.mark.django_db
+def test_anonymous_pipeline_save_rejects_a_value_transform_rce(
+    anonymous_client: Client,
+    test_grr: GenomicResourceRepo,
+    mocker: pytest_mock.MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An anonymous temporary save whose value_transform calls arbitrary
+    Python fails the background build instead of executing it (gain#764).
+
+    The temporary-save path builds the pipeline on the background loader, so
+    the gate's rejection surfaces as a logged build failure rather than a
+    non-200 response.
+    """
+    cache = LRUPipelineCache(test_grr, 16)
+    mocker.patch(
+        "web_annotation.pipelines.views.UserPipeline.lru_cache", new=cache)
+
+    config = (
+        "- position_score:\n"
+        "    attributes:\n"
+        "      - source: pos1\n"
+        "        value_transform: \"__import__('os').system('id') or value\"\n"
+        "    resource_id: scores/pos1\n"
+    )
+    params = {"config": ContentFile(config)}
+
+    with caplog.at_level(logging.WARNING):
+        response = anonymous_client.post("/api/pipelines/user", params)
+        assert response.status_code == 200
+        cache._load_executor.wait_all(10.0)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("disallowed" in message for message in messages), messages
+
+
+@pytest.mark.django_db
 def test_deferred_build_error_is_escaped_before_it_is_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
