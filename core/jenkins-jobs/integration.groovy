@@ -15,7 +15,8 @@ pipelineJob('gain-core-integration') {
         'Integration test suite for gain-core (core/tests/integration). ' +
         'Builds the gain-core CI image and runs the effect-annotation ' +
         'integration tests, which resolve the hg19 genome + refGene gene ' +
-        'models from the grr-seqpipe http GRR. Triggered downstream of ' +
+        'models from the node-local grr-sync copy of grr-seqpipe ' +
+        '(seqpipe/infra#71). Triggered downstream of ' +
         'iossifovlab/gain/<branch> on every branch; safe to run manually.')
 
     logRotator {

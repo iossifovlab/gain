@@ -1,8 +1,9 @@
 // Dedicated Jenkins pipeline for the gain-core integration test suite
 // (core/tests/integration). Builds the regular gain-core CI image and runs
 // pytest against the effect-annotation integration tests, which resolve the
-// hg19 genome + refGene gene models from the grr-seqpipe http GRR
-// (https://grr-seqpipe.seqpipe.org).
+// hg19 genome + refGene gene models from the node-local grr-sync copy of
+// grr-seqpipe (seqpipe/infra#71), bind-mounted read-only into the test
+// container.
 //
 // Expected Jenkins job setup:
 //   - Script path: core/Jenkinsfile.integration
@@ -13,18 +14,29 @@
 //     and safe to run manually.
 
 pipeline {
-    // Pinned to `pooh`: the persistent GRR cache under ${HOME}/grr_seqpipe_cache
-    // is maintained on that agent and reused across builds (the ~787MB genome
-    // is downloaded once, then range-read from the local copy).
-    agent { label 'pooh' }
+    // `builder` is the positive label carried by the build agents — the
+    // hosts that also hold the node-local grr-sync trees (seqpipe/infra#71),
+    // so the suite reads the grr-seqpipe copy off local disk wherever it
+    // lands; the `GRR pre-flight` stage asserts that before the docker
+    // build. (The label replaces the older `!dory` exclusion idiom.) Until
+    // #799 this job was pinned to `pooh`, whose persistent http-GRR cache
+    // was the only warm copy of the ~787MB genome — a single point of
+    // failure the node-local trees remove.
+    agent { label 'builder' }
 
     options {
         timeout(time: 2, unit: 'HOURS')
         buildDiscarder(logRotator(numToKeepStr: '20'))
-        // The shared cache dir fills lazily on the first (cold) build; the
-        // suite runs single-threaded so concurrent workers never race to
-        // download the same resource. Serialise builds on the agent too.
-        disableConcurrentBuilds()
+        // The implicit `Declarative: Checkout SCM` clone is redundant here --
+        // the explicit `Checkout` stage checks out the exact branch/commit
+        // under test into the same workspace -- and it is also the clone that
+        // killed build #775: on an agent this job has never run on, it is a
+        // FULL cold clone of gain (~500MB) running under the git plugin's
+        // default 10-minute timeout, which a ~200KiB/s GitHub link cannot
+        // meet (git-remote-https died of signal 15 at 26%). Skip it; the
+        // explicit stage carries its own generous clone timeout instead.
+        // Same option as Jenkinsfile.release.
+        skipDefaultCheckout()
     }
 
     parameters {
@@ -49,12 +61,34 @@ pipeline {
         GAIN_REPO_URL = 'https://github.com/iossifovlab/gain.git'
 
         IMAGE_TAG = "gain-core-integration-ci:${env.BUILD_NUMBER}"
-        // Persistent across builds. Anchored to the agent home (on pooh,
-        // /var/lib/jenkins -> ZFS via the home symlink) rather than a
-        // hardcoded /data mount. The same absolute path is bind-mounted into
-        // the test container and passed as GRR_INTEGRATION_CACHE_DIR so the
-        // grr_seqpipe fixture wraps the http repo in a cache at this location.
-        GRR_CACHE_DIR = "${env.HOME}/grr_seqpipe_cache"
+
+        // GRR_ROOT is the node-local grr-sync root holding the stable
+        // per-repo symlink <root>/grr_seqpipe, published by grr-sync (atomic
+        // mode, iossifovlab/grr-sync#20) and provisioned per agent by
+        // seqpipe/infra#71 -- where it is NOT a uniform path: /tank/grr on
+        // pooh (a dedicated ZFS dataset), /data/grr on the LVM agents. This
+        // job's label is `!dory`, so it can land on any of them. Resolve
+        // per-node: honour an explicit GRR_ROOT from the agent's node
+        // environment if set, else auto-detect the first candidate that
+        // exists. The `GRR pre-flight` stage then asserts grr_seqpipe
+        // resolves under it with a .CONTENTS manifest, so a wrong/empty root
+        // fails loudly before the docker build. Same resolution as
+        // web_e2e/Jenkinsfile.e2e, which reads the sibling `grr` tree.
+        GRR_ROOT = sh(
+            script: '''
+                if [ -n "${GRR_ROOT:-}" ]; then
+                    printf '%s' "$GRR_ROOT"; exit 0
+                fi
+                for d in /tank/grr /data/grr; do
+                    [ -d "$d" ] && { printf '%s' "$d"; exit 0; }
+                done
+                # Nothing found: emit a non-resolving sentinel so the
+                # pre-flight fails with a clear "GRR not synced on this
+                # node yet" rather than an empty value.
+                printf '%s' "/grr-not-provisioned"
+            ''',
+            returnStdout: true,
+        ).trim()
     }
 
     stages {
@@ -140,9 +174,17 @@ pipeline {
                             userRemoteConfigs: [[
                                 url: env.GAIN_REPO_URL,
                             ]],
+                            // timeout (minutes) covers the one cold FULL
+                            // clone a fresh agent pays now that the job is
+                            // unpinned (#799): ~500MB at the ~200KiB/s the
+                            // agents see from GitHub needs ~40min, and the
+                            // plugin default of 10 kills it (build #775).
+                            // Warm builds fetch incrementally and never go
+                            // near it.
                             extensions: [[$class: 'CloneOption',
                                           shallow: false,
-                                          noTags: true]],
+                                          noTags: true,
+                                          timeout: 60]],
                         ])
                     } catch (Exception err) {
                         // Read the tip through the shell env rather than
@@ -173,10 +215,47 @@ pipeline {
             }
         }
 
-        stage('Build image') {
+        // Fail fast if grr-sync has not published the node-local grr_seqpipe
+        // tree on this agent yet (seqpipe/infra#71). A dangling symlink or
+        // absent tree would otherwise mount as an empty dir and fail deep in
+        // the suite with a confusing `FileNotFoundError: .CONTENTS.json`.
+        // Same check (and manifest-name tolerance) as the `Compose env`
+        // pre-flight in web_e2e/Jenkinsfile.e2e.
+        stage('GRR pre-flight') {
             // Every stage from here on is guarded the same way: on a
             // superseded COMMIT_SHA (see `Checkout`) there are no sources to
             // test, and the build is already NOT_BUILT.
+            when { expression { env.SUPERSEDED != 'true' } }
+            steps {
+                sh '''
+                    set -eu
+
+                    tree="$GRR_ROOT/grr_seqpipe"
+                    resolved="$(readlink -e "$tree" || true)"
+                    if [ -z "$resolved" ]; then
+                        echo "GRR not synced on this node yet: grr_seqpipe" >&2
+                        echo "  ($tree does not resolve -- grr-sync has" >&2
+                        echo "   not published this repo on this agent;" >&2
+                        echo "   see seqpipe/infra#71)" >&2
+                        exit 1
+                    fi
+                    # Accept EITHER manifest name: gain's directory GRR
+                    # loader (fsspec_protocol.py load_contents) tries
+                    # .CONTENTS.json.gz first and falls back to the
+                    # uncompressed .CONTENTS.json.
+                    if [ ! -f "$tree/.CONTENTS.json.gz" ] \
+                       && [ ! -f "$tree/.CONTENTS.json" ]; then
+                        echo "GRR not synced on this node yet: grr_seqpipe" >&2
+                        echo "  ($resolved has no .CONTENTS manifest --" >&2
+                        echo "   tree present but incomplete)" >&2
+                        exit 1
+                    fi
+                    echo "OK: grr_seqpipe -> $resolved"
+                '''
+            }
+        }
+
+        stage('Build image') {
             when { expression { env.SUPERSEDED != 'true' } }
             steps {
                 // Build from the repo root so the workspace manifests and
@@ -201,23 +280,20 @@ pipeline {
             when { expression { env.SUPERSEDED != 'true' } }
             steps {
                 sh '''
-                    mkdir -p "${GRR_CACHE_DIR}"
                     # The image WORKDIR is /workspace/core, so tests/integration
-                    # resolves and the checked-in grr-seqpipe definition is found
-                    # relative to the test file.
+                    # resolves relative to it.
                     #
-                    # CURL_CA_BUNDLE: pysam/libcurl needs a CA bundle it can find
-                    # to open the genome over https; point it at the image's
-                    # system bundle.
-                    #
-                    # Single-threaded (no -n): the first cold build populates the
-                    # shared cache, and parallel workers would race to write the
-                    # same resource.
+                    # The grr_seqpipe bind resolves the atomic-publish symlink
+                    # (<root>/grr_seqpipe -> <root>/grr_seqpipe.<sha>) on the
+                    # host at container start, so a sync landing mid-build
+                    # cannot swap files under the suite -- the old snapshot is
+                    # retained for a window (grr-sync#20). Mounted read-only;
+                    # GRR_INTEGRATION_DIR makes the grr_seqpipe fixture read it
+                    # as a directory repo instead of the http one.
                     docker run --rm \
-                        -v "${GRR_CACHE_DIR}:${GRR_CACHE_DIR}" \
+                        -v "${GRR_ROOT}/grr_seqpipe:/grr/grr_seqpipe:ro" \
                         -v "$PWD/reports/integration:/reports" \
-                        -e GRR_INTEGRATION_CACHE_DIR="${GRR_CACHE_DIR}" \
-                        -e CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+                        -e GRR_INTEGRATION_DIR=/grr/grr_seqpipe \
                         ${IMAGE_TAG} \
                         sh -c '
                             set +e
