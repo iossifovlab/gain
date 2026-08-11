@@ -11,14 +11,7 @@ from gain.genomic_resources.repository import (
 )
 from gain.genomic_resources.score_implementation import ScoreImplementationBase
 
-from .conftest import GLOBAL_ARTIFACTS
-
-
-def snapshot_globals(path: pathlib.Path) -> dict[str, bytes]:
-    return {
-        artifact: (path / artifact).read_bytes()
-        for artifact in GLOBAL_ARTIFACTS
-    }
+from .conftest import snapshot_globals
 
 
 def touch_resource_config(path: pathlib.Path, resource_id: str) -> None:

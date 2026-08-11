@@ -293,6 +293,17 @@ verifying nothing and writing nothing inside any resource directory.
 A resource without a committed manifest is left out of the index,
 reported by id, and fails the ``repo-index`` run.
 
+A ``repo-*`` command runs on an empty repository too, and publishes
+there exactly the artifacts listed above — so after deleting the last
+resource of a repository, ``repo-repair`` (or ``repo-index``) leaves
+none of the artifacts it publishes still advertising it. Each command
+still settles only its own, exactly as on a repository that has
+resources in it; ``repo-fix-histograms`` republishes nothing unless it
+fixed or failed on something. Note that a search index rebuilt with no
+resource in it holds no contents at all, so searching that repository
+reports the index as unavailable rather than answering that nothing
+matched.
+
 Options:
 
 .. list-table::
