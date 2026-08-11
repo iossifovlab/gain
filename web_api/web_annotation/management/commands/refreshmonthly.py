@@ -40,15 +40,12 @@ class Command(BaseCommand):
         with transaction.atomic():
             for user_quota in UserQuota.objects.all():
                 user_quota.reset_monthly()
-                user_quota.save()
 
             for anonymous_quota in AnonymousUserQuota.objects.all():
                 anonymous_quota.reset_monthly()
-                anonymous_quota.save()
 
             for session_quota in SessionQuota.objects.all():
                 session_quota.reset_monthly()
-                session_quota.save()
 
             MonthlyQuotaRefreshLog.objects.create()
 
