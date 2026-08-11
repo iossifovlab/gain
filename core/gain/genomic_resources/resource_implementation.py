@@ -11,7 +11,6 @@ from cerberus import Validator
 from gain import logging
 from gain.task_graph.graph import TaskDesc
 from gain.templates import get_template
-from gain.templates.markdown_support import render_markdown as markdown
 from gain.utils.helpers import convert_size
 
 from .dvc import is_dvc_sidecar
@@ -421,7 +420,6 @@ class InfoImplementationMixin:
         template_data = self.get_template_data()
         return get_template(self.template_name).render(
             resource=self.resource,
-            markdown=markdown,
             data=template_data,
             base="resource_template.jinja",
             styles_template=self.styles_template_name,
@@ -432,7 +430,6 @@ class InfoImplementationMixin:
         template_data = self.get_statistics_template_data()
         return get_template(self.template_name).render(
             resource=self.resource,
-            markdown=markdown,
             data=template_data,
             base="statistics_template.jinja",
             styles_template=self.styles_template_name,

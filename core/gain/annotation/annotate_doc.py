@@ -17,7 +17,6 @@ from gain.genomic_resources.genomic_context import (
 from gain.genomic_resources.genomic_scores import GenomicScore
 from gain.genomic_resources.repository import GenomicResource
 from gain.templates import get_template
-from gain.templates.markdown_support import render_markdown as markdown
 from gain.utils.verbosity_configuration import VerbosityConfiguration
 
 logger = logging.getLogger("annotate_doc")
@@ -64,7 +63,6 @@ def cli(raw_args: list[str] | None = None) -> None:
     template = get_template("annotate_doc_pipeline_template.jinja")
     html_doc = template.render(pipeline=pipeline,
                                pipeline_path=pipeline_path,
-                               markdown=markdown,
                                res_url=make_resource_url,
                                hist_url=make_histogram_url)
     if args.output:

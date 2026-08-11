@@ -17,7 +17,6 @@ from gain.genomic_resources.resource_implementation import (
 )
 from gain.task_graph.graph import TaskDesc
 from gain.templates import get_template
-from gain.templates.markdown_support import render_markdown as markdown
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +128,6 @@ class AnnotationPipelineImplementation(
         return {
             "content": doc_template.render(
                 pipeline=self.pipeline,
-                markdown=markdown,
                 res_url=self._make_resource_url,
                 hist_url=self._make_histogram_url,
             ),

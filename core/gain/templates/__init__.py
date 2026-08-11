@@ -21,6 +21,34 @@ template here is named ``*.jinja``, HTML and Markdown alike.
 
 Templates supplied by an out-of-tree provider load through this same
 environment and are autoescaped along with the rest.
+
+The environment carries one global, ``markdown``: the Markdown wrapper
+from ``gain.templates.markdown_support``.  It is registered here rather
+than passed by each caller as a render kwarg so that a template calling
+``markdown(...)`` gets the rescuing wrapper whether or not whoever
+renders it thought about the name -- gain#742 was a render site that did
+not (gain#751).  A render kwarg still shadows a global, so a caller that
+passes its own ``markdown=`` wins; no caller in this repo does.
+
+The global serves templates.  The several ``gain`` modules that render a
+resource's ``meta`` description or an ``about.md`` in *Python* -- before
+the result enters a dict some template dumps generically -- still import
+``render_markdown`` and call it themselves; a template global cannot
+reach them.  Those imports are what the architecture fence governs.
+
+``render_markdown`` is imported under its own name deliberately.  The
+wrapper module renders *through* markdown2 and so re-exports the raw
+function under the bare name ``markdown``: binding *that* here would
+leave every template in the stack without the bogus-tag rescue while
+looking correct.  ``core``'s architecture tests refuse that import; they
+read imports, so reaching the same function as an attribute of an
+imported module would pass them -- what catches that is the rescue being
+asserted on rendered output.
+
+The import sits inside ``get_jinja_env`` rather than at module scope so
+that importing ``gain.templates`` does not drag in markdown2 for callers
+that only ever fetch a template: it costs about 10ms, and the annotation
+workers pay module import per spawned process.
 """
 from __future__ import annotations
 
@@ -93,13 +121,20 @@ def _autoescape(template_name: str | None) -> bool:
 def get_jinja_env() -> Environment:
     """Return the singleton GAIn Jinja2 Environment."""
     if _state.env is None:
-        _state.env = Environment(
+        # pylint: disable=import-outside-toplevel
+        from gain.templates.markdown_support import render_markdown
+        env = Environment(
             loader=ChoiceLoader([
                 PackageLoader("gain.templates", "template_files"),
                 _ProviderLoader(),
             ]),
             autoescape=_autoescape,
         )
+        env.globals["markdown"] = render_markdown
+        # Published last, so no caller can reach a half-configured
+        # environment: assigning first and installing the global after
+        # leaves a window where the singleton renders UndefinedError.
+        _state.env = env
     return _state.env
 
 

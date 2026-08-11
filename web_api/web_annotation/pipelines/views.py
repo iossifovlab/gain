@@ -23,7 +23,6 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
 )
 from gain.templates import get_template
-from gain.templates.markdown_support import render_markdown as markdown
 from rest_framework import views
 from rest_framework.request import MultiValueDict
 from rest_framework.views import Request, Response
@@ -426,7 +425,6 @@ class PipelineDoc(AsyncAnnotationBaseView):
         return template.render(
             pipeline=pipeline,
             pipeline_path=None,
-            markdown=markdown,
             res_url=make_resource_url,
             hist_url=make_histogram_url,
         )

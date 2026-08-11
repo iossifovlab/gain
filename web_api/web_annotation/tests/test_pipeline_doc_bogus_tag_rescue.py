@@ -161,7 +161,8 @@ def test_prose_after_a_bogus_tag_survives_in_annotator_documentation(
 ) -> None:
     """The rescue reaches the template's second ``markdown(...)`` sink.
 
-    Both sinks read the same ``markdown=`` render kwarg today, so they
+    Both sinks resolve the same ``markdown`` global from the shared Jinja
+    environment (gain#751; before that, the same render kwarg), so they
     cannot diverge -- but that is a property of the current wiring, not a
     guarantee.  gain#623's first review round found exactly the shape this
     guards: a change that converted some call sites and left another.
