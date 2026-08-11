@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import logging
 import pathlib
+import shutil
 from typing import Any
 
 import pytest
@@ -73,6 +74,19 @@ def test_repo_index_skips_a_manifestless_resource_without_writing_it(
     contents = (repaired_repo / GR_CONTENTS_FILE_NAME[:-3]).read_text()
     assert "sub/one" in contents
     assert "sub/naked" not in contents
+
+
+def test_repo_index_republishes_after_the_last_resource_is_deleted(
+    repaired_repo: pathlib.Path,
+) -> None:
+    shutil.rmtree(repaired_repo / "sub")
+    assert "sub/one" in (
+        repaired_repo / GR_CONTENTS_FILE_NAME[:-3]).read_text()
+
+    cli_manage(["repo-index", "-R", str(repaired_repo)])
+
+    contents = (repaired_repo / GR_CONTENTS_FILE_NAME[:-3]).read_text()
+    assert "sub/one" not in contents
 
 
 def test_repo_index_blames_the_resource_the_fts_walk_failed_on(

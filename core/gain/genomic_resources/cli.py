@@ -47,6 +47,7 @@ from gain.genomic_resources.repository import (
     GR_CONTENTS_FILE_NAME,
     GR_INDEX_FILE_NAME,
     GR_LEGACY_CONTENTS_FILE_NAME,
+    GR_MANIFEST_FILE_NAME,
     GR_SQLITE_META_FILE_NAME,
     GR_STATISTICS_INDEX_FILE_NAME,
     GenomicResource,
@@ -713,12 +714,11 @@ def _run_repo_index_command(
     assert isinstance(proto, FsspecReadWriteProtocol)
     skipped: set[str] = set()
     for res in proto.get_all_resources():
-        try:
-            proto.load_manifest(res)
-        except FileNotFoundError:
-            # The absence IS the whole story; a traceback of the failed
-            # open would only bury it, hence `error`, not `exception`.
-            logger.error(  # noqa: TRY400
+        # An existence probe, not a load: the repository walk has
+        # already parsed every manifest that exists, and the loaders
+        # would parse each a second time.
+        if not proto.file_exists(res, GR_MANIFEST_FILE_NAME):
+            logger.error(
                 "not publishing <%s> in the repository index: "
                 "it has no manifest", res.resource_id)
             skipped.add(res.resource_id)
@@ -979,8 +979,9 @@ def _run_stats_core(
         **kwargs: bool | int | str) -> CommandResult:
     """Build the selected resources' statistics and refresh their manifests.
 
-    Writes only inside the selected resources' directories; publishing
-    the repository-global artifacts is its callers' decision.
+    Writes inside the selected resources' directories (and task logs
+    under the repository's ``.task-log``); publishing the
+    repository-global artifacts is its callers' decision.
     """
     dry_run = cast(bool, kwargs.get("dry_run", False))
     force = cast(bool, kwargs.get("force", False))
@@ -1457,7 +1458,11 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
 
     if command in _REPO_COMMANDS:
         resources = list(proto.get_all_resources())
-        if len(resources) == 0:
+        if len(resources) == 0 and command != "repo-index":
+            # For every other command an empty repository means nothing
+            # to do -- but repo-index publishes the index OF that
+            # emptiness, or a `.CONTENTS` still advertising the last
+            # deleted resource survives it (gain#760).
             logger.info("repository <%s> has no resources", repo_url)
             sys.exit(0)
     elif command in _RESOURCE_COMMANDS:
@@ -1493,10 +1498,11 @@ def _run_management_command(
     command = cast(str, kwargs["command"])
     try:
         if command == "repo-index":
-            # Ahead of the dvc-directory refusal: repo-index writes
-            # nothing inside any resource directory, and a resource the
-            # guard would refuse outright is exactly one it already
-            # skips-and-reports on its own (#373).
+            # Ahead of the dvc-directory refusal: that guard protects
+            # the writes a repair-style command makes inside resource
+            # directories, and repo-index makes none. A dvc-directory
+            # resource is published from its committed manifest like
+            # any other, or skipped-and-reported if it has none (#373).
             return _run_repo_index_command(proto)
         # Before anything is written: a resource GAIn cannot certify fails
         # the command here, where failing it costs nothing, rather than

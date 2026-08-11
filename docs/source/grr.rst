@@ -279,13 +279,16 @@ Commands:
        repository index pages) from the manifests already on disk.
 
 The two scopes differ in more than how resources are selected. A
-``resource-*`` command writes only inside the selected resources'
-directories; the repository-global artifacts — ``.CONTENTS.json[.gz]``,
-the search index and the repository index pages — are left as they
-were, so after it writes anything it notes that the repository index
-is stale. The ``repo-*`` commands republish those artifacts at the end
-of their runs, and ``repo-index`` does *only* that: it rebuilds the
-repository-global artifacts from the manifests already on disk,
+``resource-*`` command writes inside the selected resources'
+directories (plus task logs under ``.task-log``); the repository-global
+artifacts — ``.CONTENTS.json[.gz]``, the search index and the
+repository index pages — are left as they were, so after it writes
+anything it notes that the repository index is stale. The ``repo-*``
+commands republish global artifacts at the end of their runs —
+``repo-repair`` and ``repo-info`` all three, ``repo-stats`` the
+``.CONTENTS`` files and the search index, ``repo-manifest`` the
+``.CONTENTS`` files only — and ``repo-index`` does *only* that: it
+rebuilds all three groups from the manifests already on disk,
 verifying nothing and writing nothing inside any resource directory.
 A resource without a committed manifest is left out of the index,
 reported by id, and fails the ``repo-index`` run.
@@ -367,7 +370,7 @@ The search index
 
 The index is stored at the root of the repository as ``.CONTENTS.sqlite3.gz`` — a gzipped SQLite database holding a single `FTS5 <https://www.sqlite.org/fts5.html>`_ virtual table named ``contents``.
 
-The index is built and refreshed by ``grr_manage repo-index`` (and by the repository-scoped commands, ``grr_manage repo-repair`` among them, at the end of their runs). The rebuild is skipped when the repository contents are unchanged (the index records the md5 of the ``.CONTENTS`` file it was built from), so re-running either command on an untouched repository is cheap.
+The index is built and refreshed by ``grr_manage repo-index`` (and by ``repo-stats``, ``repo-info`` and ``repo-repair`` at the end of their runs). The rebuild is skipped when the repository contents are unchanged (the index records the md5 of the ``.CONTENTS`` file it was built from), so re-running any of these on an untouched repository is cheap.
 
 Indexed fields
 ^^^^^^^^^^^^^^

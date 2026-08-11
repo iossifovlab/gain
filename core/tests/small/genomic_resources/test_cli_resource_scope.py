@@ -82,6 +82,7 @@ def test_resource_repair_leaves_the_repository_globals_untouched(
 def test_resource_repair_ignores_an_unrelated_resource_it_cannot_index(
     settled_repo: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     # A resource-scoped command no longer publishes the FTS index, so a
     # broken resource it never selected cannot fail -- or even be read
@@ -96,9 +97,16 @@ def test_resource_repair_ignores_an_unrelated_resource_it_cannot_index(
     monkeypatch.setattr(ScoreImplementationBase, "collect_index_info", boom)
     touch_resource_config(settled_repo, "sub/one")
 
-    cli_manage([
-        "resource-repair", "-R", str(settled_repo), "-r", "sub/one",
-        "-j", "1"])
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage([
+            "resource-repair", "-R", str(settled_repo), "-r", "sub/one",
+            "-j", "1"])
+
+    assert not any(
+        "<sub/two>" in record.getMessage()
+        for record in caplog.records
+        if record.levelno >= logging.ERROR
+    )
 
 
 def test_a_resource_repair_that_wrote_notes_the_stale_repository_index(

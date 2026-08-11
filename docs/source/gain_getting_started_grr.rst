@@ -147,12 +147,11 @@ nucleotide/dinucleotide composition, and a full inventory of the files that make
 
 .. note::
 
-    ``resource-repair`` writes only inside the resource's own directory.
-    The repository-wide index — the ``.CONTENTS`` files and the
-    repository's ``index.html`` — is published separately by
-    ``grr_manage repo-index``, run from the repository root. Do that
-    once you want the repository as a whole (rather than the single
-    resource) to reflect your changes.
+    ``resource-repair`` does not update the repository-wide index —
+    the ``.CONTENTS`` files and the repository's ``index.html``. Those
+    are published separately by ``grr_manage repo-index``, run from
+    the repository root. Do that once you want the repository as a
+    whole (rather than the single resource) to reflect your changes.
 
 .. figure:: figures/example1_resource.png
   :scale: 80 %
