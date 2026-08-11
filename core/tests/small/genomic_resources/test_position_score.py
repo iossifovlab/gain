@@ -224,7 +224,15 @@ def test_a_walk_of_point_reads_leaves_the_tabix_buffer_pruned(
     table = score.table
     assert isinstance(table, TabixGenomicPositionTable)
 
+    # The claim of the bound is that the buffer does NOT grow with the
+    # walk -- without the drain it reaches the walk's length (200).  On
+    # this walk of point records ``LineBuffer.prune``'s cheap leading pop
+    # keeps the buffer at a record or two, so 64 is not a description of
+    # today's eviction; it is headroom, so that a policy leaning on
+    # amortized compaction -- bounded by ``LineBuffer.COMPACT_FLOOR``, 32
+    # today, see the rationale in
+    # test_prune_evicts_the_dead_records_a_wide_one_spans -- still passes,
+    # while a buffer that scales with the reads cannot.
     for pos in range(1, 201):
         assert score.fetch_position_scores("chr1", pos) == [0.1]
-
-    assert len(table.buffer) <= 2
+        assert len(table.buffer) <= 64

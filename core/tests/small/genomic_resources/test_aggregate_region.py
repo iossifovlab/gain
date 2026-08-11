@@ -11,6 +11,7 @@ helper at all.
 from __future__ import annotations
 
 import pathlib
+from collections.abc import Generator
 
 import pytest
 from gain.genomic_resources.genomic_scores import (
@@ -95,6 +96,41 @@ def test_it_agrees_with_fetch_region_weighted_values(
         )
         assert wide.aggregate_region("1", 10, 14, ["s"]) == [
             pytest.approx(expected)]
+
+
+def test_a_record_the_query_clips_to_nothing_is_not_aggregated(
+    wide: PositionScore, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-positive weight never reaches an aggregator (gain#639).
+
+    ``fetch_region_segment_scores`` deliberately yields an out-of-region
+    record through (gain#553, ADR 0008), and clipping it inverts its span
+    -- or zeroes it, for a record starting one past the query.
+    ``aggregate_region`` carries its OWN copy of the skip
+    ``fetch_region_weighted_values`` applies -- the agreement test above
+    cannot see a symmetric removal from both, so each copy gets its own
+    pin.  Without it the dead record's value would count a negative number
+    of times; ``mean`` catches that, and ``max`` -- which registers a value
+    however small its weight -- catches the zero-span record a skip
+    weakened to ``< 0`` would admit.
+    """
+    def outside(
+        chrom: str,
+        pos_begin: int | None = None,
+        pos_end: int | None = None,
+        scores: list[str] | None = None,
+    ) -> Generator[tuple[int, int, list[float]], None, None]:
+        # a [20, 25] record, clipped by the region read to a [10, 16] query
+        yield (20, 16, [9.9])
+        # a [17, ...] record, clipped to a ZERO span
+        yield (17, 16, [5.5])
+        yield (10, 14, [1.0])
+
+    monkeypatch.setattr(wide, "fetch_region_segment_scores", outside)
+
+    with wide:
+        assert wide.aggregate_region("1", 10, 16, ["s", ("s", "max")]) == [
+            pytest.approx(1.0), 1.0]
 
 
 def test_an_empty_region_lets_each_aggregator_answer(
