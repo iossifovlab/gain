@@ -704,7 +704,7 @@ def _run_repo_index_command(
         proto: ReadWriteRepositoryProtocol) -> CommandResult:
     """Publish the repository-global artifacts from on-disk manifests.
 
-    Builds ``.CONTENTS.json[.gz]``, then the FTS index, then the
+    Builds ``.CONTENTS.json.gz``, then the FTS index, then the
     repository index pages.  Nothing is verified and nothing is written
     inside any resource directory: a resource without a committed
     manifest is left out of all three, reported by id, and fails the
@@ -1098,7 +1098,7 @@ def _run_stats_core(
 def _publish_repository_contents(
         proto: ReadWriteRepositoryProtocol,
         result: CommandResult) -> CommandResult:
-    """Publish ``.CONTENTS.json[.gz]`` and the FTS index.
+    """Publish ``.CONTENTS.json.gz`` and the FTS index.
 
     The FTS index walks the whole repository, so the ids it returns may
     name resources the calling command did not select -- they are reported

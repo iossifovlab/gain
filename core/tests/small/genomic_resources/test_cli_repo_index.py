@@ -11,7 +11,7 @@ from gain.genomic_resources.repository import (
 )
 from gain.genomic_resources.score_implementation import ScoreImplementationBase
 
-from .conftest import CONTENTS_JSON_FILE_NAME, GLOBAL_ARTIFACTS
+from .conftest import GLOBAL_ARTIFACTS, read_published_contents
 
 
 def test_repo_index_rebuilds_the_repository_globals(
@@ -24,7 +24,7 @@ def test_repo_index_rebuilds_the_repository_globals(
 
     for artifact in GLOBAL_ARTIFACTS:
         assert (settled_repo / artifact).exists(), artifact
-    contents = (settled_repo / CONTENTS_JSON_FILE_NAME).read_text()
+    contents = read_published_contents(settled_repo)
     assert "sub/one" in contents
 
 
@@ -40,7 +40,7 @@ def test_repo_index_skips_a_manifestless_resource_without_writing_it(
 
     assert exit_info.value.code == 1
     assert not (naked_dir / ".MANIFEST").exists()
-    contents = (settled_repo / CONTENTS_JSON_FILE_NAME).read_text()
+    contents = read_published_contents(settled_repo)
     assert "sub/one" in contents
     assert "sub/naked" not in contents
 
@@ -49,11 +49,11 @@ def test_repo_index_republishes_after_the_last_resource_is_deleted(
     settled_repo: pathlib.Path,
 ) -> None:
     shutil.rmtree(settled_repo / "sub")
-    assert "sub/one" in (settled_repo / CONTENTS_JSON_FILE_NAME).read_text()
+    assert "sub/one" in read_published_contents(settled_repo)
 
     cli_manage(["repo-index", "-R", str(settled_repo)])
 
-    contents = (settled_repo / CONTENTS_JSON_FILE_NAME).read_text()
+    contents = read_published_contents(settled_repo)
     assert "sub/one" not in contents
 
 

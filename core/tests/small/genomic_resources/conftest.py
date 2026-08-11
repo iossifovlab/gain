@@ -253,19 +253,23 @@ def resource(tmp_path: pathlib.Path) -> GenomicResource:
     return proto.get_resource(BASIC_RESOURCE_ID)
 
 
-#: ``.CONTENTS.json``: the uncompressed twin of ``GR_CONTENTS_FILE_NAME``.
-CONTENTS_JSON_FILE_NAME = GR_CONTENTS_FILE_NAME.removesuffix(".gz")
-
 #: Every repository-global artifact the scope contract of gain#760 is
 #: about: what a `repo-index` publishes and a `resource-*` command must
 #: leave untouched. Shared by the two modules pinning that contract from
-#: its two sides, so neither can drift to a subset.
+#: its two sides, so neither can drift to a subset. The uncompressed
+#: ``.CONTENTS.json`` is not here: since #758 it is a legacy artifact
+#: nothing publishes.
 GLOBAL_ARTIFACTS = (
     GR_CONTENTS_FILE_NAME,
-    CONTENTS_JSON_FILE_NAME,
     GR_SQLITE_META_FILE_NAME,
     GR_INDEX_FILE_NAME,
 )
+
+
+def read_published_contents(repo_path: pathlib.Path) -> str:
+    """The text of the repository's published (gzipped) contents index."""
+    return gzip.decompress(
+        (repo_path / GR_CONTENTS_FILE_NAME).read_bytes()).decode("utf8")
 
 
 @pytest.fixture(scope="session")

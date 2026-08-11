@@ -281,7 +281,7 @@ Commands:
 The two scopes differ in more than how resources are selected. A
 ``resource-*`` command writes inside the selected resources'
 directories (plus task logs under ``.task-log``); the repository-global
-artifacts — ``.CONTENTS.json[.gz]``, the search index and the
+artifacts — ``.CONTENTS.json.gz``, the search index and the
 repository index pages — are left as they were, so after it writes
 anything it notes that the repository index is stale. The ``repo-*``
 commands republish global artifacts at the end of their runs —
@@ -576,7 +576,7 @@ The generated files should also be added to Git:
 
     git add my_positionscore/.MANIFEST
     git add my_positionscore/histograms/
-    git add .CONTENTS.json .CONTENTS.json.gz .CONTENTS.sqlite3.gz
+    git add .CONTENTS.json.gz .CONTENTS.sqlite3.gz
     git commit -m "Add my_positionscore generated metadata"
     git push
 
@@ -613,7 +613,7 @@ This updates the resource manifest and any derived metadata that depend on the c
 
     git add my_positionscore/genomic_resource.yaml
     git add my_positionscore/.MANIFEST
-    git add .CONTENTS.json .CONTENTS.json.gz .CONTENTS.sqlite3.gz
+    git add .CONTENTS.json.gz .CONTENTS.sqlite3.gz
     git commit -m "Update my_positionscore metadata"
     git push
 
