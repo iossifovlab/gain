@@ -46,6 +46,7 @@ from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
     GR_INDEX_FILE_NAME,
+    GR_LEGACY_CONTENTS_FILE_NAME,
     GR_SQLITE_META_FILE_NAME,
     GR_STATISTICS_INDEX_FILE_NAME,
     GenomicResource,
@@ -134,8 +135,8 @@ def _add_repository_resource_parameters_group(
         default=None,
         help="URL to the genomic resources repository. If not specified "
         "the tool assumes a local file system repository and starts looking "
-        "for .CONTENTS.json file from the current working directory up to the "
-        "root directory. If found the directory is assumed for root "
+        "for .CONTENTS.json.gz file from the current working directory up to "
+        "the root directory. If found the directory is assumed for root "
         "repository directory; otherwise error is reported.")
     group.add_argument(
         "--grr", "--definition", "-g", type=str,
@@ -255,14 +256,14 @@ def _run_repo_init_command(**kwargs: str) -> None:
     if repository is None:
         repo_url = find_directory_with_a_file(GR_CONTENTS_FILE_NAME)
         if repo_url is None:
-            repo_url = find_directory_with_a_file(GR_CONTENTS_FILE_NAME[:-3])
+            repo_url = find_directory_with_a_file(GR_LEGACY_CONTENTS_FILE_NAME)
     else:
         assert repository is not None
         repo_url = find_directory_with_a_file(
             GR_CONTENTS_FILE_NAME, repository)
         if repo_url is None:
             repo_url = find_directory_with_a_file(
-                GR_CONTENTS_FILE_NAME[:-3], repository)
+                GR_LEGACY_CONTENTS_FILE_NAME, repository)
 
     if repo_url is not None:
         logger.error(
@@ -527,7 +528,7 @@ def _build_content_file(
     proto: FsspecReadWriteProtocol,
     failed: frozenset[str] = frozenset(),
 ) -> None:
-    """Build CONTENTS.json.
+    """Build CONTENTS.json.gz.
 
     ``failed`` names resources this run could not verify; they are
     published from the manifest they already had, or left out if they
@@ -1441,7 +1442,7 @@ def _get_repo_url(args: argparse.Namespace) -> str:
     if repo_url is None:
         repo_url = find_directory_with_a_file(GR_CONTENTS_FILE_NAME)
         if repo_url is None:
-            repo_url = find_directory_with_a_file(GR_CONTENTS_FILE_NAME[:-3])
+            repo_url = find_directory_with_a_file(GR_LEGACY_CONTENTS_FILE_NAME)
         if repo_url is None:
             logger.error(
                 "Can't find repository starting from: %s", os.getcwd())

@@ -102,7 +102,7 @@ def test_a_child_with_no_index_is_skipped_rather_than_fatal(
 ) -> None:
     """A freshly checked-out GRR has no index; that must not end the search.
 
-    ``.CONTENTS.json`` with no ``.CONTENTS.sqlite3.gz`` is the normal shape
+    ``.CONTENTS.json.gz`` with no ``.CONTENTS.sqlite3.gz`` is the normal shape
     of a checked-out GRR, so a group is one repair away from this at any
     time.
     """

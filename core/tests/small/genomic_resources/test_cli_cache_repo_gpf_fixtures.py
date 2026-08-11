@@ -4,7 +4,13 @@ fixtures (``repo/`` + ``annotation.yaml``) copied from gpf-core. Complements
 the programmatic-fixture tests in ``test_cli_cache_repo.py``; this file
 exercises a multi-annotator pipeline (liftover, normalize_allele, two
 position_score annotators) against an on-disk directory GRR with a
-``.CONTENTS.json`` manifest, which the programmatic-fixture file does not."""
+manifest, which the programmatic-fixture file does not.
+
+That checked-in GRR carries an uncompressed ``.CONTENTS.json`` and no
+``.CONTENTS.json.gz``, which makes it the live coverage of the read-side
+fallback in ``load_contents``. `grr_manage` stopped *writing* the
+uncompressed index (#758); reading one an older release left behind is a
+separate promise, and this fixture is what keeps it."""
 import logging
 import pathlib
 

@@ -48,6 +48,7 @@ from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
     GR_INDEX_FILE_NAME,
+    GR_LEGACY_CONTENTS_FILE_NAME,
     GR_MANIFEST_FILE_NAME,
     GR_SQLITE_META_FILE_NAME,
     GenomicResource,
@@ -957,7 +958,11 @@ class FsspecReadOnlyProtocol(
             self._fetch_url, GR_CONTENTS_FILE_NAME)
         compression: str | None = "gzip"
         if not self.filesystem.exists(content_filename):
-            content_filename = content_filename[:-3]
+            # Not a dead branch: nothing has written this since #758,
+            # but repositories an older release published still carry
+            # one and no other file describes them.
+            content_filename = os.path.join(
+                self._fetch_url, GR_LEGACY_CONTENTS_FILE_NAME)
             compression = None
 
         data = self._read_fetch_file(content_filename, "rt", compression)
@@ -969,7 +974,10 @@ class FsspecReadOnlyProtocol(
         content_filename = os.path.join(
             self._fetch_url, GR_CONTENTS_FILE_NAME)
         if not self.filesystem.exists(content_filename):
-            content_filename = content_filename[:-3]
+            # See `load_contents`: the legacy index is still the only
+            # description an older repository has.
+            content_filename = os.path.join(
+                self._fetch_url, GR_LEGACY_CONTENTS_FILE_NAME)
 
         data = self._read_fetch_file(content_filename, "rb", None)
 
@@ -2074,12 +2082,16 @@ class FsspecReadWriteProtocol(
     def build_content_file(
         self, failed: frozenset[str] = frozenset(),
     ) -> list[dict[str, Any]]:
-        """Build the content of the repository (i.e '.CONTENTS.json' file).
+        """Build the content of the repository (i.e '.CONTENTS.json.gz').
 
         ``failed`` names resources this run could not verify; each is
         published from the manifest it already had, or left out if it
         never had one, so a failed run never rebuilds a manifest from
         scratch and poisons the contents with it (#373).
+
+        Only the gzipped index is written. An uncompressed
+        ``.CONTENTS.json`` left by an older release is reported rather
+        than deleted (#758).
         """
         content = []
         for res in self.get_all_resources():
@@ -2116,15 +2128,19 @@ class FsspecReadWriteProtocol(
         with self.filesystem.open(content_filepath, "wb") as outfile:
             outfile.write(gz)
 
-        with self.filesystem.open(
-                content_filepath[:-3],
-                "wt", encoding="utf8") as outfile:
-            json.dump(content, outfile, indent=2, sort_keys=True)
+        # Left where it is rather than deleted: in the GRRs that carry
+        # one it is a tracked file, and a publish has no business
+        # authoring that deletion in someone else's git tree.
+        abandoned = os.path.join(self.url, GR_LEGACY_CONTENTS_FILE_NAME)
+        if self.filesystem.exists(abandoned):
+            logger.warning(
+                "%s is stale: the repository index is published gzipped "
+                "only, so whatever an older release left there has just "
+                "been left behind by this publish. Only %s is maintained; "
+                "the stale file can be deleted.",
+                abandoned, GR_CONTENTS_FILE_NAME)
 
         return content
-
-    def get_content_file_path(self) -> str:
-        return os.path.join(self.url, GR_CONTENTS_FILE_NAME[:-3])
 
     def build_index_info(
         self,

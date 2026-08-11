@@ -53,7 +53,7 @@ def _search(
     repository at once, and none deserves a traceback: a query the grammar
     cannot parse, a term FTS5 cannot read as a search expression, and a
     `-s`/`-t` filter that no repository has an index to apply. The last is
-    the normal shape of a checked-out GRR -- `.CONTENTS.json` and no
+    the normal shape of a checked-out GRR -- `.CONTENTS.json.gz` and no
     `.CONTENTS.sqlite3.gz` -- and its own message names the way out.
     """
     try:

@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import argparse
+import gzip
 import logging
 import os
 import pathlib
@@ -16,6 +17,7 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
+    GR_LEGACY_CONTENTS_FILE_NAME,
     GR_MANIFEST_FILE_NAME,
 )
 from gain.genomic_resources.score_implementation import ScoreImplementationBase
@@ -789,3 +791,122 @@ def test_repo_repair_repairs_the_healthy_resources_around_a_malformed_one(
                 / "histogram_phastCons.json").is_file()
         assert (path / healthy / "statistics" / "stats_hash").is_file()
         assert (path / healthy / "index.html").is_file()
+
+
+# ---------------------------------------------------------------------------
+# The repository index is published gzipped only (#758)
+# ---------------------------------------------------------------------------
+
+
+OLDER_RELEASE_INDEX = b"written by an older release"
+
+
+@pytest.fixture
+def healthy_grr(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> pathlib.Path:
+    """A GRR of one healthy position score -- enough to publish an index."""
+    path = tmp_path_factory.mktemp("cli_repair_contents_grr")
+    a_grr().with_resource("one", _healthy_position_score()).build_repo(path)
+    return path
+
+
+@pytest.fixture
+def grr_with_an_abandoned_index(healthy_grr: pathlib.Path) -> pathlib.Path:
+    """The same GRR, carrying an index an older release left behind."""
+    (healthy_grr / GR_LEGACY_CONTENTS_FILE_NAME).write_bytes(
+        OLDER_RELEASE_INDEX)
+    return healthy_grr
+
+
+def test_a_publish_writes_only_the_compressed_repository_index(
+    healthy_grr: pathlib.Path,
+) -> None:
+    """The uncompressed twin of the index is not written at all.
+
+    It held a second copy of the same JSON, and it grows without bound on
+    large GRRs -- 2.1MB against the 298KB of the gzipped one on the
+    production `grr` (#758).
+    """
+    cli_manage(["repo-repair", "-R", str(healthy_grr), "-j", "1"])
+
+    # Paired on purpose: the presence assertion is what stops the absence
+    # one from passing vacuously on a repository that published no index
+    # at all.
+    assert (healthy_grr / GR_CONTENTS_FILE_NAME).is_file()
+    assert not (healthy_grr / GR_LEGACY_CONTENTS_FILE_NAME).exists()
+
+
+def test_a_publish_leaves_an_abandoned_index_alone(
+    grr_with_an_abandoned_index: pathlib.Path,
+) -> None:
+    """One an older release wrote is abandoned, not deleted.
+
+    In the GRRs that carry one it is a tracked file, so deleting it would
+    have the publish author a deletion commit in someone else's git tree
+    as a side effect (#758).
+    """
+    path = grr_with_an_abandoned_index
+
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
+
+    assert (path / GR_LEGACY_CONTENTS_FILE_NAME).read_bytes() \
+        == OLDER_RELEASE_INDEX
+
+
+def test_a_publish_reports_an_abandoned_index(
+    grr_with_an_abandoned_index: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Abandoning it quietly would leave a trap; the publish names it.
+
+    From this release on it answers with whatever the repository looked
+    like the last time an older release wrote it, and nothing refreshes
+    it -- so the run says where it is, once (#758).
+    """
+    path = grr_with_an_abandoned_index
+
+    with caplog.at_level(
+            logging.WARNING,
+            logger="gain.genomic_resources.fsspec_protocol"):
+        cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
+
+    # Matched on the full path, not the bare name: `.CONTENTS.json` is a
+    # substring of `.CONTENTS.json.gz`, so a message naming only the file
+    # that IS maintained would otherwise satisfy this.
+    reported = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+        and str(path / GR_LEGACY_CONTENTS_FILE_NAME) in record.getMessage()
+    ]
+
+    # Once -- the index is a repository-wide artefact, so a per-resource
+    # nag would scale the warning with the size of the GRR.
+    assert len(reported) == 1, reported
+    assert "stale" in reported[0]
+
+
+def test_a_repository_with_only_a_legacy_index_is_still_readable(
+    healthy_grr: pathlib.Path,
+) -> None:
+    """Not writing the uncompressed index is not refusing to read one.
+
+    Every GRR an older release published carries one and nothing has
+    replaced it, so the fallback in ``load_contents`` is what keeps those
+    repositories readable at all. Pinned here rather than left to ride on
+    the format of a checked-in fixture, which a regeneration would
+    silently change (#758).
+    """
+    path = healthy_grr
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
+    published = (path / GR_CONTENTS_FILE_NAME).read_bytes()
+
+    # Given a repository as an older release left it: uncompressed only
+    (path / GR_LEGACY_CONTENTS_FILE_NAME).write_bytes(
+        gzip.decompress(published))
+    (path / GR_CONTENTS_FILE_NAME).unlink()
+
+    contents = build_filesystem_test_protocol(path).load_contents()
+
+    assert [entry["id"] for entry in contents] == ["one"]
