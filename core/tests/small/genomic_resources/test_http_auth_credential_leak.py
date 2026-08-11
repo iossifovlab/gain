@@ -634,6 +634,90 @@ def test_fetch_failure_keeps_credential_in_fetch_url() -> None:
     assert _SECRET in proto._fetch_url
 
 
+def test_open_raw_file_fetch_failure_does_not_leak_url_credential() -> None:
+    # gain#629 — ``open_raw_file`` hands the credential-bearing resource file
+    # url straight to fsspec; a failing open (port 1 refuses immediately) must
+    # surface with the userinfo stripped from the message, the traceback and
+    # every exception linked via ``__cause__``/``__context__``.
+    proto = build_fsspec_protocol(
+        "i629-open", f"https://alice:{_SECRET}@127.0.0.1:1/path")
+    resource = GenomicResource("sub/res", (1, 0), proto, {})
+    with pytest.raises(OSError) as excinfo:
+        proto.open_raw_file(resource, "data.txt")
+    exc = excinfo.value
+    tb = "".join(traceback.format_exception(exc))
+    assert _SECRET not in str(exc)
+    assert "alice" not in str(exc)
+    assert _SECRET not in tb
+    for linked in _walk_exception_chain(exc):
+        assert _SECRET not in str(linked)
+    # host and path preserved so the error stays diagnosable.
+    assert "127.0.0.1" in str(exc)
+    assert "data.txt" in str(exc)
+
+
+def test_open_raw_file_failure_without_userinfo_is_unchanged() -> None:
+    # A url with no userinfo must propagate the original error untouched —
+    # same type, message still carrying the full url for diagnosability.
+    proto = build_fsspec_protocol("i629-plain", "https://127.0.0.1:1/path")
+    resource = GenomicResource("sub/res", (1, 0), proto, {})
+    with pytest.raises(OSError) as excinfo:
+        proto.open_raw_file(resource, "data.txt")
+    assert "https://127.0.0.1:1/path/sub/res(1.0)/data.txt" \
+        in str(excinfo.value)
+    # ...and it must be the ORIGINAL exception, not a redacted rebuild: the
+    # rebuild path raises outside the ``except`` block, leaving the chain
+    # empty, while fsspec's own error keeps the underlying aiohttp failure
+    # linked via ``__cause__``/``__context__``.
+    exc = excinfo.value
+    assert exc.__cause__ is not None or exc.__context__ is not None
+
+
+def test_sqlite_metadata_db_fetch_failure_does_not_leak_url_credential(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # The repository sqlite metadata DB is fetched from the same
+    # credential-bearing base url. Force the existence probe to succeed so the
+    # failing fsspec open (port 1 refuses) is what surfaces.
+    proto = build_fsspec_protocol(
+        "i629-sqlite", f"https://alice:{_SECRET}@127.0.0.1:1/path")
+    mocker.patch.object(proto.filesystem, "exists", return_value=True)
+    with pytest.raises(OSError) as excinfo:
+        proto.open_repository_metadata()
+    exc = excinfo.value
+    tb = "".join(traceback.format_exception(exc))
+    assert _SECRET not in str(exc)
+    assert _SECRET not in tb
+    for linked in _walk_exception_chain(exc):
+        assert _SECRET not in str(linked)
+    assert "127.0.0.1" in str(exc)
+
+
+def test_sqlite_metadata_db_read_failure_does_not_leak_url_credential(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # The sqlite metadata DB is opened AND read in one call; a failure
+    # surfacing at read time (range-GET after a successful open) embeds the
+    # credential-bearing url just like an open failure and must be redacted
+    # the same way.
+    url = f"https://alice:{_SECRET}@grr.example.com/path/.CONTENTS.sqlite3.gz"
+    proto = build_fsspec_protocol(
+        "i629-sqlite-read", f"https://alice:{_SECRET}@grr.example.com/path")
+    mocker.patch.object(proto.filesystem, "exists", return_value=True)
+    handle = mocker.MagicMock()
+    handle.__enter__.return_value.read.side_effect = FileNotFoundError(url)
+    mocker.patch.object(proto.filesystem, "open", return_value=handle)
+    with pytest.raises(OSError) as excinfo:
+        proto.open_repository_metadata()
+    exc = excinfo.value
+    tb = "".join(traceback.format_exception(exc))
+    assert _SECRET not in str(exc)
+    assert _SECRET not in tb
+    for linked in _walk_exception_chain(exc):
+        assert _SECRET not in str(linked)
+    assert "grr.example.com" in str(exc)
+
+
 def test_cache_worklist_failure_aggregation_redacts_url_credential(
     caplog: pytest.LogCaptureFixture,
     mocker: pytest_mock.MockerFixture,

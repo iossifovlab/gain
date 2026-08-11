@@ -1526,7 +1526,7 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
                     yield res
             return
 
-        conn = self.open_repository_sqlite3_metadata_db()
+        conn = self.open_repository_metadata()
         with conn:
             cursor = conn.cursor()
             if not cursor.execute(
@@ -1713,7 +1713,7 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
             f"open_fasta_file not supported by {type(self).__name__}")
 
     @abc.abstractmethod
-    def open_repository_sqlite3_metadata_db(self) -> apsw.Connection:
+    def open_repository_metadata(self) -> apsw.Connection:
         """Open the db file for repo metadata and return the connection."""
 
     def compute_md5_sum(self, resource: GenomicResource, filename: str) -> str:

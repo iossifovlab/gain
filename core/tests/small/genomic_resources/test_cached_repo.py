@@ -1215,7 +1215,7 @@ def indexed_cache_repository(
     Deliberately separate from ``cache_repository``: that fixture builds an
     in-memory remote with no ``.CONTENTS.sqlite3``, so a *filtered*
     search_resources() raises ValueError in the protocol
-    (`fsspec_protocol.open_repository_sqlite3_metadata_db`) long before it
+    (`fsspec_protocol.open_repository_metadata`) long before it
     reaches the code under test. ``_create_contents_db`` also works against
     real filesystem paths (``proto.root_path``), hence a filesystem remote
     rather than the in-memory one. Building the index into ``cache_repository``

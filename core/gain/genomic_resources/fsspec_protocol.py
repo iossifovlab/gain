@@ -238,20 +238,41 @@ def _fetch_url_form(url: str) -> str:
     return f"{scheme}://{parsed.netloc}{parsed.path}"
 
 
-def _rebuild_error_without_userinfo(exc: BaseException) -> BaseException:
-    """Rebuild ``exc`` with the url userinfo stripped from its message.
+def _rebuild_error_without_userinfo(
+        exc: BaseException, redacted: str) -> BaseException:
+    """Rebuild ``exc`` carrying the ``redacted`` message instead of its own.
 
-    fsspec/aiohttp interpolate the credential-bearing fetch url verbatim into a
-    fetch failure's message (e.g. ``FileNotFoundError(url)``). Return a fresh
-    exception of the same type carrying the userinfo-stripped message so it can
-    propagate/log without leaking the secret; fall back to ``OSError`` for a
-    type that cannot be reconstructed from a single message string.
+    Return a fresh exception of ``exc``'s type so it can propagate/log
+    without leaking the secret its own message carries; fall back to
+    ``OSError`` for a type that cannot be reconstructed from a single
+    message string.
     """
-    redacted = _strip_url_userinfo(str(exc))
     try:
         return type(exc)(redacted)
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         return OSError(redacted)
+
+
+def _run_redacting_userinfo[T](fn: Callable[[], T]) -> T:
+    """Run ``fn``, re-raising any failure with its url userinfo stripped.
+
+    On a fetch failure fsspec/aiohttp embed the credential-bearing fetch url
+    verbatim in the raised message (e.g. ``FileNotFoundError(url)``). Rebuild
+    the error with the url userinfo stripped and raise it OUTSIDE the
+    ``except`` block so no credential-bearing ``__context__``/``__cause__``
+    survives a chain walk. A failure whose message carries no userinfo (the
+    common non-authed case) is propagated unchanged.
+    """
+    reraise: BaseException | None = None
+    try:
+        return fn()
+    except Exception as exc:
+        message = str(exc)
+        redacted = _strip_url_userinfo(message)
+        if redacted == message:
+            raise
+        reraise = _rebuild_error_without_userinfo(exc, redacted)
+    raise reraise
 
 
 def _scan_for_resources(
@@ -933,24 +954,14 @@ class FsspecReadOnlyProtocol(
     ) -> str | bytes:
         """Open+read a fetch-url file, redacting any credential on failure.
 
-        On a fetch failure fsspec/aiohttp embed the credential-bearing
-        ``_fetch_url`` verbatim in the raised message (e.g.
-        ``FileNotFoundError(url)``). Rebuild the error with the url userinfo
-        stripped and raise it OUTSIDE the ``except`` block so no
-        credential-bearing ``__context__``/``__cause__`` survives a chain walk.
-        A failure whose message carries no userinfo (the common non-authed
-        case) is propagated unchanged.
+        ``_run_redacting_userinfo``'s guarantee, covering both the open and
+        the read.
         """
-        reraise: BaseException | None = None
-        try:
+        def open_and_read() -> str | bytes:
             with self.filesystem.open(
                     filepath, mode, compression=compression) as infile:
                 return cast("str | bytes", infile.read())
-        except Exception as exc:
-            if _strip_url_userinfo(str(exc)) == str(exc):
-                raise
-            reraise = _rebuild_error_without_userinfo(exc)
-        raise reraise
+        return _run_redacting_userinfo(open_and_read)
 
     def load_contents(self) -> list[dict[str, Any]]:
         """Load the content JSON of the repository."""
@@ -1112,13 +1123,27 @@ class FsspecReadOnlyProtocol(
         if kwargs.get("compression"):
             compression = "gzip"
 
-        return cast(
+        return self._open_fsspec_file(filepath, mode, compression)
+
+    def _open_fsspec_file(
+            self, filepath: str, mode: str,
+            compression: str | None) -> IO:
+        """Open ``filepath`` on the filesystem, redacting a failing url.
+
+        ``_run_redacting_userinfo``'s guarantee, covering the open only.
+        Errors raised later by reads on the RETURNED handle are out of reach
+        from here — the handle escapes to arbitrary callers, and wrapping it
+        would take a proxy object. A caller that opens and reads in one
+        place should use ``_read_fetch_file``, whose redaction covers the
+        read too.
+        """
+        return _run_redacting_userinfo(lambda: cast(
             IO,
             self.filesystem.open(
                 filepath, mode=mode,
-                compression=compression))
+                compression=compression)))
 
-    def open_repository_sqlite3_metadata_db(self) -> apsw.Connection:
+    def open_repository_metadata(self) -> apsw.Connection:
         sqlite_filepath = os.path.join(
             self._fetch_url, GR_SQLITE_META_FILE_NAME)
         if not self.filesystem.exists(sqlite_filepath):
@@ -1127,11 +1152,9 @@ class FsspecReadOnlyProtocol(
                 "Repository contents SQLite metadata DB not found")
 
         connection = apsw.Connection(":memory:")
-        with self.filesystem.open(
-                sqlite_filepath, "rb", compression="gzip") as decompressed_db:
-            raw_db = decompressed_db.read()
-            assert isinstance(raw_db, bytes)
-            connection.deserialize("main", raw_db)
+        raw_db = self._read_fetch_file(sqlite_filepath, "rb", "gzip")
+        assert isinstance(raw_db, bytes)
+        connection.deserialize("main", raw_db)
         return connection
 
     def _get_file_url(self, resource: GenomicResource, filename: str) -> str:
