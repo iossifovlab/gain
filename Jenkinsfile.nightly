@@ -22,9 +22,8 @@
 // broke first.
 
 pipeline {
-    // Same label exclusion the other gain pipelines use — dory's
-    // docker daemon / resource profile doesn't fit our jobs.
-    agent { label '!dory' }
+    // builder = general build agents; deploy targets don't carry it
+    agent { label 'builder' }
 
     options {
         // Generous: a cold master rebuild + e2e + VEP integration
@@ -121,7 +120,7 @@ pipeline {
             // runs, leaving zulipSend without a FilePath context.
             // Same defensive pattern as Jenkinsfile.release's post
             // hooks.
-            node('!dory') {
+            node('builder') {
                 zulipSend(
                     topic: 'nightly',
                     message:

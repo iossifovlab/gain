@@ -234,10 +234,8 @@ boolean branchStillOnRemote() {
 }
 
 pipeline {
-    // Run on any agent except `dory` — its docker daemon /
-    // resource profile doesn't fit the root build's compose
-    // stacks. Other agents are interchangeable.
-    agent { label '!dory' }
+    // builder = general build agents; deploy targets don't carry it
+    agent { label 'builder' }
 
     environment {
         // The one token every shared Docker image tag and compose

@@ -142,7 +142,8 @@ def runFreeThreadedProbe(Map args) {
 }
 
 pipeline {
-    agent { label '!dory' }
+    // builder = general build agents; deploy targets don't carry it
+    agent { label 'builder' }
 
     options {
         // 12 cells x ~10-15 min each, mostly parallelizable but
@@ -379,7 +380,7 @@ pipeline {
             // pipeline-init failure can tear down the outer
             // agent before post runs, leaving zulipSend without
             // a FilePath context.
-            node('!dory') {
+            node('builder') {
                 zulipSend(
                     topic: 'nightly',
                     message:
