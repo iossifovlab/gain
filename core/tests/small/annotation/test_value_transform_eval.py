@@ -84,10 +84,10 @@ def test_evaluates_legitimate_transform(
     assert transform(value) == expected
 
 
-def test_eval_globals_carry_empty_builtins() -> None:
-    # Defense in depth behind the gate: the namespace the compiled expression
+def test_transform_runs_with_empty_builtins() -> None:
+    # Defense in depth behind the gate: the namespace the materialised callable
     # runs in exposes no builtins, so __import__/open/exec are unreachable even
     # if a name ever slipped the whitelist.
-    from gain.annotation.value_transform_eval import _EVAL_GLOBALS
+    transform = compile_value_transform("value")
 
-    assert _EVAL_GLOBALS["__builtins__"] == {}
+    assert transform.__globals__["__builtins__"] == {}

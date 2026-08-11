@@ -40,7 +40,6 @@ MAX_STRING_LENGTH = 256
 # deliberately absent, so ``**`` is rejected.
 _ALLOWED_NODES: tuple[type[ast.AST], ...] = (
     ast.Expression,
-    ast.Load,
     ast.BinOp,
     ast.UnaryOp,
     ast.BoolOp,
@@ -134,12 +133,21 @@ def compile_value_transform(expr: str) -> Callable[[Any], Any]:
         ) from error
 
     _TransformValidator(expr).visit(tree)
-    code = compile(tree, "<value_transform>", "eval")
 
-    def transform(value: Any) -> Any:
-        # The code object was compiled from an expression validated against the
-        # whitelist above, and runs with empty builtins and a single bound name.
-        return eval(  # pylint: disable=eval-used  # noqa: S307
-            code, _EVAL_GLOBALS, {VALUE_NAME: value})
+    # Wrap the validated expression as ``lambda value: <expr>`` and materialise
+    # it once. The body then runs as ``value``-is-a-fast-local on every call,
+    # with empty builtins -- no per-call eval or namespace dict.
+    lambda_node = ast.Expression(ast.Lambda(
+        args=ast.arguments(
+            posonlyargs=[], args=[ast.arg(arg=VALUE_NAME)],
+            kwonlyargs=[], kw_defaults=[], defaults=[]),
+        body=tree.body,
+    ))
+    ast.fix_missing_locations(lambda_node)
+    code = compile(lambda_node, "<value_transform>", "eval")
 
+    # Building the lambda does not run its body; the defaults are fixed and
+    # empty, so this eval only materialises the validated callable.
+    # pylint: disable-next=eval-used
+    transform: Callable[[Any], Any] = eval(code, _EVAL_GLOBALS)  # noqa: S307
     return transform
