@@ -40,18 +40,22 @@ VALUE_NAME = "value"
 MAX_NUMBER = 1_000_000
 MAX_STRING_LENGTH = 256
 
-# Upper bound on the attacker-grounded length (from string literals / ``str``)
-# any sub-expression may produce. ``_check_result_size`` propagates a
-# conservative bound through the tree and rejects the expression if any node
-# exceeds this, closing operator-driven blow-ups the per-literal bounds miss.
-MAX_RESULT_SIZE = 1_000_000
+# The two whole-result caps, each gating one ``_Bound`` field (distinct from
+# the per-literal ``MAX_NUMBER`` / ``MAX_STRING_LENGTH`` above).
+#
+# ``MAX_GROUNDED_SIZE`` bounds the attacker-grounded length (from string
+# literals / ``str``) any sub-expression may produce; ``_check_result_size``
+# propagates a conservative bound through the tree and rejects the expression
+# if any node exceeds this, closing operator-driven blow-ups the per-literal
+# bounds miss.
+MAX_GROUNDED_SIZE = 1_000_000
 
-# Upper bound on a result's total length *including* ``value``'s own text. This
-# is the single-scale allowance -- ``value`` (<= MAX_STRING_LENGTH chars)
-# repeated by one count (<= MAX_NUMBER) -- so ``value * 1000000`` sits at the
-# boundary and passes, while chaining a second factor (``value * 1000 * 1000``)
-# exceeds it and is rejected.
-MAX_STR_LEN = MAX_STRING_LENGTH * MAX_NUMBER
+# ``MAX_VALUE_INCLUSIVE_LEN`` bounds a result's total length *including*
+# ``value``'s own text. It is the single-scale allowance -- ``value``
+# (<= MAX_STRING_LENGTH chars) repeated by one count (<= MAX_NUMBER) -- so
+# ``value * 1000000`` sits at the boundary and passes, while chaining a second
+# factor (``value * 1000 * 1000``) exceeds it and is rejected.
+MAX_VALUE_INCLUSIVE_LEN = MAX_STRING_LENGTH * MAX_NUMBER
 
 # AST nodes permitted anywhere without a dedicated visitor below. ``Pow`` is
 # deliberately absent, so ``**`` is rejected.
@@ -142,10 +146,10 @@ class _Bound(NamedTuple):
     ``grounded_size`` bounds the result length attributable to attacker-supplied
     sequence content -- string/bytes literals, ``str(...)`` output, and their
     concatenations and repetitions. It is the quantity checked against
-    ``MAX_RESULT_SIZE``. Crucially, ``value`` contributes ``0`` to it: ``value``
-    is a bounded, trusted score, so scaling it (``value * 1000000``) is fine,
-    while repeating a literal (``'ab' * 999999``) is not -- even when that
-    literal is laundered through ``or`` / ``min`` / a conditional.
+    ``MAX_GROUNDED_SIZE``. Crucially, ``value`` contributes ``0`` to it:
+    ``value`` is a bounded, trusted score, so scaling it (``value * 1000000``)
+    is fine, while repeating a literal (``'ab' * 999999``) is not -- even when
+    that literal is laundered through ``or`` / ``min`` / a conditional.
 
     ``str_len`` bounds the result length *including* ``value``'s own text; it is
     never capped directly (that would reject ``value * 1000000``) but feeds the
@@ -160,6 +164,15 @@ class _Bound(NamedTuple):
     str_len: float
     magnitude: float
     may_num: bool
+
+
+def _scalar(magnitude: float = 1.0) -> _Bound:
+    """A numeric result: grounds nothing, value-inclusive length 1."""
+    return _Bound(0, 1, magnitude, may_num=True)
+
+
+# A construct we cannot bound; fail closed so any use of it is rejected.
+_UNBOUNDED = _Bound(math.inf, math.inf, math.inf, may_num=True)
 
 
 # printf conversion: %[flags][width][.precision]conv, width/precision a number
@@ -192,9 +205,9 @@ def _bound(node: ast.AST) -> _Bound:
         if isinstance(value, str):
             return _Bound(len(value), len(value), 0, may_num=False)
         if isinstance(value, bool) or value is None:
-            return _Bound(0, 1, 1, may_num=True)
+            return _scalar()
         if isinstance(value, (int, float)):
-            return _Bound(0, 1, abs(value), may_num=True)
+            return _scalar(abs(value))
         return _Bound(0, 1, 0, may_num=False)
 
     if isinstance(node, ast.Name):
@@ -202,14 +215,14 @@ def _bound(node: ast.AST) -> _Bound:
             # A bounded, trusted score: no attacker-grounded content, but its
             # own text is at most MAX_STRING_LENGTH.
             return _Bound(0, MAX_STRING_LENGTH, MAX_NUMBER, may_num=True)
-        return _Bound(0, 1, math.inf, may_num=True)
+        return _scalar(math.inf)
 
     if isinstance(node, ast.BinOp):
         return _bound_binop(node)
 
     if isinstance(node, ast.UnaryOp):
         if isinstance(node.op, ast.Not):
-            return _Bound(0, 1, 1, may_num=True)
+            return _scalar()
         return _bound(node.operand)
 
     if isinstance(node, (ast.BoolOp, ast.IfExp)):
@@ -218,13 +231,13 @@ def _bound(node: ast.AST) -> _Bound:
         return _combine(_bound(part) for part in parts)
 
     if isinstance(node, ast.Compare):
-        return _Bound(0, 1, 1, may_num=True)
+        return _scalar()
 
     if isinstance(node, ast.Call):
         return _bound_call(node)
 
     # Unreachable: the validator has already rejected every other construct.
-    return _Bound(math.inf, math.inf, math.inf, may_num=True)
+    return _UNBOUNDED
 
 
 def _combine(bounds: Any) -> _Bound:
@@ -270,10 +283,10 @@ def _bound_binop(node: ast.BinOp) -> _Bound:
             # A non-constant string format has an unbounded runtime width.
             return _Bound(math.inf, math.inf, math.inf, may_num=False)
         # Numeric modulo: the remainder is smaller than the divisor.
-        return _Bound(0, 1, right.magnitude, may_num=True)
+        return _scalar(right.magnitude)
 
     # Sub / Div / FloorDiv: numeric, never grows a sequence.
-    return _Bound(0, 1, left.magnitude + right.magnitude, may_num=True)
+    return _scalar(left.magnitude + right.magnitude)
 
 
 def _bound_call(node: ast.Call) -> _Bound:
@@ -283,17 +296,17 @@ def _bound_call(node: ast.Call) -> _Bound:
 
     if name == "len":
         # A scalar; the argument's own size is still checked by the walk.
-        return _Bound(0, 1, first.str_len, may_num=True)
+        return _scalar(first.str_len)
     if name in ("abs", "round"):
-        return _Bound(0, 1, first.magnitude, may_num=True)
+        return _scalar(first.magnitude)
     if name == "bool":
-        return _Bound(0, 1, 1, may_num=True)
+        return _scalar()
     if name in ("int", "float"):
         # The result may be a large number -- a numeric score up to MAX_NUMBER,
         # or a string parsed to something huge (``'9e999999'``). Leave the
         # magnitude unbounded; harmless alone, and it only over-rejects a
         # literal repeated by such a count (``seq * int(...)``).
-        return _Bound(0, 1, math.inf, may_num=True)
+        return _scalar(math.inf)
     if name == "str":
         # The result is concrete text, so its whole length becomes grounded.
         digits = len(str(int(first.magnitude))) + 2 \
@@ -301,14 +314,14 @@ def _bound_call(node: ast.Call) -> _Bound:
         length = max(first.str_len, digits)
         return _Bound(length, length, 0, may_num=False)
     if name in ("min", "max"):
-        return _combine(args) if args else _Bound(0, 1, 1, may_num=True)
+        return _combine(args) if args else _scalar()
 
     # Unreachable: the validator allows no other call target.
-    return _Bound(math.inf, math.inf, math.inf, may_num=True)
+    return _UNBOUNDED
 
 
 def _check_result_size(node: ast.AST, expr: str) -> None:
-    """Reject ``expr`` if any sub-expression may exceed ``MAX_RESULT_SIZE``.
+    """Reject ``expr`` if any sub-expression may exceed either whole-result cap.
 
     Every node is bounded, so a blow-up hidden inside a scalar-returning call
     (``len('ab' * 99 * 99 * 99 * 99)``) is caught on its inner node. Both the
@@ -319,7 +332,8 @@ def _check_result_size(node: ast.AST, expr: str) -> None:
         if not isinstance(child, ast.expr):
             continue
         bound = _bound(child)
-        if bound.grounded_size > MAX_RESULT_SIZE or bound.str_len > MAX_STR_LEN:
+        if bound.grounded_size > MAX_GROUNDED_SIZE \
+                or bound.str_len > MAX_VALUE_INCLUSIVE_LEN:
             raise ValueError(
                 "value_transform expression may produce an oversized result: "
                 f"|{expr}|",
