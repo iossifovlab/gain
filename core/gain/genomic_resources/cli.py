@@ -671,6 +671,44 @@ def _create_contents_db(
     return frozenset(failed)
 
 
+def _configure_repo_index_subparser(
+        subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser(
+        "repo-index",
+        help="Publish the repository index (.CONTENTS files, search index, "
+        "repository index pages) from the manifests already on disk")
+    _add_repository_resource_parameters_group(parser, use_resource=False)
+    VerbosityConfiguration.set_arguments(parser)
+
+
+def _run_repo_index_command(
+        proto: ReadWriteRepositoryProtocol) -> CommandResult:
+    """Publish the repository-global artifacts from on-disk manifests.
+
+    Builds ``.CONTENTS.json[.gz]``, then the FTS index, then the
+    repository index pages.  Nothing is verified and nothing is written
+    inside any resource directory: a resource without a committed
+    manifest is left out of all three, reported by id, and fails the
+    run (#373).
+    """
+    assert isinstance(proto, FsspecReadWriteProtocol)
+    skipped: set[str] = set()
+    for res in proto.get_all_resources():
+        try:
+            proto.load_manifest(res)
+        except FileNotFoundError:
+            # The absence IS the whole story; a traceback of the failed
+            # open would only bury it, hence `error`, not `exception`.
+            logger.error(  # noqa: TRY400
+                "not publishing <%s> in the repository index: "
+                "it has no manifest", res.resource_id)
+            skipped.add(res.resource_id)
+    _build_content_file(proto, frozenset(skipped))
+    failed = skipped | _create_contents_db(proto, frozenset(skipped))
+    proto.build_index_info(failed=frozenset(failed))
+    return CommandResult(failed=frozenset(failed))
+
+
 def _run_repo_manifest_command(
     proto: ReadWriteRepositoryProtocol,
     resources: Sequence[GenomicResource],
@@ -1222,7 +1260,7 @@ def _do_resource_info_command(
 # _exit_with).
 _REPO_COMMANDS = frozenset({
     "repo-manifest", "repo-stats", "repo-info", "repo-repair",
-    "repo-fix-histograms"})
+    "repo-fix-histograms", "repo-index"})
 _RESOURCE_COMMANDS = frozenset({
     "resource-manifest", "resource-stats",
     "resource-info", "resource-repair"})
@@ -1254,6 +1292,7 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
     _configure_repo_repair_subparser(commands_parser)
     _configure_resource_repair_subparser(commands_parser)
     _configure_repo_fix_histograms_subparser(commands_parser)
+    _configure_repo_index_subparser(commands_parser)
     args = parser.parse_args(cli_args)
     VerbosityConfiguration.set(args)
 
@@ -1322,6 +1361,12 @@ def _run_management_command(
     """
     command = cast(str, kwargs["command"])
     try:
+        if command == "repo-index":
+            # Ahead of the dvc-directory refusal: repo-index writes
+            # nothing inside any resource directory, and a resource the
+            # guard would refuse outright is exactly one it already
+            # skips-and-reports on its own (#373).
+            return _run_repo_index_command(proto)
         # Before anything is written: a resource GAIn cannot certify fails
         # the command here, where failing it costs nothing, rather than
         # part-way through a repository it has already started rewriting
