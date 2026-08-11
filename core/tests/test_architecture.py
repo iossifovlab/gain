@@ -231,9 +231,14 @@ def test_markdown_rendering_goes_through_the_one_wrapper_module() -> None:
     browser (gain#736).  A module importing ``markdown2`` directly
     re-opens that defect at its own sink; within ``core/gain`` -- the
     fence this test can see -- only the wrapper module itself may touch
-    the library.  ``web_api`` sits outside it and still imports markdown2
-    for the same template (``web_annotation/pipelines/views.py``); that
-    sink is a known gap, not covered here.
+    the library.
+
+    ``web_api`` renders the same template from its own project and is not
+    swept here.  It is fenced by its own copy of this rule, in
+    ``web_api/web_annotation/tests/test_architecture.py`` (gain#742):
+    widening the sweep below to reach it would match no files in the
+    ``core`` CI image, which copies only ``core/`` -- collecting no
+    offenders and passing while policing nothing.
     """
     allowed = {
         pathlib.Path(GAIN_SRC) / "templates" / "markdown_support.py",
