@@ -1,7 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import logging
 import pathlib
-import shutil
 from typing import Any
 
 import pytest
@@ -11,7 +10,11 @@ from gain.genomic_resources.repository import (
 )
 from gain.genomic_resources.score_implementation import ScoreImplementationBase
 
-from .conftest import GLOBAL_ARTIFACTS, read_published_contents
+from .conftest import (
+    GLOBAL_ARTIFACTS,
+    empty_the_repository,
+    read_published_contents,
+)
 
 
 def test_repo_index_rebuilds_the_repository_globals(
@@ -48,8 +51,7 @@ def test_repo_index_skips_a_manifestless_resource_without_writing_it(
 def test_repo_index_republishes_after_the_last_resource_is_deleted(
     settled_repo: pathlib.Path,
 ) -> None:
-    shutil.rmtree(settled_repo / "sub")
-    assert "sub/one" in read_published_contents(settled_repo)
+    empty_the_repository(settled_repo)
 
     cli_manage(["repo-index", "-R", str(settled_repo)])
 

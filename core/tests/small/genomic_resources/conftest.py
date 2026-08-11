@@ -255,10 +255,9 @@ def resource(tmp_path: pathlib.Path) -> GenomicResource:
 
 #: Every repository-global artifact the scope contract of gain#760 is
 #: about: what a `repo-index` publishes and a `resource-*` command must
-#: leave untouched. Shared by the two modules pinning that contract from
-#: its two sides, so neither can drift to a subset. The uncompressed
-#: ``.CONTENTS.json`` is not here: since #758 it is a legacy artifact
-#: nothing publishes.
+#: leave untouched. Shared by every module pinning that contract, so
+#: none can drift to a subset. The uncompressed ``.CONTENTS.json`` is
+#: not here: since #758 it is a legacy artifact nothing publishes.
 GLOBAL_ARTIFACTS = (
     GR_CONTENTS_FILE_NAME,
     GR_SQLITE_META_FILE_NAME,
@@ -270,6 +269,29 @@ def read_published_contents(repo_path: pathlib.Path) -> str:
     """The text of the repository's published (gzipped) contents index."""
     return gzip.decompress(
         (repo_path / GR_CONTENTS_FILE_NAME).read_bytes()).decode("utf8")
+
+
+def empty_the_repository(repo_path: pathlib.Path) -> None:
+    """Delete every resource of ``settled_repo``, globals left behind.
+
+    The state a repository is in after its last resource was deleted:
+    the resource is gone from disk but every published global artifact
+    still advertises it.
+    """
+    shutil.rmtree(repo_path / "sub")
+    assert "sub/one" in read_published_contents(repo_path)
+
+
+def snapshot_globals(repo_path: pathlib.Path) -> dict[str, bytes]:
+    """The bytes of every repository-global artifact, to compare against.
+
+    What "left untouched" means for a command that must not publish:
+    equal bytes, not merely a file that still exists.
+    """
+    return {
+        artifact: (repo_path / artifact).read_bytes()
+        for artifact in GLOBAL_ARTIFACTS
+    }
 
 
 @pytest.fixture(scope="session")

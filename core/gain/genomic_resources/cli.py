@@ -1441,13 +1441,12 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
 
     if command in _REPO_COMMANDS:
         resources = list(proto.get_all_resources())
-        if len(resources) == 0 and command != "repo-index":
-            # For every other command an empty repository means nothing
-            # to do -- but repo-index publishes the index OF that
-            # emptiness, or a `.CONTENTS` still advertising the last
-            # deleted resource survives it (gain#760).
+        if not resources:
+            # Noted, not acted on: an empty repository is the n=0 case of
+            # the normal path, and the command still publishes the
+            # globals it always publishes -- the index OF that emptiness
+            # (gain#782).
             logger.info("repository <%s> has no resources", repo_url)
-            sys.exit(0)
     elif command in _RESOURCE_COMMANDS:
         resources = _find_resources(proto, repo_url, **vars(args))
         if not resources:
