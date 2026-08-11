@@ -8,6 +8,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, cast
 
 from gain import logging
+from gain.utils.log_safety import escape_unsafe_characters
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,16 @@ class ThreadedTaskExecutor(TaskExecutor):
             return
         exception = future.exception()
         if exception is not None:
-            logger.error("Task failed with exception: %s", exception)
+            # A failed task's exception message can carry request-shaped
+            # text: the pipeline build raises ``ValueError``s interpolating
+            # the caller's annotator type, attribute source and value
+            # transform verbatim. Escaping the rendered message keeps that
+            # whole build-error family on one line here without escaping
+            # each raise site (iossifovlab/gain#655); ``exc_info`` is
+            # deliberately not passed, so no traceback renders the raw value.
+            logger.error(
+                "Task failed with exception: %s",
+                escape_unsafe_characters(str(exception)))
             if callback_failure is not None:
                 callback_failure(exception)
         else:

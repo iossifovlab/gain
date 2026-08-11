@@ -397,6 +397,31 @@ def test_wildcard_label_in_matches_nothing(
         """, grr=labeled_grr)
 
 
+def test_a_no_match_wildcard_error_escapes_the_annotator_type(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    """The annotator type in the message is caller text, escaped.
+
+    It is a YAML mapping key, so a config can hand it a newline; the
+    no-match message interpolates it next to the wildcard, and the
+    exception is logged (iossifovlab/gain#655). The wildcard itself
+    cannot carry a control character -- the query grammar's charsets
+    exclude them -- but it is escaped as well rather than leaning on
+    the grammar staying that way.
+    """
+    forged_type = "position_score\nERROR forged.module: forged record"
+
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        AnnotationConfigParser.query_resources(
+            forged_type, "no-such-resource-*", labeled_grr,
+        )
+
+    message = str(excinfo.value)
+    assert "\n" not in message
+    # Escaped, not dropped -- the type text is retained, newline neutralised.
+    assert "forged record" in message
+
+
 def test_a_scalar_annotators_key_is_refused_rather_than_iterated() -> None:
     """``annotators: "abc"`` must not mean three annotators named a, b, c.
 
@@ -854,6 +879,65 @@ def test_invalid_internal_attribute_value() -> None:
                 - name: att1
                   internal: tru
         """)
+
+
+def test_an_unparsable_config_string_is_not_echoed_into_the_error() -> None:
+    """The raised message must not carry the caller's config text.
+
+    The no-filename branch is the one an anonymous pipeline-save POST
+    reaches (iossifovlab/gain#655). The exception is logged at ERROR, so
+    caller text in the message -- newlines intact -- forges log records.
+    The ``ErrorMark`` carries the position; the caller already holds
+    their own text.
+    """
+    payload = (
+        "- position_score: [unclosed\n"
+        "ERROR 2026-08-04 12:00:00 forged.module: forged record"
+    )
+
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        AnnotationConfigParser.parse_str(payload)
+
+    message = str(excinfo.value)
+    assert "forged record" not in message
+    assert "\n" not in message
+    assert excinfo.value.error_mark is not None
+    assert "At line" in message
+
+
+def test_an_attribute_error_escapes_the_caller_source() -> None:
+    """The attribute ``source`` in error messages is caller text, escaped.
+
+    Both the non-boolean ``internal`` message and the aggregator-conflict
+    message interpolate it, and the exceptions are logged
+    (iossifovlab/gain#655).
+    """
+    with pytest.raises(TypeError) as excinfo:
+        AnnotationConfigParser.parse_str("""
+            - annotator:
+                attributes:
+                - name: "att1\\nERROR forged.module: forged record"
+                  internal: tru
+        """)
+
+    message = str(excinfo.value)
+    assert "\n" not in message
+    assert "forged record" in message
+
+
+def test_an_aggregator_conflict_error_escapes_the_caller_source() -> None:
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        AnnotationConfigParser.parse_str("""
+            - annotator:
+                attributes:
+                - source: "att1\\nERROR forged.module: forged record"
+                  aggregator: max
+                  position_aggregator: min
+        """)
+
+    message = str(excinfo.value)
+    assert "\n" not in message
+    assert "forged record" in message
 
 
 def test_boolean_internal() -> None:
