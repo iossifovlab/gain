@@ -40,11 +40,18 @@ VALUE_NAME = "value"
 MAX_NUMBER = 1_000_000
 MAX_STRING_LENGTH = 256
 
-# Upper bound on the length (chars for text, elements for a sequence) any
-# sub-expression may produce. ``_check_result_size`` propagates a conservative
-# size bound through the tree and rejects the expression if any node exceeds
-# this, closing operator-driven blow-ups that the per-literal bounds miss.
+# Upper bound on the attacker-grounded length (from string literals / ``str``)
+# any sub-expression may produce. ``_check_result_size`` propagates a
+# conservative bound through the tree and rejects the expression if any node
+# exceeds this, closing operator-driven blow-ups the per-literal bounds miss.
 MAX_RESULT_SIZE = 1_000_000
+
+# Upper bound on a result's total length *including* ``value``'s own text. This
+# is the single-scale allowance -- ``value`` (<= MAX_STRING_LENGTH chars)
+# repeated by one count (<= MAX_NUMBER) -- so ``value * 1000000`` sits at the
+# boundary and passes, while chaining a second factor (``value * 1000 * 1000``)
+# exceeds it and is rejected.
+MAX_STR_LEN = MAX_STRING_LENGTH * MAX_NUMBER
 
 # AST nodes permitted anywhere without a dedicated visitor below. ``Pow`` is
 # deliberately absent, so ``**`` is rejected.
@@ -282,11 +289,11 @@ def _bound_call(node: ast.Call) -> _Bound:
     if name == "bool":
         return _Bound(0, 1, 1, may_num=True)
     if name in ("int", "float"):
-        # Parsing a string of unknown digits yields an unbounded magnitude
-        # (e.g. ``'9e999999'``); harmless alone, caught if used as a count.
-        magnitude = math.inf if not args or first.str_len > 0 \
-            else first.magnitude
-        return _Bound(0, 1, magnitude, may_num=True)
+        # The result may be a large number -- a numeric score up to MAX_NUMBER,
+        # or a string parsed to something huge (``'9e999999'``). Leave the
+        # magnitude unbounded; harmless alone, and it only over-rejects a
+        # literal repeated by such a count (``seq * int(...)``).
+        return _Bound(0, 1, math.inf, may_num=True)
     if name == "str":
         # The result is concrete text, so its whole length becomes grounded.
         digits = len(str(int(first.magnitude))) + 2 \
@@ -304,11 +311,15 @@ def _check_result_size(node: ast.AST, expr: str) -> None:
     """Reject ``expr`` if any sub-expression may exceed ``MAX_RESULT_SIZE``.
 
     Every node is bounded, so a blow-up hidden inside a scalar-returning call
-    (``len('ab' * 99 * 99 * 99 * 99)``) is caught on its inner node.
+    (``len('ab' * 99 * 99 * 99 * 99)``) is caught on its inner node. Both the
+    attacker-grounded length and the value-inclusive length are checked, so a
+    chained repetition of ``value`` (``value * 1000 * 1000``) is caught too.
     """
     for child in ast.walk(node):
-        if isinstance(child, ast.expr) \
-                and _bound(child).grounded_size > MAX_RESULT_SIZE:
+        if not isinstance(child, ast.expr):
+            continue
+        bound = _bound(child)
+        if bound.grounded_size > MAX_RESULT_SIZE or bound.str_len > MAX_STR_LEN:
             raise ValueError(
                 "value_transform expression may produce an oversized result: "
                 f"|{expr}|",

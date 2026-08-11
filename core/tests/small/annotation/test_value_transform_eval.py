@@ -97,6 +97,8 @@ def test_evaluates_legitimate_transform(
     "min(value, 'ab') * 999999",      # ... through min()
     "max('ab', value) * 999999",      # ... through max()
     "(value or '%9999999d') % value",  # format string laundered through `or`
+    "value * 1000 * 1000",            # chained repeat of a string-typed score
+    "value * 999999 * 999999",        # ... circumventing the per-literal cap
 ])
 def test_rejects_operator_driven_blowup(expr: str) -> None:
     # Every literal stays under the per-literal bounds, but an operator drives
