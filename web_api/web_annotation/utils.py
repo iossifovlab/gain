@@ -25,6 +25,11 @@ from web_annotation.models import (
     WebAnnotationAnonymousUser,
 )
 
+# The "code" parameter name is load-bearing outside this module: the
+# frontend image's Apache withholds a query string from its access log
+# exactly when it carries a code= parameter (iossifovlab/gain#754).
+# Renaming the parameter here silently turns that redaction off -- see the
+# access-log section of web_ui/httpd.conf.
 EMAIL_ACCOUNT_CONFIRMATION_PATH = "/api/confirm_account?code={}"
 EMAIL_VERIFICATION_RESET_PATH = "/api/reset_password?code={}"
 
