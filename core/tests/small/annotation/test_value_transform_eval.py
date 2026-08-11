@@ -92,6 +92,11 @@ def test_evaluates_legitimate_transform(
     "'%.3f%99999999d' % value",       # width in a later conversion
     "'x' * int('9' * 100)",           # count from int() of a long numeric str
     "('%' + '9' * 8 + 'd') % value",  # dynamically built format string
+    "(value or 'ab') * 999999",       # sequence laundered through `or`
+    "('ab' if value else 0) * 999999",  # ... through a conditional
+    "min(value, 'ab') * 999999",      # ... through min()
+    "max('ab', value) * 999999",      # ... through max()
+    "(value or '%9999999d') % value",  # format string laundered through `or`
 ])
 def test_rejects_operator_driven_blowup(expr: str) -> None:
     # Every literal stays under the per-literal bounds, but an operator drives
