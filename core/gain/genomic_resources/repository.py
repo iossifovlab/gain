@@ -87,6 +87,25 @@ logger = logging.getLogger(__name__)
 GR_CONF_FILE_NAME = "genomic_resource.yaml"
 GR_MANIFEST_FILE_NAME = ".MANIFEST"
 GR_CONTENTS_FILE_NAME = ".CONTENTS.json.gz"
+
+# The repository index as releases before #758 also published it:
+# uncompressed, beside the gzipped one. It is never written any more --
+# on a large GRR the uncompressed copy dwarfs the file that matters --
+# but the name stays load-bearing in three ways, so it is spelled out
+# once here rather than derived from the name above. It is a historical
+# fact, not that name minus its extension: deriving it would weld the
+# two together, and a repository that one day publishes `.json.zst`
+# would silently start probing for `.CONTENTS.json.z`.
+#
+#   - `load_contents`/`md5_contents` fall back to it when a repository
+#     has no gzipped index, which is how GRRs published by an older
+#     release, and the checked-in `fixtures/repo`, are still read;
+#   - `find_directory_with_a_file` probes it to locate a repository
+#     root, so such a checkout is still discoverable from a subdirectory;
+#   - a publish reports one it finds, since from #758 on nothing
+#     refreshes it.
+GR_LEGACY_CONTENTS_FILE_NAME = ".CONTENTS.json"
+
 GR_SQLITE_META_FILE_NAME = ".CONTENTS.sqlite3.gz"
 GR_INDEX_FILE_NAME = "index.html"
 GR_STATISTICS_FOLDER_NAME = "statistics"
@@ -2312,7 +2331,7 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
 
     @abc.abstractmethod
     def build_content_file(self) -> list[dict[str, Any]]:
-        """Build the content of the repository (i.e '.CONTENTS.json' file)."""
+        """Build the content of the repository (i.e '.CONTENTS.json.gz')."""
 
 
 def dvc_directory_output_message(

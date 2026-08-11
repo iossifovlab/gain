@@ -31,7 +31,7 @@ from gain.genomic_resources.testing.builders import (
 def unindexed_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
     """A repository with resources and labels but no FTS index.
 
-    The builders write ``.CONTENTS.json`` and no ``.CONTENTS.sqlite3.gz``,
+    The builders write ``.CONTENTS.json.gz`` and no ``.CONTENTS.sqlite3.gz``,
     which is the shape a plain checked-out GRR has before ``grr_manage``
     builds an index into it.
     """

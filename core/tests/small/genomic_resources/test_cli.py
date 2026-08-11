@@ -17,6 +17,7 @@ from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
+    GR_LEGACY_CONTENTS_FILE_NAME,
     GenomicResourceProtocolRepo,
 )
 from gain.genomic_resources.testing import (
@@ -335,8 +336,9 @@ def test_cli_list_by_type_without_an_index_says_so(
 ) -> None:
     """``-s``/``-t`` need an FTS index; say that instead of dying.
 
-    A checked-out GRR has a `.CONTENTS.json` and no `.CONTENTS.sqlite3.gz`,
-    which is exactly the repository `grr_manage` is usually pointed at.
+    A checked-out GRR has a `.CONTENTS.json.gz` and no
+    `.CONTENTS.sqlite3.gz`, which is exactly the repository
+    `grr_manage` is usually pointed at.
     """
     path, _repo = repo_fixture
 
@@ -464,14 +466,16 @@ def test_repo_init(
     # Given
     path, _repo = repo_fixture
     (path / GR_CONTENTS_FILE_NAME).unlink(missing_ok=True)
-    (path / GR_CONTENTS_FILE_NAME[:-3]).unlink(missing_ok=True)
+    (path / GR_LEGACY_CONTENTS_FILE_NAME).unlink(missing_ok=True)
 
     # When
     cli_manage(["repo-init", "-R", str(path)])
 
     # Then
     assert (path / GR_CONTENTS_FILE_NAME).exists()
-    assert (path / GR_CONTENTS_FILE_NAME[:-3]).exists()
+    # `repo-init` publishes an index too, so it is the second command that
+    # has to stop leaving the uncompressed twin behind (#758).
+    assert not (path / GR_LEGACY_CONTENTS_FILE_NAME).exists()
 
 
 def test_repo_init_inside_repo(
@@ -480,7 +484,6 @@ def test_repo_init_inside_repo(
     # Given
     path, _repo = repo_fixture
     (path / GR_CONTENTS_FILE_NAME).unlink(missing_ok=True)
-    (path / GR_CONTENTS_FILE_NAME[:-3]).unlink(missing_ok=True)
 
     (path / "inside").mkdir()
     cli_manage(["repo-init", "-R", str(path)])
@@ -491,7 +494,6 @@ def test_repo_init_inside_repo(
 
     # Then
     assert not (path / "inside" / GR_CONTENTS_FILE_NAME).exists()
-    assert not (path / "inside" / GR_CONTENTS_FILE_NAME[:-3]).exists()
 
 
 def test_grr_manage_version_report(
@@ -521,7 +523,6 @@ def test_repo_init_refuses_dry_run_and_force(
     # Given a directory that is not yet a GRR
     path, _repo = repo_fixture
     (path / GR_CONTENTS_FILE_NAME).unlink(missing_ok=True)
-    (path / GR_CONTENTS_FILE_NAME[:-3]).unlink(missing_ok=True)
 
     # When 'repo-init' is asked for a dry run, or forced
     with pytest.raises(SystemExit) as excinfo:
@@ -532,7 +533,6 @@ def test_repo_init_refuses_dry_run_and_force(
 
     # ... and the repository was left uninitialised
     assert not (path / GR_CONTENTS_FILE_NAME).exists()
-    assert not (path / GR_CONTENTS_FILE_NAME[:-3]).exists()
 
 
 # ---------------------------------------------------------------------------

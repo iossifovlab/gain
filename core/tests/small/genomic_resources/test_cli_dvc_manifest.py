@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import contextlib
 import hashlib
+import json
 import logging
 import os
 import pathlib
@@ -41,6 +42,15 @@ def md5_of(content: str) -> str:
 
 def size_of(content: str) -> int:
     return len(content.encode("utf8"))
+
+
+def published_index(proto: ReadWriteRepositoryProtocol) -> str:
+    """Return the repository index a run published, as searchable text.
+
+    Read back through the protocol rather than off disk, so these
+    assertions go through the same reader the rest of GAIn uses.
+    """
+    return json.dumps(proto.load_contents())
 
 
 def dvc_sidecar(path: str, content: str) -> str:
@@ -1720,7 +1730,7 @@ def test_a_failed_verification_publishes_no_content_derived_md5(
     assert not (path / "one" / ".grr" / "data.txt.state").exists()
 
     # ... and nothing the run refused to record is published either
-    contents = (path / ".CONTENTS.json").read_text(encoding="utf8")
+    contents = published_index(proto)
     assert md5_of(SAME_SIZE_TAMPERED_DATA) not in contents
 
     # ... so a later DEFAULT run still reads its md5 sums off the sidecars,
@@ -1754,7 +1764,7 @@ def test_a_failed_verification_leaves_the_published_manifest_alone(
     # Then the run fails, and neither the manifest nor the contents lose it
     assert excinfo.value.code == 1
     assert (path / "one" / ".MANIFEST").read_bytes() == manifest_before
-    contents = (path / ".CONTENTS.json").read_text(encoding="utf8")
+    contents = published_index(proto)
     assert md5_of(ORIGINAL_DATA) in contents
     assert md5_of(SAME_SIZE_TAMPERED_DATA) not in contents
     assert proto.load_resource_file_state(
