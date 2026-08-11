@@ -7,43 +7,11 @@ import pytest
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
-    GR_CONTENTS_FILE_NAME,
-    GR_INDEX_FILE_NAME,
     GR_MANIFEST_FILE_NAME,
-    GR_SQLITE_META_FILE_NAME,
 )
 from gain.genomic_resources.score_implementation import ScoreImplementationBase
-from gain.genomic_resources.testing.builders import (
-    a_grr,
-    a_position_score,
-)
 
-GLOBAL_ARTIFACTS = (
-    GR_CONTENTS_FILE_NAME,        # .CONTENTS.json.gz
-    GR_CONTENTS_FILE_NAME[:-3],   # .CONTENTS.json
-    GR_SQLITE_META_FILE_NAME,     # .CONTENTS.sqlite3.gz
-    GR_INDEX_FILE_NAME,           # index.html
-)
-
-
-@pytest.fixture
-def settled_repo(tmp_path: pathlib.Path) -> pathlib.Path:
-    """A two-score repository fully repaired, globals included."""
-    repo = a_grr()
-    for rid in ("sub/one", "sub/two"):
-        repo = repo.with_resource(
-            rid,
-            a_position_score()
-            .with_score("phastCons", "float")
-            .with_data("""
-                chrom  pos_begin  phastCons
-                1      10         0.1
-                1      11         0.2
-            """),
-        )
-    repo.build_repo(tmp_path)
-    cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
-    return tmp_path
+from .conftest import GLOBAL_ARTIFACTS
 
 
 def snapshot_globals(path: pathlib.Path) -> dict[str, bytes]:
@@ -148,6 +116,19 @@ def test_a_dry_run_resource_repair_does_not_note_the_index(
             "-n", "-j", "1"])
 
     assert "repo-index" not in caplog.text
+
+
+def test_resource_stats_leaves_the_repository_globals_untouched(
+    settled_repo: pathlib.Path,
+) -> None:
+    touch_resource_config(settled_repo, "sub/one")
+    globals_before = snapshot_globals(settled_repo)
+
+    cli_manage([
+        "resource-stats", "-R", str(settled_repo), "-r", "sub/one",
+        "-j", "1"])
+
+    assert snapshot_globals(settled_repo) == globals_before
 
 
 def test_resource_manifest_leaves_the_repository_globals_untouched(

@@ -47,7 +47,6 @@ from gain.genomic_resources.repository import (
     GR_CONTENTS_FILE_NAME,
     GR_INDEX_FILE_NAME,
     GR_LEGACY_CONTENTS_FILE_NAME,
-    GR_MANIFEST_FILE_NAME,
     GR_SQLITE_META_FILE_NAME,
     GR_STATISTICS_INDEX_FILE_NAME,
     GenomicResource,
@@ -430,13 +429,11 @@ def _do_resource_manifest_command(
     dry_run: bool,  # noqa: FBT001
     force: bool,  # noqa: FBT001
     use_dvc: bool,  # noqa: FBT001
-) -> tuple[bool, bool]:
+) -> bool:
     """Check, and outside a dry run save, one resource's manifest.
 
-    Returns ``(stale, wrote)``: whether a dry run found the manifest
-    stale, and whether a real run saved it.  At most one of the two can
-    be true -- a dry run writes nothing, and a real run repairs what it
-    found instead of counting it.
+    Returns whether anything came of it: a dry run reports finding the
+    manifest stale, a real run reports saving it.
     """
     # '.dvc' entries are always collected, in EVERY mode: they are the md5
     # sum of the file they describe by default, and the thing `--without-dvc`
@@ -473,7 +470,7 @@ def _do_resource_manifest_command(
         logger.warning(msg)
 
     if dry_run:
-        return bool(manifest_update), False
+        return bool(manifest_update)
 
     if force or bool(manifest_update):
         # The manifest `check_update_manifest` returned IS the updated one:
@@ -485,9 +482,9 @@ def _do_resource_manifest_command(
         logger.info(
             "updating manifest for resource <%s>...", res.resource_id)
         proto.save_manifest(res, manifest_update.manifest)
-        return False, True
+        return True
 
-    return False, False
+    return False
 
 
 class ManifestOutcome(NamedTuple):
@@ -519,14 +516,16 @@ def _run_repo_manifest_command_internal(
     wrote = False
     for res in resources:
         try:
-            updates_needed[res.resource_id], wrote_one = (
-                _do_resource_manifest_command(
-                    proto, res,
-                    dry_run=dry_run,
-                    force=force,
-                    use_dvc=use_dvc,
-                ))
-            wrote = wrote or wrote_one
+            changed = _do_resource_manifest_command(
+                proto, res,
+                dry_run=dry_run,
+                force=force,
+                use_dvc=use_dvc,
+            )
+            # In a real run `changed` means "saved", which belongs to
+            # `wrote` and not to the dry-run staleness count.
+            updates_needed[res.resource_id] = changed if dry_run else False
+            wrote = wrote or (changed and not dry_run)
         except (DvcContentDriftError, *RESOURCE_ERRORS) as err:
             # Collected, not raised: every drifted resource of the
             # repository is reported by one run, and the resources that
@@ -714,18 +713,18 @@ def _run_repo_index_command(
     assert isinstance(proto, FsspecReadWriteProtocol)
     skipped: set[str] = set()
     for res in proto.get_all_resources():
-        # An existence probe, not a load: the repository walk has
-        # already parsed every manifest that exists, and the loaders
-        # would parse each a second time.
-        if not proto.file_exists(res, GR_MANIFEST_FILE_NAME):
+        # The repository walk already loaded every manifest that exists,
+        # so this is an attribute read; only a genuinely manifest-less
+        # resource pays one probe.
+        if res.get_loaded_manifest() is None:
             logger.error(
                 "not publishing <%s> in the repository index: "
                 "it has no manifest", res.resource_id)
             skipped.add(res.resource_id)
-    _build_content_file(proto, frozenset(skipped))
-    failed = skipped | _create_contents_db(proto, frozenset(skipped))
-    proto.build_index_info(failed=frozenset(failed))
-    return CommandResult(failed=frozenset(failed))
+    result = _publish_repository_contents(
+        proto, CommandResult(failed=frozenset(skipped)))
+    proto.build_index_info(failed=result.failed)
+    return result
 
 
 def _run_manifest_core(
@@ -1134,22 +1133,6 @@ def _run_resource_stats_command(
         proto, _run_stats_core(repo, proto, resources, **kwargs))
 
 
-def _run_repo_repair_command(
-        repo: GenomicResourceRepo,
-        proto: ReadWriteRepositoryProtocol,
-        resources: Sequence[GenomicResource],
-        **kwargs: str | bool | int) -> CommandResult:
-    return _run_repo_info_command(repo, proto, resources, **kwargs)
-
-
-def _run_resource_repair_command(
-        repo: GenomicResourceRepo,
-        proto: ReadWriteRepositoryProtocol,
-        resources: Sequence[GenomicResource],
-        **kwargs: str | bool | int) -> CommandResult:
-    return _run_resource_info_command(repo, proto, resources, **kwargs)
-
-
 def _regenerate_resource_pages(
         repo: GenomicResourceRepo,
         proto: ReadWriteRepositoryProtocol,
@@ -1523,17 +1506,13 @@ def _run_management_command(
         if command == "resource-stats":
             return _run_resource_stats_command(
                 repo, proto, resources, **kwargs)
-        if command == "repo-info":
+        # Repair is info plus nothing: the info commands already rebuild
+        # manifests and statistics on the way to the pages.
+        if command in ("repo-info", "repo-repair"):
             return _run_repo_info_command(
                 repo, proto, resources, **kwargs)
-        if command == "resource-info":
+        if command in ("resource-info", "resource-repair"):
             return _run_resource_info_command(
-                repo, proto, resources, **kwargs)
-        if command == "repo-repair":
-            return _run_repo_repair_command(
-                repo, proto, resources, **kwargs)
-        if command == "resource-repair":
-            return _run_resource_repair_command(
                 repo, proto, resources, **kwargs)
         if command == "repo-fix-histograms":
             return _run_repo_fix_histograms_command(proto, resources)

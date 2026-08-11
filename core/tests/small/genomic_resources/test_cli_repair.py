@@ -530,15 +530,14 @@ def test_an_unrecognised_management_command_does_not_repair(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # Dispatch is by suffix; a name added to _REPO_COMMANDS but not handled
-    # here used to land on the unconditional `return _run_repo_repair...`
-    # tail and silently run a full repair.
+    # A name added to _REPO_COMMANDS but not handled in the dispatch used
+    # to land on an unconditional repair tail and silently run it.
     path, proto = proto_fixture
 
     def must_not_run(*_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("repair must not run for an unknown command")
 
-    monkeypatch.setattr(cli, "_run_repo_repair_command", must_not_run)
+    monkeypatch.setattr(cli, "_run_repo_info_command", must_not_run)
 
     with caplog.at_level(logging.INFO, logger="grr_manage"), \
             pytest.raises(SystemExit) as excinfo:
