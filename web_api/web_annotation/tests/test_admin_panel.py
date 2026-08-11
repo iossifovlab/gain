@@ -1,10 +1,11 @@
 # pylint: disable=W0621,C0114,C0116
 import pathlib
-from typing import cast
+from typing import NamedTuple, cast
 from unittest.mock import MagicMock
 
 import pytest
 from admin_panel.views import (
+    AdminPanelView,
     DeleteAnonymousJobsView,
     ResetDailyQuotaView,
     ResetMonthlyQuotaView,
@@ -13,6 +14,8 @@ from admin_panel.views import (
     SetIpQuotaView,
     SetSessionQuotaView,
 )
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from rest_framework.response import Response
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -42,11 +45,7 @@ def factory() -> APIRequestFactory:
 @pytest.fixture
 def user_quota() -> UserQuota:
     user = User.objects.get(email="user@example.com")
-    quota = UserQuota(user=user)
-    quota.reset_daily()
-    quota.reset_monthly()
-    quota.save()
-    return quota
+    return UserQuota.objects.create(user=user)
 
 
 def test_reset_daily_quota_returns_204(factory: APIRequestFactory) -> None:
@@ -462,11 +461,7 @@ def test_set_current_quota_invalid_amount(
 
 @pytest.fixture
 def session_quota() -> SessionQuota:
-    quota = SessionQuota(session_id="test-session-id")
-    quota.reset_daily()
-    quota.reset_monthly()
-    quota.save()
-    return quota
+    return SessionQuota.objects.create(session_id="test-session-id")
 
 
 def test_set_session_quota_returns_200(
@@ -620,11 +615,7 @@ def test_set_session_quota_invalid_amount(
 
 @pytest.fixture
 def ip_quota() -> AnonymousUserQuota:
-    quota = AnonymousUserQuota(ip="1.2.3.4")
-    quota.reset_daily()
-    quota.reset_monthly()
-    quota.save()
-    return quota
+    return AnonymousUserQuota.objects.create(ip="1.2.3.4")
 
 
 def test_set_ip_quota_returns_200(
@@ -889,3 +880,89 @@ def test_delete_anonymous_jobs_returns_400_for_authenticated_user(
         request, user=User.objects.get(email="user@example.com"))
     response = DeleteAnonymousJobsView.as_view()(request)
     assert response.status_code == 400
+
+
+# --- quota setters write only the field they set ---
+
+#: The columns the abstract Quota declares -- what the two concrete models
+#: have in common, minus their own identity field. Derived rather than listed
+#: so a counter added later is covered without editing this.
+_QUOTA_FIELDS = tuple(sorted(
+    {field.name for field in UserQuota._meta.fields}
+    & {field.name for field in AnonymousUserQuota._meta.fields}
+    - {"id"},
+))
+
+
+def _assert_writes_only(
+    queries: CaptureQueriesContext, expected_field: str,
+) -> None:
+    """Assert one UPDATE was issued, touching only ``expected_field``.
+
+    A concurrent deduction cannot be observed from outside the view -- it
+    would have to land between the view's own read and its write -- so the
+    emitted statement is what pins "writes only the field it sets".
+
+    Column names are matched quoted, so that a short one does not match the
+    table name the statement opens with.
+    """
+    updates = [
+        query["sql"] for query in queries.captured_queries
+        if query["sql"].lstrip().upper().startswith("UPDATE")
+    ]
+    assert len(updates) == 1
+    assert f'"{expected_field}"' in updates[0]
+    for field in _QUOTA_FIELDS:
+        if field != expected_field:
+            assert f'"{field}"' not in updates[0]
+
+
+class _SetterCase(NamedTuple):
+    """One admin quota setter, and the single field that call should write."""
+
+    view: type[AdminPanelView]
+    path: str
+    params: dict[str, str]
+    quota_fixture: str
+    expected_field: str
+
+
+@pytest.mark.parametrize("case", [
+    _SetterCase(
+        SetExtraQuotaView, "/admin-panel/set-extra-quota",
+        {"user_email": "user@example.com",
+         "quota_type": "jobs", "amount": "42"},
+        "user_quota", "extra_jobs",
+    ),
+    _SetterCase(
+        SetCurrentQuotaView, "/admin-panel/set-current-quota",
+        {"user_email": "user@example.com",
+         "quota_type": "daily_jobs", "amount": "7"},
+        "user_quota", "daily_jobs",
+    ),
+    _SetterCase(
+        SetSessionQuotaView, "/admin-panel/set-session-quota",
+        {"session_id": "test-session-id",
+         "quota_type": "monthly_variants", "amount": "888"},
+        "session_quota", "monthly_variants",
+    ),
+    _SetterCase(
+        SetIpQuotaView, "/admin-panel/set-ip-quota",
+        {"ip": "1.2.3.4",
+         "quota_type": "monthly_variants", "amount": "555"},
+        "ip_quota", "monthly_variants",
+    ),
+], ids=lambda case: case.view.__name__)
+def test_quota_setter_writes_only_the_field_it_sets(
+    factory: APIRequestFactory,
+    request: pytest.FixtureRequest,
+    case: _SetterCase,
+) -> None:
+    request.getfixturevalue(case.quota_fixture)
+    http_request = factory.get(case.path, case.params)
+    force_authenticate(http_request, user=_anon())
+
+    with CaptureQueriesContext(connection) as queries:
+        case.view.as_view()(http_request)
+
+    _assert_writes_only(queries, case.expected_field)

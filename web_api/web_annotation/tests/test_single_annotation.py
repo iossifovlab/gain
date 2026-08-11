@@ -669,9 +669,7 @@ def test_unlimited_user_quota_not_deducted_after_single_allele_query(
     user = User.objects.get(email="user@example.com")
     user.is_unlimited = True
     user.save()
-    quota = UserQuota(user=user)
-    quota.reset_daily()
-    quota.reset_monthly()
+    quota = UserQuota.objects.create(user=user)
 
     before_daily = quota.daily_variants
     before_monthly = quota.monthly_variants

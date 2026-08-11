@@ -41,15 +41,12 @@ class Command(BaseCommand):
         with transaction.atomic():
             for user_quota in UserQuota.objects.all():
                 user_quota.reset_daily()
-                user_quota.save()
 
             for anonymous_quota in AnonymousUserQuota.objects.all():
                 anonymous_quota.reset_daily()
-                anonymous_quota.save()
 
             for session_quota in SessionQuota.objects.all():
                 session_quota.reset_daily()
-                session_quota.save()
 
             DailyQuotaRefreshLog.objects.create()
 

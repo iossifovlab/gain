@@ -9,6 +9,8 @@ import pytest_mock
 from django.conf import LazySettings
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from web_annotation.management.commands.export_quotas import HEADER
 from web_annotation.models import (
@@ -24,26 +26,17 @@ from web_annotation.models import (
 @pytest.fixture
 def user_quota() -> UserQuota:
     user = User.objects.get(email="user@example.com")
-    quota = UserQuota(user=user)
-    quota.reset_daily()
-    quota.reset_monthly()
-    return quota
+    return UserQuota.objects.create(user=user)
 
 
 @pytest.fixture
 def anonymous_quota() -> AnonymousUserQuota:
-    quota = AnonymousUserQuota(ip="127.0.0.1")
-    quota.reset_daily()
-    quota.reset_monthly()
-    return quota
+    return AnonymousUserQuota.objects.create(ip="127.0.0.1")
 
 
 @pytest.fixture
 def session_quota() -> SessionQuota:
-    quota = SessionQuota(session_id="test-session")
-    quota.reset_daily()
-    quota.reset_monthly()
-    return quota
+    return SessionQuota.objects.create(session_id="test-session")
 
 
 def test_create_user_creates_user_with_given_email() -> None:
@@ -551,3 +544,24 @@ def test_export_quotas_writes_to_file(
     call_command("export_quotas", str(output))
     rows = list(csv.DictReader(output.open()))
     assert any(r["type"] == "user" for r in rows)
+
+
+def _quota_update_count(queries: CaptureQueriesContext) -> int:
+    return sum(
+        1 for query in queries.captured_queries
+        if query["sql"].lstrip().upper().startswith("UPDATE")
+        and "quota" in query["sql"].lower()
+    )
+
+
+@pytest.mark.parametrize("command", ["refreshdaily", "refreshmonthly"])
+def test_refresh_writes_each_quota_row_once(
+    user_quota: UserQuota,
+    anonymous_quota: AnonymousUserQuota,
+    session_quota: SessionQuota,
+    command: str,
+) -> None:
+    with CaptureQueriesContext(connection) as queries:
+        call_command(command)
+
+    assert _quota_update_count(queries) == 3

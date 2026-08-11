@@ -1,8 +1,12 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import copy
+from typing import cast
+
 import pytest
 
 from web_annotation.models import (
     AnonymousUserQuota,
+    Quota,
     QuotaSnapshot,
     SessionQuota,
     User,
@@ -13,19 +17,18 @@ from web_annotation.models import (
 
 @pytest.fixture
 def anonymous_quota() -> AnonymousUserQuota:
-    quota = AnonymousUserQuota(ip="127.0.0.1")
-    quota.reset_daily()
-    quota.reset_monthly()
-    return quota
+    return AnonymousUserQuota.objects.create(ip="127.0.0.1")
 
 
 @pytest.fixture
 def user_quota() -> UserQuota:
     user = User.objects.get(email="user@example.com")
-    quota = UserQuota(user=user)
-    quota.reset_daily()
-    quota.reset_monthly()
-    return quota
+    return UserQuota.objects.create(user=user)
+
+
+@pytest.fixture
+def session_quota() -> SessionQuota:
+    return SessionQuota.objects.create(session_id="test-session")
 
 
 def test_anonymous_quota_max_values(
@@ -232,6 +235,7 @@ def test_job_complete_does_not_consume_extras_when_monthly_covers(
 ) -> None:
     # daily exhausted, but monthly alone covers the amount — no extras needed
     anonymous_quota.daily_attributes = 0
+    anonymous_quota.save()
     before_extra = anonymous_quota.extra_attributes
 
     anonymous_quota.job_complete(variants_count=0, attributes_count=5_000)
@@ -245,6 +249,7 @@ def test_job_complete_consumes_extras_when_both_periods_exhausted(
     anonymous_quota.daily_attributes = 0
     anonymous_quota.monthly_attributes = 0
     anonymous_quota.extra_attributes = 20_000
+    anonymous_quota.save()
 
     anonymous_quota.job_complete(variants_count=0, attributes_count=5_000)
 
@@ -258,6 +263,7 @@ def test_job_complete_consumes_extras_for_remainder_beyond_max_period(
     anonymous_quota.daily_attributes = 3
     anonymous_quota.monthly_attributes = 3
     anonymous_quota.extra_attributes = 20
+    anonymous_quota.save()
 
     anonymous_quota.job_complete(variants_count=0, attributes_count=10)
 
@@ -274,6 +280,7 @@ def test_job_complete_zeros_all_extras_when_extra_exhausted(
     anonymous_quota.extra_attributes = 5_000
     anonymous_quota.extra_jobs = 50
     anonymous_quota.extra_variants = 500_000
+    anonymous_quota.save()
 
     anonymous_quota.job_complete(variants_count=0, attributes_count=5_000)
 
@@ -289,6 +296,7 @@ def test_job_complete_zeros_all_extras_when_extra_overdrawn(
     anonymous_quota.monthly_attributes = 0
     anonymous_quota.extra_attributes = 3_000
     anonymous_quota.extra_jobs = 50
+    anonymous_quota.save()
 
     anonymous_quota.job_complete(variants_count=0, attributes_count=5_000)
 
@@ -303,6 +311,7 @@ def test_job_complete_does_not_zero_extras_when_partial_consumption(
     anonymous_quota.monthly_attributes = 0
     anonymous_quota.extra_attributes = 10_000
     anonymous_quota.extra_jobs = 50
+    anonymous_quota.save()
 
     anonymous_quota.job_complete(variants_count=0, attributes_count=5_000)
 
@@ -319,6 +328,35 @@ def test_job_complete_persisted(anonymous_quota: AnonymousUserQuota) -> None:
         == anonymous_quota.get_daily_variant_max() - 500
     assert refreshed.daily_attributes == \
         anonymous_quota.get_daily_attribute_max() - 2_000
+
+
+@pytest.mark.parametrize(
+    "quota_fixture", ["anonymous_quota", "user_quota", "session_quota"])
+def test_two_overlapping_job_completions_are_both_recorded(
+    request: pytest.FixtureRequest,
+    quota_fixture: str,
+) -> None:
+    """Two instances loaded from the same state each deduct, and both land.
+
+    This models the overlap deterministically rather than with threads: what
+    makes a concurrent deduction disappear is the second writer working from
+    state it read before the first committed, which two independently loaded
+    instances reproduce exactly. The row lock itself is a no-op on SQLite, so
+    it is the re-read this pins, not the locking.
+
+    Run for each concrete quota, since the guarantee lives on the abstract
+    Quota and has to reach all three.
+    """
+    quota = cast(Quota, request.getfixturevalue(quota_fixture))
+    first = copy.copy(quota)
+    second = copy.copy(quota)
+
+    first.job_complete(variants_count=1_000, attributes_count=0)
+    second.job_complete(variants_count=1_000, attributes_count=0)
+
+    quota.refresh_from_db()
+    assert quota.daily_variants == quota.get_daily_variant_max() - 2_000
+    assert quota.daily_jobs == quota.get_daily_job_max() - 2
 
 
 def test_single_allele_query_complete_decrements_variant_counts(
@@ -362,6 +400,7 @@ def test_single_allele_query_complete_does_not_consume_extras_when_monthly_cover
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     anonymous_quota.daily_attributes = 0
+    anonymous_quota.save()
     before_extra = anonymous_quota.extra_attributes
 
     anonymous_quota.single_allele_query_complete(attributes_count=10)
@@ -375,6 +414,7 @@ def test_single_allele_query_complete_consumes_extras_when_both_periods_exhauste
     anonymous_quota.daily_attributes = 0
     anonymous_quota.monthly_attributes = 0
     anonymous_quota.extra_attributes = 50
+    anonymous_quota.save()
 
     anonymous_quota.single_allele_query_complete(attributes_count=10)
 
@@ -388,6 +428,7 @@ def test_single_allele_query_complete_consumes_extras_for_remainder_beyond_max_p
     anonymous_quota.daily_attributes = 4
     anonymous_quota.monthly_attributes = 4
     anonymous_quota.extra_attributes = 20
+    anonymous_quota.save()
 
     anonymous_quota.single_allele_query_complete(attributes_count=10)
 
@@ -403,6 +444,7 @@ def test_single_allele_query_complete_zeros_all_extras_when_extra_exhausted(
     anonymous_quota.monthly_attributes = 0
     anonymous_quota.extra_attributes = 10
     anonymous_quota.extra_variants = 5
+    anonymous_quota.save()
 
     anonymous_quota.single_allele_query_complete(attributes_count=10)
 
@@ -417,6 +459,7 @@ def test_single_allele_query_complete_does_not_zero_extras_when_partial_consumpt
     anonymous_quota.monthly_attributes = 0
     anonymous_quota.extra_attributes = 50
     anonymous_quota.extra_variants = 5
+    anonymous_quota.save()
 
     anonymous_quota.single_allele_query_complete(attributes_count=10)
 
@@ -490,6 +533,7 @@ def test_add_units_clamps_negative_extras_before_adding(
     anonymous_quota.extra_jobs = -5
     anonymous_quota.extra_variants = -100
     anonymous_quota.extra_attributes = -1_000
+    anonymous_quota.save()
     anonymous_quota.add_units()
     assert anonymous_quota.extra_jobs == anonymous_quota.get_monthly_job_max()
     assert anonymous_quota.extra_variants == (
@@ -607,15 +651,11 @@ def test_anonymous_user_get_quota_returns_existing(
 
 
 def test_anonymous_user_get_quota_minimum_of_session_and_ip() -> None:
-    ip_quota = AnonymousUserQuota(ip="10.0.0.3")
-    ip_quota.reset_daily()
-    ip_quota.reset_monthly()
+    ip_quota = AnonymousUserQuota.objects.create(ip="10.0.0.3")
     ip_quota.daily_jobs = 7
     ip_quota.save()
 
-    session_quota = SessionQuota(session_id="low-session")
-    session_quota.reset_daily()
-    session_quota.reset_monthly()
+    session_quota = SessionQuota.objects.create(session_id="low-session")
     session_quota.daily_jobs = 2
     session_quota.save()
 
@@ -635,3 +675,45 @@ def test_anonymous_user_get_quota_does_not_duplicate(
 
     assert AnonymousUserQuota.objects.filter(ip="127.0.0.1").count() == 1
     assert SessionQuota.objects.filter(session_id="test-session").count() == 1
+
+
+def test_job_complete_does_not_overwrite_a_concurrent_write(
+    anonymous_quota: AnonymousUserQuota,
+) -> None:
+    stale = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
+    AnonymousUserQuota.objects.filter(pk=anonymous_quota.pk).update(
+        daily_variants=4_000, extra_jobs=7)
+
+    stale.job_complete(variants_count=1_000, attributes_count=0)
+
+    stored = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
+    assert stored.daily_variants == 3_000
+    assert stored.extra_jobs == 7
+
+
+def test_single_allele_query_complete_does_not_overwrite_a_concurrent_write(
+    anonymous_quota: AnonymousUserQuota,
+) -> None:
+    stale = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
+    AnonymousUserQuota.objects.filter(pk=anonymous_quota.pk).update(
+        daily_attributes=800, extra_jobs=7)
+
+    stale.single_allele_query_complete(attributes_count=300)
+
+    stored = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
+    assert stored.daily_attributes == 500
+    assert stored.extra_jobs == 7
+
+
+def test_add_units_does_not_overwrite_a_concurrent_write(
+    anonymous_quota: AnonymousUserQuota,
+) -> None:
+    stale = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
+    AnonymousUserQuota.objects.filter(pk=anonymous_quota.pk).update(
+        daily_jobs=4, extra_jobs=6)
+
+    stale.add_units()
+
+    stored = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
+    assert stored.extra_jobs == 6 + anonymous_quota.get_monthly_job_max()
+    assert stored.daily_jobs == 4

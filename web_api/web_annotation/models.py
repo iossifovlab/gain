@@ -8,12 +8,14 @@ import pathlib
 import time
 import uuid
 from abc import abstractmethod
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import timedelta
 from typing import Any, ClassVar, Self, cast
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, AnonymousUser
-from django.db import connection, models
+from django.db import connection, models, transaction
 from django.utils import timezone
 from gain import logging
 
@@ -892,6 +894,15 @@ class Quota(models.Model):
     column is NOT NULL and the migrations are written against that default,
     not because zero is ever a sensible starting value -- it is precisely the
     value that means "exhausted".
+
+    A method that mutates a counter by reading it first must run inside
+    ``_mutating_stored_row``, which re-reads the row under a lock so two
+    overlapping writers cannot each deduct from the same starting value.
+    Spending quota goes through ``_consume``, which owns that lock already.
+    ``reset_daily`` and ``reset_monthly`` are the deliberate exception: they
+    overwrite the counters with configured limits rather than deriving new
+    values from what they read, so they have nothing to lose to a concurrent
+    writer -- though they do still write the whole row.
     """
     daily_jobs = models.IntegerField(default=0)
     monthly_jobs = models.IntegerField(default=0)
@@ -1005,16 +1016,15 @@ class Quota(models.Model):
 
     def add_units(self) -> None:
         """Add extra units to the quota."""
-        self.extra_jobs = max(self.extra_jobs, 0)
-        self.extra_jobs += self.get_monthly_job_max()
+        with self._mutating_stored_row():
+            self.extra_jobs = max(self.extra_jobs, 0)
+            self.extra_jobs += self.get_monthly_job_max()
 
-        self.extra_variants = max(self.extra_variants, 0)
-        self.extra_variants += self.get_monthly_variant_max()
+            self.extra_variants = max(self.extra_variants, 0)
+            self.extra_variants += self.get_monthly_variant_max()
 
-        self.extra_attributes = max(self.extra_attributes, 0)
-        self.extra_attributes += self.get_monthly_attribute_max()
-
-        self.save()
+            self.extra_attributes = max(self.extra_attributes, 0)
+            self.extra_attributes += self.get_monthly_attribute_max()
 
     def check_job_quota(self) -> bool:
         """Check if the user has quota for a job."""
@@ -1060,6 +1070,46 @@ class Quota(models.Model):
             and self.check_attribute_quota(attributes_count) \
             and self.check_variant_quota(variants_count)
 
+    @contextmanager
+    def _mutating_stored_row(self) -> Iterator[None]:
+        """Apply the enclosed mutation to the stored row, under a row lock.
+
+        Consuming quota is a read-modify-write, so two of them overlapping
+        would otherwise lose a deduction: each reads the same counters and the
+        second write erases the first. The row is therefore re-read under
+        ``select_for_update`` and written back within one transaction, which
+        serialises the whole read-modify-write against any other consumer of
+        the same row.
+
+        The re-read lands in ``self``, so the enclosed mutation and the caller
+        that inspects the instance afterwards both see the stored values. Any
+        unsaved change staged on the instance beforehand is discarded -- the
+        stored row, not the instance, is what a consumption operates on.
+
+        ``select_for_update`` is a silent no-op on SQLite, so the guarantee
+        this provides is real only on the PostgreSQL backend that production
+        and the e2e stack run; nothing here needs a backend guard, but a test
+        of the locking itself cannot be written against the unit suite.
+        """
+        using = self._state.db
+        with transaction.atomic(using=using):
+            self.refresh_from_db(
+                from_queryset=self._meta.base_manager
+                .using(using).select_for_update())
+            yield
+            self.save(using=using)
+
+    def _consume(self, *deductions: tuple[str, str, str, int]) -> None:
+        """Apply ``deductions`` to the stored row, in order, as one write.
+
+        The single way to spend quota: it owns the row lock, so there is no
+        path that deducts without one. Order is significant -- an earlier
+        deduction can zero the extras a later one reads.
+        """
+        with self._mutating_stored_row():
+            for daily, monthly, extra, amount in deductions:
+                self._deduct(daily, monthly, extra, amount)
+
     def _deduct(
         self,
         daily_field: str,
@@ -1085,30 +1135,27 @@ class Quota(models.Model):
 
     def job_complete(self, variants_count: int, attributes_count: int) -> None:
         """Update quotas after a job is completed."""
-        self._deduct("daily_jobs", "monthly_jobs", "extra_jobs", 1)
-        self._deduct(
-            "daily_variants", "monthly_variants",
-            "extra_variants",
-            variants_count,
+        self._consume(
+            ("daily_jobs", "monthly_jobs", "extra_jobs", 1),
+            (
+                "daily_variants", "monthly_variants",
+                "extra_variants", variants_count,
+            ),
+            (
+                "daily_attributes", "monthly_attributes",
+                "extra_attributes", attributes_count,
+            ),
         )
-        self._deduct(
-            "daily_attributes", "monthly_attributes",
-            "extra_attributes",
-            attributes_count,
-        )
-        self.save()
 
     def single_allele_query_complete(self, attributes_count: int) -> None:
         """Update quotas after a single allele query is completed."""
-        self._deduct(
-            "daily_variants", "monthly_variants",
-            "extra_variants", 1,
+        self._consume(
+            ("daily_variants", "monthly_variants", "extra_variants", 1),
+            (
+                "daily_attributes", "monthly_attributes",
+                "extra_attributes", attributes_count,
+            ),
         )
-        self._deduct(
-            "daily_attributes", "monthly_attributes",
-            "extra_attributes", attributes_count,
-        )
-        self.save()
 
 
 @dataclasses.dataclass(frozen=True)

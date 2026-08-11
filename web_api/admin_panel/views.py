@@ -33,7 +33,21 @@ _CURRENT_QUOTA_FIELDS = {
 }
 
 
-def _quota_snapshot_response(quota: Quota) -> Response:
+def _set_quota_field_response(
+    quota: Quota, field: str, amount: int,
+) -> Response:
+    """Set one counter on ``quota`` and answer with the row as stored.
+
+    Writing only the named column keeps a deduction that commits alongside
+    this request from being overwritten; re-reading afterwards keeps the
+    answer from reporting the rest of the row as it was before that
+    deduction. The two belong together -- a setter that wrote the whole row
+    would need no re-read, and one that writes a column without re-reading
+    answers with a state that was never stored.
+    """
+    setattr(quota, field, amount)
+    quota.save(update_fields=[field])
+    quota.refresh_from_db()
     snapshot = QuotaSnapshot.from_quota(quota)
     return Response(dataclasses.asdict(snapshot))
 
@@ -87,10 +101,9 @@ class SetExtraQuotaView(AdminPanelView):
                 status=status.HTTP_404_NOT_FOUND)
 
         quota = UserQuota.get_or_create_for(user=user)
-        setattr(quota, _EXTRA_QUOTA_FIELDS[quota_type], amount_int)
-        quota.save()
+        field = _EXTRA_QUOTA_FIELDS[quota_type]
 
-        return _quota_snapshot_response(quota)
+        return _set_quota_field_response(quota, field, amount_int)
 
 
 class SetCurrentQuotaView(AdminPanelView):
@@ -126,10 +139,8 @@ class SetCurrentQuotaView(AdminPanelView):
                 status=status.HTTP_404_NOT_FOUND)
 
         quota = UserQuota.get_or_create_for(user=user)
-        setattr(quota, quota_type, amount_int)
-        quota.save()
 
-        return _quota_snapshot_response(quota)
+        return _set_quota_field_response(quota, quota_type, amount_int)
 
 
 class SetSessionQuotaView(AdminPanelView):
@@ -163,10 +174,8 @@ class SetSessionQuotaView(AdminPanelView):
                 status=status.HTTP_400_BAD_REQUEST)
 
         quota = SessionQuota.get_or_create_for(session_id=session_id)
-        setattr(quota, quota_type, amount_int)
-        quota.save()
 
-        return _quota_snapshot_response(quota)
+        return _set_quota_field_response(quota, quota_type, amount_int)
 
 
 class SetIpQuotaView(AdminPanelView):
@@ -207,10 +216,8 @@ class SetIpQuotaView(AdminPanelView):
                 status=status.HTTP_400_BAD_REQUEST)
 
         quota = AnonymousUserQuota.get_or_create_for(ip=ip)
-        setattr(quota, quota_type, amount_int)
-        quota.save()
 
-        return _quota_snapshot_response(quota)
+        return _set_quota_field_response(quota, quota_type, amount_int)
 
 
 class DeleteAnonymousJobsView(AdminPanelView):
