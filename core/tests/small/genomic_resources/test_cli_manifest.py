@@ -45,7 +45,9 @@ def test_resource_manifest_simple(
 
     # Then
     assert (path / "one" / GR_MANIFEST_FILE_NAME).is_file()
-    assert (path / GR_CONTENTS_FILE_NAME).exists()
+    # The repository index is repo-scoped; a resource-scoped command
+    # leaves it to `repo-index` (gain#760).
+    assert not (path / GR_CONTENTS_FILE_NAME).exists()
 
 
 def test_resource_manifest_dry_run_simple(

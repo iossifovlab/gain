@@ -4,13 +4,14 @@ import gzip
 import logging
 import os
 import pathlib
+import shutil
 import threading
 from collections.abc import Callable, Generator
 from typing import Any
 
 import pytest
 import pytest_mock
-from gain.genomic_resources.cli import _create_contents_db
+from gain.genomic_resources.cli import _create_contents_db, cli_manage
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadOnlyProtocol,
     FsspecReadWriteProtocol,
@@ -18,6 +19,9 @@ from gain.genomic_resources.fsspec_protocol import (
 )
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
+    GR_CONTENTS_FILE_NAME,
+    GR_INDEX_FILE_NAME,
+    GR_SQLITE_META_FILE_NAME,
     GenomicResource,
 )
 from gain.genomic_resources.testing import (
@@ -28,6 +32,10 @@ from gain.genomic_resources.testing import (
     copy_proto_genomic_resources,
     s3_test_protocol,
     setup_directories,
+)
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_position_score,
 )
 
 logger = logging.getLogger(__name__)
@@ -243,3 +251,62 @@ def resource(tmp_path: pathlib.Path) -> GenomicResource:
     # Repairing the repository is what writes the manifest.
     proto = build_filesystem_test_protocol(root_path)
     return proto.get_resource(BASIC_RESOURCE_ID)
+
+
+#: Every repository-global artifact the scope contract of gain#760 is
+#: about: what a `repo-index` publishes and a `resource-*` command must
+#: leave untouched. Shared by the two modules pinning that contract from
+#: its two sides, so neither can drift to a subset. The uncompressed
+#: ``.CONTENTS.json`` is not here: since #758 it is a legacy artifact
+#: nothing publishes.
+GLOBAL_ARTIFACTS = (
+    GR_CONTENTS_FILE_NAME,
+    GR_SQLITE_META_FILE_NAME,
+    GR_INDEX_FILE_NAME,
+)
+
+
+def read_published_contents(repo_path: pathlib.Path) -> str:
+    """The text of the repository's published (gzipped) contents index."""
+    return gzip.decompress(
+        (repo_path / GR_CONTENTS_FILE_NAME).read_bytes()).decode("utf8")
+
+
+@pytest.fixture(scope="session")
+def _settled_grr_template(
+        tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
+    """A repaired two-score repository, built once per session.
+
+    A full ``repo-repair`` is the most expensive CLI operation the small
+    tests run; the per-test ``settled_repo`` below copies this tree
+    instead of re-repairing it.
+    """
+    path = tmp_path_factory.mktemp("settled_grr_template")
+    repo = a_grr()
+    for rid in ("sub/one", "sub/two"):
+        repo = repo.with_resource(
+            rid,
+            a_position_score()
+            .with_score("phastCons", "float")
+            .with_data("""
+                chrom  pos_begin  phastCons
+                1      10         0.1
+                1      11         0.2
+            """),
+        )
+    repo.build_repo(path)
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
+    return path
+
+
+@pytest.fixture
+def settled_repo(
+    _settled_grr_template: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> pathlib.Path:
+    """A two-score repository fully repaired, globals included."""
+    repo_path = tmp_path / "grr"
+    # copy2 (copytree's default) keeps mtimes, so the `.grr` state
+    # receipts stay valid in the copy.
+    shutil.copytree(_settled_grr_template, repo_path)
+    return repo_path

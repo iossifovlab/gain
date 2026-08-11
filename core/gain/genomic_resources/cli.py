@@ -109,11 +109,17 @@ class CommandResult:
 
     An ``int`` could express only the first, which is why non-dry-run
     repair was structurally incapable of reporting failure.
+
+    ``wrote`` is not a fourth outcome but a fact about the run: whether
+    it changed anything on disk.  The resource-scoped commands read it
+    to note that the repository-global artifacts are now behind the
+    resources they describe (gain#760).
     """
 
     needs_update: int = 0
     failed: frozenset[str] = frozenset()
     repo_failed: bool = False
+    wrote: bool = False
 
     @property
     def has_failures(self) -> bool:
@@ -424,6 +430,11 @@ def _do_resource_manifest_command(
     force: bool,  # noqa: FBT001
     use_dvc: bool,  # noqa: FBT001
 ) -> bool:
+    """Check, and outside a dry run save, one resource's manifest.
+
+    Returns whether anything came of it: a dry run reports finding the
+    manifest stale, a real run reports saving it.
+    """
     # '.dvc' entries are always collected, in EVERY mode: they are the md5
     # sum of the file they describe by default, and the thing `--without-dvc`
     # verifies the bytes against. Gating this on `use_dvc` also deleted every
@@ -471,6 +482,7 @@ def _do_resource_manifest_command(
         logger.info(
             "updating manifest for resource <%s>...", res.resource_id)
         proto.save_manifest(res, manifest_update.manifest)
+        return True
 
     return False
 
@@ -483,10 +495,12 @@ class ManifestOutcome(NamedTuple):
     the resources whose manifest could not be built at all - today, only a
     resource whose content drifted from its ``.dvc`` sidecars under
     ``--without-dvc``; it has NO entry in ``updates_needed`` (#373).
+    ``wrote`` is whether the pass saved any manifest.
     """
 
     updates_needed: dict[str, bool]
     failed: frozenset[str]
+    wrote: bool
 
 
 def _run_repo_manifest_command_internal(
@@ -499,14 +513,19 @@ def _run_repo_manifest_command_internal(
 
     updates_needed = {}
     failed: set[str] = set()
+    wrote = False
     for res in resources:
         try:
-            updates_needed[res.resource_id] = _do_resource_manifest_command(
+            changed = _do_resource_manifest_command(
                 proto, res,
                 dry_run=dry_run,
                 force=force,
                 use_dvc=use_dvc,
             )
+            # In a real run `changed` means "saved", which belongs to
+            # `wrote` and not to the dry-run staleness count.
+            updates_needed[res.resource_id] = changed if dry_run else False
+            wrote = wrote or (changed and not dry_run)
         except (DvcContentDriftError, *RESOURCE_ERRORS) as err:
             # Collected, not raised: every drifted resource of the
             # repository is reported by one run, and the resources that
@@ -521,7 +540,7 @@ def _run_repo_manifest_command_internal(
                 err, "could not verify", res.resource_id)
             failed.add(res.resource_id)
 
-    return ManifestOutcome(updates_needed, frozenset(failed))
+    return ManifestOutcome(updates_needed, frozenset(failed), wrote)
 
 
 def _build_content_file(
@@ -671,11 +690,53 @@ def _create_contents_db(
     return frozenset(failed)
 
 
-def _run_repo_manifest_command(
+def _configure_repo_index_subparser(
+        subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser(
+        "repo-index",
+        help="Publish the repository index (.CONTENTS files, search index, "
+        "repository index pages) from the manifests already on disk")
+    _add_repository_resource_parameters_group(parser, use_resource=False)
+    VerbosityConfiguration.set_arguments(parser)
+
+
+def _run_repo_index_command(
+        proto: ReadWriteRepositoryProtocol) -> CommandResult:
+    """Publish the repository-global artifacts from on-disk manifests.
+
+    Builds ``.CONTENTS.json.gz``, then the FTS index, then the
+    repository index pages.  Nothing is verified and nothing is written
+    inside any resource directory: a resource without a committed
+    manifest is left out of all three, reported by id, and fails the
+    run (#373).
+    """
+    assert isinstance(proto, FsspecReadWriteProtocol)
+    skipped: set[str] = set()
+    for res in proto.get_all_resources():
+        # The repository walk already loaded every manifest that exists,
+        # so this is an attribute read; only a genuinely manifest-less
+        # resource pays one probe.
+        if res.get_loaded_manifest() is None:
+            logger.error(
+                "not publishing <%s> in the repository index: "
+                "it has no manifest", res.resource_id)
+            skipped.add(res.resource_id)
+    result = _publish_repository_contents(
+        proto, CommandResult(failed=frozenset(skipped)))
+    proto.build_index_info(failed=result.failed)
+    return result
+
+
+def _run_manifest_core(
     proto: ReadWriteRepositoryProtocol,
     resources: Sequence[GenomicResource],
     **kwargs: bool | int | str,
 ) -> CommandResult:
+    """Create/update the selected resources' manifests.
+
+    Writes only inside the selected resources' directories; publishing
+    the repository-global artifacts is its callers' decision.
+    """
     dry_run = cast(bool, kwargs.get("dry_run", False))
     force = cast(bool, kwargs.get("force", False))
     if dry_run and force:
@@ -696,9 +757,46 @@ def _run_repo_manifest_command(
                 1 for stale in outcome.updates_needed.values() if stale
             ) + len(outcome.failed),
             failed=outcome.failed)
+    return CommandResult(failed=outcome.failed, wrote=outcome.wrote)
+
+
+def _run_repo_manifest_command(
+    proto: ReadWriteRepositoryProtocol,
+    resources: Sequence[GenomicResource],
+    **kwargs: bool | int | str,
+) -> CommandResult:
+    result = _run_manifest_core(proto, resources, **kwargs)
+    if cast(bool, kwargs.get("dry_run", False)):
+        return result
     assert isinstance(proto, FsspecReadWriteProtocol)
-    _build_content_file(proto, outcome.failed)
-    return CommandResult(failed=outcome.failed)
+    _build_content_file(proto, result.failed)
+    return result
+
+
+def _note_stale_repository_index(
+        proto: ReadWriteRepositoryProtocol,
+        result: CommandResult) -> CommandResult:
+    """Note that a run left the repository-global artifacts behind.
+
+    A resource-scoped command writes only inside the selected resources'
+    directories, so anything it changed is not yet reflected in
+    ``.CONTENTS``, the search index or the repository index pages.
+    """
+    if result.wrote:
+        logger.info(
+            "repository index of <%s> not updated; "
+            "run 'grr_manage repo-index' before publishing",
+            proto.get_url())
+    return result
+
+
+def _run_resource_manifest_command(
+    proto: ReadWriteRepositoryProtocol,
+    resources: Sequence[GenomicResource],
+    **kwargs: bool | int | str,
+) -> CommandResult:
+    return _note_stale_repository_index(
+        proto, _run_manifest_core(proto, resources, **kwargs))
 
 
 def _find_resources(
@@ -873,11 +971,17 @@ def _statistics_not_built(
     return frozenset(not_built)
 
 
-def _run_repo_stats_command(
+def _run_stats_core(
         repo: GenomicResourceRepo,
         proto: ReadWriteRepositoryProtocol,
         resources: Sequence[GenomicResource],
         **kwargs: bool | int | str) -> CommandResult:
+    """Build the selected resources' statistics and refresh their manifests.
+
+    Writes inside the selected resources' directories (and task logs
+    under the repository's ``.task-log``); publishing the
+    repository-global artifacts is its callers' decision.
+    """
     dry_run = cast(bool, kwargs.get("dry_run", False))
     force = cast(bool, kwargs.get("force", False))
     region_size = cast(int, kwargs.get("region_size", 3_000_000))
@@ -986,41 +1090,57 @@ def _run_repo_stats_command(
             dry_run=False, force=True, use_dvc=True)
         failed |= set(stats_manifest_outcome.failed)
 
-    assert isinstance(proto, FsspecReadWriteProtocol)
-    _build_content_file(proto, frozenset(failed))
-    # The FTS index walks the whole repository, so the ids it returns may
-    # name resources this command did not select -- they are reported
-    # under their own ids, and the run fails, but the selected resource is
-    # not blamed for them. A resource that already failed this run is
-    # left out of it: rebuilding an index for a resource the run is
-    # failing on is exactly the poison #373 removes.
-    failed |= _create_contents_db(proto, frozenset(failed))
     return CommandResult(
-        failed=frozenset(failed), repo_failed=repo_failed)
+        failed=frozenset(failed), repo_failed=repo_failed,
+        wrote=outcome.wrote or bool(stats_resources))
 
 
-def _run_repo_repair_command(
-        repo: GenomicResourceRepo,
+def _publish_repository_contents(
         proto: ReadWriteRepositoryProtocol,
-        resources: Sequence[GenomicResource],
-        **kwargs: str | bool | int) -> CommandResult:
-    return _run_repo_info_command(repo, proto, resources, **kwargs)
+        result: CommandResult) -> CommandResult:
+    """Publish ``.CONTENTS.json.gz`` and the FTS index.
 
-
-def _run_repo_info_command(
-        repo: GenomicResourceRepo,
-        proto: ReadWriteRepositoryProtocol,
-        resources: Sequence[GenomicResource],
-        **kwargs: str | bool | int) -> CommandResult:
-    result = _run_repo_stats_command(repo, proto, resources, **kwargs)
-
-    dry_run = cast(bool, kwargs.get("dry_run", False))
-    if dry_run:
-        return result
-
+    The FTS index walks the whole repository, so the ids it returns may
+    name resources the calling command did not select -- they are reported
+    under their own ids, and the run fails, but the selected resource is
+    not blamed for them. A resource that already failed this run is
+    left out of both artifacts: rebuilding an index for a resource the
+    run is failing on is exactly the poison #373 removes.
+    """
     assert isinstance(proto, FsspecReadWriteProtocol)
+    _build_content_file(proto, result.failed)
+    failed = result.failed | _create_contents_db(proto, result.failed)
+    return dataclasses.replace(result, failed=frozenset(failed))
+
+
+def _run_repo_stats_command(
+        repo: GenomicResourceRepo,
+        proto: ReadWriteRepositoryProtocol,
+        resources: Sequence[GenomicResource],
+        **kwargs: bool | int | str) -> CommandResult:
+    result = _run_stats_core(repo, proto, resources, **kwargs)
+    if cast(bool, kwargs.get("dry_run", False)):
+        return result
+    return _publish_repository_contents(proto, result)
+
+
+def _run_resource_stats_command(
+        repo: GenomicResourceRepo,
+        proto: ReadWriteRepositoryProtocol,
+        resources: Sequence[GenomicResource],
+        **kwargs: bool | int | str) -> CommandResult:
+    return _note_stale_repository_index(
+        proto, _run_stats_core(repo, proto, resources, **kwargs))
+
+
+def _regenerate_resource_pages(
+        repo: GenomicResourceRepo,
+        proto: ReadWriteRepositoryProtocol,
+        resources: Sequence[GenomicResource],
+        result: CommandResult) -> CommandResult:
+    """Regenerate the selected resources' own info pages."""
     failed = set(result.failed)
-    proto.build_index_info(failed=frozenset(failed))
+    wrote = result.wrote
     for res in resources:
         if res.resource_id in failed:
             # Something GAIn was asked to do to it already failed -- most
@@ -1032,12 +1152,42 @@ def _run_repo_info_command(
                 "it already failed in this run", res.resource_id)
             continue
         try:
-            _do_resource_info_command(repo, proto, res)
+            wrote = _do_resource_info_command(repo, proto, res) or wrote
         except Exception as err:  # noqa: BLE001
             report_resource_failure(
                 err, "skipping info page for", res.resource_id)
             failed.add(res.resource_id)
-    return dataclasses.replace(result, failed=frozenset(failed))
+    return dataclasses.replace(
+        result, failed=frozenset(failed), wrote=wrote)
+
+
+def _run_repo_info_command(
+        repo: GenomicResourceRepo,
+        proto: ReadWriteRepositoryProtocol,
+        resources: Sequence[GenomicResource],
+        **kwargs: str | bool | int) -> CommandResult:
+    result = _run_repo_stats_command(repo, proto, resources, **kwargs)
+
+    if cast(bool, kwargs.get("dry_run", False)):
+        return result
+
+    assert isinstance(proto, FsspecReadWriteProtocol)
+    proto.build_index_info(failed=result.failed)
+    return _regenerate_resource_pages(repo, proto, resources, result)
+
+
+def _run_resource_info_command(
+        repo: GenomicResourceRepo,
+        proto: ReadWriteRepositoryProtocol,
+        resources: Sequence[GenomicResource],
+        **kwargs: str | bool | int) -> CommandResult:
+    result = _run_stats_core(repo, proto, resources, **kwargs)
+
+    if cast(bool, kwargs.get("dry_run", False)):
+        return result
+
+    return _note_stale_repository_index(
+        proto, _regenerate_resource_pages(repo, proto, resources, result))
 
 
 def _fix_one_histogram(
@@ -1180,26 +1330,29 @@ def _write_resource_file_if_changed(
         proto: ReadWriteRepositoryProtocol,
         res: GenomicResource,
         filename: str,
-        content: str) -> None:
+        content: str) -> bool:
     """Write ``content`` to a resource file only if it differs.
 
     The generated info pages are deterministic, so regenerating them on
     an unchanged repo produces identical bytes. Skipping the write in
     that case keeps the file's mtime stable, so re-running repo-repair
     is idempotent (and mtime-based consumers don't see spurious churn).
+    Returns whether the file was written.
     """
     if proto.file_exists(res, filename):
         with proto.open_raw_file(res, filename, "rt") as infile:
             if infile.read() == content:
-                return
+                return False
     with proto.open_raw_file(res, filename, mode="wt") as outfile:
         outfile.write(content)
+    return True
 
 
 def _do_resource_info_command(
         repo: GenomicResourceRepo,
         proto: ReadWriteRepositoryProtocol,
-        res: GenomicResource) -> None:
+        res: GenomicResource) -> bool:
+    """Regenerate one resource's info pages; return whether any changed."""
     implementation = build_resource_implementation(res)
 
     # Both pages are rendered BEFORE either is written: writing index.html
@@ -1209,10 +1362,10 @@ def _do_resource_info_command(
     info = implementation.get_info(repo=repo)
     statistics_info = implementation.get_statistics_info(repo=repo)
 
-    _write_resource_file_if_changed(
+    wrote = _write_resource_file_if_changed(
         proto, res, GR_INDEX_FILE_NAME, info)
-    _write_resource_file_if_changed(
-        proto, res, GR_STATISTICS_INDEX_FILE_NAME, statistics_info)
+    return _write_resource_file_if_changed(
+        proto, res, GR_STATISTICS_INDEX_FILE_NAME, statistics_info) or wrote
 
 
 # The repository-scoped and resource-scoped commands differ only in how they
@@ -1222,7 +1375,7 @@ def _do_resource_info_command(
 # _exit_with).
 _REPO_COMMANDS = frozenset({
     "repo-manifest", "repo-stats", "repo-info", "repo-repair",
-    "repo-fix-histograms"})
+    "repo-fix-histograms", "repo-index"})
 _RESOURCE_COMMANDS = frozenset({
     "resource-manifest", "resource-stats",
     "resource-info", "resource-repair"})
@@ -1254,6 +1407,7 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
     _configure_repo_repair_subparser(commands_parser)
     _configure_resource_repair_subparser(commands_parser)
     _configure_repo_fix_histograms_subparser(commands_parser)
+    _configure_repo_index_subparser(commands_parser)
     args = parser.parse_args(cli_args)
     VerbosityConfiguration.set(args)
 
@@ -1287,7 +1441,11 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
 
     if command in _REPO_COMMANDS:
         resources = list(proto.get_all_resources())
-        if len(resources) == 0:
+        if len(resources) == 0 and command != "repo-index":
+            # For every other command an empty repository means nothing
+            # to do -- but repo-index publishes the index OF that
+            # emptiness, or a `.CONTENTS` still advertising the last
+            # deleted resource survives it (gain#760).
             logger.info("repository <%s> has no resources", repo_url)
             sys.exit(0)
     elif command in _RESOURCE_COMMANDS:
@@ -1322,21 +1480,39 @@ def _run_management_command(
     """
     command = cast(str, kwargs["command"])
     try:
+        if command == "repo-index":
+            # Ahead of the dvc-directory refusal: that guard protects
+            # the writes a repair-style command makes inside resource
+            # directories, and repo-index makes none. A dvc-directory
+            # resource is published from its committed manifest like
+            # any other, or skipped-and-reported if it has none (#373).
+            return _run_repo_index_command(proto)
         # Before anything is written: a resource GAIn cannot certify fails
         # the command here, where failing it costs nothing, rather than
         # part-way through a repository it has already started rewriting
         # (#284).
         refuse_dvc_directory_outputs(proto, resources)
-        if command.endswith("-manifest"):
+        # Dispatched by FULL command name, never by suffix: the repo- and
+        # resource-scoped variants of one verb differ in whether the
+        # repository-global artifacts are republished at the end, so a
+        # suffix match would silently hand one scope the other's contract.
+        if command == "repo-manifest":
             return _run_repo_manifest_command(proto, resources, **kwargs)
-        if command.endswith("-stats"):
+        if command == "resource-manifest":
+            return _run_resource_manifest_command(proto, resources, **kwargs)
+        if command == "repo-stats":
             return _run_repo_stats_command(
                 repo, proto, resources, **kwargs)
-        if command.endswith("-info"):
+        if command == "resource-stats":
+            return _run_resource_stats_command(
+                repo, proto, resources, **kwargs)
+        # Repair is info plus nothing: the info commands already rebuild
+        # manifests and statistics on the way to the pages.
+        if command in ("repo-info", "repo-repair"):
             return _run_repo_info_command(
                 repo, proto, resources, **kwargs)
-        if command.endswith("-repair"):
-            return _run_repo_repair_command(
+        if command in ("resource-info", "resource-repair"):
+            return _run_resource_info_command(
                 repo, proto, resources, **kwargs)
         if command == "repo-fix-histograms":
             return _run_repo_fix_histograms_command(proto, resources)

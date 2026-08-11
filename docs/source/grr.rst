@@ -244,7 +244,7 @@ Usage:
 .. code-block:: text
 
     grr_manage [-h] [--version] [--verbose] [--logfile LOGFILE]
-               {list,repo-init,repo-manifest,resource-manifest,repo-stats,resource-stats,repo-info,resource-info,repo-repair,resource-repair} ...
+               {list,repo-init,repo-manifest,resource-manifest,repo-stats,resource-stats,repo-info,resource-info,repo-repair,resource-repair,repo-index} ...
 
 Commands:
 
@@ -274,6 +274,24 @@ Commands:
      - Update/rebuild manifest and histograms whole GRR.
    * - ``resource-repair``
      - Update/rebuild manifest and histograms for a resource.
+   * - ``repo-index``
+     - Publish the repository index (``.CONTENTS`` files, search index,
+       repository index pages) from the manifests already on disk.
+
+The two scopes differ in more than how resources are selected. A
+``resource-*`` command writes inside the selected resources'
+directories (plus task logs under ``.task-log``); the repository-global
+artifacts — ``.CONTENTS.json.gz``, the search index and the
+repository index pages — are left as they were, so after it writes
+anything it notes that the repository index is stale. The ``repo-*``
+commands republish global artifacts at the end of their runs —
+``repo-repair`` and ``repo-info`` all three, ``repo-stats`` the
+``.CONTENTS`` files and the search index, ``repo-manifest`` the
+``.CONTENTS`` files only — and ``repo-index`` does *only* that: it
+rebuilds all three groups from the manifests already on disk,
+verifying nothing and writing nothing inside any resource directory.
+A resource without a committed manifest is left out of the index,
+reported by id, and fails the ``repo-index`` run.
 
 Options:
 
@@ -352,7 +370,7 @@ The search index
 
 The index is stored at the root of the repository as ``.CONTENTS.sqlite3.gz`` — a gzipped SQLite database holding a single `FTS5 <https://www.sqlite.org/fts5.html>`_ virtual table named ``contents``.
 
-The index is built and refreshed by ``grr_manage repo-repair``. Repair skips the rebuild when the repository contents are unchanged (the index records the md5 of the ``.CONTENTS`` file it was built from), so re-running it on an untouched repository is cheap.
+The index is built and refreshed by ``grr_manage repo-index`` (and by ``repo-stats``, ``repo-info`` and ``repo-repair`` at the end of their runs). The rebuild is skipped when the repository contents are unchanged (the index records the md5 of the ``.CONTENTS`` file it was built from), so re-running any of these on an untouched repository is cheap.
 
 Indexed fields
 ^^^^^^^^^^^^^^
@@ -545,12 +563,20 @@ After adding the resource, return to the GRR root directory and run
     cd ..
     grr_manage resource-repair
 
+then ``grr_manage repo-index`` to publish the updated resource in the
+repository index:
+
+.. code-block:: bash
+
+    grr_manage repo-index
+
 The generated files should also be added to Git:
 
 .. code-block:: bash
 
     git add my_positionscore/.MANIFEST
     git add my_positionscore/histograms/
+    git add .CONTENTS.json.gz .CONTENTS.sqlite3.gz
     git commit -m "Add my_positionscore generated metadata"
     git push
 
@@ -579,13 +605,15 @@ directory:
 .. code-block:: bash
 
     grr_manage resource-repair
+    grr_manage repo-index
 
-This updates the resource manifest and any derived metadata that depend on the configuration. Then add the changed files to Git:
+This updates the resource manifest and any derived metadata that depend on the configuration, and republishes the repository index. Then add the changed files to Git:
 
 .. code-block:: bash
 
     git add my_positionscore/genomic_resource.yaml
     git add my_positionscore/.MANIFEST
+    git add .CONTENTS.json.gz .CONTENTS.sqlite3.gz
     git commit -m "Update my_positionscore metadata"
     git push
 

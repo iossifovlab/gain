@@ -141,9 +141,17 @@ We strongly recommend running the command below, which checks the resource and p
 
     grr_manage resource-repair
 
-On successful completion, an ``index.html`` file will appear in the ``my_minigenome`` directory. 
-It contains basic metadata about the resource, statistics such as chromosome length and 
+On successful completion, an ``index.html`` file will appear in the ``my_minigenome`` directory.
+It contains basic metadata about the resource, statistics such as chromosome length and
 nucleotide/dinucleotide composition, and a full inventory of the files that make up the resource.
+
+.. note::
+
+    ``resource-repair`` does not update the repository-wide index —
+    the ``.CONTENTS`` files and the repository's ``index.html``. Those
+    are published separately by ``grr_manage repo-index``, run from
+    the repository root. Do that once you want the repository as a
+    whole (rather than the single resource) to reflect your changes.
 
 .. figure:: figures/example1_resource.png
   :scale: 80 %

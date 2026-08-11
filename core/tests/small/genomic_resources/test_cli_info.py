@@ -91,7 +91,9 @@ def test_resource_info(
 
     assert (path / "one/index.html").exists()
     assert not (path / "two/index.html").exists()
-    assert (path / "index.html").exists()
+    # The repository index page is repo-scoped; a resource-scoped
+    # command leaves it to `repo-index` (gain#760).
+    assert not (path / "index.html").exists()
 
     cli_manage([
         "resource-info", "-R", str(path), "-r", "two", "-j", "1",
@@ -99,7 +101,7 @@ def test_resource_info(
 
     assert (path / "one/index.html").exists()
     assert (path / "two/index.html").exists()
-    assert (path / "index.html").exists()
+    assert not (path / "index.html").exists()
 
     result = (path / "one/index.html").read_text()
 
