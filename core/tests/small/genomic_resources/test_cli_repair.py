@@ -112,7 +112,9 @@ def test_resource_repair_simple(
     # Then
     assert (path / "one/statistics").exists()
     assert (path / "one" / GR_MANIFEST_FILE_NAME).exists()
-    assert (path / GR_CONTENTS_FILE_NAME).exists()
+    # The repository index is repo-scoped; a resource-scoped command
+    # leaves it to `repo-index` (gain#760).
+    assert not (path / GR_CONTENTS_FILE_NAME).exists()
 
 
 def test_repo_repair_simple(
@@ -468,40 +470,6 @@ def test_repo_repair_fails_when_the_fts_index_cannot_be_built(
     assert "skipping FTS index for" in caplog.text
     assert "cannot index this" in caplog.text
     assert "is consistent" not in caplog.text
-
-
-def test_the_fts_index_blames_the_resource_it_failed_on_not_the_selected_one(
-    proto_fixture: tuple[pathlib.Path, FsspecReadWriteProtocol],
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    # The FTS index is repository-wide, so it walks resources the user did
-    # NOT select.  Those failures are real and must fail the run, but they
-    # are reported under their own id.
-    path, _proto = proto_fixture
-    real = ScoreImplementationBase.collect_index_info
-
-    def boom(self: Any) -> Any:
-        if self.resource.resource_id == "two":
-            raise ValueError("cannot index this")
-        return real(self)
-
-    monkeypatch.setattr(ScoreImplementationBase, "collect_index_info", boom)
-
-    with caplog.at_level(logging.INFO, logger="grr_manage"), \
-            pytest.raises(SystemExit) as excinfo:
-        cli_manage([
-            "resource-repair", "-R", str(path), "-r", "one", "-j", "1"])
-
-    assert excinfo.value.code != 0
-    failures = [
-        record.getMessage() for record in caplog.records
-        if record.levelno == logging.ERROR
-    ]
-    assert any("<two>" in message for message in failures)
-    assert not any("<one>" in message for message in failures)
-    # The selected resource was still repaired.
-    assert (path / "one" / "index.html").is_file()
 
 
 def test_repo_repair_fails_when_the_statistics_hash_is_not_stored(

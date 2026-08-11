@@ -709,11 +709,16 @@ def _run_repo_index_command(
     return CommandResult(failed=frozenset(failed))
 
 
-def _run_repo_manifest_command(
+def _run_manifest_core(
     proto: ReadWriteRepositoryProtocol,
     resources: Sequence[GenomicResource],
     **kwargs: bool | int | str,
 ) -> CommandResult:
+    """Create/update the selected resources' manifests.
+
+    Writes only inside the selected resources' directories; publishing
+    the repository-global artifacts is its callers' decision.
+    """
     dry_run = cast(bool, kwargs.get("dry_run", False))
     force = cast(bool, kwargs.get("force", False))
     if dry_run and force:
@@ -734,9 +739,28 @@ def _run_repo_manifest_command(
                 1 for stale in outcome.updates_needed.values() if stale
             ) + len(outcome.failed),
             failed=outcome.failed)
-    assert isinstance(proto, FsspecReadWriteProtocol)
-    _build_content_file(proto, outcome.failed)
     return CommandResult(failed=outcome.failed)
+
+
+def _run_repo_manifest_command(
+    proto: ReadWriteRepositoryProtocol,
+    resources: Sequence[GenomicResource],
+    **kwargs: bool | int | str,
+) -> CommandResult:
+    result = _run_manifest_core(proto, resources, **kwargs)
+    if cast(bool, kwargs.get("dry_run", False)):
+        return result
+    assert isinstance(proto, FsspecReadWriteProtocol)
+    _build_content_file(proto, result.failed)
+    return result
+
+
+def _run_resource_manifest_command(
+    proto: ReadWriteRepositoryProtocol,
+    resources: Sequence[GenomicResource],
+    **kwargs: bool | int | str,
+) -> CommandResult:
+    return _run_manifest_core(proto, resources, **kwargs)
 
 
 def _find_resources(
@@ -911,11 +935,16 @@ def _statistics_not_built(
     return frozenset(not_built)
 
 
-def _run_repo_stats_command(
+def _run_stats_core(
         repo: GenomicResourceRepo,
         proto: ReadWriteRepositoryProtocol,
         resources: Sequence[GenomicResource],
         **kwargs: bool | int | str) -> CommandResult:
+    """Build the selected resources' statistics and refresh their manifests.
+
+    Writes only inside the selected resources' directories; publishing
+    the repository-global artifacts is its callers' decision.
+    """
     dry_run = cast(bool, kwargs.get("dry_run", False))
     force = cast(bool, kwargs.get("force", False))
     region_size = cast(int, kwargs.get("region_size", 3_000_000))
@@ -1024,17 +1053,45 @@ def _run_repo_stats_command(
             dry_run=False, force=True, use_dvc=True)
         failed |= set(stats_manifest_outcome.failed)
 
-    assert isinstance(proto, FsspecReadWriteProtocol)
-    _build_content_file(proto, frozenset(failed))
-    # The FTS index walks the whole repository, so the ids it returns may
-    # name resources this command did not select -- they are reported
-    # under their own ids, and the run fails, but the selected resource is
-    # not blamed for them. A resource that already failed this run is
-    # left out of it: rebuilding an index for a resource the run is
-    # failing on is exactly the poison #373 removes.
-    failed |= _create_contents_db(proto, frozenset(failed))
     return CommandResult(
         failed=frozenset(failed), repo_failed=repo_failed)
+
+
+def _publish_repository_contents(
+        proto: ReadWriteRepositoryProtocol,
+        result: CommandResult) -> CommandResult:
+    """Publish ``.CONTENTS.json[.gz]`` and the FTS index.
+
+    The FTS index walks the whole repository, so the ids it returns may
+    name resources the calling command did not select -- they are reported
+    under their own ids, and the run fails, but the selected resource is
+    not blamed for them. A resource that already failed this run is
+    left out of both artifacts: rebuilding an index for a resource the
+    run is failing on is exactly the poison #373 removes.
+    """
+    assert isinstance(proto, FsspecReadWriteProtocol)
+    _build_content_file(proto, result.failed)
+    failed = result.failed | _create_contents_db(proto, result.failed)
+    return dataclasses.replace(result, failed=frozenset(failed))
+
+
+def _run_repo_stats_command(
+        repo: GenomicResourceRepo,
+        proto: ReadWriteRepositoryProtocol,
+        resources: Sequence[GenomicResource],
+        **kwargs: bool | int | str) -> CommandResult:
+    result = _run_stats_core(repo, proto, resources, **kwargs)
+    if cast(bool, kwargs.get("dry_run", False)):
+        return result
+    return _publish_repository_contents(proto, result)
+
+
+def _run_resource_stats_command(
+        repo: GenomicResourceRepo,
+        proto: ReadWriteRepositoryProtocol,
+        resources: Sequence[GenomicResource],
+        **kwargs: bool | int | str) -> CommandResult:
+    return _run_stats_core(repo, proto, resources, **kwargs)
 
 
 def _run_repo_repair_command(
@@ -1045,20 +1102,21 @@ def _run_repo_repair_command(
     return _run_repo_info_command(repo, proto, resources, **kwargs)
 
 
-def _run_repo_info_command(
+def _run_resource_repair_command(
         repo: GenomicResourceRepo,
         proto: ReadWriteRepositoryProtocol,
         resources: Sequence[GenomicResource],
         **kwargs: str | bool | int) -> CommandResult:
-    result = _run_repo_stats_command(repo, proto, resources, **kwargs)
+    return _run_resource_info_command(repo, proto, resources, **kwargs)
 
-    dry_run = cast(bool, kwargs.get("dry_run", False))
-    if dry_run:
-        return result
 
-    assert isinstance(proto, FsspecReadWriteProtocol)
+def _regenerate_resource_pages(
+        repo: GenomicResourceRepo,
+        proto: ReadWriteRepositoryProtocol,
+        resources: Sequence[GenomicResource],
+        result: CommandResult) -> CommandResult:
+    """Regenerate the selected resources' own info pages."""
     failed = set(result.failed)
-    proto.build_index_info(failed=frozenset(failed))
     for res in resources:
         if res.resource_id in failed:
             # Something GAIn was asked to do to it already failed -- most
@@ -1076,6 +1134,34 @@ def _run_repo_info_command(
                 err, "skipping info page for", res.resource_id)
             failed.add(res.resource_id)
     return dataclasses.replace(result, failed=frozenset(failed))
+
+
+def _run_repo_info_command(
+        repo: GenomicResourceRepo,
+        proto: ReadWriteRepositoryProtocol,
+        resources: Sequence[GenomicResource],
+        **kwargs: str | bool | int) -> CommandResult:
+    result = _run_repo_stats_command(repo, proto, resources, **kwargs)
+
+    if cast(bool, kwargs.get("dry_run", False)):
+        return result
+
+    assert isinstance(proto, FsspecReadWriteProtocol)
+    proto.build_index_info(failed=result.failed)
+    return _regenerate_resource_pages(repo, proto, resources, result)
+
+
+def _run_resource_info_command(
+        repo: GenomicResourceRepo,
+        proto: ReadWriteRepositoryProtocol,
+        resources: Sequence[GenomicResource],
+        **kwargs: str | bool | int) -> CommandResult:
+    result = _run_stats_core(repo, proto, resources, **kwargs)
+
+    if cast(bool, kwargs.get("dry_run", False)):
+        return result
+
+    return _regenerate_resource_pages(repo, proto, resources, result)
 
 
 def _fix_one_histogram(
@@ -1372,16 +1458,31 @@ def _run_management_command(
         # part-way through a repository it has already started rewriting
         # (#284).
         refuse_dvc_directory_outputs(proto, resources)
-        if command.endswith("-manifest"):
+        # Dispatched by FULL command name, never by suffix: the repo- and
+        # resource-scoped variants of one verb differ in whether the
+        # repository-global artifacts are republished at the end, so a
+        # suffix match would silently hand one scope the other's contract.
+        if command == "repo-manifest":
             return _run_repo_manifest_command(proto, resources, **kwargs)
-        if command.endswith("-stats"):
+        if command == "resource-manifest":
+            return _run_resource_manifest_command(proto, resources, **kwargs)
+        if command == "repo-stats":
             return _run_repo_stats_command(
                 repo, proto, resources, **kwargs)
-        if command.endswith("-info"):
+        if command == "resource-stats":
+            return _run_resource_stats_command(
+                repo, proto, resources, **kwargs)
+        if command == "repo-info":
             return _run_repo_info_command(
                 repo, proto, resources, **kwargs)
-        if command.endswith("-repair"):
+        if command == "resource-info":
+            return _run_resource_info_command(
+                repo, proto, resources, **kwargs)
+        if command == "repo-repair":
             return _run_repo_repair_command(
+                repo, proto, resources, **kwargs)
+        if command == "resource-repair":
+            return _run_resource_repair_command(
                 repo, proto, resources, **kwargs)
         if command == "repo-fix-histograms":
             return _run_repo_fix_histograms_command(proto, resources)
