@@ -15,12 +15,6 @@ from web_annotation.models import (
     WebAnnotationAnonymousUser,
 )
 
-#: The extra-unit fields, which belong to neither period and so are refreshed
-#: by neither reset. Declared here rather than on the model: gain#749 scoped
-#: itself to the counters, and giving the extras a tuple of their own belongs
-#: with the code that would consume it.
-EXTRA_UNIT_FIELDS = ("extra_jobs", "extra_variants", "extra_attributes")
-
 
 def _seed_sentinels(
     quota: Quota, fields: tuple[str, ...],
@@ -89,6 +83,35 @@ def test_every_declared_counter_is_a_real_model_field() -> None:
     assert set(Quota.COUNTER_FIELDS) <= model_fields
 
 
+def test_every_declared_extra_unit_field_is_a_real_model_field() -> None:
+    # The extras get no such loud failure: a name no column backs is only
+    # ever reached through setattr, which would happily create an instance
+    # attribute and drop the grant on save (gain#788).
+    model_fields = {
+        field.name for field in AnonymousUserQuota._meta.get_fields()
+    }
+    assert set(Quota.EXTRA_UNIT_FIELDS) <= model_fields
+
+
+def test_the_period_tuples_are_still_derived_from_the_resource_table() -> None:
+    # A tripwire, not a property: while the tuples are projections of
+    # RESOURCE_FIELDS this cannot fail, which is the point. It fires when a
+    # period tuple is written by hand again and *diverges* from the table --
+    # a tuple that quietly loses a counter, which no other test catches: the
+    # model-field test still passes because the remaining names are real, and
+    # the reset tests loop the shortened tuple and so pass vacuously. A
+    # hand-written tuple that matches the table is a harmless no-op and stays
+    # green, correctly.
+    rows = Quota.RESOURCE_FIELDS.values()
+    derived_daily = tuple(daily for daily, _, _ in rows)
+    derived_monthly = tuple(monthly for _, monthly, _ in rows)
+    derived_extra = tuple(extra for _, _, extra in rows)
+
+    assert derived_daily == Quota.DAILY_COUNTER_FIELDS
+    assert derived_monthly == Quota.MONTHLY_COUNTER_FIELDS
+    assert derived_extra == Quota.EXTRA_UNIT_FIELDS
+
+
 def test_reset_daily_refreshes_every_declared_daily_counter(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
@@ -127,7 +150,7 @@ def test_reset_daily_leaves_the_monthly_counters_and_extras_untouched(
     # too, silently handing back monthly quota every night. Seeded off the
     # tuple so a counter added to a period stays covered here.
     untouched = _seed_sentinels(
-        anonymous_quota, Quota.MONTHLY_COUNTER_FIELDS + EXTRA_UNIT_FIELDS)
+        anonymous_quota, Quota.MONTHLY_COUNTER_FIELDS + Quota.EXTRA_UNIT_FIELDS)
     anonymous_quota.save()
     monthly_stamp_before = anonymous_quota.last_monthly_reset
 
@@ -143,7 +166,7 @@ def test_reset_monthly_leaves_the_daily_counters_and_extras_untouched(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     untouched = _seed_sentinels(
-        anonymous_quota, Quota.DAILY_COUNTER_FIELDS + EXTRA_UNIT_FIELDS)
+        anonymous_quota, Quota.DAILY_COUNTER_FIELDS + Quota.EXTRA_UNIT_FIELDS)
     anonymous_quota.save()
     daily_stamp_before = anonymous_quota.last_daily_reset
 
@@ -381,6 +404,54 @@ def test_job_complete_zeros_all_extras_when_extra_overdrawn(
     assert anonymous_quota.extra_jobs == 0
 
 
+def test_job_complete_charges_each_resource_through_its_declared_columns(
+    anonymous_quota: AnonymousUserQuota,
+) -> None:
+    # A distinct amount per resource, so that charging a resource through
+    # another resource's columns -- the mismatch that spelling the triples out
+    # by hand invites -- shows up as the wrong amount rather than cancelling
+    # out. Equal amounts would make any permutation of the resources
+    # invisible here (gain#788). Indexed, not `.get`, so that declaring a
+    # resource forces a decision about what a job completion charges it.
+    charged = {"jobs": 1, "variants": 2, "attributes": 3}
+    before = {
+        field: getattr(anonymous_quota, field)
+        for daily, monthly, _ in Quota.RESOURCE_FIELDS.values()
+        for field in (daily, monthly)
+    }
+
+    anonymous_quota.job_complete(
+        variants_count=charged["variants"],
+        attributes_count=charged["attributes"],
+    )
+
+    for resource, (daily, monthly, _) in Quota.RESOURCE_FIELDS.items():
+        amount = charged[resource]
+        for field in (daily, monthly):
+            actual = getattr(anonymous_quota, field)
+            assert actual == before[field] - amount, field
+
+
+def test_extras_exhaustion_zeroes_every_declared_extra_field(
+    anonymous_quota: AnonymousUserQuota,
+) -> None:
+    # Drawing any one extras pool down to zero zeroes them all. Driven off the
+    # declaration rather than naming the three, so a resource added to
+    # RESOURCE_FIELDS and left out of the zeroing keeps a live balance after
+    # extras are supposed to be exhausted -- free quota, with no exception and
+    # no failing test (gain#788).
+    for _, _, extra in Quota.RESOURCE_FIELDS.values():
+        setattr(anonymous_quota, extra, 5_000)
+    anonymous_quota.daily_attributes = 0
+    anonymous_quota.monthly_attributes = 0
+    anonymous_quota.save()
+
+    anonymous_quota.job_complete(variants_count=0, attributes_count=5_000)
+
+    for _, _, extra in Quota.RESOURCE_FIELDS.values():
+        assert getattr(anonymous_quota, extra) == 0, extra
+
+
 def test_job_complete_does_not_zero_extras_when_partial_consumption(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
@@ -604,6 +675,21 @@ def test_add_units_increments_extra_attributes(
         before + anonymous_quota.get_monthly_attribute_max()
 
 
+def test_add_units_grants_every_declared_extra_field(
+    anonymous_quota: AnonymousUserQuota,
+) -> None:
+    # Driven off the declaration rather than naming the three extras, so a
+    # resource added to RESOURCE_FIELDS and forgotten in add_units fails here
+    # instead of silently never receiving a grant -- the admin panel would
+    # report success and the user would get nothing (gain#788).
+    configured = settings.QUERY_QUOTAS["anonymous"]
+
+    anonymous_quota.add_units()
+
+    for _, monthly, extra in Quota.RESOURCE_FIELDS.values():
+        assert getattr(anonymous_quota, extra) == configured[monthly], extra
+
+
 def test_add_units_clamps_negative_extras_before_adding(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
@@ -809,7 +895,7 @@ def test_reset_daily_does_not_overwrite_a_concurrent_write(
     stale = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
     concurrent = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
     untouched = _seed_sentinels(
-        concurrent, Quota.MONTHLY_COUNTER_FIELDS + EXTRA_UNIT_FIELDS)
+        concurrent, Quota.MONTHLY_COUNTER_FIELDS + Quota.EXTRA_UNIT_FIELDS)
     concurrent.save()
 
     stale.reset_daily()
@@ -825,7 +911,7 @@ def test_reset_monthly_does_not_overwrite_a_concurrent_write(
     stale = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
     concurrent = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
     untouched = _seed_sentinels(
-        concurrent, Quota.DAILY_COUNTER_FIELDS + EXTRA_UNIT_FIELDS)
+        concurrent, Quota.DAILY_COUNTER_FIELDS + Quota.EXTRA_UNIT_FIELDS)
     concurrent.save()
 
     stale.reset_monthly()
