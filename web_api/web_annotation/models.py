@@ -8,9 +8,10 @@ import pathlib
 import time
 import uuid
 from abc import abstractmethod
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import timedelta
+from types import MappingProxyType
 from typing import Any, ClassVar, Self, cast
 
 from django.conf import settings
@@ -926,16 +927,35 @@ class Quota(models.Model):
     extra_variants = models.IntegerField(default=0)
     extra_attributes = models.IntegerField(default=0)
 
-    #: The counters ``reset_daily`` refreshes, and the settings keys their
-    #: limits are configured under -- the two are the same names on purpose.
-    DAILY_COUNTER_FIELDS: ClassVar[tuple[str, ...]] = (
-        "daily_jobs", "daily_variants", "daily_attributes",
-    )
+    #: The columns metering each quota resource -- its daily counter, its
+    #: monthly counter, and the extra-unit field an admin grant tops up --
+    #: declared once, because granting, deducting and the extras exhaustion
+    #: rule all read them from here (gain#788). The names are spelled out
+    #: rather than built from the resource key so that grepping a column
+    #: finds its declaration; the daily and monthly ones double as the
+    #: settings keys their limits are configured under.
+    RESOURCE_FIELDS: ClassVar[Mapping[str, tuple[str, str, str]]] = \
+        MappingProxyType({
+            "jobs": (
+                "daily_jobs", "monthly_jobs", "extra_jobs"),
+            "variants": (
+                "daily_variants", "monthly_variants", "extra_variants"),
+            "attributes": (
+                "daily_attributes", "monthly_attributes", "extra_attributes"),
+        })
+
+    #: The counters ``reset_daily`` refreshes.
+    DAILY_COUNTER_FIELDS: ClassVar[tuple[str, ...]] = tuple(
+        daily for daily, _, _ in RESOURCE_FIELDS.values())
 
     #: The counters ``reset_monthly`` refreshes.
-    MONTHLY_COUNTER_FIELDS: ClassVar[tuple[str, ...]] = (
-        "monthly_jobs", "monthly_variants", "monthly_attributes",
-    )
+    MONTHLY_COUNTER_FIELDS: ClassVar[tuple[str, ...]] = tuple(
+        monthly for _, monthly, _ in RESOURCE_FIELDS.values())
+
+    #: The extra-unit fields, which belong to neither period and so are
+    #: refreshed by neither reset.
+    EXTRA_UNIT_FIELDS: ClassVar[tuple[str, ...]] = tuple(
+        extra for _, _, extra in RESOURCE_FIELDS.values())
 
     #: Counters that a new quota starts at its configured limit. The
     #: timestamps and the extra-unit fields are not among them: their zero
@@ -1052,16 +1072,16 @@ class Quota(models.Model):
         self._reset(self.MONTHLY_COUNTER_FIELDS, "last_monthly_reset")
 
     def add_units(self) -> None:
-        """Add extra units to the quota."""
+        """Grant every resource a further month's worth of extra units.
+
+        Driven off ``RESOURCE_FIELDS`` so a resource cannot be declared and
+        then silently left out of the grant, which would have the admin panel
+        report a success the user never receives.
+        """
         with self._mutating_stored_row():
-            self.extra_jobs = max(self.extra_jobs, 0)
-            self.extra_jobs += self.get_monthly_job_max()
-
-            self.extra_variants = max(self.extra_variants, 0)
-            self.extra_variants += self.get_monthly_variant_max()
-
-            self.extra_attributes = max(self.extra_attributes, 0)
-            self.extra_attributes += self.get_monthly_attribute_max()
+            for _, monthly, extra in self.RESOURCE_FIELDS.values():
+                current = max(getattr(self, extra), 0)
+                setattr(self, extra, current + self._max_for(monthly))
 
     def check_job_quota(self) -> bool:
         """Check if the user has quota for a job."""
@@ -1136,16 +1156,20 @@ class Quota(models.Model):
             yield
             self.save(using=using)
 
-    def _consume(self, *deductions: tuple[str, str, str, int]) -> None:
-        """Apply ``deductions`` to the stored row, in order, as one write.
+    def _consume(self, *deductions: tuple[str, int]) -> None:
+        """Charge each ``(resource, amount)`` to the stored row, as one write.
 
         The single way to spend quota: it owns the row lock, so there is no
         path that deducts without one. Order is significant -- an earlier
         deduction can zero the extras a later one reads.
+
+        Callers name the resource and the amount, which is all they know; the
+        columns metering it come from ``RESOURCE_FIELDS``. Amounts cannot live
+        in that declaration because they belong to the call, not the resource.
         """
         with self._mutating_stored_row():
-            for daily, monthly, extra, amount in deductions:
-                self._deduct(daily, monthly, extra, amount)
+            for resource, amount in deductions:
+                self._deduct(*self.RESOURCE_FIELDS[resource], amount)
 
     def _deduct(
         self,
@@ -1166,32 +1190,22 @@ class Quota(models.Model):
         new_extra = getattr(self, extra_field) - extra_deduction
         setattr(self, extra_field, new_extra)
         if new_extra <= 0 < extra_deduction:
-            self.extra_jobs = 0
-            self.extra_variants = 0
-            self.extra_attributes = 0
+            for field in self.EXTRA_UNIT_FIELDS:
+                setattr(self, field, 0)
 
     def job_complete(self, variants_count: int, attributes_count: int) -> None:
         """Update quotas after a job is completed."""
         self._consume(
-            ("daily_jobs", "monthly_jobs", "extra_jobs", 1),
-            (
-                "daily_variants", "monthly_variants",
-                "extra_variants", variants_count,
-            ),
-            (
-                "daily_attributes", "monthly_attributes",
-                "extra_attributes", attributes_count,
-            ),
+            ("jobs", 1),
+            ("variants", variants_count),
+            ("attributes", attributes_count),
         )
 
     def single_allele_query_complete(self, attributes_count: int) -> None:
         """Update quotas after a single allele query is completed."""
         self._consume(
-            ("daily_variants", "monthly_variants", "extra_variants", 1),
-            (
-                "daily_attributes", "monthly_attributes",
-                "extra_attributes", attributes_count,
-            ),
+            ("variants", 1),
+            ("attributes", attributes_count),
         )
 
 
