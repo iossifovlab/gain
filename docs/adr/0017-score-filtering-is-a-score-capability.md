@@ -57,10 +57,19 @@ and is a separate decision with its own issue.
 The check happens once per pipeline build rather than once per record.
 
 **A comparison with a missing operand is False.** Missing means an NA cell
-(which parses to `None`) or a real `nan`. False, not an exception and not a
-skipped record: the *clause* fails, so the record can still be selected by
-the other arm of an `or`. This is decided once, for all operators, because
-no operator in this language can say anything about a value that is absent.
+(which parses to `None`) or a real `nan`, at any float width. False, not an
+exception and not a skipped record: the *clause* fails, so the record can
+still be selected by the other arm of an `or`. This is decided once, for all
+operators, because no operator in this language can say anything about a
+value that is absent.
+
+**A filter belongs to the score that compiled it**, and a read refuses one
+compiled elsewhere. Its variables are bound to that score's definitions — a
+column index, a value type, an NA set — and none of those travel with a
+record, so a foreign filter would extract by the wrong column. Two resources
+that both define `freq` is precisely the case where that produces a plausible
+wrong answer instead of an error, so it is checked (once per fetch, not per
+record) rather than left to the caller.
 
 **The annotators keep their configuration surface and nothing else.** The
 `allele_filter` / `fragment_filter` / `cnv_filter` spellings, their

@@ -290,6 +290,70 @@ def test_the_grammar_takes_digits_in_names_and_negative_numbers(
     assert [record[1] for record in records] == expected_positions
 
 
+@pytest.mark.parametrize("expression, expected_positions", [
+    ("freq > 0.15 and freq < 0.25", [11]),
+    ("freq < 0.15 or freq > 0.25", [10, 12]),
+    # Chains of three: the compiler nests these, and a nesting that
+    # associated them wrongly would still answer correctly for two terms.
+    ("freq > 0.05 and freq > 0.15 and freq > 0.25", [12]),
+    ("freq < 0.15 or freq == 0.2 or freq > 0.25", [10, 11, 12]),
+    # Mixed: `and` binds tighter than `or`. The second clause is false for
+    # every record, so this discriminates -- `A or (B and C)` keeps the
+    # record `A` selects, while `(A or B) and C` would keep nothing.
+    ("freq == 0.1 or freq > 0.15 and freq < 0.05", [10]),
+])
+def test_the_connectives_combine_clauses(
+    position_score: PositionScore,
+    expression: str,
+    expected_positions: list[int],
+) -> None:
+    """``and``/``or``, including chains longer than the two-term case.
+
+    The two-term case is what a broken nesting still gets right, so the
+    three-term chains are the ones that actually pin the compiler's
+    recursion.
+    """
+    with position_score.open() as score:
+        score_filter = score.compile_filter(expression)
+
+        records = list(score.fetch_records(
+            "1", 10, 12, score_filter=score_filter))
+
+    assert [record[1] for record in records] == expected_positions
+
+
+def test_a_filter_refuses_the_records_of_a_different_score(
+    position_score: PositionScore,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A filter belongs to the score that compiled it.
+
+    Its variables are bound to that score's definitions -- a column index,
+    a value type, an NA set -- so reading another score's records through
+    it extracts by the wrong column. Two resources both defining ``freq``
+    is exactly when that goes unnoticed, so it is refused rather than
+    answered with values nobody can tell are wrong.
+    """
+    other = build_position_score_from_resource(
+        a_position_score()
+        .with_score("padding", "str")
+        .with_score("freq", "float")
+        .with_data("""
+            chrom  pos_begin  padding  freq
+            1      10         x        0.9
+        """)
+        .build_resource(tmp_path / "other"))
+
+    with position_score.open() as score, other.open() as other_score:
+        foreign = score.compile_filter("freq > 0.15")
+
+        with pytest.raises(ScoreFilterError) as excinfo:
+            list(other_score.fetch_records(
+                "1", 10, 10, score_filter=foreign))
+
+    assert "compiled against" in str(excinfo.value)
+
+
 def test_compile_filter_refuses_a_name_the_score_does_not_define(
     position_score: PositionScore,
 ) -> None:

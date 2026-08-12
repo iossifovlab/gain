@@ -8,6 +8,7 @@ record, so it belongs where the score definitions are.  See
 from __future__ import annotations
 
 import math
+import numbers
 import textwrap
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -64,8 +65,16 @@ def _is_missing(value: Any) -> bool:
     An NA cell parses to ``None``; a float column may also carry a real
     ``nan``.  Both mean "this record does not say", and neither orders
     against anything.
+
+    Tested against ``numbers.Real`` rather than ``float`` so that every
+    width of float answers the same way: ``numpy`` registers its scalar
+    types there, and only ``float64`` happens to subclass ``float``.  A
+    string is not a Real and never reaches ``isnan``, which would raise on
+    it -- and strings are the common case in these filters, so this stays a
+    type test rather than a try/except in a per-record path.
     """
-    return value is None or (isinstance(value, float) and math.isnan(value))
+    return value is None or (
+        isinstance(value, numbers.Real) and math.isnan(value))
 
 
 def _compare(
@@ -91,26 +100,37 @@ def _compare(
 
 
 class ScoreFilter:
-    """A compiled record predicate, carrying the expression it came from.
+    """A compiled record predicate, bound to the score that compiled it.
 
     Opaque on purpose: a caller compiles one through
     :meth:`GenomicScore.compile_filter` and passes it back to a fetch, and
     the tree it was compiled from is nobody else's business.  The source
     expression is kept for error messages and ``repr``.
+
+    It carries the score because its variables are bound to that score's
+    definitions -- a column index, a value type, an NA set -- and none of
+    those travel with a record.  See :meth:`bound_to`.
     """
 
     def __init__(
-        self, expression: str, predicate: Callable[[Record], bool],
+        self, score: GenomicScore, expression: str,
+        predicate: Callable[[Record], bool],
     ) -> None:
+        self.score = score
         self.expression = expression
         self._predicate = predicate
+
+    def bound_to(self, score: GenomicScore) -> bool:
+        """Whether this filter may read ``score``'s records."""
+        return self.score is score
 
     def __call__(self, record: Record) -> bool:
         """Whether this record passes the filter."""
         return self._predicate(record)
 
     def __repr__(self) -> str:
-        return f"ScoreFilter({self.expression!r})"
+        return (f"ScoreFilter({self.expression!r}, "
+                f"score=<{self.score.resource_id}>)")
 
 
 class ScoreFilterError(ValueError):
@@ -131,7 +151,25 @@ def compile_score_filter(
         tree = _PARSER.parse(normalized)
     except Exception as e:
         raise ScoreFilterError(str(e)) from e
-    return ScoreFilter(normalized, _build_predicate(tree, score))
+    return ScoreFilter(score, normalized, _build_predicate(tree, score))
+
+
+def require_filter_owner(
+    score: GenomicScore, score_filter: ScoreFilter,
+) -> None:
+    """Refuse a filter compiled against a different score.
+
+    Checked once per fetch rather than per record.  The failure it prevents
+    is silent: two resources both defining ``freq`` put it at different
+    column indexes, so the foreign filter reads a real value from the wrong
+    column and selects records nobody can tell are wrong.
+    """
+    if not score_filter.bound_to(score):
+        raise ScoreFilterError(
+            f"filter {score_filter.expression!r} was compiled against "
+            f"genomic score <{score_filter.score.resource_id}> and cannot "
+            f"read records of <{score.resource_id}>; compile it through "
+            f"the score you are reading")
 
 
 def _build_predicate(

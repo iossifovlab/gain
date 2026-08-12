@@ -75,6 +75,7 @@ from gain.genomic_resources.score_def import (
 from gain.genomic_resources.score_filter import (
     ScoreFilter,
     compile_score_filter,
+    require_filter_owner,
 )
 from gain.genomic_resources.score_resource import ScoreResource
 from gain.genomic_resources.vcf_scores import (
@@ -856,6 +857,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         filtered case is a generator over that same eagerly-obtained one, so
         a bad argument still raises from the call.
         """
+        if score_filter is not None:
+            require_filter_owner(self, score_filter)
         records = self.table.get_records_in_region(chrom, pos_begin, pos_end)
         if score_filter is None:
             return records
