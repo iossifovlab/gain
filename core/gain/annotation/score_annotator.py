@@ -5,10 +5,7 @@ np_score_annotator, and allele_score_annotator.
 """
 import abc
 import textwrap
-from collections.abc import Callable
 from typing import Any
-
-from lark import Lark, Token, Tree
 
 from gain import logging
 from gain.annotation.annotatable import Annotatable, VCFAllele
@@ -35,15 +32,14 @@ from gain.genomic_resources.genomic_position_table.record import (
     CHROM,
     POS_BEGIN,
     REF,
-    Record,
 )
 from gain.genomic_resources.genomic_scores import (
-    AlleleScore,
     GenomicScore,
     build_allele_score_from_resource,
     build_position_score_from_resource,
 )
 from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.score_filter import ScoreFilterError
 from gain.templates import get_template
 
 logger = logging.getLogger(__name__)
@@ -382,55 +378,21 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
     resolve via ``GenomicScore.get_score_value_from_record``.
     """
 
-    ALLELE_FILTER_GRAMMAR = textwrap.dedent("""
-        ?start: filter | and_ | or
-
-        and_: filter "and" filter
-
-        or: filter "or" filter
-
-        ?filter: subject operator subject | or | and_
-
-        ?subject: variable | value
-
-        value: "\\"" word "\\"" | number
-
-        variable: word
-
-        operator: equals | greater_than | less_than | in
-
-        equals: "=="
-
-        greater_than: ">"
-
-        less_than: "<"
-
-        in: "in"
-
-        word: /[0-9]*[a-zA-Z_!@#$%^&*()_+][a-zA-Z0-9!@#$%^&*()_+]*/
-
-        number: /-?[0-9]+\\.?[0-9]*/
-
-        %ignore " "
-    """)
-
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
         resource = get_genomic_resource(
             pipeline, info, {"np_score", "allele_score"})
         self.allele_score = build_allele_score_from_resource(resource)
-        self.filter_parser = Lark(self.ALLELE_FILTER_GRAMMAR)
         self.allele_filter = None
         allele_filter_str = info.parameters.get("allele_filter")
         if allele_filter_str is not None:
             assert isinstance(allele_filter_str, str)
 
-            filter_str = allele_filter_str.replace(
-                "\n", " ").replace("\t", " ").strip()
             try:
-                self.allele_filter = self._build_allele_filter_func(
-                    self.filter_parser.parse(filter_str),
-                    self.allele_score)
-            except Exception as e:
+                self.allele_filter = self.allele_score.compile_filter(
+                    allele_filter_str)
+            except ScoreFilterError as e:
+                # Named after the parameter the user wrote: the score knows
+                # nothing about how the expression reached it (cf. gain#477).
                 raise AnnotationConfigurationError(
                     f"Error parsing allele_filter: {e}") from e
 
@@ -475,96 +437,6 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             self.add_score_aggregator_documentation(
                 attr, "aggregator", attr.aggregator)
 
-    @classmethod
-    def _build_allele_filter_func(
-        cls, tree: Tree, score: AlleleScore,
-    ) -> Callable[[Record], bool]:
-        """Compile a Lark parse tree into a record predicate.
-
-        A value is read off a RECORD, through the score that owns the
-        definitions -- so the score is threaded in here and closed over by
-        each variable accessor, leaving the predicate a one-argument callable
-        the fetch loop applies per record.
-        """
-        if tree.data == "and_":
-            assert isinstance(tree.children[0], Tree)
-            assert isinstance(tree.children[1], Tree)
-            left_func = cls._build_allele_filter_func(tree.children[0], score)
-            right_func = cls._build_allele_filter_func(tree.children[1], score)
-            return lambda rec: left_func(rec) and right_func(rec)
-        if tree.data == "or":
-            left_func = cls._build_allele_filter_func(tree.children[0], score)
-            right_func = cls._build_allele_filter_func(tree.children[1], score)
-            return lambda rec: left_func(rec) or right_func(rec)
-
-        left = tree.children[0]
-        assert isinstance(left, Tree)
-        assert isinstance(left.data, Token)
-        left_type = left.data.value
-        if left_type == "variable":
-            assert isinstance(left.children[0], Tree)
-            assert isinstance(left.children[0].data, Token)
-            assert left.children[0].data.value == "word"
-            assert isinstance(left.children[0].children[0], Token)
-            left_value = left.children[0].children[0].value
-
-            def left_accessor(_record: Record) -> Any:
-                return score.get_score_value_from_record(_record, left_value)
-        else:
-            assert isinstance(left.children[0], Tree)
-            assert isinstance(left.children[0].data, Token)
-            is_number = left.children[0].data.value == "number"
-            assert isinstance(left.children[0].children[0], Token)
-            left_value = left.children[0].children[0].value
-            if is_number:
-                left_value = float(left_value)
-
-            def left_accessor(
-                _record: Record,
-            ) -> Any:  # pylint: disable=unused-argument
-                return left_value
-        assert isinstance(tree.children[1], Tree)
-        assert isinstance(tree.children[1].children[0], Tree)
-        assert isinstance(tree.children[1].children[0].data, Token)
-        operator = tree.children[1].children[0].data.value
-        right = tree.children[2]
-        assert isinstance(right, Tree)
-        assert isinstance(right.data, Token)
-        right_type = right.data.value
-        if right_type == "variable":
-            assert isinstance(right.children[0], Tree)
-            assert isinstance(right.children[0].data, Token)
-            assert right.children[0].data.value == "word"
-            assert isinstance(right.children[0].children[0], Token)
-            right_value = right.children[0].children[0].value
-
-            def right_accessor(_record: Record) -> Any:
-                return score.get_score_value_from_record(_record, right_value)
-        else:
-            assert isinstance(right.children[0], Tree)
-            assert isinstance(right.children[0].data, Token)
-            is_number = right.children[0].data.value == "number"
-            assert isinstance(right.children[0].children[0], Token)
-            right_value = right.children[0].children[0].value
-            if is_number:
-                right_value = float(right_value)
-
-            def right_accessor(
-                _record: Record,
-            ) -> Any:  # pylint: disable=unused-argument
-                return right_value
-
-        if operator == "equals":
-            return lambda rec: left_accessor(rec) == right_accessor(rec)
-        if operator == "greater_than":
-            return lambda rec: left_accessor(rec) > right_accessor(rec)
-        if operator == "less_than":
-            return lambda rec: left_accessor(rec) < right_accessor(rec)
-        if operator == "in":
-            return lambda rec: left_accessor(rec) in right_accessor(rec)
-
-        raise ValueError(f"Unsupported operator {operator.data}")
-
     def get_attribute_defaults(
         self, spec: AttributeSpec,
     ) -> dict[str, Any]:
@@ -601,24 +473,19 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         self, annotatable: VCFAllele,
     ) -> dict[str, Any]:
         """Return scores for an exact chrom/pos/ref/alt match."""
-        record = self.allele_score.fetch_allele_record(
+        values = self.allele_score.fetch_allele_scores(
             annotatable.chrom,
             annotatable.position,
             annotatable.reference,
             annotatable.alternative,
+            self.simple_score_queries or None,
+            score_filter=self.allele_filter,
         )
-        if record is None:
+        if values is None:
             return self._empty_result()
-
-        if self.allele_filter is not None and not self.allele_filter(record):
-            return self._empty_result()
-
-        scores: dict[str, Any] = {
-            sc: self.allele_score.get_score_value_from_record(record, sc)
-            for sc in (
-                self.simple_score_queries or self.allele_score.get_all_scores()
-            )
-        }
+        # Widened, because the virtual `allele` attribute below is a LIST of
+        # strings and the score's own values are scalars.
+        scores: dict[str, Any] = dict(values)
 
         if self.allele_attribute is not None:
             allele_str = (
@@ -650,6 +517,10 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         for record in self.allele_score.fetch_records(
             annotatable.chrom, annotatable.position, annotatable.pos_end,
         ):
+            # Counted BEFORE the filter: "no lines here" and "no line the
+            # filter kept" are different answers -- the first is absent data
+            # and the second an empty selection -- so the filter cannot be
+            # pushed into the fetch on this path.
             has_lines = True
             if self.allele_filter is not None \
                     and not self.allele_filter(record):

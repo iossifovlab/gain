@@ -265,6 +265,10 @@ Note the YAML quoting in that example: the expression is wrapped in single quote
 
 A string literal must be a single word — letters, digits, ``_`` and the symbols ``!@#$%^&*()+`` are accepted, while spaces, ``.``, ``,``, ``-`` and ``/`` are not. A value such as ``Pathogenic/Likely_pathogenic`` therefore cannot be written as a literal; match a substring of it instead.
 
+Every name in the expression must be a score the resource defines. A name it does not define fails the pipeline as it is built, listing the names that would have worked, rather than misbehaving once per annotated line.
+
+A line that carries no value for a score named in the expression — an NA cell, or ``nan`` — does not satisfy a comparison against it: that comparison is false, and the line can still be kept by the other side of an ``or``.
+
 **allele attribute**
 
 In addition to score columns, ``source: allele`` is a virtual attribute that returns the matched allele keys as a list of ``chrom:pos:ref:alt`` strings. It is only meaningful in ``region`` mode (or for ``VCFAllele`` inputs with ``mode: region``), where multiple alleles can be matched.
@@ -625,6 +629,8 @@ in the fragment score resource (for example, class, frequency, dataset label). I
         attributes:
         - attribute.<attribute1 id>
         - attribute.<attribute2 id>
+
+``fragment_filter`` expressions are written in the same language as ``allele_filter`` above — the same operators, the same literals, the same treatment of missing values and of names the resource does not define.
 
 Score attributes (all attributes other than ``count``) can overlap multiple fragments per
 annotatable. Each score attribute carries a resource-defined aggregator default and supports

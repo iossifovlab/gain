@@ -1,8 +1,4 @@
-import textwrap
-from collections.abc import Callable
 from typing import Any
-
-from lark import Lark, Token, Tree
 
 from gain import logging
 from gain.annotation.annotatable import Annotatable
@@ -20,7 +16,7 @@ from gain.genomic_resources.genomic_scores import FragmentScore
 from gain.genomic_resources.resource_types import (
     warn_deprecated_spelling,
 )
-from gain.genomic_resources.score_def import ScoreValue
+from gain.genomic_resources.score_filter import ScoreFilterError
 
 logger = logging.getLogger(__name__)
 
@@ -56,38 +52,6 @@ class FragmentScoreAnnotator(AnnotatorBase):
     See ``docs/adr/0011-deprecate-cnv-collection-vocabulary.md``.
     """
 
-    FRAGMENT_FILTER_GRAMMAR = textwrap.dedent("""
-        ?start: filter | and_ | or
-
-        and_: filter "and" filter
-
-        or: filter "or" filter
-
-        ?filter: subject operator subject | or | and_
-
-        ?subject: variable | value
-
-        value: "\\"" word "\\"" | number
-
-        variable: word
-
-        operator: equals | greater_than | less_than | in
-
-        equals: "=="
-
-        greater_than: ">"
-
-        less_than: "<"
-
-        in: "in"
-
-        word: /[a-zA-Z!@#$%^&*()_+]+/
-
-        number: /[0-9\\.]+/
-
-        %ignore " "
-    """)
-
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
         resource_id = info.parameters.get("resource_id")
         if resource_id is None:
@@ -118,8 +82,6 @@ class FragmentScoreAnnotator(AnnotatorBase):
         # lost by bypassing the factory here.
         self.fragment_score = FragmentScore(resource)
         info.resources.append(resource)
-
-        self.filter_parser = Lark(self.FRAGMENT_FILTER_GRAMMAR)
 
         # Two spellings -- `fragment_filter` is the one to write, `cnv_filter`
         # is what pipelines we do not control say.
@@ -152,15 +114,14 @@ class FragmentScoreAnnotator(AnnotatorBase):
         if filter_str is not None:
             assert isinstance(filter_str, str)
 
-            filter_str = filter_str.replace(
-                "\n", " ").replace("\t", " ").strip()
             try:
-                self.fragment_filter = self._build_fragment_filter_func(
-                    self.filter_parser.parse(filter_str))
-            except Exception as e:
+                self.fragment_filter = self.fragment_score.compile_filter(
+                    filter_str)
+            except ScoreFilterError as e:
                 # Names the spelling the user actually wrote -- reporting a
                 # key absent from their config sends them looking in the
-                # wrong place (cf. gain#477).
+                # wrong place (cf. gain#477).  The score cannot do this: it
+                # is handed an expression, not the parameter it came from.
                 raise AnnotationConfigurationError(
                     f"Error parsing {used_parameter}: {e}") from e
 
@@ -211,89 +172,6 @@ class FragmentScoreAnnotator(AnnotatorBase):
             return {"aggregator": score_def.aggregator}
         return {}
 
-    @classmethod
-    def _build_fragment_filter_func(
-        cls, tree: Tree,
-    ) -> Callable[[dict[str, ScoreValue]], bool]:
-        if tree.data == "and_":
-            assert isinstance(tree.children[0], Tree)
-            assert isinstance(tree.children[1], Tree)
-            left_func = cls._build_fragment_filter_func(tree.children[0])
-            right_func = cls._build_fragment_filter_func(tree.children[1])
-            return lambda frag: left_func(frag) and right_func(frag)
-        if tree.data == "or":
-            left_func = cls._build_fragment_filter_func(tree.children[0])
-            right_func = cls._build_fragment_filter_func(tree.children[1])
-            return lambda frag: left_func(frag) or right_func(frag)
-
-        left = tree.children[0]
-        assert isinstance(left, Tree)
-        assert isinstance(left.data, Token)
-        left_type = left.data.value
-        if left_type == "variable":
-            assert isinstance(left.children[0], Tree)
-            assert isinstance(left.children[0].data, Token)
-            assert left.children[0].data.value == "word"
-            assert isinstance(left.children[0].children[0], Token)
-            left_value = left.children[0].children[0].value
-
-            def left_accessor(_values: dict[str, ScoreValue]) -> Any:
-                return _values.get(left_value)
-        else:
-            assert isinstance(left.children[0], Tree)
-            assert isinstance(left.children[0].data, Token)
-            is_number = left.children[0].data.value == "number"
-            assert isinstance(left.children[0].children[0], Token)
-            left_value = left.children[0].children[0].value
-            if is_number:
-                left_value = float(left_value)
-
-            def left_accessor(
-                    _values: dict[str, ScoreValue],
-            ) -> Any:  # pylint: disable=unused-argument
-                return left_value
-        assert isinstance(tree.children[1], Tree)
-        assert isinstance(tree.children[1].children[0], Tree)
-        assert isinstance(tree.children[1].children[0].data, Token)
-        operator = tree.children[1].children[0].data.value
-        right = tree.children[2]
-        assert isinstance(right, Tree)
-        assert isinstance(right.data, Token)
-        right_type = right.data.value
-        if right_type == "variable":
-            assert isinstance(right.children[0], Tree)
-            assert isinstance(right.children[0].data, Token)
-            assert right.children[0].data.value == "word"
-            assert isinstance(right.children[0].children[0], Token)
-            right_value = right.children[0].children[0].value
-
-            def right_accessor(_values: dict[str, ScoreValue]) -> Any:
-                return _values.get(right_value)
-        else:
-            assert isinstance(right.children[0], Tree)
-            assert isinstance(right.children[0].data, Token)
-            is_number = right.children[0].data.value == "number"
-            assert isinstance(right.children[0].children[0], Token)
-            right_value = right.children[0].children[0].value
-            if is_number:
-                right_value = float(right_value)
-
-            def right_accessor(
-                    _values: dict[str, ScoreValue],
-            ) -> Any:  # pylint: disable=unused-argument
-                return right_value
-
-        if operator == "equals":
-            return lambda frag: left_accessor(frag) == right_accessor(frag)
-        if operator == "greater_than":
-            return lambda frag: left_accessor(frag) > right_accessor(frag)
-        if operator == "less_than":
-            return lambda frag: left_accessor(frag) < right_accessor(frag)
-        if operator == "in":
-            return lambda frag: left_accessor(frag) in right_accessor(frag)
-
-        raise ValueError(f"Unsupported operator {operator.data}")
-
     def open(self) -> Annotator:
         self.fragment_score.open()
         super().open()
@@ -308,13 +186,8 @@ class FragmentScoreAnnotator(AnnotatorBase):
         context: dict[str, Any],  # noqa: ARG002
     ) -> dict[str, Any]:
         fragments = self.fragment_score.fetch_fragment_scores(
-            annotatable.chrom, annotatable.pos, annotatable.pos_end)
-
-        if self.fragment_filter:
-            fragments = [
-                fragment for fragment in fragments
-                if self.fragment_filter(fragment)
-            ]
+            annotatable.chrom, annotatable.pos, annotatable.pos_end,
+            score_filter=self.fragment_filter)
 
         raw: dict[str, list] = {
             attr.source: []
