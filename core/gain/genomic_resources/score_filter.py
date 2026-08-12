@@ -7,17 +7,20 @@ record, so it belongs where the score definitions are.  See
 """
 from __future__ import annotations
 
-import math
-import numbers
+import functools
+import operator
 import textwrap
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from lark import Lark, Token, Tree
+from lark import Lark, LarkError, Token, Tree
+
+from gain.utils.log_safety import escape_unsafe_characters
 
 if TYPE_CHECKING:
     from gain.genomic_resources.genomic_position_table.record import Record
     from gain.genomic_resources.genomic_scores import GenomicScore
+    from gain.genomic_resources.score_def import GenomicScoreDef
 
 #: The filter language.  Deliberately frozen at these operators; adding one
 #: is a change to what every score's configuration means, not a tweak.
@@ -50,11 +53,22 @@ SCORE_FILTER_GRAMMAR = textwrap.dedent("""
 
     number: /-?(?:[0-9]+\\.?[0-9]*|\\.[0-9]+)/
 
-    %ignore " "
+    %ignore /\\s+/
 """)
 
-#: Built once: a Lark grammar compile is not cheap, and this one is fixed.
-_PARSER = Lark(SCORE_FILTER_GRAMMAR)
+
+@functools.cache
+def _get_parser() -> Lark:
+    """Build the grammar once, on first use.
+
+    Cached rather than built at import, for the reason
+    :func:`resource_query._get_parser` gives: this module is imported by
+    ``genomic_scores``, so building here would charge every gain entry
+    point ~13ms of Earley grammar construction -- including the many that
+    never compile a filter.
+    """
+    return Lark(SCORE_FILTER_GRAMMAR)
+
 
 _RecordAccessor = Callable[["Record"], Any]
 
@@ -66,15 +80,17 @@ def _is_missing(value: Any) -> bool:
     ``nan``.  Both mean "this record does not say", and neither orders
     against anything.
 
-    Tested against ``numbers.Real`` rather than ``float`` so that every
-    width of float answers the same way: ``numpy`` registers its scalar
-    types there, and only ``float64`` happens to subclass ``float``.  A
-    string is not a Real and never reaches ``isnan``, which would raise on
-    it -- and strings are the common case in these filters, so this stays a
-    type test rather than a try/except in a per-record path.
+    ``value != value`` is true of nan and of nothing else, so it asks the
+    question without asking the TYPE first.  That matters here: this runs
+    twice per comparison per record, and an `isinstance` against a float
+    width -- or worse, against the ``numbers.Real`` ABC, which costs ~300ns
+    -- would dominate a whole-contig scan.  It is also the more general
+    test, covering every float width and any other type whose nan is its
+    own kind (``Decimal('NaN')``), where naming concrete types cannot.
     """
-    return value is None or (
-        isinstance(value, numbers.Real) and math.isnan(value))
+    # The self-comparison is the point, not a slip: see above.
+    # pylint: disable-next=comparison-with-itself
+    return value is None or bool(value != value)
 
 
 def _compare(
@@ -95,8 +111,19 @@ def _compare(
         right_value = right(record)
         if _is_missing(left_value) or _is_missing(right_value):
             return False
-        return operation(left_value, right_value)
+        return bool(operation(left_value, right_value))
     return evaluate
+
+
+#: The operators the grammar admits, and what each one asks of two values.
+#: ``operator.contains`` is not ``in``: its arguments are the other way
+#: round.
+_OPERATIONS: dict[str, Callable[[Any, Any], bool]] = {
+    "equals": operator.eq,
+    "greater_than": operator.gt,
+    "less_than": operator.lt,
+    "in": lambda left, right: left in right,
+}
 
 
 class ScoreFilter:
@@ -109,7 +136,7 @@ class ScoreFilter:
 
     It carries the score because its variables are bound to that score's
     definitions -- a column index, a value type, an NA set -- and none of
-    those travel with a record.  See :meth:`bound_to`.
+    those travel with a record.  See :meth:`require_owner`.
     """
 
     def __init__(
@@ -120,9 +147,21 @@ class ScoreFilter:
         self.expression = expression
         self._predicate = predicate
 
-    def bound_to(self, score: GenomicScore) -> bool:
-        """Whether this filter may read ``score``'s records."""
-        return self.score is score
+    def require_owner(self, score: GenomicScore) -> None:
+        """Refuse to read the records of a score that did not compile this.
+
+        Checked once per fetch, not per record.  The failure it prevents is
+        silent: two resources both defining ``freq`` put it at different
+        column indexes, so a foreign filter reads a real value from the
+        wrong column and selects records nobody can tell are wrong.
+        """
+        if self.score is score:
+            return
+        raise ScoreFilterError(
+            f"filter {self.expression!r} was compiled against genomic score "
+            f"<{self.score.resource_id}> and cannot read records of "
+            f"<{score.resource_id}>; compile it through the score you are "
+            f"reading")
 
     def __call__(self, record: Record) -> bool:
         """Whether this record passes the filter."""
@@ -142,67 +181,47 @@ def compile_score_filter(
 ) -> ScoreFilter:
     """Compile ``expression`` into a predicate over ``score``'s records.
 
-    Every variable is resolved against the score's ``score_definitions``
-    HERE, so an expression naming a score the resource does not define is
-    refused now, with the valid names, rather than per record at read time.
+    Two things are settled here rather than per record: every variable is
+    resolved against the score's ``score_definitions``, so an unknown name
+    is refused now with the valid names listed; and each resolved
+    definition is captured, keeping the name lookup out of the read loop.
     """
-    normalized = expression.replace("\n", " ").replace("\t", " ").strip()
     try:
-        tree = _PARSER.parse(normalized)
-    except Exception as e:
-        raise ScoreFilterError(str(e)) from e
-    return ScoreFilter(score, normalized, _build_predicate(tree, score))
-
-
-def require_filter_owner(
-    score: GenomicScore, score_filter: ScoreFilter,
-) -> None:
-    """Refuse a filter compiled against a different score.
-
-    Checked once per fetch rather than per record.  The failure it prevents
-    is silent: two resources both defining ``freq`` put it at different
-    column indexes, so the foreign filter reads a real value from the wrong
-    column and selects records nobody can tell are wrong.
-    """
-    if not score_filter.bound_to(score):
+        tree = _get_parser().parse(expression)
+    except LarkError as e:
+        # Both halves are escaped: the expression is config text a user
+        # wrote, and Lark quotes a context line of that same text back, so
+        # either can smuggle a line break into a logged message
+        # (iossifovlab/gain#655), as ``ResourceQueryParseError`` does.
         raise ScoreFilterError(
-            f"filter {score_filter.expression!r} was compiled against "
-            f"genomic score <{score_filter.score.resource_id}> and cannot "
-            f"read records of <{score.resource_id}>; compile it through "
-            f"the score you are reading")
+            f"cannot parse '{escape_unsafe_characters(expression)}': "
+            f"{escape_unsafe_characters(str(e))}") from e
+    return ScoreFilter(score, expression, _build_predicate(tree, score))
 
 
 def _build_predicate(
     tree: Tree, score: GenomicScore,
 ) -> Callable[[Record], bool]:
     """Compile a parse tree into a record predicate."""
-    if tree.data == "and_":
+    if tree.data in ("and_", "or"):
+        # One branch for both: the two differ only in the connective, and
+        # keeping them apart is how the copies this module replaces drifted
+        # -- the fragment one had lost the operand checks from its `or`.
         assert isinstance(tree.children[0], Tree)
         assert isinstance(tree.children[1], Tree)
         left_func = _build_predicate(tree.children[0], score)
         right_func = _build_predicate(tree.children[1], score)
-        return lambda rec: left_func(rec) and right_func(rec)
-    if tree.data == "or":
-        assert isinstance(tree.children[0], Tree)
-        assert isinstance(tree.children[1], Tree)
-        left_func = _build_predicate(tree.children[0], score)
-        right_func = _build_predicate(tree.children[1], score)
+        if tree.data == "and_":
+            return lambda rec: left_func(rec) and right_func(rec)
         return lambda rec: left_func(rec) or right_func(rec)
 
     left = _build_accessor(tree.children[0], score)
-    operator = _operator_name(tree.children[1])
     right = _build_accessor(tree.children[2], score)
-
-    if operator == "equals":
-        return _compare(left, right, lambda a, b: bool(a == b))
-    if operator == "greater_than":
-        return _compare(left, right, lambda a, b: bool(a > b))
-    if operator == "less_than":
-        return _compare(left, right, lambda a, b: bool(a < b))
-    if operator == "in":
-        return _compare(left, right, lambda a, b: bool(a in b))
-
-    raise ScoreFilterError(f"Unsupported operator {operator}")
+    # Indexed, not `.get`-with-a-fallback: the grammar's `operator:` rule
+    # admits exactly these four, so a miss here means the grammar and this
+    # table have been edited apart -- a programming error, and a KeyError
+    # naming the operator says so better than a filter error would.
+    return _compare(left, right, _OPERATIONS[_operator_name(tree.children[1])])
 
 
 def _operator_name(node: Any) -> str:
@@ -228,10 +247,14 @@ def _build_accessor(node: Any, score: GenomicScore) -> _RecordAccessor:
 
     if node.data.value == "variable":
         assert child.data.value == "word"
-        score_id = _require_score_id(score, raw_value)
+        # Resolved to its DEFINITION here, not per record: the read below
+        # runs on every record of a scan, and the name->definition lookup
+        # is what :meth:`GenomicScore.get_score_values_from_record` exists
+        # to keep out of that loop.
+        score_def = _require_score_def(score, raw_value)
 
         def read_score(record: Record) -> Any:
-            return score.get_score_value_from_record(record, score_id)
+            return score.get_score_value_from_def(record, score_def)
         return read_score
 
     literal: Any = raw_value
@@ -243,11 +266,12 @@ def _build_accessor(node: Any, score: GenomicScore) -> _RecordAccessor:
     return read_literal
 
 
-def _require_score_id(score: GenomicScore, name: str) -> str:
-    """Refuse a variable naming no score of this resource."""
-    if name not in score.score_definitions:
+def _require_score_def(score: GenomicScore, name: str) -> GenomicScoreDef:
+    """Resolve a variable to its definition, refusing an unknown name."""
+    score_def = score.score_definitions.get(name)
+    if score_def is None:
         raise ScoreFilterError(
             f"filter names {name!r}, which genomic score "
             f"<{score.resource_id}> does not define; it has "
             f"{sorted(score.score_definitions)}")
-    return name
+    return score_def

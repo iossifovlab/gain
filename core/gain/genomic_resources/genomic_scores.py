@@ -75,7 +75,6 @@ from gain.genomic_resources.score_def import (
 from gain.genomic_resources.score_filter import (
     ScoreFilter,
     compile_score_filter,
-    require_filter_owner,
 )
 from gain.genomic_resources.score_resource import ScoreResource
 from gain.genomic_resources.vcf_scores import (
@@ -815,15 +814,13 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         The expression names this resource's own scores and relates them
         with ``>``, ``<``, ``==``, ``in``, ``and`` and ``or``; the result is
-        passed back to any of the region reads as ``score_filter``.
-
-        Compiled ONCE, against the score definitions: a name this resource
-        does not define is refused here, naming the valid ones, rather than
-        answering per record at read time.  A clause whose operand is
-        missing (NA, or ``nan``) is False.
+        passed back to any of the record reads as ``score_filter``.
 
         Raises :class:`ScoreFilterError` on an expression that does not
-        parse or names an unknown score.
+        parse or that names a score this resource does not define.  See
+        :func:`compile_score_filter` for what compiling settles, and
+        ``docs/adr/0017-score-filtering-is-a-score-capability.md`` for why
+        the capability sits on the score.
         """
         return compile_score_filter(self, expression)
 
@@ -857,11 +854,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         filtered case is a generator over that same eagerly-obtained one, so
         a bad argument still raises from the call.
         """
-        if score_filter is not None:
-            require_filter_owner(self, score_filter)
-        records = self.table.get_records_in_region(chrom, pos_begin, pos_end)
         if score_filter is None:
-            return records
+            return self.table.get_records_in_region(chrom, pos_begin, pos_end)
+        score_filter.require_owner(self)
+        records = self.table.get_records_in_region(chrom, pos_begin, pos_end)
         return (record for record in records if score_filter(record))
 
     def get_score_value_from_record(
@@ -894,6 +890,24 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 f"{sorted(unknown)}; it has "
                 f"{sorted(self.score_definitions)}")
         return [self.score_definitions[score_id] for score_id in scores]
+
+    def get_score_value_from_def(
+        self, record: Record, score_def: GenomicScoreDef,
+    ) -> ScoreValue:
+        """Read one score off a record, for an ALREADY-resolved def.
+
+        The singular counterpart of :meth:`get_score_values_from_record`,
+        for a caller that reads ONE score per record and can resolve its
+        name once -- a compiled :class:`ScoreFilter` variable is the case
+        this exists for.  Same reason as the bulk method: it keeps the
+        name->definition lookup out of the per-record loop.
+
+        The DEFINITION may be captured before the score is open; the
+        extractor may not, so it is read here rather than closed over.
+        ``open()`` fills a definition's column index in place, so the object
+        resolved earlier is the one this reads through.
+        """
+        return self._extract_value(record, score_def)
 
     def get_score_values_from_record(
         self, record: Record, score_defs: list[GenomicScoreDef],

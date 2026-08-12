@@ -42,7 +42,12 @@ against score definitions, both of which belong to the score.
 `fetch_records`, `fetch_allele_record`, `fetch_allele_scores` and
 `fetch_fragment_scores` take it as `score_filter`. `None` is exactly the
 pre-existing behaviour. Every score type inherits the capability from the
-base, so a position score can be filtered without anyone adding a feature.
+base, so a position score can be filtered without anyone adding a feature —
+on the *record* reads. The reads that answer values rather than records
+(`fetch_position_scores`, `fetch_region_segment_scores`, the bulk
+`fetch_region_value_arrays`) do not take a filter; extending them means
+either threading the parameter through each, or a filtered view over the
+whole read family, and neither is settled here.
 
 **One grammar, the superset of the two it replaces.** Digits are allowed in
 identifiers and numbers may be negative — the union, so no expression that
@@ -90,10 +95,23 @@ exist, and one whose number is malformed (`0.5.5` parsed and then failed on
 `float()`; it now fails to parse). Each was already an error; each now
 reports as one, earlier and by name.
 
-The region path of the allele annotator still filters *outside* the fetch.
-It must distinguish "no records here" (absent data) from "no record the
-filter kept" (an empty selection), and those are different answers to the
-caller; pushing the filter into `fetch_records` would collapse them.
+The region path of the allele annotator still filters *outside* the fetch,
+and so does not get this capability. It must distinguish "no records here"
+(absent data) from "no record the filter kept" (an empty selection), and
+those are different answers to its caller — while `fetch_records` returns a
+plain iterator, in which both are an empty stream.
+
+That is a limit of the *fetch signature*, not of the idea: a region read
+answering `list[Record] | None` would express the distinction exactly as
+`fetch_allele_scores` already does for a single allele, and both annotator
+paths could then share one mechanism. Widening that signature is a change to
+the read family this issue does not touch, so it is left as follow-up. Until
+it lands, anything added to `fetch_records` — skipping extraction for
+rejected records, pushing a predicate down to the tabix layer — reaches the
+per-allele path and not the region path, which is the one that reads more
+records. `ScoreFilter.__call__` stays public for the same reason: the region
+path is the one caller that applies a filter itself, and the ownership check
+cannot cover it.
 
 ## Alternatives rejected
 

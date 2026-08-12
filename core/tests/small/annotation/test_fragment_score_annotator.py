@@ -202,28 +202,26 @@ def digit_named_grr() -> GenomicResourceRepo:
     })
 
 
-@pytest.mark.parametrize("fragment_filter, fragment_count", [
-    # A digit-bearing identifier: the old fragment grammar's `word` was
-    # letters-only, so this expression did not parse at all.
-    ("1000G > 0.05", 1),
-    # A negative literal: the old `number` was unsigned.
-    ("1000G > -1", 2),
-])
 def test_fragment_filter_takes_digit_names_and_negative_numbers(
-    fragment_filter: str, fragment_count: int,
     digit_named_grr: GenomicResourceRepo,
 ) -> None:
-    """The fragment side gained both when the grammar became the superset."""
+    """This annotator reaches the shared compiler, not its own grammar.
+
+    Both halves of the expression were unwritable on the fragment side
+    before: its ``word`` was letters-only and its ``number`` unsigned.  The
+    grammar itself is pinned where it lives, in ``test_score_filter``; what
+    this adds is that a fragment pipeline really routes there.
+    """
     pipeline = load_pipeline_from_yaml(
-        textwrap.dedent(f"""
+        textwrap.dedent("""
             - fragment_score:
                 resource_id: fragments
-                fragment_filter: "{fragment_filter}"
+                fragment_filter: "1000G > 0.05 and 1000G > -1"
             """),
         digit_named_grr)
 
     atts = pipeline.annotate(Region("1", 1, 200))
-    assert atts["count"] == fragment_count
+    assert atts["count"] == 1
 
 
 @pytest.mark.parametrize("parameter", [
