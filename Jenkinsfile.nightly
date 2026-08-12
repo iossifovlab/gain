@@ -21,6 +21,35 @@
 // build surfaces every failing downstream, not just whichever
 // broke first.
 
+// Zulip failure alert (seqpipe/infra#105). Verbatim copy of the block
+// proven in #809 — do not re-derive it. This job already alerted only
+// on failure; what changes is that the message now tags the channel and
+// carries the failed-test count, so nightly breakage reads the same way
+// as every other job's.
+def zulipAlert(String status, String emoji) {
+    String suffix = ''
+    try {
+        def results = currentBuild.rawBuild.getAction(
+            hudson.tasks.test.AbstractTestResultAction)
+        if (results != null) {
+            // failCount == 0 on a red build means nothing got as far
+            // as failing a test — a teardown / sidecar / agent problem
+            // rather than a code break.
+            suffix = results.failCount > 0
+                ? " — ${results.failCount} test(s) failed"
+                : ' — no failing tests (infra/teardown)'
+        }
+    } catch (ignored) {
+        // Needs a one-time In-process Script Approval
+        // (seqpipe/infra#106). Until then the alert fires without the
+        // count: the reporting must never break the report.
+        suffix = ''
+    }
+    return "@**channel** ${emoji} " +
+        "[${env.JOB_NAME} ${currentBuild.displayName}](${env.BUILD_URL}) " +
+        "${status}${suffix}"
+}
+
 pipeline {
     // builder = general build agents; deploy targets don't carry it
     agent { label 'builder' }
@@ -123,8 +152,18 @@ pipeline {
             node('builder') {
                 zulipSend(
                     topic: 'nightly',
-                    message:
-                        "Nightly FAILED — ${env.BUILD_URL}",
+                    message: zulipAlert('FAILED', '❌'),
+                )
+            }
+        }
+        // UNSTABLE now alerts too (seqpipe/infra#105): ruff/mypy/pylint
+        // gate to UNSTABLE rather than FAILURE, so a failure-only rule
+        // would let a lint regression sit silent overnight.
+        unstable {
+            node('builder') {
+                zulipSend(
+                    topic: 'nightly',
+                    message: zulipAlert('UNSTABLE', '⚠️'),
                 )
             }
         }

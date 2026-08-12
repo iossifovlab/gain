@@ -13,6 +13,43 @@
 // source (pytest tmp_path, the VEP cache) is bind-mounted at the same
 // absolute path in the CI test container and on the host.
 
+// Zulip failure alert (seqpipe/infra#105). Builds that pass say nothing.
+//
+// `build-status` used to receive a "Started build" message *and* a result
+// message for every build of every job — 827 messages in 48h, of which 10 were
+// failures — which made it unreadable, so nobody read it. Only FAILURE and
+// UNSTABLE alert now, and they tag the channel so the alert actually pushes.
+//
+// UNSTABLE is included deliberately: ruff/mypy/pylint gate to UNSTABLE rather
+// than FAILURE, so a failure-only rule would let a lint regression sit silent
+// until the 09:00 digest (seqpipe/infra#110).
+//
+// Verbatim copy of the block proven in #809 — do not re-derive it.
+def zulipAlert(String status, String emoji) {
+    String suffix = ''
+    try {
+        def results = currentBuild.rawBuild.getAction(
+            hudson.tasks.test.AbstractTestResultAction)
+        if (results != null) {
+            // failCount == 0 on a red build means nothing got as far as
+            // failing a test — a teardown / sidecar / agent problem rather
+            // than a code break. Saying which is what decides "re-run" vs
+            // "investigate" without opening Jenkins.
+            suffix = results.failCount > 0
+                ? " — ${results.failCount} test(s) failed"
+                : ' — no failing tests (infra/teardown)'
+        }
+    } catch (ignored) {
+        // getAction() needs a one-time In-process Script Approval
+        // (seqpipe/infra#106). Until that lands the alert still fires, just
+        // without the count: the reporting must never break the report.
+        suffix = ''
+    }
+    return "@**channel** ${emoji} " +
+        "[${env.JOB_NAME} ${currentBuild.displayName}](${env.BUILD_URL}) " +
+        "${status}${suffix}"
+}
+
 pipeline {
     // Pinned to `pooh`: the multi-GB VEP cache under ${HOME}/vep_cache
     // is maintained on that agent and reused across builds.
@@ -60,15 +97,6 @@ pipeline {
     }
 
     stages {
-        stage('Start') {
-            steps {
-                zulipSend(
-                    message: "Started build #${env.BUILD_NUMBER} of project ${env.JOB_NAME} (${env.BUILD_URL})",
-                    topic: "${env.JOB_NAME}",
-                )
-            }
-        }
-
         stage('Prepare workspace') {
             steps {
                 sh 'rm -rf reports && mkdir -p reports/integration'
@@ -134,19 +162,37 @@ pipeline {
     post {
         always {
             script {
-                try {
-                    junit(
-                        allowEmptyResults: true,
-                        testResults: 'reports/integration/*.xml',
-                    )
-                    archiveArtifacts(
-                        artifacts: 'reports/integration/*.xml',
-                        allowEmptyArchive: true,
-                        fingerprint: false,
-                    )
-                } finally {
-                    zulipNotification(topic: "${env.JOB_NAME}")
-                }
+                junit(
+                    allowEmptyResults: true,
+                    testResults: 'reports/integration/*.xml',
+                )
+                archiveArtifacts(
+                    artifacts: 'reports/integration/*.xml',
+                    allowEmptyArchive: true,
+                    fingerprint: false,
+                )
+            }
+        }
+        // `always` above must run before these so the test-result action
+        // zulipAlert() reads is already attached to the build.
+        failure {
+            // Wrapped in an explicit node block: a pipeline-init failure can
+            // tear down the outer agent before post runs, leaving zulipSend
+            // without a FilePath context. `builder` rather than this job's
+            // own `pooh` pin — posting a message needs no VEP cache.
+            node('builder') {
+                zulipSend(
+                    topic: "${env.JOB_NAME}",
+                    message: zulipAlert('FAILED', '❌'),
+                )
+            }
+        }
+        unstable {
+            node('builder') {
+                zulipSend(
+                    topic: "${env.JOB_NAME}",
+                    message: zulipAlert('UNSTABLE', '⚠️'),
+                )
             }
         }
         cleanup {
