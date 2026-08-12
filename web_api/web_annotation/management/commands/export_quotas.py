@@ -4,8 +4,12 @@ from typing import Any
 
 from django.core.management.base import BaseCommand
 
-from web_annotation.models import AnonymousUserQuota, UserQuota
+from web_annotation.models import AnonymousUserQuota, Quota, UserQuota
 
+#: Reported under each field's own name. The period counters store units
+#: consumed, but this report has always stated what a user has *left*, so
+#: those columns are converted on the way out and the rest are written as
+#: stored -- see ``_value`` (gain#750).
 FIELDS = [
     "daily_jobs",
     "monthly_jobs",
@@ -19,6 +23,9 @@ FIELDS = [
     "last_daily_reset",
     "last_monthly_reset",
 ]
+
+#: The columns that meter no units and so convert nothing.
+_TIMESTAMP_FIELDS = ("last_daily_reset", "last_monthly_reset")
 
 HEADER = ["type", "id", "email", *FIELDS]
 
@@ -42,6 +49,17 @@ class Command(BaseCommand):
             with open(output_path, "w", newline="", encoding="utf-8") as f:
                 self._write(f)
 
+    @staticmethod
+    def _value(quota: Quota, field: str) -> Any:
+        """Return the field as this report states it: remaining, not used.
+
+        Only the two timestamps are read as stored; ``remaining`` answers for
+        all nine counters, whichever convention each one is stored in.
+        """
+        if field in _TIMESTAMP_FIELDS:
+            return getattr(quota, field)
+        return quota.remaining(field)
+
     def _write(self, stream: Any) -> None:
         writer = csv.writer(stream)
         writer.writerow(HEADER)
@@ -49,11 +67,11 @@ class Command(BaseCommand):
         for user_quota in UserQuota.objects.select_related("user").all():
             writer.writerow(
                 ["user", user_quota.user.pk, user_quota.user.email]
-                + [getattr(user_quota, f) for f in FIELDS],
+                + [self._value(user_quota, f) for f in FIELDS],
             )
 
         for anon_quota in AnonymousUserQuota.objects.all():
             writer.writerow(
                 ["anonymous", anon_quota.ip, ""]
-                + [getattr(anon_quota, f) for f in FIELDS],
+                + [self._value(anon_quota, f) for f in FIELDS],
             )

@@ -66,7 +66,7 @@ def test_reset_daily_quota_resets_user_quotas(
     factory: APIRequestFactory,
     user_quota: UserQuota,
 ) -> None:
-    user_quota.daily_jobs = 0
+    user_quota.set_remaining("daily_jobs", 0)
     user_quota.save()
 
     request = factory.get("/admin-panel/reset-daily-quota")
@@ -74,14 +74,16 @@ def test_reset_daily_quota_resets_user_quotas(
     ResetDailyQuotaView.as_view()(request)
 
     user_quota.refresh_from_db()
-    assert user_quota.daily_jobs == user_quota.get_daily_job_max()
+    assert user_quota.daily_jobs == 0
+    assert user_quota.remaining("daily_jobs") \
+        == user_quota.get_daily_job_max()
 
 
 def test_reset_monthly_quota_resets_user_quotas(
     factory: APIRequestFactory,
     user_quota: UserQuota,
 ) -> None:
-    user_quota.monthly_jobs = 0
+    user_quota.set_remaining("monthly_jobs", 0)
     user_quota.save()
 
     request = factory.get("/admin-panel/reset-monthly-quota")
@@ -89,7 +91,9 @@ def test_reset_monthly_quota_resets_user_quotas(
     ResetMonthlyQuotaView.as_view()(request)
 
     user_quota.refresh_from_db()
-    assert user_quota.monthly_jobs == user_quota.get_monthly_job_max()
+    assert user_quota.monthly_jobs == 0
+    assert user_quota.remaining("monthly_jobs") \
+        == user_quota.get_monthly_job_max()
 
 
 def test_reset_daily_quota_creates_log(
@@ -305,7 +309,54 @@ def test_set_current_quota_daily_jobs(
     SetCurrentQuotaView.as_view()(request)
 
     user_quota.refresh_from_db()
-    assert user_quota.daily_jobs == 7
+    assert user_quota.remaining("daily_jobs") == 7
+
+
+def test_set_current_quota_to_zero_exhausts_the_quota(
+    factory: APIRequestFactory,
+    user_quota: UserQuota,
+) -> None:
+    # The panel's amount is the number of units the operator wants the user
+    # to have *left* -- the figure the panel displays. The column holds units
+    # consumed, so storing the amount verbatim inverts it: zero would grant a
+    # full day instead of exhausting it, and every caller that exhausts a
+    # quota by setting it to zero -- the e2e suite included -- would quietly
+    # start exercising an unexhausted one (gain#750).
+    request = factory.get("/admin-panel/set-current-quota", {
+        "user_email": "user@example.com",
+        "quota_type": "daily_jobs",
+        "amount": "0",
+    })
+    force_authenticate(request, user=_anon())
+    SetCurrentQuotaView.as_view()(request)
+
+    user_quota.refresh_from_db()
+    assert user_quota.remaining("daily_jobs") == 0
+    assert user_quota.check_job_quota() is False
+
+
+def test_set_current_quota_above_the_configured_limit_is_kept(
+    factory: APIRequestFactory,
+    user_quota: UserQuota,
+) -> None:
+    # The panel could always raise one row above its type's configured limit,
+    # because the column held the units outright. It still can: the amount is
+    # stored as a negative consumption rather than being capped. The e2e suite
+    # depends on this -- it pins the shared IP quota far above the session one
+    # so that only the session quota ever binds (gain#750).
+    granted = user_quota.get_daily_job_max() * 1_000
+    request = factory.get("/admin-panel/set-current-quota", {
+        "user_email": "user@example.com",
+        "quota_type": "daily_jobs",
+        "amount": str(granted),
+    })
+    force_authenticate(request, user=_anon())
+    response: Response = cast(Response, SetCurrentQuotaView.as_view()(request))
+
+    user_quota.refresh_from_db()
+    assert user_quota.remaining("daily_jobs") == granted
+    assert response.data is not None
+    assert response.data["daily_jobs"] == granted
 
 
 def test_set_current_quota_monthly_jobs(
@@ -321,7 +372,7 @@ def test_set_current_quota_monthly_jobs(
     SetCurrentQuotaView.as_view()(request)
 
     user_quota.refresh_from_db()
-    assert user_quota.monthly_jobs == 300
+    assert user_quota.remaining("monthly_jobs") == 300
 
 
 def test_set_current_quota_daily_variants(
@@ -337,7 +388,7 @@ def test_set_current_quota_daily_variants(
     SetCurrentQuotaView.as_view()(request)
 
     user_quota.refresh_from_db()
-    assert user_quota.daily_variants == 12345
+    assert user_quota.remaining("daily_variants") == 12345
 
 
 def test_set_current_quota_monthly_variants(
@@ -353,7 +404,7 @@ def test_set_current_quota_monthly_variants(
     SetCurrentQuotaView.as_view()(request)
 
     user_quota.refresh_from_db()
-    assert user_quota.monthly_variants == 99999
+    assert user_quota.remaining("monthly_variants") == 99999
 
 
 def test_set_current_quota_daily_attributes(
@@ -369,7 +420,7 @@ def test_set_current_quota_daily_attributes(
     SetCurrentQuotaView.as_view()(request)
 
     user_quota.refresh_from_db()
-    assert user_quota.daily_attributes == 8000
+    assert user_quota.remaining("daily_attributes") == 8000
 
 
 def test_set_current_quota_monthly_attributes(
@@ -385,7 +436,7 @@ def test_set_current_quota_monthly_attributes(
     SetCurrentQuotaView.as_view()(request)
 
     user_quota.refresh_from_db()
-    assert user_quota.monthly_attributes == 55000
+    assert user_quota.remaining("monthly_attributes") == 55000
 
 
 def test_set_current_quota_snapshot_reflects_change(
@@ -506,7 +557,7 @@ def test_set_session_quota_sets_field(
     force_authenticate(request, user=_anon())
     SetSessionQuotaView.as_view()(request)
     session_quota.refresh_from_db()
-    assert session_quota.monthly_variants == 888
+    assert session_quota.remaining("monthly_variants") == 888
 
 
 def test_set_session_quota_snapshot_reflects_change(
@@ -538,7 +589,7 @@ def test_set_session_quota_fallback_to_cookie(
     response = SetSessionQuotaView.as_view()(request)
     assert response.status_code == 200
     session_quota.refresh_from_db()
-    assert session_quota.daily_jobs == 3
+    assert session_quota.remaining("daily_jobs") == 3
 
 
 def test_set_session_quota_creates_quota_if_missing(
@@ -553,7 +604,7 @@ def test_set_session_quota_creates_quota_if_missing(
     response = SetSessionQuotaView.as_view()(request)
     assert response.status_code == 200
     quota = SessionQuota.objects.get(session_id="brand-new-session")
-    assert quota.daily_jobs == 7
+    assert quota.remaining("daily_jobs") == 7
 
 
 def test_set_session_quota_missing_session_id(
@@ -660,7 +711,7 @@ def test_set_ip_quota_sets_field(
     force_authenticate(request, user=_anon())
     SetIpQuotaView.as_view()(request)
     ip_quota.refresh_from_db()
-    assert ip_quota.monthly_variants == 555
+    assert ip_quota.remaining("monthly_variants") == 555
 
 
 def test_set_ip_quota_snapshot_reflects_change(
@@ -691,7 +742,7 @@ def test_set_ip_quota_fallback_to_anonymous_user(
     response = SetIpQuotaView.as_view()(request)
     assert response.status_code == 200
     ip_quota.refresh_from_db()
-    assert ip_quota.daily_jobs == 3
+    assert ip_quota.remaining("daily_jobs") == 3
 
 
 def test_set_ip_quota_returns_400_for_authenticated_user(
@@ -719,7 +770,7 @@ def test_set_ip_quota_creates_quota_if_missing(
     response = SetIpQuotaView.as_view()(request)
     assert response.status_code == 200
     quota = AnonymousUserQuota.objects.get(ip="9.9.9.9")
-    assert quota.daily_jobs == 7
+    assert quota.remaining("daily_jobs") == 7
 
 
 def test_set_ip_quota_invalid_type(
