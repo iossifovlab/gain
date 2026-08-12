@@ -927,20 +927,19 @@ This command checks that the resource is usable for annotation and produces an H
     :scale: 50 %
     :align: center
 
-    Summary HTML page created for ``my_minifragmentscore`` resource.
+    Summary html page created for ``my_minifragmentscore`` resource.
 
 
-13: CNV collection (Iossifov 2021)
+13: Fragment score (Iossifov 2021)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-As a real-world example, we will build a CNV collection resource from Supplementary Data 4 of `Yoon et al.` (2021), which lists the `de novo` CNVs 
-included in their analysis from WGS of SSC (simplex) and AGRE (multiplex) families.
+As a real-world example, we will build a fragment score resource from Supplementary Data 4 of `Yoon et al.` (2021), which lists the `de novo` CNVs included in their analysis from WGS of SSC (simplex) and AGRE (multiplex) families.
 
 Create a new folder for the resource and move into it:
 
 .. code-block:: bash
 
-    mkdir my_CNVcollection
-    cd my_CNVcollection
+    mkdir my_fragmentscore
+    cd my_fragmentscore
 
 
 First download the resource file:
@@ -973,23 +972,25 @@ named ``Iossifov_Lab_SSC_AGRE_2021.tsv`` (before running the script, install ``o
 
     python - <<'PY'
     import pandas as pd
-
-    df = pd.read_csv("download-csv.php", sep=",", dtype=str)
-    df["chrom"] = "chr" + df["cnv-locus"].str.extract(r"^(\d+|X|Y|M|MT)(?=[pq])")[0]
-    df[["pos_beg","pos_end"]] = df["basepair-range"].str.extract(r"(\d+)-(\d+)").astype(int)
+    df = pd.read_excel(
+        "42003_2021_2533_MOESM6_ESM.xlsx",
+        sheet_name="De novo CNV in SSC and AGRE",
+        dtype=str,
+    )
+    coords = df["location"].str.extract(r"^(chr[^:]+):(\d+)-(\d+)$")
+    coords.columns = ["chrom", "pos_beg", "pos_end"]
     out = pd.DataFrame({
-        "chrom": df["chrom"],
-        "pos_beg": df["pos_beg"],
-        "pos_end": df["pos_end"],
-        "CNV_name": df["cnv-locus"] + " " + df["cnv-type"],
-        "deletion_duplication": df["cnv-type"],
+        "chrom": coords["chrom"],
+        "pos_beg": coords["pos_beg"].astype(int),
+        "pos_end": coords["pos_end"].astype(int),
+        "variant": df["variant"],
+        "size": df["size"].astype(int),
     })
     out.to_csv("Iossifov_Lab_SSC_AGRE_2021.tsv", sep="\t", index=False)
     PY
 
 
-After running the script, inspect ``Iossifov_Lab_SSC_AGRE_2021.tsv`` to confirm the coordinate columns (``chrom``, ``pos_begin``, and ``pos_end``) 
-and attribute columns.
+After running the script, inspect ``Iossifov_Lab_SSC_AGRE_2021.tsv`` to confirm the coordinate columns (``chrom``, ``pos_begin``, and ``pos_end``) and attribute columns.
 
 
 .. csv-table::
@@ -1028,7 +1029,7 @@ Prepare a ``genomic_resource.yaml`` with the following content to make the resou
         y_log_scale: True
         
     meta:
-      summary: Iossifov Lab SSC AGRE 2021 CNV collection
+      summary: Iossifov Lab SSC AGRE 2021 fragment score
 
 
 Finally, while still in the resource directory, run:
@@ -1037,32 +1038,36 @@ Finally, while still in the resource directory, run:
 
     grr_manage resource-repair
 
-
-This command validates the CNV collection resource for use in annotation and generates an HTML summary page with basic descriptions 
-and any available statistics for the CNV collection resource.
-
+This command validates the fragment score resource for use in annotation and generates an HTML summary page with basic descriptions and any available statistics for the fragment score resource.
 
 .. figure:: figures/example13_resource.png
     :scale: 50 %
     :align: center
 
-    Summary html page created for ``my_CNVcollection`` resource.
+    Summary html page created for ``my_fragmentscore`` resource.
 
 
 Browse the local GRR
 --------------------
 
-After creating the resources above, the local GRR contains 13 resources covering several GRR resource types, including genomes, gene models, position scores, allele scores, gene scores, gene sets, and CNV collections. The main local GRR directory (``my_GRR``) includes an HTML summary page, ``index.html``, that provides a convenient way to browse the repository. This page lists the resources in a searchable table, including their type, ID, version, total size, and summary.
+After creating the resources above, the local GRR contains 13 resources covering several GRR resource types, including genomes, gene models, position scores, allele scores, gene scores, gene sets, and fragment scores. The main local GRR directory (``my_GRR``) includes an HTML summary page, ``index.html``, that provides a convenient way to browse the repository. This page lists the resources in a searchable table, including their type, ID, version, total size, and summary.
 
-This summary page is a useful checkpoint before running annotation. The resource IDs shown in the table are the same IDs used in annotation pipeline files, such as ``my_genome``, ``my_genemodel``, ``my_position``, ``my_allele``, and ``my_genescore``.
+This summary page is a useful checkpoint before running annotation. The resource IDs shown in the table are the same IDs used in annotation pipeline files, such as ``my_genome``, ``my_genemodel``, ``my_position``, ``my_allele``, and ``my_genescore``. The **Table view** lists each resource in the GRR, showing its resource type, ID, version, total size, and summary, and also allows the resources to be searched and filtered by type.
 
 
-.. figure:: figures/localGRRsummary.png
+.. figure:: figures/localGRRsummary2.png
     :scale: 50 %
     :align: center
     
-    Repository-level summary page for ``my_GRR``. The table lists the local resources and allows searching by resource type, resource ID, or summary.
+    Repository-level summary page for ``my_GRR`` viewed in Table view, which lists the local resources and allows searching by resource type, resource ID, or summary.
 
+**Hierarchical view** organizes resources according to the folder structure of the GRR, allowing users to define and browse resources in a hierarchy that reflects how they have chosen to organize them. Unlike the Table view, the Hierarchical view does not support searching or filtering resources. Since my_GRR uses a flat folder structure, the hierarchy shown here is minimal. The Hierarchical view becomes more useful when related resources are grouped into folders—for example, by placing gene scores, position scores, or other related resources under separate folders—making larger repositories easier to browse.
+
+.. figure:: figures/localGRRsummary3.png
+    :scale: 50 %
+    :align: center
+
+    Repository-level summary page for ``my_GRR`` viewed in Hierarchical view, which organizes local resources according to the folder structure of the GRR.
 
 
 Annotate using the local GRR
@@ -1128,7 +1133,7 @@ You can clone ``mini-GRR`` with:
     git clone git@github.com:iossifovlab/mini-GRR.git
     cd mini-GRR
 
-``mini-GRR`` contains a toy genome with ready-made ``genomic_resource.yaml`` descriptors, plus minimal examples of gene models, position scores, allele scores, gene scores, and gene sets. The resources span common file types, such as TSV/tabix, BedGraph/BigWig, and VCF, and include both 0-based and 1-based coordinate conventions.
+``mini-GRR`` contains a toy genome with ready-made ``genomic_resource.yaml`` descriptors, plus minimal examples of gene models, position scores, allele scores, gene scores, gene sets, and fragment scores. The resources span common file types, such as TSV/tabix, BedGraph/BigWig, and VCF, and include both 0-based and 1-based coordinate conventions.
 
 To use ``mini-GRR`` with GAIn, add it to your ``~/.grr_definition.yaml`` file in the same way as any other local GRR:
 
@@ -1142,3 +1147,9 @@ To use ``mini-GRR`` with GAIn, add it to your ``~/.grr_definition.yaml`` file in
       directory: <path_to_mini_grr>/mini-GRR
 
 Once configured, you can browse and run pipelines against ``mini-GRR`` to verify that your GAIn installation and GRR configuration work as expected. After you understand how a resource is structured, you can use the corresponding ``mini-GRR`` example as a starting point for your own data by replacing the toy files and editing ``genomic_resource.yaml``. In this way, ``mini-GRR`` provides a compact reference for GRR directory layout, metadata fields, and resource configuration.
+
+Browsing the mini-GRR ``index.html`` page provides a quick way to explore the repository before examining individual resource directories. As shown below, the Table view brings the toy resources together in a searchable overview, making it easy to locate examples of different resource types and use them as starting points for configuring new resources.
+
+.. figure:: figures/mini-GRR.png
+    :scale: 50 %
+    :align: center
