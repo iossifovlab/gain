@@ -101,61 +101,66 @@ def test_set_unlimited_raises_for_nonexistent_user() -> None:
 def test_refreshdaily_resets_user_quota_daily_fields(
     user_quota: UserQuota,
 ) -> None:
-    user_quota.daily_jobs = 0
-    user_quota.daily_variants = 0
+    user_quota.set_remaining("daily_jobs", 0)
+    user_quota.set_remaining("daily_variants", 0)
     user_quota.save()
 
     call_command("refreshdaily")
 
     user_quota.refresh_from_db()
-    assert user_quota.daily_jobs == user_quota.get_daily_job_max()
-    assert user_quota.daily_variants == user_quota.get_daily_variant_max()
+    assert user_quota.daily_jobs == 0
+    assert user_quota.remaining("daily_jobs") == user_quota.get_daily_job_max()
+    assert user_quota.daily_variants == 0
+    assert user_quota.remaining("daily_variants") \
+        == user_quota.get_daily_variant_max()
 
 
 def test_refreshdaily_resets_anonymous_quota_daily_fields(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
-    anonymous_quota.daily_jobs = 0
-    anonymous_quota.daily_variants = 0
+    anonymous_quota.set_remaining("daily_jobs", 0)
+    anonymous_quota.set_remaining("daily_variants", 0)
     anonymous_quota.save()
 
     call_command("refreshdaily")
 
     anonymous_quota.refresh_from_db()
-    assert anonymous_quota.daily_jobs == anonymous_quota.get_daily_job_max()
-    assert (
-        anonymous_quota.daily_variants
+    assert anonymous_quota.daily_jobs == 0
+    assert anonymous_quota.remaining("daily_jobs") \
+        == anonymous_quota.get_daily_job_max()
+    assert anonymous_quota.daily_variants == 0
+    assert anonymous_quota.remaining("daily_variants") \
         == anonymous_quota.get_daily_variant_max()
-    )
 
 
 def test_refreshdaily_resets_session_quota_daily_fields(
     session_quota: SessionQuota,
 ) -> None:
-    session_quota.daily_jobs = 0
-    session_quota.daily_variants = 0
+    session_quota.set_remaining("daily_jobs", 0)
+    session_quota.set_remaining("daily_variants", 0)
     session_quota.save()
 
     call_command("refreshdaily")
 
     session_quota.refresh_from_db()
-    assert session_quota.daily_jobs == session_quota.get_daily_job_max()
-    assert (
-        session_quota.daily_variants
+    assert session_quota.daily_jobs == 0
+    assert session_quota.remaining("daily_jobs") \
+        == session_quota.get_daily_job_max()
+    assert session_quota.daily_variants == 0
+    assert session_quota.remaining("daily_variants") \
         == session_quota.get_daily_variant_max()
-    )
 
 
 def test_refreshdaily_does_not_reset_monthly_fields(
     user_quota: UserQuota,
 ) -> None:
-    user_quota.monthly_jobs = 0
+    user_quota.set_remaining("monthly_jobs", 0)
     user_quota.save()
 
     call_command("refreshdaily")
 
     user_quota.refresh_from_db()
-    assert user_quota.monthly_jobs == 0
+    assert user_quota.remaining("monthly_jobs") == 0
 
 
 def test_refreshdaily_creates_log_entry(user_quota: UserQuota) -> None:
@@ -168,26 +173,27 @@ def test_refreshdaily_skips_if_already_ran_today(
     user_quota: UserQuota,
 ) -> None:
     call_command("refreshdaily")
-    user_quota.daily_jobs = 0
+    user_quota.set_remaining("daily_jobs", 0)
     user_quota.save()
 
     call_command("refreshdaily")
 
     user_quota.refresh_from_db()
-    assert user_quota.daily_jobs == 0
+    assert user_quota.remaining("daily_jobs") == 0
 
 
 def test_refreshdaily_force_runs_even_if_already_ran(
     user_quota: UserQuota,
 ) -> None:
     call_command("refreshdaily")
-    user_quota.daily_jobs = 0
+    user_quota.set_remaining("daily_jobs", 0)
     user_quota.save()
 
     call_command("refreshdaily", "--force")
 
     user_quota.refresh_from_db()
-    assert user_quota.daily_jobs == user_quota.get_daily_job_max()
+    assert user_quota.daily_jobs == 0
+    assert user_quota.remaining("daily_jobs") == user_quota.get_daily_job_max()
 
 
 def test_refreshdaily_uses_configured_timezone_for_day_boundary(
@@ -205,7 +211,7 @@ def test_refreshdaily_uses_configured_timezone_for_day_boundary(
     utc = datetime.UTC
     DailyQuotaRefreshLog.objects.create(
         executed_at=datetime.datetime(2026, 1, 15, 2, 0, tzinfo=utc))
-    user_quota.daily_jobs = 0
+    user_quota.set_remaining("daily_jobs", 0)
     user_quota.save()
     mocker.patch(
         "django.utils.timezone.now",
@@ -214,7 +220,8 @@ def test_refreshdaily_uses_configured_timezone_for_day_boundary(
     call_command("refreshdaily")
 
     user_quota.refresh_from_db()
-    assert user_quota.daily_jobs == user_quota.get_daily_job_max()
+    assert user_quota.daily_jobs == 0
+    assert user_quota.remaining("daily_jobs") == user_quota.get_daily_job_max()
 
 
 def test_refreshdaily_timezone_ahead_of_utc_stays_aligned(
@@ -232,7 +239,7 @@ def test_refreshdaily_timezone_ahead_of_utc_stays_aligned(
     utc = datetime.UTC
     DailyQuotaRefreshLog.objects.create(
         executed_at=datetime.datetime(2026, 1, 15, 10, 0, tzinfo=utc))
-    user_quota.daily_jobs = 0
+    user_quota.set_remaining("daily_jobs", 0)
     user_quota.save()
     mocker.patch(
         "django.utils.timezone.now",
@@ -241,7 +248,8 @@ def test_refreshdaily_timezone_ahead_of_utc_stays_aligned(
     call_command("refreshdaily")
 
     user_quota.refresh_from_db()
-    assert user_quota.daily_jobs == user_quota.get_daily_job_max()
+    assert user_quota.daily_jobs == 0
+    assert user_quota.remaining("daily_jobs") == user_quota.get_daily_job_max()
 
 
 def test_refreshdaily_defaults_to_utc_day_boundary(
@@ -255,7 +263,7 @@ def test_refreshdaily_defaults_to_utc_day_boundary(
     utc = datetime.UTC
     DailyQuotaRefreshLog.objects.create(
         executed_at=datetime.datetime(2026, 1, 15, 2, 0, tzinfo=utc))
-    user_quota.daily_jobs = 0
+    user_quota.set_remaining("daily_jobs", 0)
     user_quota.save()
     mocker.patch(
         "django.utils.timezone.now",
@@ -264,7 +272,7 @@ def test_refreshdaily_defaults_to_utc_day_boundary(
     call_command("refreshdaily")
 
     user_quota.refresh_from_db()
-    assert user_quota.daily_jobs == 0
+    assert user_quota.remaining("daily_jobs") == 0
 
 
 def test_refreshdaily_rolls_back_all_changes_on_failure(
@@ -273,7 +281,7 @@ def test_refreshdaily_rolls_back_all_changes_on_failure(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
     """A failure partway through leaves no partial resets and no log row."""
-    user_quota.daily_jobs = 0
+    user_quota.set_remaining("daily_jobs", 0)
     user_quota.save()
     mocker.patch.object(
         AnonymousUserQuota, "reset_daily",
@@ -283,7 +291,8 @@ def test_refreshdaily_rolls_back_all_changes_on_failure(
         call_command("refreshdaily")
 
     user_quota.refresh_from_db()
-    assert user_quota.daily_jobs == 0  # rolled back, not refilled
+    # Rolled back, not refreshed: still no headroom left.
+    assert user_quota.remaining("daily_jobs") == 0
     assert DailyQuotaRefreshLog.objects.count() == 0
 
 
@@ -292,59 +301,67 @@ def test_refreshdaily_rolls_back_all_changes_on_failure(
 def test_refreshmonthly_resets_user_quota_monthly_fields(
     user_quota: UserQuota,
 ) -> None:
-    user_quota.monthly_jobs = 0
-    user_quota.monthly_variants = 0
+    user_quota.set_remaining("monthly_jobs", 0)
+    user_quota.set_remaining("monthly_variants", 0)
     user_quota.save()
 
     call_command("refreshmonthly")
 
     user_quota.refresh_from_db()
-    assert user_quota.monthly_jobs == user_quota.get_monthly_job_max()
-    assert user_quota.monthly_variants == user_quota.get_monthly_variant_max()
+    assert user_quota.monthly_jobs == 0
+    assert user_quota.remaining("monthly_jobs") \
+        == user_quota.get_monthly_job_max()
+    assert user_quota.monthly_variants == 0
+    assert user_quota.remaining("monthly_variants") \
+        == user_quota.get_monthly_variant_max()
 
 
 def test_refreshmonthly_resets_anonymous_quota_monthly_fields(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
-    anonymous_quota.monthly_jobs = 0
-    anonymous_quota.monthly_variants = 0
+    anonymous_quota.set_remaining("monthly_jobs", 0)
+    anonymous_quota.set_remaining("monthly_variants", 0)
     anonymous_quota.save()
 
     call_command("refreshmonthly")
 
     anonymous_quota.refresh_from_db()
-    assert anonymous_quota.monthly_jobs == anonymous_quota.get_monthly_job_max()
-    assert anonymous_quota.monthly_variants == \
+    assert anonymous_quota.monthly_jobs == 0
+    assert anonymous_quota.remaining("monthly_jobs") \
+        == anonymous_quota.get_monthly_job_max()
+    assert anonymous_quota.monthly_variants == 0
+    assert anonymous_quota.remaining("monthly_variants") == \
         anonymous_quota.get_monthly_variant_max()
 
 
 def test_refreshmonthly_resets_session_quota_monthly_fields(
     session_quota: SessionQuota,
 ) -> None:
-    session_quota.monthly_jobs = 0
-    session_quota.monthly_variants = 0
+    session_quota.set_remaining("monthly_jobs", 0)
+    session_quota.set_remaining("monthly_variants", 0)
     session_quota.save()
 
     call_command("refreshmonthly")
 
     session_quota.refresh_from_db()
-    assert session_quota.monthly_jobs == session_quota.get_monthly_job_max()
-    assert (
-        session_quota.monthly_variants
+    assert session_quota.monthly_jobs == 0
+    assert session_quota.remaining("monthly_jobs") \
+        == session_quota.get_monthly_job_max()
+    assert session_quota.monthly_variants == 0
+    assert session_quota.remaining("monthly_variants") \
         == session_quota.get_monthly_variant_max()
-    )
 
 
 def test_refreshmonthly_does_not_reset_daily_fields(
     user_quota: UserQuota,
 ) -> None:
-    user_quota.daily_jobs = 0
+    user_quota.set_remaining("daily_jobs", 0)
     user_quota.save()
 
     call_command("refreshmonthly")
 
     user_quota.refresh_from_db()
-    assert user_quota.daily_jobs == 0
+    assert user_quota.remaining("daily_jobs") == 0
 
 
 def test_refreshmonthly_creates_log_entry(user_quota: UserQuota) -> None:
@@ -357,26 +374,28 @@ def test_refreshmonthly_skips_if_already_ran_this_month(
     user_quota: UserQuota,
 ) -> None:
     call_command("refreshmonthly")
-    user_quota.monthly_jobs = 0
+    user_quota.set_remaining("monthly_jobs", 0)
     user_quota.save()
 
     call_command("refreshmonthly")
 
     user_quota.refresh_from_db()
-    assert user_quota.monthly_jobs == 0
+    assert user_quota.remaining("monthly_jobs") == 0
 
 
 def test_refreshmonthly_force_runs_even_if_already_ran(
     user_quota: UserQuota,
 ) -> None:
     call_command("refreshmonthly")
-    user_quota.monthly_jobs = 0
+    user_quota.set_remaining("monthly_jobs", 0)
     user_quota.save()
 
     call_command("refreshmonthly", "--force")
 
     user_quota.refresh_from_db()
-    assert user_quota.monthly_jobs == user_quota.get_monthly_job_max()
+    assert user_quota.monthly_jobs == 0
+    assert user_quota.remaining("monthly_jobs") \
+        == user_quota.get_monthly_job_max()
 
 
 def test_refreshmonthly_uses_configured_timezone_for_month_boundary(
@@ -394,7 +413,7 @@ def test_refreshmonthly_uses_configured_timezone_for_month_boundary(
     utc = datetime.UTC
     MonthlyQuotaRefreshLog.objects.create(
         executed_at=datetime.datetime(2026, 2, 1, 2, 0, tzinfo=utc))
-    user_quota.monthly_jobs = 0
+    user_quota.set_remaining("monthly_jobs", 0)
     user_quota.save()
     mocker.patch(
         "django.utils.timezone.now",
@@ -403,7 +422,9 @@ def test_refreshmonthly_uses_configured_timezone_for_month_boundary(
     call_command("refreshmonthly")
 
     user_quota.refresh_from_db()
-    assert user_quota.monthly_jobs == user_quota.get_monthly_job_max()
+    assert user_quota.monthly_jobs == 0
+    assert user_quota.remaining("monthly_jobs") \
+        == user_quota.get_monthly_job_max()
 
 
 def test_refreshmonthly_timezone_ahead_of_utc_stays_aligned(
@@ -421,7 +442,7 @@ def test_refreshmonthly_timezone_ahead_of_utc_stays_aligned(
     utc = datetime.UTC
     MonthlyQuotaRefreshLog.objects.create(
         executed_at=datetime.datetime(2026, 1, 31, 10, 0, tzinfo=utc))
-    user_quota.monthly_jobs = 0
+    user_quota.set_remaining("monthly_jobs", 0)
     user_quota.save()
     mocker.patch(
         "django.utils.timezone.now",
@@ -430,7 +451,9 @@ def test_refreshmonthly_timezone_ahead_of_utc_stays_aligned(
     call_command("refreshmonthly")
 
     user_quota.refresh_from_db()
-    assert user_quota.monthly_jobs == user_quota.get_monthly_job_max()
+    assert user_quota.monthly_jobs == 0
+    assert user_quota.remaining("monthly_jobs") \
+        == user_quota.get_monthly_job_max()
 
 
 def test_refreshmonthly_defaults_to_utc_month_boundary(
@@ -444,7 +467,7 @@ def test_refreshmonthly_defaults_to_utc_month_boundary(
     utc = datetime.UTC
     MonthlyQuotaRefreshLog.objects.create(
         executed_at=datetime.datetime(2026, 2, 1, 2, 0, tzinfo=utc))
-    user_quota.monthly_jobs = 0
+    user_quota.set_remaining("monthly_jobs", 0)
     user_quota.save()
     mocker.patch(
         "django.utils.timezone.now",
@@ -453,7 +476,7 @@ def test_refreshmonthly_defaults_to_utc_month_boundary(
     call_command("refreshmonthly")
 
     user_quota.refresh_from_db()
-    assert user_quota.monthly_jobs == 0
+    assert user_quota.remaining("monthly_jobs") == 0
 
 
 def test_refreshmonthly_rolls_back_all_changes_on_failure(
@@ -462,7 +485,7 @@ def test_refreshmonthly_rolls_back_all_changes_on_failure(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
     """A failure partway through leaves no partial resets and no log row."""
-    user_quota.monthly_jobs = 0
+    user_quota.set_remaining("monthly_jobs", 0)
     user_quota.save()
     mocker.patch.object(
         AnonymousUserQuota, "reset_monthly",
@@ -472,7 +495,8 @@ def test_refreshmonthly_rolls_back_all_changes_on_failure(
         call_command("refreshmonthly")
 
     user_quota.refresh_from_db()
-    assert user_quota.monthly_jobs == 0  # rolled back, not refilled
+    # Rolled back, not refreshed: still no headroom left.
+    assert user_quota.remaining("monthly_jobs") == 0
     assert MonthlyQuotaRefreshLog.objects.count() == 0
 
 
@@ -520,10 +544,11 @@ def test_export_quotas_user_row_quota_values(user_quota: UserQuota) -> None:
         r for r in rows
         if r["type"] == "user" and r["id"] == str(user.pk)
     )
-    assert int(row["daily_jobs"]) == user_quota.daily_jobs
-    assert int(row["monthly_jobs"]) == user_quota.monthly_jobs
-    assert int(row["daily_variants"]) == user_quota.daily_variants
-    assert int(row["monthly_variants"]) == user_quota.monthly_variants
+    assert int(row["daily_jobs"]) == user_quota.remaining("daily_jobs")
+    assert int(row["monthly_jobs"]) == user_quota.remaining("monthly_jobs")
+    assert int(row["daily_variants"]) == user_quota.remaining("daily_variants")
+    assert int(row["monthly_variants"]) == \
+        user_quota.remaining("monthly_variants")
 
 
 def test_export_quotas_anonymous_row_quota_values(
@@ -531,9 +556,31 @@ def test_export_quotas_anonymous_row_quota_values(
 ) -> None:
     rows = _run_export()
     row = next(r for r in rows if r["id"] == "127.0.0.1")
-    assert int(row["daily_jobs"]) == anonymous_quota.daily_jobs
-    assert int(row["monthly_jobs"]) == anonymous_quota.monthly_jobs
+    assert int(row["daily_jobs"]) == anonymous_quota.remaining("daily_jobs")
+    assert int(row["monthly_jobs"]) == \
+        anonymous_quota.remaining("monthly_jobs")
+    # The extras store remaining already, so they are reported as stored.
     assert int(row["extra_variants"]) == anonymous_quota.extra_variants
+
+
+def test_export_quotas_reports_units_remaining_not_consumed(
+    user_quota: UserQuota,
+) -> None:
+    # The export's columns are named after the model's, but have always
+    # reported what a user has left. The period columns now store what a user
+    # has used, so writing them through unchanged would silently invert an
+    # operator-facing report under an unchanged header (gain#750). A
+    # consumption that is neither zero nor the whole limit tells the two
+    # readings apart; equal ones would not.
+    user_quota.daily_jobs = 30
+    user_quota.save()
+
+    row = next(
+        r for r in _run_export()
+        if r["type"] == "user" and r["id"] == str(user_quota.user.pk)
+    )
+
+    assert int(row["daily_jobs"]) == user_quota.get_daily_job_max() - 30
 
 
 def test_export_quotas_writes_to_file(

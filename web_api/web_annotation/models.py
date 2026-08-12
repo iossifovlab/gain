@@ -890,11 +890,17 @@ class AccountConfirmationCode(BaseVerificationCode):
 class Quota(models.Model):
     """Model for tracking user quotas.
 
-    A new quota starts at the limits configured for its type; see
-    ``__init__``. The counter fields keep their zero default because the
-    column is NOT NULL and the migrations are written against that default,
-    not because zero is ever a sensible starting value -- it is precisely the
-    value that means "exhausted".
+    A period counter stores the units **consumed** since that period was last
+    refreshed, so zero is a fresh quota and no limit is stored anywhere. Every
+    reader derives what is left as ``limit - consumed`` against configuration
+    read at that moment, which is what makes a limit change reach an existing
+    row immediately rather than at the next refresh. It may also go negative,
+    for a row granted more than its limit (gain#750; ADR 0019).
+
+    The three ``extra_*`` fields do **not** follow that convention: an
+    extra-unit grant is a balance with no limit to measure against, and a
+    refresh must not clear it, so those store units *remaining*. A row
+    therefore holds both conventions, deliberately.
 
     One rule governs every write to a quota row: **write a column only if you
     re-read it under a lock or computed it yourself.** An instance's other
@@ -906,10 +912,10 @@ class Quota(models.Model):
     re-reads the whole row under a lock -- so the instance is authoritative
     for every column and a full-row save is right there. Spending quota goes
     through ``_consume``, which owns that lock already. ``reset_daily`` and
-    ``reset_monthly`` take the other route: they overwrite counters with
-    configured limits rather than deriving values from what they read, so
-    they need no lock, and in exchange may write only the columns they
-    themselves set -- see ``_reset``.
+    ``reset_monthly`` take the other route: they zero their counters rather
+    than deriving values from what they read, so they need no lock, and in
+    exchange may write only the columns they themselves set -- see
+    ``_reset``.
     """
     daily_jobs = models.IntegerField(default=0)
     monthly_jobs = models.IntegerField(default=0)
@@ -957,9 +963,10 @@ class Quota(models.Model):
     EXTRA_UNIT_FIELDS: ClassVar[tuple[str, ...]] = tuple(
         extra for _, _, extra in RESOURCE_FIELDS.values())
 
-    #: Counters that a new quota starts at its configured limit. The
-    #: timestamps and the extra-unit fields are not among them: their zero
-    #: default is already the correct starting value.
+    #: Every period counter, i.e. every field storing units consumed, and
+    #: exactly the keys each type's limits are configured under -- the
+    #: identity ``_max_for`` relies on. No timestamp or extra field meters a
+    #: period, so none is among them.
     COUNTER_FIELDS: ClassVar[tuple[str, ...]] = (
         *DAILY_COUNTER_FIELDS, *MONTHLY_COUNTER_FIELDS,
     )
@@ -968,37 +975,11 @@ class Quota(models.Model):
         """Meta class for quota model."""
         abstract = True
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        """Build a quota, starting a new one at its configured limits.
-
-        An all-zero quota row is indistinguishable from a legitimately
-        exhausted one, so a quota must never be *created* holding the zero
-        field defaults and raised to its limits afterwards: any reader
-        arriving in between would be refused although nothing was consumed.
-        Starting at the limits here means every creation path -- ``create``,
-        ``get_or_create``, plain construction -- inserts a usable row in one
-        statement, with no window and no follow-up reset.
-
-        Each counter the caller names is left alone, so naming every one of
-        them with a zero is how to build an exhausted quota; the counters not
-        named still start at their limit. Rows loaded from the database are
-        untouched, whatever they hold: Django loads them positionally, so
-        ``args`` is what tells a load apart from a construction.
-        """
-        if not args:
-            kwargs = {**self._initial_counters(), **kwargs}
-        super().__init__(*args, **kwargs)
-
     @classmethod
     @abstractmethod
     def _quota_config(cls) -> dict:
         """Return the settings QUOTAS sub-dict for this quota type."""
         raise NotImplementedError
-
-    @classmethod
-    def _initial_counters(cls) -> dict[str, int]:
-        """Return the counter values a new quota of this type starts from."""
-        return {name: cls._max_for(name) for name in cls.COUNTER_FIELDS}
 
     @classmethod
     def get_or_create_for(cls, **lookup: Any) -> Self:
@@ -1008,8 +989,56 @@ class Quota(models.Model):
 
     @classmethod
     def _max_for(cls, field: str) -> int:
-        """Return the configured limit the named counter refreshes to."""
+        """Return the configured limit the named counter is measured against.
+
+        Indexed by column name, so a period counter's column name doubles as
+        the settings key its limit is configured under. That identity is what
+        makes the settings-correspondence test fire when a counter is added;
+        renaming a column means giving ``RESOURCE_FIELDS`` a settings key of
+        its own (gain#788).
+        """
         return cast(int, cls._quota_config()[field])
+
+    def remaining(self, field: str) -> int:
+        """Return the units still available on any of the nine counters.
+
+        A period counter stores consumption, so what is left is derived
+        against the limit as configured *now* -- which is what makes a raised
+        limit reach an existing row (gain#750, ADR 0019). Floored at zero, so
+        a limit lowered below what a row consumed reads as exhausted rather
+        than as negative headroom.
+
+        An extra-unit field already stores what is left, and is returned as
+        stored. Answering for both lets a caller walking the whole row -- the
+        admin panel, the export -- ask one question per column rather than
+        branch on which convention each uses.
+        """
+        if field in self.EXTRA_UNIT_FIELDS:
+            return cast(int, getattr(self, field))
+        consumed: int = getattr(self, field)
+        return max(0, self._max_for(field) - consumed)
+
+    def set_remaining(self, field: str, remaining: int) -> None:
+        """Stage whatever leaves ``remaining`` units on any of the nine.
+
+        The inverse of ``remaining``, for the admin panel: its setters name
+        the units the operator wants the user to have *left*, which is the
+        figure the panel displays. Storing that on a period counter directly
+        would invert it -- "set daily_variants to 0" would grant a full day
+        rather than exhaust it; an extra-unit field stores it as given.
+
+        Deliberately *not* floored at zero, unlike ``remaining``: an operator
+        may grant more than the configured limit, which the panel could
+        always do and which the e2e suite relies on. That is stored as a
+        negative consumption -- the row has used less than nothing against
+        its limit -- and is spent before the limit begins to apply.
+
+        Staged on the instance only; the caller decides how to persist it.
+        """
+        if field in self.EXTRA_UNIT_FIELDS:
+            setattr(self, field, remaining)
+            return
+        setattr(self, field, self._max_for(field) - remaining)
 
     def get_daily_job_max(self) -> int:
         """Get the maximum number of daily jobs allowed."""
@@ -1038,10 +1067,16 @@ class Quota(models.Model):
     def _reset(self, fields: tuple[str, ...], stamp_field: str) -> None:
         """Refresh one period's counters and stamp when it was refreshed.
 
-        Every counter named in ``fields`` is overwritten with its configured
-        limit, so a counter added to the period's tuple refreshes without a
-        second edit here. Counters of the *other* period, and the extra-unit
-        fields, are left untouched.
+        Every counter named in ``fields`` is zeroed -- a refreshed period has
+        consumed nothing -- so a counter added to the period's tuple
+        refreshes without a second edit here. Counters of the *other* period,
+        and the extra-unit fields, are left untouched; the extras store units
+        remaining and a refresh must not clear a granted balance.
+
+        Zeroing rather than writing a configured limit is what makes the
+        refresh independent of configuration: it no longer bakes the limit
+        of the moment into the row, so a limit changed after a refresh still
+        reaches the row (gain#750).
 
         Only those columns are written, because only those were derived here.
         Nothing re-read this instance under a lock, so every other column
@@ -1059,7 +1094,7 @@ class Quota(models.Model):
         being silently re-inserted.
         """
         for field in fields:
-            setattr(self, field, self._max_for(field))
+            setattr(self, field, 0)
         setattr(self, stamp_field, timezone.now())
         self.save(update_fields=(*fields, stamp_field))
 
@@ -1083,49 +1118,35 @@ class Quota(models.Model):
                 current = max(getattr(self, extra), 0)
                 setattr(self, extra, current + self._max_for(monthly))
 
+    # The gating predicates below answer from a snapshot of this row rather
+    # than reimplementing the same policy. Production reaches only the
+    # snapshot's copies -- every gate goes through ``get_quota()`` -- so a
+    # parallel implementation here could drift, in a different unit
+    # convention, with the suite green either way (gain#750).
+
     def check_job_quota(self) -> bool:
         """Check if the user has quota for a job."""
-        if self.extra_jobs > 0:
-            return True
-        return not (self.daily_jobs <= 0 or self.monthly_jobs <= 0)
+        return QuotaSnapshot.from_quota(self).check_job_quota()
 
     def check_variant_quota(self, variants_count: int) -> bool:
         """Check if the user has the necessary variant quota."""
-        if (
-            self.extra_variants > 0
-            and self.monthly_variants + self.extra_variants >= variants_count
-        ):
-            return True
-        if self.daily_variants <= 0 or self.monthly_variants <= 0:
-            return False
-        return not (
-            self.daily_variants < variants_count
-            or self.monthly_variants < variants_count
-        )
+        return QuotaSnapshot.from_quota(self).check_variant_quota(
+            variants_count)
 
     def check_attribute_quota(self, attributes_count: int) -> bool:
         """Check if the user has the necessary attribute quota."""
-        if self.extra_attributes > 0:
-            total_attributes = self.monthly_attributes + self.extra_attributes
-            if total_attributes >= attributes_count:
-                return True
-        if self.daily_attributes <= 0 or self.monthly_attributes <= 0:
-            return False
-        return not (
-            self.daily_attributes < attributes_count
-            or self.monthly_attributes < attributes_count
-        )
+        return QuotaSnapshot.from_quota(self).check_attribute_quota(
+            attributes_count)
 
     def single_allele_allowed(self, attributes_count: int) -> bool:
         """Check if a single query is allowed."""
-        return self.check_variant_quota(1) \
-            and self.check_attribute_quota(attributes_count)
+        return QuotaSnapshot.from_quota(self).single_allele_allowed(
+            attributes_count)
 
     def job_allowed(self, variants_count: int, attributes_count: int) -> bool:
         """Check if a job is allowed based on the current quotas."""
-        return self.check_job_quota() \
-            and self.check_attribute_quota(attributes_count) \
-            and self.check_variant_quota(variants_count)
+        return QuotaSnapshot.from_quota(self).job_allowed(
+            variants_count, attributes_count)
 
     @contextmanager
     def _mutating_stored_row(self) -> Iterator[None]:
@@ -1171,6 +1192,23 @@ class Quota(models.Model):
             for resource, amount in deductions:
                 self._deduct(*self.RESOURCE_FIELDS[resource], amount)
 
+    def _charge(self, field: str, amount: int) -> None:
+        """Add ``amount`` to a period counter, stopping at its limit.
+
+        Consumption is not recorded past the limit -- the same forgiveness
+        the old floor-at-zero gave, and deliberate rather than inherited:
+        when extras cover an overshoot the excess is already charged there,
+        so recording it here too would charge the same units twice and
+        surface as missing headroom after a limit raise (gain#750).
+
+        A row already *above* its limit, which lowering a limit leaves
+        behind, is never charged back down to it -- hence the stop being the
+        larger of the limit and what is already consumed.
+        """
+        consumed: int = getattr(self, field)
+        ceiling = max(self._max_for(field), consumed)
+        setattr(self, field, min(consumed + amount, ceiling))
+
     def _deduct(
         self,
         daily_field: str,
@@ -1178,14 +1216,20 @@ class Quota(models.Model):
         extra_field: str,
         amount: int,
     ) -> None:
-        """Deduct `amount` from daily and monthly (floored at 0).
+        """Charge `amount` to daily and monthly (each stopping at its limit).
         Only consume from extras if the more-limiting period could not fully
         cover the amount, and only once. If extras are fully consumed,
-        zero out all extra quotas."""
-        daily_before = getattr(self, daily_field)
-        monthly_before = getattr(self, monthly_field)
-        setattr(self, daily_field, max(0, daily_before - amount))
-        setattr(self, monthly_field, max(0, monthly_before - amount))
+        zero out all extra quotas.
+
+        The extras arithmetic reads each period's headroom rather than its
+        stored column, so storing consumption does not change it:
+        ``remaining`` returns what the column used to hold, except that it
+        floors at zero where the old column could hold a value a lowered
+        limit had stranded above it."""
+        daily_before = self.remaining(daily_field)
+        monthly_before = self.remaining(monthly_field)
+        self._charge(daily_field, amount)
+        self._charge(monthly_field, amount)
         extra_deduction = max(0, amount - max(daily_before, monthly_before))
         new_extra = getattr(self, extra_field) - extra_deduction
         setattr(self, extra_field, new_extra)
@@ -1211,7 +1255,22 @@ class Quota(models.Model):
 
 @dataclasses.dataclass(frozen=True)
 class QuotaSnapshot:
-    """Immutable quota state snapshot for read-only checks and views."""
+    """Immutable quota state snapshot for read-only checks and views.
+
+    The nine counter fields hold units **remaining**, unlike the model's six
+    period columns, which store units consumed. The conversion happens once,
+    in ``from_quota``, against the limit configured at that moment.
+
+    Keeping the snapshot in remaining terms is what makes a limit live
+    without touching anything downstream: the predicates below, ``minimum``,
+    the quota endpoint and the admin panel's response all read the same
+    figures they always did, but recomputed per read instead of per period
+    reset (gain#750; ADR 0019). It also keeps ``minimum`` a minimum -- under
+    consumed counters "more restrictive" would invert to a maximum for six of
+    the nine fields and not the other three, which is easy to port wrongly
+    and impossible for the suite to catch, since both anonymous quota classes
+    resolve to the same configuration.
+    """
     daily_jobs: int
     monthly_jobs: int
     daily_variants: int
@@ -1230,13 +1289,14 @@ class QuotaSnapshot:
 
     @classmethod
     def from_quota(cls, quota: Quota) -> QuotaSnapshot:
+        """Read a row's headroom against the limits configured right now."""
         return cls(
-            daily_jobs=quota.daily_jobs,
-            monthly_jobs=quota.monthly_jobs,
-            daily_variants=quota.daily_variants,
-            monthly_variants=quota.monthly_variants,
-            daily_attributes=quota.daily_attributes,
-            monthly_attributes=quota.monthly_attributes,
+            daily_jobs=quota.remaining("daily_jobs"),
+            monthly_jobs=quota.remaining("monthly_jobs"),
+            daily_variants=quota.remaining("daily_variants"),
+            monthly_variants=quota.remaining("monthly_variants"),
+            daily_attributes=quota.remaining("daily_attributes"),
+            monthly_attributes=quota.remaining("monthly_attributes"),
             extra_jobs=quota.extra_jobs,
             extra_variants=quota.extra_variants,
             extra_attributes=quota.extra_attributes,
@@ -1248,9 +1308,36 @@ class QuotaSnapshot:
             max_monthly_attributes=quota.get_monthly_attribute_max(),
         )
 
+    @staticmethod
+    def _require_identical_limits(a: QuotaSnapshot, b: QuotaSnapshot) -> None:
+        """Refuse to merge two snapshots configured with different limits.
+
+        A merge mixes two rows' counters *and* their limits, which describes
+        a real quota only while both are configured identically -- true today
+        because the session and IP classes resolve to the same block, and
+        silent until now because the predicates ignored limits. Measuring
+        headroom against a limit makes it load-bearing, so it is asserted
+        rather than assumed (gain#750).
+        """
+        mismatched = {
+            name: (getattr(a, name), getattr(b, name))
+            for name in _SNAPSHOT_LIMIT_FIELDS
+            if getattr(a, name) != getattr(b, name)
+        }
+        if mismatched:
+            raise ValueError(
+                "Refusing to merge quota snapshots configured with different "
+                f"limits: {mismatched}",
+            )
+
     @classmethod
     def minimum(cls, a: QuotaSnapshot, b: QuotaSnapshot) -> QuotaSnapshot:
-        """Return the more restrictive snapshot (field-wise minimum)."""
+        """Return the more restrictive snapshot (field-wise minimum).
+
+        A minimum throughout, the six period counters included: every field
+        holds units remaining, so fewer is stricter for all of them.
+        """
+        cls._require_identical_limits(a, b)
         return cls(
             daily_jobs=min(a.daily_jobs, b.daily_jobs),
             monthly_jobs=min(a.monthly_jobs, b.monthly_jobs),
@@ -1261,15 +1348,14 @@ class QuotaSnapshot:
             extra_jobs=min(a.extra_jobs, b.extra_jobs),
             extra_variants=min(a.extra_variants, b.extra_variants),
             extra_attributes=min(a.extra_attributes, b.extra_attributes),
-            max_daily_jobs=min(a.max_daily_jobs, b.max_daily_jobs),
-            max_monthly_jobs=min(a.max_monthly_jobs, b.max_monthly_jobs),
-            max_daily_variants=min(a.max_daily_variants, b.max_daily_variants),
-            max_monthly_variants=min(
-                a.max_monthly_variants, b.max_monthly_variants),
-            max_daily_attributes=min(
-                a.max_daily_attributes, b.max_daily_attributes),
-            max_monthly_attributes=min(
-                a.max_monthly_attributes, b.max_monthly_attributes),
+            # From ``a`` alone: the guard proved both carry the same limits,
+            # and a minimum here would imply they may differ.
+            max_daily_jobs=a.max_daily_jobs,
+            max_monthly_jobs=a.max_monthly_jobs,
+            max_daily_variants=a.max_daily_variants,
+            max_monthly_variants=a.max_monthly_variants,
+            max_daily_attributes=a.max_daily_attributes,
+            max_monthly_attributes=a.max_monthly_attributes,
         )
 
     def get_daily_job_max(self) -> int:
@@ -1337,6 +1423,15 @@ class QuotaSnapshot:
             and self.check_attribute_quota(attributes_count)
             and self.check_variant_quota(variants_count)
         )
+
+
+#: The snapshot fields carrying a configured limit rather than a count.
+#: Derived once at import, not per merge: ``minimum`` runs on every anonymous
+#: quota read, where reflecting over the dataclass was its largest cost.
+_SNAPSHOT_LIMIT_FIELDS: tuple[str, ...] = tuple(
+    field.name for field in dataclasses.fields(QuotaSnapshot)
+    if field.name.startswith("max_")
+)
 
 
 class AnonymousUserQuota(Quota):

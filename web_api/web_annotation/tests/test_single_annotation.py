@@ -634,20 +634,31 @@ def test_single_annotation_allele_attribute(admin_client: Client) -> None:
     assert allele_attr["result"]["histogram"] is None
 
 
+def _exhausted_quota_for(user: User) -> UserQuota:
+    """Store a quota for ``user`` with nothing left to spend.
+
+    Exhausted, not fresh: the counters store consumption, so an all-zero row
+    is a brand-new quota with everything still to spend. Each counter is
+    therefore spent up to its limit -- which is what refuses a query, and
+    what stops the unlimited-user test from passing vacuously (gain#750).
+    """
+    quota = UserQuota(user=user)
+    for field in (
+        "daily_variants", "monthly_variants",
+        "daily_attributes", "monthly_attributes",
+    ):
+        quota.set_remaining(field, 0)
+    quota.save()
+    return quota
+
+
 def test_unlimited_user_bypasses_single_allele_quota(
     user_client: Client,
 ) -> None:
     user = User.objects.get(email="user@example.com")
     user.is_unlimited = True
     user.save()
-    quota = UserQuota(
-        user=user,
-        daily_variants=0,
-        monthly_variants=0,
-        daily_attributes=0,
-        monthly_attributes=0,
-    )
-    quota.save()
+    _exhausted_quota_for(user)
 
     response = user_client.post(
         "/api/single_allele/annotate",
@@ -696,14 +707,7 @@ def test_non_unlimited_user_is_blocked_by_quota(
     user = User.objects.get(email="user@example.com")
     user.is_unlimited = False
     user.save()
-    quota = UserQuota(
-        user=user,
-        daily_variants=0,
-        monthly_variants=0,
-        daily_attributes=0,
-        monthly_attributes=0,
-    )
-    quota.save()
+    _exhausted_quota_for(user)
 
     response = user_client.post(
         "/api/single_allele/annotate",

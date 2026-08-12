@@ -21,14 +21,17 @@ def _row_writes(captured: CaptureQueriesContext) -> list[str]:
     ]
 
 
-def _assert_at_limits(quota: Quota) -> None:
-    """Assert every counter of ``quota`` sits at its configured maximum."""
-    assert quota.daily_jobs == quota.get_daily_job_max()
-    assert quota.monthly_jobs == quota.get_monthly_job_max()
-    assert quota.daily_variants == quota.get_daily_variant_max()
-    assert quota.monthly_variants == quota.get_monthly_variant_max()
-    assert quota.daily_attributes == quota.get_daily_attribute_max()
-    assert quota.monthly_attributes == quota.get_monthly_attribute_max()
+def _assert_at_full_headroom(quota: Quota) -> None:
+    """Assert ``quota`` has consumed nothing, and so has its whole limit.
+
+    The stored zero is the load-bearing assertion; the headroom follows from
+    it arithmetically and cannot fail on its own. It is asserted anyway
+    because it is the property callers actually depend on, and because it
+    names the limit the row is measured against, which the zero does not.
+    """
+    for field in Quota.COUNTER_FIELDS:
+        assert getattr(quota, field) == 0, field
+        assert quota.remaining(field) == quota._max_for(field), field
 
 
 def test_user_quota_user_is_unique() -> None:
@@ -67,7 +70,9 @@ def test_a_created_user_quota_allows_a_single_allele_query() -> None:
     only afterwards raised to its configured limits by two further saves. A
     reader arriving in between found the row present, skipped the reset that
     only the creating caller performs, and read an all-zero quota -- refusing
-    a user who had consumed nothing.
+    a user who had consumed nothing. Zero now *means* "consumed nothing", so
+    there is nothing to raise and no window to arrive in; this keeps checking
+    the outcome the window used to break.
     """
     user = User.objects.get(email="user@example.com")
     UserQuota.objects.create(user=user)
@@ -90,23 +95,24 @@ def test_lazily_creating_a_user_quota_writes_the_row_once() -> None:
 
 
 def test_an_exhausted_user_quota_still_refuses_a_single_allele_query() -> None:
-    """All-zero has to keep meaning exhausted.
+    """A fully consumed row must refuse, and stay refused across a load.
 
-    Starting a new quota at its limits is what makes an all-zero row
-    unambiguous; a quota that reached zero by being spent must not be
-    mistaken for one that was never initialised and quietly healed.
+    The counterpart of the fresh-row tests above: those assert that an
+    all-zero row is usable, so this one has to assert that a row which has
+    spent everything is not. Together they are what makes the two states
+    distinguishable -- the ambiguity gain#670 reported, now resolved by the
+    counter meaning consumption rather than by a construction-time override
+    (gain#750).
 
-    This is also the only test that loads an all-zero quota back out of the
-    database, so it is what pins the guard in ``Quota.__init__`` that starts
-    counters at their limits on construction but leaves a load alone. Keep a
-    case that reads spent counters from the database: without one, a quota
-    healing itself on load would go unnoticed, and it fails open -- every
-    exhausted quota silently becomes full again.
+    Written through a queryset ``update`` so the exhausted state is read back
+    from the database rather than staged on an instance: a quota that healed
+    itself on load would otherwise go unnoticed, and it fails open.
     """
     user = User.objects.get(email="user@example.com")
-    UserQuota.objects.create(user=user)
-    UserQuota.objects.filter(user=user).update(
-        **dict.fromkeys(UserQuota.COUNTER_FIELDS, 0))
+    quota = UserQuota.objects.create(user=user)
+    UserQuota.objects.filter(user=user).update(**{
+        field: quota._max_for(field) for field in UserQuota.COUNTER_FIELDS
+    })
 
     assert not user.get_quota().single_allele_allowed(1)
 
@@ -134,25 +140,25 @@ def test_created_anonymous_quotas_allow_a_single_allele_query() -> None:
     assert anonymous.get_quota().single_allele_allowed(1)
 
 
-def test_a_created_user_quota_is_stored_at_its_limits() -> None:
+def test_a_created_user_quota_is_stored_having_consumed_nothing() -> None:
     """What reaches the database -- not just the instance -- is usable."""
     user = User.objects.get(email="user@example.com")
 
     UserQuota.objects.create(user=user)
 
-    _assert_at_limits(UserQuota.objects.get(user=user))
+    _assert_at_full_headroom(UserQuota.objects.get(user=user))
 
 
-def test_a_created_ip_quota_is_stored_at_its_limits() -> None:
+def test_a_created_ip_quota_is_stored_having_consumed_nothing() -> None:
     AnonymousUserQuota.objects.create(ip="10.0.0.4")
 
-    _assert_at_limits(AnonymousUserQuota.objects.get(ip="10.0.0.4"))
+    _assert_at_full_headroom(AnonymousUserQuota.objects.get(ip="10.0.0.4"))
 
 
-def test_a_created_session_quota_is_stored_at_its_limits() -> None:
+def test_a_created_session_quota_is_stored_having_consumed_nothing() -> None:
     SessionQuota.objects.create(session_id="sess-3")
 
-    _assert_at_limits(SessionQuota.objects.get(session_id="sess-3"))
+    _assert_at_full_headroom(SessionQuota.objects.get(session_id="sess-3"))
 
 
 def test_anonymous_ip_quota_is_unique() -> None:

@@ -44,8 +44,15 @@ def _set_quota_field_response(
     deduction. The two belong together -- a setter that wrote the whole row
     would need no re-read, and one that writes a column without re-reading
     answers with a state that was never stored.
+
+    ``amount`` is units *remaining* whichever counter is named, because that
+    is the figure this panel displays and the one an operator types. A period
+    counter stores units consumed and an extra-unit field stores units
+    remaining, but which is which is the model's to know: ``set_remaining``
+    answers for all nine, so a counter cannot be added to one convention and
+    written under the other (gain#750).
     """
-    setattr(quota, field, amount)
+    quota.set_remaining(field, amount)
     quota.save(update_fields=[field])
     quota.refresh_from_db()
     snapshot = QuotaSnapshot.from_quota(quota)
