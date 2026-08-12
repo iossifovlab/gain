@@ -105,6 +105,24 @@ pipeline {
         // warm node-local build times have been measured.
         timeout(time: 4, unit: 'HOURS')
         buildDiscarder(logRotator(numToKeepStr: '20'))
+        // Without this, the job checks out gain TWICE per build: the
+        // implicit `Declarative: Checkout SCM` runs before the first
+        // stage, and then the explicit `Checkout` stage below clones
+        // the same repo again into the same workspace. The explicit
+        // one is the checkout this job actually depends on — it is the
+        // one that resolves COMMIT_SHA/BRANCH_NAME and that the
+        // superseded-commit `catch` reasons about — so the implicit
+        // one is pure duplicate work, and on an agent this job has
+        // never run on it is a second full cold clone (~500MB).
+        // Skip it; the explicit stage carries its own generous clone
+        // timeout instead. Same option, same shape, as
+        // core/Jenkinsfile.integration (#799) and Jenkinsfile.release.
+        //
+        // This makes the job responsible for its own workspace state:
+        // nothing before `Checkout` may assume a populated workspace.
+        // `Prepare workspace` (which runs first, on purpose — gain#489)
+        // only rm -rf's and mkdir -p's, so it is unaffected.
+        skipDefaultCheckout(true)
     }
 
     environment {
@@ -233,9 +251,9 @@ pipeline {
         //      an ordinary fast-forward push between the upstream
         //      trigger and this stage was enough to break a build
         //      whose SHA was still perfectly reachable. It also
-        //      degraded the shared workspace repo (cloned with full
-        //      history by the declarative `Checkout SCM` above) to a
-        //      shallow one. Hence: no shallow clone here.
+        //      degraded the reused workspace repo to a shallow one,
+        //      which every later build then inherited. Hence: no
+        //      shallow clone here.
         //
         //   2. A force-push past COMMIT_SHA orphans it — unreachable
         //      from every ref, therefore unfetchable at ANY depth.
@@ -269,9 +287,19 @@ pipeline {
                             userRemoteConfigs: [[
                                 url: env.GAIN_REPO_URL,
                             ]],
+                            // timeout (minutes) covers the one cold
+                            // FULL clone an agent this job has never
+                            // run on has to pay. The git plugin's
+                            // default is 10 minutes; this is the only
+                            // clone in the build now (see
+                            // skipDefaultCheckout above), so buying it
+                            // generous headroom costs nothing — warm
+                            // builds fetch incrementally and never go
+                            // near it.
                             extensions: [[$class: 'CloneOption',
                                           shallow: false,
-                                          noTags: true]],
+                                          noTags: true,
+                                          timeout: 60]],
                         ])
                     } catch (Exception err) {
                         // Read the tip through the shell env rather
