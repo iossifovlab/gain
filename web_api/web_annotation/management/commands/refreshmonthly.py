@@ -37,6 +37,8 @@ class Command(BaseCommand):
                 "Use --force to override.")
             return
 
+        # One transaction for the whole walk, deliberately -- see the note in
+        # ``refreshdaily`` (gain#768, gain#807).
         with transaction.atomic():
             for user_quota in UserQuota.objects.all():
                 user_quota.reset_monthly()

@@ -895,14 +895,20 @@ class Quota(models.Model):
     not because zero is ever a sensible starting value -- it is precisely the
     value that means "exhausted".
 
-    A method that mutates a counter by reading it first must run inside
-    ``_mutating_stored_row``, which re-reads the row under a lock so two
-    overlapping writers cannot each deduct from the same starting value.
-    Spending quota goes through ``_consume``, which owns that lock already.
-    ``reset_daily`` and ``reset_monthly`` are the deliberate exception: they
-    overwrite the counters with configured limits rather than deriving new
-    values from what they read, so they have nothing to lose to a concurrent
-    writer -- though they do still write the whole row.
+    One rule governs every write to a quota row: **write a column only if you
+    re-read it under a lock or computed it yourself.** An instance's other
+    columns are as stale as the read that produced it, and saving them back
+    reverts whatever committed since.
+
+    The two write paths satisfy it differently. A method that mutates a
+    counter by reading it first runs inside ``_mutating_stored_row``, which
+    re-reads the whole row under a lock -- so the instance is authoritative
+    for every column and a full-row save is right there. Spending quota goes
+    through ``_consume``, which owns that lock already. ``reset_daily`` and
+    ``reset_monthly`` take the other route: they overwrite counters with
+    configured limits rather than deriving values from what they read, so
+    they need no lock, and in exchange may write only the columns they
+    themselves set -- see ``_reset``.
     """
     daily_jobs = models.IntegerField(default=0)
     monthly_jobs = models.IntegerField(default=0)
@@ -1017,14 +1023,25 @@ class Quota(models.Model):
         second edit here. Counters of the *other* period, and the extra-unit
         fields, are left untouched.
 
-        Writes the whole row, as both callers always have -- see the class
-        docstring for why that is safe for an overwrite and gain#768 for the
-        separate defect it nonetheless causes.
+        Only those columns are written, because only those were derived here.
+        Nothing re-read this instance under a lock, so every other column
+        still holds whatever the read that produced it saw; a full-row save
+        would put all of that back and revert whatever committed in the
+        meantime -- a consumption's deduction, or an admin's extra-unit grant
+        (gain#768). The class docstring states the rule this follows.
+
+        ``update_fields`` requires a row that already exists; every caller
+        operates on a persisted one, which is what #765 made true. It also
+        leaves the instance stale in the columns it declined to write -- no
+        caller re-reads it today, and one that needed to would pair this with
+        ``refresh_from_db`` -- and it raises on an UPDATE that matches no
+        row, so a quota deleted mid-refresh aborts the refresh instead of
+        being silently re-inserted.
         """
         for field in fields:
             setattr(self, field, self._max_for(field))
         setattr(self, stamp_field, timezone.now())
-        self.save()
+        self.save(update_fields=(*fields, stamp_field))
 
     def reset_daily(self) -> None:
         """Reset all daily quota counts."""
