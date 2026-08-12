@@ -831,6 +831,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         chrom: str,
         pos_begin: int | None,
         pos_end: int | None,
+        *,
         score_filter: ScoreFilter | None = None,
     ) -> Iterator[Record]:
         """Fetch the records of a region, optionally filtered.
@@ -2303,6 +2304,7 @@ class AlleleScore(GenomicScore):
 
     def fetch_allele_record(
         self, chrom: str, pos: int, ref: str, alt: str,
+        *,
         score_filter: ScoreFilter | None = None,
     ) -> Record | None:
         """Return the record matching this allele exactly, or None.
@@ -2334,6 +2336,7 @@ class AlleleScore(GenomicScore):
         self, chrom: str, position: int,
         reference: str, alternative: str,
         scores: list[str] | None = None,
+        *,
         score_filter: ScoreFilter | None = None,
     ) -> dict[str, ScoreValue] | None:
         """Fetch score values at specified genomic position and nucleotide.
@@ -2481,6 +2484,7 @@ class FragmentScore(GenomicScore):
         self, chrom: str,
         start: int, stop: int,
         scores: list[str] | None = None,
+        *,
         score_filter: ScoreFilter | None = None,
     ) -> list[dict[str, ScoreValue]]:
         """Fetch score values for every fragment overlapping a region.
