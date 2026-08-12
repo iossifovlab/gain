@@ -159,16 +159,25 @@ def test_reset_daily_updates_timestamp(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     before = anonymous_quota.last_daily_reset
+
     anonymous_quota.reset_daily()
-    assert anonymous_quota.last_daily_reset >= before
+
+    # Read back: the reset names the columns it writes, so the stamp reaches
+    # the row only by being one of them. Asserting on the instance alone
+    # passes on the setattr whatever the write leaves behind.
+    refreshed = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
+    assert refreshed.last_daily_reset > before
 
 
 def test_reset_monthly_updates_timestamp(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     before = anonymous_quota.last_monthly_reset
+
     anonymous_quota.reset_monthly()
-    assert anonymous_quota.last_monthly_reset >= before
+
+    refreshed = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
+    assert refreshed.last_monthly_reset > before
 
 
 def test_reset_daily_persisted(anonymous_quota: AnonymousUserQuota) -> None:
@@ -785,3 +794,42 @@ def test_add_units_does_not_overwrite_a_concurrent_write(
     stored = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
     assert stored.extra_jobs == 6 + anonymous_quota.get_monthly_job_max()
     assert stored.daily_jobs == 4
+
+
+def test_reset_daily_does_not_overwrite_a_concurrent_write(
+    anonymous_quota: AnonymousUserQuota,
+) -> None:
+    # The refresh commands read every row and write each one back, so a write
+    # committing in between is carried off again unless the reset touches only
+    # its own period's columns (gain#768). The sentinels stand in for the two
+    # losses the issue names: the other period's counters are where a
+    # consumption's deduction lands, the extras are where an admin's grant
+    # does. Seeded off the declared tuples, as the sibling reset tests are, so
+    # a counter added to a period stays covered here.
+    stale = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
+    concurrent = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
+    untouched = _seed_sentinels(
+        concurrent, Quota.MONTHLY_COUNTER_FIELDS + EXTRA_UNIT_FIELDS)
+    concurrent.save()
+
+    stale.reset_daily()
+
+    stored = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
+    for field, sentinel in untouched.items():
+        assert getattr(stored, field) == sentinel, field
+
+
+def test_reset_monthly_does_not_overwrite_a_concurrent_write(
+    anonymous_quota: AnonymousUserQuota,
+) -> None:
+    stale = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
+    concurrent = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
+    untouched = _seed_sentinels(
+        concurrent, Quota.DAILY_COUNTER_FIELDS + EXTRA_UNIT_FIELDS)
+    concurrent.save()
+
+    stale.reset_monthly()
+
+    stored = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
+    for field, sentinel in untouched.items():
+        assert getattr(stored, field) == sentinel, field
