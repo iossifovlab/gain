@@ -72,6 +72,10 @@ from gain.genomic_resources.score_def import (
     extract_column_value,
     normalize_na_values,
 )
+from gain.genomic_resources.score_filter import (
+    ScoreFilter,
+    compile_score_filter,
+)
 from gain.genomic_resources.score_resource import ScoreResource
 from gain.genomic_resources.vcf_scores import (
     extract_vcf_value,
@@ -805,32 +809,56 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         assert self.table is not None
         return self.table.header
 
+    def compile_filter(self, expression: str) -> ScoreFilter:
+        """Compile a boolean expression into a filter over this score.
+
+        The expression names this resource's own scores and relates them
+        with ``>``, ``<``, ``==``, ``in``, ``and`` and ``or``; the result is
+        passed back to any of the region reads as ``score_filter``.
+
+        Compiled ONCE, against the score definitions: a name this resource
+        does not define is refused here, naming the valid ones, rather than
+        answering per record at read time.  A clause whose operand is
+        missing (NA, or ``nan``) is False.
+
+        Raises :class:`ScoreFilterError` on an expression that does not
+        parse or names an unknown score.
+        """
+        return compile_score_filter(self, expression)
+
     def fetch_records(
         self,
         chrom: str,
         pos_begin: int | None,
         pos_end: int | None,
+        score_filter: ScoreFilter | None = None,
     ) -> Iterator[Record]:
-        """Fetch the records of a region.
+        """Fetch the records of a region, optionally filtered.
 
         A caller reads a record's positional fields from its slots
         (``record[CHROM]``, ``record[POS_BEGIN]``, ...) and a score value
         through :meth:`get_score_value_from_record` or
         :meth:`get_score_values_from_record` on this score.
 
-        Adds nothing to what the table yields.  It exists so a caller need
-        not reach past the score to its table, and is public because the
-        record-consuming half of this API is.
+        ``score_filter`` is a predicate from :meth:`compile_filter`, applied
+        to each record; only records it accepts are yielded.  ``None`` --
+        the default -- yields what the table yields, and is the whole of
+        what this method did before filtering became a score capability.
 
         ``chrom`` is required, here and throughout the region-read family.
         A caller that wants every record of a table asks the table:
         ``score.table.get_all_records()``.
 
-        Not a generator function: it returns the table's generator rather
-        than delegating to it, so a bad argument raises from the call and
-        not from the first ``next()``.
+        Not a generator function in the unfiltered case: it returns the
+        table's generator rather than delegating to it, so a bad argument
+        raises from the call and not from the first ``next()``.  The
+        filtered case is a generator over that same eagerly-obtained one, so
+        a bad argument still raises from the call.
         """
-        return self.table.get_records_in_region(chrom, pos_begin, pos_end)
+        records = self.table.get_records_in_region(chrom, pos_begin, pos_end)
+        if score_filter is None:
+            return records
+        return (record for record in records if score_filter(record))
 
     def get_score_value_from_record(
         self, record: Record, score_id: str,
