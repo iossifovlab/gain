@@ -237,7 +237,7 @@ The optional ``allele_filter`` parameter restricts which allele lines are consid
 
 The filter expression supports the comparison operators ``>``, ``>=``, ``<``, ``<=``, ``==``, ``!=`` and ``in``, combined with ``not``, ``and`` and ``or``. Operands are either score column names (resolved per line), numeric literals (integers, decimals, and negative values are all supported), or double-quoted string literals.
 
-A score column name is made of letters, digits and ``_``, and may begin with a digit (for example, ``1000G``). Other characters are not accepted in a name, even where a resource defines a score whose id contains them; ``(``, ``)`` and ``!`` in particular are punctuation of the filter language itself.
+A score column name is made of letters, digits and the symbols ``_@#$%^&*+``, and may begin with a digit (for example, ``1000G``) — so names such as ``GERP++_RS`` can be filtered on. The three characters ``(``, ``)`` and ``!`` are punctuation of the filter language itself and cannot appear in a name, even where a resource defines a score whose id contains one.
 
 ``not`` binds tightest, then ``and``, then ``or``, so ``A or B and C`` means ``A or (B and C)`` and ``not A and B`` means ``(not A) and B``. Parentheses override that grouping:
 
@@ -248,6 +248,8 @@ A score column name is made of letters, digits and ``_``, and may begin with a d
         allele_filter: (AF < 0.001 or AF > 0.999) and not QUAL < 30
         attributes:
         - source: <source_score_attribute>
+
+Further examples of the parameter in use:
 
 .. code:: yaml
 

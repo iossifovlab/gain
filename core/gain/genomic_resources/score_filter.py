@@ -71,7 +71,7 @@ SCORE_FILTER_GRAMMAR = textwrap.dedent("""
 
     in: "in"
 
-    name: /[0-9]*[a-zA-Z_][a-zA-Z0-9_]*/
+    name: /[0-9]*[a-zA-Z_@#$%^&*+][a-zA-Z0-9_@#$%^&*+]*/
 
     text: /[0-9]*[a-zA-Z_!@#$%^&*()_+][a-zA-Z0-9!@#$%^&*()_+]*/
 
@@ -88,8 +88,8 @@ def _get_parser() -> Lark:
     Cached rather than built at import, for the reason
     :func:`resource_query._get_parser` gives: this module is imported by
     ``genomic_scores``, so building here would charge every gain entry
-    point ~13ms of Earley grammar construction -- including the many that
-    never compile a filter.
+    point the Earley grammar construction -- including the many that never
+    compile a filter.
     """
     return Lark(SCORE_FILTER_GRAMMAR)
 

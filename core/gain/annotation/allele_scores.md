@@ -115,9 +115,12 @@ Collects allele strings from all lines in the region.
 The annotator only resolves the parameter and reports configuration errors
 under it; the expression language, its compiler and its semantics belong to
 the score — see `genomic_resources/score_filter.py`,
-`GenomicScore.compile_filter` and
-`docs/adr/0017-score-filtering-is-a-score-capability.md`. The user-facing
-syntax is documented in `docs/source/annotation_infrastructure.rst`.
+`GenomicScore.compile_filter`,
+`docs/adr/0017-score-filtering-is-a-score-capability.md` for why the
+capability sits on the score and
+`docs/adr/0018-score-filter-grammar-extension.md` for the language's
+precedence and character rules. The user-facing syntax is documented in
+`docs/source/annotation_infrastructure.rst`.
 
 ### Methods
 

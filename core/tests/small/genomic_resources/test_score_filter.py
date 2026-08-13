@@ -507,15 +507,86 @@ def test_not_binds_tighter_than_the_connectives(
     assert [record[1] for record in records] == expected_positions
 
 
+def test_a_name_carrying_a_plus_is_still_filterable(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``GERP++_RS`` is published, and ``+`` is not syntax in this language.
+
+    dbNSFP names three of its scores this way.  Only the characters the
+    grammar actually needs -- ``(``, ``)`` and ``!`` -- gave up their place
+    in an identifier; taking the rest of the punctuation with them would
+    have made a filter over dbNSFP fail the pipeline build.
+    """
+    resource = (
+        a_position_score()
+        .with_score("GERP++_RS", "float")
+        .with_data("""
+            chrom  pos_begin  GERP++_RS
+            1      10         1.0
+            1      11         3.0
+        """)
+        .build_resource(tmp_path)
+    )
+    score = build_position_score_from_resource(resource)
+
+    with score.open() as opened:
+        score_filter = opened.compile_filter("GERP++_RS > 2")
+
+        records = list(opened.fetch_records(
+            "1", 10, 11, score_filter=score_filter))
+
+    assert [record[1] for record in records] == [11]
+
+
+def test_a_name_beginning_with_not_is_read_as_a_name(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``notch`` is a variable, not ``not`` applied to ``ch``.
+
+    ``not`` is the one keyword that PREFIXES its operand, so a name starting
+    with those three letters has two readings and the grammar admits both --
+    the one ambiguity the precedence cascade does not remove.  The infix
+    keywords have no such problem: ``andy > 1`` cannot be an ``and``, because
+    there is nothing to its left.
+
+    Resolved in favour of the name, which is what a resource author means and
+    what the language did before.  Pinned because that resolution is the
+    parser's tie-break rather than something the grammar states.
+    """
+    resource = (
+        a_position_score()
+        .with_score("notch", "float")
+        .with_score("ch", "float")
+        .with_data("""
+            chrom  pos_begin  notch  ch
+            1      10         1.0    9.0
+            1      11         3.0    9.0
+        """)
+        .build_resource(tmp_path)
+    )
+    score = build_position_score_from_resource(resource)
+
+    with score.open() as opened:
+        score_filter = opened.compile_filter("notch > 2")
+
+        records = list(opened.fetch_records(
+            "1", 10, 11, score_filter=score_filter))
+
+    # Read as `not (ch > 2)` this would be [] -- `ch` is 9.0 on both records.
+    assert [record[1] for record in records] == [11]
+
+
 def test_a_score_named_with_punctuation_can_no_longer_be_filtered_on(
     tmp_path: pathlib.Path,
 ) -> None:
     """What making ``(``, ``)`` and ``!`` mean something cost.
 
-    They were legal in a variable name, along with ``@#$%^&*+`` -- which is
-    why a parenthesised expression used to parse as a comparison between two
-    oddly-named scores rather than as a group.  A resource may still DEFINE
-    such a score; it can no longer be named in a filter.
+    All three were legal in a variable name, which is why a parenthesised
+    expression used to parse as a comparison between two oddly-named scores
+    rather than as a group.  They are the ONLY three that left: the rest of
+    the punctuation a name could carry is not syntax here and stayed, so
+    ``GERP++_RS`` is unaffected.  A resource may still define a score named
+    with one of the three; it can no longer be named in a filter.
 
     The refusal is a PARSE error, not the unknown-name one: the score is
     asserted to exist first, so this cannot pass for the wrong reason.

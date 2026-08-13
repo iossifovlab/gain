@@ -373,9 +373,11 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
     ``allele_filter``
     -----------------
     An optional annotator-level boolean expression evaluated against each
-    record before it is included in the result.  Supported
-    operators: ``>``, ``<``, ``==``, ``in``, ``and``, ``or``.  Variables
-    resolve via ``GenomicScore.get_score_value_from_record``.
+    record before it is included in the result.  Compares with ``>``,
+    ``>=``, ``<``, ``<=``, ``==``, ``!=`` and ``in``, combined with ``not``,
+    ``and`` and ``or`` -- in that order of precedence, and parenthesised to
+    override it.  Variables resolve via
+    ``GenomicScore.get_score_value_from_record``.
     """
 
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
