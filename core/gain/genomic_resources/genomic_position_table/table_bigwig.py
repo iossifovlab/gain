@@ -12,13 +12,14 @@ from gain.genomic_resources.genomic_position_table.table import (
 )
 from gain.genomic_resources.repository import GenomicResource
 
-# One already-fetched bigWig interval: begin, end and value, with begin and end
-# ALREADY converted from the file's 0-based half-open coordinates to the closed
-# one-based interval of the record contract.  That ``+1`` conversion lives in
-# :meth:`BigWigTable._fetch` and is deliberately left there -- what a fetch
-# *yields* has changed more than once, how it converts coordinates has not --
-# so a bigWig parser, unlike the tabular one, has no coordinate transform of
-# its own to fold in.
+# One fetched bigWig interval: begin, end and value, exactly as
+# ``pyBigWig.intervals()`` returned it -- RAW, in the file's own 0-based
+# half-open coordinates.  Converting it to the closed one-based interval of the
+# record contract is the parser's job (see :func:`build_bigwig_parser`), as the
+# zero-based transform is the tabular parser's.  The conversion used to happen
+# a layer earlier, in the fetch path, which had to allocate a converted 3-tuple
+# per interval purely to carry it across that boundary -- an object the parser
+# read three slots back out of and dropped (gain#823).
 BigWigInterval = tuple[int, int, float]
 
 # The one column a bigWig has, for the bulk column-array read.  A record's
@@ -141,16 +142,27 @@ def build_bigwig_parser() -> BigWigParser:
     open-time refusal that names the resource and the score, and the
     "no speed to be had" measurement predated the removal of the parse.
 
+    **The parser owns the coordinate conversion.**  It takes the interval RAW,
+    in the file's 0-based half-open coordinates, and produces the closed
+    one-based interval of the record contract by doing the ``+1`` on the begin
+    itself -- the same fusion of transform and record construction the tabular
+    parser performs for its zero-based tables.  This reverses an earlier design
+    point, which converted in the fetch methods and documented the parser as
+    having no transform of its own: converting a layer up meant allocating a
+    3-tuple per interval whose only purpose was to reach this function, which
+    read its three slots back out and dropped it.  Removing that object, and
+    the generator level built around it, is gain#823.
+
     The parser closes over nothing.  A bigWig has no configurable transform for
     it to specialise on -- it is a binary format with a fixed layout, its
-    coordinates are converted upstream in the fetch methods, and its result
+    conversion is fixed by the format rather than by config, and its result
     contig is the (already reference-mapped) query chrom threaded in per call.
     It is still built here, once, rather than inlined, to keep the shape of the
     three record backends identical: a parser is built at open() and produces
     the records the fetch path yields.
     """
     def parse(chrom: str, interval: BigWigInterval) -> Record:
-        return (chrom, interval[0], interval[1], None, None, interval[2])
+        return (chrom, interval[0] + 1, interval[1], None, None, interval[2])
     return parse
 
 
@@ -255,41 +267,6 @@ class BigWigTable(GenomicPositionTable):
             pos = end
         return [], pos
 
-    def _fetch(
-        self, chrom: str, pos_begin: int, pos_end: int,
-    ) -> Generator[tuple[int, int, float], None, None]:
-        """Walk the region in adaptively-sized chunks, yielding intervals.
-
-        The only fetch strategy.  There used to be a second one that kept a
-        retained buffer across calls and was chosen when a query started
-        within ``use_buffered_threshold`` of the last; it was measured to be a
-        net loss on every access pattern real data produces and removed. See
-        ``docs/adr/0002-remove-bigwig-fetch-buffering.md``.
-        """
-        assert self._bw_file is not None
-        chrom_len = self.chroms[chrom]
-        pos_end = min(pos_end, chrom_len)
-
-        start = pos_begin
-        while start < pos_end:
-            # A generator that outlives close() must not look like a complete,
-            # shorter result set.  The handle is what says the table is still
-            # usable, and it is checked per chunk rather than once on entry:
-            # the assert above runs at the first ``next()``, and a close landing
-            # between two chunks is exactly the case a lazily-consumed fetch
-            # produces.  Stated here with a message because the message is the
-            # whole point -- a truncated score list is indistinguishable from a
-            # complete one at the call site, and for an annotation read that is
-            # wrong data rather than an error.
-            assert self._bw_file is not None, \
-                "bigWig table closed while a region fetch was in flight"
-            intervals, start = self._fetch_chunk(
-                self._window, chrom, start, pos_end, pos_end)
-            if not intervals:
-                return
-            for interval in intervals:
-                yield (interval[0] + 1, interval[1], interval[2])
-
     def get_records_in_region(
         self,
         chrom: str,
@@ -302,9 +279,20 @@ class BigWigTable(GenomicPositionTable):
         contig is mapped reference->file by ``_map_file_chrom`` before the
         fetch, and each record's CHROM slot carries ``chrom`` back -- the
         reference-space contig the caller asked for -- so the result stays in
-        reference space.  The interval the fetch method yields is already in
-        the record contract's closed one-based coordinates (the ``+1`` lives in
-        the fetch methods); the parser only assembles the record around it.
+        reference space.  The intervals go to the parser RAW, in the file's
+        0-based half-open coordinates, and the parser converts them to the
+        contract's closed one-based interval in the same expression that
+        assembles the record (see :func:`build_bigwig_parser`).
+
+        The adaptive chunk walk is inlined here rather than sitting behind a
+        fetch generator of its own.  That generator yielded a converted
+        3-tuple per interval, built for no reader but the ``parser`` call on
+        the next line -- so removing it removes both a per-record object and a
+        generator level from the hottest loop in the read path (gain#823).
+        It remains the only fetch strategy: there used to be a second one that
+        kept a retained buffer across calls, measured a net loss on every
+        access pattern real data produces and removed (see
+        ``docs/adr/0002-remove-bigwig-fetch-buffering.md``).
         """
         assert self.parser is not None
         parser = self.parser
@@ -329,10 +317,26 @@ class BigWigTable(GenomicPositionTable):
         if pos_end is None:
             pos_end = self.chroms[fchrom]
 
-        pos_begin = max(0, pos_begin - 1)
+        start = max(0, pos_begin - 1)
+        stop = min(pos_end, self.chroms[fchrom])
 
-        for interval in self._fetch(fchrom, pos_begin, pos_end):
-            yield parser(chrom, interval)
+        while start < stop:
+            # A generator that outlives close() must not look like a complete,
+            # shorter result set.  The handle is what says the table is still
+            # usable, and it is checked per chunk rather than once on entry: a
+            # close landing between two chunks is exactly the case a lazily-
+            # consumed fetch produces.  Stated with a message because the
+            # message is the whole point -- a truncated score list is
+            # indistinguishable from a complete one at the call site, and for
+            # an annotation read that is wrong data rather than an error.
+            assert self._bw_file is not None, \
+                "bigWig table closed while a region fetch was in flight"
+            intervals, start = self._fetch_chunk(
+                self._window, fchrom, start, stop, stop)
+            if not intervals:
+                return
+            for interval in intervals:
+                yield parser(chrom, interval)
 
     def get_region_value_arrays(
         self,
@@ -351,8 +355,9 @@ class BigWigTable(GenomicPositionTable):
         :meth:`_fetch_chunk` windowing -- so memory stays bounded exactly as
         the record path's -- but turns each chunk of raw intervals into arrays
         in one shot rather than building a ``Record`` per interval.  The
-        coordinates match :meth:`_fetch_direct`: the raw zero-based half-open
-        ``[begin, end)`` becomes closed one-based (``begin + 1``, ``end``).
+        coordinates match the record path's: the raw zero-based half-open
+        ``[begin, end)`` becomes closed one-based (``begin + 1``, ``end``) --
+        here in one vectorized shift, there in :func:`build_bigwig_parser`.
 
         **A bigWig has exactly one column, and its index is 0.**  A record's
         PAYLOAD is the interval's value (see :func:`build_bigwig_parser`), so

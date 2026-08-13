@@ -327,7 +327,9 @@ They stay accepted by the schema and are warned about (see
 
 The private buffer machinery went with them -- ``_buffer``,
 ``_buffer_region``, ``_fill``, ``_find``, ``_fetch_buffered``, ``_last_pos``
--- and ``_fetch_direct`` is now simply ``_fetch``.  None of those were
+-- and ``_fetch_direct``, the surviving strategy, was first renamed ``_fetch``
+and has since been inlined into ``get_records_in_region`` (gain#823, to drop
+a per-record tuple and a generator level).  None of those were
 exported; they are named here only because the two invariants they carried
 were load-bearing enough to have their own regression tests, and both are now
 unreachable rather than maintained: a reopened table cannot serve a previous

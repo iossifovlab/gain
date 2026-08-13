@@ -187,19 +187,21 @@ def test_bigwig_parser_converts_zero_based_half_open_to_closed_one_based(
     # The subtle correctness point of the migration: a bigWig interval is
     # 0-based half-open in the file, and the record must carry it as the
     # contract's closed one-based interval -- byte-identical to what the
-    # BigWigLine adapter produced.  The ``+1`` on the begin lives in the fetch
-    # methods (left untouched), so by the time the parser sees an interval it
-    # is already ``(pos_begin_1based, pos_end, value)``; the parser assembles
-    # the record around it, and the PAYLOAD is the value alone.  A file
-    # interval ``[0, 10)`` for chr1 reaches the parser as ``(1, 10, 0.11)``
-    # and must become this exact record.
+    # BigWigLine adapter produced.  The ``+1`` on the begin is the PARSER's
+    # (gain#823): the fetch path hands over the interval exactly as
+    # ``pyBigWig.intervals()`` returned it, so the conversion happens once,
+    # here, in the same expression that assembles the record.  It used to live
+    # in the fetch methods, which had to build a converted 3-tuple purely to
+    # hand it across this boundary -- an object the parser read three slots
+    # back out of and discarded.  A file interval ``[0, 10)`` for chr1 reaches
+    # the parser raw, as ``(0, 10, 0.11)``, and must become this exact record.
     parser = build_bigwig_parser()
-    assert parser("chr1", (1, 10, 0.11)) == (
+    assert parser("chr1", (0, 10, 0.11)) == (
         "chr1", 1, 10, None, None, 0.11)
     # A mapped/reference contig threaded in from the query is carried on the
     # record's CHROM slot -- mapping-on-result.  The payload no longer repeats
     # it, which is one of the three fields the narrowing removed.
-    assert parser("2", (6, 10, 0.4)) == (
+    assert parser("2", (5, 10, 0.4)) == (
         "2", 6, 10, None, None, 0.4)
 
 
