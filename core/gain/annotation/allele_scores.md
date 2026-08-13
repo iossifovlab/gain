@@ -109,28 +109,20 @@ Collects allele strings from all lines in the region.
 
 `include_attributes` works the same way as for exact match.
 
-### `allele_filter` — Lark grammar
+### `allele_filter`
 
 `allele_filter` is an annotator-level parameter (not an attribute parameter).
-Supported syntax:
-
-| Form | Example |
-|---|---|
-| `variable > number` | `freq > 0.05` |
-| `variable < number` | `freq < 0.05` |
-| `variable == number` | `freq == 0.05` |
-| `variable == "string"` | `type == "SNV"` |
-| `variable in variable` | (right-hand variable is also a score lookup) |
-| `expr and expr` | `freq > 0.01 and freq < 0.1` |
-| `expr or expr` | `freq < 0.01 or freq > 0.9` |
-
-Variables resolve to score values via `ScoreLineBase.get_score(name)`.
+The annotator only resolves the parameter and reports configuration errors
+under it; the expression language, its compiler and its semantics belong to
+the score — see `genomic_resources/score_filter.py`,
+`GenomicScore.compile_filter` and
+`docs/adr/0017-score-filtering-is-a-score-capability.md`. The user-facing
+syntax is documented in `docs/source/annotation_infrastructure.rst`.
 
 ### Methods
 
 | Method | Visibility | Description |
 |---|---|---|
-| `AlleleScoreAnnotator._build_allele_filter_func` | class method | Recursively compiles a Lark parse tree into a `ScoreLineBase → bool` callable. |
 | `AlleleScoreAnnotator.get_all_attribute_descriptions` | override | Extends the parent implementation to add the virtual `"allele"` attribute with `default=False`. |
 | `AlleleScoreAnnotator._annotate_allele` | private | Exact chrom/pos/ref/alt lookup; used in `allele` mode. |
 | `AlleleScoreAnnotator._annotate_region` | private | Aggregates scores for all allele lines overlapping the annotatable span; used in `region` mode. |

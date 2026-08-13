@@ -72,6 +72,10 @@ from gain.genomic_resources.score_def import (
     extract_column_value,
     normalize_na_values,
 )
+from gain.genomic_resources.score_filter import (
+    ScoreFilter,
+    compile_score_filter,
+)
 from gain.genomic_resources.score_resource import ScoreResource
 from gain.genomic_resources.vcf_scores import (
     extract_vcf_value,
@@ -805,32 +809,60 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         assert self.table is not None
         return self.table.header
 
+    def compile_filter(self, expression: str) -> ScoreFilter:
+        """Compile a boolean expression into a filter over this score.
+
+        The expression names this resource's own scores and relates them
+        with ``>``, ``<``, ``==``, ``in``, ``and`` and ``or``; the result is
+        passed back to any of the record reads as ``score_filter``.
+
+        Raises :class:`ScoreFilterError` on an expression that does not
+        parse or that names a score this resource does not define.  See
+        :func:`compile_score_filter` for what compiling settles, and
+        ``docs/adr/0017-score-filtering-is-a-score-capability.md`` for why
+        the capability sits on the score.
+        """
+        return compile_score_filter(self, expression)
+
     def fetch_records(
         self,
         chrom: str,
         pos_begin: int | None,
         pos_end: int | None,
-    ) -> Iterator[Record]:
-        """Fetch the records of a region.
+        *,
+        score_filter: ScoreFilter | None = None,
+    ) -> Generator[Record, None, None]:
+        """Yield the records of a region, optionally filtered.
 
         A caller reads a record's positional fields from its slots
         (``record[CHROM]``, ``record[POS_BEGIN]``, ...) and a score value
         through :meth:`get_score_value_from_record` or
         :meth:`get_score_values_from_record` on this score.
 
-        Adds nothing to what the table yields.  It exists so a caller need
-        not reach past the score to its table, and is public because the
-        record-consuming half of this API is.
+        ``score_filter`` is a predicate from :meth:`compile_filter`, applied
+        to each record; only records it accepts are yielded.  ``None`` --
+        the default -- yields what the table yields, and is the whole of
+        what this method did before filtering became a score capability.
 
         ``chrom`` is required, here and throughout the region-read family.
         A caller that wants every record of a table asks the table:
         ``score.table.get_all_records()``.
 
-        Not a generator function: it returns the table's generator rather
-        than delegating to it, so a bad argument raises from the call and
-        not from the first ``next()``.
+        Nothing here is checked before the first ``next()``, the filter's
+        ownership included: every backend's
+        ``get_records_in_region`` is itself a generator function, so an
+        unknown contig has always been reported from the first record read
+        rather than from the call, and there is no eagerness left to
+        preserve by structuring this any other way.
         """
-        return self.table.get_records_in_region(chrom, pos_begin, pos_end)
+        records = self.table.get_records_in_region(chrom, pos_begin, pos_end)
+        if score_filter is None:
+            yield from records
+            return
+        score_filter.require_owner(self)
+        for record in records:
+            if score_filter(record):
+                yield record
 
     def get_score_value_from_record(
         self, record: Record, score_id: str,
@@ -2273,8 +2305,10 @@ class AlleleScore(GenomicScore):
             yield pos, pos, self.get_score_values_from_record(
                 record, score_defs)
 
-    def fetch_allele_record(
+    def _fetch_allele_record(
         self, chrom: str, pos: int, ref: str, alt: str,
+        *,
+        score_filter: ScoreFilter | None = None,
     ) -> Record | None:
         """Return the record matching this allele exactly, or None.
 
@@ -2282,16 +2316,21 @@ class AlleleScore(GenomicScore):
         share a position, one per ref/alt pair, so the nucleotides are what
         pick between them.
 
-        Hands back the record rather than its values, which is what lets a
-        caller decide whether it wants the allele at all before paying to
-        extract anything -- ``AlleleScoreAnnotator`` applies its
-        ``allele_filter`` here, and returns empty without reading a single
-        score for an allele the filter rejects.  A caller that just wants
-        the values asks :meth:`fetch_allele_scores`; one that wants them off
-        this record reads
-        :meth:`GenomicScore.get_score_value_from_record`.
+        ``score_filter`` -- from :meth:`GenomicScore.compile_filter` -- is
+        applied to the matched record, and an allele it rejects reads as
+        absent: the caller asked for an allele it is not to have, which is
+        the same answer as an allele this resource does not carry.  The
+        filter runs on the RECORD, so a rejected allele costs no value
+        extraction.
+
+        Internal to the allele read: it hands back a RECORD, which is this
+        class's own currency and not something a caller outside it should
+        have to know how to read.  :meth:`fetch_allele_scores` is the
+        allele read; a caller that wants records for a whole region asks
+        :meth:`GenomicScore.fetch_records`.
         """
-        for record in self.fetch_records(chrom, pos, pos):
+        for record in self.fetch_records(
+                chrom, pos, pos, score_filter=score_filter):
             if record[REF] == ref and record[ALT] == alt:
                 return record
         return None
@@ -2300,8 +2339,14 @@ class AlleleScore(GenomicScore):
         self, chrom: str, position: int,
         reference: str, alternative: str,
         scores: list[str] | None = None,
+        *,
+        score_filter: ScoreFilter | None = None,
     ) -> dict[str, ScoreValue] | None:
-        """Fetch score values at specified genomic position and nucleotide."""
+        """Fetch score values at specified genomic position and nucleotide.
+
+        ``score_filter`` selects whether this allele is reported at all; an
+        allele it rejects reads as absent, exactly as an unmatched one does.
+        """
         if chrom not in self.get_all_chromosomes():
             raise ValueError(
                 f"{chrom} is not among the available chromosomes for "
@@ -2310,8 +2355,9 @@ class AlleleScore(GenomicScore):
         requested_scores = scores or self.get_all_scores()
         score_defs = self._resolve_score_defs(requested_scores)
 
-        selected = self.fetch_allele_record(
-            chrom, position, reference, alternative)
+        selected = self._fetch_allele_record(
+            chrom, position, reference, alternative,
+            score_filter=score_filter)
         if selected is None:
             return None
         return dict(zip(
@@ -2440,6 +2486,8 @@ class FragmentScore(GenomicScore):
         self, chrom: str,
         start: int, stop: int,
         scores: list[str] | None = None,
+        *,
+        score_filter: ScoreFilter | None = None,
     ) -> list[dict[str, ScoreValue]]:
         """Fetch score values for every fragment overlapping a region.
 
@@ -2449,6 +2497,12 @@ class FragmentScore(GenomicScore):
         overlaps gives ``[]``; unlike the two per-position reads there is no
         ``None``, because several fragments overlapping is the normal case
         and "none of them" is a count of zero rather than absent data.
+
+        ``score_filter`` -- from :meth:`GenomicScore.compile_filter` -- drops
+        the fragments it rejects, which are then simply not among the dicts.
+        It reads the RECORD, so it may name any score the resource defines,
+        including one outside ``scores``, and a rejected fragment costs no
+        extraction.
 
         A contig this resource does not have is a different answer: that is
         the caller asking about something that does not exist, and it is
@@ -2468,7 +2522,8 @@ class FragmentScore(GenomicScore):
         requested_scores = scores or self.get_all_scores()
         score_defs = self._resolve_score_defs(requested_scores)
 
-        records = list(self.fetch_records(chrom, start, stop))
+        records = list(self.fetch_records(
+            chrom, start, stop, score_filter=score_filter))
         if not records:
             return []
 

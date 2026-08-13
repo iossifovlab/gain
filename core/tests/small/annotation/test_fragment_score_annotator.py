@@ -4,6 +4,7 @@ import textwrap
 
 import pytest
 from gain.annotation.annotatable import Annotatable, Position, Region
+from gain.annotation.annotation_config import AnnotationConfigurationError
 
 # VCFAllele
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
@@ -172,6 +173,84 @@ def test_fragment_filter_on_newline(
 
     atts = pipeline.annotate(annotatable)
     assert atts["count"] == fragment_count
+
+
+@pytest.fixture(scope="module")
+def digit_named_grr() -> GenomicResourceRepo:
+    """A fragment score named the way real population scores are.
+
+    A leading-digit name is what the fragment grammar could not express;
+    ``1000G`` is the shape the GRR actually publishes.
+    """
+    return build_inmemory_test_repository({
+        "fragments": {
+            "genomic_resource.yaml": textwrap.dedent("""
+                type: fragment_score
+                table:
+                  filename: data.mem
+                scores:
+                - id: 1000G
+                  name: 1000G
+                  type: float
+                  desc: a population frequency
+            """),
+            "data.mem": convert_to_tab_separated("""
+               chrom  pos_begin  pos_end  1000G
+               1      10         20       0.02
+               1      50         100      0.10
+            """)},
+    })
+
+
+def test_fragment_filter_takes_digit_names_and_negative_numbers(
+    digit_named_grr: GenomicResourceRepo,
+) -> None:
+    """This annotator reaches the shared compiler, not its own grammar.
+
+    Both halves of the expression were unwritable on the fragment side
+    before: its ``word`` was letters-only and its ``number`` unsigned.  The
+    grammar itself is pinned where it lives, in ``test_score_filter``; what
+    this adds is that a fragment pipeline really routes there.
+    """
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent("""
+            - fragment_score:
+                resource_id: fragments
+                fragment_filter: "1000G > 0.05 and 1000G > -1"
+            """),
+        digit_named_grr)
+
+    atts = pipeline.annotate(Region("1", 1, 200))
+    assert atts["count"] == 1
+
+
+@pytest.mark.parametrize("parameter", [
+    "fragment_filter",
+    # Deliberately the legacy spelling: what is pinned is that the message
+    # names whichever one was written.
+    pytest.param("cnv_filter", marks=pytest.mark.legacy_vocabulary),
+])
+def test_fragment_filter_naming_an_unknown_score_is_refused(
+    parameter: str, grr: GenomicResourceRepo,
+) -> None:
+    """Refused while the pipeline builds, under the spelling the user wrote.
+
+    Both spellings are one parameter, and whichever one the configuration
+    says is the one named back -- reporting the other sends the author
+    looking for a key that appears nowhere in their file (gain#477).
+    """
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        load_pipeline_from_yaml(
+            textwrap.dedent(f"""
+                - fragment_score:
+                    resource_id: fragments
+                    {parameter}: 'freq < 0.05'
+                """),
+            grr)
+
+    message = str(excinfo.value)
+    assert f"Error parsing {parameter}" in message
+    assert "'frequency'" in message
 
 
 @pytest.mark.parametrize(

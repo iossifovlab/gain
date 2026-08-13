@@ -616,6 +616,35 @@ def test_unparsable_allele_filter_names_allele_filter(
     assert "cnv_filter" not in message
 
 
+def test_allele_filter_naming_an_unknown_score_is_refused_at_config_time(
+    allele_score_repository: GenomicResourceRepo,
+) -> None:
+    """A misspelt score name fails the pipeline, not each annotated record.
+
+    The name is checked against the resource's score definitions while the
+    filter is compiled, so the pipeline refuses to build at all -- and the
+    message lists the names that would have worked.  Reported under the
+    parameter the user wrote, as every other filter error on this annotator
+    is.
+    """
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        load_pipeline_from_yaml(
+            textwrap.dedent("""
+                - allele_score:
+                    resource_id: allele_score
+                    allele_filter: "frequency > 0.03"
+                    attributes:
+                    - source: freq
+            """),
+            allele_score_repository,
+        )
+
+    message = str(excinfo.value)
+    assert "Error parsing allele_filter" in message
+    assert "frequency" in message
+    assert "'freq'" in message
+
+
 def test_unparsable_allele_filter_keeps_the_parser_diagnostics(
     allele_score_repository: GenomicResourceRepo,
 ) -> None:
