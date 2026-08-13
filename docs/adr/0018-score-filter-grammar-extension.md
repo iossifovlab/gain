@@ -39,9 +39,10 @@ Nothing else about it changes.
 
 **Precedence is declared by a rule cascade** — `or`, then `and`, then `not`,
 then a primary that is either a comparison or a parenthesized expression.
-Precedence between the connectives no longer depends on how the parser
-resolves ambiguity, and adding an operator means choosing its level in the
-cascade rather than hoping. `and` over `or` is unchanged; the pre-existing
+Precedence no longer depends on how the parser resolves ambiguity — no
+expression the grammar accepts has more than one derivation — and adding an
+operator means choosing its level in the cascade rather than hoping. `and`
+over `or` is unchanged; the pre-existing
 tests that pin it by evaluation stayed green across the restructure, which is
 what makes this a restructure rather than a redefinition.
 
@@ -49,9 +50,13 @@ what makes this a restructure rather than a redefinition.
 up none.** The one terminal became two. A name loses `(`, `)` and `!` —
 the characters the new syntax needs — and keeps everything else it had,
 including a leading run of digits (`1000G`) and the `@#$%^&*+` that made it
-odd in the first place. A literal keeps the old class verbatim: its quotes
-already delimit it, so it needs no narrowing at all, and narrowing it would
-have quietly broken filters the annotator documentation advertises.
+odd in the first place. A literal keeps the old class exactly — it is
+derived from the name's, plus the three characters, so the two cannot drift —
+and narrowing it would have quietly broken filters the annotator
+documentation advertises. Note that this leaves a literal a punctuation
+whitelist rather than "anything between quotes"; `.`, `-`, `/` and spaces
+are still out, which is the deferred widening below, not a property of the
+quotes.
 
 Splitting rather than narrowing both is the whole point. Sharing one terminal
 is what made "make `(` mean something" and "keep `"path(o)genic"` working"
@@ -119,24 +124,26 @@ called `and` already was. The cascade did not create this and does not fix
 it; refusing such names at compile time would be a new restriction on what a
 resource may define, which is a bigger decision than this one.
 
-**One ambiguity survives, and it is not the one the cascade removed.** A name
-that BEGINS with `not` — `notch`, `nothing` — has two derivations: the whole
-word as a name, and `not` applied to the rest. Both are still derivable, and
-Lark's tie-break picks the name, which is the backward-compatible reading and
-the one an author means. The infix keywords have no equivalent problem:
-`andy > 1` cannot be an `and`, because nothing stands to its left.
+**The cascade left one ambiguity, and a guarded keyword removed it.** A name
+that BEGINS with `not` — `notch`, `nothing` — had two derivations: the whole
+word as a name, and `not` applied to the rest. The cascade does not reach
+that, because it is lexical rather than structural. `not` is therefore
+matched only when the character after it cannot continue a name, which leaves
+`notch` with one derivation.
 
-So the claim this ADR is entitled to is narrower than "the grammar is
-unambiguous": the *connectives* no longer depend on ambiguity resolution,
-while one prefix-keyword case still does. It is pinned by a test rather than
-removed, because removing it means a `not` terminal that refuses to match
-inside a longer word — and that would stop a score named exactly `not` from
-parsing as a name, which it does today. Trading a working name for a tidier
-claim is the mistake this ADR already records once.
+This was very nearly left as a tie-break pinned by a test, on the belief that
+guarding the keyword would reserve the word and stop a score named exactly
+`not` from parsing. It does not: the guard asks only what FOLLOWS, and after
+a bare `not` comes a space, so both the keyword and the name remain available
+to the parser and only the name completes a comparison. Measured, not
+assumed — `not > 2` selects records, and there is a test that says so.
+
+The general form of both mistakes in this ADR is the same: an assumption
+about blast radius, believed because it was convenient, and cheap to check.
 
 **Earley is still the parser.** An LALR one would be faster to build, and the
-build is already cached behind first use, so there is nothing to gain that is
-worth the keyword-versus-name behaviour changing underneath us.
+build is already cached behind first use, so there is nothing to gain worth
+re-testing the keyword-versus-name behaviour for.
 
 ## Alternatives rejected
 

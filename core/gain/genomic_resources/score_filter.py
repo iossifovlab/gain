@@ -21,26 +21,30 @@ if TYPE_CHECKING:
     from gain.genomic_resources.genomic_position_table.record import Record
     from gain.genomic_resources.genomic_scores import GenomicScore
 
+#: The punctuation a score name may carry, beyond letters and digits.
+#: `(`, `)` and `!` are absent because the language needs them as syntax;
+#: nothing else was taken away, so a name like `GERP++_RS` still parses.
+_NAME_PUNCTUATION = "_@#$%^&*+"
+
+#: The punctuation a quoted literal may carry.  A superset of the name's BY
+#: CONSTRUCTION, which is the point of writing it this way: the two were one
+#: class until `(`, `)` and `!` became syntax, and a hand-copied second class
+#: would let a future narrowing of names quietly narrow literals too.
+_TEXT_PUNCTUATION = _NAME_PUNCTUATION + "!()"
+
 #: The filter language.  The rules cascade `or` -> `and` -> `not` ->
 #: comparison-or-group precisely so that precedence is declared here rather
 #: than left to the parser's ambiguity resolution, and adding an operator
-#: means placing it in that cascade.  Note the two character classes: a
-#: variable name is narrow, because `(`, `)` and `!` are syntax, while a
-#: quoted literal is wide, because its quotes already delimit it.
-SCORE_FILTER_GRAMMAR = textwrap.dedent("""
+#: means placing it in that cascade.  `_NOT` is guarded against matching
+#: inside a longer word so that `notch` is a name and not a negated `ch`.
+SCORE_FILTER_GRAMMAR = textwrap.dedent(f"""
     ?start: or_expr
 
-    ?or_expr: and_expr | or
+    ?or_expr: and_expr | or_expr "or" and_expr -> or
 
-    or: or_expr "or" and_expr
+    ?and_expr: not_expr | and_expr "and" not_expr -> and_
 
-    ?and_expr: not_expr | and_
-
-    and_: and_expr "and" not_expr
-
-    ?not_expr: primary | not
-
-    not: "not" not_expr
+    ?not_expr: primary | _NOT not_expr -> not
 
     ?primary: comparison | "(" or_expr ")"
 
@@ -71,9 +75,11 @@ SCORE_FILTER_GRAMMAR = textwrap.dedent("""
 
     in: "in"
 
-    name: /[0-9]*[a-zA-Z_@#$%^&*+][a-zA-Z0-9_@#$%^&*+]*/
+    _NOT: /not(?![a-zA-Z0-9{_NAME_PUNCTUATION}])/
 
-    text: /[0-9]*[a-zA-Z_!@#$%^&*()_+][a-zA-Z0-9!@#$%^&*()_+]*/
+    name: /[0-9]*[a-zA-Z{_NAME_PUNCTUATION}][a-zA-Z0-9{_NAME_PUNCTUATION}]*/
+
+    text: /[0-9]*[a-zA-Z{_TEXT_PUNCTUATION}][a-zA-Z0-9{_TEXT_PUNCTUATION}]*/
 
     number: /-?(?:[0-9]+\\.?[0-9]*|\\.[0-9]+)/
 
@@ -128,10 +134,10 @@ def _compare(
     value that is not there.  ``not`` is not among them -- it negates what a
     clause answered, so it turns this False into True, and that is why
     ``x != v`` and ``not (x == v)`` differ on a record missing ``x``.
-    Answering False (rather than
-    raising, as ``None > 0.1`` used to) keeps a filter total -- the record
-    is simply not selected by this clause, and can still be selected by the
-    other arm of an ``or``.
+
+    Answering False, rather than raising as ``None > 0.1`` used to, keeps a
+    filter total: the record is simply not selected by this clause, and can
+    still be selected by the other arm of an ``or``.
     """
     def evaluate(record: Record) -> bool:
         left_value = left(record)
@@ -233,9 +239,8 @@ def _build_predicate(
 ) -> Callable[[Record], bool]:
     """Compile a parse tree into a record predicate."""
     if tree.data == "not":
-        # The negation is of the CLAUSE's answer, not of the values it read.
-        # A clause over a missing value is False, so its negation is True --
-        # which is why `x != v` and `not (x == v)` part company there.
+        # Negates what the clause ANSWERED, never the values it read -- see
+        # `_compare` for what that costs a missing operand.
         assert isinstance(tree.children[0], Tree)
         negated = _build_predicate(tree.children[0], score)
         return lambda rec: not negated(rec)
@@ -252,6 +257,10 @@ def _build_predicate(
             return lambda rec: left_func(rec) and right_func(rec)
         return lambda rec: left_func(rec) or right_func(rec)
 
+    # Named, not a fall-through: a rule added to the grammar and not to this
+    # dispatch should say so, rather than die further down on an operand that
+    # was never an operand.
+    assert tree.data == "comparison", f"no case for grammar rule {tree.data}"
     left = _build_accessor(tree.children[0], score)
     right = _build_accessor(tree.children[2], score)
     # Indexed, not `.get`-with-a-fallback: the grammar's `operator:` rule

@@ -437,19 +437,19 @@ def test_inequality_selects_what_equality_does_not(
 def test_not_negates_the_clause_it_applies_to(
     position_score: PositionScore,
 ) -> None:
-    """``not`` selects exactly the records the bare clause does not."""
+    """``not`` selects exactly the records the bare clause does not.
+
+    The bare clause selects ``[11, 12]`` -- pinned by
+    :func:`test_fetch_records_keeps_only_records_the_filter_accepts` -- so
+    over records that all carry a value the two are complementary.
+    """
     with position_score.open() as score:
         negated = score.compile_filter("not freq > 0.15")
-        bare = score.compile_filter("freq > 0.15")
 
-        negated_records = list(score.fetch_records(
+        records = list(score.fetch_records(
             "1", 10, 12, score_filter=negated))
-        bare_records = list(score.fetch_records(
-            "1", 10, 12, score_filter=bare))
 
-    assert [record[1] for record in negated_records] == [10]
-    # Complementary over these records, which all carry a value.
-    assert [record[1] for record in bare_records] == [11, 12]
+    assert [record[1] for record in records] == [10]
 
 
 @pytest.mark.parametrize("expression, expected_positions", [
@@ -544,14 +544,14 @@ def test_a_name_beginning_with_not_is_read_as_a_name(
     """``notch`` is a variable, not ``not`` applied to ``ch``.
 
     ``not`` is the one keyword that PREFIXES its operand, so a name starting
-    with those three letters has two readings and the grammar admits both --
-    the one ambiguity the precedence cascade does not remove.  The infix
-    keywords have no such problem: ``andy > 1`` cannot be an ``and``, because
-    there is nothing to its left.
+    with those three letters would have two readings -- and the grammar
+    settles it rather than leaving it to the parser, by refusing to match the
+    keyword when a name character follows it.  The infix keywords never had
+    the problem: ``andy > 1`` cannot be an ``and``, because there is nothing
+    to its left.
 
-    Resolved in favour of the name, which is what a resource author means and
-    what the language did before.  Pinned because that resolution is the
-    parser's tie-break rather than something the grammar states.
+    A score named exactly ``not`` still reads as a name, because the
+    character after it is then a space rather than a name character.
     """
     resource = (
         a_position_score()
@@ -573,6 +573,37 @@ def test_a_name_beginning_with_not_is_read_as_a_name(
             "1", 10, 11, score_filter=score_filter))
 
     # Read as `not (ch > 2)` this would be [] -- `ch` is 9.0 on both records.
+    assert [record[1] for record in records] == [11]
+
+
+def test_a_score_named_exactly_not_is_still_a_name(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The keyword guard costs no name, not even the keyword's own spelling.
+
+    Guarding ``not`` against matching inside a longer word could have been
+    read as reserving the word outright.  It does not: the guard only asks
+    what FOLLOWS, and after a bare ``not`` comes a space, so the keyword and
+    the name both remain available and only the name completes a comparison.
+    """
+    resource = (
+        a_position_score()
+        .with_score("not", "float")
+        .with_data("""
+            chrom  pos_begin  not
+            1      10         1.0
+            1      11         3.0
+        """)
+        .build_resource(tmp_path)
+    )
+    score = build_position_score_from_resource(resource)
+
+    with score.open() as opened:
+        score_filter = opened.compile_filter("not > 2")
+
+        records = list(opened.fetch_records(
+            "1", 10, 11, score_filter=score_filter))
+
     assert [record[1] for record in records] == [11]
 
 
