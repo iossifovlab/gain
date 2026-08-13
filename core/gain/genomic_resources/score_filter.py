@@ -21,8 +21,12 @@ if TYPE_CHECKING:
     from gain.genomic_resources.genomic_position_table.record import Record
     from gain.genomic_resources.genomic_scores import GenomicScore
 
-#: The filter language.  Deliberately frozen at these operators; adding one
-#: is a change to what every score's configuration means, not a tweak.
+#: The filter language.  The rules cascade `or` -> `and` -> `not` ->
+#: comparison-or-group precisely so that precedence is declared here rather
+#: than left to the parser's ambiguity resolution, and adding an operator
+#: means placing it in that cascade.  Note the two character classes: a
+#: variable name is narrow, because `(`, `)` and `!` are syntax, while a
+#: quoted literal is wide, because its quotes already delimit it.
 SCORE_FILTER_GRAMMAR = textwrap.dedent("""
     ?start: or_expr
 
@@ -120,8 +124,11 @@ def _compare(
     """Apply ``operation``, answering False if either operand is missing.
 
     The missing case is decided here, once, rather than per operator: every
-    operator in this language relates two values, and none of them can say
-    anything about a value that is not there.  Answering False (rather than
+    COMPARISON relates two values, and none of them can say anything about a
+    value that is not there.  ``not`` is not among them -- it negates what a
+    clause answered, so it turns this False into True, and that is why
+    ``x != v`` and ``not (x == v)`` differ on a record missing ``x``.
+    Answering False (rather than
     raising, as ``None > 0.1`` used to) keeps a filter total -- the record
     is simply not selected by this clause, and can still be selected by the
     other arm of an ``or``.
@@ -248,9 +255,9 @@ def _build_predicate(
     left = _build_accessor(tree.children[0], score)
     right = _build_accessor(tree.children[2], score)
     # Indexed, not `.get`-with-a-fallback: the grammar's `operator:` rule
-    # admits exactly these four, so a miss here means the grammar and this
-    # table have been edited apart -- a programming error, and a KeyError
-    # naming the operator says so better than a filter error would.
+    # admits exactly the keys of this table, so a miss here means the two
+    # have been edited apart -- a programming error, and a KeyError naming
+    # the operator says so better than a filter error would.
     return _compare(left, right, _OPERATIONS[_operator_name(tree.children[1])])
 
 
