@@ -322,6 +322,119 @@ def test_the_connectives_combine_clauses(
     assert [record[1] for record in records] == expected_positions
 
 
+@pytest.mark.parametrize("expression, expected_positions", [
+    # Each pairs with its strict form, which excludes the boundary record:
+    # `freq > 0.2` is [12] and `freq < 0.2` is [10].  Without position 11
+    # in the answer these would pass against the strict operator.
+    ("freq >= 0.2", [11, 12]),
+    ("freq <= 0.2", [10, 11]),
+])
+def test_the_orderings_include_the_boundary(
+    position_score: PositionScore,
+    expression: str,
+    expected_positions: list[int],
+) -> None:
+    """``>=`` and ``<=`` order like their strict forms but keep equality."""
+    with position_score.open() as score:
+        score_filter = score.compile_filter(expression)
+
+        records = list(score.fetch_records(
+            "1", 10, 12, score_filter=score_filter))
+
+    assert [record[1] for record in records] == expected_positions
+
+
+def test_inequality_selects_what_equality_does_not(
+    position_score: PositionScore,
+) -> None:
+    """``!=`` is the complement of ``==`` over records that carry a value.
+
+    Over records that do NOT carry one the two are not complements, which
+    :func:`test_inequality_and_a_negated_equality_disagree_on_missing`
+    pins separately.
+    """
+    with position_score.open() as score:
+        score_filter = score.compile_filter("freq != 0.2")
+
+        records = list(score.fetch_records(
+            "1", 10, 12, score_filter=score_filter))
+
+    assert [record[1] for record in records] == [10, 12]
+
+
+def test_not_negates_the_clause_it_applies_to(
+    position_score: PositionScore,
+) -> None:
+    """``not`` selects exactly the records the bare clause does not."""
+    with position_score.open() as score:
+        negated = score.compile_filter("not freq > 0.15")
+        bare = score.compile_filter("freq > 0.15")
+
+        negated_records = list(score.fetch_records(
+            "1", 10, 12, score_filter=negated))
+        bare_records = list(score.fetch_records(
+            "1", 10, 12, score_filter=bare))
+
+    assert [record[1] for record in negated_records] == [10]
+    # Complementary over these records, which all carry a value.
+    assert [record[1] for record in bare_records] == [11, 12]
+
+
+@pytest.mark.parametrize("expression, expected_positions", [
+    # Grouped, the `and` applies to both arms of the `or`: position 10 is
+    # dropped because it fails `freq > 0.15`.
+    ("(freq == 0.1 or freq == 0.2) and freq > 0.15", [11]),
+    # Ungrouped, `and` binds tighter, so the `or`'s left arm stands alone
+    # and position 10 survives.  The two readings differ HERE, which is
+    # what makes this pair a test rather than a pair of assertions.
+    ("freq == 0.1 or freq == 0.2 and freq > 0.15", [10, 11]),
+])
+def test_parentheses_regroup_what_precedence_would_bind(
+    position_score: PositionScore,
+    expression: str,
+    expected_positions: list[int],
+) -> None:
+    """Grouping overrides the default binding, and only where written."""
+    with position_score.open() as score:
+        score_filter = score.compile_filter(expression)
+
+        records = list(score.fetch_records(
+            "1", 10, 12, score_filter=score_filter))
+
+    assert [record[1] for record in records] == expected_positions
+
+
+@pytest.mark.parametrize("expression, expected_positions", [
+    # `not` tighter than `and`: this is `(not freq > 0.15) and freq < 0.25`.
+    # Read the other way -- `not (freq > 0.15 and freq < 0.25)` -- it would
+    # be [10, 12].
+    ("not freq > 0.15 and freq < 0.25", [10]),
+    # `not` tighter than `or`: this is `(not freq > 0.25) or freq > 0.15`,
+    # which is every record.  Read as `not (freq > 0.25 or freq > 0.15)`
+    # it would be [10].
+    ("not freq > 0.25 or freq > 0.15", [10, 11, 12]),
+    # Parentheses buy back the looser reading.
+    ("not (freq > 0.15 and freq < 0.25)", [10, 12]),
+])
+def test_not_binds_tighter_than_the_connectives(
+    position_score: PositionScore,
+    expression: str,
+    expected_positions: list[int],
+) -> None:
+    """Precedence runs ``not`` then ``and`` then ``or``.
+
+    Each case is chosen so the two readings give DIFFERENT records; an
+    expression both readings agree on would pin nothing.
+    """
+    with position_score.open() as score:
+        score_filter = score.compile_filter(expression)
+
+        records = list(score.fetch_records(
+            "1", 10, 12, score_filter=score_filter))
+
+    assert [record[1] for record in records] == expected_positions
+
+
 def test_a_filter_refuses_the_records_of_a_different_score(
     position_score: PositionScore,
     tmp_path: pathlib.Path,

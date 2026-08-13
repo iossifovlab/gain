@@ -24,31 +24,52 @@ if TYPE_CHECKING:
 #: The filter language.  Deliberately frozen at these operators; adding one
 #: is a change to what every score's configuration means, not a tweak.
 SCORE_FILTER_GRAMMAR = textwrap.dedent("""
-    ?start: filter | and_ | or
+    ?start: or_expr
 
-    and_: filter "and" filter
+    ?or_expr: and_expr | or
 
-    or: filter "or" filter
+    or: or_expr "or" and_expr
 
-    ?filter: subject operator subject | or | and_
+    ?and_expr: not_expr | and_
+
+    and_: and_expr "and" not_expr
+
+    ?not_expr: primary | not
+
+    not: "not" not_expr
+
+    ?primary: comparison | "(" or_expr ")"
+
+    comparison: subject operator subject
 
     ?subject: variable | value
 
-    value: "\\"" word "\\"" | number
+    value: "\\"" text "\\"" | number
 
-    variable: word
+    variable: name
 
-    operator: equals | greater_than | less_than | in
+    operator: equals | not_equals
+            | greater_than | greater_or_equal
+            | less_than | less_or_equal
+            | in
 
     equals: "=="
 
+    not_equals: "!="
+
     greater_than: ">"
+
+    greater_or_equal: ">="
 
     less_than: "<"
 
+    less_or_equal: "<="
+
     in: "in"
 
-    word: /[0-9]*[a-zA-Z_!@#$%^&*()_+][a-zA-Z0-9!@#$%^&*()_+]*/
+    name: /[0-9]*[a-zA-Z_][a-zA-Z0-9_]*/
+
+    text: /[0-9]*[a-zA-Z_!@#$%^&*()_+][a-zA-Z0-9!@#$%^&*()_+]*/
 
     number: /-?(?:[0-9]+\\.?[0-9]*|\\.[0-9]+)/
 
@@ -119,8 +140,11 @@ def _compare(
 #: round.
 _OPERATIONS: dict[str, Callable[[Any, Any], bool]] = {
     "equals": operator.eq,
+    "not_equals": operator.ne,
     "greater_than": operator.gt,
+    "greater_or_equal": operator.ge,
     "less_than": operator.lt,
+    "less_or_equal": operator.le,
     "in": lambda left, right: left in right,
 }
 
@@ -201,6 +225,14 @@ def _build_predicate(
     tree: Tree, score: GenomicScore,
 ) -> Callable[[Record], bool]:
     """Compile a parse tree into a record predicate."""
+    if tree.data == "not":
+        # The negation is of the CLAUSE's answer, not of the values it read.
+        # A clause over a missing value is False, so its negation is True --
+        # which is why `x != v` and `not (x == v)` part company there.
+        assert isinstance(tree.children[0], Tree)
+        negated = _build_predicate(tree.children[0], score)
+        return lambda rec: not negated(rec)
+
     if tree.data in ("and_", "or"):
         # One branch for both: the two differ only in the connective, and
         # keeping them apart is how the copies this module replaces drifted
@@ -244,7 +276,7 @@ def _build_accessor(node: Any, score: GenomicScore) -> _RecordAccessor:
     raw_value = child.children[0].value
 
     if node.data.value == "variable":
-        assert child.data.value == "word"
+        assert child.data.value == "name"
         score_id = _require_score_id(score, raw_value)
 
         def read_score(record: Record) -> Any:
