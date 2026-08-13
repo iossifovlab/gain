@@ -60,6 +60,10 @@ from gain.genomic_resources.testing import (
     setup_tabix,
     setup_vcf,
 )
+from gain.genomic_resources.testing.builders import (
+    a_position_score,
+    an_allele_score,
+)
 from gain.task_graph.graph import TaskGraph
 
 
@@ -1498,6 +1502,58 @@ def test_record_to_begin_end_validates_order() -> None:
 
     with pytest.raises(OSError, match="has a region"):
         GenomicScore._record_to_begin_end(bad_record)
+
+
+def test_segment_path_refuses_a_backwards_record(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The same refusal, at the seam that performs it in the hot loop.  The
+    # segment loop used to reach it only by calling _record_to_begin_end and
+    # throwing away the chrom that method returns; it now reads the two
+    # position slots itself (gain#823), so the check has to be pinned HERE and
+    # not only on the helper -- otherwise dropping it from the loop leaves a
+    # green suite while a backwards record streams out as an inverted span,
+    # whose width as a weight is negative.
+    #
+    # A zero-based row is how a backwards record is authored: the zero-based
+    # adjustment bumps end only when begin == end, so an end < begin row is
+    # left unrepaired and reaches the score layer as POS_END < POS_BEGIN.
+    score = PositionScore(
+        a_position_score()
+        .with_score("v", "float")
+        .with_zero_based()
+        .with_data("""
+            chrom  pos_begin  pos_end  v
+            1      5          3        0.5
+        """)
+        .build_resource(tmp_path),
+    ).open()
+
+    with pytest.raises(OSError, match="has a region"):
+        list(score.fetch_region_segment_scores("1", 1, 100))
+
+
+def test_allele_point_path_refuses_a_backwards_record(
+    tmp_path: pathlib.Path,
+) -> None:
+    # An allele score collapses each record to the single point it sits at, so
+    # it reads POS_BEGIN and would never look at POS_END for the value it
+    # yields.  It checks the ordering anyway, and must keep checking it: a
+    # record whose end precedes its begin is a resource no reader can proceed
+    # past, and this path is the only one that sees an allele record.
+    score = AlleleScore(
+        an_allele_score()
+        .with_score("s", "float")
+        .with_zero_based()
+        .with_data("""
+            chrom  pos_begin  pos_end  reference  alternative  s
+            1      5          3        A          G            0.5
+        """)
+        .build_resource(tmp_path),
+    ).open()
+
+    with pytest.raises(OSError, match="has a region"):
+        list(score.fetch_region_segment_scores("1", 1, 100))
 
 
 def test_default_annotation_requires_list() -> None:
