@@ -67,6 +67,16 @@ def score_with_missing_values(tmp_path: pathlib.Path) -> PositionScore:
     "freq == other_freq",
     '"a" in ID',
     'ID in "abc"',
+    # The orderings that include equality answer no differently: a value
+    # that is not there is not >= or <= anything either.
+    "freq >= -1",
+    "freq <= 1",
+    # `!=` is the one where "false" reads as a choice rather than the only
+    # option -- a record carrying nothing is arguably "not 0.5".  It is
+    # still false: the rule is per CLAUSE, and a clause cannot speak about
+    # a value that is absent.  `not (freq == 0.5)` is how you ask the other
+    # question; see the test below for the two parting company.
+    "freq != 0.5",
 ])
 def test_a_missing_operand_makes_its_clause_false(
     score_with_missing_values: PositionScore,
@@ -104,6 +114,34 @@ def test_a_missing_operand_still_lets_the_other_arm_select(
             "1", 10, 11, score_filter=score_filter))
 
     assert [record[1] for record in records] == [10, 11]
+
+
+def test_inequality_and_a_negated_equality_disagree_on_missing(
+    score_with_missing_values: PositionScore,
+) -> None:
+    """``x != v`` is not a synonym for ``not (x == v)``.
+
+    Over a record that carries a value the two agree, and over one that does
+    not they cannot: a comparison with a missing operand is false, so ``!=``
+    declines to select -- while ``not`` negates that false and selects.
+
+    De Morgan therefore does not carry across the comparison boundary.  It
+    is a consequence of the missing-value rule rather than a separate
+    decision, but it is the consequence people trip over, so it is pinned
+    rather than left to be rediscovered.
+    """
+    with score_with_missing_values.open() as score:
+        inequality = score.compile_filter("freq != 0.5")
+        negated_equality = score.compile_filter("not (freq == 0.5)")
+
+        by_inequality = list(score.fetch_records(
+            "1", 10, 11, score_filter=inequality))
+        by_negated_equality = list(score.fetch_records(
+            "1", 10, 11, score_filter=negated_equality))
+
+    # Position 11 carries no freq at all; position 10 carries 0.1.
+    assert [record[1] for record in by_inequality] == [10]
+    assert [record[1] for record in by_negated_equality] == [10, 11]
 
 
 def test_fetch_records_keeps_only_records_the_filter_accepts(
@@ -201,6 +239,40 @@ def test_fragment_reads_drop_the_fragments_the_filter_rejects(
             "1", 10, 30, score_filter=score_filter)
 
     assert fragments == [{"freq": pytest.approx(0.1), "collection": "AGRE"}]
+
+
+def test_the_new_syntax_reaches_the_fragment_read(
+    fragment_score: FragmentScore,
+) -> None:
+    """Grouping and the new operators work through a real read path.
+
+    The grammar is shared, but the read paths are not: this one applies the
+    predicate to the record before extracting anything.
+    """
+    with fragment_score.open() as score:
+        score_filter = score.compile_filter(
+            '(collection == "SSC" or collection == "AGRE") and freq >= 0.1')
+
+        fragments = score.fetch_fragment_scores(
+            "1", 10, 30, score_filter=score_filter)
+
+    assert fragments == [{"freq": pytest.approx(0.1), "collection": "AGRE"}]
+
+
+def test_a_negated_clause_reaches_the_allele_read(
+    allele_score: AlleleScore,
+) -> None:
+    """A negation selects per allele, and a rejected allele still reads None."""
+    with allele_score.open() as score:
+        score_filter = score.compile_filter("not (freq >= 0.15)")
+
+        kept = score.fetch_allele_scores(
+            "1", 10, "A", "G", score_filter=score_filter)
+        rejected = score.fetch_allele_scores(
+            "1", 10, "A", "C", score_filter=score_filter)
+
+    assert kept == {"freq": pytest.approx(0.1)}
+    assert rejected is None
 
 
 def test_a_fragment_filter_may_name_a_score_that_was_not_requested(
@@ -320,6 +392,285 @@ def test_the_connectives_combine_clauses(
             "1", 10, 12, score_filter=score_filter))
 
     assert [record[1] for record in records] == expected_positions
+
+
+@pytest.mark.parametrize("expression, expected_positions", [
+    # Each pairs with its strict form, which excludes the boundary record:
+    # `freq > 0.2` is [12] and `freq < 0.2` is [10].  Without position 11
+    # in the answer these would pass against the strict operator.
+    ("freq >= 0.2", [11, 12]),
+    ("freq <= 0.2", [10, 11]),
+])
+def test_the_orderings_include_the_boundary(
+    position_score: PositionScore,
+    expression: str,
+    expected_positions: list[int],
+) -> None:
+    """``>=`` and ``<=`` order like their strict forms but keep equality."""
+    with position_score.open() as score:
+        score_filter = score.compile_filter(expression)
+
+        records = list(score.fetch_records(
+            "1", 10, 12, score_filter=score_filter))
+
+    assert [record[1] for record in records] == expected_positions
+
+
+def test_inequality_selects_what_equality_does_not(
+    position_score: PositionScore,
+) -> None:
+    """``!=`` is the complement of ``==`` over records that carry a value.
+
+    Over records that do NOT carry one the two are not complements, which
+    :func:`test_inequality_and_a_negated_equality_disagree_on_missing`
+    pins separately.
+    """
+    with position_score.open() as score:
+        score_filter = score.compile_filter("freq != 0.2")
+
+        records = list(score.fetch_records(
+            "1", 10, 12, score_filter=score_filter))
+
+    assert [record[1] for record in records] == [10, 12]
+
+
+def test_not_negates_the_clause_it_applies_to(
+    position_score: PositionScore,
+) -> None:
+    """``not`` selects exactly the records the bare clause does not.
+
+    The bare clause selects ``[11, 12]`` -- pinned by
+    :func:`test_fetch_records_keeps_only_records_the_filter_accepts` -- so
+    over records that all carry a value the two are complementary.
+    """
+    with position_score.open() as score:
+        negated = score.compile_filter("not freq > 0.15")
+
+        records = list(score.fetch_records(
+            "1", 10, 12, score_filter=negated))
+
+    assert [record[1] for record in records] == [10]
+
+
+@pytest.mark.parametrize("expression, expected_positions", [
+    # Grouped, the `and` applies to both arms of the `or`: position 10 is
+    # dropped because it fails `freq > 0.15`.
+    ("(freq == 0.1 or freq == 0.2) and freq > 0.15", [11]),
+    # Ungrouped, `and` binds tighter, so the `or`'s left arm stands alone
+    # and position 10 survives.  The two readings differ HERE, which is
+    # what makes this pair a test rather than a pair of assertions.
+    ("freq == 0.1 or freq == 0.2 and freq > 0.15", [10, 11]),
+])
+def test_parentheses_regroup_what_precedence_would_bind(
+    position_score: PositionScore,
+    expression: str,
+    expected_positions: list[int],
+) -> None:
+    """Grouping overrides the default binding, and only where written."""
+    with position_score.open() as score:
+        score_filter = score.compile_filter(expression)
+
+        records = list(score.fetch_records(
+            "1", 10, 12, score_filter=score_filter))
+
+    assert [record[1] for record in records] == expected_positions
+
+
+@pytest.mark.parametrize("expression, expected_positions", [
+    # `not` tighter than `and`: this is `(not freq > 0.15) and freq < 0.25`.
+    # Read the other way -- `not (freq > 0.15 and freq < 0.25)` -- it would
+    # be [10, 12].
+    ("not freq > 0.15 and freq < 0.25", [10]),
+    # `not` tighter than `or`: this is `(not freq > 0.25) or freq > 0.15`,
+    # which is every record.  Read as `not (freq > 0.25 or freq > 0.15)`
+    # it would be [10].
+    ("not freq > 0.25 or freq > 0.15", [10, 11, 12]),
+    # Parentheses buy back the looser reading.
+    ("not (freq > 0.15 and freq < 0.25)", [10, 12]),
+])
+def test_not_binds_tighter_than_the_connectives(
+    position_score: PositionScore,
+    expression: str,
+    expected_positions: list[int],
+) -> None:
+    """Precedence runs ``not`` then ``and`` then ``or``.
+
+    Each case is chosen so the two readings give DIFFERENT records; an
+    expression both readings agree on would pin nothing.
+    """
+    with position_score.open() as score:
+        score_filter = score.compile_filter(expression)
+
+        records = list(score.fetch_records(
+            "1", 10, 12, score_filter=score_filter))
+
+    assert [record[1] for record in records] == expected_positions
+
+
+def test_a_name_carrying_a_plus_is_still_filterable(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``GERP++_RS`` is published, and ``+`` is not syntax in this language.
+
+    dbNSFP names three of its scores this way.  Only the characters the
+    grammar actually needs -- ``(``, ``)`` and ``!`` -- gave up their place
+    in an identifier; taking the rest of the punctuation with them would
+    have made a filter over dbNSFP fail the pipeline build.
+    """
+    resource = (
+        a_position_score()
+        .with_score("GERP++_RS", "float")
+        .with_data("""
+            chrom  pos_begin  GERP++_RS
+            1      10         1.0
+            1      11         3.0
+        """)
+        .build_resource(tmp_path)
+    )
+    score = build_position_score_from_resource(resource)
+
+    with score.open() as opened:
+        score_filter = opened.compile_filter("GERP++_RS > 2")
+
+        records = list(opened.fetch_records(
+            "1", 10, 11, score_filter=score_filter))
+
+    assert [record[1] for record in records] == [11]
+
+
+def test_a_name_beginning_with_not_is_read_as_a_name(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``notch`` is a variable, not ``not`` applied to ``ch``.
+
+    ``not`` is the one keyword that PREFIXES its operand, so a name starting
+    with those three letters would have two readings -- and the grammar
+    settles it rather than leaving it to the parser, by refusing to match the
+    keyword when a name character follows it.  The infix keywords never had
+    the problem: ``andy > 1`` cannot be an ``and``, because there is nothing
+    to its left.
+
+    A score named exactly ``not`` still reads as a name, because the
+    character after it is then a space rather than a name character.
+    """
+    resource = (
+        a_position_score()
+        .with_score("notch", "float")
+        .with_score("ch", "float")
+        .with_data("""
+            chrom  pos_begin  notch  ch
+            1      10         1.0    9.0
+            1      11         3.0    9.0
+        """)
+        .build_resource(tmp_path)
+    )
+    score = build_position_score_from_resource(resource)
+
+    with score.open() as opened:
+        score_filter = opened.compile_filter("notch > 2")
+
+        records = list(opened.fetch_records(
+            "1", 10, 11, score_filter=score_filter))
+
+    # Read as `not (ch > 2)` this would be [] -- `ch` is 9.0 on both records.
+    assert [record[1] for record in records] == [11]
+
+
+def test_a_score_named_exactly_not_is_still_a_name(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The keyword guard costs no name, not even the keyword's own spelling.
+
+    Guarding ``not`` against matching inside a longer word could have been
+    read as reserving the word outright.  It does not: the guard only asks
+    what FOLLOWS, and after a bare ``not`` comes a space, so the keyword and
+    the name both remain available and only the name completes a comparison.
+    """
+    resource = (
+        a_position_score()
+        .with_score("not", "float")
+        .with_data("""
+            chrom  pos_begin  not
+            1      10         1.0
+            1      11         3.0
+        """)
+        .build_resource(tmp_path)
+    )
+    score = build_position_score_from_resource(resource)
+
+    with score.open() as opened:
+        score_filter = opened.compile_filter("not > 2")
+
+        records = list(opened.fetch_records(
+            "1", 10, 11, score_filter=score_filter))
+
+    assert [record[1] for record in records] == [11]
+
+
+def test_a_score_named_with_punctuation_can_no_longer_be_filtered_on(
+    tmp_path: pathlib.Path,
+) -> None:
+    """What making ``(``, ``)`` and ``!`` mean something cost.
+
+    All three were legal in a variable name, which is why a parenthesised
+    expression used to parse as a comparison between two oddly-named scores
+    rather than as a group.  They are the ONLY three that left: the rest of
+    the punctuation a name could carry is not syntax here and stayed, so
+    ``GERP++_RS`` is unaffected.  A resource may still define a score named
+    with one of the three; it can no longer be named in a filter.
+
+    The refusal is a PARSE error, not the unknown-name one: the score is
+    asserted to exist first, so this cannot pass for the wrong reason.
+    """
+    resource = (
+        a_position_score()
+        .with_score("a!b", "float")
+        .with_data("""
+            chrom  pos_begin  a!b
+            1      10         0.1
+        """)
+        .build_resource(tmp_path)
+    )
+    score = build_position_score_from_resource(resource)
+
+    with score.open() as opened:
+        assert "a!b" in opened.score_definitions
+
+        with pytest.raises(ScoreFilterError) as excinfo:
+            opened.compile_filter("a!b > 0.05")
+
+    assert "cannot parse" in str(excinfo.value)
+
+
+def test_a_quoted_literal_still_takes_the_punctuation_it_always_did(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Only the variable name narrowed; the literal kept its characters.
+
+    The two were one terminal, so narrowing identifiers would have silently
+    narrowed what a quoted literal may hold -- and the annotator docs
+    advertise ``!@#$%^&*()+`` in a literal.  Quotes delimit it, so it needs
+    no narrowing to keep ``(`` and ``!`` unambiguous.
+    """
+    resource = (
+        a_position_score()
+        .with_score("CLNSIG", "str")
+        .with_data("""
+            chrom  pos_begin  CLNSIG
+            1      10         path!o(genic)
+            1      11         benign
+        """)
+        .build_resource(tmp_path)
+    )
+    score = build_position_score_from_resource(resource)
+
+    with score.open() as opened:
+        score_filter = opened.compile_filter('CLNSIG == "path!o(genic)"')
+
+        records = list(opened.fetch_records(
+            "1", 10, 11, score_filter=score_filter))
+
+    assert [record[1] for record in records] == [10]
 
 
 def test_a_filter_refuses_the_records_of_a_different_score(

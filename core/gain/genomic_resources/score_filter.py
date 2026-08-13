@@ -21,34 +21,65 @@ if TYPE_CHECKING:
     from gain.genomic_resources.genomic_position_table.record import Record
     from gain.genomic_resources.genomic_scores import GenomicScore
 
-#: The filter language.  Deliberately frozen at these operators; adding one
-#: is a change to what every score's configuration means, not a tweak.
-SCORE_FILTER_GRAMMAR = textwrap.dedent("""
-    ?start: filter | and_ | or
+#: The punctuation a score name may carry, beyond letters and digits.
+#: `(`, `)` and `!` are absent because the language needs them as syntax;
+#: nothing else was taken away, so a name like `GERP++_RS` still parses.
+_NAME_PUNCTUATION = "_@#$%^&*+"
 
-    and_: filter "and" filter
+#: The punctuation a quoted literal may carry.  A superset of the name's BY
+#: CONSTRUCTION, which is the point of writing it this way: the two were one
+#: class until `(`, `)` and `!` became syntax, and a hand-copied second class
+#: would let a future narrowing of names quietly narrow literals too.
+_TEXT_PUNCTUATION = _NAME_PUNCTUATION + "!()"
 
-    or: filter "or" filter
+#: The filter language.  The rules cascade `or` -> `and` -> `not` ->
+#: comparison-or-group precisely so that precedence is declared here rather
+#: than left to the parser's ambiguity resolution, and adding an operator
+#: means placing it in that cascade.  `_NOT` is guarded against matching
+#: inside a longer word so that `notch` is a name and not a negated `ch`.
+SCORE_FILTER_GRAMMAR = textwrap.dedent(f"""
+    ?start: or_expr
 
-    ?filter: subject operator subject | or | and_
+    ?or_expr: and_expr | or_expr "or" and_expr -> or
+
+    ?and_expr: not_expr | and_expr "and" not_expr -> and_
+
+    ?not_expr: primary | _NOT not_expr -> not
+
+    ?primary: comparison | "(" or_expr ")"
+
+    comparison: subject operator subject
 
     ?subject: variable | value
 
-    value: "\\"" word "\\"" | number
+    value: "\\"" text "\\"" | number
 
-    variable: word
+    variable: name
 
-    operator: equals | greater_than | less_than | in
+    operator: equals | not_equals
+            | greater_than | greater_or_equal
+            | less_than | less_or_equal
+            | in
 
     equals: "=="
 
+    not_equals: "!="
+
     greater_than: ">"
+
+    greater_or_equal: ">="
 
     less_than: "<"
 
+    less_or_equal: "<="
+
     in: "in"
 
-    word: /[0-9]*[a-zA-Z_!@#$%^&*()_+][a-zA-Z0-9!@#$%^&*()_+]*/
+    _NOT: /not(?![a-zA-Z0-9{_NAME_PUNCTUATION}])/
+
+    name: /[0-9]*[a-zA-Z{_NAME_PUNCTUATION}][a-zA-Z0-9{_NAME_PUNCTUATION}]*/
+
+    text: /[0-9]*[a-zA-Z{_TEXT_PUNCTUATION}][a-zA-Z0-9{_TEXT_PUNCTUATION}]*/
 
     number: /-?(?:[0-9]+\\.?[0-9]*|\\.[0-9]+)/
 
@@ -63,8 +94,8 @@ def _get_parser() -> Lark:
     Cached rather than built at import, for the reason
     :func:`resource_query._get_parser` gives: this module is imported by
     ``genomic_scores``, so building here would charge every gain entry
-    point ~13ms of Earley grammar construction -- including the many that
-    never compile a filter.
+    point the Earley grammar construction -- including the many that never
+    compile a filter.
     """
     return Lark(SCORE_FILTER_GRAMMAR)
 
@@ -99,11 +130,14 @@ def _compare(
     """Apply ``operation``, answering False if either operand is missing.
 
     The missing case is decided here, once, rather than per operator: every
-    operator in this language relates two values, and none of them can say
-    anything about a value that is not there.  Answering False (rather than
-    raising, as ``None > 0.1`` used to) keeps a filter total -- the record
-    is simply not selected by this clause, and can still be selected by the
-    other arm of an ``or``.
+    COMPARISON relates two values, and none of them can say anything about a
+    value that is not there.  ``not`` is not among them -- it negates what a
+    clause answered, so it turns this False into True, and that is why
+    ``x != v`` and ``not (x == v)`` differ on a record missing ``x``.
+
+    Answering False, rather than raising as ``None > 0.1`` used to, keeps a
+    filter total: the record is simply not selected by this clause, and can
+    still be selected by the other arm of an ``or``.
     """
     def evaluate(record: Record) -> bool:
         left_value = left(record)
@@ -119,8 +153,11 @@ def _compare(
 #: round.
 _OPERATIONS: dict[str, Callable[[Any, Any], bool]] = {
     "equals": operator.eq,
+    "not_equals": operator.ne,
     "greater_than": operator.gt,
+    "greater_or_equal": operator.ge,
     "less_than": operator.lt,
+    "less_or_equal": operator.le,
     "in": lambda left, right: left in right,
 }
 
@@ -201,6 +238,13 @@ def _build_predicate(
     tree: Tree, score: GenomicScore,
 ) -> Callable[[Record], bool]:
     """Compile a parse tree into a record predicate."""
+    if tree.data == "not":
+        # Negates what the clause ANSWERED, never the values it read -- see
+        # `_compare` for what that costs a missing operand.
+        assert isinstance(tree.children[0], Tree)
+        negated = _build_predicate(tree.children[0], score)
+        return lambda rec: not negated(rec)
+
     if tree.data in ("and_", "or"):
         # One branch for both: the two differ only in the connective, and
         # keeping them apart is how the copies this module replaces drifted
@@ -213,12 +257,16 @@ def _build_predicate(
             return lambda rec: left_func(rec) and right_func(rec)
         return lambda rec: left_func(rec) or right_func(rec)
 
+    # Named, not a fall-through: a rule added to the grammar and not to this
+    # dispatch should say so, rather than die further down on an operand that
+    # was never an operand.
+    assert tree.data == "comparison", f"no case for grammar rule {tree.data}"
     left = _build_accessor(tree.children[0], score)
     right = _build_accessor(tree.children[2], score)
     # Indexed, not `.get`-with-a-fallback: the grammar's `operator:` rule
-    # admits exactly these four, so a miss here means the grammar and this
-    # table have been edited apart -- a programming error, and a KeyError
-    # naming the operator says so better than a filter error would.
+    # admits exactly the keys of this table, so a miss here means the two
+    # have been edited apart -- a programming error, and a KeyError naming
+    # the operator says so better than a filter error would.
     return _compare(left, right, _OPERATIONS[_operator_name(tree.children[1])])
 
 
@@ -244,7 +292,7 @@ def _build_accessor(node: Any, score: GenomicScore) -> _RecordAccessor:
     raw_value = child.children[0].value
 
     if node.data.value == "variable":
-        assert child.data.value == "word"
+        assert child.data.value == "name"
         score_id = _require_score_id(score, raw_value)
 
         def read_score(record: Record) -> Any:

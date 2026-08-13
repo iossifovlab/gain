@@ -57,6 +57,11 @@ parsed before stops parsing.
 Extending it changes what every filter in every deployed pipeline may mean,
 and is a separate decision with its own issue.
 
+> **Superseded by [ADR 0018](0018-score-filter-grammar-extension.md).** That
+> separate decision was taken: the language gained `>=`, `<=`, `!=`, `not`
+> and grouping, and its precedence became declared rather than emergent.
+> Everything else in this ADR still holds.
+
 **Variable names are validated at compile time**, against
 `score_definitions`, refusing an unknown name with the valid names listed.
 The check happens once per pipeline build rather than once per record.

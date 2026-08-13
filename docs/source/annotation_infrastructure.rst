@@ -235,7 +235,21 @@ In ``region`` mode, the ``aggregator`` attribute parameter controls how multiple
 
 The optional ``allele_filter`` parameter restricts which allele lines are considered before aggregation. Lines that do not satisfy the expression are skipped entirely, as if they were absent from the resource.
 
-The filter expression supports the operators ``>``, ``<``, ``==``, ``in``, ``and``, and ``or``. Operands are either score column names (resolved per line), numeric literals (integers, decimals, and negative values are all supported), or double-quoted string literals. Score column names that begin with a digit (for example, ``1000G``) are also valid.
+The filter expression supports the comparison operators ``>``, ``>=``, ``<``, ``<=``, ``==``, ``!=`` and ``in``, combined with ``not``, ``and`` and ``or``. Operands are either score column names (resolved per line), numeric literals (integers, decimals, and negative values are all supported), or double-quoted string literals.
+
+A score column name is made of letters, digits and the symbols ``_@#$%^&*+``, and may begin with a digit (for example, ``1000G``) — so names such as ``GERP++_RS`` can be filtered on. The three characters ``(``, ``)`` and ``!`` are punctuation of the filter language itself and cannot appear in a name, even where a resource defines a score whose id contains one.
+
+``not`` binds tightest, then ``and``, then ``or``, so ``A or B and C`` means ``A or (B and C)`` and ``not A and B`` means ``(not A) and B``. Parentheses override that grouping:
+
+.. code:: yaml
+
+    - allele_score_annotator:
+        resource_id: <allele score resource ID>
+        allele_filter: (AF < 0.001 or AF > 0.999) and not QUAL < 30
+        attributes:
+        - source: <source_score_attribute>
+
+Further examples of the parameter in use:
 
 .. code:: yaml
 
@@ -268,6 +282,8 @@ A string literal must be a single word — letters, digits, ``_`` and the symbol
 Every name in the expression must be a score the resource defines. A name it does not define fails the pipeline as it is built, listing the names that would have worked, rather than misbehaving once per annotated line.
 
 A line that carries no value for a score named in the expression — an NA cell, or ``nan`` — does not satisfy a comparison against it: that comparison is false, and the line can still be kept by the other side of an ``or``.
+
+That applies to every comparison, including ``!=``: a line carrying no ``AF`` is not kept by ``AF != 0.5``, because the comparison cannot speak about a value that is not there. ``not`` is different — it negates the answer a comparison gave, so ``not (AF == 0.5)`` *does* keep that line. ``AF != 0.5`` and ``not (AF == 0.5)`` agree on every line that carries a value and disagree on every line that does not; pick the one that says what you mean about absent data.
 
 **allele attribute**
 

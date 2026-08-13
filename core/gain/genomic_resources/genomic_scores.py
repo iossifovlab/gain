@@ -813,14 +813,17 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """Compile a boolean expression into a filter over this score.
 
         The expression names this resource's own scores and relates them
-        with ``>``, ``<``, ``==``, ``in``, ``and`` and ``or``; the result is
+        with ``>``, ``>=``, ``<``, ``<=``, ``==``, ``!=`` and ``in``,
+        combined with ``not``, ``and`` and ``or``; the result is
         passed back to any of the record reads as ``score_filter``.
 
         Raises :class:`ScoreFilterError` on an expression that does not
         parse or that names a score this resource does not define.  See
-        :func:`compile_score_filter` for what compiling settles, and
+        :func:`compile_score_filter` for what compiling settles,
         ``docs/adr/0017-score-filtering-is-a-score-capability.md`` for why
-        the capability sits on the score.
+        the capability sits on the score, and
+        ``docs/adr/0018-score-filter-grammar-extension.md`` for the
+        language's precedence and what a name may contain.
         """
         return compile_score_filter(self, expression)
 
