@@ -87,7 +87,8 @@ worthless; above it, it is a 1.6–1.75× win.
 ## Decision
 
 **Remove the buffering layer entirely.** `BigWigTable` has one fetch strategy —
-the chunked walk, now `_fetch` — and keeps no interval state across calls.
+the chunked walk, first renamed `_fetch` and since gain#823 inlined into
+`get_records_in_region` — and keeps no interval state across calls.
 `_buffer`, `_buffer_region`, `_fill`, `_find`, `_fetch_buffered` and `_last_pos`
 are gone.
 
@@ -126,10 +127,10 @@ pattern whose correct fix is to call the API differently.
   rather than maintained: a reopened table cannot serve a previous open's values
   (gain#345), and a fetch cannot resume from retained state after `close()`. The
   second rule still applies — a generator mid-walk must notice a closed handle —
-  and its guard moved into `_fetch`, checked once per chunk. A walk that fits in
-  a single chunk now completes after `close()` instead of raising, because it
-  has already read everything it will yield; the test was rewritten to span
-  several chunks rather than relax the rule.
+  and its guard moved into the chunk walk, checked once per chunk. A walk that
+  fits in a single chunk now completes after `close()` instead of raising,
+  because it has already read everything it will yield; the test was rewritten
+  to span several chunks rather than relax the rule.
 - `_find`'s insertion-point rule went with the buffer. It was subtle and it was
   a bug source: returning the left-hand neighbour on a miss emitted a score at a
   position the track does not cover. The *fixture geometry* that caught it is

@@ -327,7 +327,9 @@ They stay accepted by the schema and are warned about (see
 
 The private buffer machinery went with them -- ``_buffer``,
 ``_buffer_region``, ``_fill``, ``_find``, ``_fetch_buffered``, ``_last_pos``
--- and ``_fetch_direct`` is now simply ``_fetch``.  None of those were
+-- and ``_fetch_direct``, the surviving strategy, was first renamed ``_fetch``
+and has since been inlined into ``get_records_in_region`` (gain#823, to drop
+a per-record tuple and a generator level).  None of those were
 exported; they are named here only because the two invariants they carried
 were load-bearing enough to have their own regression tests, and both are now
 unreachable rather than maintained: a reopened table cannot serve a previous
@@ -474,10 +476,12 @@ dated removal, per the precedent of gain#343 -- deletes it.
 
 The return type narrowed with the rename: the values slot was
 ``list[ScoreValue] | None`` and no code path could yield ``None`` there --
-both producers end in ``get_score_values_from_record``, which is typed
-``list[ScoreValue]`` -- so the new name promises ``list[ScoreValue]`` and the
-narrowing runs down the private chain (``region_values_from_records``,
-``_clipped_score_values``, ``_allele_point_values``) and, since gain#734,
+both producers build the values slot as a list comprehension over
+``_extract_value`` (through ``get_score_values_from_record`` until gain#823
+hoisted the extractor out of the loop) -- so the new name promises
+``list[ScoreValue]`` and the narrowing runs down the private chain
+(``region_values_from_records``, ``_clipped_score_values``,
+``_allele_point_values``) and, since gain#734,
 through ``fetch_region_weighted_values``' values slot as well.  A caller's
 ``None`` guard on a yielded values slot is dead code now, as
 ``aggregate_region``'s was.  ``fetch_position_scores`` keeps its ``| None``:
