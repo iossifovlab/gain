@@ -217,7 +217,7 @@ The ``allele_score_annotator`` operates in one of two modes, selected by the ``m
    * - ``region``
      - Finds all allele lines that overlap the annotatable's span and aggregates their scores.
 
-       This mode works with any annotatable type, including ``VCFAllele``, ``Region``, and CNV.
+       This mode works with any annotatable type, including ``VCFAllele``, ``Region``, and other interval-based annotatables.
 
 In ``region`` mode, the ``aggregator`` attribute parameter controls how multiple matched values are combined. If no ``aggregator`` is specified in the attribute configuration, the annotator uses the score's default ``allele_aggregator`` from the resource definition (which defaults to ``max`` for numeric scores and ``list`` for string scores).
 
@@ -607,15 +607,13 @@ optional associated fields (for example type, frequency, or dataset labels), and
 annotation GAIn performs an interval overlap query at the annotatable's genomic coordinates to
 retrieve matching fragments.
 
-Copy-number variants are the most common thing to store this way, which is why this annotator
-and its resource type were once called ``cnv_collection``. Nothing about either is specific to
-copy number.
+Copy-number variants are the most common thing to store this way, which is why the resource type was once called ``cnv_collection`` and the annotator ``cnv_collection_annotator``. Nothing about either is specific to copy number.
 
 .. note::
 
-    **The older names still work, but they are deprecated and stop being accepted in GAIn**
-    ``2027.1.0``. ``cnv_collection`` and ``cnv_collection_annotator`` are still accepted as
-    annotator names, ``type: cnv_collection`` is still accepted as a resource type, and
+    **The older names still work, but they are deprecated and will stop being accepted in GAIn**
+    ``2027.1.0``. ``cnv_collection_annotator`` is still accepted as an
+    annotator name, ``type: cnv_collection`` is still accepted as a resource type, and
     ``cnv_filter:`` is still accepted as the filter parameter -- each one now logs a warning
     naming where it was written and what to write instead. Rewrite them to ``fragment_score``,
     ``fragment_score_annotator``, ``type: fragment_score`` and ``fragment_filter:``.
@@ -623,8 +621,7 @@ copy number.
     Do not configure both ``fragment_filter:`` and ``cnv_filter:`` on one annotator -- they are
     two spellings of one parameter, and GAIn refuses the pipeline rather than pick one.
 
-A ``fragment_score_annotator`` can be used with a minimal configuration. If you omit the ``attributes`` section, GAIn uses the resource's default annotation,
-which reports the count of overlapping fragments in the resource for each input annotatable (i.e., how many fragments in the database overlap that locus).
+A ``fragment_score_annotator`` can be used with a minimal configuration. If you omit the ``attributes`` section, GAIn uses the resource's default annotation, which reports the count of overlapping fragments in the resource for each input annotatable (i.e., how many fragments in the database overlap that locus).
 
 .. code:: yaml
 
@@ -1785,7 +1782,7 @@ This produces ``annotation_6.txt`` with the lifted-over annotatable plus the hg1
 
 A `fragment_score_annotator` reports copy-number variant (CNV) events whose intervals overlap each 
 input locus. If you do not specify any attributes, the annotator reports the number of overlapping 
-CNV events observed in the collection as ``count``.
+CNV events observed in the resource as ``count``.
 
 Create a file called ``annotation_pipeline_cnv_1.yaml`` with the following content. This will query the `DGV <https://grr.iossifovlab.com/hg38/cnv_collections/DGV/index.html>`_ resource.
 
@@ -1815,7 +1812,7 @@ This produces ``annotation_cnv_1.txt`` with the default count column:
 
 
 
-To emit specific fields from the CNV records, add an ``attributes`` list. CNV collection attributes 
+To emit specific fields from the CNV records, add an ``attributes`` list. Fragment score attributes 
 use the ``attribute.<id>`` form (for example, ``attribute.deletion_duplication``).
 
 Create a file called annotation_pipeline_cnv_2.yaml:

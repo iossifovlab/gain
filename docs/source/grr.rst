@@ -1136,7 +1136,7 @@ which describes the event type recorded.
       desc: duplication or deletion
 
     meta:
-      summary: CNV collection resource
+      summary: fragment score resource
 
 
 Gene scores
