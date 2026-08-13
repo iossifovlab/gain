@@ -63,9 +63,25 @@ COPY web_api/scripts/grr-definition.yaml \
 
 EXPOSE 9001
 
+# `--access-log /dev/null` discards daphne's access log rather than
+# letting it default to stdout.  That log records the full request
+# target, query string included, so every redemption of
+# `/api/reset_password?code=…` or `/api/confirm_account?code=…` wrote a
+# live single-use code into the container's stdout and from there into
+# the host's docker `json-file` store (iossifovlab/gain#795; gain#754
+# was the same leak in the frontend image's Apache log).  The record is
+# dropped rather than redacted because the frontend Apache already logs
+# every externally reachable request, with those queries redacted, so
+# this one is a duplicate -- and daphne only accepts a redacting
+# AccessLogGenerator through its server constructor, not from the CLI.
+#
+# Do NOT silence it with `-v 0` instead: verbosity drives the root
+# logger too, so that would take the application's own logging down to
+# WARN with it.  Verbosity stays at its default of 1.
 ENTRYPOINT ["daphne", \
             "--bind", "0.0.0.0", \
             "--port", "9001", \
             "--proxy-headers", \
             "--http-timeout", "1200", \
+            "--access-log", "/dev/null", \
             "web_annotation.asgi:application"]
