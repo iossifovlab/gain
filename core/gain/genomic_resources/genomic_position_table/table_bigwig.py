@@ -16,10 +16,7 @@ from gain.genomic_resources.repository import GenomicResource
 # ``pyBigWig.intervals()`` returned it -- RAW, in the file's own 0-based
 # half-open coordinates.  Converting it to the closed one-based interval of the
 # record contract is the parser's job (see :func:`build_bigwig_parser`), as the
-# zero-based transform is the tabular parser's.  The conversion used to happen
-# a layer earlier, in the fetch path, which had to allocate a converted 3-tuple
-# per interval purely to carry it across that boundary -- an object the parser
-# read three slots back out of and dropped (gain#823).
+# zero-based transform is the tabular parser's.
 BigWigInterval = tuple[int, int, float]
 
 # The one column a bigWig has, for the bulk column-array read.  A record's
@@ -148,10 +145,8 @@ def build_bigwig_parser() -> BigWigParser:
     itself -- the same fusion of transform and record construction the tabular
     parser performs for its zero-based tables.  This reverses an earlier design
     point, which converted in the fetch methods and documented the parser as
-    having no transform of its own: converting a layer up meant allocating a
-    3-tuple per interval whose only purpose was to reach this function, which
-    read its three slots back out and dropped it.  Removing that object, and
-    the generator level built around it, is gain#823.
+    having no transform of its own: converting a layer up meant building a
+    3-tuple per interval whose only reader was this function (gain#823).
 
     The parser closes over nothing.  A bigWig has no configurable transform for
     it to specialise on -- it is a binary format with a fixed layout, its
@@ -285,13 +280,9 @@ class BigWigTable(GenomicPositionTable):
         assembles the record (see :func:`build_bigwig_parser`).
 
         The adaptive chunk walk is inlined here rather than sitting behind a
-        fetch generator of its own.  That generator yielded a converted
-        3-tuple per interval, built for no reader but the ``parser`` call on
-        the next line -- so removing it removes both a per-record object and a
-        generator level from the hottest loop in the read path (gain#823).
-        It remains the only fetch strategy: there used to be a second one that
-        kept a retained buffer across calls, measured a net loss on every
-        access pattern real data produces and removed (see
+        fetch generator of its own, which would resume once per record to hand
+        over an interval this method passes straight on (gain#823).  It is the
+        only fetch strategy; the retained-buffer one is gone (see
         ``docs/adr/0002-remove-bigwig-fetch-buffering.md``).
         """
         assert self.parser is not None
@@ -312,13 +303,12 @@ class BigWigTable(GenomicPositionTable):
                 f"{self.genomic_resource.resource_id}: contig {chrom!r} "
                 f"(mapped to {fchrom!r}) is not among the file's contigs: "
                 f"{sorted(self.chroms)}")
-        if pos_begin is None:
-            pos_begin = 0
-        if pos_end is None:
-            pos_end = self.chroms[fchrom]
-
-        start = max(0, pos_begin - 1)
-        stop = min(pos_end, self.chroms[fchrom])
+        # Same normalization as get_region_value_arrays', in the same shape:
+        # both walks bound themselves by the contig's length, and reading them
+        # side by side is what keeps them from drifting apart.
+        chrom_len = self.chroms[fchrom]
+        start = 0 if pos_begin is None else max(0, pos_begin - 1)
+        stop = chrom_len if pos_end is None else min(pos_end, chrom_len)
 
         while start < stop:
             # A generator that outlives close() must not look like a complete,

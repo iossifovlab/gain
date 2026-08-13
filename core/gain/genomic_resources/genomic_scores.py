@@ -782,13 +782,22 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         self.close()
 
     @staticmethod
-    def _backwards_record_error(record: Record) -> OSError:
+    def _inverted_span_error(record: Record) -> OSError:
         """Build the refusal for a record whose end precedes its begin.
 
         Returned rather than raised, so the raise stays at the site that read
         the slots -- and so the several sites that perform this check share
         one message.  Off the hot path by construction: a caller compares two
         integers per record and only calls this when the comparison fails.
+
+        Not to be confused with
+        :func:`~gain.genomic_resources.resource_errors.backwards_records_error`,
+        despite the neighbouring vocabulary: that one refuses a resource whose
+        records move backwards *along a contig*, raises
+        :class:`MalformedResourceError`, and belongs to ``validate_records``.
+        This one is about a single record's own two ends, and stays an
+        ``OSError`` -- the type the read path has always raised for it, and
+        the type the tests pin.
 
         The message names the record by its DECODED slots rather than
         interpolating it.  A record's last slot is the backend's payload, so
@@ -810,20 +819,15 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     def _record_to_begin_end(record: Record) -> tuple[str, int, int]:
         """Read a record's three positional slots, checking their order.
 
-        Three slot reads, no method call and no per-record object.
-
-        For a caller that wants the two positions and not the chrom, this is
-        the wrong door: it allocates a 3-tuple to carry a value the caller
-        drops on the next line, which is what the segment and allele-point
-        loops used to do per record (gain#823).  Those read their slots
-        directly and raise :meth:`_backwards_record_error` themselves.  The
-        method stays for the callers that DO want all three.
+        Returns the chrom as well, so it is the wrong door for a caller that
+        wants only the two positions: read the slots and raise
+        :meth:`_inverted_span_error` directly, as the per-record loops do.
         """
         chrom = record[CHROM]
         pos_begin = record[POS_BEGIN]
         pos_end = record[POS_END]
         if pos_end < pos_begin:
-            raise GenomicScore._backwards_record_error(record)
+            raise GenomicScore._inverted_span_error(record)
         return chrom, pos_begin, pos_end
 
     def _get_header(self) -> tuple[Any, ...] | None:
@@ -1186,7 +1190,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             rec_begin = record[POS_BEGIN]
             rec_end = record[POS_END]
             if rec_end < rec_begin:
-                raise self._backwards_record_error(record)
+                raise self._inverted_span_error(record)
             if pos_begin is not None and rec_end < pos_begin:
                 continue
 
@@ -1239,11 +1243,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         removed.
 
         The ordering rule is all it states.  The per-record path additionally
-        raises :meth:`_backwards_record_error` on a record whose end precedes
-        its begin; there is no array counterpart, because no backend the bulk
-        path reads can produce one (tabix refuses to index such a row, and a
-        bigWig cannot express it).  If that ever stops being true, this is
-        where the check belongs.
+        refuses a record whose end precedes its begin (the message is
+        :meth:`_inverted_span_error`); there is no array counterpart, because
+        no backend the bulk path reads can produce one (tabix refuses to index
+        such a row, and a bigWig cannot express it).  If that ever stops being
+        true, this is where the check belongs.
 
         ``chrom`` is what the batches were read for.  A bulk scan reads one
         region, which lies within one contig, so the implementations carry
@@ -2333,20 +2337,22 @@ class AlleleScore(GenomicScore):
         score_defs: list[GenomicScoreDef],
     ) -> Generator[
             tuple[int, int, list[ScoreValue]], None, None]:
-        """Stream one point per allele record, for a checked request."""
+        """Stream one point per allele record, for a checked request.
+
+        The point is POS_BEGIN, but POS_END is read too, to refuse a record
+        whose end precedes its begin: a different rule from anything the scan
+        validates, one no reader can proceed past, and one no other allele
+        read states -- ``validate_records`` states the scan's rules, and the
+        single-allele read matches on ref/alt without looking at the span.
+
+        Reads its slots directly and extracts inline, for the reasons
+        :meth:`GenomicScore._clipped_score_values` gives.
+        """
         extract = self._extract_value
         for record in records:
-            # The point is POS_BEGIN, but the ordering is still checked: a
-            # record whose end precedes its begin is a different rule from
-            # anything the scan validates, and one no reader can proceed past.
-            # Read off the slots rather than through ``_record_to_begin_end``,
-            # which would allocate a 3-tuple to carry back two values this
-            # loop drops (gain#823); the extractor is likewise hoisted out of
-            # the loop instead of reached through
-            # ``get_score_values_from_record`` per record.
             pos = record[POS_BEGIN]
             if record[POS_END] < pos:
-                raise self._backwards_record_error(record)
+                raise self._inverted_span_error(record)
             yield pos, pos, [
                 extract(record, score_def) for score_def in score_defs]
 
