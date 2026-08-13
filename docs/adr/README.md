@@ -78,6 +78,8 @@ of one decision will drift.
 | [0014](0014-gain-owns-the-10x-readers.md) | gain owns the 10x readers, and the statistics build never reads the data matrix | accepted; `gex_only` clause superseded by 0015 |
 | [0015](0015-a-10x-read-returns-the-whole-resource.md) | A 10x read returns the whole resource by default | accepted |
 | [0016](0016-grr-content-is-trusted-by-authorship.md) | GRR content is trusted by authorship | accepted |
+| [0017](0017-score-filtering-is-a-score-capability.md) | Record filtering is a genomic-score capability, not an annotator one | accepted; frozen-operator clause superseded by 0018 |
+| [0018](0018-score-filter-grammar-extension.md) | The score filter's precedence is declared, and its names are narrow | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;
