@@ -374,7 +374,8 @@ over it -- yielding ``(pos, ref, alt, values)`` where every other kind yields
 read, uniform across all three kinds.  Its REF/ALT were what the allele
 variant added, and nothing consumed them: a caller that needs the nucleotides
 reads ``record[REF]`` / ``record[ALT]`` off ``fetch_records``, which is what
-``AlleleScoreAnnotator`` and ``fetch_allele_record`` already did.
+``AlleleScoreAnnotator`` and ``AlleleScore._fetch_allele_record`` already
+did.
 
 **New export ``ContigExtent`` and a new abstract method
 ``find_chromosome_length``; ``get_chromosome_length`` is no longer abstract.**

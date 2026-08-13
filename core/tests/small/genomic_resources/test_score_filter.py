@@ -149,12 +149,14 @@ def test_a_matched_but_filtered_allele_reads_as_absent(
             "1", 10, "A", "C", score_filter=score_filter)
         rejected = score.fetch_allele_scores(
             "1", 10, "A", "G", score_filter=score_filter)
-        rejected_record = score.fetch_allele_record(
-            "1", 10, "A", "G", score_filter=score_filter)
+        absent = score.fetch_allele_scores(
+            "1", 10, "A", "T", score_filter=score_filter)
 
     assert kept == {"freq": pytest.approx(0.2)}
+    # The rejected allele and the one the resource does not carry at all are
+    # the same answer, which is the point.
     assert rejected is None
-    assert rejected_record is None
+    assert absent is None
 
 
 def test_an_allele_read_without_a_filter_is_unchanged(
@@ -163,10 +165,8 @@ def test_an_allele_read_without_a_filter_is_unchanged(
     """``score_filter=None`` is the whole of the old behaviour."""
     with allele_score.open() as score:
         scores = score.fetch_allele_scores("1", 10, "A", "G")
-        record = score.fetch_allele_record("1", 10, "A", "G")
 
     assert scores == {"freq": pytest.approx(0.1)}
-    assert record is not None
 
 
 @pytest.fixture

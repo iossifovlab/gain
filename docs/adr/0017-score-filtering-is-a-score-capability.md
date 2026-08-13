@@ -39,9 +39,9 @@ against score definitions, both of which belong to the score.
 
 **A filter is compiled by the score and passed back to its reads.**
 `GenomicScore.compile_filter(expression)` returns an opaque `ScoreFilter`;
-`fetch_records`, `fetch_allele_record`, `fetch_allele_scores` and
-`fetch_fragment_scores` take it as `score_filter`. `None` is exactly the
-pre-existing behaviour. Every score type inherits the capability from the
+`fetch_records`, `fetch_allele_scores` and `fetch_fragment_scores` take it
+as `score_filter`, as does the internal `_fetch_allele_record` they share.
+`None` is exactly the pre-existing behaviour. Every score type inherits the capability from the
 base, so a position score can be filtered without anyone adding a feature —
 on the *record* reads. The reads that answer values rather than records
 (`fetch_position_scores`, `fetch_region_segment_scores`, the bulk
@@ -75,6 +75,15 @@ record, so a foreign filter would extract by the wrong column. Two resources
 that both define `freq` is precisely the case where that produces a plausible
 wrong answer instead of an error, so it is checked (once per fetch, not per
 record) rather than left to the caller.
+
+**Two names narrowed while this landed**, both agreed in review of PR #819.
+`fetch_allele_record` became `_fetch_allele_record`: it hands back a
+`Record`, the allele read's own currency, and had no caller outside its
+class in `gain`, `gpf`, `web_api` or any annotator plugin. And
+`fetch_records` became a generator function — the docstring claiming its
+`return`-not-`yield` shape made a bad argument raise from the *call* was
+simply wrong, since every backend's `get_records_in_region` is itself a
+generator function, so it never did.
 
 **The annotators keep their configuration surface and nothing else.** The
 `allele_filter` / `fragment_filter` / `cnv_filter` spellings, their

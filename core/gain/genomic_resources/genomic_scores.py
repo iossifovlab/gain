@@ -831,8 +831,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         pos_end: int | None,
         *,
         score_filter: ScoreFilter | None = None,
-    ) -> Iterator[Record]:
-        """Fetch the records of a region, optionally filtered.
+    ) -> Generator[Record, None, None]:
+        """Yield the records of a region, optionally filtered.
 
         A caller reads a record's positional fields from its slots
         (``record[CHROM]``, ``record[POS_BEGIN]``, ...) and a score value
@@ -848,17 +848,21 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         A caller that wants every record of a table asks the table:
         ``score.table.get_all_records()``.
 
-        Not a generator function in the unfiltered case: it returns the
-        table's generator rather than delegating to it, so a bad argument
-        raises from the call and not from the first ``next()``.  The
-        filtered case is a generator over that same eagerly-obtained one, so
-        a bad argument still raises from the call.
+        Nothing here is checked before the first ``next()``, the filter's
+        ownership included: every backend's
+        ``get_records_in_region`` is itself a generator function, so an
+        unknown contig has always been reported from the first record read
+        rather than from the call, and there is no eagerness left to
+        preserve by structuring this any other way.
         """
-        if score_filter is None:
-            return self.table.get_records_in_region(chrom, pos_begin, pos_end)
-        score_filter.require_owner(self)
         records = self.table.get_records_in_region(chrom, pos_begin, pos_end)
-        return (record for record in records if score_filter(record))
+        if score_filter is None:
+            yield from records
+            return
+        score_filter.require_owner(self)
+        for record in records:
+            if score_filter(record):
+                yield record
 
     def get_score_value_from_record(
         self, record: Record, score_id: str,
@@ -2319,7 +2323,7 @@ class AlleleScore(GenomicScore):
             yield pos, pos, self.get_score_values_from_record(
                 record, score_defs)
 
-    def fetch_allele_record(
+    def _fetch_allele_record(
         self, chrom: str, pos: int, ref: str, alt: str,
         *,
         score_filter: ScoreFilter | None = None,
@@ -2337,11 +2341,11 @@ class AlleleScore(GenomicScore):
         filter runs on the RECORD, so a rejected allele costs no value
         extraction.
 
-        Hands back the record rather than its values, for a caller that
-        wants the positional fields or means to extract selectively.  A
-        caller that just wants the values asks :meth:`fetch_allele_scores`;
-        one that wants them off this record reads
-        :meth:`GenomicScore.get_score_value_from_record`.
+        Internal to the allele read: it hands back a RECORD, which is this
+        class's own currency and not something a caller outside it should
+        have to know how to read.  :meth:`fetch_allele_scores` is the
+        allele read; a caller that wants records for a whole region asks
+        :meth:`GenomicScore.fetch_records`.
         """
         for record in self.fetch_records(
                 chrom, pos, pos, score_filter=score_filter):
@@ -2359,8 +2363,7 @@ class AlleleScore(GenomicScore):
         """Fetch score values at specified genomic position and nucleotide.
 
         ``score_filter`` selects whether this allele is reported at all; an
-        allele it rejects reads as absent, exactly as an unmatched one does
-        (see :meth:`fetch_allele_record`).
+        allele it rejects reads as absent, exactly as an unmatched one does.
         """
         if chrom not in self.get_all_chromosomes():
             raise ValueError(
@@ -2370,7 +2373,7 @@ class AlleleScore(GenomicScore):
         requested_scores = scores or self.get_all_scores()
         score_defs = self._resolve_score_defs(requested_scores)
 
-        selected = self.fetch_allele_record(
+        selected = self._fetch_allele_record(
             chrom, position, reference, alternative,
             score_filter=score_filter)
         if selected is None:
