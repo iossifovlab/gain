@@ -1,0 +1,15 @@
+# Lint policy for this PROTOTYPE only -- the repo's ruff.toml, plus three
+# rules waived because each objects to something that is the point here:
+#
+#   SLF001  the prototype measures private internals (_fetch_chunk, _window,
+#           _extract_value, _record_to_begin_end).  Reaching for them is how
+#           it compares against today's path without editing today's path.
+#   FBT003  Config(True, True, True) and Verdict(False, n, msg) -- positional
+#           booleans in small NamedTuples whose field order IS the table
+#           layout the frames print.
+#   INP001  deliberately not a package.  Nothing in gain imports this, and an
+#           __init__.py would invite something to.
+extend = "../../../ruff.toml"
+
+[lint]
+extend-ignore = ["SLF001", "FBT003", "INP001"]
