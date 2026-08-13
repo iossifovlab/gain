@@ -20,7 +20,6 @@ from gain.utils.log_safety import escape_unsafe_characters
 if TYPE_CHECKING:
     from gain.genomic_resources.genomic_position_table.record import Record
     from gain.genomic_resources.genomic_scores import GenomicScore
-    from gain.genomic_resources.score_def import GenomicScoreDef
 
 #: The filter language.  Deliberately frozen at these operators; adding one
 #: is a change to what every score's configuration means, not a tweak.
@@ -181,10 +180,9 @@ def compile_score_filter(
 ) -> ScoreFilter:
     """Compile ``expression`` into a predicate over ``score``'s records.
 
-    Two things are settled here rather than per record: every variable is
-    resolved against the score's ``score_definitions``, so an unknown name
-    is refused now with the valid names listed; and each resolved
-    definition is captured, keeping the name lookup out of the read loop.
+    Every variable is checked against the score's ``score_definitions``
+    HERE, so an expression naming a score the resource does not define is
+    refused now, with the valid names, rather than per record at read time.
     """
     try:
         tree = _get_parser().parse(expression)
@@ -247,14 +245,10 @@ def _build_accessor(node: Any, score: GenomicScore) -> _RecordAccessor:
 
     if node.data.value == "variable":
         assert child.data.value == "word"
-        # Resolved to its DEFINITION here, not per record: the read below
-        # runs on every record of a scan, and the name->definition lookup
-        # is what :meth:`GenomicScore.get_score_values_from_record` exists
-        # to keep out of that loop.
-        score_def = _require_score_def(score, raw_value)
+        score_id = _require_score_id(score, raw_value)
 
         def read_score(record: Record) -> Any:
-            return score.get_score_value_from_def(record, score_def)
+            return score.get_score_value_from_record(record, score_id)
         return read_score
 
     literal: Any = raw_value
@@ -266,12 +260,11 @@ def _build_accessor(node: Any, score: GenomicScore) -> _RecordAccessor:
     return read_literal
 
 
-def _require_score_def(score: GenomicScore, name: str) -> GenomicScoreDef:
-    """Resolve a variable to its definition, refusing an unknown name."""
-    score_def = score.score_definitions.get(name)
-    if score_def is None:
+def _require_score_id(score: GenomicScore, name: str) -> str:
+    """Refuse a variable naming no score of this resource."""
+    if name not in score.score_definitions:
         raise ScoreFilterError(
             f"filter names {name!r}, which genomic score "
             f"<{score.resource_id}> does not define; it has "
             f"{sorted(score.score_definitions)}")
-    return score_def
+    return name

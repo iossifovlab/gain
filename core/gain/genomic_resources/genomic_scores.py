@@ -895,24 +895,6 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 f"{sorted(self.score_definitions)}")
         return [self.score_definitions[score_id] for score_id in scores]
 
-    def get_score_value_from_def(
-        self, record: Record, score_def: GenomicScoreDef,
-    ) -> ScoreValue:
-        """Read one score off a record, for an ALREADY-resolved def.
-
-        The singular counterpart of :meth:`get_score_values_from_record`,
-        for a caller that reads ONE score per record and can resolve its
-        name once -- a compiled :class:`ScoreFilter` variable is the case
-        this exists for.  Same reason as the bulk method: it keeps the
-        name->definition lookup out of the per-record loop.
-
-        The DEFINITION may be captured before the score is open; the
-        extractor may not, so it is read here rather than closed over.
-        ``open()`` fills a definition's column index in place, so the object
-        resolved earlier is the one this reads through.
-        """
-        return self._extract_value(record, score_def)
-
     def get_score_values_from_record(
         self, record: Record, score_defs: list[GenomicScoreDef],
     ) -> list[ScoreValue]:
