@@ -6,7 +6,7 @@ import enum
 import warnings
 from abc import abstractmethod
 from collections.abc import Generator, Iterator, Sequence
-from itertools import starmap
+from itertools import chain, starmap
 from types import TracebackType
 from typing import (
     TYPE_CHECKING,
@@ -75,6 +75,7 @@ from gain.genomic_resources.score_def import (
 from gain.genomic_resources.score_filter import (
     ScoreFilter,
     compile_score_filter,
+    select_records,
 )
 from gain.genomic_resources.score_resource import ScoreResource
 from gain.genomic_resources.vcf_scores import (
@@ -856,16 +857,14 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         ``get_records_in_region`` is itself a generator function, so an
         unknown contig has always been reported from the first record read
         rather than from the call, and there is no eagerness left to
-        preserve by structuring this any other way.
+        preserve by structuring this any other way.  That is a property of
+        *this* read rather than a rule for the family: a read that
+        materialises has no generator body to defer a refusal into, and
+        :meth:`AlleleScore.fetch_allele_records` accordingly refuses from
+        the call.
         """
         records = self.table.get_records_in_region(chrom, pos_begin, pos_end)
-        if score_filter is None:
-            yield from records
-            return
-        score_filter.require_owner(self)
-        for record in records:
-            if score_filter(record):
-                yield record
+        yield from select_records(self, records, score_filter)
 
     def get_score_value_from_record(
         self, record: Record, score_id: str,
@@ -2064,6 +2063,9 @@ class AlleleScore(GenomicScore):
 
     Key Methods:
         fetch_allele_scores: Get score values for a specific variant
+        fetch_allele_records: Get the records of a region, filtered, telling
+            a region holding no allele apart from one whose alleles were all
+            rejected
         fetch_region_segment_scores: Iterate over allele scores in a
             genomic region
         substitutions_mode: Check if operating in SUBSTITUTIONS mode
@@ -2326,11 +2328,11 @@ class AlleleScore(GenomicScore):
         filter runs on the RECORD, so a rejected allele costs no value
         extraction.
 
-        Internal to the allele read: it hands back a RECORD, which is this
-        class's own currency and not something a caller outside it should
-        have to know how to read.  :meth:`fetch_allele_scores` is the
-        allele read; a caller that wants records for a whole region asks
-        :meth:`GenomicScore.fetch_records`.
+        Internal to the allele read: :meth:`fetch_allele_scores` is the
+        per-allele read and hands back values, which is what a caller
+        asking about one allele wants.  A caller that wants the records of a
+        whole region asks :meth:`fetch_allele_records`, or
+        :meth:`GenomicScore.fetch_records` to stream them.
         """
         for record in self.fetch_records(
                 chrom, pos, pos, score_filter=score_filter):
@@ -2367,6 +2369,70 @@ class AlleleScore(GenomicScore):
             requested_scores,
             self.get_score_values_from_record(selected, score_defs),
             strict=True))
+
+    def fetch_allele_records(
+        self, chrom: str, pos_begin: int | None, pos_end: int | None,
+        *,
+        score_filter: ScoreFilter | None = None,
+    ) -> list[Record] | None:
+        """Return the allele records overlapping a region, or ``None``.
+
+        ``None`` means no record overlaps the region at all -- absent data.
+        A list means records were there, and holds the ones ``score_filter``
+        accepted, which may be none of them: ``[]`` is an empty selection.
+        The two are different answers and a caller may well report them
+        differently, which is the whole reason this read exists rather than
+        :meth:`GenomicScore.fetch_records` serving the same purpose -- an
+        iterator makes both an empty stream.
+
+        :meth:`FragmentScore.fetch_fragment_scores` deliberately has no
+        ``None``, and the difference is in the data rather than in taste: a
+        region is spanned by fragments as a matter of course, so "no
+        fragment covers it" is a count of zero.  Allele records sit at
+        points, most of a genome carries none, and a region holding no
+        allele is the same absent data that :meth:`fetch_allele_scores`
+        already answers ``None`` for.
+
+        ``score_filter`` -- from :meth:`GenomicScore.compile_filter` -- is
+        applied inside the read, so a rejected record costs no value
+        extraction and the ownership check covers this path too.
+
+        Records, not values: a caller wants the nucleotides and the position
+        as well as the scores, reads several scores off one record, and may
+        read scores this method was never told about.  Handing back dicts
+        would settle all three for it, and wrongly.  Values come off a
+        record through :meth:`get_score_value_from_record`.
+
+        A contig the resource does not have is refused, as the other allele
+        reads refuse it, and refused from the call: answering ``None`` would
+        make a caller's typo indistinguishable from real absent data.  This
+        read materialises, so there is no generator body to defer the
+        refusal into -- unlike :meth:`GenomicScore.fetch_records`, which
+        reports it from the first record read.
+
+        Materialising is what the ``list``/``None`` answer costs: a caller
+        reading a region far larger than it can hold wants the streaming
+        read instead.  Records the filter rejects are never held, though --
+        only the accepted ones accumulate.
+        """
+        if chrom not in self.get_all_chromosomes():
+            raise ValueError(
+                f"{chrom} is not among the available chromosomes for "
+                f"allele score resource {self.resource_id}")
+        if score_filter is not None:
+            # Here rather than left to the application below, which a
+            # region holding no record never reaches: a foreign filter is a
+            # programming error and must not be refused on a populated
+            # region and accepted on an empty one.  `select` checks it
+            # again, at the cost of one identity comparison per read.
+            score_filter.require_owner(self)
+
+        overlapping = self.fetch_records(chrom, pos_begin, pos_end)
+        first = next(overlapping, None)
+        if first is None:
+            return None
+        return list(select_records(
+            self, chain([first], overlapping), score_filter))
 
 
 class FragmentScore(GenomicScore):

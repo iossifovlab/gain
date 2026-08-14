@@ -10,7 +10,7 @@ from __future__ import annotations
 import functools
 import operator
 import textwrap
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from typing import TYPE_CHECKING, Any
 
 from lark import Lark, LarkError, Token, Tree
@@ -199,13 +199,50 @@ class ScoreFilter:
             f"<{score.resource_id}>; compile it through the score you are "
             f"reading")
 
-    def __call__(self, record: Record) -> bool:
-        """Whether this record passes the filter."""
-        return self._predicate(record)
+    def select(
+        self, score: GenomicScore, records: Iterable[Record],
+    ) -> Iterator[Record]:
+        """Yield the records of ``score`` this filter accepts.
+
+        The only way to apply a filter, and it takes the score being read
+        rather than the records alone, so :meth:`require_owner` cannot be
+        forgotten: there is no reachable way to test a record against a
+        filter without first saying which score the record came from.  The
+        predicate itself stays private for that reason.
+
+        Applying the predicate used to be the caller's own business, and the
+        allele annotator's region path was the one caller that did it -- the
+        single filter application the ownership check could not cover
+        (ADR 0017).  It reads through this now, as every other path does.
+
+        Lazy, and the ownership check is not: a foreign filter is refused
+        from the call, before any record is read, because it is a
+        programming error rather than a property of the data.  A caller
+        that defers this call into a generator body defers the refusal with
+        it -- :meth:`GenomicScore.fetch_records` does, and says so.
+        """
+        self.require_owner(score)
+        return (record for record in records if self._predicate(record))
 
     def __repr__(self) -> str:
         return (f"ScoreFilter({self.expression!r}, "
                 f"score=<{self.score.resource_id}>)")
+
+
+def select_records(
+    score: GenomicScore,
+    records: Iterable[Record],
+    score_filter: ScoreFilter | None,
+) -> Iterator[Record]:
+    """Apply an optional filter to a record stream.
+
+    Every read takes its filter as ``ScoreFilter | None``, so every read
+    would otherwise answer "and what does absent mean?" for itself.  It
+    means the records unchanged, and it means that in one place.
+    """
+    if score_filter is None:
+        return iter(records)
+    return score_filter.select(score, records)
 
 
 class ScoreFilterError(ValueError):
