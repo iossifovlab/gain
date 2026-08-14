@@ -3,8 +3,8 @@
 // path below loads this repo's `Jenkinsfile.nightly`.
 //
 // The job is cron-triggered (~02:00 UTC) and rebuilds master plus
-// the integration suites (gain-web-e2e + gain-vep-integration)
-// unconditionally.
+// the integration suites unconditionally, then deploys the image it
+// just validated to the gain.seqpipe.org staging host.
 //
 // tb-7e7: cron MUST live in this DSL, not in Jenkinsfile.nightly.
 // gain-seed re-applies the DSL on every master push (pollSCM every
@@ -22,10 +22,15 @@
 pipelineJob('gain-nightly') {
     description(
         'Cron-scheduled orchestrator that rebuilds master from ' +
-        'scratch and re-runs gain-web-e2e + gain-vep-integration ' +
+        'scratch and re-runs gain-web-e2e, gain-vep-integration, ' +
+        'gain-spliceai-integration and gain-python-matrix ' +
         'unconditionally. Catches dependency drift / silently-' +
-        'stale caches on quiet days. Sends a Zulip alert on ' +
-        'failure (topic: nightly).')
+        'stale caches on quiet days. If all of them pass, it then ' +
+        'triggers gain-staging-deploy to put the image this build ' +
+        'validated (pinned to the master rebuild\'s BUILD_NUMBER) ' +
+        'on pooh / gain.seqpipe.org — so staging only ever moves ' +
+        'to a verified master. Sends a Zulip alert on failure ' +
+        '(topic: nightly).')
 
     logRotator {
         numToKeep(40)

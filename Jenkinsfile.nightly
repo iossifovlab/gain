@@ -2,7 +2,8 @@
 // and re-runs the integration jobs unconditionally. Catches
 // dependency drift / silently-stale caches on quiet days.
 //
-// Four downstreams are exercised:
+// Five validation downstreams are exercised, then the validated
+// image is deployed to staging:
 //   - iossifovlab/gain/master        — full rebuild, lint+tests+
 //                                      wheels+conda+prod images
 //   - /gain-web-e2e                  — Playwright e2e against the
@@ -11,15 +12,26 @@
 //   - /gain-vep-integration          — VEP integration tests
 //                                      (otherwise gated on
 //                                      vep_annotator/** changes)
+//   - /gain-spliceai-integration     — spliceai integration tests
+//                                      against the real hg38/GENCODE
+//                                      resources
 //   - /gain-python-matrix            — pytest matrix across
 //                                      Python 3.12/3.13/3.14 for
 //                                      core, demo_annotator,
 //                                      vep_annotator, web_api
+//   - /gain-staging-deploy           — deploys gainweb to pooh
+//                                      (gain.seqpipe.org) pinned to
+//                                      the master rebuild's
+//                                      BUILD_NUMBER. Gated on all of
+//                                      the above being green.
 //
-// Each is wrapped in `catchError` so a failure in one doesn't mask
-// the others. By morning we want a single Zulip alert whose linked
-// build surfaces every failing downstream, not just whichever
-// broke first.
+// The five validation stages are wrapped in `catchError` so a
+// failure in one doesn't mask the others. By morning we want a
+// single Zulip alert whose linked build surfaces every failing
+// downstream, not just whichever broke first. The deploy stage uses
+// a `when` gate instead: "deploy the nightly image" means *verified*
+// master, not merely recent master — putting a known-bad build on
+// staging is the one outcome this job exists to prevent.
 
 // Zulip failure alert (seqpipe/infra#105). Verbatim copy of the block
 // proven in #809 — do not re-derive it. This job already alerted only
@@ -76,11 +88,59 @@ pipeline {
             steps {
                 catchError(buildResult: 'FAILURE',
                            stageResult: 'FAILURE') {
-                    build(
-                        job: 'iossifovlab/gain/master',
-                        wait: true,
-                        propagate: true,
-                    )
+                    script {
+                        // Capture the downstream build's BUILD_NUMBER
+                        // so `Deploy on pooh` can pin gainweb's image
+                        // tag to exactly the image this nightly
+                        // validated. Without the pin, a regular master
+                        // push landing during the multi-hour nightly
+                        // window would race — pooh would deploy
+                        // whatever :latest points at when the deploy
+                        // stage runs, NOT what we tested. The master
+                        // build publishes :${BUILD_NUMBER} alongside
+                        // :${GIT_SHORT} and :latest, and the root
+                        // Jenkinsfile calls those three a *published*
+                        // contract (the release pipeline already
+                        // selects an upstream build by :${BUILD_NUMBER}
+                        // the same way).
+                        def rebuild = build(
+                            job: 'iossifovlab/gain/master',
+                            wait: true,
+                            propagate: true,
+                        )
+                        env.MASTER_REBUILD_NUMBER =
+                            rebuild.number.toString()
+                        // ...and whether that build actually published
+                        // an image at all. `Build & push prod images`
+                        // is gated `not DOCS_ONLY`, so a master build
+                        // whose whole changeset lives under docs/
+                        // succeeds WITHOUT pushing :${BUILD_NUMBER} —
+                        // pinning to it would then fail the deploy with
+                        // an opaque "manifest unknown". The usual
+                        // nightly case is an empty changeset, which the
+                        // root Jenkinsfile deliberately scores as
+                        // DOCS_ONLY=false, so this only bites when a
+                        // docs-only commit lands in the window between
+                        // the previous master build and this one.
+                        // (gpf's `Fetch gain wheel` learned the same
+                        // lesson the hard way against the same gate.)
+                        //
+                        // Reading it must never be what breaks the
+                        // deploy, so this fails OPEN: anything other
+                        // than a positive 'true' deploys, matching the
+                        // root Jenkinsfile's own bias of short-circuiting
+                        // only when it positively knows. Same defensive
+                        // shape as zulipAlert() below.
+                        try {
+                            env.MASTER_REBUILD_DOCS_ONLY =
+                                rebuild.buildVariables?.get('DOCS_ONLY') ?:
+                                    'unknown'
+                        } catch (ignored) {
+                            env.MASTER_REBUILD_DOCS_ONLY = 'unknown'
+                        }
+                        echo "Master rebuild #${env.MASTER_REBUILD_NUMBER} " +
+                             "(DOCS_ONLY=${env.MASTER_REBUILD_DOCS_ONLY})"
+                    }
                 }
             }
         }
@@ -138,6 +198,61 @@ pipeline {
                         propagate: true,
                     )
                 }
+            }
+        }
+
+        stage('Deploy on pooh') {
+            // Deploys the gainweb stack to pooh (gain.seqpipe.org),
+            // pinned to the master rebuild's BUILD_NUMBER.
+            //
+            // The gate is the feature. If the e2e / vep / spliceai /
+            // python-matrix stages tripped, this is skipped and
+            // staging keeps yesterday's working build — `currentResult`
+            // is already FAILURE/UNSTABLE by then, because every
+            // catchError above sets it. UNSTABLE counts as "not green"
+            // deliberately: lint/type gates mark the build UNSTABLE
+            // rather than FAILURE, and an image that fails them is not
+            // one to put on staging unattended overnight.
+            //
+            // NOT wrapped in catchError — if the deploy itself fails
+            // after the gate passed, we want the nightly to go red and
+            // alert. That is the whole reporting path this stage needs:
+            // the existing post { failure { zulipSend(topic: 'nightly') } }
+            // already carries it, which is why `wait: true,
+            // propagate: true` is required here. The nightly's other
+            // downstream triggers use the same shape; the `wait: false`
+            // fire-and-forget pattern (and its branch-deletion caveat,
+            // #489) belongs to the ROOT Jenkinsfile's branch-scoped
+            // triggers, and applies to neither this stage nor the ones
+            // above it. gain-staging-deploy takes no branch parameter
+            // at all — its Job DSL pins the pipeline to gain-infra's
+            // master — so no branch can be deleted out from under it.
+            //
+            // Unlike gpf-nightly's equivalent there is no wipe: this
+            // deployment is never destroyed, so backend-migrate runs
+            // against a long-lived database that accumulates state
+            // across months of master builds. That is more
+            // production-like, and it makes the deploy job's
+            // pre-deploy pg_dump load-bearing rather than decorative —
+            // it is the only way back from a bad migration.
+            when {
+                expression {
+                    currentBuild.currentResult == 'SUCCESS' &&
+                        env.MASTER_REBUILD_DOCS_ONLY != 'true'
+                }
+            }
+            steps {
+                build(
+                    job: '/gain-staging-deploy',
+                    wait: true,
+                    propagate: true,
+                    parameters: [
+                        string(
+                            name: 'IMAGE_TAG',
+                            value: env.MASTER_REBUILD_NUMBER,
+                        ),
+                    ],
+                )
             }
         }
     }
