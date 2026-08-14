@@ -510,23 +510,21 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 
         Aggregation is handled by AnnotatorBase._apply_aggregators.
         """
+        records = self.allele_score.fetch_allele_records(
+            annotatable.chrom, annotatable.position, annotatable.pos_end,
+            score_filter=self.allele_filter,
+        )
+        # `None` is absent data and `[]` an empty selection -- the read
+        # tells them apart so this path does not have to count records
+        # before filtering them, and the filter runs inside the fetch.
+        if records is None:
+            return self._empty_result()
+
         raw: dict[str, list] = {
             source: [] for source in self.allele_score_sources}
         alleles: set[str] = set()
-        has_lines = False
 
-        for record in self.allele_score.fetch_records(
-            annotatable.chrom, annotatable.position, annotatable.pos_end,
-        ):
-            # Counted BEFORE the filter: "no lines here" and "no line the
-            # filter kept" are different answers -- the first is absent data
-            # and the second an empty selection -- so the filter cannot be
-            # pushed into the fetch on this path.
-            has_lines = True
-            if self.allele_filter is not None \
-                    and not self.allele_filter(record):
-                continue
-
+        for record in records:
             for source in self.allele_score_sources:
                 raw[source].append(
                     self.allele_score.get_score_value_from_record(
@@ -544,9 +542,6 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                         for a in self.attrs_to_include)
                     allele_str += f":{attrs_str}"
                 alleles.add(allele_str)
-
-        if not has_lines:
-            return self._empty_result()
 
         result = {
             attr.source: raw.get(attr.source) for attr in self.attributes

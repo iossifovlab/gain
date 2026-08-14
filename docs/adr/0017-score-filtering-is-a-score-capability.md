@@ -39,8 +39,11 @@ against score definitions, both of which belong to the score.
 
 **A filter is compiled by the score and passed back to its reads.**
 `GenomicScore.compile_filter(expression)` returns an opaque `ScoreFilter`;
-`fetch_records`, `fetch_allele_scores` and `fetch_fragment_scores` take it
-as `score_filter`, as does the internal `_fetch_allele_record` they share.
+`fetch_records`, `fetch_allele_scores`, `fetch_allele_records` (added by
+gain#820) and `fetch_fragment_scores` take it as `score_filter`, as does
+the internal `_fetch_allele_record` they share. Applying one is
+`ScoreFilter.select(score, records)`, or `select_records(...)` where the
+filter is optional.
 `None` is exactly the pre-existing behaviour. Every score type inherits the capability from the
 base, so a position score can be filtered without anyone adding a feature —
 on the *record* reads. The reads that answer values rather than records
@@ -109,23 +112,40 @@ exist, and one whose number is malformed (`0.5.5` parsed and then failed on
 `float()`; it now fails to parse). Each was already an error; each now
 reports as one, earlier and by name.
 
-The region path of the allele annotator still filters *outside* the fetch,
-and so does not get this capability. It must distinguish "no records here"
-(absent data) from "no record the filter kept" (an empty selection), and
-those are different answers to its caller — while `fetch_records` returns a
-plain iterator, in which both are an empty stream.
+The region path of the allele annotator filtered *outside* the fetch when
+this decision first landed, and so did not get the capability. It has to
+distinguish "no records here" (absent data) from "no record the filter kept"
+(an empty selection), and those are different answers to its caller — while
+`fetch_records` returns a plain iterator, in which both are an empty stream.
 
-That is a limit of the *fetch signature*, not of the idea: a region read
-answering `list[Record] | None` would express the distinction exactly as
-`fetch_allele_scores` already does for a single allele, and both annotator
-paths could then share one mechanism. Widening that signature is a change to
-the read family this issue does not touch, so it is left as follow-up. Until
-it lands, anything added to `fetch_records` — skipping extraction for
-rejected records, pushing a predicate down to the tabix layer — reaches the
-per-allele path and not the region path, which is the one that reads more
-records. `ScoreFilter.__call__` stays public for the same reason: the region
-path is the one caller that applies a filter itself, and the ownership check
-cannot cover it.
+That was a limit of the *fetch signature*, not of the idea, and gain#820
+lifted it. `AlleleScore.fetch_allele_records` answers `list[Record] | None`
+and takes a `score_filter`: `None` is a region no record overlaps, `[]` a
+region whose records the filter all rejected. The distinction is expressed
+in the read, exactly as `fetch_allele_scores` already expressed it for a
+single allele, so no caller applies a filter itself any more.
+
+What that buys is narrower than "both paths now share one mechanism", and
+worth stating precisely. The region read still applies the filter *above*
+`fetch_records`, because the peek that tells its two answers apart has to
+see the records the filter would reject. So a predicate pushed down into
+`fetch_records` or into the tabix layer would reach the per-allele path and
+still not the region path; making it reach both means changing this read
+too. What is now shared is the application point and the ownership check —
+which is what stops the two paths disagreeing about what a filter *means*,
+the drift the follow-up was really about.
+
+`ScoreFilter.__call__` is gone with it. Applying a filter is now
+`ScoreFilter.select(score, records)`, which performs the ownership check
+itself and is the only way in; the per-record test is private. The point is
+not that the one uncovered application was removed but that another cannot
+be written: a caller has no way to test a record against a filter without
+naming the score the record came from.
+
+`FragmentScore.fetch_fragment_scores` keeps answering `[]` with no `None`.
+The asymmetry is in the data, not an oversight — a region is spanned by
+fragments as a matter of course, so "none cover it" is a count of zero,
+whereas most of a genome carries no allele record at all.
 
 ## Alternatives rejected
 

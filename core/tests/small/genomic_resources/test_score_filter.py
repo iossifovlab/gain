@@ -2,6 +2,7 @@
 import pathlib
 
 import pytest
+from gain.genomic_resources.genomic_position_table.record import ALT, REF
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     FragmentScore,
@@ -273,6 +274,112 @@ def test_a_negated_clause_reaches_the_allele_read(
 
     assert kept == {"freq": pytest.approx(0.1)}
     assert rejected is None
+
+
+def test_the_region_read_drops_the_alleles_the_filter_rejects(
+    allele_score: AlleleScore,
+) -> None:
+    """The region read filters inside the fetch, as the per-allele one does.
+
+    Its caller no longer applies the predicate itself, so this is the only
+    place the rejection can happen.
+    """
+    with allele_score.open() as score:
+        score_filter = score.compile_filter("freq > 0.15")
+
+        records = score.fetch_allele_records(
+            "1", 10, 10, score_filter=score_filter)
+
+        assert records is not None
+        kept = [
+            (record[REF], record[ALT],
+             score.get_score_value_from_record(record, "freq"))
+            for record in records
+        ]
+
+    assert kept == [("A", "C", pytest.approx(0.2))]
+
+
+def test_a_region_keeping_no_allele_is_not_a_region_holding_none(
+    allele_score: AlleleScore,
+) -> None:
+    """``[]`` is an empty selection; ``None`` is absent data.
+
+    The distinction this read exists for.  Its caller answers differently
+    for each -- an empty list of alleles against no allele attribute at all
+    -- and a plain record iterator makes both an empty stream, which is why
+    the region path could not filter inside the fetch before.
+    """
+    with allele_score.open() as score:
+        score_filter = score.compile_filter("freq > 2.0")
+
+        kept_none = score.fetch_allele_records(
+            "1", 10, 10, score_filter=score_filter)
+        no_records = score.fetch_allele_records(
+            "1", 200, 300, score_filter=score_filter)
+
+    assert kept_none == []
+    assert no_records is None
+
+
+def test_the_region_read_refuses_a_filter_of_a_different_score(
+    allele_score: AlleleScore,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Ownership is checked here as on every other filtered read.
+
+    Refused from the call rather than from the first record: this read
+    answers a list, so there is no generator body to defer it into.
+    """
+    other = build_allele_score_from_resource(
+        an_allele_score()
+        .with_score("padding", "str")
+        .with_score("freq", "float")
+        .with_data("""
+            chrom  pos_begin  reference  alternative  padding  freq
+            1      10         A          G            x        0.9
+        """)
+        .build_resource(tmp_path / "other"))
+
+    with allele_score.open() as score, other.open() as other_score:
+        foreign = score.compile_filter("freq > 0.15")
+
+        with pytest.raises(ScoreFilterError) as excinfo:
+            other_score.fetch_allele_records(
+                "1", 10, 10, score_filter=foreign)
+
+    assert "compiled against" in str(excinfo.value)
+
+
+def test_the_region_read_refuses_a_foreign_filter_on_an_empty_region_too(
+    allele_score: AlleleScore,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Where there is no record to discover the mismatch on.
+
+    A foreign filter is a programming error, so it must not be refused for
+    a region holding records and accepted for one holding none -- a typo
+    answering differently on a populated contig than on an empty one is
+    what the eager checks in this module exist to prevent.
+    """
+    other = build_allele_score_from_resource(
+        an_allele_score()
+        .with_score("padding", "str")
+        .with_score("freq", "float")
+        .with_data("""
+            chrom  pos_begin  reference  alternative  padding  freq
+            1      10         A          G            x        0.9
+        """)
+        .build_resource(tmp_path / "other"))
+
+    with allele_score.open() as score, other.open() as other_score:
+        foreign = score.compile_filter("freq > 0.15")
+
+        with pytest.raises(ScoreFilterError) as excinfo:
+            other_score.fetch_allele_records(
+                "1", 200, 300, score_filter=foreign)
+
+    assert "compiled against" in str(excinfo.value)
 
 
 def test_a_fragment_filter_may_name_a_score_that_was_not_requested(

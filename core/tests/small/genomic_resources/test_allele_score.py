@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
+import pathlib
 import textwrap
 
 import pytest
@@ -10,9 +11,11 @@ from gain.genomic_resources.genomic_position_table.record import (
 )
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
+    build_allele_score_from_resource,
 )
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME, GenomicResource
 from gain.genomic_resources.testing import build_inmemory_test_resource
+from gain.genomic_resources.testing.builders import an_allele_score
 
 
 def build_allele_resource(config: str, data: str) -> GenomicResource:
@@ -20,6 +23,23 @@ def build_allele_resource(config: str, data: str) -> GenomicResource:
         GR_CONF_FILE_NAME: textwrap.dedent(config),
         "data.mem": textwrap.dedent(data),
     })
+
+
+@pytest.fixture
+def region_allele_score(tmp_path: pathlib.Path) -> AlleleScore:
+    """Two alleles at one position and a third further along."""
+    resource = (
+        an_allele_score()
+        .with_score("freq", "float")
+        .with_data("""
+            chrom  pos_begin  reference  alternative  freq
+            1      10         A          G            0.1
+            1      10         A          C            0.2
+            1      16         C          T            0.3
+        """)
+        .build_resource(tmp_path)
+    )
+    return build_allele_score_from_resource(resource)
 
 
 def test_the_simplest_allele_score() -> None:
@@ -294,3 +314,62 @@ def test_allele_score_fetch_region_spanning_record_at_pos_begin() -> None:
     # The nucleotides come off the record, not the values stream.
     assert [(r[POS_BEGIN], r[REF], r[ALT])
             for r in score.fetch_records("1", 10, 12)] == [(10, "A", "G")]
+
+
+def test_a_region_no_allele_overlaps_reads_as_absent(
+    region_allele_score: AlleleScore,
+) -> None:
+    """``None`` is absent data -- no record is there to have an opinion.
+
+    Distinct from the empty selection an accompanying filter can produce,
+    which is what this read exists to tell apart.
+    """
+    with region_allele_score.open() as score:
+        records = score.fetch_allele_records("1", 200, 300)
+
+    assert records is None
+
+
+def test_a_region_reads_every_allele_that_overlaps_it(
+    region_allele_score: AlleleScore,
+) -> None:
+    """Several records legitimately share a position; each is its own.
+
+    Compared as a set: which alleles come back is this read's business,
+    while the order they arrive in is the table's, and differs by backend.
+    """
+    with region_allele_score.open() as score:
+        records = score.fetch_allele_records("1", 10, 16)
+
+    assert records is not None
+    assert {(r[POS_BEGIN], r[REF], r[ALT]) for r in records} == {
+        (10, "A", "C"),
+        (10, "A", "G"),
+        (16, "C", "T"),
+    }
+
+
+def test_a_region_read_takes_the_contig_bounds_as_its_default(
+    region_allele_score: AlleleScore,
+) -> None:
+    """``None`` bounds mean the whole contig, as they do for the table."""
+    with region_allele_score.open() as score:
+        records = score.fetch_allele_records("1", None, None)
+
+    assert records is not None
+    assert len(records) == 3
+
+
+def test_a_region_read_refuses_a_contig_the_resource_does_not_have(
+    region_allele_score: AlleleScore,
+) -> None:
+    """A contig that does not exist is not a region holding nothing.
+
+    Refused as the per-allele and fragment reads refuse it: answering
+    ``None`` would make a caller's typo indistinguishable from real absent
+    data.
+    """
+    with region_allele_score.open() as score, pytest.raises(
+        ValueError, match="not among the available chromosomes",
+    ):
+        score.fetch_allele_records("2", 10, 16)
