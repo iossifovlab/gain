@@ -130,6 +130,11 @@ class FileCacheVerdict(NamedTuple):
 _COPY_MAX_ATTEMPTS = 4
 _COPY_BACKOFF_BASE = 5  # seconds; delays are 5s, 15s, 45s
 
+#: Directory inside a resource holding the protocol's own bookkeeping --
+#: per-file ``.state`` documents, lockfiles, and partial downloads. Not part
+#: of the resource: everything that enumerates resource files skips it.
+GRR_INTERNAL_DIR = ".grr"
+
 
 class ChecksumMismatchError(OSError):
     """A completed download whose md5 disagrees with the manifest.
@@ -1331,7 +1336,8 @@ class FsspecReadWriteProtocol(
             raise NotImplementedError(self._non_local_lock_message())
         validate_resource_file_name(resource.resource_id, filename)
         resource_url = self.get_resource_url(resource)
-        path = os.path.join(resource_url, ".grr", f"{filename}.lockfile")
+        path = os.path.join(
+            resource_url, GRR_INTERNAL_DIR, f"{filename}.lockfile")
         return path.removeprefix(f"{self.scheme}://")
 
     def _non_local_lock_message(self) -> str:
@@ -1732,7 +1738,8 @@ class FsspecReadWriteProtocol(
         """
         validate_resource_file_name(resource.resource_id, filename)
         resource_url = self.get_resource_url(resource)
-        return os.path.join(resource_url, ".grr", f"{filename}.state")
+        return os.path.join(
+            resource_url, GRR_INTERNAL_DIR, f"{filename}.state")
 
     def _get_resource_file_download_path(
             self, resource: GenomicResource, filename: str) -> str:
@@ -1751,7 +1758,8 @@ class FsspecReadWriteProtocol(
         validate_resource_file_name(resource.resource_id, filename)
         resource_url = self.get_resource_url(resource)
         return os.path.join(
-            resource_url, ".grr", f"{filename}.{uuid.uuid4().hex}.part")
+            resource_url, GRR_INTERNAL_DIR,
+            f"{filename}.{uuid.uuid4().hex}.part")
 
     def get_resource_file_timestamp(
             self, resource: GenomicResource, filename: str) -> float:
