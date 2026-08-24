@@ -7,11 +7,15 @@ occur inside a value. See iossifovlab/gain#852.
 """
 from io import StringIO
 
+import pytest
 from gain.genomic_resources.gene_models.gene_models import GeneModels
 from gain.genomic_resources.gene_models.gene_models_factory import (
     build_gene_models_from_resource,
 )
 from gain.genomic_resources.gene_models.parsers import (
+    _parse_gtf_attributes,
+    escape_default_attribute,
+    parse_default_attributes,
     parse_default_gene_models_format,
 )
 from gain.genomic_resources.gene_models.serialization import (
@@ -65,3 +69,52 @@ def test_gtf_note_with_semicolon_survives_default_roundtrip() -> None:
     attributes = _default_format_roundtrip(gene_models)
 
     assert attributes["note"] == NOTE_WITH_SEMICOLON
+
+
+def test_gtf_note_fragment_without_a_space_is_not_a_new_attribute() -> None:
+    """The D. melanogaster case: a fragment that is a single bare word."""
+    note = "lncRNA:CR40469-RA; Dmel\\lncRNA:CR40469-RA; CR40469-RA"
+
+    attributes = _parse_gtf_attributes(f'transcript_id "T1"; note "{note}";')
+
+    assert attributes == {"transcript_id": "T1", "note": note}
+
+
+def test_gtf_attribute_value_cannot_inject_a_key() -> None:
+    """A value that looks like more attributes stays a value."""
+    attributes = _parse_gtf_attributes(
+        'gene_id "G1"; note "evil; gene_name "HACKED"";',
+    )
+
+    assert "gene_name" not in attributes
+    assert attributes["gene_id"] == "G1"
+
+
+def test_gtf_malformed_attribute_reports_the_offending_text() -> None:
+    with pytest.raises(ValueError, match="CR40469-RA"):
+        _parse_gtf_attributes('transcript_id "T1"; CR40469-RA;')
+
+
+def test_gtf_unterminated_quote_reports_the_offending_text() -> None:
+    with pytest.raises(ValueError, match="unterminated quote"):
+        _parse_gtf_attributes('transcript_id "T1; note "x";')
+
+
+def test_default_attributes_roundtrip_preserves_every_delimiter() -> None:
+    value = "before; after: inner\\slash"
+
+    escaped = escape_default_attribute(value)
+
+    assert parse_default_attributes(f"note:{escaped}") == {"note": value}
+
+
+def test_default_attributes_keep_unknown_backslash_sequences() -> None:
+    """Values written before escaping was introduced read back unchanged."""
+    assert parse_default_attributes("note:Dmel\\lncRNA_CR40469-RA") == {
+        "note": "Dmel\\lncRNA_CR40469-RA",
+    }
+
+
+def test_default_attributes_malformed_pair_reports_the_offending_text() -> None:
+    with pytest.raises(ValueError, match="orphan"):
+        parse_default_attributes("note:fine;orphan")
