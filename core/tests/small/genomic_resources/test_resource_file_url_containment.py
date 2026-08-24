@@ -692,8 +692,8 @@ def test_poisoned_manifest_entry_still_fails_on_access(
 
 @pytest.mark.parametrize("argv", [
     ["list"],
-    ["repo-repair"],
-    ["resource-repair", "--resource", "good_one"],
+    ["repo-repair", "-j", "1"],
+    ["resource-repair", "--resource", "good_one", "-j", "1"],
 ])
 def test_grr_manage_survives_a_poisoned_resource(
     poisoned_repo_path: pathlib.Path, argv: list[str],

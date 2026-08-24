@@ -23,6 +23,9 @@ from gain.task_graph.executor import (
 )
 from gain.task_graph.graph import Task, TaskGraph
 
+# The whole file's subject is the dask executor (#851).
+pytestmark = pytest.mark.dask_executor
+
 
 def noop() -> None:
     pass
