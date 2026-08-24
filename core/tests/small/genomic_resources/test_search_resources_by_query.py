@@ -1,5 +1,26 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""``search_resources(resource_query=...)`` across the repository layers."""
+"""``search_resources(resource_query=...)`` across the repository layers.
+
+The repository fixtures below are module-scoped. Each builds a *constant*
+repository and every consuming test only queries it -- nothing writes to a
+repository directory after it is built. ``search_resources`` reads
+``.CONTENTS.json.gz``, and the indexed route deserializes
+``.CONTENTS.sqlite3.gz`` into an ``:memory:`` connection per search
+(``FsspecReadOnlyProtocol.open_repository_metadata``), so no two tests share a
+connection and no query can leave a trace another test could read.
+
+Read-only-ness is decided per fixture, not wholesale. The two fixtures that
+rebuild a repository over its own published index do that rebuild *inside the
+fixture body*, once, before any test using them runs, and each still owns its
+own directory -- the mutation is fixture setup rather than something a test
+does. ``index_predating_a_non_mapping_labels`` has a single consumer and stays
+function-scoped, since sharing would save nothing.
+
+The scope matters because this module is setup-bound: 286 items that share
+~0.15s of query time between them were rebuilding a repository and its FTS
+index apiece (gain#863). Under ``pytest -n`` each worker builds its own copy
+of what it needs, so this is once per worker, not once per run.
+"""
 import gzip
 import pathlib
 from typing import Any
@@ -27,8 +48,10 @@ from gain.genomic_resources.testing.builders import (
 )
 
 
-@pytest.fixture
-def unindexed_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
+@pytest.fixture(scope="module")
+def unindexed_grr(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> GenomicResourceProtocolRepo:
     """A repository with resources and labels but no FTS index.
 
     The builders write ``.CONTENTS.json.gz`` and no ``.CONTENTS.sqlite3.gz``,
@@ -49,7 +72,7 @@ def unindexed_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
             "other/res_c",
             a_position_score().with_labels(domain="domain_a"),
         )
-        .build_repo(tmp_path)
+        .build_repo(tmp_path_factory.mktemp("unindexed_grr"))
     )
 
 
@@ -97,17 +120,20 @@ def _labelled_repository(res_a_labels: dict[str, Any]) -> GRRBuilder:
     )
 
 
-@pytest.fixture
-def labelled_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
+@pytest.fixture(scope="module")
+def labelled_grr(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> GenomicResourceProtocolRepo:
     """An indexed repository whose index describes the resources it has."""
-    repo = _labelled_repository(_RES_A_LABELS).build_repo(tmp_path)
-    _create_contents_db(build_filesystem_test_protocol(tmp_path))
+    root = tmp_path_factory.mktemp("labelled_grr")
+    repo = _labelled_repository(_RES_A_LABELS).build_repo(root)
+    _create_contents_db(build_filesystem_test_protocol(root))
     return repo
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def index_predating_a_label(
-    tmp_path: pathlib.Path,
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> GenomicResourceProtocolRepo:
     """A repository whose published index predates one of its labels.
 
@@ -124,10 +150,11 @@ def index_predating_a_label(
     Same resources as ``labelled_grr`` otherwise, so the query corpus
     means the same thing against both.
     """
-    _labelled_repository(_RES_A_LABELS).build_repo(tmp_path)
-    _create_contents_db(build_filesystem_test_protocol(tmp_path))
+    root = tmp_path_factory.mktemp("index_predating_a_label")
+    _labelled_repository(_RES_A_LABELS).build_repo(root)
+    _create_contents_db(build_filesystem_test_protocol(root))
     return _labelled_repository(
-        {**_RES_A_LABELS, "newlabel": "fresh"}).build_repo(tmp_path)
+        {**_RES_A_LABELS, "newlabel": "fresh"}).build_repo(root)
 
 
 def test_a_label_added_after_the_index_means_the_same_on_both_routes(
@@ -160,9 +187,9 @@ def test_a_label_added_after_the_index_means_the_same_on_both_routes(
     assert through_index == without_index
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def index_predating_a_label_edit(
-    tmp_path: pathlib.Path,
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> GenomicResourceProtocolRepo:
     """A repository whose published index predates a label *value*.
 
@@ -177,10 +204,11 @@ def index_predating_a_label_edit(
     Same resources as ``labelled_grr`` otherwise, so the query corpus
     means the same thing against all three fixtures.
     """
-    _labelled_repository(_RES_A_LABELS).build_repo(tmp_path)
-    _create_contents_db(build_filesystem_test_protocol(tmp_path))
+    root = tmp_path_factory.mktemp("index_predating_a_label_edit")
+    _labelled_repository(_RES_A_LABELS).build_repo(root)
+    _create_contents_db(build_filesystem_test_protocol(root))
     return _labelled_repository(
-        {**_RES_A_LABELS, "domain": "gamma"}).build_repo(tmp_path)
+        {**_RES_A_LABELS, "domain": "gamma"}).build_repo(root)
 
 
 @pytest.mark.parametrize(
