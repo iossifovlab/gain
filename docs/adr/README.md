@@ -81,6 +81,7 @@ of one decision will drift.
 | [0017](0017-score-filtering-is-a-score-capability.md) | Record filtering is a genomic-score capability, not an annotator one | accepted; frozen-operator clause superseded by 0018 |
 | [0018](0018-score-filter-grammar-extension.md) | The score filter's precedence is declared, and its names are narrow | accepted |
 | [0019](0019-quota-limits-live-in-configuration-counters-live-in-rows.md) | Quota limits live in configuration, counters live in rows | accepted |
+| [0020](0020-segments-are-value-aware-coverage-is-not.md) | Extended score statistics: segments are value-aware, coverage is not | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;
