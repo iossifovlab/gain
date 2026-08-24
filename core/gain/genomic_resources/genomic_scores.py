@@ -120,7 +120,7 @@ def clip_span(
     rec_begin: int, rec_end: int,
     pos_begin: int | None, pos_end: int | None,
 ) -> tuple[int, int] | None:
-    """The region rule, stated once: skip, clip, and refuse an inversion.
+    """Clip a record's span to a queried window: skip, clip, or refuse.
 
     Returns the part of ``[rec_begin, rec_end]`` inside
     ``[pos_begin, pos_end]``, where a ``None`` bound means unbounded on
@@ -1675,9 +1675,9 @@ class PositionScore(GenomicScore):
         The weight of a position-score record is the number of base pairs
         of the queried region it covers -- how many times its value counts
         when the region is aggregated.  It is derived here, from the
-        clipped bounds this layer already computes, so that a caller
-        aggregating a region never re-clips a record nor materialises one
-        copy of a value per base pair.
+        record's span clipped to the window, so that a caller aggregating
+        a region never clips a record nor materialises one copy of a value
+        per base pair.
         """
         for left, right, values in self.fetch_region_segment_scores(
             chrom, pos_begin, pos_end, scores,
@@ -1685,7 +1685,8 @@ class PositionScore(GenomicScore):
             span = clip_span(left, right, pos_begin, pos_end)
             if span is None:
                 continue
-            yield (values, self._record_weight(*span))
+            left, right = span
+            yield (values, self._record_weight(left, right))
 
     def fetch_position_scores(
         self, chrom: str, position: int,
@@ -1753,6 +1754,7 @@ class PositionScore(GenomicScore):
             left, right = span
             if right < cursor:
                 continue
+            # cursor >= start, so this also subsumes the clip's left clamp.
             left = max(left, cursor)
             if left > cursor:
                 yield None, left - cursor
