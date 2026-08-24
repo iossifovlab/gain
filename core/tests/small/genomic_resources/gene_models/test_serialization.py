@@ -10,6 +10,9 @@ from gain.genomic_resources.gene_models.gene_models_factory import (
     build_gene_models_from_file,
     build_gene_models_from_resource,
 )
+from gain.genomic_resources.gene_models.parsers import (
+    parse_default_gene_models_format,
+)
 from gain.genomic_resources.gene_models.serialization import (
     GTF_FEATURE_ORDER,
     _save_as_default_gene_models,
@@ -651,7 +654,7 @@ def test_collect_gtf_stop_codon_regions_split() -> None:
 def test_save_as_default_gene_models_attributes_escaping(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Test that attributes with colons are properly escaped."""
+    """Test that attributes with colons survive a save/load round trip."""
     content = """
 #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
 TEST      tx1  1     +      10      100   12       95     2         10,50      40,100
@@ -673,13 +676,15 @@ TEST      tx1  1     +      10      100   12       95     2         10,50      4
     output_file = tmp_path / "gene_models.txt"
     save_as_default_gene_models(gene_models, str(output_file), gzipped=False)
 
-    # Read and check attributes are escaped
+    # The delimiter is escaped in the file, not substituted away...
     content = pathlib.Path(output_file).read_text()
-    # Colons in keys should be replaced with underscores
-    assert (
-        "test_attr_value_with_colons" in content
-        or "test:attr" in content
-    )
+    assert "test\\:attr:value\\:with\\:colons" in content
+
+    # ...so the original key and value are recovered on read.
+    reloaded = parse_default_gene_models_format(StringIO(content))
+    assert reloaded is not None
+    attributes = next(iter(reloaded.values())).attributes
+    assert attributes["test:attr"] == "value:with:colons"
 
 
 def test_gene_models_to_gtf_attributes_formatting(

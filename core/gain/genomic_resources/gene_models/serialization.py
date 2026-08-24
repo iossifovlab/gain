@@ -10,6 +10,11 @@ from gain.utils.regions import BedRegion, difference, total_length
 from .gene_models import (
     GeneModels,
 )
+from .parsers import (
+    DEFAULT_ATTRIBUTE_ASSIGNMENT,
+    DEFAULT_ATTRIBUTE_SEPARATOR,
+    escape_default_attribute,
+)
 from .transcript_models import (
     Exon,
     TranscriptModel,
@@ -367,9 +372,11 @@ def _save_as_default_gene_models(
         exon_frames = ",".join([
             str(e.frame) for e in transcript_model.exons])
 
-        add_atts = ";".join(
+        add_atts = DEFAULT_ATTRIBUTE_SEPARATOR.join(
             [
-                k + ":" + str(v).replace(":", "_")
+                escape_default_attribute(str(k))
+                + DEFAULT_ATTRIBUTE_ASSIGNMENT
+                + escape_default_attribute(str(v))
                 for k, v in list(transcript_model.attributes.items())
             ],
         )
