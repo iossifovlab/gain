@@ -13,11 +13,16 @@ path is its subject, with ``@pytest.mark.dask_executor``.  Everything
 else must pass ``"-j", "1"`` to its ``cli_manage`` calls; if this guard
 fails a test, the fix is almost always the ``-j 1``, not the marker.
 
-The probe wraps ``Client.__init__`` once per process, so it sees every
-in-process construction -- ``setup_client``, a conftest fixture, or a
-direct ``Client(...)`` -- whichever test's setup/call/teardown it lands
-in.  A CLI run in a *subprocess* is out of its reach; those call sites
-are policed by review and by the cost showing up in ``--durations``.
+The probe wraps ``Client.__init__`` once per process and refuses the
+construction on the spot whenever the test currently running is not
+marked.  Enforcing at construction time is what makes fixture scope
+irrelevant: a session- or module-scoped fixture instantiates during its
+first requesting test's setup -- before any function-scoped autouse
+fixture could snapshot state -- and a construction in a late finalizer
+still lands inside some test's protocol.  Both raise, with the marker
+and the ``-j 1`` remedy in the message.  A CLI run in a *subprocess* is
+out of the probe's reach; those call sites are policed by review and by
+the cost showing up in ``--durations``.
 """
 import functools
 from collections.abc import Generator
@@ -27,7 +32,10 @@ from distributed import Client
 
 DASK_EXECUTOR_MARKER = "dask_executor"
 
-_client_constructions: list[str] = []
+# Single-assignment holder (pylint treats a reassigned module-level name
+# as a mis-cased constant); the "item" slot is the test whose runtest
+# protocol is currently executing in this process, if any.
+_CURRENT: dict[str, pytest.Item | None] = {"item": None}
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -37,6 +45,18 @@ def pytest_configure(config: pytest.Config) -> None:
         f"the dask distributed executor path; unmarked tests that "
         f"construct a dask Client fail the ownership guard (gain#851)")
     _install_client_probe()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_protocol(
+    item: pytest.Item,
+) -> Generator[None, object, object]:
+    """Track the test whose protocol is running, for the probe."""
+    _CURRENT["item"] = item
+    try:
+        return (yield)
+    finally:
+        _CURRENT["item"] = None
 
 
 def _install_client_probe() -> None:
@@ -49,33 +69,17 @@ def _install_client_probe() -> None:
         return
 
     @functools.wraps(original_init)
-    def recording_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        _client_constructions.append(type(self).__name__)
+    def guarding_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        item = _CURRENT["item"]
+        if item is not None and \
+                item.get_closest_marker(DASK_EXECUTOR_MARKER) is None:
+            raise RuntimeError(
+                f"{item.nodeid} constructed a dask distributed Client "
+                "without owning it; pass '-j', '1' to the "
+                "cli_manage/TaskGraphCli invocation so it runs the "
+                "SequentialExecutor, or -- only if the dask executor "
+                "path is what this test exists to exercise -- mark it "
+                f"with @pytest.mark.{DASK_EXECUTOR_MARKER} (gain#851)")
         return original_init(self, *args, **kwargs)
 
-    Client.__init__ = recording_init  # type: ignore[method-assign]
-
-
-@pytest.fixture(autouse=True)
-def dask_clusters_are_owned(
-    request: pytest.FixtureRequest,
-) -> Generator[None, None, None]:
-    """Fail a test that boots a dask cluster without owning one.
-
-    See the module docstring: the delta in recorded ``Client``
-    constructions over this test's whole protocol (setup + call +
-    teardown) is charged to it, so a cluster built inside a fixture is
-    caught at the first test that requests it.
-    """
-    before = len(_client_constructions)
-    yield
-    if len(_client_constructions) == before:
-        return
-    if request.node.get_closest_marker(DASK_EXECUTOR_MARKER) is not None:
-        return
-    pytest.fail(
-        "constructed a dask distributed Client without owning it; pass "
-        "'-j', '1' to the cli_manage/TaskGraphCli invocation so it runs "
-        "the SequentialExecutor, or -- only if the dask executor path is "
-        "what this test exists to exercise -- mark it with "
-        f"@pytest.mark.{DASK_EXECUTOR_MARKER}")
+    Client.__init__ = guarding_init  # type: ignore[method-assign]

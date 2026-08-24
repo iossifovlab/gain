@@ -13,13 +13,14 @@ from gain.genomic_resources.resource_types import (
     reset_deprecation_notices,
 )
 
-# The dask-ownership guard (#851): the hook wraps Client.__init__ once
-# per process, the autouse fixture charges each construction to the test
-# it happened in. Imported names are how a conftest adopts a plugin
-# module's hooks and fixtures.
+# The dask-ownership guard (#851): pytest_configure wraps
+# Client.__init__ once per process, pytest_runtest_protocol tells the
+# probe which test is running, and the probe refuses a construction by
+# an unmarked test on the spot. Imported names are how a conftest
+# adopts a plugin module's hooks.
 from tests.dask_guard import (  # noqa: F401  # pylint: disable=unused-import
-    dask_clusters_are_owned,
     pytest_configure,
+    pytest_runtest_protocol,
 )
 
 
