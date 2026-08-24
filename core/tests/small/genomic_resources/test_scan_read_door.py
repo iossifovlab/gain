@@ -2,7 +2,7 @@
 
 The scan reads a region as ``region_values_from_records`` over
 ``validate_records(fetch_records(...))``; every plain read -- ``fetch_records``,
-``fetch_region_segment_scores``, ``fetch_region_weighted_values``,
+``fetch_region_segments``, ``fetch_region_weighted_values``,
 ``fetch_position_scores`` -- is the same transform over the same records with
 that middle link left out, and checks nothing.  These tests pin both halves of
 the split, because either half alone is quietly undoable: a scan that stops
@@ -100,7 +100,7 @@ def test_the_region_read_is_the_transform_over_the_record_stream(
         chr1   21         30       0.3
     """)
 
-    assert list(score.fetch_region_segment_scores("chr1", 5, 25)) == list(
+    assert list(score.fetch_region_segments("chr1", 5, 25)) == list(
         score.region_values_from_records(
             score.fetch_records("chr1", 5, 25), "chr1", 5, 25))
 
@@ -126,7 +126,7 @@ def test_reading_a_position_score_whose_records_touch_yields_them_all(
     # records, clipped, in table order.
     score = _position_score(tmp_path, "touching", TOUCHING_RECORDS)
 
-    assert list(score.fetch_region_segment_scores("chr1", 1, 10)) == [
+    assert list(score.fetch_region_segments("chr1", 1, 10)) == [
         (1, 5, [0.1]),
         (5, 9, [0.2]),
     ]
@@ -414,7 +414,7 @@ def test_reading_that_same_fragment_score_raises_nothing(
     # the region read still does not use it -- every record comes back.
     score = _fragment_score_reading_backwards(tmp_path, monkeypatch)
 
-    assert len(list(score.fetch_region_segment_scores(
+    assert len(list(score.fetch_region_segments(
         "chr1", 1, 30, ["s"]))) == 2
 
 
@@ -448,13 +448,13 @@ def test_the_region_size_zero_path_refuses_a_malformed_position_score(
     assert "at most one record per position" in str(excinfo.value)
 
 
-def test_a_region_read_clips_every_record_to_the_query(
+def test_a_region_read_reports_every_record_at_its_own_extent(
     tmp_path: pathlib.Path,
 ) -> None:
-    # Clipping is preserved to the base pair: a record straddling either edge
-    # of the queried region reaches the scan trimmed exactly as it reaches a
-    # reader -- one transform serves both -- so no histogram weight and no
-    # min/max range moves with gain#588.
+    # A record straddling either edge of the queried region reaches the scan
+    # whole, exactly as it reaches a reader -- one transform serves both --
+    # and what a partial overlap means is decided by each window-answering
+    # consumer, with ``clip_span`` (ADR 0008).
     score = _position_score(tmp_path, "well_formed", """
         chrom  pos_begin  pos_end  s
         chr1   1          10       0.1
@@ -462,10 +462,10 @@ def test_a_region_read_clips_every_record_to_the_query(
         chr1   21         30       0.3
     """)
 
-    assert list(score.fetch_region_segment_scores("chr1", 5, 25)) == [
-        (5, 10, [0.1]),
+    assert list(score.fetch_region_segments("chr1", 5, 25)) == [
+        (1, 10, [0.1]),
         (11, 20, [0.2]),
-        (21, 25, [0.3]),
+        (21, 30, [0.3]),
     ]
 
 
@@ -554,7 +554,7 @@ def test_the_scan_measures_a_well_formed_region_exactly_as_a_reader_reads_it(
 
     assert list(GenomicScoreImplementation._scan_region(
         score, "chr1", 5, 25, ["s"])) == \
-        list(score.fetch_region_segment_scores("chr1", 5, 25, ["s"]))
+        list(score.fetch_region_segments("chr1", 5, 25, ["s"]))
 
 
 def test_an_allele_score_reads_each_record_as_the_point_it_sits_at(
@@ -584,10 +584,10 @@ def test_an_allele_score_reads_each_record_as_the_point_it_sits_at(
 
     assert list(score.region_values_from_records(
         score.fetch_records("chr1", 1, 20), "chr1", 1, 20, ["s"])) == \
-        list(score.fetch_region_segment_scores("chr1", 1, 20, ["s"]))
+        list(score.fetch_region_segments("chr1", 1, 20, ["s"]))
     # Two records share position 10 -- which is what an allele score IS --
     # and the in-memory backend hands them back ordered by their alleles.
-    assert list(score.fetch_region_segment_scores("chr1", 1, 20, ["s"])) == [
+    assert list(score.fetch_region_segments("chr1", 1, 20, ["s"])) == [
         (10, 10, [0.2]),
         (10, 10, [0.1]),
         (16, 16, [0.3]),
@@ -598,11 +598,11 @@ def test_the_position_rule_compares_raw_spans_not_clipped_ones(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Two records overlapping at 50..100, queried from 120: a clipped
-    # comparison sees the first one pulled back to the query's start and the
-    # second clipped too, so the overlap it would have to reject is not in
-    # what the read yields.  The raw spans still hold it, and the validator
-    # sits in front of the transform, where they still exist.
+    # Two records overlapping at 50..100, queried from 120.  The validator
+    # reads the RAW record stream, in front of the transform: a kind's
+    # transform may reshape a record beyond recognition (an allele score
+    # collapses it to a point), so raw is the only layer at which one rule
+    # serves every kind.
     score = _position_score(tmp_path, "overlapping", """
         chrom  pos_begin  pos_end  s
         chr1   1          10       0.1
@@ -614,13 +614,11 @@ def test_the_position_rule_compares_raw_spans_not_clipped_ones(
 
     monkeypatch.setattr(score, "fetch_records", overlapping)
 
-    # The read yields ONE record: the first ends at 100, before the query
-    # begins, and is dropped rather than clipped to an inverted span.  So
-    # what the read hands on holds no overlap at all -- a rule reading these
-    # spans could not find one, which is the whole reason the validator sits
-    # in front of the transform rather than behind it.
-    assert list(score.fetch_region_segment_scores("chr1", 120, 200, ["s"])) == [
-        (120, 150, [0.2]),
+    # The read passes both records through at their own extents -- it
+    # answers for the backend, holding no window opinion of its own.
+    assert list(score.fetch_region_segments("chr1", 120, 200, ["s"])) == [
+        (1, 100, [0.1]),
+        (50, 150, [0.2]),
     ]
     with pytest.raises(MalformedResourceError) as excinfo:
         list(score.validate_records(score.fetch_records("chr1", 120, 200)))

@@ -3521,8 +3521,8 @@ def test_a_buffered_tabix_query_drops_a_record_that_died_before_it(
     # tabix table whose configured ``pos_end`` is narrower than the end its
     # index answers region queries by (gain#553) still hands the score layer
     # a record it did not ask for; what keeps that out of a resource's saved
-    # statistics is the score layer's own skip, applied per record in
-    # ``GenomicScore._clipped_score_values`` and as a mask in
+    # statistics is the score layer's own skip, applied per record with
+    # ``clip_span`` in the statistics scan and as a mask in
     # ``_clip_and_weigh``, pinned by
     # test_both_scan_paths_measure_an_out_of_region_record_alike.
     resource = (
