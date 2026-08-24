@@ -172,7 +172,7 @@ def test_merge_refuses_different_chromosomes() -> None:
         left.merge(other)
 
 
-def test_merge_with_an_empty_neighbor_keeps_the_open_run_stitchable() -> None:
+def test_an_empty_region_between_two_runs_prevents_stitching() -> None:
     first = RegionCoverage("chr1", 1, 10)
     first.add_interval(4, 10, (0.5,))
     empty = RegionCoverage("chr1", 11, 20)

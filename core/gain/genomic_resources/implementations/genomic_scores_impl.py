@@ -659,7 +659,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         accumulate = GenomicScoreImplementation._accumulate_arrays
         if coverage is not None:
 
-            def accumulate(
+            def accumulate_with_coverage(
                 arrays: RecordArrays,
                 result: dict[str, Histogram],
                 region: tuple[str, int | None, int | None],
@@ -669,6 +669,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                     arrays, result, region, score)
                 GenomicScoreImplementation._accumulate_coverage(
                     arrays, coverage, region)
+
+            accumulate = accumulate_with_coverage
 
         return GenomicScoreImplementation._bulk_region_scan(
             resource, result, chrom, start, end, accumulate)
@@ -697,9 +699,11 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         maximum).  For overlapping fragment rows the covered count is
         still exact -- ``add_interval`` unions whatever run shapes arrive
         -- while run identity may differ from the row-by-row feed where
-        differently-valued fragments interleave; fragment segment
-        statistics are not published (value-aware segments are a
-        position-score statistic).
+        differently-valued fragments interleave, and differs again
+        between chunked and unchunked scans of the same fragment rows;
+        fragment segment statistics are not published (value-aware
+        segments are a position-score statistic), and a consumer that
+        wants them must first give fragments an exact run algebra.
         """
         _chrom, start, end = region
         pos_begin, pos_end, value_cells = arrays
@@ -717,12 +721,11 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         if end is not None:
             right = np.minimum(right, end)
 
+        kept_cells = [column[keep] for column in value_cells.values()]
         boundary = np.ones(left.shape[0], dtype=bool)
         if left.shape[0] > 1:
-            touching = left[1:] <= np.maximum.accumulate(right)[:-1] + 1
-            equal = touching
-            for column in value_cells.values():
-                kept = column[keep]
+            equal = left[1:] <= np.maximum.accumulate(right)[:-1] + 1
+            for kept in kept_cells:
                 head, prev = kept[1:], kept[:-1]
                 if kept.dtype == object:
                     same = head == prev
@@ -733,7 +736,6 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             boundary[1:] = ~equal
         starts = np.flatnonzero(boundary)
         run_ends = np.maximum.reduceat(right, starts)
-        kept_cells = [column[keep] for column in value_cells.values()]
         for index, run_start in enumerate(starts):
             coverage.add_interval(
                 int(left[run_start]),
