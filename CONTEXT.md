@@ -89,6 +89,26 @@ One condition on one label inside a **resource query** — `key = value` or
 evaluates it, `matches` is the only definition of the comparison.
 _Avoid_: predicate, label filter
 
+### Tabular score statistics
+
+**Segment**:
+A maximal run of touching-or-overlapping table rows of a tabular score
+carrying **equal values** — the whole row's score-column tuple compares equal,
+NA equal to NA, floats exactly as stored (ADR 0020). Value-aware and
+per-resource: a touching row that differs in any score column starts a new
+segment, and a run of NA rows is a segment. Not a table row as stored — an
+unmerged row is a *fragment*, deliberately the opposite view.
+_Avoid_: interval, region (reserved for query regions), run, block, same-value
+region
+
+**Covered position**:
+A position spanned by at least one table row — **value-blind**, union
+semantics, computed independently of **segments**. Σ segment lengths can
+exceed the covered count wherever different-valued rows overlap, so neither
+statistic may be derived from the other (ADR 0020).
+_Avoid_: covered base, coverage depth (nothing here counts how many rows
+span a position), breadth
+
 ### ann_data resources
 
 **Data matrix**:
@@ -158,6 +178,10 @@ reason a read of one is not a read of the other
   **column vocabulary**. A **resource query** contains **label clauses**, which
   bind it to nothing.
 - A **search term** and a **resource query** conjoin when both are supplied.
+- A **segment** merges touching-or-overlapping *equal-valued* rows of one
+  **resource**'s table; a **covered position** is spanned by *any* row, values
+  ignored. Segments are value-aware, coverage is not, and the two coincide
+  only where no different-valued rows overlap.
 - An **ann_data resource** is a **resource** whose content is one **data matrix**
   and the two **axis tables** describing its axes; every row of `var` carries a
   **feature type**, and one resource may hold several.
