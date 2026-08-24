@@ -24,6 +24,88 @@ GeneModelsParser = Callable[
     dict[str, TranscriptModel] | None,
 ]
 
+# The ``default`` format packs attributes into one column as ``key:value``
+# pairs joined by ``;``. Both delimiters, and the escape character itself,
+# are backslash-escaped inside keys and values so that any attribute value
+# survives a save/load round trip. See iossifovlab/gain#852.
+DEFAULT_ATTRIBUTE_SEPARATOR = ";"
+DEFAULT_ATTRIBUTE_ASSIGNMENT = ":"
+_DEFAULT_ESCAPED_CHARS = (
+    "\\", DEFAULT_ATTRIBUTE_SEPARATOR, DEFAULT_ATTRIBUTE_ASSIGNMENT,
+)
+
+
+def escape_default_attribute(value: str) -> str:
+    """Escape the ``default`` format attribute delimiters in a value."""
+    for char in _DEFAULT_ESCAPED_CHARS:
+        value = value.replace(char, f"\\{char}")
+    return value
+
+
+def unescape_default_attribute(value: str) -> str:
+    """Reverse `escape_default_attribute`.
+
+    Backslashes that do not introduce a known escape are left as they are,
+    so attribute values written before escaping was introduced -- which may
+    legitimately contain a backslash, as NCBI RefSeq notes do -- are read
+    back unchanged.
+    """
+    result: list[str] = []
+    index = 0
+    while index < len(value):
+        char = value[index]
+        following = value[index + 1:index + 2]
+        if char == "\\" and following in _DEFAULT_ESCAPED_CHARS:
+            result.append(value[index + 1])
+            index += 2
+            continue
+        result.append(char)
+        index += 1
+    return "".join(result)
+
+
+def _split_unescaped(
+    data: str, separator: str, maxsplit: int = -1,
+) -> list[str]:
+    """Split `data` on `separator` occurrences that are not escaped."""
+    parts: list[str] = []
+    current: list[str] = []
+    index = 0
+    while index < len(data):
+        char = data[index]
+        if char == "\\" and index + 1 < len(data):
+            current.extend((char, data[index + 1]))
+            index += 2
+            continue
+        if char == separator and maxsplit != len(parts):
+            parts.append("".join(current))
+            current = []
+            index += 1
+            continue
+        current.append(char)
+        index += 1
+    parts.append("".join(current))
+    return parts
+
+
+def parse_default_attributes(atts: str) -> dict[str, str]:
+    """Parse the ``atts`` column of the ``default`` gene models format."""
+    result = {}
+    for fragment in _split_unescaped(atts, DEFAULT_ATTRIBUTE_SEPARATOR):
+        if not fragment:
+            continue
+        pair = _split_unescaped(
+            fragment, DEFAULT_ATTRIBUTE_ASSIGNMENT, maxsplit=1)
+        if len(pair) != 2:
+            raise ValueError(
+                f"malformed gene models attribute {fragment!r}; "
+                f"expected a 'key{DEFAULT_ATTRIBUTE_ASSIGNMENT}value' pair",
+            )
+        key, value = pair
+        result[unescape_default_attribute(key)] = \
+            unescape_default_attribute(value)
+    return result
+
 
 def parse_default_gene_models_format(
     infile: IO,
@@ -89,10 +171,7 @@ def parse_default_gene_models_format(
         attributes: dict = {}
         atts = line.get("atts")
         if atts and isinstance(atts, str):
-            astep = [a.split(":") for a in atts.split(";")]
-            attributes = {
-                a[0]: a[1] for a in astep
-            }
+            attributes = parse_default_attributes(atts)
         gene = line["gene"]
         gene = gene_mapping.get(gene, gene)
         transcript_model = TranscriptModel(
@@ -626,14 +705,43 @@ def parse_ucscgenepred_models_format(
     return transcript_models
 
 
+def _split_gtf_attributes(data: str) -> list[str]:
+    """Split a GTF attributes column on separators outside quoted values.
+
+    A ``;`` inside a quoted value is data, not a separator. NCBI RefSeq
+    routinely embeds them in ``note`` and ``product``.
+    """
+    fragments = []
+    start = 0
+    in_quotes = False
+    for index, char in enumerate(data):
+        if char == '"':
+            in_quotes = not in_quotes
+        elif char == ";" and not in_quotes:
+            fragments.append(data[start:index])
+            start = index + 1
+    if in_quotes:
+        raise ValueError(
+            f"unterminated quote in GTF attributes: {data!r}",
+        )
+    fragments.append(data[start:])
+    return fragments
+
+
 def _parse_gtf_attributes(data: str) -> dict[str, str]:
-    attributes = list(
-        filter(lambda x: x, [a.strip() for a in data.split(";")]),
-    )
+    """Parse a GTF attributes column into key/value pairs."""
     result = {}
-    for attr in attributes:
-        key, value = attr.split(" ", maxsplit=1)
-        result[key.strip()] = value.strip('"').strip()
+    for fragment in _split_gtf_attributes(data):
+        attr = fragment.strip()
+        if not attr:
+            continue
+        key, separator, value = attr.partition(" ")
+        if not separator:
+            raise ValueError(
+                f"malformed GTF attribute {attr!r}; "
+                f"expected a 'key value' pair",
+            )
+        result[key.strip()] = value.strip().strip('"')
     return result
 
 
