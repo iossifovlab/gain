@@ -7,6 +7,13 @@ equal values (the whole scanned score tuple, NA equal to NA, floats exact).
 """
 from __future__ import annotations
 
+import json
+from typing import Any
+
+from gain.genomic_resources.statistics.base_statistic import Statistic
+
+COVERAGE_STATISTICS_FILE = "statistics/coverage.json"
+
 
 class RegionCoverage:
     """Coverage of one scanned region, accumulated row by row.
@@ -142,3 +149,72 @@ class RegionCoverage:
                 self._first_run = self._run
             self._closed_segments += 1
         self._run = (begin, end, values)
+
+
+class CoverageStatistics(Statistic):
+    """A resource's covered positions, per chromosome and global.
+
+    Accumulates one :class:`RegionCoverage` per scanned region through
+    :meth:`fold_region` — same-chromosome regions merge (adjacency
+    asserted there), distinct chromosomes accumulate side by side — and
+    serializes to the resource's ``statistics/coverage.json`` as raw
+    counts.  Fractions are deliberately not computed here: they need
+    chromosome lengths, which belong to a reference genome resolved at
+    render time.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "coverage", "Covered positions per chromosome and global")
+        self._regions: dict[str, RegionCoverage] = {}
+
+    def fold_region(self, region: RegionCoverage) -> None:
+        """Fold one region's coverage in, keyed by its chromosome."""
+        held = self._regions.get(region.chrom)
+        if held is None:
+            self._regions[region.chrom] = region
+        else:
+            held.merge(region)
+
+    def covered_by_chromosome(self) -> dict[str, int]:
+        return {
+            chrom: region.covered
+            for chrom, region in self._regions.items()
+        }
+
+    def covered_global(self) -> int:
+        return sum(region.covered for region in self._regions.values())
+
+    def add_value(self, value: Any) -> None:  # noqa: ARG002
+        raise TypeError(
+            "CoverageStatistics accumulates regions, not values; "
+            "use fold_region")
+
+    def merge(self, other: Statistic) -> None:
+        if not isinstance(other, CoverageStatistics):
+            raise TypeError("unexpected type of statistics to merge with")
+        for region in other._regions.values():  # noqa: SLF001
+            self.fold_region(region)
+
+    def serialize(self) -> str:
+        return json.dumps({
+            "format_version": 1,
+            "chromosomes": {
+                chrom: {"covered_positions": covered}
+                for chrom, covered in self.covered_by_chromosome().items()
+            },
+            "global": {"covered_positions": self.covered_global()},
+        }, indent=2)
+
+    @staticmethod
+    def deserialize(content: str) -> CoverageStatistics:
+        # Only the counts round-trip; the open-run bookkeeping is scan
+        # state and is never written.  Unknown keys are ignored rather
+        # than rejected, so a file carrying extra fields still reads.
+        data = json.loads(content)
+        result = CoverageStatistics()
+        for chrom, counts in data["chromosomes"].items():
+            region = RegionCoverage(chrom, None, None)
+            region.covered = int(counts["covered_positions"])
+            result.fold_region(region)
+        return result
