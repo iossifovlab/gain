@@ -149,6 +149,48 @@ def test_noregion_build_writes_the_coverage_file(
     assert stats.covered_global() == COVERED
 
 
+@pytest.mark.parametrize("region_size", [1, 2, 3, 7, 100])
+def test_coverage_is_chunk_invariant(
+    tmp_path: pathlib.Path,
+    region_size: int,
+) -> None:
+    # Region sizes 1-3 split single-valued stretches across three or
+    # more chunks, which is the shape that goes wrong without the
+    # one-run bookkeeping (a two-chunk split stitches either way).
+    resource = _multivalued_tabix(tmp_path)
+    confs: dict = {"score": _hist_conf()}
+
+    results = [
+        GenomicScoreImplementation._do_histogram_task(
+            resource, confs, "chr1", start,
+            min(start + region_size - 1, 60))
+        for start in range(1, 61, region_size)
+    ]
+    stats = GenomicScoreImplementation._merge_coverage(resource, *results)
+
+    assert stats is not None
+    assert stats.covered_by_chromosome() == {"chr1": COVERED}
+    merged = stats._regions["chr1"]
+    assert merged.segment_count == SEGMENTS
+
+
+def test_statistics_hash_is_untouched_by_the_coverage_build(
+    tmp_path: pathlib.Path,
+) -> None:
+    from gain.genomic_resources.implementations.genomic_scores_impl import (
+        build_score_implementation_from_resource,
+    )
+    resource = _multivalued_tabix(tmp_path)
+    before = build_score_implementation_from_resource(
+        resource).calc_statistics_hash()
+
+    GenomicScoreImplementation._do_noregion_histograms(resource)
+
+    after = build_score_implementation_from_resource(
+        resource).calc_statistics_hash()
+    assert after == before
+
+
 def test_fragment_rows_overlapping_and_nested_count_once(
     tmp_path: pathlib.Path,
 ) -> None:

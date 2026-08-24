@@ -141,6 +141,11 @@ def test_a_segment_spanning_three_chunks_is_one_segment() -> None:
 
     assert first.segment_count == 1
     assert first.covered == 22
+    # The stitched run's SPAN is the load-bearing part: a merge that
+    # treats a fully-covered middle chunk's head and tail as two open
+    # runs keeps the count right here but loses the run's true begin,
+    # which is what the segment-length statistics (gain#775) consume.
+    assert first._run == (4, 25, (0.5,))
 
 
 def test_merge_refuses_regions_out_of_order() -> None:
