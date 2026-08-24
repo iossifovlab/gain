@@ -377,7 +377,7 @@ def test_a_malformed_row_costs_only_its_own_cell_in_a_region_scan(
 ) -> None:
     """A scan over the malformed row still returns every well-formed row.
 
-    The reported shape of the bug: ``fetch_region_segment_scores`` yielded
+    The reported shape of the bug: ``fetch_region_segments`` yielded
     the first row and then died on the second, so the well-formed row AFTER
     it was
     never reached -- one bad cell cost the whole fetch, and a caller that saw
@@ -393,7 +393,7 @@ chr1   6   .  A   T   .    .      ORIGIN=1,
 chr1   7   .  A   T   .    .      ORIGIN=2
 """)
     with score:
-        values = list(score.fetch_region_segment_scores(
+        values = list(score.fetch_region_segments(
             "chr1", 1, 100, ["ORIGIN"]))
 
     assert values == [(5, 5, ["1"]), (6, 6, ["1"]), (7, 7, ["2"])]
