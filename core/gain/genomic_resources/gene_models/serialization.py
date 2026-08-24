@@ -7,13 +7,9 @@ from typing import IO
 from gain import logging
 from gain.utils.regions import BedRegion, difference, total_length
 
+from .default_attributes import format_default_attributes
 from .gene_models import (
     GeneModels,
-)
-from .parsers import (
-    DEFAULT_ATTRIBUTE_ASSIGNMENT,
-    DEFAULT_ATTRIBUTE_SEPARATOR,
-    escape_default_attribute,
 )
 from .transcript_models import (
     Exon,
@@ -372,14 +368,7 @@ def _save_as_default_gene_models(
         exon_frames = ",".join([
             str(e.frame) for e in transcript_model.exons])
 
-        add_atts = DEFAULT_ATTRIBUTE_SEPARATOR.join(
-            [
-                escape_default_attribute(str(k))
-                + DEFAULT_ATTRIBUTE_ASSIGNMENT
-                + escape_default_attribute(str(v))
-                for k, v in list(transcript_model.attributes.items())
-            ],
-        )
+        add_atts = format_default_attributes(transcript_model.attributes)
 
         columns = [
             transcript_model.chrom,
