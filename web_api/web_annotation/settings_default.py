@@ -474,13 +474,14 @@ LOGGING = {
 # ``GPFWA_ANNOTATION_MAX_WORKERS``; unset means "keep whatever this settings
 # module chose", so no deployment moves by merging this.
 #
-# It bounds THAT pool only. The interactive-annotate pool and the anonymous
-# pipeline-validation pool are separately-sized literals (the latter measured
-# at a knee -- see ``docs/659-validate-async-slo.md``), so this is not a cap
-# on gainweb's total worker threads. For that, cap the container: the cgroup
-# knobs in iossifovlab/gain-infra#33 are the containment story, and this
-# setting is the complement -- it lets a deployment state the parallelism it
-# wants instead of capping the CPU the app believes it has.
+# It bounds THAT pool only. The interactive-annotate pool, the anonymous
+# pipeline-validation pool and the pipeline cache's loader pool are each
+# separately-sized literals (the validation one measured at a knee -- see
+# ``docs/659-validate-async-slo.md``), so this is not a cap on gainweb's
+# total worker threads. For that, cap the container: the cgroup knobs in
+# iossifovlab/gain-infra#33 are the containment story, and this setting is
+# the complement -- it lets a deployment state the parallelism it wants
+# instead of capping the CPU the app believes it has.
 #
 # Read once, at settings import: the pool is constructed in a class body, so
 # neither a later ``override_settings`` nor a settings reload re-sizes a pool

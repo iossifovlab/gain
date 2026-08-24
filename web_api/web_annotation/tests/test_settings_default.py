@@ -7,7 +7,7 @@ import pytest
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
-from web_annotation import settings_default, test_settings
+from web_annotation import settings_default, settings_e2e, test_settings
 from web_annotation.models import Quota
 
 
@@ -169,3 +169,20 @@ def test_query_quotas_name_exactly_the_counter_fields(
     assert set(module.QUERY_QUOTAS) == {"anonymous", "user"}
     for quota_type, configured in module.QUERY_QUOTAS.items():
         assert set(configured) == set(Quota.COUNTER_FIELDS), quota_type
+
+
+def test_reloading_a_settings_module_does_not_grow_installed_apps() -> None:
+    # A deployment settings module receives INSTALLED_APPS by wildcard import,
+    # which binds the name to settings_default's own list object. Extending it
+    # IN PLACE therefore mutates the base module's list -- and the live
+    # django.conf.settings list along with it -- so merely re-importing the
+    # module appends the same app again. The second entry is invisible until
+    # something calls modify_settings(INSTALLED_APPS=...), which then dies with
+    # "Application labels aren't unique". Deployment modules must rebind
+    # instead.
+    before = list(settings.INSTALLED_APPS).count("admin_panel")
+
+    importlib.reload(settings_e2e)
+    importlib.reload(settings_e2e)
+
+    assert list(settings.INSTALLED_APPS).count("admin_panel") == before

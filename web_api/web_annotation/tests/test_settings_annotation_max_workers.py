@@ -26,9 +26,15 @@ MODULE_DEFAULTS = [
     (settings_daphne, 16),
     (settings_e2e, 16),
 ]
-MODULE_IDS = [
-    module.__name__.rsplit(".", 1)[-1] for module, _ in MODULE_DEFAULTS
-]
+MODULES = [module for module, _ in MODULE_DEFAULTS]
+MODULE_IDS = [module.__name__.rsplit(".", 1)[-1] for module in MODULES]
+
+#: The module the deployment actually runs: gain-infra's compose overrides the
+#: production image's own DJANGO_SETTINGS_MODULE with this one. Parse failures
+#: are exercised here rather than against all four, because validation lives in
+#: the one shared helper and the per-module tests below already pin that every
+#: module goes through it.
+DEPLOYED_MODULE = settings_gunicorn
 
 
 @pytest.fixture
@@ -41,20 +47,15 @@ def restore_settings_modules(
     # invalid value would otherwise re-raise from this teardown, since the
     # modules refuse to import with one.
     monkeypatch.undo()
-    # settings_default LAST. The deployment modules alias its INSTALLED_APPS
-    # list, and settings_e2e appends to that list IN PLACE, so reloading a
-    # deployment module last would leave the base module's app list mutated
-    # for whatever runs next.
-    for module, _ in reversed(MODULE_DEFAULTS):
+    for module in reversed(MODULES):
         importlib.reload(module)
 
 
-@pytest.mark.parametrize(("module", "default"), MODULE_DEFAULTS, ids=MODULE_IDS)
+@pytest.mark.parametrize("module", MODULES, ids=MODULE_IDS)
 def test_worker_count_is_read_from_the_environment(
     monkeypatch: pytest.MonkeyPatch,
     restore_settings_modules: None,
     module: ModuleType,
-    default: int,
 ) -> None:
     monkeypatch.setenv(ENV_VAR, "6")
 
@@ -102,23 +103,38 @@ def test_blank_is_treated_as_unset(
     assert workers == default
 
 
+def test_surrounding_whitespace_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+    restore_settings_modules: None,
+) -> None:
+    # A templated env file readily produces `GPFWA_ANNOTATION_MAX_WORKERS= 8 `.
+    # That is a well-formed count with padding, not a typo, and is accepted --
+    # matching how GPFWA_NUM_PROXIES treats its own input. Pinned so that
+    # dropping the strip() cannot pass unnoticed.
+    monkeypatch.setenv(ENV_VAR, "  8  ")
+
+    importlib.reload(DEPLOYED_MODULE)
+
+    workers = DEPLOYED_MODULE.ANNOTATION_MAX_WORKERS
+    assert workers == 8
+
+
 @pytest.mark.parametrize(
     "raw",
     [
         "two", "1.5", "1,2", "-1", "+2", "0x10", "16 workers", "1_0",
-        "\uff11\uff10",  # fullwidth "10": int() accepts it, we must not
+        # Fullwidth "10" as escapes: the literal characters are exactly what
+        # RUF001 exists to flag, and int() would happily accept them.
+        "\uff11\uff10",
     ],
     ids=[
         "word", "float", "comma", "negative", "signed", "hex", "trailing-word",
         "pep515-underscore", "fullwidth-digits",
     ],
 )
-@pytest.mark.parametrize(("module", "default"), MODULE_DEFAULTS, ids=MODULE_IDS)
 def test_malformed_worker_count_refuses_to_boot(
     monkeypatch: pytest.MonkeyPatch,
     restore_settings_modules: None,
-    module: ModuleType,
-    default: int,
     raw: str,
 ) -> None:
     # Strict like GPFWA_NUM_PROXIES, not lenient like
@@ -134,15 +150,14 @@ def test_malformed_worker_count_refuses_to_boot(
     monkeypatch.setenv(ENV_VAR, raw)
 
     with pytest.raises(ImproperlyConfigured, match=ENV_VAR):
-        importlib.reload(module)
+        importlib.reload(DEPLOYED_MODULE)
 
 
-@pytest.mark.parametrize(("module", "default"), MODULE_DEFAULTS, ids=MODULE_IDS)
+@pytest.mark.parametrize("module", MODULES, ids=MODULE_IDS)
 def test_zero_workers_refuses_to_boot(
     monkeypatch: pytest.MonkeyPatch,
     restore_settings_modules: None,
     module: ModuleType,
-    default: int,
 ) -> None:
     # Zero is well-formed as digits but meaningless as a pool width, and it is
     # NOT clamped to one: a deployment that asks for zero workers has said
@@ -151,6 +166,9 @@ def test_zero_workers_refuses_to_boot(
     # zero reaches ThreadPoolExecutor(max_workers=0), which raises ValueError
     # from the annotation view's class body at import, a long way from the
     # environment variable that actually caused it.
+    #
+    # Checked on every module, unlike the malformed table: refusing zero is a
+    # deliberate decision on this issue, so each shipped module pins it.
     monkeypatch.setenv(ENV_VAR, "0")
 
     with pytest.raises(ImproperlyConfigured, match=ENV_VAR):
@@ -167,6 +185,6 @@ def test_refusal_echoes_the_offending_value(
     monkeypatch.setenv(ENV_VAR, "sixteen")
 
     with pytest.raises(ImproperlyConfigured) as excinfo:
-        importlib.reload(settings_gunicorn)
+        importlib.reload(DEPLOYED_MODULE)
 
     assert "'sixteen'" in str(excinfo.value)

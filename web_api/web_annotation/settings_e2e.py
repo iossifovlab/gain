@@ -6,7 +6,12 @@ from .settings_default import *
 USERS_ACTIVATED_BY_DEFAULT = True
 STATIC_ROOT = '/static/gpf/static'
 
-INSTALLED_APPS += ["admin_panel"]
+# Rebind rather than `+=`: the wildcard import above binds this name to
+# settings_default's own list object, so an in-place extend mutates the
+# base module's list -- and the live django.conf.settings list with it.
+# Re-importing this module then appends "admin_panel" again, and a later
+# modify_settings(INSTALLED_APPS=...) dies on duplicate app labels.
+INSTALLED_APPS = [*INSTALLED_APPS, "admin_panel"]
 
 
 QUOTAS = {
