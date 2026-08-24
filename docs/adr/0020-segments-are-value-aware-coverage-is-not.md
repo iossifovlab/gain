@@ -4,7 +4,8 @@
 - **Date:** 2026-08-24
 - **Issues:** [gain#770](https://github.com/iossifovlab/gain/issues/770) (the
   epic and its decision record), [gain#771](https://github.com/iossifovlab/gain/issues/771)
-  (this record)
+  (this record), [gain#848](https://github.com/iossifovlab/gain/issues/848)
+  (the scanned-tuple amendment)
 
 ## Context
 
@@ -33,16 +34,24 @@ simpler and it made an identity hold for free.
 ### Segment — value-aware
 
 A **segment** is a maximal run of touching-or-overlapping table rows carrying
-**equal values**: the whole row's score-column tuple compares equal, with NA
-equal to NA, and floats compared exactly as stored. Per-resource — one
-segmentation regardless of how many score columns the resource declares. A row
-that touches its neighbour but differs in any score column starts a new
-segment.
+**equal values**: the row's **scanned** score-column tuple compares equal,
+with NA equal to NA, and floats compared exactly as stored. *Scanned* means
+the score columns the statistics scan fetches — every declared score except
+those whose histogram config resolves to the null histogram, whether asked
+for, fallen to, or nullified at build time when no min/max could be computed
+(the resolution rules live with the histogram-config builder). Per-resource —
+one segmentation regardless of how many score columns the resource declares.
+A row that touches its neighbour but differs in any scanned score column
+starts a new segment.
 
 Three details of "equal" are decisions, not defaults:
 
-- **Whole-row tuple**, not per-column. However many score columns a resource
-  has, it has one segmentation; a change in *any* column breaks the segment.
+- **Whole scanned tuple**, not per-column *(amended 2026-08-24, gain#848 —
+  originally "whole-row tuple": the statistics scan never fetches a
+  null-histogram column, so such a column never entered the comparison, and
+  the wording now records the implemented decision, made in gain#772 as "no
+  read-set change")*. However many score columns a resource declares, it has
+  one segmentation; a change in any *scanned* column breaks the segment.
 - **NA equals NA.** NA is a value like any other, so a run of NA rows merges
   into a segment. Segments exist wherever rows exist; a segment is not
   evidence of a usable value.
@@ -122,9 +131,16 @@ segmentation — the value-aware definition a statistician might expect.
 Rejected: N columns mean N segment counts and N histograms per chromosome,
 multiplying the statistics surface and the page for a distinction no current
 consumer asks about, and losing the one-segmentation-per-resource shape the
-rest of the statistics share. The whole-row tuple still breaks wherever any
-column changes, so it bounds every per-column segmentation from below; a
-per-column view can be added later without disturbing this one.
+rest of the statistics share. The scanned tuple still breaks wherever any
+scanned column changes, so it bounds every per-scanned-column segmentation
+from below; a per-column view can be added later without disturbing this one.
+
+**Widening the scan to the literal whole row** *(gain#848)*. Fetching
+null-histogram columns during the statistics scan, so segment equality could
+compare the whole row as this record first worded it. Rejected: it would
+fetch columns nothing else in the statistics build uses, and it could
+silently change segment counts wherever a null-histogram column varies
+inside an existing run.
 
 **Per-score-column NA-aware coverage.** Counting a position as covered per
 column, only where that column has a non-NA value. Rejected for coverage:
@@ -156,6 +172,13 @@ indefinitely — which is accepted and made visible rather than hidden.
   the statistics report it rather than smooth it.
 - **NA runs are segments.** A consumer reading segment counts must not read
   them as "runs of usable values".
+- **Fragment segments are unpublishable until fragments have an exact run
+  algebra** *(amended 2026-08-24, gain#848)*. For overlapping fragment rows,
+  run identity is approximate twice over — bulk-vs-per-record and
+  chunked-vs-unchunked — while covered counts stay exact. Value-aware
+  segments are a position-score statistic; nothing may publish a fragment
+  segment count or length histogram before giving fragments an exact run
+  algebra.
 - **The rollout is visibly incomplete for a while.** Resource pages show
   "not computed" until each resource is rebuilt; that state is intended, not
   a defect.
