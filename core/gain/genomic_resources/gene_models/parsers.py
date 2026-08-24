@@ -11,6 +11,7 @@ from gain.genomic_resources.repository import (
     GenomicResource,
 )
 
+from .default_attributes import parse_default_attributes
 from .transcript_models import (
     Exon,
     TranscriptModel,
@@ -23,89 +24,6 @@ GeneModelsParser = Callable[
     [IO, dict[str, str] | None, int | None],
     dict[str, TranscriptModel] | None,
 ]
-
-# The ``default`` format packs attributes into one column as ``key:value``
-# pairs joined by ``;``. Both delimiters, and the escape character itself,
-# are backslash-escaped inside keys and values so that any attribute value
-# survives a save/load round trip. See iossifovlab/gain#852.
-DEFAULT_ATTRIBUTE_SEPARATOR = ";"
-DEFAULT_ATTRIBUTE_ASSIGNMENT = ":"
-_DEFAULT_ESCAPED_CHARS = (
-    "\\", DEFAULT_ATTRIBUTE_SEPARATOR, DEFAULT_ATTRIBUTE_ASSIGNMENT,
-)
-
-
-def escape_default_attribute(value: str) -> str:
-    """Escape the ``default`` format attribute delimiters in a value."""
-    for char in _DEFAULT_ESCAPED_CHARS:
-        value = value.replace(char, f"\\{char}")
-    return value
-
-
-def unescape_default_attribute(value: str) -> str:
-    """Reverse `escape_default_attribute`.
-
-    A backslash that does not introduce a known escape is left as it is, so
-    a value written before escaping existed -- which may legitimately carry
-    a backslash, as NCBI RefSeq notes do -- reads back unchanged. The one
-    exception is a backslash directly in front of a delimiter or another
-    backslash: nothing in the file says whether it was written with
-    escaping, so it is read as an escape.
-    """
-    result: list[str] = []
-    index = 0
-    while index < len(value):
-        char = value[index]
-        following = value[index + 1:index + 2]
-        if char == "\\" and following in _DEFAULT_ESCAPED_CHARS:
-            result.append(value[index + 1])
-            index += 2
-            continue
-        result.append(char)
-        index += 1
-    return "".join(result)
-
-
-def _split_unescaped(
-    data: str, separator: str, maxsplit: int = -1,
-) -> list[str]:
-    """Split `data` on `separator` occurrences that are not escaped."""
-    parts: list[str] = []
-    current: list[str] = []
-    index = 0
-    while index < len(data):
-        char = data[index]
-        if char == "\\" and index + 1 < len(data):
-            current.extend((char, data[index + 1]))
-            index += 2
-            continue
-        if char == separator and maxsplit != len(parts):
-            parts.append("".join(current))
-            current = []
-            index += 1
-            continue
-        current.append(char)
-        index += 1
-    parts.append("".join(current))
-    return parts
-
-
-def parse_default_attributes(atts: str) -> dict[str, str]:
-    """Parse the ``atts`` column of the ``default`` gene models format."""
-    result = {}
-    for fragment in _split_unescaped(atts, DEFAULT_ATTRIBUTE_SEPARATOR):
-        if not fragment:
-            continue
-        pair = _split_unescaped(
-            fragment, DEFAULT_ATTRIBUTE_ASSIGNMENT, maxsplit=1)
-        if len(pair) != 2:
-            raise ValueError(
-                f"malformed gene models attribute {fragment!r}; "
-                f"expected a 'key{DEFAULT_ATTRIBUTE_ASSIGNMENT}value' pair",
-            )
-        result[unescape_default_attribute(pair[0])] = \
-            unescape_default_attribute(pair[1])
-    return result
 
 
 def parse_default_gene_models_format(
@@ -754,6 +672,12 @@ def _parse_gtf_attributes_unquoted(data: str) -> dict[str, str] | None:
     return result
 
 
+def _end_of_gtf_attribute(data: str, start: int) -> int:
+    """Return the index of the next separator at or after `start`."""
+    stop = data.find(";", start)
+    return len(data) if stop == -1 else stop
+
+
 def _scan_gtf_attributes(data: str) -> dict[str, str]:
     """Parse a GTF attributes column, reading quotes by position."""
     result = {}
@@ -766,11 +690,10 @@ def _scan_gtf_attributes(data: str) -> dict[str, str]:
             break
 
         space = data.find(" ", index)
-        stop = data.find(";", index)
-        if space == -1 or (stop != -1 and stop < space):
-            fragment = data[index:stop if stop != -1 else length].strip()
+        stop = _end_of_gtf_attribute(data, index)
+        if space == -1 or stop < space:
             raise ValueError(
-                f"malformed GTF attribute {fragment!r}; "
+                f"malformed GTF attribute {data[index:stop].strip()!r}; "
                 f"expected a 'key value' pair",
             )
         key = data[index:space]
@@ -787,12 +710,9 @@ def _scan_gtf_attributes(data: str) -> dict[str, str]:
                     f"{data[index:index + 60]!r}",
                 )
             value = data[index + 1:closing]
-            index = data.find(";", closing + 1)
-            if index == -1:
-                index = length
+            index = _end_of_gtf_attribute(data, closing + 1)
         else:
-            stop = data.find(";", index)
-            stop = length if stop == -1 else stop
+            stop = _end_of_gtf_attribute(data, index)
             value = data[index:stop]
             index = stop
 

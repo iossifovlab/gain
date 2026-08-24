@@ -3,19 +3,21 @@
 
 Both the GTF attributes column and the ``default`` format's ``atts`` column
 pack several key/value pairs into one field using delimiters that may also
-occur inside a value. See iossifovlab/gain#852.
+occur inside a value.
 """
 from io import StringIO
 
 import pytest
+from gain.genomic_resources.gene_models.default_attributes import (
+    escape_default_attribute,
+    parse_default_attributes,
+)
 from gain.genomic_resources.gene_models.gene_models import GeneModels
 from gain.genomic_resources.gene_models.gene_models_factory import (
     build_gene_models_from_resource,
 )
 from gain.genomic_resources.gene_models.parsers import (
     _parse_gtf_attributes,
-    escape_default_attribute,
-    parse_default_attributes,
     parse_default_gene_models_format,
 )
 from gain.genomic_resources.gene_models.serialization import (
@@ -139,13 +141,10 @@ def test_default_attributes_keep_unknown_backslash_sequences() -> None:
 
 
 def test_legacy_backslash_before_a_delimiter_reads_as_an_escape() -> None:
-    """The one sequence a pre-escaping file cannot be told apart from.
+    """The one sequence the column cannot describe unambiguously.
 
-    Nothing in the file records whether it was written with escaping, so a
-    backslash that happens to sit in front of a delimiter is read as an
-    escape. Values written before escaping existed reach this only if they
-    end in a backslash, which the quote-blind parser this change replaces
-    could never produce -- it truncated values at the first ';'.
+    A backslash sitting in front of a delimiter is always read as an escape,
+    because the column records nothing that would mark it as a literal one.
     """
     assert parse_default_attributes("note:Dmel\\;gene_name:FOO") == {
         "note": "Dmel;gene_name:FOO",
