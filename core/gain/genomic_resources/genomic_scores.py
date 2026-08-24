@@ -116,6 +116,40 @@ DEFAULT_VALUE_ARRAYS_BATCH_SIZE = 100_000
 RecordArrays = tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]]
 
 
+def clip_span(
+    rec_begin: int, rec_end: int,
+    pos_begin: int | None, pos_end: int | None,
+) -> tuple[int, int] | None:
+    """The region rule, stated once: skip, clip, and refuse an inversion.
+
+    Returns the part of ``[rec_begin, rec_end]`` inside
+    ``[pos_begin, pos_end]``, where a ``None`` bound means unbounded on
+    that side, or ``None`` for a record with no part inside the region:
+    one ending before it (the skip) or one starting past it (which
+    naive clipping would turn into an inverted span, whose width as a
+    weight is negative).
+    """
+    if pos_begin is not None and rec_end < pos_begin:
+        return None
+    left = max(pos_begin, rec_begin) if pos_begin is not None else rec_begin
+    right = min(pos_end, rec_end) if pos_end is not None else rec_end
+    if left > right:
+        return None
+    return (left, right)
+
+
+def clip_to_region[T](
+    segments: Iterator[tuple[int, int, T]],
+    pos_begin: int | None,
+    pos_end: int | None,
+) -> Generator[tuple[int, int, T], None, None]:
+    """Clip a segment stream to a region, dropping what falls outside."""
+    for begin, end, payload in segments:
+        span = clip_span(begin, end, pos_begin, pos_end)
+        if span is not None:
+            yield (span[0], span[1], payload)
+
+
 class GenomicScore(ScoreResource[GenomicScoreDef]):
     """Base class for genomic score resources.
 
