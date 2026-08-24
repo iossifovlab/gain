@@ -90,25 +90,39 @@
 </div>
 
 <h2>Coverage</h2>
-{% set coverage = impl.get_coverage_statistics() %}
+{% set coverage = impl.get_coverage_display() %}
 {% if coverage != None %}
+{% set has_fractions = coverage.has_fractions %}
 <div class="scrollable-table-container">
 <table>
     <thead>
         <tr>
             <th>Chromosome</th>
             <th>Covered positions</th>
+            {%- if has_fractions %}
+            <th>Covered %</th>
+            {%- endif %}
         </tr>
     </thead>
-    {%- for chrom, covered in coverage.covered_by_chromosome().items() -%}
+    {%- for row in coverage.rows -%}
         <tr>
-            <td>{{ chrom }}</td>
-            <td>{{ covered }}</td>
+            <td>{{ row.chrom }}</td>
+            <td>{{ row.covered }}</td>
+            {%- if has_fractions %}
+            <td>{% if row.fraction != None -%}
+                {{ "%.2f%%"|format(row.fraction * 100) }}
+            {%- endif %}</td>
+            {%- endif %}
         </tr>
     {%- endfor %}
     <tr class="coverage-global">
         <td>all chromosomes</td>
-        <td>{{ coverage.covered_global() }}</td>
+        <td>{{ coverage.global_covered }}</td>
+        {%- if has_fractions %}
+        <td>{% if coverage.global_fraction != None -%}
+            {{ "%.2f%%"|format(coverage.global_fraction * 100) }}
+        {%- endif %}</td>
+        {%- endif %}
     </tr>
 </table>
 </div>

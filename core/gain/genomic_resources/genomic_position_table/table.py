@@ -101,6 +101,13 @@ class GenomicPositionTable(abc.ABC):
     # claim and behaviour disagree in either direction.
     supports_value_arrays: ClassVar[bool] = False
 
+    # Whether :meth:`find_chromosome_length` answers are EXACT contig
+    # lengths (an ``int``, or a raise) rather than probed upper bounds.
+    # A caller that needs a true denominator -- e.g. a coverage fraction
+    # -- may only trust a backend that declares this; the tabix probe's
+    # answer is guaranteed LARGER than the actual length and stays False.
+    chrom_lengths_are_exact: ClassVar[bool] = False
+
     CHROM = "chrom"
     POS_BEGIN = "pos_begin"
     POS_END = "pos_end"
