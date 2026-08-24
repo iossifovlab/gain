@@ -12,6 +12,8 @@ import math
 from collections.abc import Iterable
 from typing import Any
 
+import numpy as np
+
 from gain.genomic_resources.statistics.base_statistic import Statistic
 
 COVERAGE_STATISTICS_FILE = "statistics/coverage.json"
@@ -166,6 +168,75 @@ class RegionCoverage:
                 self._first_run = self._run
             self._closed_segments += 1
         self._run = (begin, end, values)
+
+    def add_interval_batch(
+        self,
+        left: np.ndarray,
+        right: np.ndarray,
+        cells: list[np.ndarray],
+    ) -> None:
+        """Fold a batch of clipped row spans, collapsed into runs.
+
+        The vectorized statement of the rule :meth:`add_interval`
+        applies row by row — it lives HERE, beside that rule, so the
+        equality algebra has one home: rows collapse into a run while
+        they touch or overlap the positions covered so far and every
+        column compares equal, nan equal to nan (ADR 0020), and each
+        run costs one :meth:`add_interval` rather than one per row.
+
+        The touching test reads the running maximum end, which is exact
+        for a position score (whose validators refuse overlap, so the
+        previous row IS the running maximum).  For overlapping fragment
+        rows the covered count is still exact — :meth:`add_interval`
+        unions whatever run shapes arrive — while run identity may
+        differ from the row-by-row feed and between chunked and
+        unchunked scans where differently-valued fragments interleave;
+        fragment segment statistics are not published (value-aware
+        segments are a position-score statistic), and a consumer that
+        wants them must first give fragments an exact run algebra.
+
+        ``left``/``right`` are the already-clipped spans, ``cells`` one
+        kept column per scanned score, all equally long.
+        """
+        count = left.shape[0]
+        if not count:
+            return
+        boundary = np.ones(count, dtype=bool)
+        if count > 1:
+            equal = left[1:] <= np.maximum.accumulate(right)[:-1] + 1
+            for column in cells:
+                head, prev = column[1:], column[:-1]
+                if column.dtype == object:
+                    same = head == prev
+                else:
+                    same = (head == prev) \
+                        | (np.isnan(head) & np.isnan(prev))
+                equal &= same
+            boundary[1:] = ~equal
+        starts = np.flatnonzero(boundary)
+        run_begins = left[starts].tolist()
+        run_ends = np.maximum.reduceat(right, starts).tolist()
+        # Gather per-run values vectorized, then hand the loop plain
+        # Python objects: per-run numpy scalar indexing would put the
+        # object churn ADR 0001 deleted back on the hot path for the
+        # common one-value-per-row score, where runs are rows.
+        columns = []
+        for column in cells:
+            gathered = column[starts]
+            if gathered.dtype == object:
+                columns.append(gathered.tolist())
+            else:
+                columns.append([
+                    None if is_nan else value
+                    for value, is_nan in zip(
+                        gathered.tolist(),
+                        np.isnan(gathered).tolist(), strict=True)
+                ])
+        run_values = list(zip(*columns, strict=True)) if columns \
+            else [()] * len(run_begins)
+        for begin, end, values in zip(
+                run_begins, run_ends, run_values, strict=True):
+            self.add_interval(begin, end, values)
 
 
 class CoverageStatistics(Statistic):
