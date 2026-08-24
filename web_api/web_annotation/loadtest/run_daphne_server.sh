@@ -37,6 +37,7 @@ cat > "${GRR_FIXTURE}" <<YAML
 id: test
 type: dir
 directory: ${GRR_DIR}
+public_url: http://test
 YAML
 
 # Run the worktree's own web_annotation (not whatever the shared venv installed
