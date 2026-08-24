@@ -213,7 +213,7 @@ def test_dispatch_uses_bulk_for_float_tabix(tmp_path: pathlib.Path) -> None:
 
     assert GenomicScoreImplementation._can_bulk_histogram(resource, confs)
     via_task = GenomicScoreImplementation._do_histogram_task(
-        resource, confs, "chr1", 1, 20)
+        resource, confs, "chr1", 1, 20).histograms
     ref = GenomicScoreImplementation._do_histogram(
         resource, confs, "chr1", 1, 20)
     _assert_hists_equal(via_task, ref)
@@ -229,7 +229,7 @@ def test_dispatch_falls_back_for_whole_table_scan(
     resource = _multiscore_tabix(tmp_path)
     confs: dict = {"s1": _hist_conf(), "s2": _hist_conf()}
     via_task = GenomicScoreImplementation._do_histogram_task(
-        resource, confs, "chr1", None, None)
+        resource, confs, "chr1", None, None).histograms
     ref = GenomicScoreImplementation._do_histogram(
         resource, confs, "chr1", None, None)
     _assert_hists_equal(via_task, ref)
@@ -300,7 +300,7 @@ def test_bulk_histogram_matches_per_record_int_score_via_the_task(
     confs: dict = {"s": _int_hist_conf()}
 
     via_task = GenomicScoreImplementation._do_histogram_task(
-        resource, confs, "chr1", 1, 20)
+        resource, confs, "chr1", 1, 20).histograms
     ref = GenomicScoreImplementation._do_histogram(
         resource, confs, "chr1", 1, 20)
 
@@ -392,7 +392,7 @@ def test_bulk_categorical_matches_per_record_via_the_task(
     confs: dict = {"s": CategoricalHistogramConfig.default_config()}
 
     via_task = GenomicScoreImplementation._do_histogram_task(
-        resource, confs, "chr1", 1, 20)
+        resource, confs, "chr1", 1, 20).histograms
     ref = GenomicScoreImplementation._do_histogram(
         resource, confs, "chr1", 1, 20)
 
@@ -438,7 +438,7 @@ def test_a_str_score_with_a_number_histogram_keeps_the_per_record_path(
     assert not GenomicScoreImplementation._can_bulk_histogram(resource, confs)
 
     ref = GenomicScoreImplementation._do_histogram_task(
-        resource, confs, "chr1", 1, 20)
+        resource, confs, "chr1", 1, 20).histograms
     assert isinstance(ref["s"], NullHistogram)
 
 
@@ -586,7 +586,7 @@ def test_np_score_is_not_bulk_eligible(tmp_path: pathlib.Path) -> None:
     assert not GenomicScoreImplementation._can_bulk_histogram(resource, confs)
 
     via_task = GenomicScoreImplementation._do_histogram_task(
-        resource, confs, "1", 1, 20)
+        resource, confs, "1", 1, 20).histograms
     ref = GenomicScoreImplementation._do_histogram(
         resource, confs, "1", 1, 20)
     _assert_hists_equal(via_task, ref)
