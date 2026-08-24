@@ -248,7 +248,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         A kind whose records read as something other than the span they
         cover states that ONCE, by overriding:
         - region_values_from_records(): what a region's raw records mean for
-          this kind.  ``fetch_region_segment_scores`` is it applied to
+          this kind.  ``fetch_region_segments`` is it applied to
           ``fetch_records``, and the statistics scan is it applied to
           ``validate_records(fetch_records(...))`` -- so a kind states its
           reading once and both consumers get it (ADR 0008).
@@ -1129,8 +1129,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         self,
         records: Iterator[Record],
         chrom: str,
-        pos_begin: int | None = None,
-        pos_end: int | None = None,
+        pos_begin: int | None = None,  # noqa: ARG002
+        pos_end: int | None = None,  # noqa: ARG002
         scores: list[str] | None = None,
     ) -> Generator[
             tuple[int, int, list[ScoreValue]], None, None]:
@@ -1138,7 +1138,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         The region read expressed as a function OF a record stream, which is
         what lets the two consumers of a region differ by what they COMPOSE
-        rather than by a flag: :meth:`fetch_region_segment_scores` is this
+        rather than by a flag: :meth:`fetch_region_segments` is this
         applied to :meth:`fetch_records`, and the statistics scan is this
         applied to
         ``validate_records(fetch_records(...))``.  Neither can quietly
@@ -1146,22 +1146,24 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         which of the two is reading (ADR 0008).
 
         ``chrom``, ``pos_begin`` and ``pos_end`` name the region the records
-        were asked for.  Nothing is fetched here, but the span is what the
-        values are clipped to, and it is what the guards below are about.
+        were asked for.  Nothing is fetched here, and nothing is reshaped to
+        the window either -- what a partial overlap means belongs to the
+        caller (ADR 0008); a consumer answering a question about the window
+        clips with :func:`clip_span`.  The positions are what the guards
+        below are about.
 
         The guards run when this is CALLED rather than on the first
         ``next()`` -- the pattern :meth:`fetch_records` documents -- which is
-        why the streaming half lives in :meth:`_clipped_score_values`.  They
+        why the streaming half lives in :meth:`_score_segments`.  They
         stay here rather than moving down into ``fetch_records``: that method
         is on the annotation hot path, where a per-call
         ``get_all_chromosomes()`` membership scan is a real cost.
 
-        This base body yields every record clipped to the queried region,
-        which is what a position score and a fragment score both mean by it.
+        This base body yields every record at its own extent, which is what
+        a position score and a fragment score both mean by it.
         """
         score_defs = self._region_read_defs(chrom, scores)
-        return self._clipped_score_values(
-            records, pos_begin, pos_end, score_defs)
+        return self._score_segments(records, score_defs)
 
     def _region_read_defs(
         self, chrom: str, scores: list[str] | None,
@@ -1184,29 +1186,27 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         return self._resolve_score_defs(scores)
 
-    def _clipped_score_values(
+    def _score_segments(
         self,
         records: Iterator[Record],
-        pos_begin: int | None,
-        pos_end: int | None,
         score_defs: list[GenomicScoreDef],
     ) -> Generator[
             tuple[int, int, list[ScoreValue]], None, None]:
-        """Stream the clipped spans of an already-checked region request.
+        """Stream each record's own span for an already-checked request.
 
-        A record ending before the query is dropped rather than clipped.
-        Clipping one would put its begin at the query's start and its end
-        behind it -- an inverted span, whose width as a weight is negative.
-        The vectorized scan masks the same records on the same edge
-        (``pos_end >= start``), so the two paths measure a region alike; a
-        histogram must not depend on which of them a resource was eligible
-        for.
+        Every record is yielded at its full extent, including one that only
+        partly overlaps -- or entirely misses -- the region it was fetched
+        for.  What a partial overlap means depends on what the caller is
+        computing, so deciding it belongs to the window-answering consumers,
+        each of which clips with :func:`clip_span` (ADR 0008).
 
-        This does not refuse the record, because a backend answering a
-        region query with a record outside it is misconfigured rather than
-        holding bad data -- a table whose index and ``pos_end`` name
-        different columns (gain#553), which ADR 0008 refuses at ``open()``
-        and deliberately not here.
+        A record whose end precedes its begin is refused: that is a claim
+        about the record itself, not about any window.  A record outside
+        the queried region is NOT refused -- a backend answering a region
+        query with such a record is misconfigured rather than holding bad
+        data (a table whose index and ``pos_end`` name different columns,
+        gain#553), which ADR 0008 refuses at ``open()`` and deliberately
+        not here.
 
         The hottest loop in the read path, so it reads its record slots
         directly rather than through the helpers that wrap them (gain#823):
@@ -1224,15 +1224,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             rec_end = record[POS_END]
             if rec_end < rec_begin:
                 raise self._inverted_span_error(record)
-            if pos_begin is not None and rec_end < pos_begin:
-                continue
-
-            val = [extract(record, score_def) for score_def in score_defs]
-
-            left = max(pos_begin, rec_begin) \
-                if pos_begin is not None else rec_begin
-            right = min(pos_end, rec_end) if pos_end is not None else rec_end
-            yield (left, right, val)
+            yield (rec_begin, rec_end, [
+                extract(record, score_def) for score_def in score_defs])
 
     @abstractmethod
     def validate_records(
@@ -1290,7 +1283,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """
         raise NotImplementedError
 
-    def fetch_region_segment_scores(
+    def fetch_region_segments(
         self,
         chrom: str,
         pos_begin: int | None = None,
@@ -1300,13 +1293,19 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             tuple[int, int, list[ScoreValue]], None, None]:
         """Yield ``(begin, end, values)`` per record touching the region.
 
-        One tuple per underlying RECORD -- a segment, with that record's own
-        clipped span -- not one value per position.  The region's records,
-        read as this kind means them.  A plain read: it checks nothing.  The
-        statistics scan reads the same records through the same transform
-        with :meth:`validate_records` composed in front, and that extra link
-        -- visible at the consumer, in ``genomic_scores_impl.py`` -- is the
-        whole of the difference between the two (ADR 0008).
+        One tuple per underlying RECORD -- a segment, at that record's own
+        extent -- not one value per position.  The region's records, read as
+        this kind means them.  A record straddling the region's edge is
+        reported whole: what a partial overlap means depends on what the
+        caller is computing, so a caller answering a question about the
+        window composes :func:`clip_to_region` over this stream, or calls
+        :func:`clip_span` per segment (ADR 0008).
+
+        A plain read: it checks nothing.  The statistics scan reads the same
+        records through the same transform with :meth:`validate_records`
+        composed in front, and that extra link -- visible at the consumer,
+        in ``genomic_scores_impl.py`` -- is the whole of the difference
+        between the two (ADR 0008).
 
         One body per kind, in :meth:`region_values_from_records`, rather than
         one per kind per consumer: two that had to agree is how the paths
@@ -1315,6 +1314,39 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         return self.region_values_from_records(
             self.fetch_records(chrom, pos_begin, pos_end),
             chrom, pos_begin, pos_end, scores)
+
+    def fetch_region_segment_scores(
+        self,
+        chrom: str,
+        pos_begin: int | None = None,
+        pos_end: int | None = None,
+        scores: list[str] | None = None,
+    ) -> Generator[
+            tuple[int, int, list[ScoreValue]], None, None]:
+        """Yield ``(begin, end, values)`` per record, clipped to the region.
+
+        .. deprecated::
+            Use :meth:`fetch_region_segments` instead -- the same read,
+            reporting each record's own extent instead of reshaping it to
+            the queried window.  Retained because published callers hold
+            the clipped spans (``docs/source/python_interface.rst``);
+            removal is tracked as gain#844.
+
+        The body is the worked example of composing the region transducer:
+        the unclipped segment stream, with :func:`clip_to_region` deciding
+        what a partial overlap means.
+        """
+        warnings.warn(
+            "GenomicScore.fetch_region_segment_scores is deprecated; use "
+            "fetch_region_segments, which reports each record's own extent "
+            "instead of clipping it to the queried window. This clipped "
+            "read is retained until gain#844 removes it.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return clip_to_region(
+            self.fetch_region_segments(chrom, pos_begin, pos_end, scores),
+            pos_begin, pos_end)
 
     def fetch_region_values(
         self,
@@ -1385,7 +1417,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     ) -> list[ScoreValue]:
         """Reduce a region to one value per requested score.
 
-        The aggregating counterpart of :meth:`fetch_region_segment_scores`,
+        The aggregating counterpart of :meth:`fetch_region_segments`,
         which it is built on: that method yields one entry per record, this
         one folds
         those entries into a single value per request.
@@ -1436,7 +1468,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         # falls, even outside the window (see
         # test_an_allele_point_outside_the_window_still_aggregates_once).
         clip = self.RECORD_WEIGHT_IS_SPAN
-        for left, right, values in self.fetch_region_segment_scores(
+        for left, right, values in self.fetch_region_segments(
                 chrom, pos_begin, pos_end, score_ids):
             if clip:
                 span = clip_span(left, right, pos_begin, pos_end)
@@ -1532,7 +1564,7 @@ class PositionScore(GenomicScore):
         ...     # Fetch scores at a specific position
         ...     values = score.fetch_position_scores("chr1", 12345)
         ...     # Fetch scores across a region
-        ...     region = score.fetch_region_segment_scores(
+        ...     region = score.fetch_region_segments(
         ...         "chr1", 10000, 20000)
         ...     for pos_begin, pos_end, scores in region:
         ...         print(f"{pos_begin}-{pos_end}: {scores}")
@@ -1551,8 +1583,8 @@ class PositionScore(GenomicScore):
 
     Key Methods:
         fetch_position_scores: Get score values at a specific position
-        fetch_region_segment_scores: Iterate over score segments in a
-            genomic region
+        fetch_region_segments: Iterate over score segments in a
+            genomic region, each at its record's own extent
         fetch_region_weighted_values: Iterate over ``(values, weight)`` pairs
             in a genomic region, for a caller that aggregates it
     """
@@ -1679,7 +1711,7 @@ class PositionScore(GenomicScore):
         a region never clips a record nor materialises one copy of a value
         per base pair.
         """
-        for left, right, values in self.fetch_region_segment_scores(
+        for left, right, values in self.fetch_region_segments(
             chrom, pos_begin, pos_end, scores,
         ):
             span = clip_span(left, right, pos_begin, pos_end)
@@ -1746,7 +1778,7 @@ class PositionScore(GenomicScore):
         region width, and accumulated weight can never exceed it.
         """
         cursor = start
-        for left, right, values in self.fetch_region_segment_scores(
+        for left, right, values in self.fetch_region_segments(
                 chrom, start, end, scores):
             span = clip_span(left, right, start, end)
             if span is None:
@@ -2147,7 +2179,7 @@ class AlleleScore(GenomicScore):
         fetch_allele_records: Get the records of a region, filtered, telling
             a region holding no allele apart from one whose alleles were all
             rejected
-        fetch_region_segment_scores: Iterate over allele scores in a
+        fetch_region_segments: Iterate over allele scores in a
             genomic region
         substitutions_mode: Check if operating in SUBSTITUTIONS mode
         alleles_mode: Check if operating in ALLELES mode
@@ -2172,7 +2204,7 @@ class AlleleScore(GenomicScore):
     }
 
     # Several records share a position -- one per ref/alt pair -- and each
-    # weighs 1.  Structurally so: :meth:`fetch_region_segment_scores` yields
+    # weighs 1.  Structurally so: :meth:`fetch_region_segments` yields
     # ``(pos, pos, values)``, collapsing the record to a point however wide an
     # optional ``pos_end`` column reaches, so a span weight would not merely be
     # a different choice, it would disagree with the per-record read.
@@ -2361,10 +2393,12 @@ class AlleleScore(GenomicScore):
         needs the nucleotides themselves reads ``record[REF]`` /
         ``record[ALT]`` off :meth:`fetch_records`.
 
-        Nothing is clipped, there being no span left to clip.  ``pos_begin``
-        and ``pos_end`` are still taken, because they are what
-        :meth:`GenomicScore.region_values_from_records` means by a region and
-        this is one kind's answer to it.
+        The point stands wherever it falls relative to the queried window:
+        like every segment read, this holds no window opinion, and what a
+        point outside the window means is the caller's question (ADR 0008).
+        ``pos_begin`` and ``pos_end`` are still taken, because they are what
+        :meth:`GenomicScore.region_values_from_records` means by a region
+        and this is one kind's answer to it.
 
         Nothing is checked either: every record is read, whatever its
         position is next to the one before it.  The rule an allele score's
@@ -2390,7 +2424,7 @@ class AlleleScore(GenomicScore):
         single-allele read matches on ref/alt without looking at the span.
 
         Reads its slots directly and extracts inline, for the reasons
-        :meth:`GenomicScore._clipped_score_values` gives.
+        :meth:`GenomicScore._score_segments` gives.
         """
         extract = self._extract_value
         for record in records:

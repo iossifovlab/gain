@@ -679,6 +679,36 @@ def test_reading_an_allele_score_going_backwards_raises_nothing(
     ]
 
 
+def test_fetch_region_segments_reports_a_straddling_records_true_extent(
+    position_score: PositionScore,
+) -> None:
+    # The records at (11, 13) and (21, 23) both straddle an edge of the
+    # queried window [12, 22]; the segment read reports their own spans,
+    # not the window's.
+    assert list(position_score.fetch_region_segments(
+        "chr1", 12, 22, scores=["s1"])) == [
+        (11, 13, [1.0]),
+        (21, 23, [2.0]),
+    ]
+
+
+def test_fetch_region_segment_scores_is_deprecated_and_still_clips(
+    position_score: PositionScore,
+) -> None:
+    # The old name keeps its meaning -- the straddling records above come
+    # back reshaped to the window -- so callers holding the clipped spans
+    # (see gain#825) see no silent change; its removal is tracked as
+    # gain#844.
+    with pytest.warns(DeprecationWarning, match="fetch_region_segments"):
+        clipped = list(position_score.fetch_region_segment_scores(
+            "chr1", 12, 22, scores=["s1"]))
+
+    assert clipped == [
+        (12, 13, [1.0]),
+        (21, 22, [2.0]),
+    ]
+
+
 def test_fetch_region_values_is_a_deprecated_alias_of_the_segment_read(
     position_score: PositionScore,
 ) -> None:

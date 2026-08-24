@@ -1,7 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """``GenomicScore.aggregate_region``: a region reduced to one value per score.
 
-The aggregating counterpart of ``fetch_region_segment_scores``.  What these
+The aggregating counterpart of ``fetch_region_segments``.  What these
 pin is mostly its agreement with things that already exist -- the annotators,
 and
 the per-type weighting rule ``WeightedValues`` documents -- because a helper
@@ -101,18 +101,16 @@ def test_it_agrees_with_fetch_region_weighted_values(
 def test_a_record_the_query_clips_to_nothing_is_not_aggregated(
     wide: PositionScore, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A non-positive weight never reaches an aggregator (gain#639).
+    """A record with no part inside the window never reaches an aggregator.
 
-    ``fetch_region_segment_scores`` deliberately yields an out-of-region
-    record through (gain#553, ADR 0008), and clipping it inverts its span
-    -- or zeroes it, for a record starting one past the query.
-    ``aggregate_region`` carries its OWN copy of the skip
-    ``fetch_region_weighted_values`` applies -- the agreement test above
-    cannot see a symmetric removal from both, so each copy gets its own
-    pin.  Without it the dead record's value would count a negative number
-    of times; ``mean`` catches that, and ``max`` -- which registers a value
-    however small its weight -- catches the zero-span record a skip
-    weakened to ``< 0`` would admit.
+    ``fetch_region_segments`` deliberately yields an out-of-region record
+    through (gain#553, ADR 0008), at its own extent.  ``aggregate_region``
+    carries its OWN ``clip_span`` -- the agreement test above cannot see a
+    symmetric removal from both it and ``fetch_region_weighted_values``, so
+    each copy gets its own pin.  Without it the dead record's value would
+    count -- for a negative number of times, even; ``mean`` catches that,
+    and ``max`` -- which registers a value however small its weight --
+    catches the zero-overlap record too (gain#639).
     """
     def outside(
         chrom: str,
@@ -120,13 +118,14 @@ def test_a_record_the_query_clips_to_nothing_is_not_aggregated(
         pos_end: int | None = None,
         scores: list[str] | None = None,
     ) -> Generator[tuple[int, int, list[float]], None, None]:
-        # a [20, 25] record, clipped by the region read to a [10, 16] query
-        yield (20, 16, [9.9])
-        # a [17, ...] record, clipped to a ZERO span
-        yield (17, 16, [5.5])
+        # a [20, 25] record, entirely past the [10, 16] query
+        yield (20, 25, [9.9])
+        # a record starting ONE past the query -- clipping it naively
+        # would produce a zero span, not a skip
+        yield (17, 17, [5.5])
         yield (10, 14, [1.0])
 
-    monkeypatch.setattr(wide, "fetch_region_segment_scores", outside)
+    monkeypatch.setattr(wide, "fetch_region_segments", outside)
 
     with wide:
         assert wide.aggregate_region("1", 10, 16, ["s", ("s", "max")]) == [

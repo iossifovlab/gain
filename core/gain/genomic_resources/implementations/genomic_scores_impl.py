@@ -706,9 +706,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
         Returns ``(keep, weights)``: the mask of records surviving the
         ``pos_end >= start`` skip, and their weights.  The skip is the same
-        one :meth:`GenomicScore._clipped_score_values` applies per record, on
-        the same edge, so a region measures the same whichever path a
-        resource was eligible for -- neither drops a record the other keeps.
+        edge :func:`~gain.genomic_resources.genomic_scores.clip_span`
+        applies per record in the statistics scan, so a region measures the
+        same whichever path a resource was eligible for -- neither drops a
+        record the other keeps.
         Nothing here stops a negative weight if an inverted span arrives
         (the backends' doing rather than this function's).  The per-record
         consumer refuses such a record -- one beginning past the region's

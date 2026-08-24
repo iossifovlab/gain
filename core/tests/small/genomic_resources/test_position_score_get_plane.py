@@ -261,7 +261,7 @@ def test_a_segment_straddling_a_bin_boundary_splits_at_it(
         ]
 
 
-# The plane rides `fetch_region_segment_scores`, so it must answer
+# The plane rides `fetch_region_segments`, so it must answer
 # identically off
 # every backend a position score realizes onto.  One dataset (10-13: 0.2,
 # 16: 0.8), three realizations; a bigWig stores float32, hence approx.
@@ -386,13 +386,13 @@ def test_a_record_outside_the_region_is_dropped_not_counted(
 ) -> None:
     """A backend answering outside the query must not corrupt the plane.
 
-    ``_clipped_score_values`` deliberately yields such a record through --
-    the misconfigured backend it implies is refused at ``open()``, not by a
-    read (gain#553, ADR 0008) -- and clipping it inverts its span.  The
-    walker must drop it, as ``aggregate_region`` and
-    ``fetch_region_weighted_values`` drop their non-positive weights;
-    counting it would yield phantom positions past the region width and
-    feed the aggregator a negative weight.
+    ``_score_segments`` deliberately yields such a record through, at its
+    own extent -- the misconfigured backend it implies is refused at
+    ``open()``, not by a read (gain#553, ADR 0008).  The walker must drop
+    it, as ``aggregate_region`` and ``fetch_region_weighted_values`` drop
+    it with the same ``clip_span``; counting it would yield phantom
+    positions past the region width and feed the aggregator a negative
+    weight.
     """
     def outside(
         chrom: str,
@@ -400,10 +400,10 @@ def test_a_record_outside_the_region_is_dropped_not_counted(
         pos_end: int | None = None,
         scores: list[str] | None = None,
     ) -> Generator[tuple[int, int, list[float]], None, None]:
-        # a [20, 25] record, clipped by the region read to a [10, 16] query
-        yield (20, 16, [9.9])
+        # a [20, 25] record, entirely past the [10, 16] query
+        yield (20, 25, [9.9])
 
-    monkeypatch.setattr(gapped, "fetch_region_segment_scores", outside)
+    monkeypatch.setattr(gapped, "fetch_region_segments", outside)
     with gapped:
         assert list(gapped.get_score_in_region("1", 10, 16)) == [None] * 7
         assert gapped.get_score_in_region_agg("1", 10, 16) is None
