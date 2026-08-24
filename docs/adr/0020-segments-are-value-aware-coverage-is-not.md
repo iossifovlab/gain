@@ -1,0 +1,164 @@
+# 20. Extended score statistics: segments are value-aware, coverage is not
+
+- **Status:** accepted
+- **Date:** 2026-08-24
+- **Issues:** [gain#770](https://github.com/iossifovlab/gain/issues/770) (the
+  epic and its decision record), [gain#771](https://github.com/iossifovlab/gain/issues/771)
+  (this record)
+
+## Context
+
+The GRR resource info page documents a tabular score today with value
+histograms and min/max — it says what values a score holds, and nothing about
+**where** it holds them or **how its content is structured**. "Does this score
+cover chrX?", "is it one value per base or long constant runs?", "what does
+this allele score actually contain — SNVs, indels, something else?" are all
+questions the page cannot answer. gain#770 extends the computed statistics to
+answer them, per chromosome and globally, for `position_score` and
+`allele_score` (fragment scores ride the shared machinery; resources still
+typed `np_score` take the allele path automatically).
+
+Doing that required giving two everyday words a precise meaning, because both
+are used loosely everywhere else: what is one *segment* of a score, and when
+is a position *covered*? The definitions decide what the statistics mean, so
+they were decided first, before any statistic is implemented — and one of them
+was decided **twice**. The original decision record (2026-08-11) defined a
+segment value-blind; on 2026-08-24, before any implementation existed, that
+was reversed to the value-aware definition below. The reversal is part of this
+record, because the rejected definition will look attractive again — it is
+simpler and it made an identity hold for free.
+
+## Decision
+
+### Segment — value-aware
+
+A **segment** is a maximal run of touching-or-overlapping table rows carrying
+**equal values**: the whole row's score-column tuple compares equal, with NA
+equal to NA, and floats compared exactly as stored. Per-resource — one
+segmentation regardless of how many score columns the resource declares. A row
+that touches its neighbour but differs in any score column starts a new
+segment.
+
+Three details of "equal" are decisions, not defaults:
+
+- **Whole-row tuple**, not per-column. However many score columns a resource
+  has, it has one segmentation; a change in *any* column breaks the segment.
+- **NA equals NA.** NA is a value like any other, so a run of NA rows merges
+  into a segment. Segments exist wherever rows exist; a segment is not
+  evidence of a usable value.
+- **Floats compare exactly, as stored.** No tolerance. A tolerance would need
+  a constant nobody can justify, would make segmentation non-transitive
+  (a≈b, b≈c, a≉c), and would make the statistics depend on comparison policy
+  rather than on the data.
+
+A segment is also **not a table row as stored** — that is a *fragment* (the
+fragment-score vocabulary, ADR [0003](0003-fragment-score-vocabulary.md)):
+fragments are unmerged and overlapping fragments each count, deliberately the
+opposite of the merged segment view. Both views are collected, because they
+answer different questions.
+
+### Covered position — value-blind
+
+A position is **covered** when at least one table row spans it — union
+semantics, ignoring values entirely, computed independently of segments. This
+is the definition the coverage documentation needs: "is there data here at
+all?" is a question about row extents, not about values.
+
+The two definitions deliberately do not compose. **Σ segment lengths is not
+the covered-position count**: where rows with different values overlap, their
+segments overlap too, and the sum double-counts the shared positions. Equality
+holds only for a resource with no different-valued overlap. Nothing may
+present the sum of segment lengths as coverage; coverage has its own
+statistic.
+
+### Allele classification — strict VCF anchoring
+
+Allele-score rows are classified from ref/alt as written, VCF-anchored:
+**substitution** is strictly 1→1; **insertion** and **deletion** are the
+anchored forms (length = the length difference); **complex** is everything
+else, *including MNVs*; a counted **other** bucket absorbs what does not parse
+(N, symbolic alleles, malformed pairs), so the class totals always sum to the
+row count. MNVs are not "substitutions of length n": keeping substitution
+strictly 1→1 is what makes the 4×4 ref→alt substitution matrix exact rather
+than a projection of multi-base events.
+
+### Bins, storage, rollout
+
+- **Fixed log-scale bins, a code-level constant.** Length histograms
+  (segments, fragments, indels) use one fixed binning everywhere, so
+  per-chromosome results merge into exact global ones at build time — no
+  second pass, no approximate merge, and chunked scans merge exactly for the
+  same reason.
+- **Raw counts stored; fractions at render.** The statistics file holds
+  counts only. Coverage *fractions* need chromosome lengths, which belong to
+  a reference genome, not to the score — so they are computed at render time
+  from a resolvable genome (bigWig header as fallback). The stored statistics
+  stay genome-independent, and rendering can improve without rebuilding any
+  resource.
+- **Lazy rollout; `calc_statistics_hash` untouched.** The new statistics do
+  not enter the statistics hash, so no existing resource is invalidated.
+  Statistics appear as resources are rebuilt; the page renders "not computed"
+  where they are absent. The lever this requires — a verified per-resource
+  forced rebuild in `grr_manage` — is part of the epic.
+
+## Rejected alternatives
+
+**Value-blind union segments — the original choice, reversed.** As first
+decided, a segment was a maximal run of touching-or-overlapping rows with
+values ignored. It bought two real simplifications: covered positions =
+Σ segment lengths *by construction*, and no definition of "equal" needed — no
+multi-column question, no NA question, no float question. It was given up
+because a value-blind segment documents only row adjacency, and row adjacency
+is what the coverage statistics already state: its total duplicates the
+covered count, and its length histogram describes gap structure, which the
+coverage table and the fragment view carry between them. The epic's goal is
+coverage *and content structure*, and only a value-aware segment says anything
+about content — one value per base and a megabase constant run are different
+resources, and value-blind segmentation cannot tell them apart. The price of
+the reversal is recorded honestly below.
+
+**Per-score-column segmentation.** Each score column with its own
+segmentation — the value-aware definition a statistician might expect.
+Rejected: N columns mean N segment counts and N histograms per chromosome,
+multiplying the statistics surface and the page for a distinction no current
+consumer asks about, and losing the one-segmentation-per-resource shape the
+rest of the statistics share. The whole-row tuple still breaks wherever any
+column changes, so it bounds every per-column segmentation from below; a
+per-column view can be added later without disturbing this one.
+
+**Per-score-column NA-aware coverage.** Counting a position as covered per
+column, only where that column has a non-NA value. Rejected for coverage:
+it conflates "the table has no row here" with "the row has no value for this
+column here", which are different claims (the same distinction this project
+has been burned by before — see the search-index entries in `CONTEXT.md`).
+Coverage documents the first; per-column NA-ness is visible in the value
+statistics. This also keeps coverage per-resource — one table, not one per
+column.
+
+**Hash-versioned rollout.** Folding the new statistics into
+`calc_statistics_hash` so every resource rebuilds on upgrade. Rejected: it
+invalidates the statistics of every deployed resource in every GRR at once,
+turning a documentation improvement into a fleet-wide rebuild obligation. The
+lazy path costs a mixed state — some resource pages showing "not computed"
+indefinitely — which is accepted and made visible rather than hidden.
+
+## Consequences
+
+- **Two numbers that used to be one.** Covered positions and Σ segment
+  lengths are separate statistics that agree only absent different-valued
+  overlap. Rendering must never derive one from the other.
+- **The chunk merge carries values.** A region-chunked scan stitches segments
+  across chunk boundaries, so each chunk's open head/tail segments must carry
+  their value tuples — equality is now part of the stitch. The merge is
+  order-sensitive, unlike the min/max and histogram merges.
+- **Exact equality is sensitive by design.** A score whose stored values
+  differ in the last bit segments finely; that is a fact about the data, and
+  the statistics report it rather than smooth it.
+- **NA runs are segments.** A consumer reading segment counts must not read
+  them as "runs of usable values".
+- **The rollout is visibly incomplete for a while.** Resource pages show
+  "not computed" until each resource is rebuilt; that state is intended, not
+  a defect.
+- The definitions are vocabulary now: `CONTEXT.md` carries **segment** and
+  **covered position**, and issue text and docstrings in the statistics area
+  are held to them.
