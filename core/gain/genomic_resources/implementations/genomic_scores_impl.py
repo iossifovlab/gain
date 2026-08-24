@@ -54,6 +54,10 @@ from gain.genomic_resources.score_def import ScoreValue
 from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
 )
+from gain.genomic_resources.statistics.coverage import (
+    RegionCoverage,
+    normalize_values,
+)
 from gain.genomic_resources.statistics.min_max import MinMaxValue
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
 from gain.utils.regions import (
@@ -518,6 +522,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         chrom: str,
         start: int | None,
         end: int | None,
+        coverage: RegionCoverage | None = None,
     ) -> dict[str, Histogram]:
         impl = build_score_implementation_from_resource(resource)
         result: dict[str, Histogram] = {}
@@ -539,8 +544,15 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             # (see test_multi_base_allele_record_clipped_by_region_weighs_one).
             for left, right, rec in GenomicScoreImplementation._scan_region(
                     score, chrom, start, end, score_ids):
+                # Coverage measures every kind from the same clip the
+                # span weight reads, so the two paths agree on the one
+                # edge the shared clip leaves open: a record beginning
+                # past the region's end covers nothing (gain#636).
+                span = clip_span(left, right, start, end)
+                if coverage is not None and span is not None:
+                    coverage.add_interval(
+                        span[0], span[1], normalize_values(rec))
                 if weight_is_span:
-                    span = clip_span(left, right, start, end)
                     if span is None:
                         continue
                     left, right = span
@@ -582,6 +594,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         chrom: str,
         start: int,
         end: int,
+        coverage: RegionCoverage | None = None,
     ) -> dict[str, Histogram]:
         """Vectorized equivalent of :meth:`_do_histogram`.
 
@@ -601,9 +614,91 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             if isinstance(hist_conf, NullHistogramConfig):
                 continue
             result[score_id] = build_empty_histogram(hist_conf)
+
+        accumulate = GenomicScoreImplementation._accumulate_arrays
+        if coverage is not None:
+
+            def accumulate(  # type: ignore[misc]
+                arrays: RecordArrays,
+                result: dict[str, Histogram],
+                region: tuple[str, int | None, int | None],
+                score: GenomicScore,
+            ) -> None:
+                GenomicScoreImplementation._accumulate_arrays(
+                    arrays, result, region, score)
+                GenomicScoreImplementation._accumulate_coverage(
+                    arrays, coverage, region)
+
         return GenomicScoreImplementation._bulk_region_scan(
-            resource, result, chrom, start, end,
-            GenomicScoreImplementation._accumulate_arrays)
+            resource, result, chrom, start, end, accumulate)
+
+    @staticmethod
+    def _accumulate_coverage(
+        arrays: RecordArrays,
+        coverage: RegionCoverage,
+        region: tuple[str, int | None, int | None],
+    ) -> None:
+        """Fold one batch of column arrays into the region's coverage.
+
+        Rows are clipped to the region on both edges -- a record beginning
+        past the region's end covers nothing, the same verdict the
+        per-record path gets from ``clip_span`` (gain#636) -- and collapsed
+        into equal-valued runs before they are fed to ``coverage``, so a
+        constant stretch costs one ``add_interval`` rather than one call
+        per row.  A row extends the running run when it touches or overlaps
+        the positions covered so far and every score column compares equal,
+        with nan equal to nan -- the vectorized statement of the segment
+        rule ``RegionCoverage.add_interval`` applies row by row (ADR 0020).
+
+        The touching test reads the running maximum end rather than the
+        previous row's end, which is exact for a position score (whose
+        validators refuse overlap, so the previous row IS the running
+        maximum).  For overlapping fragment rows the covered count is
+        still exact -- ``add_interval`` unions whatever run shapes arrive
+        -- while run identity may differ from the row-by-row feed where
+        differently-valued fragments interleave; fragment segment
+        statistics are not published (value-aware segments are a
+        position-score statistic).
+        """
+        _chrom, start, end = region
+        pos_begin, pos_end, value_cells = arrays
+        keep = np.ones(pos_begin.shape[0], dtype=bool)
+        if start is not None:
+            keep &= pos_end >= start
+        if end is not None:
+            keep &= pos_begin <= end
+        if not keep.any():
+            return
+        left = pos_begin[keep]
+        right = pos_end[keep]
+        if start is not None:
+            left = np.maximum(left, start)
+        if end is not None:
+            right = np.minimum(right, end)
+
+        boundary = np.ones(left.shape[0], dtype=bool)
+        if left.shape[0] > 1:
+            touching = left[1:] <= np.maximum.accumulate(right)[:-1] + 1
+            equal = touching
+            for column in value_cells.values():
+                kept = column[keep]
+                head, prev = kept[1:], kept[:-1]
+                if kept.dtype == object:
+                    same = head == prev
+                else:
+                    same = (head == prev) \
+                        | (np.isnan(head) & np.isnan(prev))
+                equal = equal & same
+            boundary[1:] = ~equal
+        starts = np.flatnonzero(boundary)
+        run_ends = np.maximum.reduceat(right, starts)
+        kept_cells = [column[keep] for column in value_cells.values()]
+        for index, run_start in enumerate(starts):
+            coverage.add_interval(
+                int(left[run_start]),
+                int(run_ends[index]),
+                normalize_values(
+                    column[run_start] for column in kept_cells))
 
     @staticmethod
     def _bulk_region_scan(
