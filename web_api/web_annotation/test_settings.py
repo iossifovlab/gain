@@ -51,9 +51,11 @@ pathlib.Path(GRR_DEFINITION_PATH).write_text(yaml.safe_dump({
     "id": "test",
     "type": "dir",
     "directory": GRR_DIRECTORY,
+    # Resource links are derived from the repository's public URL, so the
+    # test GRR declares one; without it they would fall back to this
+    # checkout's absolute path and differ from machine to machine.
+    "public_url": "http://test",
 }))
-
-RESOURCES_BASE_URL = "http://test/"
 
 EMAIL_REDIRECT_ENDPOINT = os.environ.get(
     "GPFWA_EMAIL_REDIRECT_ENDPOINT", "http://testserver/")

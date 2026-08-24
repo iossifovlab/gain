@@ -49,6 +49,10 @@ def test_grr(mocker: pytest_mock.MockFixture) -> GenomicResourceRepo:
             "id": "test",
             "type": "dir",
             "directory": str(grr_dir),
+            # Same id over the same directory as the GRR the settings
+            # build, so it has to agree with them on the public url --
+            # a protocol cannot be repointed at a second one.
+            "public_url": "http://test",
         },
     )
 

@@ -15,8 +15,6 @@ QUOTAS = {
     "disk_space": "2048M",
 }
 
-RESOURCES_BASE_URL = "http://grr.seqpipe.org/"
-
 ANNOTATION_MAX_WORKERS = 16
 PIPELINES_CACHE_SIZE = 256
 
