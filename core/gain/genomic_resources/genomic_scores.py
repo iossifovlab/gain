@@ -150,6 +150,14 @@ def clip_to_region[T](
             yield (span[0], span[1], payload)
 
 
+# The shared core of every fetch_region_segment_scores deprecation warning
+# (the base method and the AlleleScore override); gain#844 removes the name.
+_SEGMENT_SCORES_DEPRECATION = (
+    "GenomicScore.fetch_region_segment_scores is deprecated; use "
+    "fetch_region_segments. This name is retained until gain#844 "
+    "removes it. ")
+
+
 class GenomicScore(ScoreResource[GenomicScoreDef]):
     """Base class for genomic score resources.
 
@@ -1337,10 +1345,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         what a partial overlap means.
         """
         warnings.warn(
-            "GenomicScore.fetch_region_segment_scores is deprecated; use "
-            "fetch_region_segments, which reports each record's own extent "
-            "instead of clipping it to the queried window. This clipped "
-            "read is retained until gain#844 removes it.",
+            _SEGMENT_SCORES_DEPRECATION
+            + "The replacement reports each record's own extent instead "
+            "of clipping it to the queried window.",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -1359,9 +1366,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """Yield ``(begin, end, values)`` per record touching the region.
 
         .. deprecated::
-            Use :meth:`fetch_region_segment_scores` instead -- the same
-            read under a name that says it yields one tuple per record
-            (a segment), not one value per position.  Retained as a thin
+            Use :meth:`fetch_region_segments` -- note it reports each
+            record's own extent, where this alias yields the record
+            clipped to the queried window (compose :func:`clip_to_region`
+            over it where the clipped spans matter).  Retained as a thin
             compatibility alias only because the published
             ``docs/source/python_interface.rst`` showed this name to
             external readers; no in-tree or known cross-repo caller
@@ -1369,9 +1377,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """
         warnings.warn(
             "GenomicScore.fetch_region_values is deprecated; use "
-            "fetch_region_segment_scores instead. It is retained only "
-            "for readers of the published documentation, until gain#730 "
-            "removes it.",
+            "fetch_region_segments (unclipped; compose clip_to_region "
+            "over it for the clipped spans this alias yields). It is "
+            "retained only for readers of the published documentation, "
+            "until gain#730 removes it.",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -2422,14 +2431,13 @@ class AlleleScore(GenomicScore):
         .. deprecated::
             Use :meth:`fetch_region_segments` -- for this kind the very
             same read.  An allele read collapses each record to a point and
-            has never reshaped it to the queried window, so unlike the base
-            method there is no clip to preserve here; the two names differ
-            only in the warning.  Removal is tracked as gain#844.
+            holds no window opinion, so unlike the base method there is no
+            clip to preserve here; the two names differ only in the
+            warning.  Removal is tracked as gain#844.
         """
         warnings.warn(
-            "GenomicScore.fetch_region_segment_scores is deprecated; use "
-            "fetch_region_segments. For an allele score the two are the "
-            "same read. This name is retained until gain#844 removes it.",
+            _SEGMENT_SCORES_DEPRECATION
+            + "For an allele score the two are the same read.",
             DeprecationWarning,
             stacklevel=2,
         )
