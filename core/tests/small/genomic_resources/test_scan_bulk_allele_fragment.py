@@ -407,7 +407,8 @@ def test_dispatch_uses_bulk_for_allele_and_fragment(
     assert G._can_bulk_histogram(resource, confs)
     assert G._bulk_scan_eligible(resource, ["s"])
     _assert_hists_equal(
-        G._do_histogram_task(resource, confs, "chr1", 1, 300).histograms, ref_hist)
+        G._do_histogram_task(
+            resource, confs, "chr1", 1, 300).histograms, ref_hist)
     _assert_min_max_equal(
         G._do_min_max_task(resource, ["s"], "chr1", 1, 300), ref_min_max)
     assert calls == ["_do_histogram_bulk", "_do_min_max_bulk"]
@@ -426,7 +427,7 @@ def test_dispatch_keeps_an_ineligible_score_off_the_bulk_path(
     )
     confs: dict = {"score": _hist_conf()}
     calls = _spy_on_bulk(monkeypatch)
-    G._do_histogram_task(resource, confs, "1", 1, 20).histograms
+    G._do_histogram_task(resource, confs, "1", 1, 20)
     G._do_min_max_task(resource, ["score"], "1", 1, 20)
     assert not calls, calls
 
@@ -439,7 +440,7 @@ def test_dispatch_keeps_an_unbounded_region_off_the_bulk_path(
     resource = _fragment_tabix(tmp_path)
     confs: dict = {"s": _hist_conf()}
     calls = _spy_on_bulk(monkeypatch)
-    G._do_histogram_task(resource, confs, "chr1", None, None).histograms
+    G._do_histogram_task(resource, confs, "chr1", None, None)
     G._do_min_max_task(resource, ["s"], "chr1", None, None)
     assert not calls, calls
 

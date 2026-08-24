@@ -88,4 +88,31 @@
     {%- endfor %}
 </table>
 </div>
+
+<h2>Coverage</h2>
+{% set coverage = impl.get_coverage_statistics() %}
+{% if coverage != None %}
+<div class="scrollable-table-container">
+<table>
+    <thead>
+        <tr>
+            <th>Chromosome</th>
+            <th>Covered positions</th>
+        </tr>
+    </thead>
+    {%- for chrom, covered in coverage.covered_by_chromosome().items() -%}
+        <tr>
+            <td>{{ chrom }}</td>
+            <td>{{ covered }}</td>
+        </tr>
+    {%- endfor %}
+    <tr class="coverage-global">
+        <td>all chromosomes</td>
+        <td>{{ coverage.covered_global() }}</td>
+    </tr>
+</table>
+</div>
+{% else %}
+<p>not computed</p>
+{% endif %}
 {% endblock %}
