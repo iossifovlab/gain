@@ -148,7 +148,7 @@ def _replicated_pass(score: PositionScore) -> Callable[[], float]:
     """Replay the pre-#260 strategy: one copy of a value per base pair."""
     def run() -> float:
         raw: list[float] = []
-        for left, right, values in score.fetch_region_segment_scores(
+        for left, right, values in score.fetch_region_segments(
             _CHROM, 1, _REGION_LEN, [_SCORE_ID],
         ):
             raw.extend([values[0]] * (right - left + 1))  # type: ignore[misc]

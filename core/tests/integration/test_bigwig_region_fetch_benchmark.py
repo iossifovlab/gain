@@ -12,7 +12,7 @@ window is now retuned toward a target number of records per call.
 Three numbers are reported over the same dense 1 Mb / 20,000-interval fixture:
 
 * the **score-layer region fetch**
-  (``PositionScore.fetch_region_segment_scores`` across the whole megabase)
+  (``PositionScore.fetch_region_segments`` across the whole megabase)
   -- the end-to-end cost callers actually pay;
 * the **old fixed 50 bp walk**, replayed here as a raw ``intervals()`` loop
   over the same range, which is the I/O the backend used to issue; and
@@ -155,7 +155,7 @@ def _fetch_pass(score: PositionScore) -> Callable[[], int]:
     """A score-layer region fetch across the whole 1 Mb region."""
     def run() -> int:
         count = 0
-        for _left, _right, values in score.fetch_region_segment_scores(
+        for _left, _right, values in score.fetch_region_segments(
             _CHROM, 1, _REGION_LEN,
         ):
             count += 1

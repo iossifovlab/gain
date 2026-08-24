@@ -1853,7 +1853,7 @@ def test_zero_based_invalid_row_rejected_by_score_layer(
         .build_resource(tmp_path),
     ).open()
     with pytest.raises(OSError, match="has a region"):
-        list(score.fetch_region_segment_scores("1", 1, 100))
+        list(score.fetch_region_segments("1", 1, 100))
 
 
 def test_invalid_region_error_names_the_offending_line(
@@ -1875,7 +1875,7 @@ def test_invalid_region_error_names_the_offending_line(
         .build_resource(tmp_path),
     ).open()
     with pytest.raises(OSError, match=re.escape("record 1:6-3")):
-        list(score.fetch_region_segment_scores("1", 1, 100))
+        list(score.fetch_region_segments("1", 1, 100))
 
 
 def test_zero_based_no_pos_end_column_end_to_end(

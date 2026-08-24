@@ -150,7 +150,7 @@ def _allele_multibase_tabix(tmp_path: pathlib.Path) -> GenomicResource:
 def test_multi_base_allele_record_weighs_one_not_its_span(
     tmp_path: pathlib.Path,
 ) -> None:
-    # ``AlleleScore.fetch_region_segment_scores`` yields ``(pos, pos,
+    # ``AlleleScore.fetch_region_segments`` yields ``(pos, pos,
     # values)``, so a record weighs 1 however far its ``pos_end`` reaches.
     # Span-weighting it
     # in bulk would silently produce a different histogram.
