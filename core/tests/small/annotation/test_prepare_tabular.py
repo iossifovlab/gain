@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import gzip
 import logging
+import os
 import pathlib
 import stat
 import textwrap
@@ -15,6 +16,7 @@ from gain.annotation.prepare_tabular import (
     _build_argument_parser,
     _build_direct_sort_plan,
     _build_indirect_sort_plan,
+    _build_sort_cmd,
     _default_output_path,
     _detect_input_separator,
     _injected_values_for,
@@ -133,6 +135,33 @@ def test_indirect_sort_plan_collision_errors() -> None:
     with pytest.raises(ValueError, match="cannot inject sort columns"):
         _build_indirect_sort_plan(
             r2a, header, {"vcf_like": "chr1:4:C:T", "chrom": "x"})
+
+
+def test_build_sort_cmd_forwards_threads_and_buffer_only_when_set(
+) -> None:
+    header = ["chrom", "pos", "score"]
+    r2a = RecordToPosition(("chrom", "pos"), None)
+    plan = _build_direct_sort_plan(r2a, header)
+
+    cmd = _build_sort_cmd(
+        plan, rank_prefix=False, separator="\t",
+        work_dir="/work", threads=4, buffer="1G")
+    assert "--parallel=4" in cmd
+    assert cmd[cmd.index("-S") + 1] == "1G"
+
+    cmd = _build_sort_cmd(
+        plan, rank_prefix=False, separator="\t",
+        work_dir="/work", threads=None, buffer=None)
+    assert "--parallel=4" not in cmd
+    assert "-S" not in cmd
+
+
+def test_sort_buffer_and_threads_flags_are_parsed() -> None:
+    parser = _build_argument_parser()
+    args = vars(parser.parse_args(
+        ["in.tsv", "--sort-threads", "4", "--sort-buffer", "1G"]))
+    assert args["sort_threads"] == 4
+    assert args["sort_buffer"] == "1G"
 
 
 def test_injected_values_for_cnv_allele() -> None:
@@ -568,6 +597,7 @@ def test_cli_streaming_failure_preserves_a_previously_good_output(
 
 def test_cli_sort_failure_preserves_a_previously_good_output(
     tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The destination survives a native-sort failure too."""
     in_file = tmp_path / "in.tsv"
@@ -581,9 +611,17 @@ def test_cli_sort_failure_preserves_a_previously_good_output(
     good_output = out_file.read_bytes()
     good_index = index_file.read_bytes()
 
-    # an unparsable buffer size makes the native sort exit non-zero
-    with pytest.raises((RuntimeError, BrokenPipeError)):
-        cli([str(in_file), "-o", str(out_file), "--sort-buffer", "notasize"])
+    # a stub `sort` on PATH consumes its input and exits non-zero;
+    # draining stdin first keeps the failure on the exit-code path
+    # rather than surfacing as a writer-side BrokenPipeError
+    stub = tmp_path / "bin" / "sort"
+    stub.parent.mkdir()
+    stub.write_text("#!/bin/sh\ncat > /dev/null\nexit 1\n")
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", str(stub.parent), prepend=os.pathsep)
+
+    with pytest.raises(RuntimeError, match="native sort failed"):
+        cli([str(in_file), "-o", str(out_file)])
 
     assert out_file.read_bytes() == good_output
     assert index_file.read_bytes() == good_index
