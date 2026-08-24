@@ -8,11 +8,28 @@ equal values (the whole scanned score tuple, NA equal to NA, floats exact).
 from __future__ import annotations
 
 import json
+import math
+from collections.abc import Iterable
 from typing import Any
 
 from gain.genomic_resources.statistics.base_statistic import Statistic
 
 COVERAGE_STATISTICS_FILE = "statistics/coverage.json"
+
+
+def normalize_values(values: Iterable[Any]) -> tuple:
+    """A row's score values as the tuple segment equality compares.
+
+    Every spelling of "no value" -- ``None`` on the per-record path, nan
+    in a bulk float column -- becomes ``None``, so NA equals NA whichever
+    path produced the row (ADR 0020).  Everything else is compared as
+    stored: floats exactly, no tolerance.
+    """
+    return tuple(
+        None if value is None
+        or (isinstance(value, float) and math.isnan(value))
+        else value
+        for value in values)
 
 
 class RegionCoverage:
