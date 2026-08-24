@@ -561,6 +561,18 @@ DVC_SUBCOMMANDS = [
 ]
 
 
+def task_graph_jobs(subcommand: str) -> list[str]:
+    """The `-j 1` argv for the subcommands that run a task graph.
+
+    The `-manifest` subcommands take no task-graph arguments and reject
+    `-j`; the rest default `jobs` to a machine-sized dask cluster, which
+    no test here wants (#851).
+    """
+    if subcommand.endswith("-manifest"):
+        return []
+    return ["-j", "1"]
+
+
 @pytest.mark.parametrize("subcommand", DVC_SUBCOMMANDS)
 def test_dvc_options_are_available_on_subcommand(
     subcommand: str,
@@ -1159,11 +1171,7 @@ def test_every_manifest_subcommand_refuses_a_dvc_directory(
     setup_dvc_directory_grr(path, materialised=True)
     build_filesystem_test_protocol(path, repair=False)
 
-    args = [subcommand, "-R", str(path)]
-    if not subcommand.endswith("-manifest"):
-        # Only the task-graph subcommands offer `-j`; without it they
-        # default to a machine-sized dask cluster (#851).
-        args.extend(["-j", "1"])
+    args = [subcommand, "-R", str(path), *task_graph_jobs(subcommand)]
     if subcommand.startswith("resource-"):
         args.extend(["-r", "one"])
 
@@ -1247,12 +1255,7 @@ def test_a_refused_grr_is_left_exactly_as_it_was_found(
     setup_mixed_dvc_directory_grr(tmp_path)
     before = tree_of(tmp_path)
 
-    args = [subcommand, "-R", str(tmp_path)]
-    if not subcommand.endswith("-manifest"):
-        # The task-graph options are offered by the subcommands that have a
-        # task graph; `-j 1` keeps a regression from fanning out over every
-        # core before it writes what this test is watching for.
-        args.extend(["-j", "1"])
+    args = [subcommand, "-R", str(tmp_path), *task_graph_jobs(subcommand)]
     if subcommand.startswith("resource-"):
         # A resource pattern, so the command spans BOTH resources: the
         # claim is about what is written for a resource other than the
@@ -1722,12 +1725,9 @@ def test_a_failed_verification_publishes_no_content_derived_md5(
     path, proto = unmanifested_drifted_repo_fixture
 
     # When the repository is verified
-    args = [command, "-R", str(path), "-D"]
-    if command == "repo-repair":
-        # Only the task-graph subcommands offer `-j` (#851).
-        args.extend(["-j", "1"])
     with pytest.raises(SystemExit) as excinfo:
-        cli_manage(args)
+        cli_manage(
+            [command, "-R", str(path), "-D", *task_graph_jobs(command)])
 
     # Then the run fails and writes no manifest
     assert excinfo.value.code == 1
@@ -1744,10 +1744,7 @@ def test_a_failed_verification_publishes_no_content_derived_md5(
 
     # ... so a later DEFAULT run still reads its md5 sums off the sidecars,
     # and still merges the pointer-only entry
-    args = [command, "-R", str(path)]
-    if command == "repo-repair":
-        args.extend(["-j", "1"])
-    cli_manage(args)
+    cli_manage([command, "-R", str(path), *task_graph_jobs(command)])
     manifest = proto.load_manifest(proto.get_resource("one"))
     assert manifest["data.txt"].md5 == md5_of(ORIGINAL_DATA)
     assert manifest["big.bw"].md5 == md5_of(ORIGINAL_DATA)

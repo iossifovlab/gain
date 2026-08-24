@@ -30,16 +30,23 @@ def dask_client() -> Generator[Client, None, None]:
     client.close()
 
 
-@pytest.fixture(params=["dask", "sequential", "process_pool"])  # "process_pool"
+# The dask param carries the ownership marker (#851), so only the dask
+# third of each consuming test is excused by the guard -- and the client
+# is fetched lazily, so the sequential and process_pool runs never boot
+# the session cluster at all.
+@pytest.fixture(params=[
+    pytest.param("dask", marks=pytest.mark.dask_executor),
+    "sequential",
+    "process_pool",
+])
 def executor(
-    dask_client: Client,
     request: pytest.FixtureRequest,
 ) -> Generator[TaskGraphExecutor, None, None]:
     if request.param == "dask":
         # DaskExecutor.close() calls client.shutdown(), which tears the whole
         # cluster down. The client is session-scoped and shared, so we must NOT
         # close the executor here -- the dask_client fixture owns teardown.
-        yield DaskExecutor(dask_client)
+        yield DaskExecutor(request.getfixturevalue("dask_client"))
         return
 
     executor: TaskGraphExecutor

@@ -60,7 +60,6 @@ def test_chain_tasks(
     assert res == expected
 
 
-@pytest.mark.dask_executor
 @pytest.mark.parametrize(
     "tasks, task_id, expected", [
         ([task_a, task_d], "D", "result D"),
