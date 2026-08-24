@@ -55,10 +55,12 @@ from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
 )
 from gain.genomic_resources.statistics.coverage import (
+    COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
     COVERAGE_STATISTICS_FILE,
     CoverageStatistics,
     RegionCoverage,
     normalize_values,
+    plot_segment_length_histogram,
 )
 from gain.genomic_resources.statistics.min_max import MinMaxValue
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
@@ -99,6 +101,13 @@ _COVERAGE_SCAN_RESOURCE_TYPES = frozenset(
     for spelling in equivalent_resource_types(resource_type)
 )
 
+# Of the kinds coverage scans, only position scores publish segment
+# statistics: their validators refuse overlap, so the run algebra is
+# exact.  Fragment rows overlap and have no exact run algebra yet;
+# their segment statistics are gain#794's slice.
+_SEGMENT_STATISTICS_RESOURCE_TYPES = frozenset(
+    equivalent_resource_types("position_score"))
+
 
 class RegionScanResult(NamedTuple):
     """What one region's statistics task hands to the merge step."""
@@ -111,12 +120,15 @@ class CoverageRow(NamedTuple):
     """One chromosome's rendered coverage: raw count plus optional fraction.
 
     ``fraction`` is ``None`` when no denominator resolved for this
-    chromosome -- the row renders its raw count only.
+    chromosome -- the row renders its raw count only.  ``segments`` is
+    ``None`` when the stored statistic carries no segment data for the
+    resource (an old file, or a kind that publishes none).
     """
 
     chrom: str
     covered: int
     fraction: float | None
+    segments: int | None
 
 
 class CoverageDisplay(NamedTuple):
@@ -138,6 +150,25 @@ class CoverageDisplay(NamedTuple):
     @property
     def has_fractions(self) -> bool:
         return any(row.fraction is not None for row in self.rows)
+
+    @property
+    def global_segments(self) -> int | None:
+        """The segment total, or ``None`` when any row lacks segments.
+
+        All-or-nothing like the stored statistic: a global over a
+        partial set would silently understate.
+        """
+        counts = [
+            row.segments for row in self.rows
+            if row.segments is not None
+        ]
+        if not counts or len(counts) != len(self.rows):
+            return None
+        return sum(counts)
+
+    @property
+    def has_segments(self) -> bool:
+        return self.global_segments is not None
 
 
 class GenomicScoreImplementation(ScoreImplementationBase):
@@ -176,6 +207,11 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             return InfoImplementationMixin.get_statistics_info(self)
         finally:
             self._render_repo = None
+
+    @staticmethod
+    def get_coverage_segment_lengths_image_filename() -> str:
+        """The info page's one statement of the global histogram's path."""
+        return COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE
 
     def get_coverage_statistics(self) -> CoverageStatistics | None:
         """The resource's coverage statistics, or ``None`` if not built.
@@ -222,11 +258,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                     "(covered positions: %s); rendering raw counts for it",
                     length, chrom, self.resource.resource_id, covered[chrom])
                 del lengths[chrom]
+        segments = coverage.segments_by_chromosome()
         rows = [
             CoverageRow(
                 chrom,
                 count,
                 count / lengths[chrom] if chrom in lengths else None,
+                segments.get(chrom),
             )
             for chrom, count in covered.items()
         ]
@@ -1177,8 +1215,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         executor, whose task results arrive serialized.
         """
         coverage = None
-        if resource.get_type() in _COVERAGE_SCAN_RESOURCE_TYPES:
-            coverage = RegionCoverage(chrom, start, end)
+        resource_type = resource.get_type()
+        if resource_type in _COVERAGE_SCAN_RESOURCE_TYPES:
+            coverage = RegionCoverage(
+                chrom, start, end,
+                track_segments=resource_type
+                in _SEGMENT_STATISTICS_RESOURCE_TYPES)
         try:
             if chrom is not None and start is not None and end is not None \
                     and GenomicScoreImplementation._can_bulk_histogram(
@@ -1353,7 +1395,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         return statistics
 
     @staticmethod
-    def _save_coverage(
+    def _save_and_plot_coverage(
         resource: GenomicResource,
         statistics: CoverageStatistics | None,
     ) -> None:
@@ -1362,6 +1404,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         with resource.proto.open_raw_file(
                 resource, COVERAGE_STATISTICS_FILE, mode="wt") as outfile:
             outfile.write(statistics.serialize())
+        lengths = statistics.segment_lengths_global()
+        if lengths is None:
+            return
+        with resource.proto.open_raw_file(
+                resource, COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
+                mode="wb") as outfile:
+            plot_segment_length_histogram(outfile, lengths)
 
     @staticmethod
     def _merge_and_save_histograms(
@@ -1370,7 +1419,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> dict[str, Histogram]:
         merged_histograms = GenomicScoreImplementation._merge_histograms(
             resource, *(result.histograms for result in results))
-        GenomicScoreImplementation._save_coverage(
+        GenomicScoreImplementation._save_and_plot_coverage(
             resource,
             GenomicScoreImplementation._merge_coverage(resource, *results))
         return GenomicScoreImplementation._save_histograms(

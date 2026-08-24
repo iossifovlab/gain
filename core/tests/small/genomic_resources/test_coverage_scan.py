@@ -1,4 +1,5 @@
 # pylint: disable=C0114,C0116,W0212,W0621
+import json
 import pathlib
 
 import numpy as np
@@ -58,6 +59,16 @@ def _multivalued_tabix(tmp_path: pathlib.Path) -> GenomicResource:
 
 COVERED = 22
 SEGMENTS = 4
+# Segment lengths 10, 6, 2 and 4 on the log2 bins: [2,4) holds one,
+# [4,8) holds two, [8,16) holds one.
+SEGMENT_LENGTHS = {1: 1, 2: 2, 3: 1}
+
+
+def _expected_histogram() -> list[int]:
+    histogram = [0] * 32
+    for index, count in SEGMENT_LENGTHS.items():
+        histogram[index] = count
+    return histogram
 
 
 def test_per_record_scan_accumulates_coverage(
@@ -89,6 +100,9 @@ def test_bulk_scan_coverage_matches_per_record(
 
     assert bulk.covered == per_record.covered == COVERED
     assert bulk.segment_count == per_record.segment_count == SEGMENTS
+    assert bulk.segment_length_histogram() \
+        == per_record.segment_length_histogram() \
+        == _expected_histogram()
 
 
 @pytest.mark.parametrize("batch_size", [1, 2, 3, 100])
@@ -110,6 +124,7 @@ def test_bulk_coverage_is_batch_size_invariant(
 
     assert coverage.covered == COVERED
     assert coverage.segment_count == SEGMENTS
+    assert coverage.segment_length_histogram() == _expected_histogram()
 
 
 def test_region_task_carries_coverage_beside_the_histograms(
@@ -160,6 +175,55 @@ def test_noregion_build_writes_the_coverage_file(
     stats = CoverageStatistics.deserialize(content)
     assert stats.covered_by_chromosome() == {"chr1": COVERED}
     assert stats.covered_global() == COVERED
+    assert stats.segments_by_chromosome() == {"chr1": SEGMENTS}
+    assert stats.segments_global() == SEGMENTS
+    assert stats.segment_lengths_global() == _expected_histogram()
+
+
+def test_build_writes_the_segment_length_image(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _multivalued_tabix(tmp_path)
+
+    GenomicScoreImplementation._do_noregion_histograms(resource)
+
+    assert resource.file_exists(
+        "statistics/coverage_segment_lengths.png")
+
+
+def test_info_page_shows_segment_statistics(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _multivalued_tabix(tmp_path)
+    GenomicScoreImplementation._do_noregion_histograms(resource)
+
+    page = GenomicScoreImplementation(resource).get_info()
+
+    assert "Segments" in page
+    assert f">{SEGMENTS}<" in page
+    assert "statistics/coverage_segment_lengths.png" in page
+
+
+def test_info_page_with_an_old_coverage_file_omits_segments(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A coverage.json written before segment histograms existed: the
+    # coverage table still renders, the segment column and image do not.
+    resource = _multivalued_tabix(tmp_path)
+    GenomicScoreImplementation._do_noregion_histograms(resource)
+    with resource.proto.open_raw_file(
+            resource, "statistics/coverage.json", mode="wt") as outfile:
+        outfile.write(json.dumps({
+            "format_version": 1,
+            "chromosomes": {"chr1": {"covered_positions": COVERED}},
+            "global": {"covered_positions": COVERED},
+        }))
+
+    page = GenomicScoreImplementation(resource).get_info()
+
+    assert f">{COVERED}<" in page
+    assert "Segments" not in page
+    assert "coverage_segment_lengths.png" not in page
 
 
 def test_noregion_build_keys_coverage_by_chromosome(
@@ -210,6 +274,7 @@ def test_coverage_is_chunk_invariant(
     assert stats.covered_by_chromosome() == {"chr1": COVERED}
     merged = stats._regions["chr1"]
     assert merged.segment_count == SEGMENTS
+    assert merged.segment_length_histogram() == _expected_histogram()
 
 
 def test_statistics_hash_is_untouched_by_the_coverage_build(
@@ -283,6 +348,37 @@ def test_fragment_rows_overlapping_and_nested_count_once(
 
     assert per_record.covered == 122
     assert bulk.covered == 122
+
+
+def test_fragment_build_publishes_no_segment_statistics(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Fragment run identity is chunk-dependent (overlapping rows have
+    # no exact run algebra -- gain#794), so fragment resources publish
+    # covered positions only: no segment keys, no histogram image.
+    resource = (
+        a_fragment_score()
+        .with_score("frequency", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  frequency
+            chr1   10         100      0.1
+            chr1   20         30       0.2
+            chr1   90         120      0.3
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+    GenomicScoreImplementation._do_noregion_histograms(resource)
+
+    stats = CoverageStatistics.deserialize(
+        resource.get_file_content("statistics/coverage.json"))
+    assert stats.covered_by_chromosome() == {"chr1": 111}
+    assert stats.segments_by_chromosome() == {}
+    assert stats.segments_global() is None
+    assert not resource.file_exists(
+        "statistics/coverage_segment_lengths.png")
 
 
 def test_a_record_beginning_past_the_region_end_contributes_zero() -> None:
