@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Generator
-from typing import Any, ClassVar, TypeVar, cast
+from typing import Any, ClassVar, NamedTuple, TypeVar, cast
 
 import numpy as np
 
@@ -55,6 +55,8 @@ from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
 )
 from gain.genomic_resources.statistics.coverage import (
+    COVERAGE_STATISTICS_FILE,
+    CoverageStatistics,
     RegionCoverage,
     normalize_values,
 )
@@ -86,6 +88,23 @@ _BULK_SCAN_RESOURCE_TYPES = frozenset(
     for resource_type in ("position_score", "allele_score", "fragment_score")
     for spelling in equivalent_resource_types(resource_type)
 )
+
+# The kinds whose rows have a span coverage can union: position scores and
+# fragment scores (in both spellings).  Allele scores are deliberately out:
+# their rows collapse to points and their coverage is a DISTINCT-position
+# count with its own slice (gain#777), not this union.
+_COVERAGE_SCAN_RESOURCE_TYPES = frozenset(
+    spelling
+    for resource_type in ("position_score", "fragment_score")
+    for spelling in equivalent_resource_types(resource_type)
+)
+
+
+class RegionScanResult(NamedTuple):
+    """What one region's statistics task hands to the merge step."""
+
+    histograms: dict[str, Histogram]
+    coverage: RegionCoverage | None
 
 
 class GenomicScoreImplementation(ScoreImplementationBase):
@@ -151,11 +170,18 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                     resource, all_min_max_scores, chrom, None, None)
                   for chrom in chroms),
             )
+        results = [
+            GenomicScoreImplementation._do_histogram_task(
+                resource, all_hist_confs, chrom, None, None)
+            for chrom in chroms
+        ]
         hist_result = GenomicScoreImplementation._merge_histograms(
             resource,
-            *(GenomicScoreImplementation._do_histogram_task(
-                resource, all_hist_confs, chrom, None, None)
-              for chrom in chroms),
+            *(result.histograms for result in results),
+        )
+        GenomicScoreImplementation._save_coverage(
+            resource,
+            GenomicScoreImplementation._merge_coverage(resource, *results),
         )
         GenomicScoreImplementation._save_histograms(
             resource,
@@ -993,7 +1019,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         chrom: str,
         start: int | None,
         end: int | None,
-    ) -> dict[str, Histogram]:
+    ) -> RegionScanResult:
         """Compute a region's histograms, bulk-vectorized where eligible.
 
         The bulk path needs a bounded region: a concrete contig, because its
@@ -1003,15 +1029,28 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
         A resource the scan refuses is reported here and the refusal
         re-raised, for the reason :meth:`_do_min_max_task` gives.
+
+        Coverage rides the same read: a kind whose rows have a span to
+        union gets a :class:`RegionCoverage` accumulated by whichever
+        path serves the histograms, carried out in the task's RETURN
+        value — a mutated argument would not travel under a distributed
+        executor, whose task results arrive serialized.
         """
+        coverage = None
+        if resource.get_type() in _COVERAGE_SCAN_RESOURCE_TYPES:
+            coverage = RegionCoverage(chrom, start, end)
         try:
             if chrom is not None and start is not None and end is not None \
                     and GenomicScoreImplementation._can_bulk_histogram(
                         resource, all_hist_confs):
-                return GenomicScoreImplementation._do_histogram_bulk(
-                    resource, all_hist_confs, chrom, start, end)
-            return GenomicScoreImplementation._do_histogram(
-                resource, all_hist_confs, chrom, start, end)
+                histograms = GenomicScoreImplementation._do_histogram_bulk(
+                    resource, all_hist_confs, chrom, start, end,
+                    coverage=coverage)
+            else:
+                histograms = GenomicScoreImplementation._do_histogram(
+                    resource, all_hist_confs, chrom, start, end,
+                    coverage=coverage)
+            return RegionScanResult(histograms, coverage)
         except MalformedResourceError as err:
             report_resource_failure(
                 err, "could not build the histograms of",
@@ -1142,12 +1181,55 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         return merged_histograms
 
     @staticmethod
+    def _merge_coverage(
+        resource: GenomicResource,
+        *results: RegionScanResult,
+    ) -> CoverageStatistics | None:
+        """Fold the regions' coverage, or ``None`` for an uncovered kind.
+
+        Region results arrive in the genomic order the tasks were
+        created in; the fold is keyed by chromosome, and within one
+        chromosome ``RegionCoverage.merge`` refuses a pair that is not
+        adjacent-and-in-order, so an ordering bug fails the build rather
+        than mis-counting it.
+        """
+        coverages = [
+            result.coverage for result in results
+            if result.coverage is not None]
+        if not coverages:
+            return None
+        statistics = CoverageStatistics()
+        try:
+            for coverage in coverages:
+                statistics.fold_region(coverage)
+        except ValueError as err:
+            report_resource_failure(
+                err, "could not merge the coverage of",
+                resource.resource_id)
+            raise
+        return statistics
+
+    @staticmethod
+    def _save_coverage(
+        resource: GenomicResource,
+        statistics: CoverageStatistics | None,
+    ) -> None:
+        if statistics is None:
+            return
+        with resource.proto.open_raw_file(
+                resource, COVERAGE_STATISTICS_FILE, mode="wt") as outfile:
+            outfile.write(statistics.serialize())
+
+    @staticmethod
     def _merge_and_save_histograms(
         resource: GenomicResource,
-        *calculated_histograms: dict[str, Any],
+        *results: RegionScanResult,
     ) -> dict[str, Histogram]:
         merged_histograms = GenomicScoreImplementation._merge_histograms(
-            resource, *calculated_histograms)
+            resource, *(result.histograms for result in results))
+        GenomicScoreImplementation._save_coverage(
+            resource,
+            GenomicScoreImplementation._merge_coverage(resource, *results))
         return GenomicScoreImplementation._save_histograms(
             resource, merged_histograms)
 

@@ -13,6 +13,7 @@ from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
+    RegionScanResult,
 )
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
@@ -380,7 +381,7 @@ def _histogram_that_raises(resource_id: str) -> Any:
     ) -> Any:
         if resource.resource_id == resource_id:
             raise ValueError("histogram task boom")
-        return real(resource, *args, **kwargs)
+        return RegionScanResult(real(resource, *args, **kwargs), None)
 
     return staticmethod(patched)
 

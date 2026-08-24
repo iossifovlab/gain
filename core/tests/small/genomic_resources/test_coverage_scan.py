@@ -7,12 +7,14 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.coverage import (
+    CoverageStatistics,
     RegionCoverage,
 )
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
     a_fragment_score,
     a_position_score,
+    an_allele_score,
 )
 
 from tests.small.genomic_resources.test_histogram_scan_bulk import (
@@ -95,6 +97,56 @@ def test_bulk_coverage_is_batch_size_invariant(
 
     assert coverage.covered == COVERED
     assert coverage.segment_count == SEGMENTS
+
+
+def test_region_task_carries_coverage_beside_the_histograms(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _multivalued_tabix(tmp_path)
+    confs: dict = {"score": _hist_conf()}
+
+    result = GenomicScoreImplementation._do_histogram_task(
+        resource, confs, "chr1", 1, 100)
+
+    assert set(result.histograms) == {"score"}
+    assert result.coverage is not None
+    assert result.coverage.covered == COVERED
+
+
+def test_region_task_collects_no_coverage_for_allele_scores(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        an_allele_score()
+        .with_score("s", "float")
+        .with_data(
+            """
+            chrom  pos_begin  reference  alternative  s
+            chr1   10         A          G            0.1
+            chr1   14         C          T            0.3
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    confs: dict = {"s": _hist_conf()}
+
+    result = GenomicScoreImplementation._do_histogram_task(
+        resource, confs, "chr1", 1, 100)
+
+    assert result.coverage is None
+
+
+def test_noregion_build_writes_the_coverage_file(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _multivalued_tabix(tmp_path)
+
+    GenomicScoreImplementation._do_noregion_histograms(resource)
+
+    content = resource.get_file_content("statistics/coverage.json")
+    stats = CoverageStatistics.deserialize(content)
+    assert stats.covered_by_chromosome() == {"chr1": COVERED}
+    assert stats.covered_global() == COVERED
 
 
 def test_fragment_rows_overlapping_and_nested_count_once(
