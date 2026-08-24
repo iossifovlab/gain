@@ -1,5 +1,13 @@
-# pylint: disable=W0621
-from gain.genomic_resources.genomic_scores import clip_span, clip_to_region
+# pylint: disable=C0114,C0116,W0621
+import pathlib
+
+from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
+    build_allele_score_from_resource,
+    clip_span,
+    clip_to_region,
+)
+from gain.genomic_resources.testing.builders import an_allele_score
 
 
 def test_a_record_overhanging_both_edges_is_clipped_to_the_region() -> None:
@@ -22,6 +30,34 @@ def test_a_record_ending_before_the_region_is_skipped() -> None:
 
 def test_a_record_starting_past_the_region_is_refused_not_inverted() -> None:
     assert clip_span(20, 25, 10, 15) is None
+
+
+def _multibase_allele_score(tmp_path: pathlib.Path) -> AlleleScore:
+    # The first record spans ten bases, so a region query for [15, 25]
+    # fetches it, while the point it collapses to (10) falls OUTSIDE the
+    # window.  A count-weighted record counts once wherever that point
+    # falls -- the region clip reads the window only where the weight
+    # derives from the span.
+    resource = (
+        an_allele_score()
+        .with_score("s", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  reference   alternative  s
+            chr1   10         19       AGGGGGGGGG  A            0.1
+            chr1   30         30       C           T            0.5
+            """)
+        .build_resource(tmp_path)
+    )
+    return build_allele_score_from_resource(resource)
+
+
+def test_an_allele_point_outside_the_window_still_aggregates_once(
+    tmp_path: pathlib.Path,
+) -> None:
+    with _multibase_allele_score(tmp_path).open() as score:
+        assert score.aggregate_region(
+            "chr1", 15, 25, [("s", "count")]) == [1]
 
 
 def test_clip_to_region_clips_the_kept_segments_and_drops_the_rest() -> None:

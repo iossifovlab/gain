@@ -16,6 +16,7 @@ from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     RecordArrays,
     build_score_from_resource,
+    clip_span,
 )
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
@@ -533,9 +534,19 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             # One statement of the rule, read by this path and by the bulk
             # one: only a position score weighs a record by its span.
             weight_is_span = score.RECORD_WEIGHT_IS_SPAN
+            # Only the span-derived weight reads the window: a count-kind
+            # record counts once wherever the point it collapses to falls
+            # (see test_multi_base_allele_record_clipped_by_region_weighs_one).
             for left, right, rec in GenomicScoreImplementation._scan_region(
                     score, chrom, start, end, score_ids):
-                weight = right - left + 1 if weight_is_span else 1
+                if weight_is_span:
+                    span = clip_span(left, right, start, end)
+                    if span is None:
+                        continue
+                    left, right = span
+                    weight = right - left + 1
+                else:
+                    weight = 1
                 for scr_index, scr_id in enumerate(score_ids):
 
                     try:
