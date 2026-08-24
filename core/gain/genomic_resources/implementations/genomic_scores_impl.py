@@ -709,10 +709,11 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         one :meth:`GenomicScore._clipped_score_values` applies per record, on
         the same edge, so a region measures the same whichever path a
         resource was eligible for -- neither drops a record the other keeps.
-        Neither weighs an inverted span either, though that is the backends'
-        doing rather than this function's: nothing here would stop a negative
-        weight if one arrived.  gain#636 tracks the edge they are both silent
-        about: a record beginning past the region's end.
+        Nothing here stops a negative weight if an inverted span arrives
+        (the backends' doing rather than this function's).  The per-record
+        consumer refuses such a record -- one beginning past the region's
+        end -- via :func:`~gain.genomic_resources.genomic_scores.clip_span`;
+        gain#636 tracks closing that edge on this path too.
 
         Measuring only.  Whether the batch is one this kind's records may
         form is settled upstream, by the door's ``validate_record_arrays``,
