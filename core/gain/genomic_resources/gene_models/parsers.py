@@ -101,9 +101,8 @@ def parse_default_attributes(atts: str) -> dict[str, str]:
                 f"malformed gene models attribute {fragment!r}; "
                 f"expected a 'key{DEFAULT_ATTRIBUTE_ASSIGNMENT}value' pair",
             )
-        key, value = pair
-        result[unescape_default_attribute(key)] = \
-            unescape_default_attribute(value)
+        result[unescape_default_attribute(pair[0])] = \
+            unescape_default_attribute(pair[1])
     return result
 
 
