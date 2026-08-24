@@ -4,7 +4,9 @@
 - **Date:** 2026-08-24
 - **Issues:** [gain#770](https://github.com/iossifovlab/gain/issues/770) (the
   epic and its decision record), [gain#771](https://github.com/iossifovlab/gain/issues/771)
-  (this record), [gain#848](https://github.com/iossifovlab/gain/issues/848)
+  (this record), [gain#773](https://github.com/iossifovlab/gain/issues/773)
+  (the allele-classification amendment),
+  [gain#848](https://github.com/iossifovlab/gain/issues/848)
   (the scanned-tuple amendment)
 
 ## Context
@@ -90,6 +92,30 @@ else, *including MNVs*; a counted **other** bucket absorbs what does not parse
 row count. MNVs are not "substitutions of length n": keeping substitution
 strictly 1→1 is what makes the 4×4 ref→alt substitution matrix exact rather
 than a projection of multi-base events.
+
+*Amended by gain#773:* "as written" left **case** unstated, and byte-exact
+anchoring makes case load-bearing — `a→ag` anchors, `A→ag` does not, so the
+same event written two ways would land in two different classes. Both alleles
+are therefore **upper-cased before classification**: a soft-masked lowercase
+base classifies as the base it masks instead of silently inflating `complex`.
+What is still not `ACGT` afterwards — `N`, a symbolic allele such as `<DEL>`,
+the missing-allele `*`, an empty string — is exactly what `other` counts. The
+same amendment settles the identity pair `A→A`: the 1→1 rule is read
+literally, so it is a substitution and the substitution matrix has a populated
+diagonal. Whether to *render* that diagonal belongs to the matrix, not to the
+classification.
+
+Two further consequences of "the classes sum to the row count", both decided
+the same way. A row may carry **no allele at all** — a table configures its
+ref and alt columns independently, and a VCF `ALT` of `.` yields a record with
+no alternative — and such a row is `other`, not an error and not a dropped
+row: a score with no ref column classifies as entirely `other` rather than
+failing its build, because coverage documentation is not a validation gate
+(ADR 0008 keeps validation in the scan). And the ins/del **length is signed**
+— positive when the alternative adds bases, negative when it removes them —
+so one number serves both anchored classes and the histograms can share a
+binning; "length = the length difference" above is that difference taken
+alt-minus-ref, not an absolute value.
 
 ### Bins, storage, rollout
 
@@ -182,6 +208,6 @@ indefinitely — which is accepted and made visible rather than hidden.
 - **The rollout is visibly incomplete for a while.** Resource pages show
   "not computed" until each resource is rebuilt; that state is intended, not
   a defect.
-- The definitions are vocabulary now: `CONTEXT.md` carries **segment** and
-  **covered position**, and issue text and docstrings in the statistics area
-  are held to them.
+- The definitions are vocabulary now: `CONTEXT.md` carries **segment**,
+  **covered position** and the five **allele classes**, and issue text and
+  docstrings in the statistics area are held to them.

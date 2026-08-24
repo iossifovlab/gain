@@ -111,6 +111,48 @@ statistic may be derived from the other (ADR 0020).
 _Avoid_: covered base, coverage depth (nothing here counts how many rows
 span a position), breadth
 
+**Allele class**:
+What an allele-score row's ref/alt pair is, classified VCF-anchored as one of
+exactly five values — **substitution**, **insertion**, **deletion**,
+**complex**, **other** (ADR 0020). Every pair classifies, so the five counts
+sum to the row count. Alleles are upper-cased first; anything then outside
+`ACGT` is **other**.
+_Avoid_: variant type, allele type (the annotation layer's `Annotatable.Type`
+is a different vocabulary, with `SMALL_INSERTION`/`SMALL_DELETION` spellings
+and no **other**), effect
+
+**Substitution**:
+An allele class: strictly one reference base to one alternative base, the
+identity pair included. Never a multi-base event — that is what keeps the 4×4
+ref→alt matrix exact. Not to be confused with an allele score's
+`substitutions` **mode** (`allele_score_mode`, and the default for
+`np_score`-typed resources), which selects how a whole resource is *read* —
+a property of the score, not a classification of any one of its rows.
+_Avoid_: SNV, SNP (both read as "one variant" rather than one class of row),
+MNV (an MNV is **complex**)
+
+**Insertion** / **Deletion**:
+The two anchored allele classes: a single reference base the alternative
+starts with, or its mirror image. Anchoring is strict — `AT→ATG` lengthens
+but is **complex**, because its reference is not a single base. The length
+is how many bases the alternative adds over the reference, *signed*:
+positive for an insertion, negative for a deletion.
+_Avoid_: indel (names the pair, not either class), small insertion, small
+deletion (nothing here is classified by size)
+
+**Complex**:
+The allele class for everything the anchored rules do not match — MNVs and
+unanchored indels alike — carrying both alleles' lengths rather than one
+length.
+_Avoid_: other (a different class), MNV, substitution of length n
+
+**Other**:
+The allele class for a ref/alt pair that does not parse as alleles: `N`, a
+symbolic allele, `*`, an empty string, or a row whose table configures no
+ref or alt column at all. Counted rather than dropped.
+_Avoid_: unknown, invalid, unclassified, error (a row here is well-formed
+data the classification declines to interpret, not a fault)
+
 ### ann_data resources
 
 **Data matrix**:
@@ -184,6 +226,10 @@ reason a read of one is not a read of the other
   **resource**'s table; a **covered position** is spanned by *any* row, values
   ignored. Segments are value-aware, coverage is not, and the two coincide
   only where no different-valued rows overlap.
+- Every allele-score row has exactly one **allele class**, so the counts of
+  **substitution**, **insertion**, **deletion**, **complex** and **other** sum
+  to the row count. **Segments** and **covered positions** describe *where* a
+  score holds data; allele classes describe *what* its rows are.
 - An **ann_data resource** is a **resource** whose content is one **data matrix**
   and the two **axis tables** describing its axes; every row of `var` carries a
   **feature type**, and one resource may hold several.
