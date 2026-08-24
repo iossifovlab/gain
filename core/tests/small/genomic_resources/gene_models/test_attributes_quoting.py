@@ -97,7 +97,30 @@ def test_gtf_malformed_attribute_reports_the_offending_text() -> None:
 
 def test_gtf_unterminated_quote_reports_the_offending_text() -> None:
     with pytest.raises(ValueError, match="unterminated quote"):
-        _parse_gtf_attributes('transcript_id "T1; note "x";')
+        _parse_gtf_attributes('gene_id "G1"; note "runs off the end')
+
+
+def test_gtf_stray_quote_in_a_value_keeps_the_later_attributes() -> None:
+    """GTF cannot escape a quote, so a value may carry a stray one."""
+    attributes = _parse_gtf_attributes(
+        'gene_id "G1"; product "3" end marker"; transcript_id "T1";',
+    )
+
+    assert attributes["product"] == '3" end marker'
+    assert attributes["transcript_id"] == "T1"
+
+
+def test_gtf_bare_value_is_read_to_the_separator() -> None:
+    """GENCODE writes exon_number unquoted."""
+    attributes = _parse_gtf_attributes('gene_id "G1"; exon_number 1;')
+
+    assert attributes == {"gene_id": "G1", "exon_number": "1"}
+
+
+def test_gtf_value_whitespace_is_trimmed() -> None:
+    assert _parse_gtf_attributes('gene_id "G1 "; gene_name " N";') == {
+        "gene_id": "G1", "gene_name": "N",
+    }
 
 
 def test_default_attributes_roundtrip_preserves_every_delimiter() -> None:
@@ -112,6 +135,23 @@ def test_default_attributes_keep_unknown_backslash_sequences() -> None:
     """Values written before escaping was introduced read back unchanged."""
     assert parse_default_attributes("note:Dmel\\lncRNA_CR40469-RA") == {
         "note": "Dmel\\lncRNA_CR40469-RA",
+    }
+
+
+def test_legacy_backslash_before_a_delimiter_reads_as_an_escape() -> None:
+    """The one sequence a pre-escaping file cannot be told apart from.
+
+    Nothing in the file records whether it was written with escaping, so a
+    backslash that happens to sit in front of a delimiter is read as an
+    escape. Values written before escaping existed reach this only if they
+    end in a backslash, which the quote-blind parser this change replaces
+    could never produce -- it truncated values at the first ';'.
+    """
+    assert parse_default_attributes("note:Dmel\\;gene_name:FOO") == {
+        "note": "Dmel;gene_name:FOO",
+    }
+    assert parse_default_attributes("note:x\\\\y;gene:G") == {
+        "note": "x\\y", "gene": "G",
     }
 
 

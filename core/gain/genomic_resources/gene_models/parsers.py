@@ -45,10 +45,12 @@ def escape_default_attribute(value: str) -> str:
 def unescape_default_attribute(value: str) -> str:
     """Reverse `escape_default_attribute`.
 
-    Backslashes that do not introduce a known escape are left as they are,
-    so attribute values written before escaping was introduced -- which may
-    legitimately contain a backslash, as NCBI RefSeq notes do -- are read
-    back unchanged.
+    A backslash that does not introduce a known escape is left as it is, so
+    a value written before escaping existed -- which may legitimately carry
+    a backslash, as NCBI RefSeq notes do -- reads back unchanged. The one
+    exception is a backslash directly in front of a delimiter or another
+    backslash: nothing in the file says whether it was written with
+    escaping, so it is read as an escape.
     """
     result: list[str] = []
     index = 0
@@ -704,44 +706,111 @@ def parse_ucscgenepred_models_format(
     return transcript_models
 
 
-def _split_gtf_attributes(data: str) -> list[str]:
-    """Split a GTF attributes column on separators outside quoted values.
+def _find_gtf_closing_quote(data: str, start: int) -> int:
+    """Return the index of the quote closing a value opened before `start`.
 
-    A ``;`` inside a quoted value is data, not a separator. NCBI RefSeq
-    routinely embeds them in ``note`` and ``product``.
+    GTF defines no escape for a quote inside a value, so a value may carry a
+    stray one. The closing quote is the first that is followed only by blanks
+    and then either a separator or the end of the column; anything else is
+    taken to be part of the value.
     """
-    fragments = []
-    start = 0
-    in_quotes = False
-    for index, char in enumerate(data):
-        if char == '"':
-            in_quotes = not in_quotes
-        elif char == ";" and not in_quotes:
-            fragments.append(data[start:index])
-            start = index + 1
-    if in_quotes:
-        raise ValueError(
-            f"unterminated quote in GTF attributes: {data!r}",
-        )
-    fragments.append(data[start:])
-    return fragments
+    index = data.find('"', start)
+    while index != -1:
+        probe = index + 1
+        while probe < len(data) and data[probe] == " ":
+            probe += 1
+        if probe >= len(data) or data[probe] == ";":
+            return index
+        index = data.find('"', index + 1)
+    return -1
 
 
-def _parse_gtf_attributes(data: str) -> dict[str, str]:
-    """Parse a GTF attributes column into key/value pairs."""
+def _parse_gtf_attributes_unquoted(data: str) -> dict[str, str] | None:
+    """Parse an attributes column in which no value carries a quote.
+
+    Returns ``None`` for anything this cannot settle on its own -- a value
+    holding a quote that is not simply wrapped around it, or a fragment that
+    is not a pair -- leaving those to `_scan_gtf_attributes`, which reads
+    quotes by position. Splitting wholesale is worth this second pass: the
+    overwhelming majority of GTF records need no scanning at all.
+    """
     result = {}
-    for fragment in _split_gtf_attributes(data):
+    for fragment in data.split(";"):
         attr = fragment.strip()
         if not attr:
             continue
         key, separator, value = attr.partition(" ")
         if not separator:
+            return None
+        value = value.strip()
+        if '"' in value:
+            if len(value) < 2 or value[0] != '"' or value[-1] != '"':
+                return None
+            value = value[1:-1]
+            if '"' in value:
+                return None
+            value = value.strip()
+        result[key] = value
+    return result
+
+
+def _scan_gtf_attributes(data: str) -> dict[str, str]:
+    """Parse a GTF attributes column, reading quotes by position."""
+    result = {}
+    index = 0
+    length = len(data)
+    while index < length:
+        while index < length and (data[index] == ";" or data[index].isspace()):
+            index += 1
+        if index >= length:
+            break
+
+        space = data.find(" ", index)
+        stop = data.find(";", index)
+        if space == -1 or (stop != -1 and stop < space):
+            fragment = data[index:stop if stop != -1 else length].strip()
             raise ValueError(
-                f"malformed GTF attribute {attr!r}; "
+                f"malformed GTF attribute {fragment!r}; "
                 f"expected a 'key value' pair",
             )
-        result[key.strip()] = value.strip().strip('"')
+        key = data[index:space]
+
+        index = space
+        while index < length and data[index] == " ":
+            index += 1
+
+        if index < length and data[index] == '"':
+            closing = _find_gtf_closing_quote(data, index + 1)
+            if closing == -1:
+                raise ValueError(
+                    f"unterminated quote in GTF attribute {key!r}: "
+                    f"{data[index:index + 60]!r}",
+                )
+            value = data[index + 1:closing]
+            index = data.find(";", closing + 1)
+            if index == -1:
+                index = length
+        else:
+            stop = data.find(";", index)
+            stop = length if stop == -1 else stop
+            value = data[index:stop]
+            index = stop
+
+        result[key] = value.strip()
     return result
+
+
+def _parse_gtf_attributes(data: str) -> dict[str, str]:
+    """Parse a GTF attributes column into key/value pairs.
+
+    A ``;`` separates attributes and is data anywhere inside a value -- NCBI
+    RefSeq routinely embeds them in ``note`` and ``product``. Values may be
+    quoted or bare, and a bare value runs to the next separator.
+    """
+    parsed = _parse_gtf_attributes_unquoted(data)
+    if parsed is not None:
+        return parsed
+    return _scan_gtf_attributes(data)
 
 
 def parse_gtf_gene_models_format(
