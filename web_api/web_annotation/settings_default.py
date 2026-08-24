@@ -468,7 +468,69 @@ LOGGING = {
     },
 }
 
-ANNOTATION_MAX_WORKERS = 4
+
+# Width of the annotation *file-job* thread pool -- the one bound on how many
+# annotation jobs run at once (iossifovlab/gain#837). Read from
+# ``GPFWA_ANNOTATION_MAX_WORKERS``; unset means "keep whatever this settings
+# module chose", so no deployment moves by merging this.
+#
+# It bounds THAT pool only. The interactive-annotate pool and the anonymous
+# pipeline-validation pool are separately-sized literals (the latter measured
+# at a knee -- see ``docs/659-validate-async-slo.md``), so this is not a cap
+# on gainweb's total worker threads. For that, cap the container: the cgroup
+# knobs in iossifovlab/gain-infra#33 are the containment story, and this
+# setting is the complement -- it lets a deployment state the parallelism it
+# wants instead of capping the CPU the app believes it has.
+#
+# Read once, at settings import: the pool is constructed in a class body, so
+# neither a later ``override_settings`` nor a settings reload re-sizes a pool
+# that already exists. Changing it means restarting the process.
+#
+# Every deployment settings module re-assigns this AFTER
+# ``from .settings_default import *``, so each must call this helper with its
+# own default -- an environment read placed only here would be silently
+# clobbered by all three. The helper is deliberately NOT underscore-prefixed:
+# the wildcard import skips underscored names, and the deployment modules need
+# to call it. It stays out of Django's settings namespace regardless, since
+# Django only reads UPPERCASE attributes.
+#
+# Unparseable values fail HERE, at startup, like GPFWA_NUM_PROXIES and unlike
+# GPFWA_ANONYMOUS_JOB_TTL_HOURS: only a janitor cares about a bad TTL, while a
+# mis-sized pool silently governs every annotation for the life of the
+# process.
+def resolve_annotation_max_workers(default: int) -> int:
+    """Resolve the annotation file-job pool width from the environment."""
+    raw = os.environ.get("GPFWA_ANNOTATION_MAX_WORKERS")
+    if raw is None or not raw.strip():
+        return default
+    candidate = raw.strip()
+    # Do not delegate the shape check to int(): it accepts PEP 515 underscore
+    # separators AND every Unicode digit, so `int("1_0")` is 10, and so is
+    # int() of the fullwidth or Arabic-Indic spelling of ten -- a typo would
+    # boot with ten workers instead of failing. isdigit() alone is not enough
+    # either: it is true for those same Unicode digits. The count must be
+    # plain ASCII decimal. A separate `< 0` check would be dead code here:
+    # the guard admits only [0-9]+, so a leading sign never reaches int().
+    if not (candidate.isascii() and candidate.isdigit()):
+        raise ImproperlyConfigured(
+            "GPFWA_ANNOTATION_MAX_WORKERS must be a positive integer, "
+            f"got {raw!r}",
+        )
+    workers = int(candidate)
+    # Zero parses but cannot be honoured, and is NOT clamped to one: asking
+    # for zero workers is a statement the deployment did not mean, and running
+    # on one anyway would hide it. Left unchecked it reaches
+    # ThreadPoolExecutor(max_workers=0), which raises ValueError from the
+    # annotation view's class body -- a failure far from its cause.
+    if workers < 1:
+        raise ImproperlyConfigured(
+            "GPFWA_ANNOTATION_MAX_WORKERS must be at least 1, "
+            f"got {raw!r}",
+        )
+    return workers
+
+
+ANNOTATION_MAX_WORKERS = resolve_annotation_max_workers(4)
 PIPELINES_CACHE_SIZE = 256
 
 ANNOTATION_TASK_TIMEOUT = 60 * 60 * 2  # 2 hours

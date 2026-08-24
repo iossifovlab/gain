@@ -13,5 +13,5 @@ QUOTAS = {
     "disk_space": "2048M",
 }
 
-ANNOTATION_MAX_WORKERS = 16
+ANNOTATION_MAX_WORKERS = resolve_annotation_max_workers(16)
 PIPELINES_CACHE_SIZE = 256
