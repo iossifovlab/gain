@@ -1,8 +1,38 @@
 # pylint: disable=C0114,C0116,W0212,W0621
 import pytest
 from gain.genomic_resources.statistics.coverage import (
+    CoverageStatistics,
     RegionCoverage,
 )
+
+
+def test_container_folds_regions_by_chromosome() -> None:
+    stats = CoverageStatistics()
+    chr1_left = RegionCoverage("chr1", 1, 10)
+    chr1_left.add_interval(4, 10, (0.5,))
+    chr1_right = RegionCoverage("chr1", 11, 20)
+    chr1_right.add_interval(11, 12, (0.5,))
+    chr2 = RegionCoverage("chr2", 1, 10)
+    chr2.add_interval(2, 4, (0.1,))
+
+    stats.fold_region(chr1_left)
+    stats.fold_region(chr1_right)
+    stats.fold_region(chr2)
+
+    assert stats.covered_by_chromosome() == {"chr1": 9, "chr2": 3}
+    assert stats.covered_global() == 12
+
+
+def test_container_serialization_round_trips_the_counts() -> None:
+    stats = CoverageStatistics()
+    region = RegionCoverage("chr1", 1, 10)
+    region.add_interval(4, 10, (0.5,))
+    stats.fold_region(region)
+
+    restored = CoverageStatistics.deserialize(stats.serialize())
+
+    assert restored.covered_by_chromosome() == {"chr1": 7}
+    assert restored.covered_global() == 7
 
 
 def test_disjoint_intervals_sum_their_lengths() -> None:
