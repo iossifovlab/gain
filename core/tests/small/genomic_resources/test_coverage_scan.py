@@ -1,7 +1,9 @@
 # pylint: disable=C0114,C0116,W0212,W0621
 import pathlib
 
+import numpy as np
 import pytest
+from gain.genomic_resources.histogram import NumberHistogramConfig
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
     build_score_implementation_from_resource,
@@ -18,9 +20,15 @@ from gain.genomic_resources.testing.builders import (
     an_allele_score,
 )
 
-from tests.small.genomic_resources.test_histogram_scan_bulk import (
-    _hist_conf,
-)
+
+def _hist_conf() -> NumberHistogramConfig:
+    return NumberHistogramConfig.from_dict({
+        "type": "number",
+        "view_range": {"min": 0, "max": 1},
+        "number_of_bins": 10,
+        "x_log_scale": False,
+        "y_log_scale": False,
+    })
 
 
 def _multivalued_tabix(tmp_path: pathlib.Path) -> GenomicResource:
@@ -150,6 +158,31 @@ def test_noregion_build_writes_the_coverage_file(
     assert stats.covered_global() == COVERED
 
 
+def test_noregion_build_keys_coverage_by_chromosome(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_position_score()
+        .with_score("score", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  score
+            chr1   5          9        0.1
+            chr2   1          10       0.2
+            chr2   20         21       0.3
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+    GenomicScoreImplementation._do_noregion_histograms(resource)
+
+    stats = CoverageStatistics.deserialize(
+        resource.get_file_content("statistics/coverage.json"))
+    assert stats.covered_by_chromosome() == {"chr1": 5, "chr2": 12}
+    assert stats.covered_global() == 17
+
+
 @pytest.mark.parametrize("region_size", [1, 2, 3, 7, 100])
 def test_coverage_is_chunk_invariant(
     tmp_path: pathlib.Path,
@@ -248,7 +281,24 @@ def test_fragment_rows_overlapping_and_nested_count_once(
     assert bulk.covered == 122
 
 
-def test_bigwig_scan_coverage_matches_tabix(
+def test_a_record_beginning_past_the_region_end_contributes_zero() -> None:
+    # The gain#636 edge: a misbehaving backend can answer a region query
+    # with a record wholly past it, which a naive clip would turn into a
+    # negative length.  Feed the bulk accumulator such a batch directly.
+    coverage = RegionCoverage("chr1", 1, 25)
+    arrays = (
+        np.array([30]), np.array([33]),
+        {"score": np.array([0.5])},
+    )
+
+    GenomicScoreImplementation._accumulate_coverage(
+        arrays, coverage, ("chr1", 1, 25))
+
+    assert coverage.covered == 0
+    assert coverage.segment_count == 0
+
+
+def test_bigwig_scan_coverage(
     tmp_path: pathlib.Path,
 ) -> None:
     # bedGraph rows are 0-based half-open: the four rows are the tabix

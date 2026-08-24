@@ -208,6 +208,12 @@ class CoverageStatistics(Statistic):
             "use fold_region")
 
     def merge(self, other: Statistic) -> None:
+        """Fold another statistics object's regions into this one.
+
+        For statistics holding LIVE regions (the scan's own): two
+        deserialized statistics carry no extents, so same-chromosome
+        regions from two files refuse to merge as non-adjacent.
+        """
         if not isinstance(other, CoverageStatistics):
             raise TypeError("unexpected type of statistics to merge with")
         for region in other._regions.values():  # noqa: SLF001
