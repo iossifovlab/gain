@@ -2409,6 +2409,32 @@ class AlleleScore(GenomicScore):
         score_defs = self._region_read_defs(chrom, scores)
         return self._allele_point_values(records, score_defs)
 
+    def fetch_region_segment_scores(
+        self,
+        chrom: str,
+        pos_begin: int | None = None,
+        pos_end: int | None = None,
+        scores: list[str] | None = None,
+    ) -> Generator[
+            tuple[int, int, list[ScoreValue]], None, None]:
+        """Yield ``(pos, pos, values)`` per allele record of the region.
+
+        .. deprecated::
+            Use :meth:`fetch_region_segments` -- for this kind the very
+            same read.  An allele read collapses each record to a point and
+            has never reshaped it to the queried window, so unlike the base
+            method there is no clip to preserve here; the two names differ
+            only in the warning.  Removal is tracked as gain#844.
+        """
+        warnings.warn(
+            "GenomicScore.fetch_region_segment_scores is deprecated; use "
+            "fetch_region_segments. For an allele score the two are the "
+            "same read. This name is retained until gain#844 removes it.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.fetch_region_segments(chrom, pos_begin, pos_end, scores)
+
     def _allele_point_values(
         self,
         records: Iterator[Record],

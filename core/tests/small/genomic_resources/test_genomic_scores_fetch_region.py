@@ -709,16 +709,53 @@ def test_fetch_region_segment_scores_is_deprecated_and_still_clips(
     ]
 
 
+def test_the_deprecated_read_never_clipped_an_allele_and_still_does_not(
+    tmp_path: pathlib.Path,
+) -> None:
+    # An allele read collapses each record to the point it sits at and has
+    # never held a window opinion: a ten-base deletion overlapping the
+    # window's start answers at its own position, OUTSIDE the window.  The
+    # deprecated name must keep that meaning -- clipping is the base kinds'
+    # history, not this one's.
+    resource = (
+        an_allele_score()
+        .with_score("s", "float")
+        .with_data("""
+            chrom  pos_begin  pos_end  reference   alternative  s
+            chr1   10         19       AGGGGGGGGG  A            0.1
+        """)
+        .build_resource(tmp_path)
+    )
+    score = build_allele_score_from_resource(resource)
+    score.open()
+
+    with pytest.warns(DeprecationWarning, match="fetch_region_segments"):
+        deprecated = list(score.fetch_region_segment_scores(
+            "chr1", 15, 25, scores=["s"]))
+
+    assert deprecated == [(10, 10, [0.1])]
+    assert deprecated == list(score.fetch_region_segments(
+        "chr1", 15, 25, scores=["s"]))
+
+
 def test_fetch_region_values_is_a_deprecated_alias_of_the_segment_read(
     position_score: PositionScore,
 ) -> None:
     # The alias exists for readers of the published python_interface.rst
-    # only; its removal is tracked as gain#730.
+    # only; its removal is tracked as gain#730.  The window straddles both
+    # records, so this also pins that the alias stays CLIPPED -- it
+    # forwards to fetch_region_segment_scores, whose meaning it shares.
     with pytest.warns(DeprecationWarning, match="fetch_region_segment_scores"):
         aliased = list(
             position_score.fetch_region_values(
-                "chr1", 10, 30, scores=["s1"]))
+                "chr1", 12, 22, scores=["s1"]))
 
-    assert aliased == list(
-        position_score.fetch_region_segment_scores(
-            "chr1", 10, 30, scores=["s1"]))
+    with pytest.warns(DeprecationWarning, match="fetch_region_segments"):
+        clipped = list(
+            position_score.fetch_region_segment_scores(
+                "chr1", 12, 22, scores=["s1"]))
+
+    assert aliased == clipped == [
+        (12, 13, [1.0]),
+        (21, 22, [2.0]),
+    ]

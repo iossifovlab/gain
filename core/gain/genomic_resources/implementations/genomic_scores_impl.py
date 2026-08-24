@@ -705,11 +705,14 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         """Clip a batch to the region and weigh it, per ``score``'s kind.
 
         Returns ``(keep, weights)``: the mask of records surviving the
-        ``pos_end >= start`` skip, and their weights.  The skip is the same
-        edge :func:`~gain.genomic_resources.genomic_scores.clip_span`
-        applies per record in the statistics scan, so a region measures the
-        same whichever path a resource was eligible for -- neither drops a
-        record the other keeps.
+        ``pos_end >= start`` skip, and their weights.  For a span-weighted
+        kind that skip is the same edge
+        :func:`~gain.genomic_resources.genomic_scores.clip_span` applies per
+        record in the statistics scan; for a count kind the per-record scan
+        reads no window at all, and the two paths agree because the mask is
+        computed on the RAW ``pos_end`` -- no record a backend can answer a
+        region query with falls to it.  Either way a region measures the
+        same whichever path a resource was eligible for.
         Nothing here stops a negative weight if an inverted span arrives
         (the backends' doing rather than this function's).  The per-record
         consumer refuses such a record -- one beginning past the region's
