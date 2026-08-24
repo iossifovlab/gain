@@ -468,8 +468,6 @@ LOGGING = {
     },
 }
 
-RESOURCES_BASE_URL = "http://grr.seqpipe.org/"
-
 ANNOTATION_MAX_WORKERS = 4
 PIPELINES_CACHE_SIZE = 256
 

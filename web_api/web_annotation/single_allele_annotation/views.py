@@ -3,7 +3,6 @@ from datetime import datetime
 from typing import Any, ClassVar, cast
 
 from asgiref.sync import sync_to_async
-from django.conf import settings
 from django.db.models import QuerySet
 from django.utils import timezone
 from django.utils.decorators import method_decorator
@@ -39,6 +38,25 @@ from web_annotation.serializers import AlleleSerializer
 from web_annotation.single_allele_annotation.throttling import (
     AnnotateUserRateThrottle,
 )
+
+
+def resource_index_url(resource: GenomicResource) -> str:
+    """Return the URL of the resource's documentation page.
+
+    Built from the resource's own public URL rather than from one base
+    URL for the whole repository: a GRR is not necessarily one place.
+    Production serves a group whose children are published on different
+    hosts, and only the resource knows which of them it came from
+    (#838).
+
+    The repository's public URL and the resource id are joined here
+    rather than through ``get_public_url()``, which joins them verbatim:
+    ``public_url`` is written by hand in a deployment's GRR definition,
+    so a trailing separator is a spelling that turns up, and it must not
+    reach the link as ``//``.
+    """
+    base = resource.get_repo_public_url().rstrip("/")
+    return f"{base}/{resource.get_full_id()}/index.html"
 
 
 def get_histogram_genomic_score(
@@ -277,18 +295,17 @@ class SingleAnnotation(AsyncAnnotationBaseView):
     ) -> list[dict[str, Any]]:
         """Assemble the per-annotator response payload (touches GRR)."""
         annotators_data = []
-        base_url = settings.RESOURCES_BASE_URL or ""
 
         for annotator in pipeline.annotators:
             attributes = []
             annotator_info = annotator.get_info()
-            annotator_resources = []
-            for resource in annotator_info.resources:
-                url = f"{base_url}{resource.resource_id}/index.html"
-                annotator_resources.append({
+            annotator_resources = [
+                {
                     "resource_id": resource.resource_id,
-                    "resource_url": url,
-                })
+                    "resource_url": resource_index_url(resource),
+                }
+                for resource in annotator_info.resources
+            ]
             details = {
                 "name": annotator_info.type,
                 "description": annotator_info.documentation,
