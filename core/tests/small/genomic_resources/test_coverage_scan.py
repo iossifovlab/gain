@@ -20,12 +20,16 @@ from gain.genomic_resources.testing.builders import (
     an_allele_score,
 )
 
+_HIST_DICT: dict = {
+    "type": "number",
+    "view_range": {"min": 0, "max": 1},
+    "number_of_bins": 10,
+}
+
 
 def _hist_conf() -> NumberHistogramConfig:
     return NumberHistogramConfig.from_dict({
-        "type": "number",
-        "view_range": {"min": 0, "max": 1},
-        "number_of_bins": 10,
+        **_HIST_DICT,
         "x_log_scale": False,
         "y_log_scale": False,
     })
@@ -296,6 +300,70 @@ def test_a_record_beginning_past_the_region_end_contributes_zero() -> None:
 
     assert coverage.covered == 0
     assert coverage.segment_count == 0
+
+
+def _null_histogram_column_tabix(tmp_path: pathlib.Path) -> GenomicResource:
+    # aux is histogram: null, so the statistics scan never fetches it:
+    # its change at 10 must not break the run, while the scanned score's
+    # change at 15 must (the segment tuple is the scanned columns,
+    # ADR 0020 / gain#848).
+    return (
+        a_position_score()
+        .with_score("score", "float")
+        .with_score("aux", "float")
+        .with_histogram(_HIST_DICT, score_id="score")
+        .with_histogram({"type": "null"}, score_id="aux")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  score  aux
+            chr1   5          9        0.1    1.0
+            chr1   10         14       0.1    2.0
+            chr1   15         20       0.2    2.0
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+NULL_COL_COVERED = 16
+NULL_COL_SEGMENTS = 2
+
+
+@pytest.mark.parametrize(("start", "end"), [(None, None), (1, 100)])
+def test_null_histogram_column_never_breaks_a_segment(
+    tmp_path: pathlib.Path,
+    start: int | None,
+    end: int | None,
+) -> None:
+    # The confs come from the resource yaml through the build's own
+    # unpacking, not a hand-built dict; the unbounded and bounded calls
+    # cover the task's per-record and bulk dispatch arms.
+    resource = _null_histogram_column_tabix(tmp_path)
+    _, confs = GenomicScoreImplementation._unpack_score_defs(resource)
+
+    result = GenomicScoreImplementation._do_histogram_task(
+        resource, confs, "chr1", start, end)
+
+    assert result.coverage is not None
+    assert result.coverage.covered == NULL_COL_COVERED
+    assert result.coverage.segment_count == NULL_COL_SEGMENTS
+
+
+def test_null_histogram_column_scan_path_parity(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _null_histogram_column_tabix(tmp_path)
+    _, confs = GenomicScoreImplementation._unpack_score_defs(resource)
+    per_record = RegionCoverage("chr1", 1, 100)
+    bulk = RegionCoverage("chr1", 1, 100)
+
+    GenomicScoreImplementation._do_histogram(
+        resource, confs, "chr1", 1, 100, coverage=per_record)
+    GenomicScoreImplementation._do_histogram_bulk(
+        resource, confs, "chr1", 1, 100, coverage=bulk)
+
+    assert bulk.covered == per_record.covered == NULL_COL_COVERED
+    assert bulk.segment_count == per_record.segment_count == NULL_COL_SEGMENTS
 
 
 def test_bigwig_scan_coverage(

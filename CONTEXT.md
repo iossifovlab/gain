@@ -93,11 +93,13 @@ _Avoid_: predicate, label filter
 
 **Segment**:
 A maximal run of touching-or-overlapping table rows of a tabular score
-carrying **equal values** — the whole row's score-column tuple compares equal,
-NA equal to NA, floats exactly as stored (ADR 0020). Value-aware and
-per-resource: a touching row that differs in any score column starts a new
-segment, and a run of NA rows is a segment. Not a table row as stored — an
-unmerged row is a *fragment*, deliberately the opposite view.
+carrying **equal values** — the row's *scanned* score-column tuple compares
+equal, NA equal to NA, floats exactly as stored (ADR 0020). Scanned means
+the columns the statistics scan fetches: every declared score except those
+with a null histogram. Value-aware and per-resource: a touching row that
+differs in any scanned score column starts a new segment, and a run of NA
+rows is a segment. Not a table row as stored — an unmerged row is a
+*fragment*, deliberately the opposite view.
 _Avoid_: interval, region (reserved for query regions), run, block, same-value
 region
 
