@@ -50,6 +50,7 @@ def test_close_tears_down_cluster_gracefully(
     client.retire_workers.assert_not_called()
 
 
+@pytest.mark.dask_executor
 @pytest.mark.parametrize(
     "tasks,expected_order", [
         (  # 0: simple chain
@@ -152,6 +153,7 @@ def _live_asyncio_tasks() -> int:
     return sum(1 for obj in gc.get_objects() if isinstance(obj, asyncio.Task))
 
 
+@pytest.mark.dask_executor
 def test_execute_does_not_accumulate_asyncio_waiters(
     dask_client: Client,
 ) -> None:
@@ -254,6 +256,7 @@ class _SlowGatherClient(_SlowClient):
         return self._client.gather(*args, **kwargs)
 
 
+@pytest.mark.dask_executor
 def test_slow_submission_does_not_end_the_run_early(
     dask_client: Client,
 ) -> None:
@@ -294,6 +297,7 @@ def test_slow_submission_does_not_end_the_run_early(
         assert results[f"WideTask{i}"] == i * 2
 
 
+@pytest.mark.dask_executor
 def test_slow_gather_does_not_end_the_run_early(
     dask_client: Client,
 ) -> None:
@@ -353,6 +357,7 @@ class _DyingWorkerClient(_WrappedClient):
         return self._client.map(die_on_the_worker, tasks, **kwargs)
 
 
+@pytest.mark.dask_executor
 def test_a_task_that_dies_on_the_worker_is_delivered_as_an_error(
     dask_client: Client,
     tmp_path: pathlib.Path,
@@ -411,6 +416,7 @@ def _live_run_worker_threads() -> list[threading.Thread]:
     ]
 
 
+@pytest.mark.dask_executor
 def test_abandoning_the_result_iterator_shuts_the_run_down(
     dask_client: Client,
     tmp_path: pathlib.Path,
@@ -453,6 +459,7 @@ def test_abandoning_the_result_iterator_shuts_the_run_down(
     )
 
 
+@pytest.mark.dask_executor
 def test_abandoned_runs_do_not_accumulate_across_a_shared_client(
     dask_client: Client,
     tmp_path: pathlib.Path,
@@ -530,6 +537,7 @@ def _a_graph_of_doubles(prefix: str, count: int) -> TaskGraph:
     return graph
 
 
+@pytest.mark.dask_executor
 def test_two_runs_of_the_same_graph_submit_disjoint_dask_keys(
     dask_client: Client,
     tmp_path: pathlib.Path,
@@ -570,6 +578,7 @@ def test_two_runs_of_the_same_graph_submit_disjoint_dask_keys(
     )
 
 
+@pytest.mark.dask_executor
 def test_a_submitted_dask_key_still_names_its_task_first(
     dask_client: Client,
     tmp_path: pathlib.Path,
@@ -597,6 +606,7 @@ def test_a_submitted_dask_key_still_names_its_task_first(
     )
 
 
+@pytest.mark.dask_executor
 def test_tasks_whose_ids_differ_only_in_punctuation_all_run(
     dask_client: Client,
     tmp_path: pathlib.Path,
@@ -647,6 +657,7 @@ def slowly_tagged(stamp: str, x: int) -> str:
     return f"{stamp}:{x * 2}"
 
 
+@pytest.mark.dask_executor
 def test_an_abandoned_run_does_not_feed_stale_results_to_the_next_run(
     dask_client: Client,
     tmp_path: pathlib.Path,
@@ -730,6 +741,7 @@ def boom() -> None:
     raise ValueError("boom")
 
 
+@pytest.mark.dask_executor
 def test_a_failing_task_without_keep_going_tears_the_run_down(
     dask_client: Client,
     tmp_path: pathlib.Path,
@@ -949,6 +961,7 @@ def _assert_failing_client_delivers_every_task_as_error(
     )
 
 
+@pytest.mark.dask_executor
 def test_a_submission_that_fails_ends_the_run_instead_of_hanging(
     dask_client: Client,
     tmp_path: pathlib.Path,
@@ -967,6 +980,7 @@ def test_a_submission_that_fails_ends_the_run_instead_of_hanging(
         _FailingSubmitClient(dask_client), tmp_path, "submission")
 
 
+@pytest.mark.dask_executor
 def test_a_gather_that_fails_ends_the_run_instead_of_hanging(
     dask_client: Client,
     tmp_path: pathlib.Path,
@@ -1045,6 +1059,7 @@ class _CallbackRaisingClient(_WrappedClient):
         ]
 
 
+@pytest.mark.dask_executor
 def test_a_callback_registration_that_fails_ends_the_run_instead_of_hanging(
     dask_client: Client,
     tmp_path: pathlib.Path,
@@ -1136,6 +1151,7 @@ class _CompletionRacingCallbackClient(_WrappedClient):
         return self._client.gather(*args, **kwargs)
 
 
+@pytest.mark.dask_executor
 def test_an_abort_does_not_redeliver_a_task_the_results_worker_took(
     dask_client: Client,
     tmp_path: pathlib.Path,
@@ -1204,6 +1220,7 @@ def raise_histogram_error() -> None:
         "Can not merge categorical histograms; too many unique values 127")
 
 
+@pytest.mark.dask_executor
 def test_a_histogram_error_ends_the_run_instead_of_hanging(
     dask_client: Client,
     tmp_path: pathlib.Path,

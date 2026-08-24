@@ -13,6 +13,7 @@ from gain.task_graph import (
 )
 
 
+@pytest.mark.dask_executor
 def test_basic_default_executor() -> None:
     parser = argparse.ArgumentParser(description="test_basic")
     TaskGraphCli.add_arguments(parser)

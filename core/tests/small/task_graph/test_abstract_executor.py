@@ -72,6 +72,7 @@ class DummyCache(TaskCache):
         self.mapping[task] = CacheRecord(record_type, result)
 
 
+@pytest.mark.dask_executor
 def test_calling_execute_twice(executor: TaskGraphExecutor) -> None:
     graph = TaskGraph()
     first_task = graph.create_task("First", lambda: None, args=[], deps=[])
@@ -93,6 +94,7 @@ def test_calling_execute_twice(executor: TaskGraphExecutor) -> None:
     executor.execute(graph)
 
 
+@pytest.mark.dask_executor
 def test_abandoning_a_run_leaves_the_executor_reusable(
     executor: TaskGraphExecutor,
 ) -> None:
@@ -127,6 +129,7 @@ def test_abandoning_a_run_leaves_the_executor_reusable(
     )
 
 
+@pytest.mark.dask_executor
 def test_executing_with_cache(
     executor: TaskGraphExecutor, tmp_path: pathlib.Path,
 ) -> None:

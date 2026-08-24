@@ -233,7 +233,7 @@ def test_default_repair_keeps_the_sidecar_md5_of_an_edited_file(
     # When the data file is edited in place, leaving the sidecar stale
     (path / "one" / "data.txt").write_text(TAMPERED_DATA, encoding="utf8")
 
-    cli_manage(["resource-repair", "-R", str(path), "-r", "one"])
+    cli_manage(["resource-repair", "-R", str(path), "-r", "one", "-j", "1"])
 
     # Then the manifest still carries what the sidecar declares
     res = proto.get_resource("one")
@@ -459,7 +459,7 @@ def test_size_preserving_edit_is_only_caught_by_the_verifier(
     path, proto = stale_same_size_dvc_proto_fixture
 
     # When the resource is repaired in the default mode
-    cli_manage(["resource-repair", "-R", str(path), "-r", "one"])
+    cli_manage(["resource-repair", "-R", str(path), "-r", "one", "-j", "1"])
 
     # Then the manifest describes what DVC published
     res = proto.get_resource("one")
@@ -469,7 +469,7 @@ def test_size_preserving_edit_is_only_caught_by_the_verifier(
     # When the same GRR is verified with '-D'
     with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as excinfo:
         cli_manage([
-            "resource-repair", "-R", str(path), "-r", "one", "-D"])
+            "resource-repair", "-R", str(path), "-r", "one", "-D", "-j", "1"])
 
     # Then the edit is caught and the run fails
     assert excinfo.value.code == 1
@@ -487,7 +487,7 @@ def test_without_dvc_reports_every_drifted_file(
 
     # When the whole repository is verified
     with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as excinfo:
-        cli_manage(["repo-repair", "-R", str(path), "-D"])
+        cli_manage(["repo-repair", "-R", str(path), "-D", "-j", "1"])
 
     # Then the run fails naming EVERY drifted file...
     assert excinfo.value.code == 1
@@ -519,10 +519,10 @@ def test_repo_repair_never_drops_pointer_only_entries(
     """
     # Given a `.dvc`-only clone with correct manifests
     path, proto = pointer_only_repo_fixture
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
 
     # When repo-repair is run again, with or without dvc
-    cli_manage(["repo-repair", "-R", str(path), *dvc_args])
+    cli_manage(["repo-repair", "-R", str(path), *dvc_args, "-j", "1"])
 
     # Then the pointer-only entries are still there, taken from the sidecars
     one = proto.load_manifest(proto.get_resource("one"))
@@ -546,7 +546,7 @@ def test_pointer_only_data_file_is_never_hashed(
     path, _proto = pointer_only_repo_fixture
 
     # When the repository is repaired
-    cli_manage(["repo-repair", "-R", str(path), *dvc_args])
+    cli_manage(["repo-repair", "-R", str(path), *dvc_args, "-j", "1"])
 
     # Then the absent data files are never hashed
     assert "big.bw" not in md5_spy
@@ -664,7 +664,7 @@ def test_gitignored_dvc_leaf_takes_its_md5_from_its_sidecar(
     path, proto = gitignored_dvc_proto_fixture
 
     # When its manifest is built
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
 
     # Then the gitignored data file is in the manifest and was never hashed
     assert "data.txt" not in md5_spy
@@ -683,7 +683,7 @@ def test_without_dvc_on_a_clean_grr_persists_content_derived_states(
     path, proto = gitignored_dvc_proto_fixture
 
     # When the whole repository is verified - it must not fail
-    cli_manage(["repo-repair", "-R", str(path), "-D"])
+    cli_manage(["repo-repair", "-R", str(path), "-D", "-j", "1"])
 
     # Then every materialised file was hashed and its state persisted
     assert "data.txt" in md5_spy
@@ -702,7 +702,7 @@ def test_gitignored_dvc_leaf_is_not_rehashed_on_a_repeat_run(
     """The fast path holds for the production layout: a repeat run is free."""
     # Given a repaired GRR in the production layout
     path, _proto = gitignored_dvc_proto_fixture
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
 
     manifest_before = (path / "one" / ".MANIFEST").read_bytes()
     states_before = resource_states(path)
@@ -710,7 +710,7 @@ def test_gitignored_dvc_leaf_is_not_rehashed_on_a_repeat_run(
     md5_spy.clear()
 
     # When nothing changed and the GRR is repaired again
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
 
     # Then nothing is hashed and nothing is rewritten
     assert md5_spy == []
@@ -746,7 +746,7 @@ def test_ancestor_gitignored_dvc_leaf_takes_its_md5_from_its_sidecar(
     proto = build_filesystem_test_protocol(path, repair=False)
 
     # When its manifest is built
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
 
     # Then the DVC-managed data file is kept, from its sidecar, never hashed,
     assert "data.txt" not in md5_spy
@@ -766,7 +766,7 @@ def test_gitignored_dvc_leaf_tampered_before_any_state_keeps_the_sidecar(
     path, proto = gitignored_stale_dvc_proto_fixture
 
     # When the GRR is repaired in the default mode
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
 
     # Then the manifest describes what DVC published
     manifest = proto.load_manifest(proto.get_resource("one"))
@@ -780,12 +780,12 @@ def test_gitignored_dvc_leaf_tampered_in_place_keeps_the_sidecar(
 ) -> None:
     # Given a repaired GRR in the production layout
     path, proto = gitignored_dvc_proto_fixture
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
 
     # When the data file is edited in place, its size unchanged
     tamper(path / "one" / "data.txt", SAME_SIZE_TAMPERED_DATA)
 
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
 
     # Then the manifest still carries what the sidecar declares, and no
     # state was invented for an md5 sum GAIn never computed
@@ -804,7 +804,7 @@ def test_without_dvc_catches_a_timestamp_preserving_tamper(
     # Given a repaired GRR whose data file was rewritten with identical size
     # and timestamp - invisible to the fast path
     path, proto = gitignored_dvc_proto_fixture
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
     manifest_before = (path / "one" / ".MANIFEST").read_bytes()
     tamper(
         path / "one" / "data.txt", SAME_SIZE_TAMPERED_DATA,
@@ -812,7 +812,7 @@ def test_without_dvc_catches_a_timestamp_preserving_tamper(
 
     # When the GRR is audited with '-D'
     with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as excinfo:
-        cli_manage(["repo-repair", "-R", str(path), "-D"])
+        cli_manage(["repo-repair", "-R", str(path), "-D", "-j", "1"])
 
     # Then the tampering is caught, the run fails and the manifest, a
     # committed artefact, is left exactly as `dvc add` last described it
@@ -844,7 +844,7 @@ def test_without_dvc_hashes_every_file_exactly_once(
     # Given a repaired GRR in the production layout whose data file was then
     # tampered with - so the audit finds drift and fails the run
     path, _proto = gitignored_dvc_proto_fixture
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
     tamper(
         path / "one" / "data.txt", SAME_SIZE_TAMPERED_DATA,
         keep_timestamp=True)
@@ -852,7 +852,7 @@ def test_without_dvc_hashes_every_file_exactly_once(
 
     # When the GRR is audited with '-D'
     with pytest.raises(SystemExit):
-        cli_manage(["repo-repair", "-R", str(path), "-D"])
+        cli_manage(["repo-repair", "-R", str(path), "-D", "-j", "1"])
 
     # Then every materialised file is hashed exactly once
     counts = Counter(md5_spy)
@@ -867,11 +867,11 @@ def test_without_dvc_hashes_every_file_exactly_once_when_up_to_date(
 ) -> None:
     # Given a repaired GRR in the production layout
     path, _proto = gitignored_dvc_proto_fixture
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
     md5_spy.clear()
 
     # When the unchanged GRR is audited with '-D'
-    cli_manage(["repo-repair", "-R", str(path), "-D"])
+    cli_manage(["repo-repair", "-R", str(path), "-D", "-j", "1"])
 
     # Then every materialised file is hashed exactly once
     counts = Counter(md5_spy)
@@ -909,7 +909,7 @@ def test_force_rebuild_does_not_rehash_unchanged_files(
     """
     # Given a repaired GRR in the production layout
     path, _proto = gitignored_dvc_proto_fixture
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
     md5_spy.clear()
 
     # When the manifest is force-rebuilt with nothing changed
@@ -961,7 +961,7 @@ def test_malformed_dvc_sidecar_does_not_abort_the_cli(
     proto = build_filesystem_test_protocol(path, repair=False)
 
     # When the resource is repaired - it must not raise
-    cli_manage(["resource-repair", "-R", str(path), "-r", "one"])
+    cli_manage(["resource-repair", "-R", str(path), "-r", "one", "-j", "1"])
 
     # Then the sidecar is ignored and the file's own bytes are described
     manifest = proto.load_manifest(proto.get_resource("one"))
@@ -988,7 +988,7 @@ def test_dvc_sidecar_without_md5_yields_no_pointer_only_entry(
     proto = build_filesystem_test_protocol(path, repair=False)
 
     # When the manifest is built
-    cli_manage(["resource-repair", "-R", str(path), "-r", "one"])
+    cli_manage(["resource-repair", "-R", str(path), "-r", "one", "-j", "1"])
 
     # Then no entry is invented for it - and no `md5: null` is written
     manifest_content = (path / "one" / ".MANIFEST").read_text(encoding="utf8")
@@ -1092,7 +1092,7 @@ def test_dvc_directory_output_is_refused(
 
     # When the GRR is repaired
     with pytest.raises(SystemExit) as excinfo:
-        cli_manage(["repo-repair", "-R", str(path), *dvc_args])
+        cli_manage(["repo-repair", "-R", str(path), *dvc_args, "-j", "1"])
 
     # Then the command fails
     assert excinfo.value.code == 1
@@ -1119,7 +1119,7 @@ def test_dvc_directory_output_is_recognised_by_either_signal(
 
     # When the GRR is repaired - it is refused
     with pytest.raises(SystemExit) as excinfo:
-        cli_manage(["repo-repair", "-R", str(path)])
+        cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
     assert excinfo.value.code == 1
 
 
@@ -1136,7 +1136,7 @@ def test_dvc_directory_refusal_names_the_resource_and_the_sidecar(
 
     # When the GRR is repaired
     with caplog.at_level(logging.ERROR), pytest.raises(SystemExit):
-        cli_manage(["repo-repair", "-R", str(path)])
+        cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
 
     # Then the error names the resource and the offending `.dvc` file, says
     # what is not supported, and says what to do instead
@@ -1160,6 +1160,10 @@ def test_every_manifest_subcommand_refuses_a_dvc_directory(
     build_filesystem_test_protocol(path, repair=False)
 
     args = [subcommand, "-R", str(path)]
+    if not subcommand.endswith("-manifest"):
+        # Only the task-graph subcommands offer `-j`; without it they
+        # default to a machine-sized dask cluster (#851).
+        args.extend(["-j", "1"])
     if subcommand.startswith("resource-"):
         args.extend(["-r", "one"])
 
@@ -1327,7 +1331,7 @@ def test_a_per_file_dvc_resource_is_not_refused(
     path, proto = gitignored_dvc_proto_fixture
 
     # When the GRR is repaired - it does not raise
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
 
     # Then the manifest describes the file's own bytes
     manifest = proto.load_manifest(proto.get_resource("one"))
@@ -1366,7 +1370,7 @@ def test_a_plain_html_data_file_is_manifested(
     proto = build_filesystem_test_protocol(path, repair=False)
 
     # When the GRR is repaired
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
 
     # Then it is manifested, from its own bytes
     manifest = proto.load_manifest(proto.get_resource("one"))
@@ -1394,7 +1398,7 @@ def test_materialised_dvc_html_takes_its_md5_from_its_sidecar(
     proto = build_filesystem_test_protocol(path, repair=False)
 
     # When the GRR is repaired
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
 
     # Then it is manifested from its sidecar, and never hashed
     manifest = proto.load_manifest(proto.get_resource("one"))
@@ -1422,7 +1426,7 @@ def test_generated_info_pages_are_kept_out_of_the_manifest(
     proto = build_filesystem_test_protocol(path, repair=False)
 
     # When the GRR is repaired
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
 
     # Then the generated page is not in the manifest
     manifest = proto.load_manifest(proto.get_resource("one"))
@@ -1458,7 +1462,7 @@ def test_a_dvc_managed_generated_page_is_kept_out_of_the_manifest(
     proto = build_filesystem_test_protocol(path, repair=False)
 
     # When the GRR is repaired
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
 
     # Then the generated page is still not in the manifest
     manifest = proto.load_manifest(proto.get_resource("one"))
@@ -1473,7 +1477,7 @@ def test_rebuilding_the_info_pages_does_not_dirty_the_manifest(
     """The generated pages are out of the manifest, so rebuilding is free."""
     # Given a repaired GRR whose info pages have been generated
     path, _proto = gitignored_dvc_proto_fixture
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
     assert (path / "one" / "index.html").exists()
     assert (path / "one" / "statistics" / "index.html").exists()
     manifest_before = (path / "one" / ".MANIFEST").read_bytes()
@@ -1481,7 +1485,7 @@ def test_rebuilding_the_info_pages_does_not_dirty_the_manifest(
     # When the info pages are rebuilt from scratch
     (path / "one" / "index.html").unlink()
     (path / "one" / "statistics" / "index.html").unlink()
-    cli_manage(["resource-info", "-R", str(path), "-r", "one"])
+    cli_manage(["resource-info", "-R", str(path), "-r", "one", "-j", "1"])
 
     # Then the pages are back and the manifest is byte-for-byte unchanged
     assert (path / "one" / "index.html").exists()
@@ -1523,7 +1527,7 @@ def test_per_file_dvc_manifest_is_byte_identical(
     path, _proto = gitignored_dvc_proto_fixture
 
     # When it is repaired
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
 
     # Then its manifest is byte-for-byte what it has always been
     text = (path / "one" / ".MANIFEST").read_text(encoding="utf8")
@@ -1544,7 +1548,7 @@ def test_pointer_only_per_file_dvc_manifest_is_byte_identical(
     })
 
     # When it is repaired
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
 
     # Then its manifest is byte-for-byte what it has always been - and
     # identical to the materialised one: a per-file `dvc add` output manifests
@@ -1633,7 +1637,7 @@ def test_a_state_written_by_an_earlier_gain_is_trusted_whatever_wrote_it(
     _record_state_as_an_earlier_gain_would(proto, path)
 
     md5_spy.clear()
-    cli_manage(["resource-repair", "-R", str(path), "-r", "one"])
+    cli_manage(["resource-repair", "-R", str(path), "-r", "one", "-j", "1"])
 
     # The recorded state is authoritative: no rehash, stale md5 kept.
     assert "data.txt" not in md5_spy
@@ -1659,7 +1663,8 @@ def test_without_dvc_re_verifies_a_state_written_by_an_earlier_gain(
     md5_spy.clear()
     with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as excinfo:
         cli_manage([
-            "resource-repair", "-R", str(path), "-r", "one", "--without-dvc"])
+            "resource-repair", "-R", str(path), "-r", "one",
+            "--without-dvc", "-j", "1"])
 
     # Recorded state ignored; the drift from the sidecar is reported.
     assert "data.txt" in md5_spy
@@ -1717,8 +1722,12 @@ def test_a_failed_verification_publishes_no_content_derived_md5(
     path, proto = unmanifested_drifted_repo_fixture
 
     # When the repository is verified
+    args = [command, "-R", str(path), "-D"]
+    if command == "repo-repair":
+        # Only the task-graph subcommands offer `-j` (#851).
+        args.extend(["-j", "1"])
     with pytest.raises(SystemExit) as excinfo:
-        cli_manage([command, "-R", str(path), "-D"])
+        cli_manage(args)
 
     # Then the run fails and writes no manifest
     assert excinfo.value.code == 1
@@ -1735,7 +1744,10 @@ def test_a_failed_verification_publishes_no_content_derived_md5(
 
     # ... so a later DEFAULT run still reads its md5 sums off the sidecars,
     # and still merges the pointer-only entry
-    cli_manage([command, "-R", str(path)])
+    args = [command, "-R", str(path)]
+    if command == "repo-repair":
+        args.extend(["-j", "1"])
+    cli_manage(args)
     manifest = proto.load_manifest(proto.get_resource("one"))
     assert manifest["data.txt"].md5 == md5_of(ORIGINAL_DATA)
     assert manifest["big.bw"].md5 == md5_of(ORIGINAL_DATA)
@@ -1754,12 +1766,12 @@ def test_a_failed_verification_leaves_the_published_manifest_alone(
     """
     # Given a repaired GRR whose file then turns out to have drifted
     path, proto = stale_same_size_dvc_proto_fixture
-    cli_manage(["repo-repair", "-R", str(path)])
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
     manifest_before = (path / "one" / ".MANIFEST").read_bytes()
 
     # When it is verified
     with pytest.raises(SystemExit) as excinfo:
-        cli_manage(["repo-repair", "-R", str(path), "-D"])
+        cli_manage(["repo-repair", "-R", str(path), "-D", "-j", "1"])
 
     # Then the run fails, and neither the manifest nor the contents lose it
     assert excinfo.value.code == 1
@@ -1883,7 +1895,7 @@ def test_the_generated_pages_are_written_where_the_exclusion_looks(
     monkeypatch.setattr(
         cli_module, "GR_STATISTICS_INDEX_FILE_NAME",
         "generated-stats/index.html")
-    cli_manage(["resource-info", "-R", str(path), "-r", "one"])
+    cli_manage(["resource-info", "-R", str(path), "-r", "one", "-j", "1"])
 
     # Then that is where `resource-info` writes them: the writer reads the
     # very constants the exclusion is built from

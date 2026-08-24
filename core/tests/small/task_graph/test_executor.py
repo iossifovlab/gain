@@ -69,6 +69,7 @@ def test_exit_does_not_mask_body_exception() -> None:
     assert executor.closed
 
 
+@pytest.mark.dask_executor
 def test_dependency_chain(executor: TaskGraphExecutor) -> None:
     graph = TaskGraph()
     task_1 = graph.create_task("Task 1", do_work, args=[0.01], deps=[])
@@ -99,6 +100,7 @@ def test_dependent_task_recalculation(
     assert len(completed_tasks) == 2
 
 
+@pytest.mark.dask_executor
 def test_multiple_dependancies(executor: TaskGraphExecutor) -> None:
     graph = TaskGraph()
 
@@ -121,6 +123,7 @@ def add_to_list(what: int, where: list[int]) -> list[int]:
     return where
 
 
+@pytest.mark.dask_executor
 def test_implicit_dependancies(executor: TaskGraphExecutor) -> None:
     graph = TaskGraph()
 
@@ -166,6 +169,7 @@ def raise_exception() -> None:
     raise ValueError("Task failed")
 
 
+@pytest.mark.dask_executor
 def test_error_handling(executor: TaskGraphExecutor) -> None:
     graph = TaskGraph()
     task_1 = graph.create_task("Task 1", do_work, args=[0], deps=[])
@@ -178,6 +182,7 @@ def test_error_handling(executor: TaskGraphExecutor) -> None:
         ))
 
 
+@pytest.mark.dask_executor
 def test_error_handling_keep_going(
     executor: TaskGraphExecutor,
 ) -> None:
@@ -205,6 +210,7 @@ def test_error_handling_keep_going(
     assert "Task 4" not in error_tasks
 
 
+@pytest.mark.dask_executor
 def test_diamond_graph(executor: TaskGraphExecutor) -> None:
     graph = TaskGraph()
     task_a = graph.create_task("A", do_work, args=[0.01], deps=[])
@@ -225,6 +231,7 @@ def return_5() -> int:
     return 5
 
 
+@pytest.mark.dask_executor
 def test_result_passing_chain(executor: TaskGraphExecutor) -> None:
     graph = TaskGraph()
     task_a = graph.create_task("A", return_5, args=[], deps=[])
@@ -240,6 +247,7 @@ def test_result_passing_chain(executor: TaskGraphExecutor) -> None:
     assert results["C"] == 16
 
 
+@pytest.mark.dask_executor
 def test_wide_parallel_execution(executor: TaskGraphExecutor) -> None:
     # Test many independent tasks that can run in parallel
     graph = TaskGraph()
@@ -257,6 +265,7 @@ def test_wide_parallel_execution(executor: TaskGraphExecutor) -> None:
         assert results[f"WideTask{i}"] == i * 2
 
 
+@pytest.mark.dask_executor
 def test_empty_graph(executor: TaskGraphExecutor) -> None:
     graph = TaskGraph()
     results = list(executor.execute(graph))
@@ -267,6 +276,7 @@ def return_42() -> int:
     return 42
 
 
+@pytest.mark.dask_executor
 def test_single_task_graph(executor: TaskGraphExecutor) -> None:
     # Was xfailed as "flaky. Needs fixing." until gain#365: a one-task
     # graph is the shape most exposed to the run loop's termination race,
@@ -304,6 +314,7 @@ def merge_lists(*lists: list[int]) -> list[int]:
     return result
 
 
+@pytest.mark.dask_executor
 def test_complex_result_aggregation(
     executor: TaskGraphExecutor,
 ) -> None:
