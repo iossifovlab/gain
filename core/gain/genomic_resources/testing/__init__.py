@@ -21,6 +21,7 @@ from s3fs.core import S3FileSystem
 
 from gain import logging
 from gain.genomic_resources.fsspec_protocol import (
+    GRR_INTERNAL_DIR,
     FsspecReadOnlyProtocol,
     FsspecReadWriteProtocol,
     FsspecRepositoryProtocol,
@@ -616,10 +617,97 @@ def build_s3_test_protocol(
 def copy_proto_genomic_resources(
         dest_proto: FsspecReadWriteProtocol,
         src_proto: FsspecReadOnlyProtocol) -> None:
+    """Publish every resource of ``src_proto`` into ``dest_proto``.
+
+    Populating a *fresh* s3 protocol takes a bulk path -- see
+    :func:`_bulk_populate_genomic_resources` -- which is the same
+    repository for a fraction of the round trips (gain#862).  Every other
+    destination is populated resource by resource through the protocol.
+
+    The bulk path is only taken for a destination that is still empty: it
+    uploads what the source has and so, unlike
+    :meth:`ReadWriteRepositoryProtocol.copy_resource`, cannot remove a
+    file that has left the manifest since.
+    """
+    if dest_proto.scheme == "s3" and not dest_proto.filesystem.find(
+            dest_proto.url):
+        _bulk_populate_genomic_resources(dest_proto, src_proto)
+        return
+
     for res in src_proto.get_all_resources():
         dest_proto.copy_resource(res)
     dest_proto.build_content_file()
     dest_proto.filesystem.invalidate_cache()
+
+
+def _bulk_populate_genomic_resources(
+        dest_proto: FsspecReadWriteProtocol,
+        src_proto: FsspecReadOnlyProtocol) -> None:
+    """Populate an empty s3 protocol by staging locally and uploading once.
+
+    Copying resource by resource over s3 costs a few hundred small
+    synchronous round trips -- an existence check and a directory listing
+    per file, a read-back to checksum what was just written, and a
+    copy-plus-delete to publish it out of the staging name.  None of that
+    work is about s3; it is the protocol being careful about a store it
+    cannot see.  So the repository is assembled on local disk first --
+    through this very function, against a filesystem protocol, so the
+    result is identical by construction -- and then handed to the store in
+    one batched transfer.
+
+    A resource's protocol-internal ``.grr`` directory is not uploaded.
+    Its ``.state`` documents each record the modification time of the
+    object they describe, which does not exist until that object has been
+    uploaded, so they are rebuilt against the store afterwards.  Which
+    resources exist, and each file's md5, are taken from the staged
+    repository rather than re-read from the store: they are the same
+    bytes, they are already on local disk, and the copy has verified each
+    against the manifest it came from.  So no object is read back.
+
+    The tail matters as much as the transfer.  A file-by-file copy leaves
+    the destination with its resource memo WARM (``build_content_file``
+    enumerates) and the s3fs listing cache EMPTY, and that combination is
+    what keeps a freshly published repository from looking stale: the
+    caller's first enumeration is answered from the memo without listing
+    s3, so ``modified()`` falls through to a ``head_object``, which is
+    what the states recorded.  Leave the memo cold instead and the first
+    enumeration lists, ``list_objects_v2`` fills the cache with
+    ``LastModified`` values MinIO reports to the millisecond where the
+    HEAD reports whole seconds, and ``classify_resource_file`` then finds
+    every file drifted and rewrites its state.  So this ends the way the
+    file-by-file copy ends: memo dropped, rebuilt, listing cache cleared.
+    """
+    filesystem = dest_proto.filesystem
+    dest_url = dest_proto.url.rstrip("/")
+
+    with tempfile.TemporaryDirectory("_grr_bulk_staging") as staging:
+        staging_path = pathlib.Path(staging)
+        staging_proto = build_filesystem_test_protocol(staging_path)
+        copy_proto_genomic_resources(staging_proto, src_proto)
+
+        local_paths = []
+        object_urls = []
+        for path in sorted(staging_path.rglob("*")):
+            relative = path.relative_to(staging_path)
+            if not path.is_file() or GRR_INTERNAL_DIR in relative.parts:
+                continue
+            local_paths.append(str(path))
+            object_urls.append(f"{dest_url}/{relative.as_posix()}")
+        filesystem.put(local_paths, object_urls)
+
+        filesystem.invalidate_cache()
+        for staged_res in staging_proto.get_all_resources():
+            resource = GenomicResource(
+                staged_res.resource_id, staged_res.version, dest_proto)
+            for entry in staged_res.get_manifest():
+                dest_proto.save_resource_file_state(
+                    resource,
+                    dest_proto.build_resource_file_state(
+                        resource, entry.name, md5=entry.md5))
+
+    dest_proto.invalidate()
+    dest_proto.get_all_resources_dict()
+    filesystem.invalidate_cache()
 
 
 @contextlib.contextmanager
