@@ -60,9 +60,7 @@ def test_gain_core_tests_do_not_import_from_gpf_core(
     )
 
 
-def test_the_table_layer_imports_nothing_from_the_score_layer(
-    gain_arch: EvaluableArchitecture,
-) -> None:
+def test_the_table_layer_imports_nothing_from_the_score_layer() -> None:
     """``genomic_position_table`` must not depend on the score modules.
 
     The seam the record contract draws: a backend yields records and owns its
@@ -74,7 +72,11 @@ def test_the_table_layer_imports_nothing_from_the_score_layer(
     modules exist to keep apart.
 
     Written as a module-name scan rather than through pytestarch's rule DSL so
-    that the failure names the offending module and the import it made.
+    that the failure names the offending module and the import it made. It
+    therefore needs no ``EvaluableArchitecture`` -- do not add ``gain_arch``
+    for symmetry with the two tests above. Unread, it only builds the gain
+    import graph a second time, on whichever ``pytest -n`` worker happens to
+    take this item (gain#863).
     """
     table_pkg = os.path.join(GAIN_SRC, "genomic_resources",
                              "genomic_position_table")
