@@ -135,6 +135,21 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def get_statistics_info(self, **kwargs: Any) -> str:  # noqa: ARG002
         return InfoImplementationMixin.get_statistics_info(self)
 
+    def get_coverage_statistics(self) -> CoverageStatistics | None:
+        """The resource's coverage statistics, or ``None`` if not built.
+
+        Absence is an expected state, not an error: statistics roll out
+        lazily as resources are rebuilt (``calc_statistics_hash`` does
+        not know about this file), so a resource built before the
+        statistic existed simply has nothing to show yet.
+        """
+        try:
+            content = self.resource.get_file_content(
+                COVERAGE_STATISTICS_FILE)
+        except FileNotFoundError:
+            return None
+        return CoverageStatistics.deserialize(content)
+
     @staticmethod
     def _do_noregion_histograms(
         resource: GenomicResource,
@@ -644,7 +659,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         accumulate = GenomicScoreImplementation._accumulate_arrays
         if coverage is not None:
 
-            def accumulate(  # type: ignore[misc]
+            def accumulate(
                 arrays: RecordArrays,
                 result: dict[str, Histogram],
                 region: tuple[str, int | None, int | None],

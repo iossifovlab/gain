@@ -4,6 +4,7 @@ import pathlib
 import pytest
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
+    build_score_implementation_from_resource,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.coverage import (
@@ -177,9 +178,6 @@ def test_coverage_is_chunk_invariant(
 def test_statistics_hash_is_untouched_by_the_coverage_build(
     tmp_path: pathlib.Path,
 ) -> None:
-    from gain.genomic_resources.implementations.genomic_scores_impl import (
-        build_score_implementation_from_resource,
-    )
     resource = _multivalued_tabix(tmp_path)
     before = build_score_implementation_from_resource(
         resource).calc_statistics_hash()
@@ -189,6 +187,35 @@ def test_statistics_hash_is_untouched_by_the_coverage_build(
     after = build_score_implementation_from_resource(
         resource).calc_statistics_hash()
     assert after == before
+
+
+def test_info_page_renders_the_coverage_section(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _multivalued_tabix(tmp_path)
+    GenomicScoreImplementation._do_noregion_histograms(resource)
+
+    page = GenomicScoreImplementation(resource).get_info()
+
+    assert "Coverage" in page
+    assert "chr1" in page
+    assert f">{COVERED}<" in page
+
+
+def test_info_page_without_the_statistics_file_says_not_computed(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A resource built before this statistic existed: histograms are
+    # there, statistics/coverage.json is not.
+    resource = _multivalued_tabix(tmp_path)
+    GenomicScoreImplementation._do_noregion_histograms(resource)
+    resource.proto.delete_resource_file(
+        resource, "statistics/coverage.json")
+
+    page = GenomicScoreImplementation(resource).get_info()
+
+    assert "Coverage" in page
+    assert "not computed" in page
 
 
 def test_fragment_rows_overlapping_and_nested_count_once(
