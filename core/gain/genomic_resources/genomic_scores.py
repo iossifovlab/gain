@@ -1431,11 +1431,19 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 aggregators, requests, strict=True)
         ]
 
+        # Only a span-derived weight reads the window: a kind that counts
+        # a record once counts it wherever the point it collapses to
+        # falls, even outside the window (see
+        # test_an_allele_point_outside_the_window_still_aggregates_once).
+        clip = self.RECORD_WEIGHT_IS_SPAN
         for left, right, values in self.fetch_region_segment_scores(
                 chrom, pos_begin, pos_end, score_ids):
+            if clip:
+                span = clip_span(left, right, pos_begin, pos_end)
+                if span is None:
+                    continue
+                left, right = span
             weight = self._record_weight(left, right)
-            if weight <= 0:
-                continue
             for aggregator, column in targets:
                 aggregator.add(values[column], weight)
 
@@ -1674,10 +1682,10 @@ class PositionScore(GenomicScore):
         for left, right, values in self.fetch_region_segment_scores(
             chrom, pos_begin, pos_end, scores,
         ):
-            weight = self._record_weight(left, right)
-            if weight <= 0:
+            span = clip_span(left, right, pos_begin, pos_end)
+            if span is None:
                 continue
-            yield (values, weight)
+            yield (values, self._record_weight(*span))
 
     def fetch_position_scores(
         self, chrom: str, position: int,
@@ -1739,15 +1747,13 @@ class PositionScore(GenomicScore):
         cursor = start
         for left, right, values in self.fetch_region_segment_scores(
                 chrom, start, end, scores):
+            span = clip_span(left, right, start, end)
+            if span is None:
+                continue
+            left, right = span
             if right < cursor:
                 continue
             left = max(left, cursor)
-            if left > right:
-                # A record whose clipped span inverts -- a backend
-                # answering outside the queried region, which the region
-                # read yields through (see _clipped_score_values) and the
-                # sibling consumers drop as a non-positive weight.
-                continue
             if left > cursor:
                 yield None, left - cursor
             yield values, right - left + 1
