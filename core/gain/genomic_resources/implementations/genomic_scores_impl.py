@@ -185,22 +185,11 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                     resource, all_min_max_scores, chrom, None, None)
                   for chrom in chroms),
             )
-        results = [
-            GenomicScoreImplementation._do_histogram_task(
+        GenomicScoreImplementation._merge_and_save_histograms(
+            resource,
+            *(GenomicScoreImplementation._do_histogram_task(
                 resource, all_hist_confs, chrom, None, None)
-            for chrom in chroms
-        ]
-        hist_result = GenomicScoreImplementation._merge_histograms(
-            resource,
-            *(result.histograms for result in results),
-        )
-        GenomicScoreImplementation._save_coverage(
-            resource,
-            GenomicScoreImplementation._merge_coverage(resource, *results),
-        )
-        GenomicScoreImplementation._save_histograms(
-            resource,
-            hist_result,
+              for chrom in chroms),
         )
 
     def create_statistics_build_tasks(
@@ -588,8 +577,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 # Coverage measures every kind from the same clip the
                 # span weight reads, so the two paths agree on the one
                 # edge the shared clip leaves open: a record beginning
-                # past the region's end covers nothing (gain#636).
-                span = clip_span(left, right, start, end)
+                # past the region's end covers nothing (gain#636).  A
+                # scan needing neither skips the clip entirely.
+                span = clip_span(left, right, start, end) \
+                    if weight_is_span or coverage is not None else None
                 if coverage is not None and span is not None:
                     coverage.add_interval(
                         span[0], span[1], normalize_values(rec))
@@ -683,27 +674,14 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> None:
         """Fold one batch of column arrays into the region's coverage.
 
-        Rows are clipped to the region on both edges -- a record beginning
-        past the region's end covers nothing, the same verdict the
-        per-record path gets from ``clip_span`` (gain#636) -- and collapsed
-        into equal-valued runs before they are fed to ``coverage``, so a
-        constant stretch costs one ``add_interval`` rather than one call
-        per row.  A row extends the running run when it touches or overlaps
-        the positions covered so far and every score column compares equal,
-        with nan equal to nan -- the vectorized statement of the segment
-        rule ``RegionCoverage.add_interval`` applies row by row (ADR 0020).
-
-        The touching test reads the running maximum end rather than the
-        previous row's end, which is exact for a position score (whose
-        validators refuse overlap, so the previous row IS the running
-        maximum).  For overlapping fragment rows the covered count is
-        still exact -- ``add_interval`` unions whatever run shapes arrive
-        -- while run identity may differ from the row-by-row feed where
-        differently-valued fragments interleave, and differs again
-        between chunked and unchunked scans of the same fragment rows;
-        fragment segment statistics are not published (value-aware
-        segments are a position-score statistic), and a consumer that
-        wants them must first give fragments an exact run algebra.
+        Clipping only: rows are clipped to the region on both edges -- a
+        record beginning past the region's end covers nothing, the same
+        verdict the per-record path gets from ``clip_span`` (gain#636) --
+        and handed to :meth:`RegionCoverage.add_interval_batch`, which
+        owns the run-collapse algebra.  Nothing here knows what "equal
+        values" means.  The batches the backends return rarely carry a
+        row outside the queried region, so the all-kept batch skips the
+        mask copies entirely.
         """
         _chrom, start, end = region
         pos_begin, pos_end, value_cells = arrays
@@ -714,34 +692,17 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             keep &= pos_begin <= end
         if not keep.any():
             return
-        left = pos_begin[keep]
-        right = pos_end[keep]
+        if keep.all():
+            left, right = pos_begin, pos_end
+            cells = list(value_cells.values())
+        else:
+            left, right = pos_begin[keep], pos_end[keep]
+            cells = [column[keep] for column in value_cells.values()]
         if start is not None:
             left = np.maximum(left, start)
         if end is not None:
             right = np.minimum(right, end)
-
-        kept_cells = [column[keep] for column in value_cells.values()]
-        boundary = np.ones(left.shape[0], dtype=bool)
-        if left.shape[0] > 1:
-            equal = left[1:] <= np.maximum.accumulate(right)[:-1] + 1
-            for kept in kept_cells:
-                head, prev = kept[1:], kept[:-1]
-                if kept.dtype == object:
-                    same = head == prev
-                else:
-                    same = (head == prev) \
-                        | (np.isnan(head) & np.isnan(prev))
-                equal = equal & same
-            boundary[1:] = ~equal
-        starts = np.flatnonzero(boundary)
-        run_ends = np.maximum.reduceat(right, starts)
-        for index, run_start in enumerate(starts):
-            coverage.add_interval(
-                int(left[run_start]),
-                int(run_ends[index]),
-                normalize_values(
-                    column[run_start] for column in kept_cells))
+        coverage.add_interval_batch(left, right, cells)
 
     @staticmethod
     def _bulk_region_scan(
@@ -1204,15 +1165,18 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> CoverageStatistics | None:
         """Fold the regions' coverage, or ``None`` for an uncovered kind.
 
-        Region results arrive in the genomic order the tasks were
-        created in; the fold is keyed by chromosome, and within one
-        chromosome ``RegionCoverage.merge`` refuses a pair that is not
-        adjacent-and-in-order, so an ordering bug fails the build rather
-        than mis-counting it.
+        The fold sorts the regions into genomic order rather than
+        trusting the task-argument order they arrived in, is keyed by
+        chromosome, and within one chromosome ``RegionCoverage.merge``
+        still refuses a pair that is not adjacent-and-in-order -- a gap
+        or overlap fails the build rather than mis-counting it.
         """
-        coverages = [
-            result.coverage for result in results
-            if result.coverage is not None]
+        coverages = sorted(
+            (result.coverage for result in results
+             if result.coverage is not None),
+            key=lambda coverage: (
+                coverage.chrom,
+                coverage.start if coverage.start is not None else 0))
         if not coverages:
             return None
         statistics = CoverageStatistics()
