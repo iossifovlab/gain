@@ -10,13 +10,79 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Iterable
-from typing import Any
+from typing import IO, Any
 
 import numpy as np
 
 from gain.genomic_resources.statistics.base_statistic import Statistic
 
 COVERAGE_STATISTICS_FILE = "statistics/coverage.json"
+COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE = \
+    "statistics/coverage_segment_lengths.png"
+
+# Length histograms (segments here; fragments and indels reuse the same
+# contract, ADR 0020) use fixed log2 bins: bin ``i`` holds lengths in
+# ``[2**i, 2**(i + 1))``, and the last bin is open-ended.  The edges are
+# part of the stored format -- histograms binned on different edges
+# cannot be merged -- so this constant must not change once resources
+# carry statistics built from it.
+LENGTH_HISTOGRAM_BIN_COUNT = 32
+
+
+def length_histogram_bin_index(length: int) -> int:
+    """The fixed log2 bin a length of that many base pairs falls in."""
+    if length < 1:
+        raise ValueError(f"length must be positive: {length}")
+    return min(length.bit_length() - 1, LENGTH_HISTOGRAM_BIN_COUNT - 1)
+
+
+def _bin_edge_label(edge: int) -> str:
+    for unit, factor in (("G", 2 ** 30), ("M", 2 ** 20), ("K", 2 ** 10)):
+        if edge >= factor:
+            return f"{edge // factor}{unit}"
+    return str(edge)
+
+
+def plot_segment_length_histogram(
+    outfile: IO,
+    histogram: list[int],
+) -> None:
+    """Render a segment-length histogram on the fixed log2 bins as PNG.
+
+    Styled to sit beside the per-score value histograms on the resource
+    info page: same figure size and label font as
+    :mod:`gain.genomic_resources.histogram` renders.
+    """
+    # pylint: disable=import-outside-toplevel
+    import matplotlib
+    matplotlib.use("agg")
+    import matplotlib.pyplot as plt
+
+    from gain.genomic_resources.histogram import (
+        HISTOGRAM_LABELS_FONT_SIZE,
+    )
+
+    figure, axes = plt.subplots(figsize=(15, 10))
+    axes.bar(
+        range(len(histogram)), histogram, width=0.9, align="edge")
+    # Ticks at every fourth bin's lower edge; the last bin is
+    # open-ended, so its lower edge is labeled as a floor.
+    last = len(histogram) - 1
+    ticks = [*range(0, last, 4), last]
+    labels = [_bin_edge_label(2 ** tick) for tick in ticks[:-1]]
+    labels.append(f"≥{_bin_edge_label(2 ** last)}")
+    axes.set_xticks(ticks)
+    axes.set_xticklabels(labels, fontsize=HISTOGRAM_LABELS_FONT_SIZE)
+    axes.tick_params(axis="y", labelsize=HISTOGRAM_LABELS_FONT_SIZE)
+    axes.set_xlabel(
+        "segment length (bp)", fontsize=HISTOGRAM_LABELS_FONT_SIZE)
+    axes.set_ylabel("segments", fontsize=HISTOGRAM_LABELS_FONT_SIZE)
+    # Counts span orders of magnitude on genome-scale scores; symlog
+    # keeps the small bars visible while zero stays on the axis.
+    axes.set_yscale("symlog")
+    figure.tight_layout()
+    figure.savefig(outfile, format="png")
+    plt.close(figure)
 
 
 def normalize_values(values: Iterable[Any]) -> tuple:
@@ -48,10 +114,16 @@ class RegionCoverage:
         chrom: str,
         start: int | None,
         end: int | None,
+        *,
+        track_segments: bool = True,
     ) -> None:
         self.chrom = chrom
         self.start = start
         self.end = end
+        # False for kinds whose rows have no exact run algebra
+        # (overlapping fragment rows): coverage still unions, but no
+        # segment summary is published.
+        self._track_segments = track_segments
         self.covered = 0
         # The rightmost covered position so far; union means only the part
         # of a row past this mark adds new covered positions.
@@ -65,9 +137,88 @@ class RegionCoverage:
         # a segment spanning three or more chunks stay one segment: the
         # middle chunks' head and tail are the same run, never two.
         self._first_run: tuple[int, int, tuple] | None = None
+        # Lengths of the INTERIOR closed segments -- every closed run
+        # except the first -- on the fixed log2 bins.  The first and the
+        # open run are excluded because either may still stitch across a
+        # merge boundary; their lengths are only final at read time.
+        self._interior_bins = [0] * LENGTH_HISTOGRAM_BIN_COUNT
+        # A deserialized region's segment data, frozen as read; it
+        # carries no scan state.
+        self._frozen_segments: tuple[int, list[int]] | None = None
+
+    @classmethod
+    def frozen(
+        cls,
+        chrom: str,
+        covered: int,
+        segments: tuple[int, list[int]] | None,
+    ) -> RegionCoverage:
+        """A region restored from serialized counts, with no scan state.
+
+        ``segments`` of ``None`` marks the segment data unknown -- the
+        file predates it or carries foreign bins.
+        """
+        region = cls(
+            chrom, None, None, track_segments=segments is not None)
+        region.covered = covered
+        region._frozen_segments = segments
+        return region
+
+    def segment_summary(self) -> tuple[int, list[int]] | None:
+        """Segment count and length histogram, or ``None`` if unknown.
+
+        Unknown means the region does not track segments: rows without
+        an exact run algebra, or a region deserialized from a
+        statistics file that predates segment-length histograms.  The
+        count and histogram accessors themselves are only meaningful
+        through this gate.
+        """
+        if not self._track_segments:
+            return None
+        return self.segment_count, self.segment_length_histogram()
+
+    def segment_length_histogram(self) -> list[int]:
+        """Counts of segment lengths on the fixed log2 bins.
+
+        Finalizes the still-open bookkeeping: the first and the open run
+        are folded in on top of the interior counts, so the histogram
+        totals exactly ``segment_count``.
+        """
+        if self._frozen_segments is not None:
+            return list(self._frozen_segments[1])
+        histogram = list(self._interior_bins)
+        if self._closed_segments:
+            first = self._first_run
+            assert first is not None
+            self._add_to(histogram, first)
+        if self._run is not None:
+            self._add_to(histogram, self._run)
+        return histogram
+
+    @staticmethod
+    def _add_to(
+        histogram: list[int],
+        run: tuple[int, int, tuple],
+    ) -> None:
+        begin, end, _ = run
+        histogram[length_histogram_bin_index(end - begin + 1)] += 1
+
+    def _record_closed(self, run: tuple[int, int, tuple]) -> None:
+        """A run closed: freeze the first, bin the interior ones.
+
+        The caller still advances ``_closed_segments`` itself -- a
+        stitched merge records the combined run here but counts it
+        through the other region's tally.
+        """
+        if not self._closed_segments:
+            self._first_run = run
+        elif self._track_segments:
+            self._add_to(self._interior_bins, run)
 
     @property
     def segment_count(self) -> int:
+        if self._frozen_segments is not None:
+            return self._frozen_segments[0]
         return self._closed_segments + (1 if self._run is not None else 0)
 
     def _first(self) -> tuple[int, int, tuple] | None:
@@ -97,6 +248,8 @@ class RegionCoverage:
                 f"{other.chrom}:{other.start}-{other.end}")
 
         self.covered += other.covered
+        self._track_segments = \
+            self._track_segments and other._track_segments
         if other._run is None:
             self.end = other.end
             return
@@ -104,6 +257,7 @@ class RegionCoverage:
             self._closed_segments = other._closed_segments
             self._first_run = other._first_run
             self._run = other._run
+            self._interior_bins = list(other._interior_bins)
         else:
             self._merge_runs(other)
         self._covered_through = other._covered_through
@@ -133,14 +287,18 @@ class RegionCoverage:
             # stays open for the next merge.
             self._run = (last_begin, other._run[1], last_values)
             return
+        for index, count in enumerate(other._interior_bins):
+            self._interior_bins[index] += count
         if stitch:
-            combined = (last_begin, first_end, last_values)
-            if not self._closed_segments:
-                self._first_run = combined
+            self._record_closed((last_begin, first_end, last_values))
             self._closed_segments += other._closed_segments
         else:
-            if not self._closed_segments:
-                self._first_run = self._run
+            self._record_closed(self._run)
+            if other._closed_segments and self._track_segments:
+                # The other region's first run closed there without
+                # being binned -- it could still have stitched.  It did
+                # not, so it is interior of the merged region now.
+                self._add_to(self._interior_bins, other_first)
             self._closed_segments += \
                 1 + other._closed_segments
         self._run = other._run
@@ -164,8 +322,7 @@ class RegionCoverage:
             if values == run_values and begin <= run_end + 1:
                 self._run = (run_begin, max(run_end, end), run_values)
                 return
-            if not self._closed_segments:
-                self._first_run = self._run
+            self._record_closed(self._run)
             self._closed_segments += 1
         self._run = (begin, end, values)
 
@@ -273,6 +430,59 @@ class CoverageStatistics(Statistic):
     def covered_global(self) -> int:
         return sum(region.covered for region in self._regions.values())
 
+    def _summaries(self) -> dict[str, tuple[int, list[int]]] | None:
+        """Per-chromosome segment summaries, or ``None`` if any chromosome
+        lacks them -- a partial global would silently understate."""
+        summaries = {}
+        for chrom, region in self._regions.items():
+            summary = region.segment_summary()
+            if summary is None:
+                return None
+            summaries[chrom] = summary
+        return summaries
+
+    def segments_by_chromosome(self) -> dict[str, int]:
+        summaries = self._summaries()
+        if summaries is None:
+            return {}
+        return {
+            chrom: count for chrom, (count, _) in summaries.items()
+        }
+
+    def segments_global(self) -> int | None:
+        summaries = self._summaries()
+        if summaries is None:
+            return None
+        return sum(count for count, _ in summaries.values())
+
+    def segment_lengths_by_chromosome(self) -> dict[str, list[int]]:
+        """Per-chromosome length histograms -- the read API for the
+        per-chromosome data the statistics file stores (rendered
+        consumers use the global roll-up; gain#776 reads these)."""
+        summaries = self._summaries()
+        if summaries is None:
+            return {}
+        return {
+            chrom: histogram
+            for chrom, (_, histogram) in summaries.items()
+        }
+
+    @staticmethod
+    def _binwise_sum(histograms: Iterable[list[int]]) -> list[int]:
+        merged = [0] * LENGTH_HISTOGRAM_BIN_COUNT
+        for histogram in histograms:
+            for index, count in enumerate(histogram):
+                merged[index] += count
+        return merged
+
+    def segment_lengths_global(self) -> list[int] | None:
+        """The bin-wise sum of the per-chromosome length histograms."""
+        summaries = self._summaries()
+        if summaries is None:
+            return None
+        return self._binwise_sum(
+            histogram for _, histogram in summaries.values())
+
     def add_value(self, value: Any) -> None:  # noqa: ARG002
         raise TypeError(
             "CoverageStatistics accumulates regions, not values; "
@@ -291,24 +501,59 @@ class CoverageStatistics(Statistic):
             self.fold_region(region)
 
     def serialize(self) -> str:
+        # One walk of the regions serves the per-chromosome entries and
+        # the global roll-up; the global segment keys are written only
+        # when EVERY chromosome has a summary (a partial global would
+        # silently understate).
+        chromosomes: dict[str, dict[str, Any]] = {}
+        summaries: dict[str, tuple[int, list[int]]] | None = {}
+        for chrom, region in self._regions.items():
+            entry: dict[str, Any] = {
+                "covered_positions": region.covered,
+            }
+            summary = region.segment_summary()
+            if summary is None:
+                summaries = None
+            else:
+                entry["segment_count"] = summary[0]
+                entry["segment_length_histogram"] = summary[1]
+                if summaries is not None:
+                    summaries[chrom] = summary
+            chromosomes[chrom] = entry
+        global_entry: dict[str, Any] = {
+            "covered_positions": self.covered_global(),
+        }
+        if summaries is not None:
+            global_entry["segment_count"] = sum(
+                count for count, _ in summaries.values())
+            global_entry["segment_length_histogram"] = self._binwise_sum(
+                histogram for _, histogram in summaries.values())
         return json.dumps({
             "format_version": 1,
-            "chromosomes": {
-                chrom: {"covered_positions": covered}
-                for chrom, covered in self.covered_by_chromosome().items()
-            },
-            "global": {"covered_positions": self.covered_global()},
+            "chromosomes": chromosomes,
+            "global": global_entry,
         }, indent=2)
 
     @staticmethod
     def deserialize(content: str) -> CoverageStatistics:
         # Only the counts round-trip; the open-run bookkeeping is scan
         # state and is never written.  Unknown keys are ignored rather
-        # than rejected, so a file carrying extra fields still reads.
+        # than rejected, so a file carrying extra fields still reads,
+        # and a file written before segment histograms existed reads
+        # with its segment data unknown.
         data = json.loads(content)
         result = CoverageStatistics()
         for chrom, counts in data["chromosomes"].items():
-            region = RegionCoverage(chrom, None, None)
-            region.covered = int(counts["covered_positions"])
-            result.fold_region(region)
+            segments = None
+            if "segment_count" in counts:
+                histogram = [
+                    int(count) for count
+                    in counts["segment_length_histogram"]]
+                # A histogram of any other length was binned on foreign
+                # edges; it cannot merge with this code's fixed bins,
+                # so it reads as segments-unknown.
+                if len(histogram) == LENGTH_HISTOGRAM_BIN_COUNT:
+                    segments = (int(counts["segment_count"]), histogram)
+            result.fold_region(RegionCoverage.frozen(
+                chrom, int(counts["covered_positions"]), segments))
         return result

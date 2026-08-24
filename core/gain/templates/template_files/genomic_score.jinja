@@ -93,6 +93,7 @@
 {% set coverage = impl.get_coverage_display() %}
 {% if coverage != None %}
 {% set has_fractions = coverage.has_fractions %}
+{% set has_segments = coverage.has_segments %}
 <div class="scrollable-table-container">
 <table>
     <thead>
@@ -101,6 +102,9 @@
             <th>Covered positions</th>
             {%- if has_fractions %}
             <th>Covered %</th>
+            {%- endif %}
+            {%- if has_segments %}
+            <th>Segments</th>
             {%- endif %}
         </tr>
     </thead>
@@ -113,6 +117,9 @@
                 {{ "%.2f%%"|format(row.fraction * 100) }}
             {%- endif %}</td>
             {%- endif %}
+            {%- if has_segments %}
+            <td>{{ row.segments }}</td>
+            {%- endif %}
         </tr>
     {%- endfor %}
     <tr class="coverage-global">
@@ -123,9 +130,18 @@
             {{ "%.2f%%"|format(coverage.global_fraction * 100) }}
         {%- endif %}</td>
         {%- endif %}
+        {%- if has_segments %}
+        <td>{{ coverage.global_segments }}</td>
+        {%- endif %}
     </tr>
 </table>
 </div>
+{%- if has_segments %}
+<h3>Segment lengths</h3>
+<img src="{{ impl.get_coverage_segment_lengths_image_filename() }}"
+    alt="global segment-length histogram"
+    title="Segment lengths across all chromosomes, fixed log2 bins">
+{%- endif %}
 {% else %}
 <p>not computed</p>
 {% endif %}
