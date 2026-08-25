@@ -92,8 +92,59 @@ motivation — and pay for itself against the cost gain#665 already identified:
 `ref`/`alt` are `str`, so they would ride as `object` arrays, which is the
 per-row memory the array path exists to avoid.
 
+### That proposal arrived: gain#780 (2026-08-24)
+
+**The two sentences above about the batch shape no longer describe the code**,
+and are kept because they record why the shape held until something paid for
+changing it. What is still true is everything this document is actually about:
+the duplicate-key rule stays refused, `validate_record_arrays` still states the
+ordering rule and nothing more, and no validator reads the key columns.
+
+gain#780 carries `ref`/`alt` for a consumer that did not exist when gain#665
+was written: the allele statistics of gain#770/gain#777, which tally
+substitutions, insertions, deletions and complex alleles and therefore have to
+see the nucleotides. Being a *statistic* rather than a *validator* is the whole
+difference — it does not adjudicate between rows, so it needs no rule about
+repeated keys, and the duplicate rows this document defends are simply counted,
+each on its own.
+
+It pays the memory cost rather than dodging it, and the measurement confirms
+gain#665 was right about the cost. On 200,000 rows of a realistic tabix allele
+fixture, against the fastest honest per-record read:
+
+- throughput is only about **1.1x** — the win is modest, not a multiple;
+- peak memory goes from effectively **zero** (the per-record read streams) to
+  **31.7 MB** at the default 100,000-row batch, because `ref`/`alt` ride as
+  `object` arrays of `str` exactly as gain#665 said they would.
+
+The memory is a knob rather than a price — it tracks batch size linearly, and
+at a 10,000-row batch it is 3.2 MB with throughput unchanged — but it is a real
+cost that the streaming read does not pay.
+
+So what carried gain#780 was **not** speed. A tabix-backed `allele_score` is
+bulk-scan-eligible today, so a statistic that only knew how to collect
+per-record would render "not computed" for the resources that matter while
+their `np_score` twins got numbers. The key columns are carried so that one
+statistic can be collected on whichever path the scan takes. That is a
+different argument from the one gain#665 made and lost, which is why it
+succeeded where that one did not.
+
+Two things in that issue's shape are worth keeping here, because they are why
+this is an addition rather than a reversal:
+
+- The columns ride a **separate `AlleleScore.fetch_region_allele_arrays`**, not
+  a flag on `fetch_region_value_arrays`. `RecordArrays` is unchanged and every
+  existing consumer of the shared read is untouched — so the shape quoted above
+  still holds *for that read*. ADR 0008 turned down a mode flag on a read path,
+  and this respects it.
+- The key columns are handed back **raw**, where the score columns beside them
+  are parsed. `fetch_records` reads them verbatim, so the two reads hand a
+  caller the same strings rather than two dialects — which is what lets a
+  statistic collected on either path come out identical.
+
 ## Prior requests
 
 - iossifovlab/gain#663 — "AlleleScore.validate_records: refuse a duplicate (pos, ref, alt) key"
 - iossifovlab/grr#23 — "Duplicate (chrom, pos, ref, alt) keys in 7 published allele scores"
 - iossifovlab/gain#665 — "Carry ref/alt in the column-array read; restore AlleleScore bulk eligibility" (downstream of gain#663; see the knock-on section above)
+- iossifovlab/gain#780 — "Opt-in raw ref/alt column arrays on the AlleleScore bulk read" (**shipped**; the motivated proposal gain#665's rejection invited — see the knock-on section above)

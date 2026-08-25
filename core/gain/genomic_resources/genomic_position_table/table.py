@@ -114,6 +114,13 @@ class GenomicPositionTable(abc.ABC):
     REF = "reference"
     ALT = "alternative"
 
+    # The spellings a column definition may address its column by, the two
+    # deprecated ones included.  :meth:`get_column_key` implements what each
+    # one MEANS; this names them, for the one caller that has to know whether
+    # a definition addresses a column without yet being able to resolve it.
+    COLUMN_KEY_SPELLINGS: ClassVar[tuple[str, ...]] = (
+        "index", "column_index", "name", "column_name")
+
     def __init__(
             self, genomic_resource: GenomicResource, table_definition: dict):
         self.genomic_resource = genomic_resource
@@ -254,6 +261,30 @@ class GenomicPositionTable(abc.ABC):
                     f"the same chromosome {chrom!r}")
             chrom_map[chrom] = fchrom
         return chrom_map
+
+    def would_resolve_column(self, col: str) -> bool:
+        """Whether ``col`` will have a key once this table is open.
+
+        The question :meth:`get_column_key` answers, asked of a table that
+        may not be open yet -- and asked HERE, because which spellings
+        address a column, and that a bare header column counts as
+        addressing one, is this class's knowledge and not its callers'.
+
+        With a header in hand -- ``header_mode: list`` names it in the
+        config, and an opened table has read it -- this IS
+        :meth:`get_column_key`, so the two cannot disagree.  Without one,
+        the config is the only evidence there is, and the answer is whether
+        the definition addresses the column at all: a ``col_def`` carrying
+        none of :attr:`COLUMN_KEY_SPELLINGS` is not an address, and
+        ``get_column_key`` would fall past it to the header fallback and
+        resolve ``None``.  Answering on the mere PRESENCE of the block would
+        promise a column an empty ``reference:`` never delivers.
+        """
+        if self.header is not None:
+            return self.get_column_key(col) is not None
+        col_def = self.definition.get(col)
+        return col_def is not None and any(
+            spelling in col_def for spelling in self.COLUMN_KEY_SPELLINGS)
 
     def get_column_key(self, col: str) -> int | None:
         """Find the index of a column in the table.
