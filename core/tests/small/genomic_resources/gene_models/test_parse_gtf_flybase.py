@@ -170,6 +170,53 @@ def test_a_repeated_transcript_id_is_still_an_error() -> None:
         )
 
 
+@pytest.mark.parametrize("feature", ["miRNA", "pre_miRNA"])
+def test_an_exon_child_of_a_skipped_biotype_blames_the_parent(
+    feature: str,
+) -> None:
+    """FlyBase's premise is that these biotypes have no exon children.
+
+    A file that breaks it must say the parent was skipped, not point at
+    the exon as if the transcript had never appeared.
+    """
+    with pytest.raises(
+            ValueError,
+            match=(
+                "exon transcript FBtr0070000 was skipped as "
+                f"exonless feature {feature}"
+            )):
+        _gene_models(
+            _record(feature, 19961689, 19968479, TRANSCRIPT_ATTRIBUTES),
+            _record("exon", 19961689, 19961845, TRANSCRIPT_ATTRIBUTES),
+        )
+
+
+def test_an_exon_of_a_never_seen_transcript_names_it() -> None:
+    with pytest.raises(
+            ValueError,
+            match=(
+                "exon transcript FBtr0070000 not found "
+                "in transcript models"
+            )):
+        _gene_models(
+            _record("exon", 19961689, 19961845, TRANSCRIPT_ATTRIBUTES),
+        )
+
+
+def test_a_codon_child_of_a_skipped_biotype_blames_the_parent() -> None:
+    with pytest.raises(
+            ValueError,
+            match=(
+                "start_codon transcript FBtr0070000 was skipped as "
+                "exonless feature miRNA"
+            )):
+        _gene_models(
+            _record("miRNA", 19961689, 19968479, TRANSCRIPT_ATTRIBUTES),
+            _record("start_codon", 19961689, 19961691,
+                    TRANSCRIPT_ATTRIBUTES),
+        )
+
+
 def test_unknown_feature_still_raises() -> None:
     """The change narrows the failure; it does not remove it."""
     with pytest.raises(ValueError, match="unknown feature Selenoprotein"):
