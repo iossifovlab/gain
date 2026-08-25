@@ -67,9 +67,9 @@ def test_untracked_segments_have_no_summary_and_merge_stays_untracked(
 ) -> None:
     # A region whose rows have no exact run algebra (overlapping
     # fragment rows) still counts coverage but publishes no segments.
-    left = RegionCoverage("chr1", 1, 10, track_segments=False)
+    left = RegionCoverage("chr1", 1, 10, rows_are_disjoint=False)
     left.add_interval(4, 10, (0.5,))
-    right = RegionCoverage("chr1", 11, 20, track_segments=False)
+    right = RegionCoverage("chr1", 11, 20, rows_are_disjoint=False)
     right.add_interval(11, 16, (0.5,))
 
     left.merge(right)

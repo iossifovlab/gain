@@ -22,7 +22,10 @@ from typing import IO, Any, NamedTuple
 import numpy as np
 
 from gain.genomic_resources.cli_errors import report_resource_failure
-from gain.genomic_resources.genomic_scores import RecordArrays
+from gain.genomic_resources.genomic_scores import (
+    RecordArrays,
+    owned_records_mask,
+)
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.base_statistic import (
     Statistic,
@@ -120,10 +123,12 @@ def normalize_values(values: Iterable[Any]) -> tuple:
 class RegionCoverage:
     """Coverage of one scanned region, accumulated row by row.
 
-    Consumes clipped ``[begin, end]`` spans in non-decreasing ``begin``
-    order — the order the scan validators guarantee — and counts each
-    position once however many rows span it (a running-maximum union, so
-    nested and overlapping fragment rows are handled).
+    Consumes ``[begin, end]`` spans in non-decreasing ``begin`` order —
+    the order the scan validators guarantee — and counts each position
+    once however many rows span it (a running-maximum union, so nested
+    and overlapping fragment rows are handled).  Whether those spans
+    arrive clipped to the region is the scan's decision, taken from
+    :attr:`rows_are_disjoint`.
     """
 
     def __init__(
@@ -132,15 +137,21 @@ class RegionCoverage:
         start: int | None,
         end: int | None,
         *,
-        track_segments: bool = True,
+        rows_are_disjoint: bool = True,
     ) -> None:
         self.chrom = chrom
         self.start = start
         self.end = end
-        # False for kinds whose rows have no exact run algebra
-        # (overlapping fragment rows): coverage still unions, but no
-        # segment summary is published.
-        self._track_segments = track_segments
+        # ONE fact about the kind being scanned, with two consequences.
+        # Rows that can neither overlap nor touch (a position score,
+        # whose validators refuse both) have an exact run algebra, so
+        # their segment summary is published; and they are pairwise
+        # disjoint, so the scan may hand this their FULL spans and the
+        # union stays additive across regions.  Rows that can overlap
+        # (fragments) publish no segment summary, and must be handed
+        # spans clipped to the region -- see
+        # ``GenomicScoreImplementation._accumulate_coverage``.
+        self._rows_are_disjoint = rows_are_disjoint
         self.covered = 0
         # The rightmost covered position so far; union means only the part
         # of a row past this mark adds new covered positions.
@@ -173,13 +184,26 @@ class RegionCoverage:
         """A region restored from serialized counts, with no scan state.
 
         ``segments`` of ``None`` marks the segment data unknown -- the
-        file predates it or carries foreign bins.
+        file predates it or carries foreign bins.  A frozen region never
+        accumulates a span, so ``rows_are_disjoint`` has no clipping
+        consequence here; it carries only the other one, gating the
+        summary this region can answer with.
         """
         region = cls(
-            chrom, None, None, track_segments=segments is not None)
+            chrom, None, None, rows_are_disjoint=segments is not None)
         region.covered = covered
         region._frozen_segments = segments
         return region
+
+    @property
+    def rows_are_disjoint(self) -> bool:
+        """Whether the scanned kind's rows can neither overlap nor touch.
+
+        Read by the scan to decide whether to clip the spans it hands
+        :meth:`add_interval` -- see the constructor for the one fact and
+        its two consequences.
+        """
+        return self._rows_are_disjoint
 
     def segment_summary(self) -> tuple[int, list[int]] | None:
         """Segment count and length histogram, or ``None`` if unknown.
@@ -190,7 +214,7 @@ class RegionCoverage:
         count and histogram accessors themselves are only meaningful
         through this gate.
         """
-        if not self._track_segments:
+        if not self._rows_are_disjoint:
             return None
         return self.segment_count, self.segment_length_histogram()
 
@@ -229,7 +253,7 @@ class RegionCoverage:
         """
         if not self._closed_segments:
             self._first_run = run
-        elif self._track_segments:
+        elif self._rows_are_disjoint:
             self._add_to(self._interior_bins, run)
 
     @property
@@ -254,8 +278,8 @@ class RegionCoverage:
         refuse_unmergeable(_MERGE_FAILURE, self, other)
 
         self.covered += other.covered
-        self._track_segments = \
-            self._track_segments and other._track_segments
+        self._rows_are_disjoint = \
+            self._rows_are_disjoint and other._rows_are_disjoint
         if other._run is None:
             self.end = other.end
             return
@@ -273,8 +297,17 @@ class RegionCoverage:
         """Combine the run bookkeeping of two non-empty regions.
 
         The one stitch decision: this region's open run and the other's
-        first run are one segment exactly when both abut the shared
-        boundary and carry equal values.
+        first run are one segment exactly when they touch or overlap and
+        carry equal values -- the very test :meth:`add_interval` applies
+        row by row, stated once more across a merge boundary.
+
+        It is deliberately NOT "both runs abut the shared boundary".
+        That was the same test in a world where every span arrived
+        clipped to its region, which made abutting the boundary the only
+        way two runs could touch.  A region handed FULL spans (an
+        unclipped, disjoint kind -- see :attr:`rows_are_disjoint`) has
+        runs that reach past its own extent, and abutting would refuse
+        to stitch a segment that plainly continues.
         """
         assert self._run is not None
         assert other._run is not None
@@ -284,8 +317,7 @@ class RegionCoverage:
         first_begin, first_end, first_values = other_first
 
         stitch = (
-            last_end == self.end
-            and first_begin == other.start
+            first_begin <= last_end + 1
             and last_values == first_values
         )
         if stitch and not other._closed_segments:
@@ -300,7 +332,7 @@ class RegionCoverage:
             self._closed_segments += other._closed_segments
         else:
             self._record_closed(self._run)
-            if other._closed_segments and self._track_segments:
+            if other._closed_segments and self._rows_are_disjoint:
                 # The other region's first run closed there without
                 # being binned -- it could still have stitched.  It did
                 # not, so it is interior of the merged region now.
@@ -627,22 +659,40 @@ def accumulate_coverage(
 ) -> None:
     """Fold one batch of column arrays into the region's coverage.
 
-    Clipping only: rows are clipped to the region on both edges -- a
-    record beginning past the region's end covers nothing, the same
-    verdict the per-record path gets from ``clip_span`` (gain#636) --
-    and handed to :meth:`RegionCoverage.add_interval_batch`, which
-    owns the run-collapse algebra.  Nothing here knows what "equal
-    values" means.  The batches the backends return rarely carry a
-    row outside the queried region, so the all-kept batch skips the
-    mask copies entirely.
+    Coverage partitions POSITIONS, not records: a union is only
+    additive across parallel regions when the spans are clipped to
+    disjoint extents.  Two fragments 8-14 and 12-18 over regions
+    [1-10] and [11-20] cover 11 positions between them; measured whole
+    they would report 7 + 7, and :meth:`RegionCoverage.merge` holds
+    only counts, so nothing downstream can repair it.
+
+    So a kind whose rows can overlap is clipped on both edges -- a
+    record beginning past the region's end covers nothing, the gain#636
+    verdict.  A kind whose rows cannot (see
+    :attr:`RegionCoverage.rows_are_disjoint`) is spared the clip
+    entirely and rides
+    :func:`~gain.genomic_resources.genomic_scores.owned_records_mask`,
+    the record partition every other statistic reads: disjoint spans
+    cannot double-count, so the union is exact at full span, and the
+    segment runs the same feed builds are measured at their true length
+    rather than the region's.
+
+    Either way the spans reach :meth:`RegionCoverage.add_interval_batch`,
+    which owns the run-collapse algebra; nothing here knows what "equal
+    values" means.  The batches the backends return rarely carry a row
+    outside the queried region, so the all-kept batch skips the mask
+    copies entirely.
     """
     _chrom, start, end = region
     pos_begin, pos_end, value_cells = arrays
-    keep = np.ones(pos_begin.shape[0], dtype=bool)
-    if start is not None:
-        keep &= pos_end >= start
-    if end is not None:
-        keep &= pos_begin <= end
+    if coverage.rows_are_disjoint:
+        keep = owned_records_mask(pos_begin, start, end)
+    else:
+        keep = np.ones(pos_begin.shape[0], dtype=bool)
+        if start is not None:
+            keep &= pos_end >= start
+        if end is not None:
+            keep &= pos_begin <= end
     if not keep.any():
         return
     if keep.all():
@@ -651,10 +701,11 @@ def accumulate_coverage(
     else:
         left, right = pos_begin[keep], pos_end[keep]
         cells = [column[keep] for column in value_cells.values()]
-    if start is not None:
-        left = np.maximum(left, start)
-    if end is not None:
-        right = np.minimum(right, end)
+    if not coverage.rows_are_disjoint:
+        if start is not None:
+            left = np.maximum(left, start)
+        if end is not None:
+            right = np.minimum(right, end)
     coverage.add_interval_batch(left, right, cells)
 
 

@@ -369,10 +369,17 @@ def test_bulk_categorical_matches_per_record_str_score(
     assert ref["s"].raw_values == {"aaa": 9, "bbb": 10, "ccc": 1}
 
 
-def test_bulk_categorical_matches_per_record_str_score_clipped(
+def test_bulk_categorical_matches_per_record_str_score_selected(
     tmp_path: pathlib.Path,
 ) -> None:
-    """The region clip weighs a partially covered record by its overlap."""
+    """A region weighs the records it OWNS, each at its full span.
+
+    The deliberate gain#794 change, on the kind that shows both edges at
+    once: 1..3 reaches into 2..13 but begins before it, so it is not this
+    region's to measure at all; 12..20 begins inside and is measured
+    whole, all nine bases, rather than truncated at the region's end.
+    Under the region clip these read 2 and 2.
+    """
     resource = _str_position_tabix(tmp_path)
     confs: dict = {"s": CategoricalHistogramConfig.default_config()}
 
@@ -382,7 +389,7 @@ def test_bulk_categorical_matches_per_record_str_score_clipped(
         resource, confs, "chr1", 2, 13)
 
     _assert_categorical_equal(bulk, ref)
-    assert ref["s"].raw_values == {"aaa": 2 + 6, "bbb": 1 + 2, "ccc": 1}
+    assert ref["s"].raw_values == {"aaa": 6, "bbb": 1 + 9, "ccc": 1}
 
 
 def test_bulk_categorical_matches_per_record_via_the_task(
