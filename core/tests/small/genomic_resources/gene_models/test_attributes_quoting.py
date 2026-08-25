@@ -5,6 +5,7 @@ Both the GTF attributes column and the ``default`` format's ``atts`` column
 pack several key/value pairs into one field using delimiters that may also
 occur inside a value.
 """
+from collections.abc import Callable
 from io import StringIO
 
 import pytest
@@ -13,9 +14,6 @@ from gain.genomic_resources.gene_models.default_attributes import (
     parse_default_attributes,
 )
 from gain.genomic_resources.gene_models.gene_models import GeneModels
-from gain.genomic_resources.gene_models.gene_models_factory import (
-    build_gene_models_from_resource,
-)
 from gain.genomic_resources.gene_models.parsers import (
     _parse_gtf_attributes,
     parse_default_gene_models_format,
@@ -23,7 +21,6 @@ from gain.genomic_resources.gene_models.parsers import (
 from gain.genomic_resources.gene_models.serialization import (
     _save_as_default_gene_models,
 )
-from gain.genomic_resources.testing import build_inmemory_test_resource
 
 NOTE_WITH_SEMICOLON = (
     "The sequence was modified: inserted 5 bases in 4 codons; "
@@ -31,27 +28,19 @@ NOTE_WITH_SEMICOLON = (
 )
 
 
-def _gtf_gene_models(attributes: str) -> GeneModels:
-    """Build gene models from a one-transcript GTF with given attributes."""
+def _one_transcript_records(attributes: str) -> list[str]:
+    """GTF records for one two-exon transcript with the given attributes."""
     def record(feature: str, start: int, end: int) -> str:
         return "\t".join([
             "chr1", "test", feature, str(start), str(end),
             ".", "+", ".", attributes,
         ])
 
-    content = "\n".join([
+    return [
         record("transcript", 10, 100),
         record("exon", 10, 40),
         record("exon", 60, 100),
-    ]) + "\n"
-    res = build_inmemory_test_resource(
-        content={
-            "genomic_resource.yaml":
-                "{type: gene_models, filename: genes.gtf, format: gtf}",
-            "genes.gtf": content,
-        },
-    )
-    return build_gene_models_from_resource(res).load()
+    ]
 
 
 def _default_format_roundtrip(gene_models: GeneModels) -> dict:
@@ -63,10 +52,12 @@ def _default_format_roundtrip(gene_models: GeneModels) -> dict:
     return next(iter(reloaded.values())).attributes
 
 
-def test_gtf_note_with_semicolon_survives_default_roundtrip() -> None:
-    gene_models = _gtf_gene_models(
+def test_gtf_note_with_semicolon_survives_default_roundtrip(
+    gtf_gene_models: Callable[..., GeneModels],
+) -> None:
+    gene_models = gtf_gene_models(*_one_transcript_records(
         f'gene_id "G1"; transcript_id "T1"; note "{NOTE_WITH_SEMICOLON}";',
-    )
+    ))
 
     attributes = _default_format_roundtrip(gene_models)
 

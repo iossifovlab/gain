@@ -1,7 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import textwrap
 from collections.abc import Callable
-from pathlib import Path
 
 import pytest
 from gain.genomic_resources.gene_models.gene_models import (
@@ -979,8 +978,10 @@ def test_explore_shh_gene(
     ("gene_models/test_known_gene.txt", "knowngene"),
     ("gene_models/test_default_ref_gene_201309.txt", "default"),
 ])
-def test_with_various_formats(filename: str, fmt: str) -> None:
-    path = str(Path(__file__).resolve().parent / "fixtures" / filename)
+def test_with_various_formats(
+    fixture_dirname: Callable[[str], str], filename: str, fmt: str,
+) -> None:
+    path = fixture_dirname(filename)
     reference_models = build_gene_models_from_file(path, file_format=fmt)
     assert reference_models is not None
     reference_models.load()

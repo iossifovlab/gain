@@ -6,7 +6,6 @@ import textwrap
 from collections.abc import Callable
 
 import pytest
-import pytest_mock
 from gain.genomic_resources.gene_models.gene_models import (
     GeneModels,
     create_regions_from_genes,
@@ -30,27 +29,6 @@ from gain.genomic_resources.testing import (
     convert_to_tab_separated,
 )
 from gain.testing.t4c8_import import t4c8_genes
-
-
-@pytest.fixture
-def fixture_dirname() -> Callable:
-    def _fixture_dirname(filename: str) -> str:
-        return os.path.join(
-            os.path.dirname(os.path.realpath(__file__)),
-            "fixtures",
-            filename)
-
-    return _fixture_dirname
-
-
-@pytest.fixture
-def clean_gene_models_cache(
-    mocker: pytest_mock.MockerFixture,
-) -> None:
-    mocker.patch(
-        "gain.genomic_resources.gene_models."
-        "gene_models_factory._INMEMORY_CACHE",
-        {})
 
 
 @pytest.fixture
