@@ -170,12 +170,20 @@ class TranscriptModel:
         self.chrom = chrom
         self.strand = strand
         self.tx = tx  # pylint: disable=invalid-name
+        # The annotated coordinates, kept verbatim. Every quantity
+        # derived from them goes through _coding_bounds(); nothing else in
+        # this class reads self.cds directly.
         self.cds = cds
         self.exons: list[Exon] = exons if exons is not None else []
         self.attributes = attributes if attributes is not None else {}
 
     def is_coding(self) -> bool:
         """Check if this transcript is protein-coding.
+
+        The CDS is measured against the exon set, so a transcript whose
+        annotated CDS misses its exons entirely translates nothing and is
+        not coding. This keeps ``is_coding()`` in step with
+        :meth:`cds_regions`, which callers index into without checking.
 
         Returns:
             bool: True if the transcript has a coding region (CDS),
@@ -186,7 +194,43 @@ class TranscriptModel:
             ...     cds_len = transcript.cds_len()
             ...     print(f"CDS length: {cds_len}bp")
         """
-        return self.cds[0] < self.cds[1]
+        cds_beg, cds_end = self._coding_bounds()
+        return cds_beg < cds_end
+
+    def _coding_bounds(self) -> tuple[int, int]:
+        """Return the CDS intersected with the exon set.
+
+        The annotated CDS is not guaranteed to lie inside the transcript's
+        exons. Metazoan mitochondrial genes carry an *incomplete stop
+        codon* -- the mRNA ends in ``T`` or ``TA`` and polyadenylation
+        completes the codon -- so annotators legitimately emit a
+        ``stop_codon`` running 1-2 bp past the terminal exon.
+
+        Bases outside the exons are not transcribed, so they contribute no
+        frame, no region and no length. Every CDS-derived quantity is
+        therefore computed against these bounds rather than ``self.cds``,
+        which keeps the annotated coordinates untouched.
+
+        A CDS disjoint from the exon set yields an *empty* span, whose start
+        is greater than its stop. Callers apply their own non-coding test to
+        these bounds rather than to ``self.cds``, so that a transcript whose
+        CDS overruns its exons is indistinguishable from the otherwise
+        identical transcript whose CDS is flush with them.
+
+        Because the returned stop never exceeds the last exon and the
+        returned start is never below the first, an exon walk driven by
+        these bounds always terminates inside the exon list.
+
+        Returns:
+            tuple[int, int]: The coding start and stop, clamped to the
+                first and last exon respectively.
+        """
+        if not self.exons:
+            return (self.cds[0], self.cds[0] - 1)
+        return (
+            max(self.cds[0], self.exons[0].start),
+            min(self.cds[1], self.exons[-1].stop),
+        )
 
     def cds_regions(self, ss_extend: int = 0) -> list[BedRegion]:
         """Compute coding sequence (CDS) regions.
@@ -197,6 +241,10 @@ class TranscriptModel:
         Args:
             ss_extend (int): Number of bases to extend into splice sites
                 at exon boundaries. Default is 0 (no extension).
+
+        The CDS is intersected with the exon set first, so the result
+        never leaves an exon. An empty list is returned for a non-coding
+        transcript and for one whose CDS misses its exons entirely.
 
         Returns:
             list[BedRegion]: List of BedRegion objects representing CDS
@@ -214,31 +262,32 @@ class TranscriptModel:
             collect_gtf_cds_regions() from serialization module to
             exclude the stop codon for GTF format.
         """
-        if self.cds[0] >= self.cds[1]:
+        cds_beg, cds_end = self._coding_bounds()
+        if cds_beg >= cds_end:
             return []
 
         regions = []
         k = 0
-        while self.exons[k].stop < self.cds[0]:
+        while self.exons[k].stop < cds_beg:
             k += 1
 
-        if self.cds[1] <= self.exons[k].stop:
+        if cds_end <= self.exons[k].stop:
             regions.append(
                 BedRegion(
-                    chrom=self.chrom, start=self.cds[0], stop=self.cds[1]),
+                    chrom=self.chrom, start=cds_beg, stop=cds_end),
             )
             return regions
 
         regions.append(
             BedRegion(
                 chrom=self.chrom,
-                start=self.cds[0],
+                start=cds_beg,
                 stop=self.exons[k].stop + ss_extend,
             ),
         )
         k += 1
-        while k < len(self.exons) and self.exons[k].stop <= self.cds[1]:
-            if self.exons[k].stop < self.cds[1]:
+        while k < len(self.exons) and self.exons[k].stop <= cds_end:
+            if self.exons[k].stop < cds_end:
                 regions.append(
                     BedRegion(
                         chrom=self.chrom,
@@ -257,14 +306,77 @@ class TranscriptModel:
                 )
                 return regions
 
-        if k < len(self.exons) and self.exons[k].start <= self.cds[1]:
+        if k < len(self.exons) and self.exons[k].start <= cds_end:
             regions.append(
                 BedRegion(
                     chrom=self.chrom,
                     start=self.exons[k].start - ss_extend,
-                    stop=self.cds[1],
+                    stop=cds_end,
                 ),
             )
+
+        return regions
+
+    def _utr_regions(self, low_end_strand: str) -> list[BedRegion]:
+        """Split the transcript around the CDS, one UTR side.
+
+        The two UTRs are mirror images: each is the exonic
+        sequence on one side of the coding region, and which side
+        is 5' depends on the strand. ``low_end_strand`` names the
+        strand for which this UTR is the one below the CDS.
+
+        Args:
+            low_end_strand (str): The strand on which this UTR
+                lies below the coding region.
+
+        Returns:
+            list[BedRegion]: The UTR segments, empty for a
+                transcript with no exonic coding sequence.
+        """
+        cds_beg, cds_end = self._coding_bounds()
+        if cds_beg >= cds_end:
+            return []
+
+        regions = []
+        k = 0
+        if self.strand == low_end_strand:
+            while self.exons[k].stop < cds_beg:
+                regions.append(
+                    BedRegion(
+                        chrom=self.chrom,
+                        start=self.exons[k].start,
+                        stop=self.exons[k].stop,
+                    ),
+                )
+                k += 1
+            if self.exons[k].start < cds_beg:
+                regions.append(
+                    BedRegion(
+                        chrom=self.chrom,
+                        start=self.exons[k].start,
+                        stop=cds_beg - 1,
+                    ),
+                )
+
+        else:
+            while self.exons[k].stop < cds_end:
+                k += 1
+            if self.exons[k].stop == cds_end:
+                k += 1
+            else:
+                regions.append(
+                    BedRegion(
+                        chrom=self.chrom,
+                        start=cds_end + 1,
+                        stop=self.exons[k].stop,
+                    ),
+                )
+                k += 1
+
+            regions.extend([
+                BedRegion(chrom=self.chrom, start=exon.start, stop=exon.stop)
+                for exon in self.exons[k:]
+            ])
 
         return regions
 
@@ -273,6 +385,10 @@ class TranscriptModel:
 
         The 5' UTR extends from the transcription start to the start codon
         (translation start). Strand orientation is considered.
+
+        The CDS is intersected with the exon set first, so a CDS
+        overrunning its terminal exon splits the transcript exactly as a
+        flush one would.
 
         Returns:
             list[BedRegion]: List of 5' UTR regions. Returns empty list for
@@ -287,57 +403,17 @@ class TranscriptModel:
             For positive strand: regions before CDS start.
             For negative strand: regions after CDS end.
         """
-        if self.cds[0] >= self.cds[1]:
-            return []
-
-        regions = []
-        k = 0
-        if self.strand == "+":
-            while self.exons[k].stop < self.cds[0]:
-                regions.append(
-                    BedRegion(
-                        chrom=self.chrom,
-                        start=self.exons[k].start,
-                        stop=self.exons[k].stop,
-                    ),
-                )
-                k += 1
-            if self.exons[k].start < self.cds[0]:
-                regions.append(
-                    BedRegion(
-                        chrom=self.chrom,
-                        start=self.exons[k].start,
-                        stop=self.cds[0] - 1,
-                    ),
-                )
-
-        else:
-            while self.exons[k].stop < self.cds[1] and k < len(self.exons):
-                k += 1
-            if self.exons[k].stop == self.cds[1]:
-                k += 1
-            else:
-                regions.append(
-                    BedRegion(
-                        chrom=self.chrom,
-                        start=self.cds[1] + 1,
-                        stop=self.exons[k].stop,
-                    ),
-                )
-                k += 1
-
-            regions.extend([
-                BedRegion(chrom=self.chrom, start=exon.start, stop=exon.stop)
-                for exon in self.exons[k:]
-            ])
-
-        return regions
+        return self._utr_regions(low_end_strand="+")
 
     def utr3_regions(self) -> list[BedRegion]:
         """Get 3' untranslated region (3' UTR) segments.
 
         The 3' UTR extends from the stop codon (translation end) to the
         transcription end. Strand orientation is considered.
+
+        The CDS is intersected with the exon set first, so a CDS
+        overrunning its terminal exon splits the transcript exactly as a
+        flush one would.
 
         Returns:
             list[BedRegion]: List of 3' UTR regions. Returns empty list for
@@ -352,51 +428,7 @@ class TranscriptModel:
             For positive strand: regions after CDS end.
             For negative strand: regions before CDS start.
         """
-        if self.cds[0] >= self.cds[1]:
-            return []
-
-        regions = []
-        k = 0
-        if self.strand == "-":
-            while self.exons[k].stop < self.cds[0]:
-                regions.append(
-                    BedRegion(
-                        chrom=self.chrom,
-                        start=self.exons[k].start,
-                        stop=self.exons[k].stop,
-                    ),
-                )
-                k += 1
-            if self.exons[k].start < self.cds[0]:
-                regions.append(
-                    BedRegion(
-                        chrom=self.chrom,
-                        start=self.exons[k].start,
-                        stop=self.cds[0] - 1,
-                    ),
-                )
-
-        else:
-            while self.exons[k].stop < self.cds[1]:
-                k += 1
-            if self.exons[k].stop == self.cds[1]:
-                k += 1
-            else:
-                regions.append(
-                    BedRegion(
-                        chrom=self.chrom,
-                        start=self.cds[1] + 1,
-                        stop=self.exons[k].stop,
-                    ),
-                )
-                k += 1
-
-            regions.extend([
-                BedRegion(chrom=self.chrom, start=exon.start, stop=exon.stop)
-                for exon in self.exons[k:]
-            ])
-
-        return regions
+        return self._utr_regions(low_end_strand="-")
 
     def all_regions(
         self, ss_extend: int = 0, prom: int = 0,
@@ -438,15 +470,16 @@ class TranscriptModel:
             ])
 
         else:
+            cds_beg, cds_end = self._coding_bounds()
             for exon in self.exons:
-                if exon.stop <= self.cds[0]:
+                if exon.stop <= cds_beg:
                     regions.append(
                         BedRegion(
                             chrom=self.chrom,
                             start=exon.start, stop=exon.stop),
                     )
-                elif exon.start <= self.cds[0]:
-                    if exon.stop >= self.cds[1]:
+                elif exon.start <= cds_beg:
+                    if exon.stop >= cds_end:
                         regions.append(
                             BedRegion(
                                 chrom=self.chrom,
@@ -460,14 +493,14 @@ class TranscriptModel:
                                 stop=exon.stop + ss_extend,
                             ),
                         )
-                elif exon.start > self.cds[1]:
+                elif exon.start > cds_end:
                     regions.append(
                         BedRegion(
                             chrom=self.chrom,
                             start=exon.start, stop=exon.stop),
                     )
                 else:
-                    if exon.stop >= self.cds[1]:
+                    if exon.stop >= cds_end:
                         regions.append(
                             BedRegion(
                                 chrom=self.chrom,
@@ -535,6 +568,10 @@ class TranscriptModel:
         Computes the codon reading frame (0, 1, or 2) for each exon based
         on the CDS coordinates and strand orientation.
 
+        Frames are computed from the CDS intersected with the exon set,
+        so bases annotated outside the exons -- an incomplete stop codon,
+        say -- shift no frame.
+
         Returns:
             list[int]: Reading frame for each exon. Values are:
                 - 0, 1, or 2 for coding exons (bases into current codon)
@@ -553,18 +590,19 @@ class TranscriptModel:
         length = len(self.exons)
         fms = []
 
-        if self.cds[0] > self.cds[1]:
+        cds_beg, cds_end = self._coding_bounds()
+        if cds_beg >= cds_end:
             fms = [-1] * length
         elif self.strand == "+":
             k = 0
-            while self.exons[k].stop < self.cds[0]:
+            while self.exons[k].stop < cds_beg:
                 fms.append(-1)
                 k += 1
             fms.append(0)
-            if self.exons[k].stop < self.cds[1]:
-                fms.append((self.exons[k].stop - self.cds[0] + 1) % 3)
+            if self.exons[k].stop < cds_end:
+                fms.append((self.exons[k].stop - cds_beg + 1) % 3)
                 k += 1
-            while self.exons[k].stop < self.cds[1] and k < length:
+            while k < length and self.exons[k].stop < cds_end:
                 fms.append(
                     (fms[k] +
                      self.exons[k].stop - self.exons[k].start + 1) % 3,
@@ -573,14 +611,14 @@ class TranscriptModel:
             fms += [-1] * (length - len(fms))
         else:
             k = length - 1
-            while self.exons[k].start > self.cds[1]:
+            while self.exons[k].start > cds_end:
                 fms.append(-1)
                 k -= 1
             fms.append(0)
-            if self.cds[0] < self.exons[k].start:
-                fms.append((self.cds[1] - self.exons[k].start + 1) % 3)
+            if cds_beg < self.exons[k].start:
+                fms.append((cds_end - self.exons[k].start + 1) % 3)
                 k -= 1
-            while self.cds[0] < self.exons[k].start and k > -1:
+            while k > -1 and cds_beg < self.exons[k].start:
                 fms.append(
                     (fms[-1] + self.exons[k].stop - self.exons[k].start + 1)
                     % 3,
@@ -589,7 +627,12 @@ class TranscriptModel:
             fms += [-1] * (length - len(fms))
             fms = fms[::-1]
 
-        assert len(self.exons) == len(fms)
+        if len(fms) != length:
+            raise ValueError(
+                f"computed {len(fms)} frames for {length} exons in "
+                f"transcript {self.tr_id} at {self.chrom}:{self.strand} "
+                f"cds={self.cds} coding_bounds={(cds_beg, cds_end)}",
+            )
         return fms
 
     def update_frames(self) -> None:
