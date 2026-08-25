@@ -46,6 +46,7 @@ from web_annotation.pipeline_cache import (
     await_build,
 )
 from web_annotation.pipelines.throttling import PipelineValidationRateThrottle
+from web_annotation.validation_cache import ValidationResultCache
 
 logger = logging.getLogger(__name__)
 
@@ -509,6 +510,18 @@ class PipelineValidation(AsyncAnnotationBaseView):
 
     throttle_classes: ClassVar = [PipelineValidationRateThrottle]
 
+    #: The memo (#833). On the class, so the one instance is shared by every
+    #: request -- DRF builds a fresh view object per request, and a memo that
+    #: died with it would never see a second keystroke.
+    #:
+    #: Private to this view, unlike the pools and ``lru_cache`` on
+    #: ``AnnotationMixin``: it caches *this endpoint's* verdicts, which no
+    #: other path produces or consumes.
+    validation_cache: ClassVar[ValidationResultCache] = ValidationResultCache(
+        settings.VALIDATION_CACHE_SIZE,
+        settings.VALIDATION_CACHE_TTL_SECONDS,
+    )
+
     # Nothing on this path bounds the body Django hands to DRF's parsers.
     # ``DATA_UPLOAD_MAX_MEMORY_SIZE`` is consulted by ``HttpRequest.body``
     # and ``.POST``, and DRF's parsers use neither; for multipart, Django
@@ -723,6 +736,17 @@ class PipelineValidation(AsyncAnnotationBaseView):
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
 
+        # The memo (#833). It sits after every bound that refuses from the
+        # request alone -- so a malformed request still gets its own accurate
+        # 400 -- and *before* the admission check, so a hit is neither
+        # charged a pool slot nor shed. Nothing else could be true of it: a
+        # hit does no work, and refusing a request because the pool is full
+        # when the answer is already in hand would shed for nothing.
+        memoised = self.validation_cache.get(content, self.grr)
+        if memoised is not None:
+            return Response(
+                {"errors": memoised}, status=views.status.HTTP_200_OK)
+
         # Admission control, checked exactly once, here: after every bound
         # that can refuse from the request alone, and immediately before the
         # first pool submission. Earlier would answer 503 to a request that
@@ -762,10 +786,7 @@ class PipelineValidation(AsyncAnnotationBaseView):
         except Exception as e:  # noqa: BLE001
             # Same formatter as the deferred-load failure path (#155) so the
             # synchronous and background error messages stay identical.
-            return Response(
-                {"errors": format_config_error(e)},
-                status=views.status.HTTP_200_OK,
-            )
+            return self._memoise(content, format_config_error(e))
 
         if len(expanded) > self.MAX_EXPANDED_ANNOTATORS:
             return Response(
@@ -777,7 +798,7 @@ class PipelineValidation(AsyncAnnotationBaseView):
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
 
-        result = {"errors": ""}
+        errors = ""
 
         try:
             # The long pole: resolving every resource and building every
@@ -789,9 +810,27 @@ class PipelineValidation(AsyncAnnotationBaseView):
             # Failures arrive from the worker thread through the future, so
             # the same formatter as the deferred-load path (#155) still
             # renders them -- identical text to the synchronous build.
-            result = {"errors": format_config_error(e)}
+            errors = format_config_error(e)
 
-        return Response(result, status=views.status.HTTP_200_OK)
+        return self._memoise(content, errors)
+
+    def _memoise(self, content: str, errors: str) -> Response:
+        """Remember this verdict and render it (#833).
+
+        The one place a 200 leaves this view, so it is also the one place a
+        verdict enters the memo. Both outcomes are memoised -- a config that
+        does not build has a verdict too, and the editor re-posts a broken
+        config as insistently as a working one.
+
+        The refusals deliberately do not come through here. A 400 is a
+        property of the *request* (its declared length, its body shape, how
+        many annotators the config declares or expands to) rather than of
+        the repository, and the two counted refusals are cheap to re-derive
+        next time; a 503 is a property of the moment. Only the verdict --
+        the thing that cost a build -- is worth remembering.
+        """
+        self.validation_cache.put(content, errors, self.grr)
+        return Response({"errors": errors}, status=views.status.HTTP_200_OK)
 
     @staticmethod
     async def _await_cancellable(future: Future[_T]) -> _T:
