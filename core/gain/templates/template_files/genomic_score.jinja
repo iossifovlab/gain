@@ -145,4 +145,52 @@
 {% else %}
 <p>not computed</p>
 {% endif %}
+
+<h2>Alleles</h2>
+{% set alleles = impl.get_allele_statistics() %}
+{% if alleles != None %}
+{% set global_alleles = alleles.global_counts() %}
+<div class="scrollable-table-container">
+<table>
+    <thead>
+        <tr>
+            <th>Chromosome</th>
+            <th>Covered positions</th>
+            <th>Alleles</th>
+        </tr>
+    </thead>
+    {%- for chrom, counts in alleles.by_chromosome().items() -%}
+        <tr>
+            <td>{{ chrom }}</td>
+            <td>{{ counts.covered_positions }}</td>
+            <td>{{ counts.allele_count }}</td>
+        </tr>
+    {%- endfor %}
+    <tr class="coverage-global">
+        <td>all chromosomes</td>
+        <td>{{ global_alleles.covered_positions }}</td>
+        <td>{{ global_alleles.allele_count }}</td>
+    </tr>
+</table>
+</div>
+<h3>Allele classes</h3>
+<div class="scrollable-table-container">
+<table>
+    <thead>
+        <tr>
+            <th>Class</th>
+            <th>Alleles</th>
+        </tr>
+    </thead>
+    {%- for name, count in global_alleles.class_counts.items() -%}
+        <tr>
+            <td>{{ name }}</td>
+            <td>{{ count }}</td>
+        </tr>
+    {%- endfor %}
+</table>
+</div>
+{% else %}
+<p>not computed</p>
+{% endif %}
 {% endblock %}

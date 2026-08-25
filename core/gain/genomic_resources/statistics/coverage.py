@@ -10,10 +10,12 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Iterable
-from typing import IO, Any
+from typing import IO, Any, NamedTuple
 
 import numpy as np
 
+from gain.genomic_resources.cli_errors import report_resource_failure
+from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.base_statistic import Statistic
 
 COVERAGE_STATISTICS_FILE = "statistics/coverage.json"
@@ -557,3 +559,111 @@ class CoverageStatistics(Statistic):
             result.fold_region(RegionCoverage.frozen(
                 chrom, int(counts["covered_positions"]), segments))
         return result
+
+
+class CoverageRow(NamedTuple):
+    """One chromosome's rendered coverage: raw count plus optional fraction.
+
+    ``fraction`` is ``None`` when no denominator resolved for this
+    chromosome -- the row renders its raw count only.  ``segments`` is
+    ``None`` when the stored statistic carries no segment data for the
+    resource (an old file, or a kind that publishes none).
+    """
+
+    chrom: str
+    covered: int
+    fraction: float | None
+    segments: int | None
+
+
+class CoverageDisplay(NamedTuple):
+    """The Coverage section's render payload, fractions resolved.
+
+    Raw counts come from the stored statistic; fractions are computed at
+    render time and never stored.  ``global_fraction`` is ``None`` unless
+    every chromosome resolved a length -- a global percent over a partial
+    denominator would be misleading.
+    """
+
+    rows: list[CoverageRow]
+    global_fraction: float | None
+
+    @property
+    def global_covered(self) -> int:
+        return sum(row.covered for row in self.rows)
+
+    @property
+    def has_fractions(self) -> bool:
+        return any(row.fraction is not None for row in self.rows)
+
+    @property
+    def global_segments(self) -> int | None:
+        """The segment total, or ``None`` when any row lacks segments.
+
+        All-or-nothing like the stored statistic: a global over a
+        partial set would silently understate.
+        """
+        counts = [
+            row.segments for row in self.rows
+            if row.segments is not None
+        ]
+        if not counts or len(counts) != len(self.rows):
+            return None
+        return sum(counts)
+
+    @property
+    def has_segments(self) -> bool:
+        return self.global_segments is not None
+
+
+def merge_region_coverage(
+    resource_id: str,
+    regions: Iterable[RegionCoverage | None],
+) -> CoverageStatistics | None:
+    """Fold the regions' coverage, or ``None`` for an uncovered kind.
+
+    The fold sorts the regions into genomic order rather than trusting
+    the task-argument order they arrived in, is keyed by chromosome, and
+    within one chromosome :meth:`RegionCoverage.merge` still refuses a
+    pair that is not adjacent-and-in-order -- a gap or an overlap fails
+    the build rather than mis-counting it.
+    """
+    ordered = sorted(
+        (region for region in regions if region is not None),
+        key=lambda region: (
+            region.chrom,
+            region.start if region.start is not None else 0))
+    if not ordered:
+        return None
+    statistics = CoverageStatistics()
+    try:
+        for region in ordered:
+            statistics.fold_region(region)
+    except ValueError as err:
+        report_resource_failure(
+            err, "could not merge the coverage of", resource_id)
+        raise
+    return statistics
+
+
+def save_and_plot_coverage(
+    resource: GenomicResource,
+    statistics: CoverageStatistics | None,
+) -> None:
+    """Write the coverage statistics and their histogram image.
+
+    Does nothing for a kind that has no coverage, and skips the image
+    for one whose segment data is unknown.
+    """
+    if statistics is None:
+        return
+    with resource.proto.open_raw_file(
+            resource, COVERAGE_STATISTICS_FILE, mode="wt") as outfile:
+        outfile.write(statistics.serialize())
+    lengths = statistics.segment_lengths_global()
+    if lengths is None:
+        return
+    with resource.proto.open_raw_file(
+            resource, COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
+            mode="wb") as outfile:
+        plot_segment_length_histogram(outfile, lengths)
