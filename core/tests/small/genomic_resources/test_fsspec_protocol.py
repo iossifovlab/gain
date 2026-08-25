@@ -78,6 +78,24 @@ def test_build_resource_file_state(
 
 
 @pytest.mark.grr_rw
+def test_build_resource_file_state_rejects_unknown_keyword(
+        fsspec_proto: FsspecReadWriteProtocol) -> None:
+    """A misspelled keyword must fail loudly at the call site.
+
+    The digest, timestamp and size are all optional and derived from the
+    store when omitted, so a typo in one of their names used to be
+    indistinguishable from omitting it -- silently costing a full re-read
+    of the file. See gain#865.
+    """
+    proto = fsspec_proto
+    res = proto.get_resource("one")
+
+    with pytest.raises(TypeError, match="md5sum"):
+        proto.build_resource_file_state(
+            res, "data.txt", md5sum="c1cfdaf7e22865b29b8d62a564dc8f23")
+
+
+@pytest.mark.grr_rw
 def test_save_load_resource_file_state(
         fsspec_proto: FsspecReadWriteProtocol) -> None:
     proto = fsspec_proto

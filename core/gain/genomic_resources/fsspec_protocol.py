@@ -1984,7 +1984,7 @@ class FsspecReadWriteProtocol(
         state = self.build_resource_file_state(
             dest_resource,
             filename,
-            md5sum=md5)
+            md5=md5)
 
         self.save_resource_file_state(dest_resource, state)
 
