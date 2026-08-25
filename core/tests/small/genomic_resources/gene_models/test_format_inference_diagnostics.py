@@ -12,7 +12,6 @@ from io import StringIO
 
 import pytest
 from gain.genomic_resources.gene_models import parsers
-from gain.genomic_resources.gene_models.gene_models import GeneModels
 from gain.genomic_resources.gene_models.gene_models_factory import (
     build_gene_models_from_file,
 )
@@ -20,6 +19,10 @@ from gain.genomic_resources.gene_models.parsers import (
     SUPPORTED_GENE_MODELS_FILE_FORMATS,
     infer_gene_model_parser,
     parse_default_gene_models_format,
+)
+
+from tests.small.genomic_resources.gene_models.conftest import (
+    build_from_content,
 )
 
 # Matches no supported gene models format.
@@ -52,19 +55,6 @@ REFFLAT_CONTENT = (
     "TP53\tNM_000546\t17\t-\t7571719\t7590868\t7572826\t7590856\t2\t"
     "7571719,7572926\t7573008,7573009\n"
 )
-
-
-def build_from_content(
-    tmp_path: pathlib.Path, name: str, content: str,
-) -> GeneModels:
-    """Write `content` to a named file and build gene models from it.
-
-    The name matters: these tests are about what the diagnostics say, and
-    the file name is part of what they have to say.
-    """
-    path = tmp_path / name
-    path.write_text(content)
-    return build_gene_models_from_file(str(path))
 
 
 @pytest.fixture

@@ -6,15 +6,30 @@ attribute syntax differ per GTF flavour — while building a resource out
 of the records and locating an on-disk fixture live here.
 """
 import os
+import pathlib
 from collections.abc import Callable
 
 import pytest
 import pytest_mock
 from gain.genomic_resources.gene_models.gene_models import GeneModels
 from gain.genomic_resources.gene_models.gene_models_factory import (
+    build_gene_models_from_file,
     build_gene_models_from_resource,
 )
 from gain.genomic_resources.testing import build_inmemory_test_resource
+
+
+def build_from_content(
+    tmp_path: pathlib.Path, name: str, content: str,
+) -> GeneModels:
+    """Write `content` to a named file and build gene models from it.
+
+    The name matters: the inference diagnostics name the file they could
+    not read, so the file name is part of what some tests assert on.
+    """
+    path = tmp_path / name
+    path.write_text(content)
+    return build_gene_models_from_file(str(path))
 
 
 @pytest.fixture

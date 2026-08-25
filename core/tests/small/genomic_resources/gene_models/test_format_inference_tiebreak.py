@@ -12,11 +12,12 @@ ccds, and anything else leaves the ambiguity standing.
 import pathlib
 from io import StringIO
 
-from gain.genomic_resources.gene_models.gene_models_factory import (
-    build_gene_models_from_file,
-)
 from gain.genomic_resources.gene_models.parsers import (
     infer_gene_models_format,
+)
+
+from tests.small.genomic_resources.gene_models.conftest import (
+    build_from_content,
 )
 
 
@@ -48,9 +49,7 @@ def test_headerless_refseq_file_loads_without_an_explicit_format(
     The parsers disagree about the gene-symbol column, so the proof that
     the right one won is the loaded gene symbol.
     """
-    path = tmp_path / "refGene.txt"
-    path.write_text(REFSEQ_CONTENT)
-    gene_models = build_gene_models_from_file(str(path))
+    gene_models = build_from_content(tmp_path, "refGene.txt", REFSEQ_CONTENT)
 
     gene_models.load()
 
