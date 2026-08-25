@@ -802,6 +802,19 @@ GTF_CODON_FEATURES = frozenset({
 })
 
 
+def _record_location(rec: dict) -> str:
+    """Identify a GTF record by feature and position.
+
+    For the errors that cannot lean on the ``transcript_id`` that
+    ``_parent_transcript``'s messages use, because the attributes are
+    themselves what is missing.
+    """
+    return (
+        f"{rec['feature']} record at "
+        f"{rec['seqname']}:{rec['start']}-{rec['end']}"
+    )
+
+
 def _parent_transcript(
     transcript_models: dict[str, TranscriptModel],
     feature: str,
@@ -873,7 +886,14 @@ def parse_gtf_gene_models_format(
             if skipped_tr_id is not None:
                 skipped_transcripts[skipped_tr_id] = feature
             continue
-        tr_id = attributes["transcript_id"]
+        # Absent is the error, present-but-empty is not: an empty value
+        # is a value, and the parser has always taken it. Both guards
+        # below turn on that distinction, so both test against ``None``.
+        tr_id = attributes.get("transcript_id")
+        if tr_id is None:
+            raise ValueError(
+                f"{_record_location(rec)} has no transcript_id attribute",
+            )
         if feature in GTF_TRANSCRIPT_FEATURES or feature == "Selenocysteine":
             if feature == "Selenocysteine" and \
                     tr_id in transcript_models:
@@ -883,12 +903,20 @@ def parse_gtf_gene_models_format(
                     f"{tr_id} of {feature} already in transcript models",
                 )
             # FlyBase labels genes with ``gene_symbol``; Ensembl and RefSeq
-            # with ``gene_name``. Both fall back to the accession.
+            # with ``gene_name``. Both fall back to the accession. Spelled
+            # out rather than driven off a tuple of the three names:
+            # ``or`` steps past an empty label where membership would
+            # return it, so only the last spelling has to be there.
             gene = (
                 attributes.get("gene_name")
                 or attributes.get("gene_symbol")
-                or attributes["gene_id"]
+                or attributes.get("gene_id")
             )
+            if gene is None:
+                raise ValueError(
+                    f"{_record_location(rec)} has no usable gene label; "
+                    "expected gene_name, gene_symbol or gene_id",
+                )
             gene = gene_mapping.get(gene, gene)
 
             transcript_model = TranscriptModel(
