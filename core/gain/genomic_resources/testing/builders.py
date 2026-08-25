@@ -161,6 +161,9 @@ class _TableScoreBuilder(MetaMixin):
     # Overrides ``SCORE_TYPE``; see
     # :meth:`FragmentScoreBuilder.with_resource_type`.
     resource_type: str | None = None
+    # Trailing key columns to leave OUT of the table entirely; see
+    # :meth:`without_key_columns`.
+    dropped_key_columns: frozenset[str] = frozenset()
 
     # Subclass-provided knobs.
     SCORE_TYPE: ClassVar[str] = ""
@@ -195,6 +198,53 @@ class _TableScoreBuilder(MetaMixin):
                 column_name=column_name, column_index=column_index,
                 desc=desc),
         )
+
+    def without_key_columns(self, *columns: str) -> Self:
+        """Build the table WITHOUT these trailing key columns.
+
+        ``reference`` and ``alternative`` are independently optional in the
+        allele-score schema, and a resource declaring neither -- or only one
+        -- is a legal shape a reader has to answer for.  A bare
+        :func:`an_allele_score` always renders both, so this is how a test
+        reaches the shapes it otherwise cannot express.
+
+        The dropped column disappears from the required data header, from the
+        rendered ``table:`` block and from the index-addressed column
+        mappings alike, so the resource is consistent rather than merely
+        missing a config line.  Supply :meth:`with_data` to match: the
+        default data block carries the columns this removes.
+
+        Accumulates, so two calls drop two columns rather than the second
+        forgetting the first.
+        """
+        unknown = set(columns) - set(self.TRAILING_COLUMNS)
+        if unknown:
+            raise ResourceValidationError(
+                f"without_key_columns: {sorted(unknown)} are not key columns "
+                f"of a {self.SCORE_TYPE}; it has "
+                f"{list(self.TRAILING_COLUMNS)}")
+        return dataclasses.replace(
+            self, dropped_key_columns=self.dropped_key_columns | set(columns))
+
+    @property
+    def _effective_trailing_columns(self) -> tuple[str, ...]:
+        """``TRAILING_COLUMNS`` less whatever was dropped."""
+        return tuple(
+            column for column in self.TRAILING_COLUMNS
+            if column not in self.dropped_key_columns)
+
+    def _effective_table_extra_config(self) -> str:
+        """The ``table:`` extra block for the columns still present.
+
+        Byte-identical to the ``TABLE_EXTRA_CONFIG`` knob while nothing is
+        dropped -- the derived path exists only for the shapes
+        :meth:`without_key_columns` reaches.
+        """
+        if not self.dropped_key_columns:
+            return self.TABLE_EXTRA_CONFIG
+        return "".join(
+            f"    {column}:\n      name: {column}\n"
+            for column in self._effective_trailing_columns)
 
     def with_chrom_mapping(self, **mapping: Any) -> Self:
         """Emit a ``chrom_mapping:`` block in the ``table:`` config.
@@ -409,7 +459,8 @@ class _TableScoreBuilder(MetaMixin):
         _validate_score_specs(scores)
         _validate_data_header(
             data, scores,
-            base_required=self.LEADING_COLUMNS + self.TRAILING_COLUMNS,
+            base_required=(
+                self.LEADING_COLUMNS + self._effective_trailing_columns),
             base_optional=self.OPTIONAL_COLUMNS)
         self._validate_header_mode(scores)
         self._validate_index_options()
@@ -516,7 +567,7 @@ class _TableScoreBuilder(MetaMixin):
         header = list(self.LEADING_COLUMNS)
         if uses_pos_end:
             header.append("pos_end")
-        header.extend(self.TRAILING_COLUMNS)
+        header.extend(self._effective_trailing_columns)
         header.extend(
             spec.column_name for spec in scores
             if spec.column_name is not None
@@ -573,7 +624,7 @@ class _TableScoreBuilder(MetaMixin):
             # header the tabix index columns come from.
             config += self._render_column_indexes(header)
         else:
-            config += self.TABLE_EXTRA_CONFIG
+            config += self._effective_table_extra_config()
         config += "scores:\n" + render_score_specs_yaml(scores)
         return config + self.render_meta()
 
@@ -582,7 +633,7 @@ class _TableScoreBuilder(MetaMixin):
         columns = [
             *self.LEADING_COLUMNS,
             *(column for column in self.OPTIONAL_COLUMNS if column in header),
-            *self.TRAILING_COLUMNS,
+            *self._effective_trailing_columns,
         ]
         lines: list[str] = []
         for column in columns:
@@ -741,6 +792,30 @@ class BigWigScoreBuilder(MetaMixin):
     na_values: str | list[str] | None = None
     fetch_budgets: dict[str, int] | None = None
     zero_based: bool = False
+    resource_type: str | None = None
+
+    def with_resource_type(self, resource_type: str) -> Self:
+        """Render a ``type:`` other than ``position_score``.
+
+        The backend a resource gets is chosen by its table FORMAT, not by
+        its type (``build_genomic_position_table``), so a bigWig can sit
+        under an ``allele_score`` just as well as under a
+        ``position_score``.  Nobody publishes one -- a bigWig has no
+        reference or alternative to carry -- and that is precisely what
+        makes it worth building: it is how a test reaches an allele score
+        whose backend serves column arrays and whose table has no key
+        columns at all.
+
+        Restricted to the types that read back through a score class over
+        this backend; ``fragment_score`` is not among them, since a bigWig
+        record is a point value rather than an attributed interval.
+        """
+        allowed = ("position_score", "allele_score", "np_score")
+        if resource_type not in allowed:
+            raise ResourceValidationError(
+                f"with_resource_type: {resource_type!r} is not a score type "
+                f"a bigWig backs; expected one of {list(allowed)}")
+        return dataclasses.replace(self, resource_type=resource_type)
 
     def with_fetch_size(self, fetch_size: int) -> Self:
         """Emit ``fetch_size:`` in the ``table:`` config.
@@ -849,7 +924,7 @@ class BigWigScoreBuilder(MetaMixin):
         zero_based_line = (
             "    zero_based: true\n" if self.zero_based else "")
         config = (
-            "type: position_score\n"
+            f"type: {self.resource_type or 'position_score'}\n"
             "table:\n"
             f"    filename: {_BIGWIG_FILENAME}\n"
             f"{zero_based_line}"

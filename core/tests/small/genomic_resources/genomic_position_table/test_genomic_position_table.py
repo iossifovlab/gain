@@ -3561,3 +3561,47 @@ def test_a_buffered_tabix_query_drops_a_record_that_died_before_it(
         (100, 1, 1000),
         (550, 1, 1000), (550, 500, 600),
     ]
+
+
+def test_an_empty_column_block_does_not_address_a_column() -> None:
+    """``would_resolve_column`` agrees with ``get_column_key``, not with YAML.
+
+    A column block carrying none of the four spellings addresses nothing:
+    ``get_column_key`` falls straight past it to the header fallback.  So a
+    caller asking, before open, whether the column will resolve has to be
+    told no -- answering on the mere PRESENCE of the block would promise a
+    key that never arrives.  ``alternative`` here is the shape that would
+    lie; ``reference`` is the shape that genuinely addresses one.
+    """
+    res = build_inmemory_test_resource({
+        "genomic_resource.yaml": """
+            table:
+                filename: data.mem
+                header_mode: none
+                chrom:
+                    column_index: 0
+                pos_begin:
+                    column_index: 1
+                reference:
+                    column_index: 2
+                alternative: {}
+            """,
+        "data.mem": convert_to_tab_separated(
+            """
+            1     10        A     G
+            """)})
+    assert res.config is not None
+
+    table = build_genomic_position_table(res, res.config["table"])
+
+    # Before open, and so from the definition alone.
+    assert table.would_resolve_column(table.REF) is True
+    assert table.would_resolve_column(table.ALT) is False
+
+    # And after open the real resolution says the same thing, which is the
+    # agreement the pre-open answer exists to approximate.
+    with table:
+        assert table.get_column_key(table.REF) == 2
+        assert table.get_column_key(table.ALT) is None
+        assert table.ref_key == 2
+        assert table.alt_key is None

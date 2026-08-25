@@ -12,6 +12,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     ClassVar,
+    NamedTuple,
     Self,
     cast,
 )
@@ -114,6 +115,48 @@ DEFAULT_VALUE_ARRAYS_BATCH_SIZE = 100_000
 # requested score id.  Named because the vectorized scan validators are
 # transducers over a stream of these.
 RecordArrays = tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]]
+
+
+class AlleleRecordArrays(NamedTuple):
+    """One batch as :meth:`AlleleScore.fetch_region_allele_arrays` makes it.
+
+    :data:`RecordArrays` widened by the two key columns an allele row has and
+    a position row does not.  The first three fields are that tuple exactly,
+    in the same order, so ``batch[:3]`` **is** a ``RecordArrays``.
+
+    That slice is required, not decorative: every consumer of the shared read
+    unpacks three names (``validate_record_arrays`` and the scan's coverage
+    accumulator among them), and handing one of them a batch of five raises
+    ``too many values to unpack``.  A caller feeding this read into machinery
+    written for the shared one passes ``batch[:3]``, and mypy says so too --
+    this type is not a ``RecordArrays``.
+
+    ``reference`` and ``alternative`` are the cells **as stored** -- see the
+    fetch method for why they are the one part of a batch that is not parsed.
+    """
+
+    pos_begin: np.ndarray
+    pos_end: np.ndarray
+    values: dict[str, np.ndarray]
+    reference: np.ndarray
+    alternative: np.ndarray
+
+
+def _key_column_array(
+    cells: dict[int, np.ndarray], key: int | None, length: int,
+) -> np.ndarray:
+    """One key column of a batch, or a column of ``None`` if it has none.
+
+    An undeclared ``reference``/``alternative`` yields an array of ``None``
+    rather than nothing at all, because that is what the record read yields
+    for it -- :func:`build_tabular_parser` puts ``None`` in the record when
+    the key is ``None``.  Handing back no array instead would make the two
+    reads disagree in shape for a resource they agree about row by row, and
+    would put the check for it in every consumer.
+    """
+    if key is None:
+        return np.full(length, None, dtype=object)
+    return cells[key]
 
 
 def clip_span(
@@ -1016,6 +1059,37 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 return False
         return True
 
+    def _require_open_and_known_chrom(self, chrom: str) -> None:
+        """Refuse a region read this score cannot answer at all.
+
+        The two conditions every bulk column read shares, stated once for
+        the readers that widen it.  Several OLDER reads in this module spell
+        the same pair out inline; they are left as they are rather than
+        swept into this change, and a few of them word the contig message
+        differently on purpose (an allele read names the resource in it).
+        """
+        if not self.is_open():
+            raise ValueError(f"genomic score <{self.resource_id}> is not open")
+        if chrom not in self.get_all_chromosomes():
+            raise ValueError(
+                f"{chrom} is not among the available chromosomes.")
+
+    def _value_arrays_refusal_reason(self) -> str:
+        """Why :meth:`supports_region_value_arrays` said no, for a raiser.
+
+        The two halves of that predicate, worded for a caller who ignored it.
+        Stated here rather than at each raise site so the reason cannot drift
+        from the predicate it explains, nor between the readers that widen it
+        (:meth:`AlleleScore.fetch_region_allele_arrays`).
+        """
+        if not self.table.supports_value_arrays:
+            return (
+                f"its {type(self.table).__name__} backend leaves "
+                f"supports_value_arrays False")
+        return (
+            "not every requested score has a value type the column "
+            f"parse serves {sorted(BULK_PARSEABLE_VALUE_TYPES)}")
+
     def fetch_region_value_arrays(
         self,
         chrom: str,
@@ -1073,32 +1147,15 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             # yields a message-less AssertionError (nothing at all under
             # ``python -O``).  Probing this capability by catching is therefore
             # not viable; ask supports_region_value_arrays() first.
-            reason = (
-                f"its {type(self.table).__name__} backend leaves "
-                f"supports_value_arrays False"
-                if not self.table.supports_value_arrays
-                else "not every requested score has a value type the column "
-                     f"parse serves {sorted(BULK_PARSEABLE_VALUE_TYPES)}")
+            reason = self._value_arrays_refusal_reason()
             raise TypeError(
                 f"genomic score <{self.resource_id}> does not serve "
                 f"fetch_region_value_arrays for {sorted(scores)}: {reason}. "
                 f"Ask supports_region_value_arrays(scores) before calling.")
-        if not self.is_open():
-            raise ValueError(f"genomic score <{self.resource_id}> is not open")
-        if chrom not in self.get_all_chromosomes():
-            raise ValueError(
-                f"{chrom} is not among the available chromosomes.")
-
-        # score id -> payload column index, resolved once for the whole scan.
-        # No cast needed: ``score_index`` is an ``int``.  A VCF score is
-        # addressed by ``col_name`` and has none, which is how the type
-        # already says the VCF backend does not reach here.
-        columns = {
-            score_id: self.score_definitions[score_id].score_index
-            for score_id in scores
-        }
+        self._require_open_and_known_chrom(chrom)
         return self._value_array_batches(
-            columns, (chrom, pos_begin, pos_end), batch_size)
+            self._score_column_indexes(scores),
+            (chrom, pos_begin, pos_end), batch_size)
 
     def _value_array_batches(
         self,
@@ -1115,17 +1172,58 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         caller that built the generator and passed it elsewhere would be handed
         the refusal at some arbitrary later point, far from the mistake.
         """
+        for begin, end, values, _cells in self._parsed_column_batches(
+                columns, region, batch_size):
+            yield begin, end, values
+
+    def _parsed_column_batches(
+        self,
+        columns: dict[str, int],
+        region: tuple[str, int | None, int | None],
+        batch_size: int,
+        extra_columns: frozenset[int] = frozenset(),
+    ) -> Generator[
+            tuple[np.ndarray, np.ndarray,
+                  dict[str, np.ndarray], dict[int, np.ndarray]],
+            None, None]:
+        """The column read every bulk reader is made of: parse, plus cells.
+
+        One statement of the parse loop, because there is more than one
+        reader over it: :meth:`_value_array_batches` and
+        :meth:`AlleleScore._allele_array_batches`.  Two copies of it is how
+        the two would come to disagree about a batch's positions, its NA
+        handling or its dtypes -- the drift ADR 0008 spends its length on.
+
+        ``extra_columns`` are fetched but NOT parsed, and reach the caller
+        through the raw ``cells`` alongside the parsed values.  That is the
+        whole of what a reader wanting a non-score column adds: it asks for
+        the index and reads it out itself, rather than teaching this loop
+        what the column means.
+        """
         chrom, pos_begin, pos_end = region
         defs = {
             score_id: self.score_definitions[score_id]
             for score_id in columns
         }
+        wanted = set(columns.values()) | set(extra_columns)
         for begin, end, cells in self.table.get_region_value_arrays(
-                chrom, pos_begin, pos_end, set(columns.values()), batch_size):
+                chrom, pos_begin, pos_end, wanted, batch_size):
             yield begin, end, {
                 score_id: defs[score_id].parse_array(cells[column])
                 for score_id, column in columns.items()
-            }
+            }, cells
+
+    def _score_column_indexes(self, scores: list[str]) -> dict[str, int]:
+        """Score id -> payload column index, resolved once for a whole scan.
+
+        No cast needed: ``score_index`` is an ``int``.  A VCF score is
+        addressed by ``col_name`` and has none, which is how the type already
+        says the VCF backend does not reach here.
+        """
+        return {
+            score_id: self.score_definitions[score_id].score_index
+            for score_id in scores
+        }
 
     def get_all_chromosomes(self) -> list[str]:
         if not self.is_open():
@@ -2591,6 +2689,141 @@ class AlleleScore(GenomicScore):
             return None
         return list(select_records(
             self, chain([first], overlapping), score_filter))
+
+    def supports_region_allele_arrays(self, scores: list[str]) -> bool:
+        """Whether :meth:`fetch_region_allele_arrays` will serve these scores.
+
+        :meth:`GenomicScore.supports_region_value_arrays` -- the backend and
+        the score value types -- plus the one condition that is this read's
+        alone: the table must declare at least one of the two key columns,
+        or there is nothing for it to carry that the shared read does not
+        already give.
+
+        The columns are configured **independently**, and one of them is
+        enough.  A table declaring only ``alternative`` is served, with the
+        missing side yielded as the ``None`` the record carries for it; that
+        is what keeps this read and :meth:`GenomicScore.fetch_records` the
+        same answer rather than two.  A bigWig-backed score is turned away
+        here without being named: it has no such columns to declare.
+
+        Answerable on an UNOPENED score, as its counterpart is -- and, in one
+        case, **conservative** there rather than exact.  A table's key columns
+        are resolved when it opens (``_set_core_column_keys``), from the
+        config and, failing that, from the header.  So this asks the same two
+        questions in the same order, using whichever of them can be answered
+        yet: the declaration always, and the header when the table already
+        has one (``header_mode: list`` names it in the config, and an opened
+        table has read it).
+
+        That leaves exactly one gap: a ``header_mode: file`` table that names
+        its key columns nowhere but inside its own data file answers ``False``
+        until it is opened and ``True`` after.  The asymmetry is the file's,
+        not this method's -- a header cannot be known without reading it --
+        and it errs the safe way, because a caller told ``False`` reads
+        per-record and gets the same rows.
+        """
+        return self._allele_arrays_refusal_reason(scores) is None
+
+    def _allele_arrays_refusal_reason(self, scores: list[str]) -> str | None:
+        """Why this read is refused for ``scores``, or ``None`` if it is not.
+
+        The predicate and the message it owes a caller who ignored it, from
+        ONE evaluation.  Asking :meth:`supports_region_allele_arrays` and
+        then re-deriving which of its two rules had said no would be the
+        same question answered twice, and the pair could come to disagree
+        about which one it was.
+        """
+        if not self.supports_region_value_arrays(scores):
+            return self._value_arrays_refusal_reason()
+        table = self.table
+        if table.ref_key is not None or table.alt_key is not None:
+            # Resolved -- the table is open, and these are authoritative.
+            return None
+        if any(
+                table.would_resolve_column(column)
+                for column in (table.REF, table.ALT)):
+            return None
+        return (
+            "its table declares neither a 'reference' nor an "
+            "'alternative' column")
+
+    def fetch_region_allele_arrays(
+        self,
+        chrom: str,
+        pos_begin: int | None,
+        pos_end: int | None,
+        scores: list[str],
+        *,
+        batch_size: int = DEFAULT_VALUE_ARRAYS_BATCH_SIZE,
+    ) -> Generator[AlleleRecordArrays, None, None]:
+        """Fetch a region as column arrays, nucleotides included.
+
+        :meth:`GenomicScore.fetch_region_value_arrays` widened by the two
+        columns an allele row has and a position row does not, for a caller
+        scanning a whole region for allele *content* rather than values --
+        the allele statistics, above all.  Each batch is that method's
+        ``(pos_begin, pos_end, {score_id: values})`` followed by the
+        ``reference`` and ``alternative`` arrays, as
+        :class:`AlleleRecordArrays`.
+
+        **The nucleotides are RAW; the scores beside them are parsed.**  That
+        asymmetry is deliberate and is the whole contract.  A score column
+        goes through its definition's column parse, so an NA sentinel arrives
+        as that score's non-value; these two columns go through nothing at
+        all.  Whatever the row held is what the array holds -- no
+        upper-casing, no stripping, no sentinel handling -- because
+        :func:`build_tabular_parser` reads them equally verbatim, and a
+        consumer reading a region through this method and a region through
+        :meth:`GenomicScore.fetch_records` must be handed the same strings
+        rather than two dialects of them.  Whoever wants them normalised
+        normalises them, once, where the meaning of the normalisation is
+        known.
+
+        Refused, rather than emulated, for a score this facade cannot serve
+        it for -- ask :meth:`supports_region_allele_arrays` first.  The
+        guards run when this method is CALLED, not on the first ``next()``,
+        which is why the streaming half lives in :meth:`_allele_array_batches`
+        rather than a ``yield`` here.
+        """
+        reason = self._allele_arrays_refusal_reason(scores)
+        if reason is not None:
+            raise TypeError(
+                f"genomic score <{self.resource_id}> does not serve "
+                f"fetch_region_allele_arrays for {sorted(scores)}: {reason}. "
+                f"Ask supports_region_allele_arrays(scores) before calling.")
+        self._require_open_and_known_chrom(chrom)
+        return self._allele_array_batches(
+            chrom, pos_begin, pos_end, scores, batch_size)
+
+    def _allele_array_batches(
+        self,
+        chrom: str,
+        pos_begin: int | None,
+        pos_end: int | None,
+        scores: list[str],
+        batch_size: int,
+    ) -> Generator[AlleleRecordArrays, None, None]:
+        """Stream the batches for an already-validated request.
+
+        The shared column read plus this kind's two extra columns, which it
+        asks for by index and reads out of the raw cells -- so the positions
+        and the parse stay stated once, in
+        :meth:`GenomicScore._parsed_column_batches`.
+        """
+        ref_key = self.table.ref_key
+        alt_key = self.table.alt_key
+        key_columns = frozenset(
+            key for key in (ref_key, alt_key) if key is not None)
+
+        for begin, end, values, cells in self._parsed_column_batches(
+                self._score_column_indexes(scores),
+                (chrom, pos_begin, pos_end), batch_size,
+                extra_columns=key_columns):
+            yield AlleleRecordArrays(
+                begin, end, values,
+                _key_column_array(cells, ref_key, len(begin)),
+                _key_column_array(cells, alt_key, len(begin)),
+            )
 
 
 class FragmentScore(GenomicScore):
