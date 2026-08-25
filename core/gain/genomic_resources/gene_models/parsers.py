@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import IO, cast
 
 import pandas as pd
@@ -10,6 +11,7 @@ from gain import logging
 from gain.genomic_resources.repository import (
     GenomicResource,
 )
+from gain.utils.log_safety import escape_unsafe_characters
 
 from .default_attributes import parse_default_attributes
 from .transcript_models import (
@@ -20,6 +22,11 @@ from .transcript_models import (
 logger = logging.getLogger(__name__)
 
 
+# Every parser signals a rejection the same two ways, and format inference
+# reads that convention back to say why a format lost: ``None`` means the
+# file does not have this format's column layout, while an empty dict means
+# the layout matched but no transcript model came of it. Anything else the
+# parser cannot handle it raises.
 GeneModelsParser = Callable[
     [IO, dict[str, str] | None, int | None],
     dict[str, TranscriptModel] | None,
@@ -62,8 +69,6 @@ def parse_default_gene_models_format(
         "exonFrames",
         "atts",
     ]
-    assert set(expected_columns) <= set(df.columns)
-
     if not set(expected_columns) <= set(df.columns):
         return None
 
@@ -901,6 +906,118 @@ def get_parser(
     return None
 
 
+INFERENCE_SAMPLE_ROWS = 50
+
+
+def _describe_exception(ex: Exception) -> str:
+    """Render an exception as a rejection reason.
+
+    Some parsers reject through an exception carrying no message at all --
+    naming the type keeps the ledger free of blank entries. The message
+    quotes text read out of the file, and the ledger it joins is itself
+    newline-structured, so a raw line break in it would forge a ledger
+    line; escape it the way the repository modules do.
+    """
+    message = escape_unsafe_characters(str(ex).strip())
+    if not message:
+        return f"{type(ex).__name__} (no message)"
+    return f"{type(ex).__name__}: {message}"
+
+
+@dataclass(frozen=True)
+class FormatInference:
+    """What trying every supported format against a file prefix established.
+
+    A format rejects a file through one of two channels: it raises, or it
+    quietly returns no transcript models. Both end up in `rejected`, so the
+    ledger has no holes -- a reason the reader cannot see is the whole of
+    gain#856.
+    """
+
+    matched: tuple[str, ...]
+    rejected: tuple[tuple[str, str], ...]
+    sampled_rows: int
+
+    @property
+    def file_format(self) -> str | None:
+        """The inferred format, or None unless exactly one format matched."""
+        if len(self.matched) == 1:
+            return self.matched[0]
+        return None
+
+    def report(self) -> str:
+        """Render why inference did not settle on a single format."""
+        if self.file_format is not None:
+            headline = (
+                f"the format is {self.file_format}, from the first "
+                f"{self.sampled_rows} records"
+            )
+        elif len(self.matched) > 1:
+            headline = (
+                f"{len(self.matched)} formats match the first "
+                f"{self.sampled_rows} records, so the format is ambiguous: "
+                f"{', '.join(self.matched)}"
+            )
+        else:
+            headline = (
+                f"no supported format matches the first "
+                f"{self.sampled_rows} records"
+            )
+        lines = [headline, "formats tried:"]
+        lines.extend(
+            f"  {fmt}: matched the sampled records" for fmt in self.matched
+        )
+        lines.extend(
+            f"  {fmt}: {reason}" for fmt, reason in self.rejected
+        )
+        lines.append(
+            f"note: inference reads only the first {self.sampled_rows} "
+            "records, so a format matching here is not evidence that the "
+            "whole file parses",
+        )
+        return "\n".join(lines)
+
+
+def infer_gene_models_format(infile: IO) -> FormatInference:
+    """Try every supported format against a prefix of `infile`."""
+    sampled_rows = INFERENCE_SAMPLE_ROWS
+    logger.info("going to infer gene models file format...")
+    matched: list[str] = []
+    rejected: list[tuple[str, str]] = []
+    for candidate in sorted(SUPPORTED_GENE_MODELS_FILE_FORMATS):
+        parser = get_parser(candidate)
+        if parser is None:
+            continue
+        logger.debug("trying file format: %s...", candidate)
+        try:
+            infile.seek(0)
+            res = parser(infile, None, sampled_rows)
+        except Exception as ex:  # noqa: BLE001 pylint: disable=broad-except
+            logger.debug(
+                "file format %s does not match; %s",
+                candidate, ex, exc_info=True)
+            rejected.append((candidate, _describe_exception(ex)))
+            continue
+        if res:
+            matched.append(candidate)
+            logger.debug("gene models format %s matches input", candidate)
+        elif res is None:
+            rejected.append(
+                (candidate, "does not have this format's column layout"))
+        else:
+            rejected.append(
+                (candidate,
+                 "has this format's column layout but yielded no "
+                 "transcript models"))
+
+    logger.info("inferred file formats: %s", matched)
+    return FormatInference(
+        matched=tuple(matched),
+        rejected=tuple(rejected),
+        sampled_rows=sampled_rows,
+    )
+
+
 def infer_gene_model_parser(
     infile: IO,
     file_format: str | None = None,
@@ -911,32 +1028,12 @@ def infer_gene_model_parser(
         if parser is not None:
             return file_format
 
-    logger.info("going to infer gene models file format...")
-    inferred_formats = []
-    for inferred_format in SUPPORTED_GENE_MODELS_FILE_FORMATS:
-        parser = get_parser(inferred_format)
-        if parser is None:
-            continue
-        try:
-            logger.debug("trying file format: %s...", inferred_format)
-            infile.seek(0)
-            res = parser(infile, None, 50)
-            if res:
-                inferred_formats.append(inferred_format)
-                logger.debug(
-                    "gene models format %s matches input", inferred_format)
-        except Exception as ex:  # noqa: BLE001 pylint: disable=broad-except
-            logger.debug(
-                "file format %s does not match; %s",
-                inferred_format, ex, exc_info=True)
+    inference = infer_gene_models_format(infile)
+    if inference.file_format is not None:
+        return inference.file_format
 
-    logger.info("inferred file formats: %s", inferred_formats)
-    if len(inferred_formats) == 1:
-        return inferred_formats[0]
-
-    logger.error(
-        "can't find gene model parser; "
-        "inferred file formats are %s", inferred_formats)
+    logger.warning("can't infer gene models file format; %s",
+                   inference.report())
     return None
 
 
@@ -960,13 +1057,33 @@ def load_transcript_models(
             filename, mode="rt", compression=compression) as infile:
 
         if fileformat is None:
-            fileformat = infer_gene_model_parser(infile)
-            logger.info("infering gene models file format: %s", fileformat)
+            inference = infer_gene_models_format(infile)
+            fileformat = inference.file_format
+            # A resource built straight from a local file has no meaningful
+            # id, and naming it adds noise rather than help. Both spellings
+            # of the repository root are per
+            # `repository.uncontained_resource_id_reason`.
+            identity = escape_unsafe_characters(filename)
+            if resource.resource_id not in {"", "."}:
+                identity = (
+                    f"{identity} (resource "
+                    f"{escape_unsafe_characters(resource.resource_id)})")
             if fileformat is None:
+                report = inference.report()
                 logger.error(
-                    "can't infer gene models file format for "
-                    "%s...", resource.resource_id)
-                raise ValueError("can't infer gene models file format")
+                    "can't infer gene models file format for %s; %s",
+                    identity, report)
+                raise ValueError(
+                    f"can't infer gene models file format for {identity}; "
+                    f"{report}")
+            # Inference read a prefix. Saying so is the difference between
+            # "this file is gtf" and "the first records of it are" -- a
+            # malformed record past them loads silently corrupted.
+            logger.info(
+                "inferred gene models file format %s for %s from only the "
+                "first %d records; that is not evidence that the rest of "
+                "the file parses",
+                fileformat, identity, inference.sampled_rows)
 
         parser = get_parser(fileformat)
         if parser is None:
