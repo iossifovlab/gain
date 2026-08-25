@@ -90,9 +90,29 @@ def test_build_resource_file_state_rejects_unknown_keyword(
     proto = fsspec_proto
     res = proto.get_resource("one")
 
-    with pytest.raises(TypeError, match="md5sum"):
+    with pytest.raises(
+            TypeError, match=r"unexpected keyword argument '?md5sum'?"):
         proto.build_resource_file_state(
-            res, "data.txt", md5sum="c1cfdaf7e22865b29b8d62a564dc8f23")
+            res, "data.txt",
+            md5sum="c1cfdaf7e22865b29b8d62a564dc8f23")  # type: ignore[call-arg]
+
+
+@pytest.mark.grr_rw
+def test_build_resource_file_state_uses_the_md5_it_is_given(
+        fsspec_proto: FsspecReadWriteProtocol) -> None:
+    """A supplied digest is recorded as-is, not recomputed from the store.
+
+    The end-to-end guard against the extra read lives in
+    ``test_fsspec_protocol_download_md5_reuse``; this pins the
+    parameter-to-field mapping itself, which that test cannot see.
+    """
+    proto = fsspec_proto
+    res = proto.get_resource("one")
+
+    state = proto.build_resource_file_state(
+        res, "data.txt", md5="not-the-stored-digest")
+
+    assert state.md5 == "not-the-stored-digest"
 
 
 @pytest.mark.grr_rw

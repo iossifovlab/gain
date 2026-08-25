@@ -2165,7 +2165,8 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
 
         The parameters are keyword-only and named explicitly so that a
         misspelled one is a TypeError here rather than a silently ignored
-        value and an extra read. See gain#865.
+        value -- which for ``md5`` costs a full re-read of the file, and
+        for the other two a stat. See gain#865.
         """
         if not self.file_exists(resource, filename):
             raise ValueError(
@@ -2181,7 +2182,8 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         if size is None:
             size = self.get_resource_file_size(resource, filename)
 
-        return ResourceFileState(filename, size, timestamp, md5)
+        return ResourceFileState(
+            filename=filename, size=size, timestamp=timestamp, md5=md5)
 
     @abc.abstractmethod
     def save_resource_file_state(

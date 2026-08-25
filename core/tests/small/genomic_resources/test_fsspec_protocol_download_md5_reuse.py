@@ -1,4 +1,4 @@
-# pylint: disable=W0621,C0114,C0116,W0212,W0613
+# pylint: disable=W0621,C0114,C0116
 import pathlib
 from typing import Any
 
@@ -8,6 +8,14 @@ from gain.genomic_resources.testing import (
     build_inmemory_test_protocol,
 )
 from pytest_mock import MockerFixture
+
+
+def _called_filename(call: Any) -> str | None:
+    """Return the filename a recorded compute_md5_sum call was given."""
+    if len(call.args) > 1:
+        return str(call.args[1])
+    filename = call.kwargs.get("filename")
+    return None if filename is None else str(filename)
 
 
 def _empty_dest_proto(
@@ -36,9 +44,13 @@ def test_copy_resource_reuses_the_verified_download_md5(
     src_resource = src_proto.get_resource("one")
     expected_files = sorted(
         entry.name for entry in src_resource.get_manifest())
+    assert expected_files, (
+        "at least one file must actually be copied, or the zero below is "
+        "vacuous -- an empty manifest downloads nothing and so trivially "
+        "recomputes nothing")
     assert expected_files == [
         "data.txt", "data.txt.gz", "genomic_resource.yaml"], \
-        "fixture changed; the count below is no longer meaningful"
+        "fixture changed; update this pin"
 
     dest_proto = _empty_dest_proto(tmp_path)
     assert dest_proto.get_all_resources_dict() == {}
@@ -61,4 +73,4 @@ def test_copy_resource_reuses_the_verified_download_md5(
     # ...and not one byte of it was read back to recompute a known digest
     assert recompute.call_count == 0, (
         f"destination files re-read to recompute md5: "
-        f"{[call.args[1] for call in recompute.call_args_list]}")
+        f"{[_called_filename(call) for call in recompute.call_args_list]}")
