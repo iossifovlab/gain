@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from threading import Lock
 from typing import TYPE_CHECKING, Any
@@ -15,12 +16,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Resource-based entries are keyed (full_id, repo_url); file-based
-# entries are keyed on the path plus every config-shaping argument.
-# The two shapes must stay distinct so the key families cannot collide.
-_ResourceCacheKey = tuple[str, str]
-_FileCacheKey = tuple[str, str | None, str | None, str | None, str]
-_INMEMORY_CACHE: dict[_ResourceCacheKey | _FileCacheKey, GeneModels] = {}
+_RESOURCE_CACHE: dict[tuple[str, str], GeneModels] = {}
+_FILE_CACHE: dict[tuple[str, str], GeneModels] = {}
 _INMEMORY_CACHE_LOCK = Lock()
 
 
@@ -50,35 +47,32 @@ def build_gene_models_from_file(
     )
 
     from .gene_models import GeneModels
-    cache_id = (
-        file_name,
-        file_format,
-        gene_mapping_file_name,
-        chrom_mapping_file_name,
-        "file:///.",
-    )
+
+    config: dict[str, Any] = {
+        "type": "gene_models",
+        "filename": _root_relative(file_name),
+    }
+    if file_format:
+        config["format"] = file_format
+    if gene_mapping_file_name:
+        config["gene_mapping"] = _root_relative(gene_mapping_file_name)
+    if chrom_mapping_file_name is not None:
+        config["chrom_mapping"] = {
+            "filename": _root_relative(chrom_mapping_file_name),
+        }
+
+    # Keyed on the serialized config so that every config-shaping
+    # argument -- present and future -- participates in the key.
+    cache_id = (file_name, json.dumps(config, sort_keys=True))
 
     with _INMEMORY_CACHE_LOCK:
-        if cache_id in _INMEMORY_CACHE:
-            return _INMEMORY_CACHE[cache_id]
-
-        config: dict[str, Any] = {
-            "type": "gene_models",
-            "filename": _root_relative(file_name),
-        }
-        if file_format:
-            config["format"] = file_format
-        if gene_mapping_file_name:
-            config["gene_mapping"] = _root_relative(gene_mapping_file_name)
-        if chrom_mapping_file_name is not None:
-            config["chrom_mapping"] = {
-                "filename": _root_relative(chrom_mapping_file_name),
-            }
+        if cache_id in _FILE_CACHE:
+            return _FILE_CACHE[cache_id]
 
         res = build_local_resource("/", config)
 
         gene_models = GeneModels(res)
-        _INMEMORY_CACHE[cache_id] = gene_models
+        _FILE_CACHE[cache_id] = gene_models
         return gene_models
 
 
@@ -100,11 +94,11 @@ def build_gene_models_from_resource(
 
     cache_id = (resource.get_full_id(), resource.get_repo_url())
     with _INMEMORY_CACHE_LOCK:
-        if cache_id in _INMEMORY_CACHE:
-            return _INMEMORY_CACHE[cache_id]
+        if cache_id in _RESOURCE_CACHE:
+            return _RESOURCE_CACHE[cache_id]
 
         gene_models = GeneModels(resource)
-        _INMEMORY_CACHE[cache_id] = gene_models
+        _RESOURCE_CACHE[cache_id] = gene_models
         return gene_models
 
 

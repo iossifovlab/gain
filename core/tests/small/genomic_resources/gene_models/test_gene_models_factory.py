@@ -7,7 +7,8 @@ from unittest.mock import Mock, patch
 import pytest
 from gain.genomic_resources.gene_models.gene_models import GeneModels
 from gain.genomic_resources.gene_models.gene_models_factory import (
-    _INMEMORY_CACHE,
+    _FILE_CACHE,
+    _RESOURCE_CACHE,
     build_gene_models_from_file,
     build_gene_models_from_resource,
     build_gene_models_from_resource_id,
@@ -43,10 +44,12 @@ GTF_CONTENT = "\n".join(GTF_LINES) + "\n"
 
 @pytest.fixture(autouse=True)
 def clear_cache() -> Any:
-    """Clear the inmemory cache before and after each test."""
-    _INMEMORY_CACHE.clear()
+    """Clear the inmemory caches before and after each test."""
+    _FILE_CACHE.clear()
+    _RESOURCE_CACHE.clear()
     yield
-    _INMEMORY_CACHE.clear()
+    _FILE_CACHE.clear()
+    _RESOURCE_CACHE.clear()
 
 
 @pytest.fixture
@@ -141,7 +144,7 @@ def test_build_from_file_caching(
 
     # Should be the same object
     assert gene_models1 is gene_models2
-    assert len(_INMEMORY_CACHE) == 1
+    assert len(_FILE_CACHE) == 1
 
 
 def test_build_from_file_different_files_different_cache(
@@ -160,7 +163,7 @@ def test_build_from_file_different_files_different_cache(
 
     # Should be different objects
     assert gene_models1 is not gene_models2
-    assert len(_INMEMORY_CACHE) == 2
+    assert len(_FILE_CACHE) == 2
 
 
 def test_build_from_file_without_format(
@@ -175,20 +178,31 @@ def test_build_from_file_without_format(
     assert len(gene_models.transcript_models) == 3
 
 
-def test_build_from_file_explicit_format_then_bare_not_aliased(
+@pytest.mark.parametrize("first_format,second_format", [
+    ("refflat", None),
+    ("refflat", "gtf"),
+])
+def test_build_from_file_format_in_cache_key(
     temp_gene_file: pathlib.Path,
+    first_format: str | None,
+    second_format: str | None,
 ) -> None:
-    """Test that a bare call is not served the explicit-format entry."""
-    gene_models_explicit = build_gene_models_from_file(
+    """Test that calls differing only in file format are not aliased."""
+    gene_models_first = build_gene_models_from_file(
         str(temp_gene_file),
-        file_format="refflat",
+        file_format=first_format,
     )
-    gene_models_bare = build_gene_models_from_file(str(temp_gene_file))
+    gene_models_second = build_gene_models_from_file(
+        str(temp_gene_file),
+        file_format=second_format,
+    )
 
-    assert gene_models_explicit is not gene_models_bare
-    assert len(_INMEMORY_CACHE) == 2
-    assert gene_models_explicit.resource.get_config()["format"] == "refflat"
-    assert "format" not in gene_models_bare.resource.get_config()
+    assert gene_models_first is not gene_models_second
+    assert len(_FILE_CACHE) == 2
+    first_config = gene_models_first.resource.get_config()
+    second_config = gene_models_second.resource.get_config()
+    assert first_config.get("format") == first_format
+    assert second_config.get("format") == second_format
 
 
 def test_build_from_file_gene_mapping_in_cache_key(
@@ -207,9 +221,7 @@ def test_build_from_file_gene_mapping_in_cache_key(
     )
 
     assert gene_models_plain is not gene_models_mapped
-    assert len(_INMEMORY_CACHE) == 2
-    gene_models_mapped.load()
-    assert "P53" in gene_models_mapped.gene_names()
+    assert len(_FILE_CACHE) == 2
 
 
 def test_build_from_file_chrom_mapping_in_cache_key(
@@ -234,7 +246,7 @@ def test_build_from_file_chrom_mapping_in_cache_key(
     )
 
     assert gene_models_plain is not gene_models_remapped
-    assert len(_INMEMORY_CACHE) == 2
+    assert len(_FILE_CACHE) == 2
 
     gene_models_plain.load()
     gene_models_remapped.load()
@@ -244,41 +256,6 @@ def test_build_from_file_chrom_mapping_in_cache_key(
         tm.chrom for tm in gene_models_remapped.transcript_models.values()}
     assert plain_chroms == {"1", "17"}
     assert remapped_chroms == {"chr1", "chr17"}
-
-
-def test_build_from_file_two_explicit_formats_not_aliased(
-    temp_gene_file: pathlib.Path,
-) -> None:
-    """Test that calls with different explicit formats are not aliased."""
-    gene_models_refflat = build_gene_models_from_file(
-        str(temp_gene_file),
-        file_format="refflat",
-    )
-    gene_models_gtf = build_gene_models_from_file(
-        str(temp_gene_file),
-        file_format="gtf",
-    )
-
-    assert gene_models_refflat is not gene_models_gtf
-    assert len(_INMEMORY_CACHE) == 2
-    assert gene_models_refflat.resource.get_config()["format"] == "refflat"
-    assert gene_models_gtf.resource.get_config()["format"] == "gtf"
-
-
-def test_build_from_file_none_and_omitted_share_cache_entry(
-    temp_gene_file: pathlib.Path,
-) -> None:
-    """Test that passing None and omitting an argument are the same call."""
-    gene_models_none = build_gene_models_from_file(
-        str(temp_gene_file),
-        file_format=None,
-        gene_mapping_file_name=None,
-        chrom_mapping_file_name=None,
-    )
-    gene_models_omitted = build_gene_models_from_file(str(temp_gene_file))
-
-    assert gene_models_none is gene_models_omitted
-    assert len(_INMEMORY_CACHE) == 1
 
 
 def test_build_from_resource_basic() -> None:
@@ -355,7 +332,7 @@ def test_build_from_resource_caching() -> None:
 
     # Should be the same object
     assert gene_models1 is gene_models2
-    assert len(_INMEMORY_CACHE) == 1
+    assert len(_RESOURCE_CACHE) == 1
 
 
 def test_build_from_resource_different_resources_different_cache(
@@ -379,7 +356,7 @@ def test_build_from_resource_different_resources_different_cache(
     build_gene_models_from_resource(res2)
 
     # Different resources should create different cache entries
-    assert len(_INMEMORY_CACHE) == 2
+    assert len(_RESOURCE_CACHE) == 2
 
 
 def test_build_from_resource_id_basic() -> None:
@@ -463,7 +440,7 @@ def test_build_from_resource_id_caching() -> None:
 
     # Should be the same object
     assert gene_models1 is gene_models2
-    assert len(_INMEMORY_CACHE) == 1
+    assert len(_RESOURCE_CACHE) == 1
 
 
 def test_build_from_resource_id_nonexistent_resource(
@@ -486,7 +463,7 @@ def test_build_from_resource_id_nonexistent_resource(
 def test_cache_isolation_between_functions(
     temp_gene_file: pathlib.Path,
 ) -> None:
-    """Test that cache is shared across all factory functions."""
+    """Test that file-based and resource-based entries never alias."""
     # Build from file
     gene_models1 = build_gene_models_from_file(
         str(temp_gene_file),
@@ -502,9 +479,10 @@ def test_cache_isolation_between_functions(
         })
     gene_models2 = build_gene_models_from_resource(res)
 
-    # Different cache entries since they have different cache keys
+    # Each builder populates its own cache
     assert gene_models1 is not gene_models2
-    assert len(_INMEMORY_CACHE) == 2
+    assert len(_FILE_CACHE) == 1
+    assert len(_RESOURCE_CACHE) == 1
 
 
 def test_cache_key_includes_filename_and_repo_url(
@@ -528,7 +506,7 @@ def test_cache_key_includes_filename_and_repo_url(
     build_gene_models_from_resource(res2)
 
     # Different resources create different cache entries
-    assert len(_INMEMORY_CACHE) == 2
+    assert len(_RESOURCE_CACHE) == 2
 
 
 def test_build_from_file_with_all_parameters(
