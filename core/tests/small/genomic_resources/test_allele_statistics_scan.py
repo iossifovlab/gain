@@ -1,0 +1,436 @@
+# pylint: disable=C0114,C0116,W0212,W0621
+import pathlib
+import re
+from collections.abc import Callable
+from typing import Any
+
+import pytest
+from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.histogram import NumberHistogramConfig
+from gain.genomic_resources.implementations.genomic_scores_impl import (
+    GenomicScoreImplementation,
+    build_score_implementation_from_resource,
+)
+from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.statistics.alleles import (
+    ALLELE_STATISTICS_FILE,
+    AlleleStatistics,
+    serves_allele_arrays,
+)
+from gain.genomic_resources.testing.builders import (
+    a_np_score,
+    a_position_score,
+    an_allele_score,
+)
+
+# One fixture carries every class and both counting rules: three rows at
+# chr1:10 (two of them the SAME (chrom, pos, ref, alt) -- legitimate
+# per-transcript data), then one row per remaining class, then a second
+# contig.
+_MIXED_TABLE = """
+    chrom  pos_begin  reference  alternative  score
+    chr1   10         A          G            0.1
+    chr1   10         A          C            0.2
+    chr1   10         A          G            0.3
+    chr1   20         A          AT           0.4
+    chr1   30         CT         C            0.5
+    chr1   40         AC         GT           0.6
+    chr1   50         N          A            0.7
+    chr2   10         G          T            0.8
+"""
+
+
+def _hist_conf() -> NumberHistogramConfig:
+    return NumberHistogramConfig.from_dict({
+        "type": "number",
+        "view_range": {"min": 0, "max": 1},
+        "number_of_bins": 10,
+        "x_log_scale": False,
+        "y_log_scale": False,
+    })
+
+
+def _mixed_allele_score(tmp_path: pathlib.Path) -> GenomicResource:
+    return (
+        an_allele_score()
+        .with_score("score", "float")
+        .with_data(_MIXED_TABLE)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+def _built_statistics(
+    tmp_path: pathlib.Path,
+    resource: GenomicResource,
+) -> AlleleStatistics:
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    return AlleleStatistics.deserialize(
+        resource.get_file_content(ALLELE_STATISTICS_FILE))
+
+
+def test_build_counts_alleles_per_chromosome(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _mixed_allele_score(tmp_path)
+
+    stats = _built_statistics(tmp_path, resource)
+
+    assert {
+        chrom: counts.allele_count
+        for chrom, counts in stats.by_chromosome().items()
+    } == {"chr1": 7, "chr2": 1}
+
+
+def test_rows_sharing_a_position_count_one_covered_position(
+    tmp_path: pathlib.Path,
+) -> None:
+    # chr1 carries three rows at position 10 -- two of them the same
+    # (chrom, pos, ref, alt) -- and one each at 20, 30, 40 and 50.
+    resource = _mixed_allele_score(tmp_path)
+
+    stats = _built_statistics(tmp_path, resource)
+
+    assert {
+        chrom: counts.covered_positions
+        for chrom, counts in stats.by_chromosome().items()
+    } == {"chr1": 5, "chr2": 1}
+
+
+def test_build_totals_every_allele_class_globally(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A>G twice and A>C once on chr1, G>T on chr2; A>AT anchored
+    # insertion, CT>C anchored deletion, AC>GT complex, N>A other.
+    resource = _mixed_allele_score(tmp_path)
+
+    stats = _built_statistics(tmp_path, resource)
+
+    assert stats.global_counts().class_counts == {
+        "substitution": 4,
+        "insertion": 1,
+        "deletion": 1,
+        "complex": 1,
+        "other": 1,
+    }
+
+
+def test_class_totals_sum_to_the_allele_count(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _mixed_allele_score(tmp_path)
+
+    stats = _built_statistics(tmp_path, resource)
+
+    for counts in (*stats.by_chromosome().values(), stats.global_counts()):
+        assert sum(counts.class_counts.values()) == counts.allele_count
+
+
+def _mixed_np_score(tmp_path: pathlib.Path) -> GenomicResource:
+    return (
+        a_np_score()
+        .with_score("score", "float")
+        .with_data(_MIXED_TABLE)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+def test_the_two_fixtures_take_different_scan_paths(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The premise of the parity test below: ``np_score`` is excluded
+    # from the bulk-scan resource types, so the identical tables are
+    # read by genuinely different scans.
+    allele = _mixed_allele_score(tmp_path / "allele")
+    np_score = _mixed_np_score(tmp_path / "np")
+    confs: dict = {"score": _hist_conf()}
+
+    assert GenomicScoreImplementation._can_bulk_histogram(allele, confs)
+    assert not GenomicScoreImplementation._can_bulk_histogram(
+        np_score, confs)
+
+
+def test_np_score_statistics_match_the_allele_score_byte_for_byte(
+    tmp_path: pathlib.Path,
+) -> None:
+    allele = _mixed_allele_score(tmp_path / "allele")
+    np_score = _mixed_np_score(tmp_path / "np")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path / "allele"), "-j", "1"])
+    cli_manage(["repo-stats", "-R", str(tmp_path / "np"), "-j", "1"])
+
+    assert np_score.get_file_content(ALLELE_STATISTICS_FILE) \
+        == allele.get_file_content(ALLELE_STATISTICS_FILE)
+
+
+@pytest.mark.parametrize("region_size", [10, 20, 7, 1])
+def test_statistics_are_chunk_invariant(
+    tmp_path: pathlib.Path,
+    region_size: int,
+) -> None:
+    # Region sizes 10 and 20 land chunk boundaries exactly on rows
+    # (positions 10, 20, 30, 40 and 50 are all multiples of 10), which
+    # is the shape a per-region ownership rule gets wrong by
+    # double-counting a position that two chunks both see.
+    whole = _mixed_allele_score(tmp_path / "whole")
+    chunked = _mixed_allele_score(tmp_path / "chunked")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path / "whole"), "-j", "1"])
+    cli_manage([
+        "repo-stats", "-R", str(tmp_path / "chunked"), "-j", "1",
+        "--region-size", str(region_size)])
+
+    assert chunked.get_file_content(ALLELE_STATISTICS_FILE) \
+        == whole.get_file_content(ALLELE_STATISTICS_FILE)
+
+
+# An allele row may carry a ``pos_end`` reaching well past the point it
+# collapses to (the golden fixture has one).  Such a row is answered to
+# EVERY region query its span touches, so a statistic that counted the
+# rows a region was handed rather than the rows it owns would count it
+# once per chunk.
+_WIDE_TABLE = """
+    chrom  pos_begin  pos_end  reference  alternative  score
+    chr1   10         40       A          G            0.1
+    chr1   10         40       A          C            0.2
+    chr1   25         60       CT         C            0.3
+    chr1   50         55       A          AT           0.4
+"""
+
+
+def _wide_score(
+    builder: Callable[[], Any], tmp_path: pathlib.Path,
+) -> GenomicResource:
+    return (
+        builder()
+        .with_score("score", "float")
+        .with_data(_WIDE_TABLE)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+@pytest.mark.parametrize("builder", [an_allele_score, a_np_score])
+@pytest.mark.parametrize("region_size", [10, 20, 7])
+def test_a_row_spanning_several_chunks_is_counted_once(
+    tmp_path: pathlib.Path,
+    builder: Callable[[], Any],
+    region_size: int,
+) -> None:
+    # Parametrized over both builders because the ownership rule is
+    # stated twice -- scalar on the per-record path (``np_score``, which
+    # the bulk scan excludes) and vectorized on the bulk one
+    # (``allele_score``) -- and a rule stated twice can drift.
+    whole = _wide_score(builder, tmp_path / "whole")
+    chunked = _wide_score(builder, tmp_path / "chunked")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path / "whole"), "-j", "1"])
+    cli_manage([
+        "repo-stats", "-R", str(tmp_path / "chunked"), "-j", "1",
+        "--region-size", str(region_size)])
+
+    counts = AlleleStatistics.deserialize(
+        whole.get_file_content(ALLELE_STATISTICS_FILE)).global_counts()
+    assert (counts.allele_count, counts.covered_positions) == (4, 3)
+    assert chunked.get_file_content(ALLELE_STATISTICS_FILE) \
+        == whole.get_file_content(ALLELE_STATISTICS_FILE)
+
+
+_KEYLESS_TABLE = """
+    chrom  pos_begin  score
+    chr1   10         0.1
+    chr1   10         0.2
+    chr1   20         0.3
+"""
+
+
+def _keyless_score(
+    builder: Callable[[], Any], tmp_path: pathlib.Path,
+) -> GenomicResource:
+    return (
+        builder()
+        .with_score("score", "float")
+        .without_key_columns("reference", "alternative")
+        .with_data(_KEYLESS_TABLE)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+@pytest.mark.parametrize("builder", [an_allele_score, a_np_score])
+def test_a_table_with_no_key_columns_counts_every_row_as_other(
+    tmp_path: pathlib.Path,
+    builder: Callable[[], Any],
+) -> None:
+    # ``reference`` and ``alternative`` are independently optional, and
+    # a row missing an allele is still a row: it classifies as ``other``
+    # rather than being dropped or raising (ADR 0020).
+    resource = _keyless_score(builder, tmp_path)
+
+    stats = _built_statistics(tmp_path, resource)
+
+    counts = stats.global_counts()
+    assert counts.allele_count == 3
+    assert counts.covered_positions == 2
+    assert counts.class_counts["other"] == 3
+
+
+def test_a_backend_refusing_the_nucleotides_falls_back_to_per_record(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The bulk histogram scan would serve this resource, but the bulk
+    # read cannot hand it nucleotides -- so the region must go back to
+    # the per-record read rather than to a statistic with no class data.
+    resource = _keyless_score(an_allele_score, tmp_path)
+    confs: dict = {"score": _hist_conf()}
+    score = build_score_implementation_from_resource(resource).score
+
+    assert GenomicScoreImplementation._can_bulk_histogram(resource, confs)
+    assert not serves_allele_arrays(score, ["score"])
+
+
+_ALT_ONLY_TABLE = """
+    chrom  pos_begin  alternative  score
+    chr1   10         G            0.1
+    chr1   10         C            0.2
+    chr1   20         AT           0.3
+"""
+
+
+def _alt_only_score(
+    builder: Callable[[], Any], tmp_path: pathlib.Path,
+) -> GenomicResource:
+    return (
+        builder()
+        .with_score("score", "float")
+        .without_key_columns("reference")
+        .with_data(_ALT_ONLY_TABLE)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+def test_a_table_declaring_only_one_key_column_is_still_bulk_served(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The bulk read serves a table declaring EITHER key column, yielding
+    # the missing side as the ``None`` the record carries -- which is
+    # what keeps it and the per-record read the same answer.  A class
+    # needs both, so such a resource is all ``other``; that is the
+    # statistic this slice wants, taken deliberately rather than
+    # inherited (gain#777).
+    resource = _alt_only_score(an_allele_score, tmp_path)
+    score = build_score_implementation_from_resource(resource).score
+
+    assert serves_allele_arrays(score, ["score"])
+
+
+@pytest.mark.parametrize("builder", [an_allele_score, a_np_score])
+def test_a_table_declaring_only_one_key_column_counts_every_row_as_other(
+    tmp_path: pathlib.Path,
+    builder: Callable[[], Any],
+) -> None:
+    resource = _alt_only_score(builder, tmp_path)
+
+    stats = _built_statistics(tmp_path, resource)
+
+    counts = stats.global_counts()
+    assert counts.allele_count == 3
+    assert counts.class_counts["other"] == 3
+
+
+def _alleles_section(page: str) -> str:
+    """The rendered Alleles section, whitespace between tags collapsed.
+
+    Scoped to the section rather than searched for across the page: an
+    allele score's Coverage section always renders "not computed" (its
+    rows have no span to union), so an unscoped assertion on that
+    phrase would pass whatever the Alleles section said.
+    """
+    heading, _, section = page.partition("<h2>Alleles</h2>")
+    assert heading != page, "the info page has no Alleles section"
+    return re.sub(r">\s+<", "><", section)
+
+
+def test_info_page_renders_a_row_per_chromosome(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    assert "<td>chr1</td><td>5</td><td>7</td>" in section
+    assert "<td>chr2</td><td>1</td><td>1</td>" in section
+
+
+def test_info_page_renders_the_global_class_summary(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    assert "<td>substitution</td><td>4</td>" in section
+    assert "<td>insertion</td><td>1</td>" in section
+    assert "<td>deletion</td><td>1</td>" in section
+    assert "<td>complex</td><td>1</td>" in section
+    assert "<td>other</td><td>1</td>" in section
+
+
+def test_info_page_without_the_statistics_file_says_not_computed(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A resource built before this statistic existed: histograms are
+    # there, statistics/alleles.json is not.
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    resource.proto.delete_resource_file(resource, ALLELE_STATISTICS_FILE)
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    assert "not computed" in section
+
+
+def test_statistics_hash_is_untouched_by_the_allele_build(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The rollout is lazy: the section appears as resources are rebuilt
+    # for other reasons, never because this statistic forced a rebuild.
+    resource = _mixed_allele_score(tmp_path)
+    before = build_score_implementation_from_resource(
+        resource).calc_statistics_hash()
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    after = build_score_implementation_from_resource(
+        resource).calc_statistics_hash()
+    assert after == before
+
+
+def test_a_position_score_writes_no_allele_statistics(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_position_score()
+        .with_score("score", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  score
+            chr1   5          9        0.1
+            chr1   10         14       0.2
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert not resource.file_exists(ALLELE_STATISTICS_FILE)
+    assert GenomicScoreImplementation(resource).get_allele_statistics() \
+        is None

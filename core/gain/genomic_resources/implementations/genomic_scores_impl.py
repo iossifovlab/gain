@@ -13,6 +13,7 @@ from gain.genomic_resources.genomic_position_table import (
     TabixGenomicPositionTable,
 )
 from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
     GenomicScore,
     RecordArrays,
     build_score_from_resource,
@@ -54,13 +55,27 @@ from gain.genomic_resources.score_def import ScoreValue
 from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
 )
+from gain.genomic_resources.statistics.alleles import (
+    ALLELE_STATISTICS_FILE,
+    AlleleStatistics,
+    RegionAlleles,
+    merge_region_alleles,
+    records_folded_into,
+    region_alleles_for,
+    save_allele_statistics,
+    serves_allele_arrays,
+    validated_allele_batches,
+)
 from gain.genomic_resources.statistics.coverage import (
     COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
     COVERAGE_STATISTICS_FILE,
+    CoverageDisplay,
+    CoverageRow,
     CoverageStatistics,
     RegionCoverage,
+    merge_region_coverage,
     normalize_values,
-    plot_segment_length_histogram,
+    save_and_plot_coverage,
 )
 from gain.genomic_resources.statistics.min_max import MinMaxValue
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
@@ -114,61 +129,7 @@ class RegionScanResult(NamedTuple):
 
     histograms: dict[str, Histogram]
     coverage: RegionCoverage | None
-
-
-class CoverageRow(NamedTuple):
-    """One chromosome's rendered coverage: raw count plus optional fraction.
-
-    ``fraction`` is ``None`` when no denominator resolved for this
-    chromosome -- the row renders its raw count only.  ``segments`` is
-    ``None`` when the stored statistic carries no segment data for the
-    resource (an old file, or a kind that publishes none).
-    """
-
-    chrom: str
-    covered: int
-    fraction: float | None
-    segments: int | None
-
-
-class CoverageDisplay(NamedTuple):
-    """The Coverage section's render payload, fractions resolved.
-
-    Raw counts come from the stored statistic; fractions are computed at
-    render time and never stored.  ``global_fraction`` is ``None`` unless
-    every chromosome resolved a length -- a global percent over a partial
-    denominator would be misleading.
-    """
-
-    rows: list[CoverageRow]
-    global_fraction: float | None
-
-    @property
-    def global_covered(self) -> int:
-        return sum(row.covered for row in self.rows)
-
-    @property
-    def has_fractions(self) -> bool:
-        return any(row.fraction is not None for row in self.rows)
-
-    @property
-    def global_segments(self) -> int | None:
-        """The segment total, or ``None`` when any row lacks segments.
-
-        All-or-nothing like the stored statistic: a global over a
-        partial set would silently understate.
-        """
-        counts = [
-            row.segments for row in self.rows
-            if row.segments is not None
-        ]
-        if not counts or len(counts) != len(self.rows):
-            return None
-        return sum(counts)
-
-    @property
-    def has_segments(self) -> bool:
-        return self.global_segments is not None
+    alleles: RegionAlleles | None = None
 
 
 class GenomicScoreImplementation(ScoreImplementationBase):
@@ -227,6 +188,18 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         except FileNotFoundError:
             return None
         return CoverageStatistics.deserialize(content)
+
+    def get_allele_statistics(self) -> AlleleStatistics | None:
+        """The resource's allele statistics, or ``None`` if not built.
+
+        Absence is an expected state for the reason
+        :meth:`get_coverage_statistics` gives: the rollout is lazy.
+        """
+        try:
+            content = self.resource.get_file_content(ALLELE_STATISTICS_FILE)
+        except FileNotFoundError:
+            return None
+        return AlleleStatistics.deserialize(content)
 
     def get_coverage_display(self) -> CoverageDisplay | None:
         """The Coverage section's payload: raw counts plus fractions.
@@ -663,6 +636,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         start: int | None,
         end: int | None,
         score_ids: list[str],
+        *,
+        alleles: RegionAlleles | None = None,
     ) -> Generator[
             tuple[int, int, list[ScoreValue]], None, None]:
         """Read a region the way the statistics scan reads it.
@@ -674,10 +649,14 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         same records, in the same order.
 
         One read.  ``validate_records`` is a transducer over the very stream
-        the transform consumes, not a second pass over the region.
+        the transform consumes, not a second pass over the region -- and so
+        is the optional allele fold, which reads the nucleotides off the RAW
+        records the transform is about to collapse to points (gain#777).
         """
         records = score.validate_records(
             score.fetch_records(chrom, start, end))
+        if alleles is not None:
+            records = records_folded_into(records, alleles)
         yield from score.region_values_from_records(
             records, chrom, start, end, score_ids)
 
@@ -752,7 +731,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         chrom: str,
         start: int | None,
         end: int | None,
+        *,
         coverage: RegionCoverage | None = None,
+        alleles: RegionAlleles | None = None,
     ) -> dict[str, Histogram]:
         impl = build_score_implementation_from_resource(resource)
         result: dict[str, Histogram] = {}
@@ -773,7 +754,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             # record counts once wherever the point it collapses to falls
             # (see test_multi_base_allele_record_clipped_by_region_weighs_one).
             for left, right, rec in GenomicScoreImplementation._scan_region(
-                    score, chrom, start, end, score_ids):
+                    score, chrom, start, end, score_ids,
+                    alleles=alleles):
                 # Coverage measures every kind from the same clip the
                 # span weight reads, so the two paths agree on the one
                 # edge the shared clip leaves open: a record beginning
@@ -826,7 +808,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         chrom: str,
         start: int,
         end: int,
+        *,
         coverage: RegionCoverage | None = None,
+        alleles: RegionAlleles | None = None,
     ) -> dict[str, Histogram]:
         """Vectorized equivalent of :meth:`_do_histogram`.
 
@@ -864,7 +848,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             accumulate = accumulate_with_coverage
 
         return GenomicScoreImplementation._bulk_region_scan(
-            resource, result, chrom, start, end, accumulate)
+            resource, result, chrom, start, end, accumulate, alleles=alleles)
 
     @staticmethod
     def _accumulate_coverage(
@@ -915,6 +899,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             [RecordArrays, dict[str, _AccT],
              tuple[str, int | None, int | None], GenomicScore],
             None],
+        *,
+        alleles: RegionAlleles | None = None,
     ) -> dict[str, _AccT]:
         """Drive a bulk region scan, folding each batch into ``result``.
 
@@ -939,11 +925,23 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         the per-record validators reset on a change of chromosome.
         """
         impl = build_score_implementation_from_resource(resource)
+        batch_size = GenomicScoreImplementation._SCAN_BATCH_SIZE
         with impl.score.open() as score:
+            if alleles is not None:
+                # The widened read: the same batches plus the two key
+                # columns, through the same door (see
+                # ``validated_allele_batches``).
+                for batch in validated_allele_batches(
+                        cast(AlleleScore, score), chrom, start, end,
+                        list(result), batch_size):
+                    accumulate(
+                        batch[:3], result, (chrom, start, end), score)
+                    alleles.add_allele_batch(
+                        batch.pos_begin, batch.reference, batch.alternative)
+                return result
             batches = score.validate_record_arrays(
                 score.fetch_region_value_arrays(
-                    chrom, start, end, list(result),
-                    batch_size=GenomicScoreImplementation._SCAN_BATCH_SIZE),
+                    chrom, start, end, list(result), batch_size=batch_size),
                 chrom)
             for arrays in batches:
                 accumulate(arrays, result, (chrom, start, end), score)
@@ -1212,7 +1210,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         union gets a :class:`RegionCoverage` accumulated by whichever
         path serves the histograms, carried out in the task's RETURN
         value — a mutated argument would not travel under a distributed
-        executor, whose task results arrive serialized.
+        executor, whose task results arrive serialized.  An allele
+        score's :class:`RegionAlleles` rides it on the same terms, with
+        one extra condition on the bulk path: it needs the nucleotides,
+        so a backend that will not serve them sends the region back to
+        the per-record read rather than to a statistic with no class
+        data.
         """
         coverage = None
         resource_type = resource.get_type()
@@ -1221,18 +1224,27 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 chrom, start, end,
                 track_segments=resource_type
                 in _SEGMENT_STATISTICS_RESOURCE_TYPES)
+        score = build_score_implementation_from_resource(resource).score
+        alleles = region_alleles_for(score, chrom, start, end)
+        # The score ids a bulk read would ask for -- the same filter
+        # ``_do_histogram_bulk`` builds its result from, since a null
+        # histogram has nothing to accumulate.
+        nucleotides = alleles is None or serves_allele_arrays(score, [
+            score_id for score_id, conf in all_hist_confs.items()
+            if not isinstance(conf, NullHistogramConfig)])
         try:
             if chrom is not None and start is not None and end is not None \
+                    and nucleotides \
                     and GenomicScoreImplementation._can_bulk_histogram(
                         resource, all_hist_confs):
                 histograms = GenomicScoreImplementation._do_histogram_bulk(
                     resource, all_hist_confs, chrom, start, end,
-                    coverage=coverage)
+                    coverage=coverage, alleles=alleles)
             else:
                 histograms = GenomicScoreImplementation._do_histogram(
                     resource, all_hist_confs, chrom, start, end,
-                    coverage=coverage)
-            return RegionScanResult(histograms, coverage)
+                    coverage=coverage, alleles=alleles)
+            return RegionScanResult(histograms, coverage, alleles)
         except MalformedResourceError as err:
             report_resource_failure(
                 err, "could not build the histograms of",
@@ -1363,65 +1375,18 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         return merged_histograms
 
     @staticmethod
-    def _merge_coverage(
-        resource: GenomicResource,
-        *results: RegionScanResult,
-    ) -> CoverageStatistics | None:
-        """Fold the regions' coverage, or ``None`` for an uncovered kind.
-
-        The fold sorts the regions into genomic order rather than
-        trusting the task-argument order they arrived in, is keyed by
-        chromosome, and within one chromosome ``RegionCoverage.merge``
-        still refuses a pair that is not adjacent-and-in-order -- a gap
-        or overlap fails the build rather than mis-counting it.
-        """
-        coverages = sorted(
-            (result.coverage for result in results
-             if result.coverage is not None),
-            key=lambda coverage: (
-                coverage.chrom,
-                coverage.start if coverage.start is not None else 0))
-        if not coverages:
-            return None
-        statistics = CoverageStatistics()
-        try:
-            for coverage in coverages:
-                statistics.fold_region(coverage)
-        except ValueError as err:
-            report_resource_failure(
-                err, "could not merge the coverage of",
-                resource.resource_id)
-            raise
-        return statistics
-
-    @staticmethod
-    def _save_and_plot_coverage(
-        resource: GenomicResource,
-        statistics: CoverageStatistics | None,
-    ) -> None:
-        if statistics is None:
-            return
-        with resource.proto.open_raw_file(
-                resource, COVERAGE_STATISTICS_FILE, mode="wt") as outfile:
-            outfile.write(statistics.serialize())
-        lengths = statistics.segment_lengths_global()
-        if lengths is None:
-            return
-        with resource.proto.open_raw_file(
-                resource, COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
-                mode="wb") as outfile:
-            plot_segment_length_histogram(outfile, lengths)
-
-    @staticmethod
     def _merge_and_save_histograms(
         resource: GenomicResource,
         *results: RegionScanResult,
     ) -> dict[str, Histogram]:
         merged_histograms = GenomicScoreImplementation._merge_histograms(
             resource, *(result.histograms for result in results))
-        GenomicScoreImplementation._save_and_plot_coverage(
-            resource,
-            GenomicScoreImplementation._merge_coverage(resource, *results))
+        save_and_plot_coverage(resource, merge_region_coverage(
+            resource.resource_id,
+            (result.coverage for result in results)))
+        save_allele_statistics(resource, merge_region_alleles(
+            resource.resource_id,
+            (result.alleles for result in results)))
         return GenomicScoreImplementation._save_histograms(
             resource, merged_histograms)
 

@@ -13,6 +13,7 @@ from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.coverage import (
     CoverageStatistics,
     RegionCoverage,
+    merge_region_coverage,
 )
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
@@ -268,7 +269,8 @@ def test_coverage_is_chunk_invariant(
             min(start + region_size - 1, 60))
         for start in range(1, 61, region_size)
     ]
-    stats = GenomicScoreImplementation._merge_coverage(resource, *results)
+    stats = merge_region_coverage(
+        resource.resource_id, (result.coverage for result in results))
 
     assert stats is not None
     assert stats.covered_by_chromosome() == {"chr1": COVERED}
