@@ -504,8 +504,12 @@ class PipelineValidation(AsyncAnnotationBaseView):
     replaces it with a bound. The HTTP contract is unchanged: the same
     statuses and the same message bodies as before.
 
-    Whether the endpoint needs a resource-resolving build at all, and
-    whether its results should be memoised, is #666 -- not decided here.
+    Both of the questions #666 raised about that build are now answered. The
+    build stays: the editor's green state promises that the config builds
+    against the GRR, and #666 decided that promise is worth what it costs.
+    And its result is memoised, by a digest of the config text, so the
+    repeat cost of a debounced editing session is a dictionary lookup
+    (#833 -- see ``validation_cache`` above and ``_memoise`` below).
     """
 
     throttle_classes: ClassVar = [PipelineValidationRateThrottle]
@@ -514,12 +518,17 @@ class PipelineValidation(AsyncAnnotationBaseView):
     #: request -- DRF builds a fresh view object per request, and a memo that
     #: died with it would never see a second keystroke.
     #:
-    #: Private to this view, unlike the pools and ``lru_cache`` on
-    #: ``AnnotationMixin``: it caches *this endpoint's* verdicts, which no
-    #: other path produces or consumes.
+    #: Here rather than on ``AnnotationMixin`` because it joins the other
+    #: validate-only bounds below (``MAX_CONFIG_LENGTH``, ``MAX_ANNOTATORS``,
+    #: ``MAX_EXPANDED_ANNOTATORS``, ``MAX_VALIDATIONS_IN_FLIGHT``). Not
+    #: because the mixin holds only shared things -- ``VALIDATE_EXECUTOR``
+    #: is up there and has exactly one user, this view -- but because a memo
+    #: of *this* endpoint's verdicts on the shared mixin would be visible to
+    #: the job, editor and single-allele views, which neither produce nor
+    #: consume one.
     validation_cache: ClassVar[ValidationResultCache] = ValidationResultCache(
-        settings.VALIDATION_CACHE_SIZE,
-        settings.VALIDATION_CACHE_TTL_SECONDS,
+        capacity=settings.VALIDATION_CACHE_SIZE,
+        ttl_seconds=settings.VALIDATION_CACHE_TTL_SECONDS,
     )
 
     # Nothing on this path bounds the body Django hands to DRF's parsers.
@@ -744,8 +753,7 @@ class PipelineValidation(AsyncAnnotationBaseView):
         # when the answer is already in hand would shed for nothing.
         memoised = self.validation_cache.get(content, self.grr)
         if memoised is not None:
-            return Response(
-                {"errors": memoised}, status=views.status.HTTP_200_OK)
+            return self._verdict_response(memoised)
 
         # Admission control, checked exactly once, here: after every bound
         # that can refuse from the request alone, and immediately before the
@@ -814,23 +822,46 @@ class PipelineValidation(AsyncAnnotationBaseView):
 
         return self._memoise(content, errors)
 
+    @staticmethod
+    def _verdict_response(errors: str) -> Response:
+        """Render a verdict as this endpoint's 200.
+
+        The one place a 200 leaves this view -- the memo hit and the two
+        computed outcomes all come through here -- so the shape the editor
+        reads (``errors``, empty when the config builds) is stated once.
+        """
+        return Response({"errors": errors}, status=views.status.HTTP_200_OK)
+
     def _memoise(self, content: str, errors: str) -> Response:
-        """Remember this verdict and render it (#833).
+        """Remember a freshly computed verdict, and render it (#833).
 
-        The one place a 200 leaves this view, so it is also the one place a
-        verdict enters the memo. Both outcomes are memoised -- a config that
-        does not build has a verdict too, and the editor re-posts a broken
-        config as insistently as a working one.
+        The one place a verdict *enters* the memo, which is why it is
+        separate from ``_verdict_response``: a memo hit renders without
+        storing, and had one helper done both, the hit path would have had to
+        re-implement the rendering.
 
-        The refusals deliberately do not come through here. A 400 is a
-        property of the *request* (its declared length, its body shape, how
-        many annotators the config declares or expands to) rather than of
-        the repository, and the two counted refusals are cheap to re-derive
-        next time; a 503 is a property of the moment. Only the verdict --
-        the thing that cost a build -- is worth remembering.
+        Both computed outcomes are memoised -- a config that does not build
+        has a verdict too, and the editor re-posts a broken config as
+        insistently as a working one.
+
+        The refusals deliberately do not come through here, because a memo
+        entry is a 200 and turning a refusal into one on its second send
+        would be a contract change. A 503 is a property of the moment, and
+        three of the four 400s are properties of the request alone -- its
+        declared length, its body shape, how many annotators the config
+        *declares* -- all cheap to re-derive.
+
+        The fourth, ``MAX_EXPANDED_ANNOTATORS``, is not: what a wildcard
+        expands to is a property of the repository. So the verdict of a
+        config that expands to just under the bound is TTL-bounded like any
+        other -- if the repository grew past it, the memo would keep saying
+        200 until the entry expired. Not reachable today (a live process
+        never re-reads the repository; see
+        ``docs/833-validate-result-memo.md``), and inside the staleness bound
+        this endpoint documents either way.
         """
         self.validation_cache.put(content, errors, self.grr)
-        return Response({"errors": errors}, status=views.status.HTTP_200_OK)
+        return self._verdict_response(errors)
 
     @staticmethod
     async def _await_cancellable(future: Future[_T]) -> _T:
@@ -924,8 +955,10 @@ class PipelineValidation(AsyncAnnotationBaseView):
         """Build the pipeline for validation, on a worker thread.
 
         The built pipeline is deliberately dropped: validation only cares
-        whether the build raises. (Whether the build is needed at all, and
-        whether its verdict should be memoised, is #666.)
+        whether the build raises. That is also why the memo (#833) stores a
+        string rather than this -- the verdict is the whole of what the
+        endpoint needs, and it is what makes an entry small enough for a
+        bound on the entry count to be a bound on memory.
         """
         # LOAD-TEST AID (iossifovlab/gain#164, extended here by #659): the
         # same env-gated, defaults-to-0.0 delay the cache's loader applies.

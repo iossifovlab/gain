@@ -21,8 +21,14 @@ the posted config directly; its build reads the same
 That endpoint is anonymous, so its own ``pipeline_validate`` throttle (120/min)
 applies unless the run logs in with an ``--email`` whose user is *unlimited* --
 which is what ``run_daphne_server.sh`` sets up, and what keeps a K=32 burst
-from turning into 429s. Nothing caches a validation result, so every request
-pays its own build (no cold/warm distinction for this target).
+from turning into 429s.
+
+The endpoint memoises its verdict by a digest of the config text
+(iossifovlab/gain#833), so a config it has already answered costs a
+dictionary lookup rather than a build. This harness measures builds, so
+``_slow_request_spec`` gives every request a config the memo has not seen.
+Given that, every request pays its own build (no cold/warm distinction for
+this target).
 
 What it does
 ------------
@@ -75,6 +81,7 @@ import contextlib
 import json
 import sys
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -220,7 +227,7 @@ def _csrf_header(session: aiohttp.ClientSession) -> dict[str, str]:
 
 
 def _slow_request_spec(
-    args: argparse.Namespace, index: int = 0,
+    args: argparse.Namespace,
 ) -> tuple[str, dict[str, Any]]:
     """Return the (path, JSON payload) of one slow request for the target.
 
@@ -228,17 +235,25 @@ def _slow_request_spec(
     different bodies: annotate names a saved pipeline, validation hands over
     the config text itself.
 
-    ``index`` distinguishes the requests of one burst. It matters only for
-    ``validate``, which memoises its verdict by a digest of the config text
-    (iossifovlab/gain#833): a burst of N identical configs is one build and
-    N-1 lookups, and this harness exists to measure what N concurrent
-    *builds* do to the process. A trailing yaml comment is discarded by the
-    parser, so each request builds the very same pipeline while presenting
-    the memo with a key it has not seen.
+    Call it once per request, not once per burst. ``validate`` memoises its
+    verdict by a digest of the config text (iossifovlab/gain#833), so a text
+    this endpoint has already answered costs a dictionary lookup rather than
+    the build this harness exists to measure -- and "already answered"
+    reaches across runs, not just across one burst, because the recorded
+    recipe drives one long-lived server at several K values inside a single
+    TTL window. ``docs/833-validate-result-memo.md`` works that through.
+
+    Hence a fresh uuid per call, which is unique within a burst and between
+    runs by construction. It rides in a trailing yaml comment, which the
+    parser discards -- so every request builds the identical pipeline while
+    presenting the memo with a key it has not seen.
     """
     if args.target == "validate":
         return VALIDATE_PATH, {
-            "config": f"{args.validate_config}\n# burst request {index}\n"}
+            "config": (
+                f"{args.validate_config}\n"
+                f"# unseen by the validation memo: {uuid.uuid4().hex}\n"
+            )}
     return ANNOTATE_PATH, {
         "annotatable": {"chrom": "chr1", "pos": "3"},
         "pipeline_id": args.pipeline_id,
@@ -336,10 +351,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
 
         # One spec per request, not one shared spec: see _slow_request_spec
         # on why the validate target must not repeat a config text.
-        specs = [
-            _slow_request_spec(args, index)
-            for index in range(args.concurrency)
-        ]
+        specs = [_slow_request_spec(args) for _ in range(args.concurrency)]
         wall_start = time.monotonic()
         slow_results = await asyncio.gather(*[
             _fire_slow_request(
