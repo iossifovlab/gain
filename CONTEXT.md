@@ -117,6 +117,17 @@ same term — a position with data — counted the way the kind means a row.
 _Avoid_: covered base, coverage depth (nothing here counts how many rows
 span a position), breadth
 
+**Fragment**:
+A table row of a tabular score **as stored** — unmerged and value-blind, the
+deliberate opposite of a **segment**. Overlapping, nested and duplicate rows
+are each their own fragment, and a fragment's length is its own span,
+`pos_end - pos_begin + 1`. Only a fragment score publishes fragment
+statistics — a count and a length histogram, on the same fixed log2 bins as
+segment lengths. Nothing publishes fragment *segments*: that would need an
+exact run algebra fragments do not have (ADR 0020, amended by gain#848).
+_Avoid_: row (ambiguous — every kind has table rows), interval, CNV, call,
+event
+
 **Allele class**:
 What an allele-score row's ref/alt pair is, classified VCF-anchored as one of
 exactly five values — **substitution**, **insertion**, **deletion**,
@@ -234,6 +245,12 @@ reason a read of one is not a read of the other
   only where no different-valued rows overlap. An **allele score** has
   **covered positions** but no **segments**: its rows are points, so there is
   nothing to merge and nothing to union — the count is of distinct positions.
+- The **regions** a contig is scanned in own the rows whose `pos_begin` falls
+  inside them, and measure those rows whole. So the regions partition the
+  contig's **fragments**, and every statistic that sums over rows is
+  independent of how the contig was split. **Covered positions** are the one
+  exception: a union is additive only across disjoint extents, so coverage
+  partitions *positions* — by clipping — wherever rows can overlap.
 - Every allele-score row has exactly one **allele class**, so the counts of
   **substitution**, **insertion**, **deletion**, **complex** and **other** sum
   to the row count. **Segments** and **covered positions** describe *where* a
