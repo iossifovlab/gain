@@ -745,7 +745,7 @@ def _parse_gtf_attributes(data: str) -> dict[str, str]:
 #: FlyBase also relies on the ``5UTR``/``3UTR`` spellings in
 #: ``GTF_IGNORED_FEATURES`` and on ``gene_symbol`` as its gene label. Check a
 #: new file's ``cut -f3 | sort -u`` against the module's ``GTF_*`` constants
-#: plus the loop's literal ``exon`` and ``Selenocysteine`` branches. Flavour
+#: plus the loop's literal ``Selenocysteine`` branch. Flavour
 #: is an intake concern only -- ``serialization.py`` normalises back out,
 #: always writing ``transcript`` and ``gene_name``.
 GTF_TRANSCRIPT_FEATURES = frozenset({
@@ -786,6 +786,11 @@ GTF_IGNORED_FEATURES = frozenset({
     "five_prime_utr",
     "three_prime_utr",
     "CDS",
+})
+
+#: Features that append an exon to their transcript's model.
+GTF_EXON_FEATURES = frozenset({
+    "exon",
 })
 
 #: Features that delimit the coding sequence. Each record widens its
@@ -898,7 +903,7 @@ def parse_gtf_gene_models_format(
             assert transcript_model.tr_id not in transcript_models
             transcript_models[transcript_model.tr_id] = transcript_model
             continue
-        if feature == "exon":
+        if feature in GTF_EXON_FEATURES:
             transcript_model = _parent_transcript(
                 transcript_models, feature, tr_id, skipped_transcripts)
             exon = Exon(

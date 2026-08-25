@@ -1,9 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""GTF records of ignored features are skipped before attribute parsing.
-
-An ignored record contributes nothing to the models, so it is not required
-to carry a ``transcript_id`` -- Ensembl ``gene`` records genuinely lack one.
-"""
+"""GTF records of ignored features are skipped before attribute parsing,
+so no ``transcript_id`` is required of them."""
 
 import pytest
 from gain.genomic_resources.gene_models import parsers
@@ -39,12 +36,14 @@ def test_an_ignored_record_needs_no_transcript_id(feature: str) -> None:
     assert gene_models.transcript_models == {}
 
 
-def test_the_ignored_set_claims_no_accepted_feature() -> None:
+def test_the_ignored_set_claims_no_feature_handled_later() -> None:
     """The ignore check runs first, so an overlap would silently win."""
-    accepted = (
+    handled_later = (
         parsers.GTF_TRANSCRIPT_FEATURES
+        | parsers.GTF_EXONLESS_TRANSCRIPT_FEATURES
+        | parsers.GTF_EXON_FEATURES
         | parsers.GTF_CODON_FEATURES
-        | {"exon", "Selenocysteine"}
+        | {"Selenocysteine"}
     )
 
-    assert not parsers.GTF_IGNORED_FEATURES & accepted
+    assert not parsers.GTF_IGNORED_FEATURES & handled_later
