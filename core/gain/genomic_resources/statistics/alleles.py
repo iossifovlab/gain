@@ -384,7 +384,8 @@ class AlleleStatistics(Statistic):
     def __init__(self) -> None:
         super().__init__(
             "alleles",
-            "Allele counts, covered positions and class totals")
+            "Allele counts, covered positions, class totals and the "
+            "substitution matrix")
         self._regions: dict[str, RegionAlleles] = {}
 
     def fold_region(self, region: RegionAlleles) -> None:

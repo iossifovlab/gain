@@ -196,6 +196,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         # life of this object, which is built per render.
         self._coverage_statistics: CoverageStatistics | None = None
         self._coverage_statistics_read = False
+        # The Alleles section asks twice too: the tables and the matrix
+        # payload.
+        self._allele_statistics: AlleleStatistics | None = None
+        self._allele_statistics_read = False
 
     def get_config_histograms(self) -> dict[str, Any]:
         """Collect all configurations of histograms for the genomic score."""
@@ -262,11 +266,17 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         Absence is an expected state for the reason
         :meth:`get_coverage_statistics` gives: the rollout is lazy.
         """
+        if self._allele_statistics_read:
+            return self._allele_statistics
         try:
             content = self.resource.get_file_content(ALLELE_STATISTICS_FILE)
         except FileNotFoundError:
-            return None
-        return AlleleStatistics.deserialize(content)
+            statistics = None
+        else:
+            statistics = AlleleStatistics.deserialize(content)
+        self._allele_statistics = statistics
+        self._allele_statistics_read = True
+        return statistics
 
     def get_allele_display(self) -> AlleleDisplay | None:
         """The substitution-matrix render payload, or ``None`` if not built.

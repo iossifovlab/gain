@@ -274,6 +274,9 @@ def test_a_row_spanning_several_chunks_is_counted_once(
     counts = AlleleStatistics.deserialize(
         whole.get_file_content(ALLELE_STATISTICS_FILE)).global_counts()
     assert (counts.allele_count, counts.covered_positions) == (4, 3)
+    assert counts.substitution_matrix is not None
+    assert sum(counts.substitution_matrix.values()) \
+        == counts.class_counts["substitution"]
     assert chunked.get_file_content(ALLELE_STATISTICS_FILE) \
         == whole.get_file_content(ALLELE_STATISTICS_FILE)
 
@@ -315,6 +318,8 @@ def test_a_table_with_no_key_columns_counts_every_row_as_other(
     assert counts.allele_count == 3
     assert counts.covered_positions == 2
     assert counts.class_counts["other"] == 3
+    assert counts.substitution_matrix is not None
+    assert sum(counts.substitution_matrix.values()) == 0
 
 
 def test_a_backend_refusing_the_nucleotides_takes_the_per_record_path(
@@ -447,6 +452,8 @@ def test_a_table_declaring_only_one_key_column_counts_every_row_as_other(
     counts = stats.global_counts()
     assert counts.allele_count == 3
     assert counts.class_counts["other"] == 3
+    assert counts.substitution_matrix is not None
+    assert sum(counts.substitution_matrix.values()) == 0
 
 
 def _alleles_section(page: str) -> str:
@@ -596,6 +603,31 @@ def test_info_page_without_the_statistics_file_says_not_computed(
         GenomicScoreImplementation(resource).get_info())
 
     assert "not computed" in section
+
+
+def test_one_page_render_reads_the_statistics_file_once(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The Alleles section asks for the statistic twice -- the tables and
+    # the matrix payload -- and over an HTTP or S3 repository each ask
+    # would be a network round trip, so the read is cached per
+    # implementation object, as the coverage statistic's is.
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    impl = GenomicScoreImplementation(resource)
+    reads = []
+    original = type(resource).get_file_content
+
+    def counting(self: GenomicResource, path: str, **kwargs: Any) -> Any:
+        if path == ALLELE_STATISTICS_FILE:
+            reads.append(path)
+        return original(self, path, **kwargs)
+
+    monkeypatch.setattr(type(resource), "get_file_content", counting)
+    impl.get_info()
+
+    assert len(reads) == 1
 
 
 def test_statistics_hash_is_untouched_by_the_allele_build(
