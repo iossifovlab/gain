@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -999,6 +1000,40 @@ def get_parser(
 
 INFERENCE_SAMPLE_ROWS = 50
 
+# refseq and ccds declare identical column layouts, so a headerless file
+# matching one matches the other; only the content of the transcript-name
+# column can separate them.
+_REFSEQ_TRANSCRIPT_NAME = re.compile(r"[NX][MR]_\d+(\.\d+)?")
+_CCDS_TRANSCRIPT_NAME = re.compile(r"CCDS\d+(\.\d+)?")
+
+
+def _break_refseq_ccds_tie(
+    infile: IO, sampled_rows: int,
+) -> tuple[str, str] | None:
+    """Choose between refseq and ccds by transcript-name content.
+
+    Returns the winning format and the evidence for it, or None when the
+    sampled names do not all share one format's accession shape.
+    """
+    infile.seek(0)
+    names = pd.read_csv(
+        infile, sep="\t", header=None, usecols=[1], dtype=str,
+        nrows=sampled_rows,
+    )[1].tolist()
+    if not names:
+        return None
+    if all(_REFSEQ_TRANSCRIPT_NAME.fullmatch(name) for name in names):
+        return (
+            "refseq",
+            "every sampled transcript name is a RefSeq accession",
+        )
+    if all(_CCDS_TRANSCRIPT_NAME.fullmatch(name) for name in names):
+        return (
+            "ccds",
+            "every sampled transcript name is a CCDS id",
+        )
+    return None
+
 
 def _describe_exception(ex: Exception) -> str:
     """Render an exception as a rejection reason.
@@ -1028,12 +1063,19 @@ class FormatInference:
     matched: tuple[str, ...]
     rejected: tuple[tuple[str, str], ...]
     sampled_rows: int
+    tie_break: tuple[str, str] | None = None
 
     @property
     def file_format(self) -> str | None:
-        """The inferred format, or None unless exactly one format matched."""
+        """The inferred format, or None when the file stays ambiguous.
+
+        Exactly one matching format is an inference; a multi-format
+        collision resolved by a content tie-break is one too.
+        """
         if len(self.matched) == 1:
             return self.matched[0]
+        if self.tie_break is not None:
+            return self.tie_break[0]
         return None
 
     def report(self) -> str:
@@ -1101,11 +1143,16 @@ def infer_gene_models_format(infile: IO) -> FormatInference:
                  "has this format's column layout but yielded no "
                  "transcript models"))
 
+    tie_break = None
+    if sorted(matched) == ["ccds", "refseq"]:
+        tie_break = _break_refseq_ccds_tie(infile, sampled_rows)
+
     logger.info("inferred file formats: %s", matched)
     return FormatInference(
         matched=tuple(matched),
         rejected=tuple(rejected),
         sampled_rows=sampled_rows,
+        tie_break=tie_break,
     )
 
 
