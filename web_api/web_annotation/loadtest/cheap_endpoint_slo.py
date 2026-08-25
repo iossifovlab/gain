@@ -219,15 +219,26 @@ def _csrf_header(session: aiohttp.ClientSession) -> dict[str, str]:
     return {}
 
 
-def _slow_request_spec(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
+def _slow_request_spec(
+    args: argparse.Namespace, index: int = 0,
+) -> tuple[str, dict[str, Any]]:
     """Return the (path, JSON payload) of one slow request for the target.
 
     The two targets ask for the same thing -- a GRR pipeline build -- through
     different bodies: annotate names a saved pipeline, validation hands over
     the config text itself.
+
+    ``index`` distinguishes the requests of one burst. It matters only for
+    ``validate``, which memoises its verdict by a digest of the config text
+    (iossifovlab/gain#833): a burst of N identical configs is one build and
+    N-1 lookups, and this harness exists to measure what N concurrent
+    *builds* do to the process. A trailing yaml comment is discarded by the
+    parser, so each request builds the very same pipeline while presenting
+    the memo with a key it has not seen.
     """
     if args.target == "validate":
-        return VALIDATE_PATH, {"config": args.validate_config}
+        return VALIDATE_PATH, {
+            "config": f"{args.validate_config}\n# burst request {index}\n"}
     return ANNOTATE_PATH, {
         "annotatable": {"chrom": "chr1", "pos": "3"},
         "pipeline_id": args.pipeline_id,
@@ -323,13 +334,18 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         # Give the sampler a moment to record a cheap-baseline before the burst.
         await asyncio.sleep(args.warmup)
 
-        path, payload = _slow_request_spec(args)
+        # One spec per request, not one shared spec: see _slow_request_spec
+        # on why the validate target must not repeat a config text.
+        specs = [
+            _slow_request_spec(args, index)
+            for index in range(args.concurrency)
+        ]
         wall_start = time.monotonic()
         slow_results = await asyncio.gather(*[
             _fire_slow_request(
                 session, base_url, path, payload, timeout=args.timeout,
             )
-            for _ in range(args.concurrency)
+            for path, payload in specs
         ])
         wall_elapsed = time.monotonic() - wall_start
 
