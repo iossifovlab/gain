@@ -1085,6 +1085,12 @@ class FormatInference:
                 f"the format is {self.file_format}, from the first "
                 f"{self.sampled_rows} records"
             )
+            if self.tie_break is not None:
+                headline += (
+                    f"; {len(self.matched)} formats matched "
+                    f"({', '.join(self.matched)}) and the tie was broken "
+                    f"because {self.tie_break[1]}"
+                )
         elif len(self.matched) > 1:
             headline = (
                 f"{len(self.matched)} formats match the first "
