@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import json
 from collections.abc import Callable, Generator, Iterable
 from typing import Any, ClassVar, NamedTuple, TypeVar, cast
@@ -59,12 +60,12 @@ from gain.genomic_resources.statistics.alleles import (
     ALLELE_STATISTICS_FILE,
     AlleleStatistics,
     RegionAlleles,
+    allele_arrays_folded_into,
     merge_region_alleles,
     records_folded_into,
     region_alleles_for,
     save_allele_statistics,
     serves_allele_arrays,
-    validated_allele_batches,
 )
 from gain.genomic_resources.statistics.coverage import (
     COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
@@ -73,6 +74,7 @@ from gain.genomic_resources.statistics.coverage import (
     CoverageRow,
     CoverageStatistics,
     RegionCoverage,
+    accumulate_coverage,
     merge_region_coverage,
     normalize_values,
     save_and_plot_coverage,
@@ -124,12 +126,34 @@ _SEGMENT_STATISTICS_RESOURCE_TYPES = frozenset(
     equivalent_resource_types("position_score"))
 
 
+def _allele_batches(
+    score: GenomicScore,
+    chrom: str,
+    start: int,
+    end: int,
+    score_ids: list[str],
+    *,
+    alleles: RegionAlleles,
+    batch_size: int,
+) -> Iterable[RecordArrays]:
+    """The bulk producer for a region carrying an allele statistic.
+
+    Only the score kind differs from the shared producer, and only the
+    statistics module knows that; this adapter is what lets
+    ``_bulk_region_scan`` stay a driver that reads whatever producer it
+    was handed.
+    """
+    return allele_arrays_folded_into(
+        cast(AlleleScore, score), chrom, start, end, score_ids,
+        batch_size=batch_size, alleles=alleles)
+
+
 class RegionScanResult(NamedTuple):
     """What one region's statistics task hands to the merge step."""
 
     histograms: dict[str, Histogram]
     coverage: RegionCoverage | None
-    alleles: RegionAlleles | None = None
+    alleles: RegionAlleles | None
 
 
 class GenomicScoreImplementation(ScoreImplementationBase):
@@ -842,51 +866,20 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             ) -> None:
                 GenomicScoreImplementation._accumulate_arrays(
                     arrays, result, region, score)
-                GenomicScoreImplementation._accumulate_coverage(
-                    arrays, coverage, region)
+                accumulate_coverage(arrays, coverage, region)
 
             accumulate = accumulate_with_coverage
 
+        batches = None
+        if alleles is not None:
+            # The widened read, folding the nucleotides off each batch on
+            # its way to the shared door; what the door and this scan see
+            # is the same three-column batch as ever.
+            batches = functools.partial(
+                _allele_batches, alleles=alleles,
+                batch_size=GenomicScoreImplementation._SCAN_BATCH_SIZE)
         return GenomicScoreImplementation._bulk_region_scan(
-            resource, result, chrom, start, end, accumulate, alleles=alleles)
-
-    @staticmethod
-    def _accumulate_coverage(
-        arrays: RecordArrays,
-        coverage: RegionCoverage,
-        region: tuple[str, int | None, int | None],
-    ) -> None:
-        """Fold one batch of column arrays into the region's coverage.
-
-        Clipping only: rows are clipped to the region on both edges -- a
-        record beginning past the region's end covers nothing, the same
-        verdict the per-record path gets from ``clip_span`` (gain#636) --
-        and handed to :meth:`RegionCoverage.add_interval_batch`, which
-        owns the run-collapse algebra.  Nothing here knows what "equal
-        values" means.  The batches the backends return rarely carry a
-        row outside the queried region, so the all-kept batch skips the
-        mask copies entirely.
-        """
-        _chrom, start, end = region
-        pos_begin, pos_end, value_cells = arrays
-        keep = np.ones(pos_begin.shape[0], dtype=bool)
-        if start is not None:
-            keep &= pos_end >= start
-        if end is not None:
-            keep &= pos_begin <= end
-        if not keep.any():
-            return
-        if keep.all():
-            left, right = pos_begin, pos_end
-            cells = list(value_cells.values())
-        else:
-            left, right = pos_begin[keep], pos_end[keep]
-            cells = [column[keep] for column in value_cells.values()]
-        if start is not None:
-            left = np.maximum(left, start)
-        if end is not None:
-            right = np.minimum(right, end)
-        coverage.add_interval_batch(left, right, cells)
+            resource, result, chrom, start, end, accumulate, batches=batches)
 
     @staticmethod
     def _bulk_region_scan(
@@ -900,7 +893,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
              tuple[str, int | None, int | None], GenomicScore],
             None],
         *,
-        alleles: RegionAlleles | None = None,
+        batches: Callable[
+            [GenomicScore, str, int, int, list[str]],
+            Iterable[RecordArrays]] | None = None,
     ) -> dict[str, _AccT]:
         """Drive a bulk region scan, folding each batch into ``result``.
 
@@ -925,27 +920,27 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         the per-record validators reset on a change of chromosome.
         """
         impl = build_score_implementation_from_resource(resource)
-        batch_size = GenomicScoreImplementation._SCAN_BATCH_SIZE
         with impl.score.open() as score:
-            if alleles is not None:
-                # The widened read: the same batches plus the two key
-                # columns, through the same door (see
-                # ``validated_allele_batches``).
-                for batch in validated_allele_batches(
-                        cast(AlleleScore, score), chrom, start, end,
-                        list(result), batch_size):
-                    accumulate(
-                        batch[:3], result, (chrom, start, end), score)
-                    alleles.add_allele_batch(
-                        batch.pos_begin, batch.reference, batch.alternative)
-                return result
-            batches = score.validate_record_arrays(
-                score.fetch_region_value_arrays(
-                    chrom, start, end, list(result), batch_size=batch_size),
-                chrom)
-            for arrays in batches:
+            if batches is None:
+                batches = GenomicScoreImplementation._validated_batches
+            for arrays in batches(score, chrom, start, end, list(result)):
                 accumulate(arrays, result, (chrom, start, end), score)
         return result
+
+    @staticmethod
+    def _validated_batches(
+        score: GenomicScore,
+        chrom: str,
+        start: int,
+        end: int,
+        score_ids: list[str],
+    ) -> Iterable[RecordArrays]:
+        """The default producer: the shared read through the shared door."""
+        return score.validate_record_arrays(
+            score.fetch_region_value_arrays(
+                chrom, start, end, score_ids,
+                batch_size=GenomicScoreImplementation._SCAN_BATCH_SIZE),
+            chrom)
 
     @staticmethod
     def _accumulate_arrays(
@@ -1226,12 +1221,18 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 in _SEGMENT_STATISTICS_RESOURCE_TYPES)
         score = build_score_implementation_from_resource(resource).score
         alleles = region_alleles_for(score, chrom, start, end)
-        # The score ids a bulk read would ask for -- the same filter
-        # ``_do_histogram_bulk`` builds its result from, since a null
-        # histogram has nothing to accumulate.
-        nucleotides = alleles is None or serves_allele_arrays(score, [
-            score_id for score_id, conf in all_hist_confs.items()
-            if not isinstance(conf, NullHistogramConfig)])
+        nucleotides = True
+        if alleles is not None:
+            # Asked of an OPEN score, and of the score ids a bulk read
+            # would ask for -- the filter ``_do_histogram_bulk`` builds
+            # its result from, since a null histogram has nothing to
+            # accumulate.  Unopened, a table naming its key columns
+            # nowhere but in its own header answers False and costs the
+            # whole region the bulk scan for no gain in correctness.
+            with score.open():
+                nucleotides = serves_allele_arrays(score, [
+                    score_id for score_id, conf in all_hist_confs.items()
+                    if not isinstance(conf, NullHistogramConfig)])
         try:
             if chrom is not None and start is not None and end is not None \
                     and nucleotides \

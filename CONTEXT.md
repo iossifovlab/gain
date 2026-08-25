@@ -108,6 +108,12 @@ A position spanned by at least one table row — **value-blind**, union
 semantics, computed independently of **segments**. Σ segment lengths can
 exceed the covered count wherever different-valued rows overlap, so neither
 statistic may be derived from the other (ADR 0020).
+What a row *spans* is the kind's own answer, not the columns': a **position
+score** and a **fragment score** span the row's interval and their covered
+count is a union of those, whereas an **allele score** row is the point it
+sits at, so its covered count is the number of **distinct positions** its
+rows sit on and an optional `pos_end` reaches over nothing. Both are the
+same term — a position with data — counted the way the kind means a row.
 _Avoid_: covered base, coverage depth (nothing here counts how many rows
 span a position), breadth
 
@@ -225,7 +231,9 @@ reason a read of one is not a read of the other
 - A **segment** merges touching-or-overlapping *equal-valued* rows of one
   **resource**'s table; a **covered position** is spanned by *any* row, values
   ignored. Segments are value-aware, coverage is not, and the two coincide
-  only where no different-valued rows overlap.
+  only where no different-valued rows overlap. An **allele score** has
+  **covered positions** but no **segments**: its rows are points, so there is
+  nothing to merge and nothing to union — the count is of distinct positions.
 - Every allele-score row has exactly one **allele class**, so the counts of
   **substitution**, **insertion**, **deletion**, **complex** and **other** sum
   to the row count. **Segments** and **covered positions** describe *where* a

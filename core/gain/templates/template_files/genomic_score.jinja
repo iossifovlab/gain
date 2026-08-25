@@ -148,7 +148,7 @@
 
 <h2>Alleles</h2>
 {% set alleles = impl.get_allele_statistics() %}
-{% if alleles != None %}
+{% if alleles is not none %}
 {% set global_alleles = alleles.global_counts() %}
 <div class="scrollable-table-container">
 <table>
@@ -166,7 +166,7 @@
             <td>{{ counts.allele_count }}</td>
         </tr>
     {%- endfor %}
-    <tr class="coverage-global">
+    <tr>
         <td>all chromosomes</td>
         <td>{{ global_alleles.covered_positions }}</td>
         <td>{{ global_alleles.allele_count }}</td>

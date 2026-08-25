@@ -113,12 +113,10 @@ def test_the_statistic_refuses_a_bare_value() -> None:
 def test_merging_two_statistics_of_one_chromosome_needs_adjacency() -> None:
     # Two DESERIALIZED statistics carry no extents, so their regions
     # refuse to merge -- the same guard the coverage statistic has.
-    left = AlleleStatistics.deserialize(AlleleStatistics().serialize())
-    left.fold_region(RegionAlleles.frozen(
-        "chr1", AlleleStatistics().global_counts()))
+    left = AlleleStatistics()
+    left.fold_region(RegionAlleles.frozen("chr1", 1, 1, {"other": 1}))
     right = AlleleStatistics()
-    right.fold_region(RegionAlleles.frozen(
-        "chr1", AlleleStatistics().global_counts()))
+    right.fold_region(RegionAlleles.frozen("chr1", 1, 1, {"other": 1}))
 
     with pytest.raises(ValueError, match="adjacent-and-in-order"):
         left.merge(right)

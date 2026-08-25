@@ -14,10 +14,16 @@ counted here instead.
 
 Raw counts only.  Anything needing a denominator is computed at render
 time, as the coverage statistic's fractions are.
+
+Laid out like its coverage twin: the per-region accumulator, the
+resource-wide statistic, the fold that merges a scan's regions into one,
+and the write.  The scan wiring that feeds it is in
+``implementations/genomic_scores_impl.py``.
 """
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Generator, Iterable, Iterator
 from typing import Any, NamedTuple
 
@@ -39,28 +45,33 @@ from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     GenomicScore,
     RecordArrays,
+    clip_span,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.statistics.base_statistic import Statistic
+from gain.genomic_resources.statistics.base_statistic import (
+    Statistic,
+    refuse_unmergeable,
+    regions_in_genomic_order,
+)
 
 ALLELE_STATISTICS_FILE = "statistics/alleles.json"
 
-#: The five classes in the order ADR 0020 states them.  The serialized
-#: class map is written in this order, so two builds of one resource
-#: produce byte-identical JSON however the rows arrived.
-CLASS_ORDER: tuple[AlleleClass, ...] = (
-    AlleleClass.SUBSTITUTION,
-    AlleleClass.INSERTION,
-    AlleleClass.DELETION,
-    AlleleClass.COMPLEX,
-    AlleleClass.OTHER,
-)
+#: The five class names, in the order ADR 0020 states them -- which is
+#: the order :class:`AlleleClass` declares them in, so this reads that
+#: order rather than restating it.  The serialized class map is written
+#: in it, so two builds of one resource produce byte-identical JSON
+#: however the rows arrived.
+CLASS_NAMES: tuple[str, ...] = tuple(
+    allele_class.value for allele_class in AlleleClass)
+
+#: How a failed fold of these regions is named in the message.
+_MERGE_FAILURE = "allele statistics"
 
 
 class AlleleCounts(NamedTuple):
     """One chromosome's -- or a whole resource's -- allele counts.
 
-    ``class_counts`` is keyed by the class names in :data:`CLASS_ORDER`
+    ``class_counts`` is keyed by the class names in :data:`CLASS_NAMES`
     and sums to ``allele_count``: every row classifies, ``other``
     absorbing what does not parse as alleles.
     """
@@ -70,6 +81,24 @@ class AlleleCounts(NamedTuple):
     class_counts: dict[str, int]
 
 
+def _total(counts: Iterable[AlleleCounts]) -> AlleleCounts:
+    """The roll-up of several chromosomes' counts into one.
+
+    The one statement of what the ``global`` entry IS -- read when the
+    statistic is serialized and when one is asked for its global counts,
+    which is why that entry is never read back from the file.
+    """
+    class_counts = dict.fromkeys(CLASS_NAMES, 0)
+    allele_count = 0
+    covered = 0
+    for entry in counts:
+        allele_count += entry.allele_count
+        covered += entry.covered_positions
+        for name, count in entry.class_counts.items():
+            class_counts[name] = class_counts.get(name, 0) + count
+    return AlleleCounts(allele_count, covered, class_counts)
+
+
 class RegionAlleles:
     """The allele content of one scanned region, accumulated row by row.
 
@@ -77,12 +106,15 @@ class RegionAlleles:
     rows are legitimate per-transcript data and each is one allele --
     and each POSITION once however many rows sit on it.
 
-    A region owns the rows whose point falls inside it, ``start <= pos
-    <= end``.  That is what makes the statistic chunk-invariant: the
-    regions of a contig partition it, so a position carries rows in
-    exactly one of them and no merge can double-count it.  A row's
-    optional ``pos_end`` takes no part -- an allele's value stands for
-    its ref/alt pair, not for the bases such a column may reach over.
+    A region owns the rows whose point falls inside it, which is what
+    makes the statistic chunk-invariant: the regions of a contig
+    partition it, so a position carries rows in exactly one of them and
+    no merge can double-count it.  A row's optional ``pos_end`` takes no
+    part -- an allele's value stands for its ref/alt pair, not for the
+    bases such a column may reach over -- so ownership is the shared
+    :func:`~gain.genomic_resources.genomic_scores.clip_span` asked about
+    the point, and gain#636's edge is answered there rather than again
+    here.
 
     Distinct positions are counted against the LAST position seen
     rather than a set of every position: the scan's door refuses a
@@ -103,23 +135,23 @@ class RegionAlleles:
         self.end = end
         self.allele_count = 0
         self.covered_positions = 0
-        self._class_counts: dict[AlleleClass, int] = dict.fromkeys(
-            CLASS_ORDER, 0)
+        self._class_counts: dict[str, int] = dict.fromkeys(CLASS_NAMES, 0)
         self._last_pos: int | None = None
 
     @classmethod
     def frozen(
         cls,
         chrom: str,
-        counts: AlleleCounts,
+        allele_count: int,
+        covered_positions: int,
+        class_counts: dict[str, int],
     ) -> RegionAlleles:
         """A region restored from serialized counts, with no scan state."""
         region = cls(chrom, None, None)
-        region.allele_count = counts.allele_count
-        region.covered_positions = counts.covered_positions
-        for allele_class in CLASS_ORDER:
-            region._class_counts[allele_class] = \
-                counts.class_counts.get(allele_class.value, 0)
+        region.allele_count = allele_count
+        region.covered_positions = covered_positions
+        region._class_counts = {
+            name: class_counts.get(name, 0) for name in CLASS_NAMES}
         return region
 
     def counts(self) -> AlleleCounts:
@@ -127,30 +159,26 @@ class RegionAlleles:
         return AlleleCounts(
             self.allele_count,
             self.covered_positions,
-            {
-                allele_class.value: self._class_counts[allele_class]
-                for allele_class in CLASS_ORDER
-            },
-        )
+            dict(self._class_counts))
 
     def _owns(self, pos: int) -> bool:
-        return (self.start is None or pos >= self.start) \
-            and (self.end is None or pos <= self.end)
+        """Whether this region owns the row sitting at ``pos``."""
+        return clip_span(pos, pos, self.start, self.end) is not None
 
-    def _fold(self, pos: int, ref: str | None, alt: str | None) -> None:
-        """Count one owned row.  The whole counting rule, stated once."""
-        self.allele_count += 1
+    def _count_position(self, pos: int) -> None:
         if pos != self._last_pos:
             self.covered_positions += 1
             self._last_pos = pos
-        self._class_counts[classify_allele(ref, alt).allele_class] += 1
 
     def add_allele(
         self, pos: int, ref: str | None, alt: str | None,
     ) -> None:
         """Fold one row, read as the point at ``pos``."""
-        if self._owns(pos):
-            self._fold(pos, ref, alt)
+        if not self._owns(pos):
+            return
+        self.allele_count += 1
+        self._count_position(pos)
+        self._class_counts[classify_allele(ref, alt).allele_class.value] += 1
 
     def add_record(self, record: Record) -> None:
         """Fold one raw record.
@@ -167,13 +195,20 @@ class RegionAlleles:
         reference: np.ndarray,
         alternative: np.ndarray,
     ) -> None:
-        """Fold a batch of column arrays, region ownership vectorized.
+        """Fold a batch of column arrays, the counting vectorized.
 
-        The same rule :meth:`add_allele` applies row by row -- only the
-        ownership test is vectorized.  The classification itself is not:
-        a class is a property of one ref/alt PAIR, and there is no array
-        statement of it that would not be a second spelling of
-        :func:`classify_allele`.
+        The same rule :meth:`add_allele` applies row by row.  Ownership
+        and the distinct-position count are vectorized outright; the
+        classification cannot be -- a class is a property of one ref/alt
+        PAIR, and an array statement of it would be a second spelling of
+        :func:`classify_allele` -- so instead each DISTINCT pair in the
+        batch is classified once and its multiplicity added.  Same
+        function, same answer, called once per pair rather than once per
+        row: a real allele score is overwhelmingly substitutions, so a
+        100,000-row batch usually holds a handful of distinct pairs, and
+        this is ~7x the row-by-row fold over whole-genome data.  (A
+        batch of entirely distinct pairs pays a small tally overhead
+        instead.)
 
         The nucleotide arrays are RAW, as
         :meth:`AlleleScore.fetch_region_allele_arrays` yields them, so
@@ -193,36 +228,34 @@ class RegionAlleles:
             positions = pos_begin[keep]
             refs = reference[keep]
             alts = alternative[keep]
-        for pos, ref, alt in zip(
-                positions.tolist(), refs.tolist(), alts.tolist(),
-                strict=True):
-            self._fold(pos, ref, alt)
+
+        self.allele_count += int(positions.shape[0])
+        # The positions arrive non-decreasing (the door's rule), so the
+        # distinct count is the number of CHANGES within the batch, plus
+        # the batch's first position unless the last batch ended on it.
+        self._count_position(int(positions[0]))
+        self.covered_positions += int(
+            np.count_nonzero(positions[1:] != positions[:-1]))
+        self._last_pos = int(positions[-1])
+
+        for pair, multiplicity in Counter(
+                zip(refs.tolist(), alts.tolist(), strict=True)).items():
+            self._class_counts[
+                classify_allele(*pair).allele_class.value] += multiplicity
 
     def merge(self, other: RegionAlleles) -> None:
         """Fold the adjacent region to the right into this one.
 
-        Refuses a pair that is not adjacent-and-in-order on one
-        chromosome, for the reason
-        :meth:`~gain.genomic_resources.statistics.coverage.RegionCoverage.merge`
-        gives: region statistics are only ever produced over a contig's
-        non-overlapping windows, and it is the adjacency that makes
-        the distinct-position counts simply add.
+        It is the adjacency -- asserted by ``refuse_unmergeable`` -- that
+        lets the counts simply add: a position belongs to exactly one of
+        two adjacent regions, so none is counted twice.
         """
-        if self.chrom != other.chrom:
-            raise ValueError(
-                f"allele statistics merge across chromosome boundaries: "
-                f"{self.chrom} and {other.chrom}")
-        if self.end is None or other.start is None \
-                or self.end + 1 != other.start:
-            raise ValueError(
-                f"allele statistics regions are not adjacent-and-in-order: "
-                f"{self.chrom}:{self.start}-{self.end} then "
-                f"{other.chrom}:{other.start}-{other.end}")
+        refuse_unmergeable(_MERGE_FAILURE, self, other)
         self.allele_count += other.allele_count
         self.covered_positions += other.covered_positions
-        for allele_class in CLASS_ORDER:
-            self._class_counts[allele_class] += \
-                other._class_counts[allele_class]
+        for name in CLASS_NAMES:
+            self._class_counts[name] += \
+                other._class_counts[name]
         if other._last_pos is not None:
             self._last_pos = other._last_pos
         self.end = other.end
@@ -237,8 +270,6 @@ class AlleleStatistics(Statistic):
     serializes to the resource's :data:`ALLELE_STATISTICS_FILE` as raw
     counts.
     """
-
-    FORMAT_VERSION = 1
 
     def __init__(self) -> None:
         super().__init__(
@@ -262,17 +293,7 @@ class AlleleStatistics(Statistic):
 
     def global_counts(self) -> AlleleCounts:
         """The roll-up over every chromosome."""
-        class_counts = {
-            allele_class.value: 0 for allele_class in CLASS_ORDER}
-        allele_count = 0
-        covered = 0
-        for region in self._regions.values():
-            counts = region.counts()
-            allele_count += counts.allele_count
-            covered += counts.covered_positions
-            for name, count in counts.class_counts.items():
-                class_counts[name] += count
-        return AlleleCounts(allele_count, covered, class_counts)
+        return _total(self.by_chromosome().values())
 
     def add_value(self, value: Any) -> None:  # noqa: ARG002
         raise TypeError(
@@ -286,33 +307,37 @@ class AlleleStatistics(Statistic):
             self.fold_region(region)
 
     def serialize(self) -> str:
+        # One walk of the regions serves the per-chromosome entries and
+        # the global roll-up.
+        chromosomes = self.by_chromosome()
         return json.dumps({
-            "format_version": self.FORMAT_VERSION,
+            "format_version": 1,
             "chromosomes": {
                 chrom: counts._asdict()
-                for chrom, counts in self.by_chromosome().items()
+                for chrom, counts in chromosomes.items()
             },
-            "global": self.global_counts()._asdict(),
+            "global": _total(chromosomes.values())._asdict(),
         }, indent=2)
 
     @staticmethod
     def deserialize(content: str) -> AlleleStatistics:
         # Only the per-chromosome counts round-trip; the global entry is
-        # a roll-up recomputed from them, and the last-position
-        # bookkeeping is scan state and is never written.  Unknown keys
-        # are ignored rather than rejected, so a file carrying extra
-        # fields still reads.
+        # a roll-up recomputed from them by ``_total``, and the
+        # last-position bookkeeping is scan state and is never written.
+        # Unknown keys are ignored rather than rejected, so a file
+        # carrying fields a later slice added still reads.
         data = json.loads(content)
         result = AlleleStatistics()
         for chrom, counts in data["chromosomes"].items():
-            result.fold_region(RegionAlleles.frozen(chrom, AlleleCounts(
+            result.fold_region(RegionAlleles.frozen(
+                chrom,
                 int(counts["allele_count"]),
                 int(counts["covered_positions"]),
                 {
                     name: int(count)
                     for name, count in counts["class_counts"].items()
                 },
-            )))
+            ))
         return result
 
 
@@ -345,6 +370,12 @@ def serves_allele_arrays(score: GenomicScore, score_ids: list[str]) -> bool:
     whose backend will not serve the ref/alt arrays must fall back to
     the per-record scan, which reads the nucleotides off the record,
     rather than produce a statistic with no class data.
+
+    Ask it of an OPEN score.  On an unopened one the answer is merely
+    conservative -- a table naming its key columns nowhere but inside
+    its own data file cannot be known to have them until that header is
+    read -- and a spurious ``False`` costs the whole region the bulk
+    scan for no gain in correctness.
     """
     return isinstance(score, AlleleScore) \
         and score.supports_region_allele_arrays(score_ids)
@@ -365,53 +396,51 @@ def records_folded_into(
         yield record
 
 
-def validated_allele_batches(
+def allele_arrays_folded_into(
     score: AlleleScore,
     chrom: str,
     start: int,
     end: int,
     score_ids: list[str],
+    *,
     batch_size: int,
-) -> Generator[AlleleRecordArrays, None, None]:
-    """The bulk read's batches, nucleotides kept, validated as usual.
+    alleles: RegionAlleles,
+) -> Generator[RecordArrays, None, None]:
+    """The bulk read, nucleotides folded off it, validated as usual.
 
-    ``validate_record_arrays`` -- the scan's array door (ADR 0008) --
-    unpacks the three names of a shared ``RecordArrays`` and raises on
-    the five an :class:`AlleleRecordArrays` carries, so the batches go
-    through it as ``batch[:3]`` and the widened batch is handed back
-    here.  The door is a transducer: it yields exactly what it was
-    given, in order, one for one, which is what lets the slice and the
-    whole batch be paired without buffering the region.
+    The array twin of :func:`records_folded_into`, and the same shape: a
+    transducer that folds each batch and yields it onward.  What it
+    yields is the batch's ``[:3]`` slice -- a plain ``RecordArrays`` --
+    because the scan's array door (``validate_record_arrays``, ADR 0008)
+    unpacks three names and raises on the five an
+    :class:`~gain.genomic_resources.genomic_scores.AlleleRecordArrays`
+    carries.
+
+    Folding on the way IN is what lets the nucleotides reach this
+    statistic without the door having to carry them: nothing downstream
+    ever sees the widened batch, so nothing has to pair the two back up.
+
+    That the fold precedes the door's verdict is unobservable: a region
+    the door refuses raises out of the scan, and its accumulator is
+    discarded with the failed task rather than merged.
     """
-    held: list[AlleleRecordArrays] = []
-
-    def shared_view() -> Generator[RecordArrays, None, None]:
+    def folded() -> Generator[AlleleRecordArrays, None, None]:
         for batch in score.fetch_region_allele_arrays(
                 chrom, start, end, score_ids, batch_size=batch_size):
-            held.append(batch)
-            yield batch[:3]
+            alleles.add_allele_batch(
+                batch.pos_begin, batch.reference, batch.alternative)
+            yield batch
 
-    for _validated in score.validate_record_arrays(shared_view(), chrom):
-        yield held.pop()
+    yield from score.validate_record_arrays(
+        (batch[:3] for batch in folded()), chrom)
 
 
 def merge_region_alleles(
     resource_id: str,
     regions: Iterable[RegionAlleles | None],
 ) -> AlleleStatistics | None:
-    """Fold the regions' counts, or ``None`` for a kind that has none.
-
-    The fold sorts the regions into genomic order rather than trusting
-    the task-argument order they arrived in, is keyed by chromosome, and
-    within one chromosome :meth:`RegionAlleles.merge` still refuses a
-    pair that is not adjacent-and-in-order -- a gap or an overlap fails
-    the build rather than mis-counting it.
-    """
-    ordered = sorted(
-        (region for region in regions if region is not None),
-        key=lambda region: (
-            region.chrom,
-            region.start if region.start is not None else 0))
+    """Fold the regions' counts, or ``None`` for a kind that has none."""
+    ordered = regions_in_genomic_order(regions)
     if not ordered:
         return None
     statistics = AlleleStatistics()
@@ -432,6 +461,6 @@ def save_allele_statistics(
     """Write the statistics into the resource, or do nothing without any."""
     if statistics is None:
         return
-    with resource.proto.open_raw_file(
-            resource, ALLELE_STATISTICS_FILE, mode="wt") as outfile:
+    with resource.open_raw_file(
+            ALLELE_STATISTICS_FILE, mode="wt") as outfile:
         outfile.write(statistics.serialize())

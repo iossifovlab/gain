@@ -381,7 +381,8 @@ def _histogram_that_raises(resource_id: str) -> Any:
     ) -> Any:
         if resource.resource_id == resource_id:
             raise ValueError("histogram task boom")
-        return RegionScanResult(real(resource, *args, **kwargs), None)
+        return RegionScanResult(
+            real(resource, *args, **kwargs), None, None)
 
     return staticmethod(patched)
 

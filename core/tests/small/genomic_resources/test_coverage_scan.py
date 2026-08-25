@@ -13,6 +13,7 @@ from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.coverage import (
     CoverageStatistics,
     RegionCoverage,
+    accumulate_coverage,
     merge_region_coverage,
 )
 from gain.genomic_resources.testing.builders import (
@@ -393,8 +394,7 @@ def test_a_record_beginning_past_the_region_end_contributes_zero() -> None:
         {"score": np.array([0.5])},
     )
 
-    GenomicScoreImplementation._accumulate_coverage(
-        arrays, coverage, ("chr1", 1, 25))
+    accumulate_coverage(arrays, coverage, ("chr1", 1, 25))
 
     assert coverage.covered == 0
     assert coverage.segment_count == 0
