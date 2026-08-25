@@ -101,6 +101,49 @@ class AlleleCounts(NamedTuple):
     class_counts: dict[str, int]
     substitution_matrix: dict[tuple[str, str], int] | None
 
+    def display(self) -> AlleleDisplay | None:
+        """This entry's matrix render payload, ``None`` matrix unknown.
+
+        Collapsing "the file carries no matrix" into ``None`` follows
+        the fragment display's precedent; a genuinely empty matrix
+        still renders, as zeros.  Everything derived is computed here,
+        at render time, and never stored: transitions are the four
+        ``A<->G`` / ``C<->T`` cells and transversions the eight
+        remaining OFF-DIAGONAL cells -- never "substitutions minus
+        transitions", which would silently count the diagonal's
+        identity rows as transversions.
+        """
+        matrix = self.substitution_matrix
+        if matrix is None:
+            return None
+        transitions = sum(
+            count for cell, count in matrix.items()
+            if cell in _TRANSITION_CELLS)
+        transversions = sum(
+            count for (ref, alt), count in matrix.items()
+            if ref != alt and (ref, alt) not in _TRANSITION_CELLS)
+        return AlleleDisplay(
+            dict(matrix),
+            transitions,
+            transversions,
+            transitions / transversions if transversions else None)
+
+
+def _merged_matrix(
+    left: dict[tuple[str, str], int] | None,
+    right: dict[tuple[str, str], int] | None,
+) -> dict[tuple[str, str], int] | None:
+    """The elementwise sum of two matrices, unknown if either is.
+
+    The one statement of the all-or-nothing rule -- as the coverage
+    segments roll up: a total over a partially-unknown set would
+    silently understate, so an unknown side makes the whole merge
+    unknown rather than a smaller number.
+    """
+    if left is None or right is None:
+        return None
+    return {cell: left[cell] + right[cell] for cell in MATRIX_CELLS}
+
 
 def _total(counts: Iterable[AlleleCounts]) -> AlleleCounts:
     """The roll-up of several chromosomes' counts into one.
@@ -119,13 +162,7 @@ def _total(counts: Iterable[AlleleCounts]) -> AlleleCounts:
         covered += entry.covered_positions
         for name, count in entry.class_counts.items():
             class_counts[name] = class_counts.get(name, 0) + count
-        # All-or-nothing, as the coverage segments roll up: a global
-        # matrix over a partial set would silently understate.
-        if matrix is None or entry.substitution_matrix is None:
-            matrix = None
-        else:
-            for cell, count in entry.substitution_matrix.items():
-                matrix[cell] += count
+        matrix = _merged_matrix(matrix, entry.substitution_matrix)
     return AlleleCounts(allele_count, covered, class_counts, matrix)
 
 
@@ -359,13 +396,8 @@ class RegionAlleles:
         for name in CLASS_NAMES:
             self._class_counts[name] += \
                 other._class_counts[name]
-        if self._substitution_matrix is None \
-                or other._substitution_matrix is None:
-            self._substitution_matrix = None
-        else:
-            for cell in MATRIX_CELLS:
-                self._substitution_matrix[cell] += \
-                    other._substitution_matrix[cell]
+        self._substitution_matrix = _merged_matrix(
+            self._substitution_matrix, other._substitution_matrix)
         if other._last_pos is not None:
             self._last_pos = other._last_pos
         self.end = other.end
@@ -463,19 +495,20 @@ _TRANSITION_CELLS: frozenset[tuple[str, str]] = frozenset(
 class AlleleDisplay(NamedTuple):
     """The Alleles section's substitution-matrix render payload.
 
-    Raw cells come from the stored statistic; everything else here --
-    the row layout, transitions, transversions, ts/tv -- is derived at
-    render time and never stored, as the coverage display derives its
-    fractions.  ``substitution_matrix`` is ``None`` for a statistics
-    file written before the matrix existed, and the whole payload
-    renders "not computed" then rather than a matrix of zeros.
+    Raw cells come from the stored statistic; the derived numbers are
+    computed by :meth:`AlleleCounts.display` -- which builds this --
+    and never stored, as the coverage display derives its fractions.
     """
 
-    substitution_matrix: dict[tuple[str, str], int] | None
-
-    @property
-    def has_matrix(self) -> bool:
-        return self.substitution_matrix is not None
+    substitution_matrix: dict[tuple[str, str], int]
+    #: The four ``A<->G`` / ``C<->T`` cells.
+    transitions: int
+    #: The eight off-diagonal cells that are not transitions; the
+    #: diagonal's identity pairs are neither.
+    transversions: int
+    #: ``None`` when there are no transversions; the template renders
+    #: "not applicable" rather than dividing.
+    ts_tv: float | None
 
     @property
     def nucleotides(self) -> tuple[str, ...]:
@@ -483,58 +516,12 @@ class AlleleDisplay(NamedTuple):
         return NUCLEOTIDES
 
     def matrix_rows(self) -> list[tuple[str, list[int]]]:
-        """The matrix as table rows: reference base, then a cell per alt.
-
-        Empty for an unknown matrix -- the template gates the table on
-        :attr:`has_matrix`.
-        """
-        if self.substitution_matrix is None:
-            return []
+        """The matrix as table rows: reference base, then a cell per alt."""
         return [
             (ref, [self.substitution_matrix[ref, alt]
                    for alt in NUCLEOTIDES])
             for ref in NUCLEOTIDES
         ]
-
-    @property
-    def transitions(self) -> int | None:
-        if self.substitution_matrix is None:
-            return None
-        return sum(
-            count
-            for cell, count in self.substitution_matrix.items()
-            if cell in _TRANSITION_CELLS)
-
-    @property
-    def transversions(self) -> int | None:
-        """The off-diagonal cells that are not transitions.
-
-        NOT "substitutions minus transitions": that would silently
-        count the diagonal's identity rows as transversions.
-        """
-        if self.substitution_matrix is None:
-            return None
-        return sum(
-            count
-            for (ref, alt), count in self.substitution_matrix.items()
-            if ref != alt and (ref, alt) not in _TRANSITION_CELLS)
-
-    @property
-    def ts_tv(self) -> float | None:
-        """The transition/transversion ratio, ``None`` when undefined.
-
-        Undefined both without a matrix and without transversions; the
-        template renders "not applicable" rather than dividing.
-        """
-        if not self.transversions:
-            return None
-        assert self.transitions is not None
-        return self.transitions / self.transversions
-
-
-def build_allele_display(statistics: AlleleStatistics) -> AlleleDisplay:
-    """The render payload over the statistic's global matrix."""
-    return AlleleDisplay(statistics.global_counts().substitution_matrix)
 
 
 def region_alleles_for(

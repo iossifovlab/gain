@@ -60,11 +60,9 @@ from gain.genomic_resources.score_implementation import (
 )
 from gain.genomic_resources.statistics.alleles import (
     ALLELE_STATISTICS_FILE,
-    AlleleDisplay,
     AlleleStatistics,
     RegionAlleles,
     allele_arrays_folded_into,
-    build_allele_display,
     merge_region_alleles,
     records_folded_into,
     region_alleles_for,
@@ -196,10 +194,6 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         # life of this object, which is built per render.
         self._coverage_statistics: CoverageStatistics | None = None
         self._coverage_statistics_read = False
-        # The Alleles section asks twice too: the tables and the matrix
-        # payload.
-        self._allele_statistics: AlleleStatistics | None = None
-        self._allele_statistics_read = False
 
     def get_config_histograms(self) -> dict[str, Any]:
         """Collect all configurations of histograms for the genomic score."""
@@ -266,29 +260,11 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         Absence is an expected state for the reason
         :meth:`get_coverage_statistics` gives: the rollout is lazy.
         """
-        if self._allele_statistics_read:
-            return self._allele_statistics
         try:
             content = self.resource.get_file_content(ALLELE_STATISTICS_FILE)
         except FileNotFoundError:
-            statistics = None
-        else:
-            statistics = AlleleStatistics.deserialize(content)
-        self._allele_statistics = statistics
-        self._allele_statistics_read = True
-        return statistics
-
-    def get_allele_display(self) -> AlleleDisplay | None:
-        """The substitution-matrix render payload, or ``None`` if not built.
-
-        The payload itself distinguishes a statistics file written
-        before the matrix existed (``has_matrix`` is false, the section
-        marks the matrix not computed) from a genuine matrix of zeros.
-        """
-        statistics = self.get_allele_statistics()
-        if statistics is None:
             return None
-        return build_allele_display(statistics)
+        return AlleleStatistics.deserialize(content)
 
     def get_coverage_display(self) -> CoverageDisplay | None:
         """The Coverage section's payload: raw counts plus fractions.

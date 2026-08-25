@@ -193,8 +193,8 @@
 </table>
 </div>
 <h3>Substitution matrix</h3>
-{% set allele_display = impl.get_allele_display() %}
-{% if allele_display is not none and allele_display.has_matrix %}
+{% set allele_display = global_alleles.display() %}
+{% if allele_display is not none %}
 <div class="scrollable-table-container">
 <table>
     <thead>

@@ -3,9 +3,9 @@ import json
 
 import pytest
 from gain.genomic_resources.statistics.alleles import (
+    AlleleDisplay,
     AlleleStatistics,
     RegionAlleles,
-    build_allele_display,
 )
 
 
@@ -203,10 +203,10 @@ def test_the_global_matrix_is_unknown_when_any_chromosome_lacks_it() -> None:
     assert counts.class_counts["substitution"] == 2
 
 
-def _statistics_of(region: RegionAlleles) -> AlleleStatistics:
+def _display_of(region: RegionAlleles) -> AlleleDisplay | None:
     statistics = AlleleStatistics()
     statistics.fold_region(region)
-    return statistics
+    return statistics.global_counts().display()
 
 
 def test_ts_tv_splits_the_off_diagonal_and_skips_the_diagonal() -> None:
@@ -217,8 +217,9 @@ def test_ts_tv_splits_the_off_diagonal_and_skips_the_diagonal() -> None:
     region.add_allele(13, "A", "C")   # transversion
     region.add_allele(14, "A", "A")   # identity: neither
 
-    display = build_allele_display(_statistics_of(region))
+    display = _display_of(region)
 
+    assert display is not None
     assert display.transitions == 3
     assert display.transversions == 1
     assert display.ts_tv == 3.0
@@ -231,26 +232,29 @@ def test_ts_tv_is_not_applicable_without_transversions() -> None:
     region.add_allele(10, "A", "G")
     region.add_allele(11, "T", "T")
 
-    display = build_allele_display(_statistics_of(region))
+    display = _display_of(region)
 
-    assert display.has_matrix
+    assert display is not None
     assert display.ts_tv is None
 
 
-def test_display_over_a_matrixless_file_has_no_matrix() -> None:
-    display = build_allele_display(_statistics_of(
-        RegionAlleles.frozen("chr1", 1, 1, {"substitution": 1})))
+def test_a_matrixless_file_yields_no_display() -> None:
+    # "Matrix unknown" collapses to None, as the fragment display
+    # collapses a file that predates its field; a genuinely empty
+    # matrix still yields a display of zeros.
+    display = _display_of(
+        RegionAlleles.frozen("chr1", 1, 1, {"substitution": 1}))
 
-    assert not display.has_matrix
-    assert display.ts_tv is None
+    assert display is None
 
 
 def test_display_rows_follow_nucleotide_order() -> None:
     region = _region()
     region.add_allele(10, "T", "A")
 
-    display = build_allele_display(_statistics_of(region))
+    display = _display_of(region)
 
+    assert display is not None
     assert [ref for ref, _ in display.matrix_rows()] == ["A", "C", "G", "T"]
     assert display.matrix_rows()[3][1] == [1, 0, 0, 0]
 
