@@ -175,6 +175,87 @@ def test_build_from_file_without_format(
     assert len(gene_models.transcript_models) == 3
 
 
+def test_build_from_file_explicit_format_then_bare_not_aliased(
+    temp_gene_file: pathlib.Path,
+) -> None:
+    """Test that a bare call is not served the explicit-format entry."""
+    gene_models_explicit = build_gene_models_from_file(
+        str(temp_gene_file),
+        file_format="refflat",
+    )
+    gene_models_bare = build_gene_models_from_file(str(temp_gene_file))
+
+    assert gene_models_explicit is not gene_models_bare
+    assert len(_INMEMORY_CACHE) == 2
+    assert gene_models_explicit.resource.get_config()["format"] == "refflat"
+    assert "format" not in gene_models_bare.resource.get_config()
+
+
+def test_build_from_file_gene_mapping_in_cache_key(
+    temp_gene_file: pathlib.Path,
+    temp_mapping_file: pathlib.Path,
+) -> None:
+    """Test that calls differing only in gene mapping are not aliased."""
+    gene_models_plain = build_gene_models_from_file(
+        str(temp_gene_file),
+        file_format="refflat",
+    )
+    gene_models_mapped = build_gene_models_from_file(
+        str(temp_gene_file),
+        file_format="refflat",
+        gene_mapping_file_name=str(temp_mapping_file),
+    )
+
+    assert gene_models_plain is not gene_models_mapped
+    assert len(_INMEMORY_CACHE) == 2
+    gene_models_mapped.load()
+    assert "P53" in gene_models_mapped.gene_names()
+
+
+def test_build_from_file_chrom_mapping_in_cache_key(
+    temp_gene_file: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test that calls differing only in chrom mapping are not aliased."""
+    chrom_mapping_file = tmp_path / "chrom_mapping.txt"
+    chrom_mapping_file.write_text(convert_to_tab_separated("""
+        chrom  file_chrom
+        chr1   1
+        chr17  17
+    """))
+
+    gene_models_plain = build_gene_models_from_file(
+        str(temp_gene_file),
+        file_format="refflat",
+    )
+    gene_models_remapped = build_gene_models_from_file(
+        str(temp_gene_file),
+        file_format="refflat",
+        chrom_mapping_file_name=str(chrom_mapping_file),
+    )
+
+    assert gene_models_plain is not gene_models_remapped
+    assert len(_INMEMORY_CACHE) == 2
+    assert "chrom_mapping" not in gene_models_plain.resource.get_config()
+    assert "chrom_mapping" in gene_models_remapped.resource.get_config()
+
+
+def test_build_from_file_none_and_omitted_share_cache_entry(
+    temp_gene_file: pathlib.Path,
+) -> None:
+    """Test that passing None and omitting an argument are the same call."""
+    gene_models_none = build_gene_models_from_file(
+        str(temp_gene_file),
+        file_format=None,
+        gene_mapping_file_name=None,
+        chrom_mapping_file_name=None,
+    )
+    gene_models_omitted = build_gene_models_from_file(str(temp_gene_file))
+
+    assert gene_models_none is gene_models_omitted
+    assert len(_INMEMORY_CACHE) == 1
+
+
 def test_build_from_resource_basic() -> None:
     """Test basic loading from resource."""
     res = build_inmemory_test_resource(

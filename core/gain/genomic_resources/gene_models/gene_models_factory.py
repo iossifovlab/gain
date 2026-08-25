@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_INMEMORY_CACHE: dict[tuple[str, str], GeneModels] = {}
+_INMEMORY_CACHE: dict[tuple[str | None, ...], GeneModels] = {}
 _INMEMORY_CACHE_LOCK = Lock()
 
 
@@ -45,7 +45,13 @@ def build_gene_models_from_file(
     )
 
     from .gene_models import GeneModels
-    cache_id = (file_name, "file:///.")
+    cache_id = (
+        file_name,
+        file_format,
+        gene_mapping_file_name,
+        chrom_mapping_file_name,
+        "file:///.",
+    )
 
     with _INMEMORY_CACHE_LOCK:
         if cache_id in _INMEMORY_CACHE:
