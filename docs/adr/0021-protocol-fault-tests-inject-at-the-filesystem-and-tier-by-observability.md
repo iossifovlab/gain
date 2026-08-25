@@ -49,16 +49,44 @@ store-observing test was the only thing that caught it.
 So: some `[s3]` arms are pure waste, and some are the only line of defense —
 and intuition about which is which is exactly what failed.
 
-### Rejected: pyfakefs
+### Rejected: pyfakefs (measured, not just argued)
 
-pyfakefs was considered as the mocking mechanism and rejected on two
-structural grounds. gain's protocol code reaches storage through fsspec's
-`AbstractFileSystem`, never through raw `os`/`io` — the layer pyfakefs
-patches — so it would intercept almost nothing the code under test does. And
-the heavy readers are C extensions: pysam/htslib and pyBigWig receive a URL
-and do their own I/O syscalls, invisible to any Python-level fake (this is
-already why `open_tabix_file` refuses the `memory://` scheme). pyfakefs would
-fake only the test *setup* helpers — cost without coverage.
+pyfakefs was considered twice — first as the protocol-test mocking
+mechanism, then again as a speed-up for the test-data builders' realize
+step — and rejected both times. The structural argument: gain's protocol
+code reaches storage through fsspec's `AbstractFileSystem`, never through
+raw `os`/`io` — the layer pyfakefs patches — so it would intercept almost
+nothing the code under test does; and the heavy readers are C extensions
+that receive a URL and do their own I/O syscalls (already why
+`open_tabix_file` refuses the `memory://` scheme).
+
+The second round was settled by experiment rather than theory
+(pyfakefs 6.2.0, pysam 0.24.0, pyBigWig 0.3.25, Python 3.12):
+
+- **pysam fails in both directions, incoherently.** A file written into
+  the fake fs is invisible to htslib (`tabix_compress` cannot open it).
+  Handed a *real* file that patched Python cannot see, `tabix_compress`
+  (pure C) succeeds — and `tabix_index` then fails "not found", because
+  pysam's Cython layer runs Python-level checks against the fake fs while
+  its C core does real I/O. Under pyfakefs, pysam straddles the two
+  worlds; no workaround makes that coherent.
+- **pyBigWig segfaults.** libBigWig's C `fopen` fails on a fake path and
+  the failure path takes the whole pytest process down
+  (`Fatal Python error: Segmentation fault`) — one bigwig builder call
+  kills the xdist worker, not the test.
+- **The speed intuition is inverted.** For a builder-shaped tree
+  (5 directories, 12 small files, a stat-and-read-back pass; best of 3,
+  300 iterations): real disk 1.09 ms, tmpfs (`/dev/shm`) 1.07 ms,
+  pyfakefs **12.08 ms**. The tmpfs arm is the control: it bounds what
+  *any* filesystem-avoidance could save at ~2%, because builder-scale
+  writes land in the page cache and never touch the device during a test
+  run. There is no disk win to capture, and pyfakefs then pays
+  Python-level interception on every `os` call — 11x slower than the
+  real filesystem it replaces.
+
+So pyfakefs would fake only the pure-Python slice of test setup, break or
+crash every tabix/VCF/bigwig realize step, and slow the slice it does
+cover by an order of magnitude: cost without coverage, measured.
 
 ## Decision
 
