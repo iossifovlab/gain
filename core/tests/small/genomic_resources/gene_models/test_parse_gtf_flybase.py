@@ -6,18 +6,20 @@ FlyBase emits ``mRNA``, ``ncRNA``, ``tRNA`` and friends, and labels genes with
 ``gene_symbol`` rather than ``gene_name``.
 """
 
+from pathlib import Path
+
 import pytest
+from gain.genomic_resources.gene_models import parsers
 from gain.genomic_resources.gene_models.gene_models import GeneModels
 from gain.genomic_resources.gene_models.gene_models_factory import (
+    build_gene_models_from_file,
     build_gene_models_from_resource,
 )
 from gain.genomic_resources.testing import build_inmemory_test_resource
 
-GENE_ATTRIBUTES = 'gene_id "FBgn0031081"; gene_symbol "Nep3";'
-TRANSCRIPT_ATTRIBUTES = (
-    'gene_id "FBgn0031081"; gene_symbol "Nep3"; '
-    'transcript_id "FBtr0070000"; transcript_symbol "Nep3-RA";'
-)
+
+def _attributes(**keys: str) -> str:
+    return " ".join(f'{key} "{value}";' for key, value in keys.items())
 
 
 def _record(feature: str, start: int, end: int, attributes: str) -> str:
@@ -27,16 +29,43 @@ def _record(feature: str, start: int, end: int, attributes: str) -> str:
     ])
 
 
-def _gene_models(*records: str) -> GeneModels:
-    """Build gene models from a FlyBase-flavour GTF of the given records."""
-    res = build_inmemory_test_resource(
-        content={
-            "genomic_resource.yaml":
-                "{type: gene_models, filename: genes.gtf, format: gtf}",
-            "genes.gtf": "\n".join(records) + "\n",
-        },
-    )
+def _gene_models(
+    *records: str,
+    gene_mapping: str | None = None,
+) -> GeneModels:
+    """Build gene models from a FlyBase-flavour GTF of the given records.
+
+    ``gene_mapping`` is the body of an alternative-names table, header
+    included, wired up through the resource config.
+    """
+    config = "type: gene_models, filename: genes.gtf, format: gtf"
+    content = {"genes.gtf": "\n".join(records) + "\n"}
+    if gene_mapping is not None:
+        config += ", gene_mapping: names.txt"
+        content["names.txt"] = gene_mapping
+    content["genomic_resource.yaml"] = f"{{{config}}}"
+
+    res = build_inmemory_test_resource(content=content)
     return build_gene_models_from_resource(res).load()
+
+
+def _one_transcript(attributes: str, **kwargs: str) -> GeneModels:
+    """Build gene models for a single mRNA transcript with one exon."""
+    return _gene_models(
+        _record("mRNA", 19961689, 19968479, attributes),
+        _record("exon", 19961689, 19961845, attributes),
+        **kwargs,
+    )
+
+
+GENE_ATTRIBUTES = _attributes(gene_id="FBgn0031081", gene_symbol="Nep3")
+TRANSCRIPT_ATTRIBUTES = _attributes(
+    gene_id="FBgn0031081", gene_symbol="Nep3",
+    transcript_id="FBtr0070000", transcript_symbol="Nep3-RA",
+)
+
+
+# ---------------------------------------------------------------- dispatch
 
 
 @pytest.mark.parametrize("feature", [
@@ -71,16 +100,24 @@ def test_exonless_biotype_yields_no_transcript_model(feature: str) -> None:
     assert gene_models.transcript_models == {}
 
 
-def _attributes(**keys: str) -> str:
-    return " ".join(f'{key} "{value}";' for key, value in keys.items())
-
-
-def _one_transcript(attributes: str) -> GeneModels:
-    """Build gene models for a single mRNA transcript with one exon."""
-    return _gene_models(
-        _record("mRNA", 19961689, 19968479, attributes),
-        _record("exon", 19961689, 19961845, attributes),
+def test_a_skipped_biotype_needs_no_transcript_id() -> None:
+    """The skip must not depend on an attribute the record never uses."""
+    gene_models = _gene_models(
+        _record("miRNA", 100, 200, _attributes(gene_id="FBgn0031081")),
     )
+
+    assert gene_models.transcript_models == {}
+
+
+def test_the_skip_set_is_disjoint_from_the_accepted_set() -> None:
+    """Otherwise the accepted set wins silently and the skip becomes dead."""
+    assert not (
+        parsers.GTF_TRANSCRIPT_FEATURES
+        & parsers.GTF_EXONLESS_TRANSCRIPT_FEATURES
+    )
+
+
+# ------------------------------------------------------------- gene labels
 
 
 def test_gene_symbol_resolves_the_gene_label() -> None:
@@ -111,26 +148,18 @@ def test_gene_id_remains_the_last_resort() -> None:
 
 
 def test_gene_mapping_applies_to_a_symbol_resolved_label() -> None:
-    attributes = _attributes(
-        gene_id="FBgn0031081", gene_symbol="Nep3",
-        transcript_id="FBtr0070000",
+    gene_models = _one_transcript(
+        _attributes(
+            gene_id="FBgn0031081", gene_symbol="Nep3",
+            transcript_id="FBtr0070000",
+        ),
+        gene_mapping="gene\talt_gene\nNep3\tNEP3\n",
     )
-    res = build_inmemory_test_resource(
-        content={
-            "genomic_resource.yaml":
-                "{type: gene_models, filename: genes.gtf, format: gtf,"
-                " gene_mapping: names.txt}",
-            "genes.gtf": "\n".join([
-                _record("mRNA", 19961689, 19968479, attributes),
-                _record("exon", 19961689, 19961845, attributes),
-            ]) + "\n",
-            "names.txt": "gene\talt_gene\nNep3\tNEP3\n",
-        },
-    )
-
-    gene_models = build_gene_models_from_resource(res).load()
 
     assert gene_models.transcript_models["FBtr0070000"].gene == "NEP3"
+
+
+# --------------------------------------------------------- errors preserved
 
 
 def test_a_repeated_transcript_id_is_still_an_error() -> None:
@@ -141,33 +170,6 @@ def test_a_repeated_transcript_id_is_still_an_error() -> None:
         )
 
 
-def test_a_flybase_shaped_file_yields_no_exonless_transcript_model() -> None:
-    """All nine FlyBase transcript-level biotypes, as they appear in a file.
-
-    The two exon-less ones must not leave a degenerate model behind.
-    """
-    records = []
-    exon_bearing = [
-        "mRNA", "ncRNA", "pseudogene", "tRNA", "snoRNA", "rRNA", "snRNA",
-    ]
-    for index, feature in enumerate([*exon_bearing, "miRNA", "pre_miRNA"]):
-        attributes = _attributes(
-            gene_id=f"FBgn{index:07d}", gene_symbol=f"sym{index}",
-            transcript_id=f"FBtr{index:07d}",
-        )
-        records.append(_record(feature, 100, 200, attributes))
-        if feature in exon_bearing:
-            records.append(_record("exon", 100, 200, attributes))
-
-    gene_models = _gene_models(*records)
-
-    assert len(gene_models.transcript_models) == len(exon_bearing)
-    assert all(
-        transcript.exons
-        for transcript in gene_models.transcript_models.values()
-    )
-
-
 def test_unknown_feature_still_raises() -> None:
     """The change narrows the failure; it does not remove it."""
     with pytest.raises(ValueError, match="unknown feature Selenoprotein"):
@@ -176,3 +178,54 @@ def test_unknown_feature_still_raises() -> None:
             _record("Selenoprotein", 19961689, 19961845,
                     TRANSCRIPT_ATTRIBUTES),
         )
+
+
+# ------------------------------------------------------------- real excerpt
+
+FLYBASE_FIXTURE = str(
+    Path(__file__).resolve().parent
+    / "fixtures" / "gene_models" / "test_flybase.gtf",
+)
+
+
+def _flybase_excerpt() -> GeneModels:
+    """Load the trimmed excerpt of a real ``dmel-all-r6.68.gtf.gz``.
+
+    It carries one transcript of each of the nine transcript-level biotypes
+    FlyBase emits, with their real spellings and attributes.
+    """
+    return build_gene_models_from_file(FLYBASE_FIXTURE, "gtf").load()
+
+
+def test_real_flybase_excerpt_admits_the_exon_bearing_biotypes_by_symbol(
+) -> None:
+    """One transcript per biotype; the miRNA and pre_miRNA are absent."""
+    gene_models = _flybase_excerpt()
+
+    assert {
+        tr_id: tm.gene
+        for tr_id, tm in gene_models.transcript_models.items()
+    } == {
+        "FBtr0070000": "Nep3",                # mRNA
+        "FBtr0070001": "tRNA:Pro-CGG-1-1",    # tRNA
+        "FBtr0070292": "snoRNA:M",            # snoRNA
+        "FBtr0078851": "snRNA:U1:82Eb",       # snRNA
+        "FBtr0086345": "5SrRNA:CR33353",      # rRNA
+        "FBtr0307588": "CR32821",             # pseudogene
+        "FBtr0308931": "lncRNA:CR33218",      # ncRNA
+    }
+
+
+def test_real_flybase_excerpt_builds_a_full_mrna() -> None:
+    """The widened dispatch still cooperates with UTR, CDS and codon rows.
+
+    Only real data carries an mRNA with all of them at once.
+    """
+    transcript = _flybase_excerpt().transcript_models["FBtr0070000"]
+
+    assert transcript.tx == (19961689, 19968479)
+    assert transcript.cds == (19963955, 19967460)
+    assert len(transcript.exons) == 9
+    assert [exon.frame for exon in transcript.exons] == [
+        -1, 0, 0, 1, 2, 2, 2, 1, 0,
+    ]

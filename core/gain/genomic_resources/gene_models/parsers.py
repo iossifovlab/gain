@@ -740,10 +740,13 @@ def _parse_gtf_attributes(data: str) -> dict[str, str]:
 
 #: Features that introduce a transcript. Ensembl and RefSeq emit the literal
 #: ``transcript``; FlyBase instead names the transcript by its biotype. Every
-#: entry is handled identically -- it creates a transcript model keyed by
-#: ``transcript_id`` -- so a flavour is supported exactly when its
-#: transcript-level spelling is listed here. Compare against a file's
-#: ``cut -f3 | sort -u`` when adding a flavour.
+#: entry here is handled identically -- it creates a transcript model keyed by
+#: ``transcript_id``. Supporting a flavour usually takes more than this set:
+#: FlyBase also relies on the ``5UTR``/``3UTR`` spellings tolerated below and
+#: on ``gene_symbol`` as its gene label. So check a new file's
+#: ``cut -f3 | sort -u`` against the whole loop, not just this list. Flavour
+#: is an intake concern only -- ``serialization.py`` normalises back out,
+#: always writing ``transcript`` and ``gene_name``.
 GTF_TRANSCRIPT_FEATURES = frozenset({
     "transcript",
     "mRNA",
@@ -755,12 +758,12 @@ GTF_TRANSCRIPT_FEATURES = frozenset({
     "tRNA",
 })
 
-#: Transcript-level features that are recognised but deliberately skipped.
-#: FlyBase emits these with no ``exon`` records whatsoever, so admitting them
-#: would produce transcript models with an empty exon list -- degenerate models
-#: carrying no sequence. A file that does give one of these an exon child
-#: should be a conscious decision to move it into
-#: ``GTF_TRANSCRIPT_FEATURES``, not a silent behaviour change.
+#: Transcript-level features FlyBase emits with no ``exon`` records at all,
+#: so admitting them would add hundreds of transcript models carrying no
+#: sequence. This is a policy about these two spellings, not an invariant the
+#: parser enforces -- any accepted feature with no ``exon`` child still yields
+#: an empty exon list. Moving one of these into ``GTF_TRANSCRIPT_FEATURES``
+#: should be deliberate, not a silent behaviour change.
 GTF_EXONLESS_TRANSCRIPT_FEATURES = frozenset({
     "miRNA",
     "pre_miRNA",
@@ -805,6 +808,8 @@ def parse_gtf_gene_models_format(
     for rec in df.to_dict(orient="records"):
         feature = rec["feature"]
         if feature == "gene":
+            continue
+        if feature in GTF_EXONLESS_TRANSCRIPT_FEATURES:
             continue
         attributes = _parse_gtf_attributes(rec["attributes"])
         tr_id = attributes["transcript_id"]
@@ -851,8 +856,6 @@ def parse_gtf_gene_models_format(
                 )
                 transcript_model.exons.append(exon)
                 continue
-        if feature in GTF_EXONLESS_TRANSCRIPT_FEATURES:
-            continue
         if feature in {
                 "UTR", "5UTR", "3UTR", "five_prime_utr", "three_prime_utr",
                 "CDS",
