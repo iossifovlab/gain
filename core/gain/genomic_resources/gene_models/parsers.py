@@ -738,6 +738,35 @@ def _parse_gtf_attributes(data: str) -> dict[str, str]:
     return _scan_gtf_attributes(data)
 
 
+#: Features that introduce a transcript. Ensembl and RefSeq emit the literal
+#: ``transcript``; FlyBase instead names the transcript by its biotype. Every
+#: entry is handled identically -- it creates a transcript model keyed by
+#: ``transcript_id`` -- so a flavour is supported exactly when its
+#: transcript-level spelling is listed here. Compare against a file's
+#: ``cut -f3 | sort -u`` when adding a flavour.
+GTF_TRANSCRIPT_FEATURES = frozenset({
+    "transcript",
+    "mRNA",
+    "ncRNA",
+    "pseudogene",
+    "rRNA",
+    "snRNA",
+    "snoRNA",
+    "tRNA",
+})
+
+#: Transcript-level features that are recognised but deliberately skipped.
+#: FlyBase emits these with no ``exon`` records whatsoever, so admitting them
+#: would produce transcript models with an empty exon list -- degenerate models
+#: carrying no sequence. A file that does give one of these an exon child
+#: should be a conscious decision to move it into
+#: ``GTF_TRANSCRIPT_FEATURES``, not a silent behaviour change.
+GTF_EXONLESS_TRANSCRIPT_FEATURES = frozenset({
+    "miRNA",
+    "pre_miRNA",
+})
+
+
 def parse_gtf_gene_models_format(
     infile: IO,
     gene_mapping: dict[str, str] | None = None,
@@ -779,7 +808,7 @@ def parse_gtf_gene_models_format(
             continue
         attributes = _parse_gtf_attributes(rec["attributes"])
         tr_id = attributes["transcript_id"]
-        if feature in {"transcript", "Selenocysteine"}:
+        if feature in GTF_TRANSCRIPT_FEATURES or feature == "Selenocysteine":
             if feature == "Selenocysteine" and \
                     tr_id in transcript_models:
                 continue
@@ -787,7 +816,13 @@ def parse_gtf_gene_models_format(
                 raise ValueError(
                     f"{tr_id} of {feature} already in transcript models",
                 )
-            gene = attributes.get("gene_name") or attributes["gene_id"]
+            # FlyBase labels genes with ``gene_symbol``; Ensembl and RefSeq
+            # with ``gene_name``. Both fall back to the accession.
+            gene = (
+                attributes.get("gene_name")
+                or attributes.get("gene_symbol")
+                or attributes["gene_id"]
+            )
             gene = gene_mapping.get(gene, gene)
 
             transcript_model = TranscriptModel(
@@ -816,6 +851,8 @@ def parse_gtf_gene_models_format(
                 )
                 transcript_model.exons.append(exon)
                 continue
+        if feature in GTF_EXONLESS_TRANSCRIPT_FEATURES:
+            continue
         if feature in {
                 "UTR", "5UTR", "3UTR", "five_prime_utr", "three_prime_utr",
                 "CDS",
