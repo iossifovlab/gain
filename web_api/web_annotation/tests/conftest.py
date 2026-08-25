@@ -14,6 +14,7 @@ from gain.genomic_resources.repository_factory import (
 )
 
 from web_annotation.models import Job, User
+from web_annotation.pipelines.views import PipelineValidation
 
 
 @pytest.fixture(autouse=True)
@@ -28,6 +29,18 @@ def clean_genomic_context(
 @pytest.fixture(autouse=True)
 def clear_throttle_cache() -> None:
     cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def clear_validation_cache() -> None:
+    """Forget validation verdicts remembered by an earlier test (gain#833).
+
+    The memo lives on ``PipelineValidation`` for the life of the process, so
+    without this a config one test validated is already answered for the
+    next -- which would silently vacate every test that expects the endpoint
+    to do the work, the shed tests above all.
+    """
+    PipelineValidation.validation_cache.clear()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

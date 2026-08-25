@@ -534,6 +534,30 @@ def resolve_annotation_max_workers(default: int) -> int:
 ANNOTATION_MAX_WORKERS = resolve_annotation_max_workers(4)
 PIPELINES_CACHE_SIZE = 256
 
+# How many validation verdicts /api/pipelines/validate remembers (gain#833).
+# An entry is a digest and a short `errors` string -- tens of bytes, not a
+# pipeline -- so the bound is about keeping an anonymous caller from growing
+# the memo without limit, not about memory pressure from any legitimate use.
+# 256 is the pipeline cache's size, and generous for the thing it bounds: one
+# editing session settles on a handful of distinct texts.
+VALIDATION_CACHE_SIZE = 256
+
+# The stated upper bound on how stale a remembered verdict may be (gain#833).
+#
+# The memo is also keyed by the repository generation, and today that is the
+# tighter of the two: a live gain process never re-reads a resource it has
+# already resolved, so a rebuild would answer exactly what the memo answers.
+# The TTL is what keeps that from being load-bearing. The GRRs are bind-
+# mounted directories that grr-sync rewrites from GitHub under the running
+# server, and `GenomicResourceRepoProtocol.invalidate` exists -- the day a
+# repository object starts picking those rewrites up, the generation key does
+# not change and this is the only thing left bounding the answer.
+#
+# Five minutes: short enough that a GRR update is picked up within one editor
+# session rather than one deploy, long enough that a session's own repeats --
+# seconds apart, on a debounce -- all land inside it.
+VALIDATION_CACHE_TTL_SECONDS = 300
+
 ANNOTATION_TASK_TIMEOUT = 60 * 60 * 2  # 2 hours
 
 DEFAULT_PIPELINE: str | None = "pipeline/hg38_clinical_annotation"

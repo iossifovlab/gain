@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import asyncio
+import contextlib
 import logging
 import textwrap
 import threading
@@ -1010,8 +1011,8 @@ def _drain_validation_pool(timeout: float = 10.0) -> None:
         time.sleep(0.01)
 
 
-@pytest.fixture
-def saturated_validation_pool() -> Iterator[None]:
+@contextlib.contextmanager
+def occupying_the_validation_pool() -> Iterator[None]:
     """Occupy the shared validation pool right up to the admission bound.
 
     The real pool rather than a patched ``size()``: the bound is about what
@@ -1019,6 +1020,10 @@ def saturated_validation_pool() -> Iterator[None]:
     only thing that reproduces that. Every occupying task is released on the
     way out, and the pool is drained both before (so a straggler from an
     earlier test cannot inflate the count) and after.
+
+    A context manager as well as the fixture below, because a test may need
+    to do something *before* the pool fills -- priming the memo (#833) has to
+    happen while requests are still being served.
     """
     executor = PipelineValidation.VALIDATE_EXECUTOR
     _drain_validation_pool()
@@ -1038,6 +1043,13 @@ def saturated_validation_pool() -> Iterator[None]:
     finally:
         release.set()
         _drain_validation_pool()
+
+
+@pytest.fixture
+def saturated_validation_pool() -> Iterator[None]:
+    """Occupy the validation pool for the whole of a test."""
+    with occupying_the_validation_pool():
+        yield
 
 
 @pytest.mark.asyncio
@@ -1169,3 +1181,70 @@ def test_the_validation_pool_width_is_pinned() -> None:
     assert executor._executor._max_workers == (
         AnnotationMixin.VALIDATE_POOL_WORKERS
     ), "the pool is not built from the pinned width"
+
+
+# ---------------------------------------------------------------------------
+# The repeat cost of an editing session is collapsed by a result memo (#833)
+# ---------------------------------------------------------------------------
+# The editor validates on a debounce, so one session posts near-identical
+# configs many times and identical ones constantly -- a keystroke and its
+# undo, a paste and a revert, a settle after the text stopped changing.
+# #666 decided the resource-resolving build stays; this is the cost side of
+# that decision, and it changes nothing the caller can observe except how
+# long the answer takes.
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_revalidating_the_same_config_does_not_rebuild(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The second POST of a config already validated answers without a build.
+
+    The status and body alone cannot show this -- they are identical either
+    way, which is the whole point. So the assertion is on the work: the three
+    pool submissions a miss makes are patched out *after* the first request,
+    and none of them may happen on the second.
+    """
+    client = AsyncClient()
+
+    first = await client.post(VALIDATE_URL, {"config": VALID_CONFIG})
+    assert first.status_code == 200, first.content
+    assert first.json() == {"errors": ""}
+
+    count = mocker.patch(
+        "web_annotation.pipelines.views._count_annotators", return_value=1)
+    parse = mocker.patch.object(
+        views.AnnotationConfigParser, "parse_str", return_value=(None, []))
+    build = mocker.patch(
+        "web_annotation.pipelines.views.load_pipeline_from_yaml",
+        return_value=None)
+
+    second = await client.post(VALIDATE_URL, {"config": VALID_CONFIG})
+
+    assert second.status_code == 200, second.content
+    assert second.json() == first.json()
+    count.assert_not_called()
+    parse.assert_not_called()
+    build.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_a_memoised_config_is_answered_by_a_saturated_server() -> None:
+    """A hit is not shed: the admission cap guards work it no longer does.
+
+    ``MAX_VALIDATIONS_IN_FLIGHT`` refuses a request because the pool cannot
+    take on more work. A request whose answer is already in hand asks the
+    pool for nothing, so refusing it would be shedding for its own sake --
+    and it would shed exactly the requests a debounced editor sends most.
+    """
+    client = AsyncClient()
+    primed = await client.post(VALIDATE_URL, {"config": VALID_CONFIG})
+    assert primed.status_code == 200, primed.content
+
+    with occupying_the_validation_pool():
+        response = await client.post(VALIDATE_URL, {"config": VALID_CONFIG})
+
+    assert response.status_code == 200, response.content
+    assert response.json() == {"errors": ""}
