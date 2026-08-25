@@ -111,3 +111,39 @@ def test_unrecognized_transcript_names_leave_the_collision_standing() -> None:
 
     assert inference.file_format is None
     assert set(inference.matched) == {"ccds", "refseq"}
+
+
+def test_an_empty_transcript_name_leaves_the_collision_standing() -> None:
+    """A blank name field is an unrecognized name, not a crash.
+
+    An empty field must not count toward "every sampled name matches" --
+    and must not take inference down with it either.
+    """
+    content = (
+        headerless_record("NM_000546", "TP53")
+        + headerless_record("", "TP53")
+    )
+
+    inference = infer_gene_models_format(StringIO(content))
+
+    assert inference.file_format is None
+    assert set(inference.matched) == {"ccds", "refseq"}
+
+
+def test_headered_refseq_ccds_collision_is_not_tie_broken() -> None:
+    """A headered file keeps its pre-tie-break behavior.
+
+    refseq and ccds declare identical headers too, so a headered file also
+    collides on exactly this pair; the tie-break must leave it alone.
+    """
+    header = (
+        "#bin\tname\tchrom\tstrand\ttxStart\ttxEnd\tcdsStart\tcdsEnd\t"
+        "exonCount\texonStarts\texonEnds\tscore\tname2\tcdsStartStat\t"
+        "cdsEndStat\texonFrames\n"
+    )
+    content = header + headerless_record("NM_000546", "TP53")
+
+    inference = infer_gene_models_format(StringIO(content))
+
+    assert inference.file_format is None
+    assert set(inference.matched) == {"ccds", "refseq"}

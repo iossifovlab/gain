@@ -1015,10 +1015,15 @@ def _break_refseq_ccds_tie(
     Returns the winning format and the evidence for it, or None when the
     sampled names do not all share one format's accession shape.
     """
+    # header=None is load-bearing twice over: a headered file collides on
+    # this same pair, and its header token "name" lands in the sample and
+    # matches neither shape, so headered files keep their pre-tie-break
+    # behavior. na_filter=False keeps a blank name field a string, so it
+    # fails both shapes instead of crashing the match.
     infile.seek(0)
     names = pd.read_csv(
         infile, sep="\t", header=None, usecols=[1], dtype=str,
-        nrows=sampled_rows,
+        nrows=sampled_rows, na_filter=False,
     )[1].tolist()
     if not names:
         return None
