@@ -27,17 +27,19 @@ def _record(feature: str, start: int, end: int, attributes: str) -> str:
     ])
 
 
-def _one_transcript(
+@pytest.fixture
+def one_transcript(
     gtf_gene_models: Callable[..., GeneModels],
-    attributes: str,
-    **kwargs: str,
-) -> GeneModels:
+) -> Callable[..., GeneModels]:
     """Build gene models for a single mRNA transcript with one exon."""
-    return gtf_gene_models(
-        _record("mRNA", 19961689, 19968479, attributes),
-        _record("exon", 19961689, 19961845, attributes),
-        **kwargs,
-    )
+    def _build(attributes: str, **kwargs: str) -> GeneModels:
+        return gtf_gene_models(
+            _record("mRNA", 19961689, 19968479, attributes),
+            _record("exon", 19961689, 19961845, attributes),
+            **kwargs,
+        )
+
+    return _build
 
 
 GENE_ATTRIBUTES = _attributes(gene_id="FBgn0031081", gene_symbol="Nep3")
@@ -109,9 +111,9 @@ def test_the_skip_set_is_disjoint_from_the_accepted_set() -> None:
 
 
 def test_gene_symbol_resolves_the_gene_label(
-    gtf_gene_models: Callable[..., GeneModels],
+    one_transcript: Callable[..., GeneModels],
 ) -> None:
-    gene_models = _one_transcript(gtf_gene_models, _attributes(
+    gene_models = one_transcript(_attributes(
         gene_id="FBgn0031081", gene_symbol="Nep3",
         transcript_id="FBtr0070000",
     ))
@@ -120,10 +122,10 @@ def test_gene_symbol_resolves_the_gene_label(
 
 
 def test_gene_name_still_wins_over_gene_symbol(
-    gtf_gene_models: Callable[..., GeneModels],
+    one_transcript: Callable[..., GeneModels],
 ) -> None:
     """Ensembl and RefSeq files, which carry both, are unaffected."""
-    gene_models = _one_transcript(gtf_gene_models, _attributes(
+    gene_models = one_transcript(_attributes(
         gene_id="FBgn0031081", gene_name="Nep3", gene_symbol="Nep3-symbol",
         transcript_id="FBtr0070000",
     ))
@@ -132,9 +134,9 @@ def test_gene_name_still_wins_over_gene_symbol(
 
 
 def test_gene_id_remains_the_last_resort(
-    gtf_gene_models: Callable[..., GeneModels],
+    one_transcript: Callable[..., GeneModels],
 ) -> None:
-    gene_models = _one_transcript(gtf_gene_models, _attributes(
+    gene_models = one_transcript(_attributes(
         gene_id="FBgn0031081", transcript_id="FBtr0070000",
     ))
 
@@ -142,10 +144,9 @@ def test_gene_id_remains_the_last_resort(
 
 
 def test_gene_mapping_applies_to_a_symbol_resolved_label(
-    gtf_gene_models: Callable[..., GeneModels],
+    one_transcript: Callable[..., GeneModels],
 ) -> None:
-    gene_models = _one_transcript(
-        gtf_gene_models,
+    gene_models = one_transcript(
         _attributes(
             gene_id="FBgn0031081", gene_symbol="Nep3",
             transcript_id="FBtr0070000",
@@ -236,7 +237,8 @@ def test_unknown_feature_still_raises(
 # ------------------------------------------------------------- real excerpt
 
 
-def _flybase_excerpt(fixture_dirname: Callable[[str], str]) -> GeneModels:
+@pytest.fixture
+def flybase_excerpt(fixture_dirname: Callable[[str], str]) -> GeneModels:
     """Load the trimmed excerpt of a real ``dmel-all-r6.68.gtf.gz``.
 
     It carries one transcript of each of the nine transcript-level biotypes
@@ -247,14 +249,12 @@ def _flybase_excerpt(fixture_dirname: Callable[[str], str]) -> GeneModels:
 
 
 def test_real_flybase_excerpt_admits_the_exon_bearing_biotypes_by_symbol(
-    fixture_dirname: Callable[[str], str],
+    flybase_excerpt: GeneModels,
 ) -> None:
     """One transcript per biotype; the miRNA and pre_miRNA are absent."""
-    gene_models = _flybase_excerpt(fixture_dirname)
-
     assert {
         tr_id: tm.gene
-        for tr_id, tm in gene_models.transcript_models.items()
+        for tr_id, tm in flybase_excerpt.transcript_models.items()
     } == {
         "FBtr0070000": "Nep3",                # mRNA
         "FBtr0070001": "tRNA:Pro-CGG-1-1",    # tRNA
@@ -267,14 +267,13 @@ def test_real_flybase_excerpt_admits_the_exon_bearing_biotypes_by_symbol(
 
 
 def test_real_flybase_excerpt_builds_a_full_mrna(
-    fixture_dirname: Callable[[str], str],
+    flybase_excerpt: GeneModels,
 ) -> None:
     """The widened dispatch still cooperates with UTR, CDS and codon rows.
 
     Only real data carries an mRNA with all of them at once.
     """
-    transcript = _flybase_excerpt(
-        fixture_dirname).transcript_models["FBtr0070000"]
+    transcript = flybase_excerpt.transcript_models["FBtr0070000"]
 
     assert transcript.tx == (19961689, 19968479)
     assert transcript.cds == (19963955, 19967460)
