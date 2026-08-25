@@ -19,6 +19,8 @@ from gain.genomic_resources.genomic_scores import (
     RecordArrays,
     build_score_from_resource,
     clip_span,
+    owned_records_mask,
+    owns_record,
 )
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
@@ -68,15 +70,19 @@ from gain.genomic_resources.statistics.alleles import (
     serves_allele_arrays,
 )
 from gain.genomic_resources.statistics.coverage import (
+    COVERAGE_FRAGMENT_LENGTHS_IMAGE_FILE,
     COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
     COVERAGE_STATISTICS_FILE,
     CoverageDisplay,
-    CoverageRow,
     CoverageStatistics,
+    FragmentDisplay,
     RegionCoverage,
     accumulate_coverage,
+    build_coverage_display,
+    build_fragment_display,
     merge_region_coverage,
     normalize_values,
+    resolve_chrom_lengths,
     save_and_plot_coverage,
 )
 from gain.genomic_resources.statistics.min_max import MinMaxValue
@@ -118,12 +124,30 @@ _COVERAGE_SCAN_RESOURCE_TYPES = frozenset(
     for spelling in equivalent_resource_types(resource_type)
 )
 
-# Of the kinds coverage scans, only position scores publish segment
-# statistics: their validators refuse overlap, so the run algebra is
-# exact.  Fragment rows overlap and have no exact run algebra yet;
-# their segment statistics are gain#794's slice.
-_SEGMENT_STATISTICS_RESOURCE_TYPES = frozenset(
+# The kinds whose rows are PAIRWISE DISJOINT -- no two share a position.
+# Position scores, whose ``validate_records`` refuses a row beginning at
+# or before its predecessor's end, on raw spans.  (Adjacent rows are
+# legal and common, and the segment algebra depends on it, so this is
+# deliberately not phrased as "cannot touch": ADR 0020 and
+# ``add_interval`` use touching for exactly that adjacency.)
+#
+# Named for the FACT rather than for one of its consequences, because it
+# has two: disjoint rows have an exact run algebra, so their segment
+# statistics are published; and they cannot double-count a position, so
+# the scan hands their coverage full unclipped spans.  Fragment rows
+# overlap, so they get neither (their counts are their own statistic --
+# gain#794).
+_NON_OVERLAPPING_ROW_RESOURCE_TYPES = frozenset(
     equivalent_resource_types("position_score"))
+
+# The kinds whose rows ARE fragments, in both spellings, and so publish
+# a fragment count and fragment-length histogram (gain#794).  A separate
+# statement from the one above rather than its complement: that these
+# are exactly the coverage-scanned kinds that overlap is true today and
+# incidental -- a future overlapping kind that is not a fragment score
+# would inherit fragment counts it has no business publishing.
+_FRAGMENT_STATISTICS_RESOURCE_TYPES = frozenset(
+    equivalent_resource_types("fragment_score"))
 
 
 def _allele_batches(
@@ -164,6 +188,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         super().__init__(resource)
         self.score: GenomicScore = build_score_from_resource(resource)
         self._render_repo: GenomicResourceRepo | None = None
+        # One page render asks for the stored coverage once per section
+        # -- Coverage and Fragments both -- and over an HTTP or S3
+        # repository that is a network round trip each.  Held for the
+        # life of this object, which is built per render.
+        self._coverage_statistics: CoverageStatistics | None = None
+        self._coverage_statistics_read = False
 
     def get_config_histograms(self) -> dict[str, Any]:
         """Collect all configurations of histograms for the genomic score."""
@@ -198,6 +228,11 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         """The info page's one statement of the global histogram's path."""
         return COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE
 
+    @staticmethod
+    def get_coverage_fragment_lengths_image_filename() -> str:
+        """The info page's one statement of the fragment image's path."""
+        return COVERAGE_FRAGMENT_LENGTHS_IMAGE_FILE
+
     def get_coverage_statistics(self) -> CoverageStatistics | None:
         """The resource's coverage statistics, or ``None`` if not built.
 
@@ -206,12 +241,18 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         not know about this file), so a resource built before the
         statistic existed simply has nothing to show yet.
         """
+        if self._coverage_statistics_read:
+            return self._coverage_statistics
         try:
             content = self.resource.get_file_content(
                 COVERAGE_STATISTICS_FILE)
         except FileNotFoundError:
-            return None
-        return CoverageStatistics.deserialize(content)
+            statistics = None
+        else:
+            statistics = CoverageStatistics.deserialize(content)
+        self._coverage_statistics = statistics
+        self._coverage_statistics_read = True
+        return statistics
 
     def get_allele_statistics(self) -> AlleleStatistics | None:
         """The resource's allele statistics, or ``None`` if not built.
@@ -228,124 +269,56 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def get_coverage_display(self) -> CoverageDisplay | None:
         """The Coverage section's payload: raw counts plus fractions.
 
-        Fractions are computed here, at render time, against a resolved
-        denominator; the stored statistic stays raw counts (see
-        :class:`CoverageStatistics`).  ``None`` when the statistic is not
-        built.  Any failure to resolve a denominator degrades to
-        raw-counts-only rendering, never a page-build failure.
-
-        The genome rung of the denominator ladder resolves against the
+        ``None`` when the statistic is not built.  This frame's whole
+        job is the genome rung of the denominator ladder -- it needs the
         repository handed to the enclosing :meth:`get_info` /
-        :meth:`get_statistics_info` call; invoked outside a page build,
-        no repository is available and that rung resolves nothing.
+        :meth:`get_statistics_info` call, and the cache it goes through
+        is shared with the scan's contig splitting.  Invoked outside a
+        page build no repository is available and that rung resolves
+        nothing, which degrades to raw counts rather than failing.
         """
         coverage = self.get_coverage_statistics()
         if coverage is None:
             return None
-        covered = coverage.covered_by_chromosome()
-        lengths = self._resolve_chrom_lengths(covered)
-        for chrom, length in list(lengths.items()):
-            if length <= 0 or covered[chrom] > length:
-                # A denominator smaller than what it must bound proves the
-                # resolved source wrong for this contig (a zero-length .fai
-                # record, a mislabeled genome).  Degrade the row to raw
-                # counts rather than render a zero-division or a >100%.
-                logger.warning(
-                    "implausible length %s for contig %s of %s "
-                    "(covered positions: %s); rendering raw counts for it",
-                    length, chrom, self.resource.resource_id, covered[chrom])
-                del lengths[chrom]
-        segments = coverage.segments_by_chromosome()
-        rows = [
-            CoverageRow(
-                chrom,
-                count,
-                count / lengths[chrom] if chrom in lengths else None,
-                segments.get(chrom),
-            )
-            for chrom, count in covered.items()
-        ]
-        if lengths and len(lengths) == len(covered):
-            global_fraction: float | None = (
-                coverage.covered_global() / sum(lengths.values()))
-        else:
-            global_fraction = None
-        return CoverageDisplay(rows, global_fraction)
+        lengths = resolve_chrom_lengths(
+            self.resource, self.score, self._render_genome(),
+            coverage.covered_by_chromosome())
+        return build_coverage_display(
+            self.resource.resource_id, coverage, lengths)
 
-    def _resolve_chrom_lengths(
-        self, chroms: Iterable[str],
-    ) -> dict[str, int]:
-        """Resolve chromosome lengths for the render-time denominator.
+    def get_fragment_display(self) -> FragmentDisplay | None:
+        """The Fragments section's payload, or ``None`` if not computed.
 
-        The ladder: the ``reference_genome`` label's genome resource,
-        falling back to the bigWig header's chromosome sizes for a
-        bigWig-backed score, or raw counts (an empty mapping) when
-        nothing resolves.  A chromosome absent from the resolved source
-        is simply absent from the result.
+        ``None`` covers both ways a fragment resource can have nothing
+        to show: no statistics file at all, and a file written before
+        fragment counts existed.  Both render the section's "not
+        computed" fallback -- these statistics roll out lazily, as
+        :meth:`get_coverage_statistics` explains.
+        """
+        coverage = self.get_coverage_statistics()
+        if coverage is None:
+            return None
+        return build_fragment_display(coverage)
+
+    def _render_genome(self) -> ReferenceGenome | None:
+        """The resource's labelled reference genome, at render time.
+
+        A label naming something that is not a genome is a reason to
+        degrade to raw counts, not to fail the page build.
         """
         genome_id = cast(
             str | None,
             self.resource.get_labels().get("reference_genome"),
         )
         try:
-            ref_genome = self._get_reference_genome_cached(
+            return self._get_reference_genome_cached(
                 self._render_repo, genome_id)
         except ValueError:
-            # The label names a resource that is not a genome.  At render
-            # time that is a reason to degrade, not to fail the page build.
             logger.warning(
                 "reference_genome label %r of %s does not name a genome "
                 "resource; ignoring it for coverage fractions",
                 genome_id, self.resource.resource_id)
-            ref_genome = None
-        if ref_genome is not None:
-            all_lengths = ref_genome.get_all_chrom_lengths()
-            return {
-                chrom: all_lengths[chrom]
-                for chrom in chroms
-                if chrom in all_lengths
-            }
-        if self.score.table.chrom_lengths_are_exact:
-            return self._table_exact_lengths(chroms)
-        logger.info(
-            "no coverage denominator resolvable for %s; "
-            "rendering raw counts only", self.resource.resource_id)
-        return {}
-
-    def _table_exact_lengths(
-        self, chroms: Iterable[str],
-    ) -> dict[str, int]:
-        """Contig lengths from a backend that declares them exact.
-
-        Only consulted when the table's ``chrom_lengths_are_exact``
-        capability holds (the bigWig header; mapping-aware).  Opens the
-        score if it is closed, and closes it again only in that case --
-        an already-open score stays open for its owner.
-        """
-        opened_here = not self.score.is_open()
-        if opened_here:
-            self.score.open()
-        try:
-            lengths: dict[str, int] = {}
-            for chrom in chroms:
-                try:
-                    length = self.score.table.find_chromosome_length(chrom)
-                except ValueError:
-                    # The backend raises ValueError both for a contig it
-                    # does not list and for a closed table; the open()
-                    # above rules the latter out, so this is the
-                    # unknown-contig case.
-                    logger.warning(
-                        "contig %s has no exact table length in %s; "
-                        "rendering raw counts for it",
-                        chrom, self.resource.resource_id)
-                    continue
-                if isinstance(length, int):
-                    lengths[chrom] = length
-            return lengths
-        finally:
-            if opened_here:
-                self.score.close()
+            return None
 
     @staticmethod
     def _do_noregion_histograms(
@@ -698,8 +671,16 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             for scr_id in score_ids
         }
         with impl.score.open() as score:
-            for _left, _right, rec in GenomicScoreImplementation._scan_region(
+            for left, _right, rec in GenomicScoreImplementation._scan_region(
                     score, chrom, start, end, score_ids):
+                # The same record partition every statistic reads: a
+                # region reduces the records it OWNS.  min/max is
+                # idempotent under duplication, so the merged result
+                # would survive without this -- but the bulk twin
+                # selects, and a region measuring differently by which
+                # path served it is what the parity tests refuse.
+                if not owns_record(left, start, end):
+                    continue
                 for score_index, score_id in enumerate(score_ids):
                     result[score_id].add_value(
                         rec[score_index],  # type: ignore
@@ -774,29 +755,36 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             # One statement of the rule, read by this path and by the bulk
             # one: only a position score weighs a record by its span.
             weight_is_span = score.RECORD_WEIGHT_IS_SPAN
-            # Only the span-derived weight reads the window: a count-kind
-            # record counts once wherever the point it collapses to falls
-            # (see test_multi_base_allele_record_clipped_by_region_weighs_one).
+            # Coverage unions POSITIONS, and a union is only additive
+            # across parallel regions when the spans are clipped to
+            # disjoint extents -- so a kind whose rows can overlap keeps
+            # clipping.  Rows that cannot are already pairwise disjoint,
+            # so their coverage is exact unclipped and rides the same
+            # record partition as every other statistic.
+            clip_coverage = coverage is not None \
+                and not coverage.rows_are_disjoint
+            track_fragments = coverage is not None \
+                and coverage.tracks_fragments
             for left, right, rec in GenomicScoreImplementation._scan_region(
                     score, chrom, start, end, score_ids,
                     alleles=alleles):
-                # Coverage measures every kind from the same clip the
-                # span weight reads, so the two paths agree on the one
-                # edge the shared clip leaves open: a record beginning
-                # past the region's end covers nothing (gain#636).  A
-                # scan needing neither skips the clip entirely.
-                span = clip_span(left, right, start, end) \
-                    if weight_is_span or coverage is not None else None
-                if coverage is not None and span is not None:
-                    coverage.add_interval(
-                        span[0], span[1], normalize_values(rec))
-                if weight_is_span:
-                    if span is None:
-                        continue
-                    left, right = span
-                    weight = right - left + 1
-                else:
-                    weight = 1
+                owned = owns_record(left, start, end)
+                if coverage is not None:
+                    if clip_coverage:
+                        span = clip_span(left, right, start, end)
+                        if span is not None:
+                            coverage.add_interval(
+                                span[0], span[1], normalize_values(rec))
+                    elif owned:
+                        coverage.add_interval(
+                            left, right, normalize_values(rec))
+                if not owned:
+                    continue
+                if track_fragments:
+                    # A fragment is the row as stored, at its own span.
+                    assert coverage is not None
+                    coverage.add_fragment(right - left + 1)
+                weight = right - left + 1 if weight_is_span else 1
                 for scr_index, scr_id in enumerate(score_ids):
 
                     try:
@@ -842,12 +830,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         rows directly and bigWig converts each fetched interval chunk in one
         shot, neither building a ``Record`` per row -- and accumulates each
         score's histogram with the histogram's own ``add_batch`` rather than a
-        per-record ``add_value``.  The clip, the weight, the overlap rule and
-        the value coercion are identical to the per-record path (pinned by the
-        bulk-vs-per-record tests, and by both paths reading one statement of
-        the per-kind rules); the dispatch restricts this to the score and
-        histogram combinations :meth:`_can_bulk_histogram` admits, over
-        tabix/bigWig tables -- everything else keeps :meth:`_do_histogram`.
+        per-record ``add_value``.  The selection, the weight, the overlap rule
+        and the value coercion are identical to the per-record path (pinned
+        by the bulk-vs-per-record tests, and by both paths reading one
+        statement of the per-kind rules); the dispatch restricts this to the
+        score and histogram combinations :meth:`_can_bulk_histogram`
+        admits, over tabix/bigWig tables -- everything else keeps
+        :meth:`_do_histogram`.
         """
         result: dict[str, Histogram] = {}
         for score_id, hist_conf in all_hist_confs.items():
@@ -952,10 +941,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         """Fold one batch of column arrays into the per-score histograms.
 
         ``arrays`` is one ``(pos_begin, pos_end, {score_id: cells})`` batch as
-        produced by :meth:`_region_value_arrays`.  Clips each record to
-        ``[start, end]`` exactly as the per-record read does (and drops
-        records ending before ``start``), weights it as ``score``'s kind
-        weights it, and adds each score's values vectorized.  Whether the
+        produced by :meth:`_region_value_arrays`.  Selects the records this
+        region OWNS exactly as the per-record read does, weighs each at
+        its full span as ``score``'s kind weighs it, and adds each
+        score's values vectorized.  Whether the
         batch is one this kind's records may form was settled before it got
         here, by the door's ``validate_record_arrays``.
 
@@ -968,7 +957,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         from ``NullHistogram.add_value`` being a no-op.
         """
         pos_begin, pos_end, value_cells = arrays
-        keep, weights = GenomicScoreImplementation._clip_and_weigh(
+        keep, weights = GenomicScoreImplementation._select_and_weigh(
             pos_begin, pos_end, region, score)
 
         for score_id, hist in result.items():
@@ -988,53 +977,52 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 result[score_id] = NullHistogram(NullHistogramConfig(str(err)))
 
     @staticmethod
-    def _clip_and_weigh(
+    def _select_and_weigh(
         pos_begin: np.ndarray,
         pos_end: np.ndarray,
         region: tuple[str, int | None, int | None],
         score: GenomicScore,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Clip a batch to the region and weigh it, per ``score``'s kind.
+        """Select a batch's owned records and weigh them, per ``score``'s kind.
 
-        Returns ``(keep, weights)``: the mask of records surviving the
-        ``pos_end >= start`` skip, and their weights.  For a span-weighted
-        kind that skip is the same edge
-        :func:`~gain.genomic_resources.genomic_scores.clip_span` applies per
-        record in the statistics scan; for a count kind the per-record scan
-        reads no window at all, and the two paths agree because the mask is
-        computed on the RAW ``pos_end`` -- no record a backend can answer a
-        region query with falls to it.  Either way a region measures the
-        same whichever path a resource was eligible for.
-        Nothing here stops a negative weight if an inverted span arrives
-        (the backends' doing rather than this function's).  The per-record
-        consumer refuses such a record -- one beginning past the region's
-        end -- via :func:`~gain.genomic_resources.genomic_scores.clip_span`;
-        gain#636 tracks closing that edge on this path too.
+        Returns ``(keep, weights)``:
+        :func:`~gain.genomic_resources.genomic_scores.owned_records_mask`,
+        and the owned records' weights measured at their FULL span --
+        never clipped to the region.  Selecting instead of clipping is
+        what makes a statistic independent of ``--region-size``
+        (gain#816): a record straddling a boundary used to be measured by
+        both regions, which summed to the right answer only for a
+        span-weighted kind and double-counted every count-weighted one.
+
+        Because the span is the record's own, an inverted span can no
+        longer be MADE here by clipping -- the gain#636 edge is
+        unrepresentable on this path rather than merely guarded.
 
         Measuring only.  Whether the batch is one this kind's records may
         form is settled upstream, by the door's ``validate_record_arrays``,
-        against the RAW columns -- which is why no rule is stated here and
-        why this may clip freely without a verdict depending on it.
+        against the RAW columns -- which is why no rule is stated here.
 
         The weight is read off the score class, which states it once for this
         path and for the per-record one: ``RECORD_WEIGHT_IS_SPAN`` -- a
-        position-score record counts once per base pair of the queried region
-        it covers (``min(end, pos_end) - max(start, pos_begin) + 1``); an
-        allele record and a fragment count 1, however wide they are.
+        position-score record counts once per base pair it spans; an allele
+        record and a fragment count 1, however wide they are.
         """
         _chrom, start, end = region
-        count = pos_begin.shape[0]
-        left = pos_begin if start is None else np.maximum(pos_begin, start)
-        right = pos_end if end is None else np.minimum(pos_end, end)
-        keep = np.ones(count, dtype=bool) if start is None \
-            else (pos_end >= start)
-
-        kleft = left[keep]
-        kright = right[keep]
-        weights = (kright - kleft + 1).astype(np.int64) \
-            if score.RECORD_WEIGHT_IS_SPAN \
-            else np.ones(kleft.size, dtype=np.int64)
-        return keep, weights
+        keep = owned_records_mask(pos_begin, start, end)
+        if not score.RECORD_WEIGHT_IS_SPAN:
+            # A count kind needs only HOW MANY records it owns; gathering
+            # their spans to measure one array's length would allocate
+            # two full columns per batch and read neither.
+            return keep, np.ones(
+                int(np.count_nonzero(keep)), dtype=np.int64)
+        if keep.all():
+            # The common case by a wide margin: rows arrive begin-sorted
+            # and only a leading run can fall outside the region, so
+            # every batch after a region's first is wholly owned.
+            return keep, (pos_end - pos_begin + 1).astype(np.int64)
+        left = pos_begin[keep]
+        right = pos_end[keep]
+        return keep, (right - left + 1).astype(np.int64)
 
     @staticmethod
     def _can_bulk_histogram(
@@ -1217,8 +1205,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         if resource_type in _COVERAGE_SCAN_RESOURCE_TYPES:
             coverage = RegionCoverage(
                 chrom, start, end,
-                track_segments=resource_type
-                in _SEGMENT_STATISTICS_RESOURCE_TYPES)
+                rows_are_disjoint=resource_type
+                in _NON_OVERLAPPING_ROW_RESOURCE_TYPES,
+                track_fragments=resource_type
+                in _FRAGMENT_STATISTICS_RESOURCE_TYPES)
         score = build_score_implementation_from_resource(resource).score
         alleles = region_alleles_for(score, chrom, start, end)
         nucleotides = True
@@ -1265,7 +1255,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         Reads the region as column-array batches of already-parsed values
         (the same producer the histogram bulk path uses) and reduces each score
         with ``min()``/``max()`` over the batch's non-nan subset, rather than a
-        per-record ``MinMaxValue.add_value``.  The parse, the region clip/skip,
+        per-record ``MinMaxValue.add_value``.  The parse, the region selection,
         the overlap rule and the record count are identical to the per-record
         path -- both read the same per-kind facts off the score class.
         """
@@ -1284,9 +1274,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> None:
         """Fold one batch of column arrays into the per-score min/max.
 
-        Shares the clip/skip with the histogram path, and the door it is read
-        through with every pass; the reduction takes ``min()``/``max()`` over
-        the kept values
+        Shares the record selection with the histogram path, and the door it
+        is read through with every pass; the reduction takes ``min()``/``max()``
+        over the owned values
         with the nans dropped first -- an empty remainder contributes nothing --
         folded into the running ``MinMaxValue`` exactly as ``add_value`` seeds
         and combines them.
@@ -1298,9 +1288,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         nan -- so the round trip is exact up to 2**53 and the correctly
         rounded integer above it.
         """
-        pos_begin, pos_end, value_cells = arrays
-        keep, _weights = GenomicScoreImplementation._clip_and_weigh(
-            pos_begin, pos_end, region, score)
+        pos_begin, _pos_end, value_cells = arrays
+        # The selection alone: min/max reduces the records this region
+        # owns and weighs nothing, so it reads the mask directly rather
+        # than asking for weights it would discard.
+        _chrom, start, end = region
+        keep = owned_records_mask(pos_begin, start, end)
 
         for score_id, min_max in result.items():
             values = value_cells[score_id][keep]
@@ -1436,8 +1429,17 @@ class FragmentScoreImplementation(GenomicScoreImplementation):
     Carries no statistics behaviour of its own: a fragment's weight-1 rule
     is declared on ``FragmentScore`` (``RECORD_WEIGHT_IS_SPAN``) and read by
     both scan paths from there.
+
+    It does carry its own info page, which is the genomic-score page plus
+    a Fragments section.  The section lives in a template that FILLS a
+    block the shared template leaves empty, so a kind with no fragments
+    renders no section at all -- rather than a heading permanently
+    reading "not computed", which is what gating one shared template on
+    a boolean produced for Coverage on allele scores.
     """
     # pylint: disable=useless-parent-delegation
+
+    template_name: ClassVar[str] = "fragment_score.jinja"
 
     def create_statistics_build_tasks(
         self, **kwargs: Any,

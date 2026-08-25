@@ -1,7 +1,9 @@
 {% extends base %}
-{% block content %}
+{# Set outside the block so every child template's block sees them:
+   a nested block does not inherit a `set` made inside its parent. #}
 {% set impl = data.genomic_scores %}
 {% set scores = impl.score %}
+{% block content %}
 
 <h2>Scores ({{ scores.score_definitions|length }})</h2>
 <div class="scrollable-table-container">  
@@ -193,4 +195,9 @@
 {% else %}
 <p>not computed</p>
 {% endif %}
+
+{# Empty by default: a kind with nothing to say here renders no section
+   at all, rather than a heading that reads "not computed" forever.
+   Filled by fragment_score.jinja. #}
+{% block fragments %}{% endblock %}
 {% endblock %}

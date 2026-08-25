@@ -181,6 +181,39 @@ def clip_span(
     return (left, right)
 
 
+def owns_record(begin: int, start: int | None, end: int | None) -> bool:
+    """Whether a region owns a record, by where that record BEGINS.
+
+    The scan's partition of RECORDS, and the one statement of it
+    (gain#816).  Ownership is total, unique and reachable: the regions
+    tile a contig contiguously from position 1, so every record's begin
+    falls in exactly one of them, and the owning region's query always
+    returns it -- ``begin`` inside ``[start, end]`` is by itself an
+    overlap.  An unbounded side owns everything on that side, which is
+    the same rule with one region.
+
+    Contrast :func:`clip_span`, which partitions POSITIONS.  A statistic
+    that sums over records wants this; one that unions positions wants
+    that.  Both live here so the two halves of the algebra have one home.
+    """
+    return (start is None or begin >= start) \
+        and (end is None or begin <= end)
+
+
+def owned_records_mask(
+    pos_begin: np.ndarray,
+    start: int | None,
+    end: int | None,
+) -> np.ndarray:
+    """:func:`owns_record` over a whole batch's begin column."""
+    keep = np.ones(pos_begin.shape[0], dtype=bool)
+    if start is not None:
+        keep &= pos_begin >= start
+    if end is not None:
+        keep &= pos_begin <= end
+    return keep
+
+
 def clip_to_region[T](
     segments: Iterator[tuple[int, int, T]],
     pos_begin: int | None,

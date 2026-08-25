@@ -163,18 +163,27 @@ def test_multi_base_allele_record_weighs_one_not_its_span(
     assert bulk["s"].bars.sum() == 3
 
 
-def test_multi_base_allele_record_clipped_by_region_weighs_one(
+def test_a_multi_base_record_is_owned_by_the_region_holding_its_begin(
     tmp_path: pathlib.Path,
 ) -> None:
-    # Region 15..25 keeps only the ten-base record, clipped to five bases: the
-    # clipped span (5), the full span (10) and the correct weight (1) are three
-    # different numbers, so a wrong weight cannot hide.
+    # gain#816: a region owns the records whose pos_begin falls in it,
+    # and no other.  The ten-base record at 10..19 reaches into 15..25
+    # but begins outside it, so that region owns nothing at all; 5..15
+    # owns it and the record sharing its position, and each weighs 1.
+    # Were the record measured by every region its span reached, it
+    # would be counted twice over the two.
     resource = _allele_multibase_tabix(tmp_path)
     confs: dict = {"s": _hist_conf()}
-    ref = G._do_histogram(resource, confs, "chr1", 15, 25)
-    bulk = G._do_histogram_bulk(resource, confs, "chr1", 15, 25)
-    _assert_hists_equal(bulk, ref)
-    assert bulk["s"].bars.sum() == 1
+
+    reaching = G._do_histogram(resource, confs, "chr1", 15, 25)
+    owning = G._do_histogram(resource, confs, "chr1", 5, 15)
+
+    _assert_hists_equal(
+        G._do_histogram_bulk(resource, confs, "chr1", 15, 25), reaching)
+    _assert_hists_equal(
+        G._do_histogram_bulk(resource, confs, "chr1", 5, 15), owning)
+    assert reaching["s"].bars.sum() == 0
+    assert owning["s"].bars.sum() == 2
 
 
 def _fragment_tabix(
@@ -573,29 +582,31 @@ def _assert_bulk_agrees_at_batch_size(
 
 @pytest.mark.parametrize("batch_size", _BATCH_SIZES)
 @pytest.mark.parametrize(
-    ("region", "kept"), [((1, 300), 5), ((35, 65), 4)],
-    ids=["unclipped", "clipped"])
+    ("region", "read", "owned"), [((1, 300), 5, 5), ((35, 65), 4, 2)],
+    ids=["whole contig", "owned subset"])
 def test_bulk_fragment_scan_agrees_across_batch_boundaries(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
     batch_size: int,
     region: tuple[int, int],
-    kept: int,
+    read: int,
+    owned: int,
 ) -> None:
     # Every fragment weighs 1, so the bars are a per-record tally and a
     # per-batch accumulator that double counts or loses a record shows up
-    # there.  The clipped region additionally drops one fragment (20..30 ends
-    # before 35), so the tally is not merely "all the rows the backend read".
+    # there.  The second region reads four fragments and owns two of them
+    # (only 40..41 and 50..60 BEGIN inside 35..65), so the tally is not
+    # merely "all the rows the backend read".
     bulk_hist, _bulk_min_max = _assert_bulk_agrees_at_batch_size(
         _five_fragments_tabix(tmp_path), monkeypatch, batch_size,
-        region, kept)
-    assert bulk_hist["s"].bars.sum() == kept
+        region, read)
+    assert bulk_hist["s"].bars.sum() == owned
 
 
 @pytest.mark.parametrize("batch_size", _BATCH_SIZES)
 @pytest.mark.parametrize(
     ("region", "kept", "binned"), [((1, 30), 5, 4), ((12, 30), 2, 2)],
-    ids=["unclipped", "clipped"])
+    ids=["whole contig", "owned subset"])
 def test_bulk_allele_scan_agrees_across_batch_boundaries(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -685,12 +696,12 @@ def test_a_region_holding_a_single_record(
     # ``kright[:-1]`` -- both empty here -- and the reductions run over a
     # single element.
     resource = make_resource(tmp_path)
-    # 14 is the allele fixture's lone non-shared record.  101..150 is chosen
-    # so the fragment fixture leaves exactly one: the 10..100 fragment is
-    # fetched (tabix reads from 100) and then dropped by the ``pos_end >=
-    # start`` clip, and only 25..200 survives -- which also means the single
-    # record is one the clip had to think about.
-    start, end = (14, 14) if make_resource is _allele_tabix else (101, 150)
+    # 14 is the allele fixture's lone non-shared record.  24..30 is chosen
+    # so the fragment fixture leaves exactly one: all three fragments are
+    # fetched (10..100 and 20..30 both reach into it) and only 25..200
+    # BEGINS inside, so the single record is one the selection had to
+    # think about rather than the only row the backend returned.
+    start, end = (14, 14) if make_resource is _allele_tabix else (24, 30)
     confs: dict = {"s": _hist_conf()}
     ref_hist = G._do_histogram(resource, confs, "chr1", start, end)
     ref_min_max = G._do_min_max(resource, ["s"], "chr1", start, end)
@@ -725,11 +736,11 @@ def test_values_outside_the_view_range_reach_the_out_of_range_bins(
     assert bulk_hist["s"].out_of_range_bins == [below, above]
 
 
-def test_multi_base_allele_record_min_max_and_clips(
+def test_multi_base_allele_record_min_max_reads_the_same_selection(
     tmp_path: pathlib.Path,
 ) -> None:
     # The ten-base allele record is exercised on the histogram path above;
-    # min/max is the other consumer of the same clip and weight code, so it
+    # min/max is the other consumer of the same selection code, so it
     # gets the same fixture.
     resource = _allele_multibase_tabix(tmp_path)
     ref = G._do_min_max(resource, ["s"], "chr1", 1, 40)
@@ -737,8 +748,16 @@ def test_multi_base_allele_record_min_max_and_clips(
     _assert_min_max_equal(bulk, ref)
     assert (bulk["s"].min, bulk["s"].max) == (0.1, 0.9)
 
-    # 15..25 keeps only the ten-base record, clipped to five bases.
-    clipped_ref = G._do_min_max(resource, ["s"], "chr1", 15, 25)
-    clipped_bulk = G._do_min_max_bulk(resource, ["s"], "chr1", 15, 25)
-    _assert_min_max_equal(clipped_bulk, clipped_ref)
-    assert (clipped_bulk["s"].min, clipped_bulk["s"].max) == (0.1, 0.1)
+    # 15..25 is reached by the ten-base record but owns none, so it
+    # reduces nothing; 20..40 owns the 30..30 record alone.  Both paths
+    # must agree, or a region would measure differently by which one
+    # served it.
+    for start, end, extremes in ((15, 25, None), (20, 40, (0.5, 0.5))):
+        region_ref = G._do_min_max(resource, ["s"], "chr1", start, end)
+        region_bulk = G._do_min_max_bulk(resource, ["s"], "chr1", start, end)
+        _assert_min_max_equal(region_bulk, region_ref)
+        if extremes is None:
+            assert np.isnan(region_bulk["s"].min)
+            assert np.isnan(region_bulk["s"].max)
+        else:
+            assert (region_bulk["s"].min, region_bulk["s"].max) == extremes
