@@ -421,10 +421,6 @@ def test_na_values_compare_equal_when_extending_a_segment() -> None:
     assert cov.segment_count == 1
 
 
-def _bin_of(length: int) -> int:
-    return length_histogram_bin_index(length)
-
-
 def test_a_stitch_never_shortens_the_run_it_merges_into() -> None:
     # A region handed FULL spans has runs reaching past its own extent,
     # so the other region's first run can END before this one's open run
@@ -441,7 +437,8 @@ def test_a_stitch_never_shortens_the_run_it_merges_into() -> None:
 
     assert left.segment_count == 1
     histogram = left.segment_length_histogram()
-    assert histogram[_bin_of(96)] == 1, "5..100 is 96bp, not 5..15's 11"
+    # 5..100 is 96bp; taking the other end would have binned 5..15's 11.
+    assert histogram[length_histogram_bin_index(96)] == 1
     assert sum(histogram) == 1
 
 
@@ -459,8 +456,9 @@ def test_a_stitch_that_closes_a_run_also_keeps_the_wider_end() -> None:
 
     assert left.segment_count == 2
     histogram = left.segment_length_histogram()
-    assert histogram[_bin_of(96)] == 1, "the stitched run is 5..100"
-    assert histogram[_bin_of(11)] == 1
+    # The stitched run is 5..100, and 30..40 closes behind it.
+    assert histogram[length_histogram_bin_index(96)] == 1
+    assert histogram[length_histogram_bin_index(11)] == 1
     assert sum(histogram) == 2
 
 

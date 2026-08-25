@@ -188,6 +188,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         super().__init__(resource)
         self.score: GenomicScore = build_score_from_resource(resource)
         self._render_repo: GenomicResourceRepo | None = None
+        # One page render asks for the stored coverage once per section
+        # -- Coverage and Fragments both -- and over an HTTP or S3
+        # repository that is a network round trip each.  Held for the
+        # life of this object, which is built per render.
+        self._coverage_statistics: CoverageStatistics | None = None
+        self._coverage_statistics_read = False
 
     def get_config_histograms(self) -> dict[str, Any]:
         """Collect all configurations of histograms for the genomic score."""
@@ -235,12 +241,18 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         not know about this file), so a resource built before the
         statistic existed simply has nothing to show yet.
         """
+        if self._coverage_statistics_read:
+            return self._coverage_statistics
         try:
             content = self.resource.get_file_content(
                 COVERAGE_STATISTICS_FILE)
         except FileNotFoundError:
-            return None
-        return CoverageStatistics.deserialize(content)
+            statistics = None
+        else:
+            statistics = CoverageStatistics.deserialize(content)
+        self._coverage_statistics = statistics
+        self._coverage_statistics_read = True
+        return statistics
 
     def get_allele_statistics(self) -> AlleleStatistics | None:
         """The resource's allele statistics, or ``None`` if not built.
@@ -836,6 +848,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             # record partition as every other statistic.
             clip_coverage = coverage is not None \
                 and not coverage.rows_are_disjoint
+            track_fragments = coverage is not None \
+                and coverage.tracks_fragments
             for left, right, rec in GenomicScoreImplementation._scan_region(
                     score, chrom, start, end, score_ids,
                     alleles=alleles):
@@ -851,9 +865,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                             left, right, normalize_values(rec))
                 if not owned:
                     continue
-                if coverage is not None:
-                    # A fragment is the row as stored, at its own span --
-                    # a no-op unless the kind publishes fragments.
+                if track_fragments:
+                    # A fragment is the row as stored, at its own span.
+                    assert coverage is not None
                     coverage.add_fragment(right - left + 1)
                 weight = right - left + 1 if weight_is_span else 1
                 for scr_index, scr_id in enumerate(score_ids):

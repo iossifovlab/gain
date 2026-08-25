@@ -65,6 +65,17 @@ def length_histogram_bin_index(length: int) -> int:
 _LENGTH_BIN_EDGES = 2 ** np.arange(LENGTH_HISTOGRAM_BIN_COUNT, dtype=np.int64)
 
 
+def _accumulate_bins(target: list[int], source: Iterable[int]) -> None:
+    """Add one length histogram into another, bin for bin.
+
+    The one statement of "counts are added, not replaced", for every
+    place two histograms on the fixed ladder come together: a merge of
+    two regions, a batch of fresh counts, a global roll-up.
+    """
+    for index, count in enumerate(source):
+        target[index] += count
+
+
 def _bin_edge_label(edge: int) -> str:
     for unit, factor in (("G", 2 ** 30), ("M", 2 ** 20), ("K", 2 ** 10)):
         if edge >= factor:
@@ -75,7 +86,7 @@ def _bin_edge_label(edge: int) -> str:
 def plot_length_histogram(
     outfile: IO,
     histogram: list[int],
-    item: str = "segment",
+    item: str,
 ) -> None:
     """Render a length histogram on the fixed log2 bins as PNG.
 
@@ -84,7 +95,9 @@ def plot_length_histogram(
     :mod:`gain.genomic_resources.histogram` renders.  ``item`` names
     what was measured -- segments or fragments -- and appears in both
     axis labels; the bins are the same ladder either way, which is what
-    lets one renderer serve both.
+    lets one renderer serve both.  Required, with no default: a
+    fragment histogram silently labelled "segment" is the one mistake
+    this parameter exists to prevent.
     """
     # pylint: disable=import-outside-toplevel
     import matplotlib
@@ -200,7 +213,6 @@ class RegionCoverage:
         self._track_fragments = track_fragments
         self._fragments = 0
         self._fragment_bins = [0] * LENGTH_HISTOGRAM_BIN_COUNT
-        self._frozen_fragments: tuple[int, list[int]] | None = None
 
     @classmethod
     def frozen(
@@ -225,7 +237,12 @@ class RegionCoverage:
             track_fragments=fragments is not None)
         region.covered = covered
         region._frozen_segments = segments
-        region._frozen_fragments = fragments
+        if fragments is not None:
+            # Straight into the accumulators: unlike segments, whose
+            # interior-bins/open-run algebra has no round-trippable
+            # state, a fragment tally IS just a count and its bins.
+            region._fragments, region._fragment_bins = (
+                fragments[0], list(fragments[1]))
         return region
 
     def add_fragment(self, length: int) -> None:
@@ -259,13 +276,17 @@ class RegionCoverage:
         """
         if not self._track_fragments or not lengths.size:
             return
-        if lengths.min() < 1:
+        indices = np.searchsorted(_LENGTH_BIN_EDGES, lengths, side="right") - 1
+        # A length below 1 sorts before the first edge and lands at -1;
+        # reading that back is free, where a separate ``min()`` would be
+        # another full pass over the batch.
+        if indices.min() < 0:
             raise ValueError(
                 f"fragment length must be positive: {lengths.min()}")
-        indices = np.searchsorted(_LENGTH_BIN_EDGES, lengths, side="right") - 1
-        counts = np.bincount(indices, minlength=LENGTH_HISTOGRAM_BIN_COUNT)
-        for index, count in enumerate(counts.tolist()):
-            self._fragment_bins[index] += count
+        _accumulate_bins(
+            self._fragment_bins,
+            np.bincount(
+                indices, minlength=LENGTH_HISTOGRAM_BIN_COUNT).tolist())
         self._fragments += int(lengths.size)
 
     def fragment_summary(self) -> tuple[int, list[int]] | None:
@@ -275,8 +296,6 @@ class RegionCoverage:
         kind whose rows are not fragments, or a region deserialized from
         a statistics file written before fragment counts existed.
         """
-        if self._frozen_fragments is not None:
-            return self._frozen_fragments
         if not self._track_fragments:
             return None
         return self._fragments, list(self._fragment_bins)
@@ -380,8 +399,7 @@ class RegionCoverage:
         self._track_fragments = \
             self._track_fragments and other._track_fragments
         self._fragments += other._fragments
-        for index, count in enumerate(other._fragment_bins):
-            self._fragment_bins[index] += count
+        _accumulate_bins(self._fragment_bins, other._fragment_bins)
         if other._run is None:
             self.end = other.end
             return
@@ -434,8 +452,7 @@ class RegionCoverage:
             self._run = (
                 last_begin, max(last_end, other._run[1]), last_values)
             return
-        for index, count in enumerate(other._interior_bins):
-            self._interior_bins[index] += count
+        _accumulate_bins(self._interior_bins, other._interior_bins)
         if stitch:
             self._record_closed(
                 (last_begin, max(last_end, first_end), last_values))
@@ -667,8 +684,7 @@ class CoverageStatistics(Statistic):
     def _binwise_sum(histograms: Iterable[list[int]]) -> list[int]:
         merged = [0] * LENGTH_HISTOGRAM_BIN_COUNT
         for histogram in histograms:
-            for index, count in enumerate(histogram):
-                merged[index] += count
+            _accumulate_bins(merged, histogram)
         return merged
 
     def add_value(self, value: Any) -> None:  # noqa: ARG002
@@ -739,13 +755,10 @@ class CoverageStatistics(Statistic):
         data = json.loads(content)
         result = CoverageStatistics()
         for chrom, counts in data["chromosomes"].items():
-            groups = {
-                name: _read_stored_summary(counts, name)
-                for name, _ in _STORED_SUMMARIES
-            }
             result.fold_region(RegionCoverage.frozen(
                 chrom, int(counts["covered_positions"]),
-                groups["segment"], groups["fragment"]))
+                _read_stored_summary(counts, "segment"),
+                _read_stored_summary(counts, "fragment")))
         return result
 
 
@@ -865,8 +878,9 @@ def accumulate_coverage(
         # position one: the rows this region OWNS, each at its own
         # unclipped span.
         owned = owned_records_mask(pos_begin, start, end)
-        for length in (pos_end[owned] - pos_begin[owned] + 1).tolist():
-            coverage.add_fragment(length)
+        coverage.add_fragment_batch(
+            pos_end - pos_begin + 1 if owned.all()
+            else pos_end[owned] - pos_begin[owned] + 1)
     if coverage.rows_are_disjoint:
         keep = owned_records_mask(pos_begin, start, end)
     else:

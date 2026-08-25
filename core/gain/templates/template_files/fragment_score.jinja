@@ -1,9 +1,6 @@
 {% extends "genomic_score.jinja" %}
-{# A fragment score's page IS the genomic-score page plus one section.
-   ``impl`` is re-derived here rather than inherited: the parent sets it
-   inside its own block, and a nested block does not see that. #}
+{# A fragment score's page IS the genomic-score page plus one section. #}
 {% block fragments %}
-{% set impl = data.genomic_scores %}
 <h2>Fragments</h2>
 {% set fragments = impl.get_fragment_display() %}
 {% if fragments != None %}
