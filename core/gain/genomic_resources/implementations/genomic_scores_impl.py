@@ -60,9 +60,11 @@ from gain.genomic_resources.score_implementation import (
 )
 from gain.genomic_resources.statistics.alleles import (
     ALLELE_STATISTICS_FILE,
+    AlleleDisplay,
     AlleleStatistics,
     RegionAlleles,
     allele_arrays_folded_into,
+    build_allele_display,
     merge_region_alleles,
     records_folded_into,
     region_alleles_for,
@@ -265,6 +267,18 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         except FileNotFoundError:
             return None
         return AlleleStatistics.deserialize(content)
+
+    def get_allele_display(self) -> AlleleDisplay | None:
+        """The substitution-matrix render payload, or ``None`` if not built.
+
+        The payload itself distinguishes a statistics file written
+        before the matrix existed (``has_matrix`` is false, the section
+        marks the matrix not computed) from a genuine matrix of zeros.
+        """
+        statistics = self.get_allele_statistics()
+        if statistics is None:
+            return None
+        return build_allele_display(statistics)
 
     def get_coverage_display(self) -> CoverageDisplay | None:
         """The Coverage section's payload: raw counts plus fractions.
