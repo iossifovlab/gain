@@ -276,18 +276,86 @@ def test_a_table_with_no_key_columns_counts_every_row_as_other(
     assert counts.class_counts["other"] == 3
 
 
-def test_a_backend_refusing_the_nucleotides_falls_back_to_per_record(
+def test_a_backend_refusing_the_nucleotides_takes_the_per_record_path(
     tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The bulk histogram scan would serve this resource, but the bulk
-    # read cannot hand it nucleotides -- so the region must go back to
-    # the per-record read rather than to a statistic with no class data.
+    # The bulk histogram scan WOULD serve this resource -- asserted
+    # below -- but the bulk read cannot hand it nucleotides, so the
+    # region must go back to the per-record read rather than to a
+    # statistic with no class data.  Making the bulk path fatal is what
+    # turns this from a restatement of the two predicates into an
+    # observation of the routing.
     resource = _keyless_score(an_allele_score, tmp_path)
     confs: dict = {"score": _hist_conf()}
     score = build_score_implementation_from_resource(resource).score
-
     assert GenomicScoreImplementation._can_bulk_histogram(resource, confs)
     assert not serves_allele_arrays(score, ["score"])
+
+    def refuse(*_args: Any, **_kwargs: Any) -> dict:
+        raise AssertionError("the bulk path must not serve this region")
+
+    monkeypatch.setattr(
+        GenomicScoreImplementation, "_do_histogram_bulk", refuse)
+    result = GenomicScoreImplementation._do_histogram_task(
+        resource, confs, "chr1", 1, 100)
+
+    assert result.alleles is not None
+    assert result.alleles.counts().class_counts["other"] == 3
+
+
+def test_the_reroute_leaves_the_histograms_unchanged(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The nucleotide gate moves the HISTOGRAM build off the bulk path
+    # too, for a resource the bulk path would otherwise have served.
+    # The two paths must still agree on what they build.
+    resource = _keyless_score(an_allele_score, tmp_path)
+
+    per_record = GenomicScoreImplementation._do_histogram(
+        resource, {"score": _hist_conf()}, "chr1", 1, 100)
+    bulk = GenomicScoreImplementation._do_histogram_bulk(
+        resource, {"score": _hist_conf()}, "chr1", 1, 100)
+
+    assert per_record["score"].to_dict() == bulk["score"].to_dict()
+
+
+def test_the_noregion_build_produces_the_same_statistics(
+    tmp_path: pathlib.Path,
+) -> None:
+    # ``--region-size 0`` is a third entry point into the scan, and one
+    # that has been bypassed before (gain#587).
+    whole = _mixed_allele_score(tmp_path / "whole")
+    noregion = _mixed_allele_score(tmp_path / "noregion")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path / "whole"), "-j", "1"])
+    cli_manage([
+        "repo-stats", "-R", str(tmp_path / "noregion"), "-j", "1",
+        "--region-size", "0"])
+
+    assert noregion.get_file_content(ALLELE_STATISTICS_FILE) \
+        == whole.get_file_content(ALLELE_STATISTICS_FILE)
+
+
+@pytest.mark.parametrize("region_size", [10, 7])
+def test_the_two_paths_agree_at_a_chunked_region_size(
+    tmp_path: pathlib.Path,
+    region_size: int,
+) -> None:
+    # The byte-identical criterion at the same region size, across the
+    # two paths rather than within one: the wide-``pos_end`` fixture is
+    # the shape where a chunk boundary and a path difference could
+    # compound.
+    allele = _wide_score(an_allele_score, tmp_path / "allele")
+    np_score = _wide_score(a_np_score, tmp_path / "np")
+
+    for name in ("allele", "np"):
+        cli_manage([
+            "repo-stats", "-R", str(tmp_path / name), "-j", "1",
+            "--region-size", str(region_size)])
+
+    assert np_score.get_file_content(ALLELE_STATISTICS_FILE) \
+        == allele.get_file_content(ALLELE_STATISTICS_FILE)
 
 
 _ALT_ONLY_TABLE = """

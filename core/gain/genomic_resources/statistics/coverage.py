@@ -4,6 +4,13 @@ Vocabulary per ``CONTEXT.md`` and ADR 0020: a **covered position** is a
 position spanned by at least one table row — value-blind, union semantics.
 A **segment** is a maximal run of touching-or-overlapping rows carrying
 equal values (the whole scanned score tuple, NA equal to NA, floats exact).
+
+The whole of this statistic lives here: the per-region accumulator and
+the resource-wide statistic, the fold that merges a scan's regions into
+one, the write, and the render payload the info page reads.  Its allele
+twin is laid out the same way in
+:mod:`gain.genomic_resources.statistics.alleles`; the scan wiring that
+feeds either is in ``implementations/genomic_scores_impl.py``.
 """
 from __future__ import annotations
 
@@ -15,10 +22,18 @@ from typing import IO, Any, NamedTuple
 import numpy as np
 
 from gain.genomic_resources.cli_errors import report_resource_failure
+from gain.genomic_resources.genomic_scores import RecordArrays
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.statistics.base_statistic import Statistic
+from gain.genomic_resources.statistics.base_statistic import (
+    Statistic,
+    refuse_unmergeable,
+    regions_in_genomic_order,
+)
 
 COVERAGE_STATISTICS_FILE = "statistics/coverage.json"
+
+#: How a failed fold of these regions is named in the message.
+_MERGE_FAILURE = "coverage"
 COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE = \
     "statistics/coverage_segment_lengths.png"
 
@@ -233,21 +248,10 @@ class RegionCoverage:
         """Fold the adjacent region to the right into this one.
 
         Refuses a pair that is not adjacent-and-in-order on one
-        chromosome: region statistics are only ever produced over a
-        contig's non-overlapping windows, so anything else reaching here
-        is a wiring error, and refusing it loudly is the difference
-        between a failed build and a silently wrong coverage table.
+        chromosome -- see ``refuse_unmergeable``, which states that rule
+        for this statistic and its allele twin alike.
         """
-        if self.chrom != other.chrom:
-            raise ValueError(
-                f"coverage merge across chromosome boundaries: "
-                f"{self.chrom} and {other.chrom}")
-        if self.end is None or other.start is None \
-                or self.end + 1 != other.start:
-            raise ValueError(
-                f"coverage regions are not adjacent-and-in-order: "
-                f"{self.chrom}:{self.start}-{self.end} then "
-                f"{other.chrom}:{other.start}-{other.end}")
+        refuse_unmergeable(_MERGE_FAILURE, self, other)
 
         self.covered += other.covered
         self._track_segments = \
@@ -616,23 +620,50 @@ class CoverageDisplay(NamedTuple):
         return self.global_segments is not None
 
 
+def accumulate_coverage(
+    arrays: RecordArrays,
+    coverage: RegionCoverage,
+    region: tuple[str, int | None, int | None],
+) -> None:
+    """Fold one batch of column arrays into the region's coverage.
+
+    Clipping only: rows are clipped to the region on both edges -- a
+    record beginning past the region's end covers nothing, the same
+    verdict the per-record path gets from ``clip_span`` (gain#636) --
+    and handed to :meth:`RegionCoverage.add_interval_batch`, which
+    owns the run-collapse algebra.  Nothing here knows what "equal
+    values" means.  The batches the backends return rarely carry a
+    row outside the queried region, so the all-kept batch skips the
+    mask copies entirely.
+    """
+    _chrom, start, end = region
+    pos_begin, pos_end, value_cells = arrays
+    keep = np.ones(pos_begin.shape[0], dtype=bool)
+    if start is not None:
+        keep &= pos_end >= start
+    if end is not None:
+        keep &= pos_begin <= end
+    if not keep.any():
+        return
+    if keep.all():
+        left, right = pos_begin, pos_end
+        cells = list(value_cells.values())
+    else:
+        left, right = pos_begin[keep], pos_end[keep]
+        cells = [column[keep] for column in value_cells.values()]
+    if start is not None:
+        left = np.maximum(left, start)
+    if end is not None:
+        right = np.minimum(right, end)
+    coverage.add_interval_batch(left, right, cells)
+
+
 def merge_region_coverage(
     resource_id: str,
     regions: Iterable[RegionCoverage | None],
 ) -> CoverageStatistics | None:
-    """Fold the regions' coverage, or ``None`` for an uncovered kind.
-
-    The fold sorts the regions into genomic order rather than trusting
-    the task-argument order they arrived in, is keyed by chromosome, and
-    within one chromosome :meth:`RegionCoverage.merge` still refuses a
-    pair that is not adjacent-and-in-order -- a gap or an overlap fails
-    the build rather than mis-counting it.
-    """
-    ordered = sorted(
-        (region for region in regions if region is not None),
-        key=lambda region: (
-            region.chrom,
-            region.start if region.start is not None else 0))
+    """Fold the regions' coverage, or ``None`` for an uncovered kind."""
+    ordered = regions_in_genomic_order(regions)
     if not ordered:
         return None
     statistics = CoverageStatistics()
@@ -657,13 +688,12 @@ def save_and_plot_coverage(
     """
     if statistics is None:
         return
-    with resource.proto.open_raw_file(
-            resource, COVERAGE_STATISTICS_FILE, mode="wt") as outfile:
+    with resource.open_raw_file(
+            COVERAGE_STATISTICS_FILE, mode="wt") as outfile:
         outfile.write(statistics.serialize())
     lengths = statistics.segment_lengths_global()
     if lengths is None:
         return
-    with resource.proto.open_raw_file(
-            resource, COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
-            mode="wb") as outfile:
+    with resource.open_raw_file(
+            COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE, mode="wb") as outfile:
         plot_segment_length_histogram(outfile, lengths)
