@@ -182,7 +182,7 @@ def test_an_exon_child_of_a_skipped_biotype_blames_the_parent(
     with pytest.raises(
             ValueError,
             match=(
-                f"exon transcript FBtr0070000 was skipped as "
+                "exon transcript FBtr0070000 was skipped as "
                 f"exonless feature {feature}"
             )):
         _gene_models(
@@ -207,7 +207,7 @@ def test_a_codon_child_of_a_skipped_biotype_blames_the_parent() -> None:
     with pytest.raises(
             ValueError,
             match=(
-                "transcript FBtr0070000 was skipped as "
+                "start_codon transcript FBtr0070000 was skipped as "
                 "exonless feature miRNA"
             )):
         _gene_models(

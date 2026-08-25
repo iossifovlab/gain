@@ -770,23 +770,28 @@ GTF_EXONLESS_TRANSCRIPT_FEATURES = frozenset({
 })
 
 
-def _missing_parent_transcript_error(
-    child: str,
+def _parent_transcript(
+    transcript_models: dict[str, TranscriptModel],
+    feature: str,
     tr_id: str,
     skipped_transcripts: dict[str, str],
-) -> ValueError:
-    """Explain a child record whose parent transcript is absent.
+) -> TranscriptModel:
+    """Fetch the parent transcript model of a child record.
 
-    Distinguishes a transcript that was never seen from one that was
-    seen but skipped as an exonless feature.
+    A child whose parent transcript is absent is an error naming the
+    transcript and why it is absent: never seen, or seen but skipped
+    as an exonless feature.
     """
+    transcript_model = transcript_models.get(tr_id)
+    if transcript_model is not None:
+        return transcript_model
     if tr_id in skipped_transcripts:
-        return ValueError(
-            f"{child} transcript {tr_id} was skipped as "
+        raise ValueError(
+            f"{feature} transcript {tr_id} was skipped as "
             f"exonless feature {skipped_transcripts[tr_id]}",
         )
-    return ValueError(
-        f"{child} transcript {tr_id} not found in transcript models",
+    raise ValueError(
+        f"{feature} transcript {tr_id} not found in transcript models",
     )
 
 
@@ -830,13 +835,12 @@ def parse_gtf_gene_models_format(
         feature = rec["feature"]
         if feature == "gene":
             continue
+        attributes = _parse_gtf_attributes(rec["attributes"])
         if feature in GTF_EXONLESS_TRANSCRIPT_FEATURES:
-            skipped_tr_id = _parse_gtf_attributes(
-                rec["attributes"]).get("transcript_id")
+            skipped_tr_id = attributes.get("transcript_id")
             if skipped_tr_id is not None:
                 skipped_transcripts[skipped_tr_id] = feature
             continue
-        attributes = _parse_gtf_attributes(rec["attributes"])
         tr_id = attributes["transcript_id"]
         if feature in GTF_TRANSCRIPT_FEATURES or feature == "Selenocysteine":
             if feature == "Selenocysteine" and \
@@ -869,26 +873,21 @@ def parse_gtf_gene_models_format(
             transcript_models[transcript_model.tr_id] = transcript_model
             continue
         if feature == "exon":
-            if tr_id not in transcript_models:
-                raise _missing_parent_transcript_error(
-                    "exon", tr_id, skipped_transcripts)
-            transcript_model = transcript_models[tr_id]
-            if feature == "exon":
-                exon = Exon(
-                    rec["start"], rec["end"], frame=-1,
-                )
-                transcript_model.exons.append(exon)
-                continue
+            transcript_model = _parent_transcript(
+                transcript_models, feature, tr_id, skipped_transcripts)
+            exon = Exon(
+                rec["start"], rec["end"], frame=-1,
+            )
+            transcript_model.exons.append(exon)
+            continue
         if feature in {
                 "UTR", "5UTR", "3UTR", "five_prime_utr", "three_prime_utr",
                 "CDS",
             }:
             continue
         if feature in {"start_codon", "stop_codon"}:
-            if tr_id not in transcript_models:
-                raise _missing_parent_transcript_error(
-                    feature, tr_id, skipped_transcripts)
-            transcript_model = transcript_models[tr_id]
+            transcript_model = _parent_transcript(
+                transcript_models, feature, tr_id, skipped_transcripts)
             cds = transcript_model.cds
             transcript_model.cds = \
                 (min(cds[0], rec["start"]), max(cds[1], rec["end"]))
