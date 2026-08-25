@@ -955,3 +955,114 @@ def test_stats_csi_indexed_position_score_matches_its_tbi_twin(
     assert csi_histogram.read_text() == tbi_histogram.read_text()
     assert NumberHistogram.deserialize(
         csi_histogram.read_text()).bars.sum() > 0
+
+
+# ---------------------------------------------------------------------------
+# gain#774: the forced per-resource statistics rebuild -- the lever the lazy
+# rollout of ADR 0020's extended statistics depends on
+# ---------------------------------------------------------------------------
+
+
+def build_one_score_with_statistics(tmp_path: pathlib.Path) -> pathlib.Path:
+    """Realize one tabix position score and build its statistics.
+
+    Leaves the resource in the state the rollout lever acts on - statistics
+    on disk and a ``stats_hash`` that matches them - and returns its
+    ``statistics`` directory.
+    """
+    (
+        a_grr()
+        .with_resource(
+            "one",
+            a_position_score()
+            .with_tabix()
+            .with_zero_based()
+            .with_score("value", "float")
+            .with_histogram({
+                "type": "number", "number_of_bins": 4,
+                "view_range": {"min": 0.0, "max": 1.0}})
+            .with_data("""
+                chrom  pos_begin  pos_end  value
+                chr1   10         15       0.2
+                chr1   17         19       0.4
+            """),
+        )
+        .build_repo(tmp_path)
+    )
+    cli_manage(["resource-stats", "-r", "one", "-R", str(tmp_path), "-j", "1"])
+    return tmp_path / "one" / "statistics"
+
+
+def test_forced_resource_stats_rebuilds_a_resource_whose_hash_is_current(
+    tmp_path: pathlib.Path,
+) -> None:
+    """`resource-stats -f` rebuilds statistics the hash gate would skip.
+
+    gain#774: ADR 0020 rolls its coverage statistics out lazily - they are
+    deliberately absent from `calc_statistics_hash`, so a resource built
+    before they existed carries a hash that is still current and never
+    rebuilds on its own. Forcing is the only deliberate way onto one.
+    """
+    # Given a built resource whose statistics match its stored hash
+    statistics = build_one_score_with_statistics(tmp_path)
+    coverage = statistics / "coverage.json"
+    stats_hash = statistics / "stats_hash"
+    written = {path.name for path in statistics.iterdir()}
+    # Guards the deletion below against a silently renamed statistic, which
+    # would leave every assertion after it vacuous
+    assert "coverage.json" in written
+    hash_before = stats_hash.read_bytes()
+
+    # ... standing in for one built before coverage statistics existed: that
+    # statistic alone is absent, and the hash - which never covered it - is
+    # left exactly as it was, so nothing but `-f` can provoke a rebuild
+    coverage.unlink()
+
+    # When its statistics are rebuilt under force
+    cli_manage([
+        "resource-stats", "-r", "one", "-R", str(tmp_path), "-j", "1", "-f",
+    ])
+
+    # Then the absent statistic is back, and nothing else went missing
+    assert {path.name for path in statistics.iterdir()} == written
+
+    # ... holding a computed result rather than a placeholder: the two rows
+    # span 5 and 2 positions and neither touches the other
+    chr1_coverage = json.loads(coverage.read_text())["chromosomes"]["chr1"]
+    assert chr1_coverage["covered_positions"] == 7
+    assert chr1_coverage["segment_count"] == 2
+
+    # ... while the hash the resource already carried is unchanged: forcing
+    # rebuilds the statistics, it does not redefine what they hash to
+    assert stats_hash.read_bytes() == hash_before
+
+
+def test_unforced_resource_stats_skips_a_resource_whose_hash_is_current(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Without `-f` the hash gate holds - which is WHY the lever exists.
+
+    gain#774: the other half of the pin. If an ordinary `resource-stats`
+    run rebuilt a resource whose hash is current, the lazy rollout would
+    need no lever and the forced test above would prove nothing.
+
+    Nothing is perturbed between the two runs, deliberately. Deleting a
+    statistic to make the skip visible would also leave the manifest
+    stale, and the rebuild predicate reads a manifest-staleness flag
+    beside the hash - inert today only because a real run always records
+    that flag as False. A perturbing test would pin both at once and go
+    red the day that flag starts working, blaming the hash gate for it.
+    """
+    # Given a built resource whose statistics match its stored hash
+    statistics = build_one_score_with_statistics(tmp_path)
+    before = {path: path.stat().st_mtime_ns for path in statistics.iterdir()}
+    assert before
+
+    # When its statistics are built again WITHOUT force
+    cli_manage(["resource-stats", "-r", "one", "-R", str(tmp_path), "-j", "1"])
+
+    # Then the hash gate skipped it: not one statistics file was rewritten,
+    # and none was added or removed either
+    assert {
+        path: path.stat().st_mtime_ns for path in statistics.iterdir()
+    } == before

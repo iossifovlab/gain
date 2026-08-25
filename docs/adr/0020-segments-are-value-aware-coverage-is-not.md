@@ -133,8 +133,14 @@ alt-minus-ref, not an absolute value.
 - **Lazy rollout; `calc_statistics_hash` untouched.** The new statistics do
   not enter the statistics hash, so no existing resource is invalidated.
   Statistics appear as resources are rebuilt; the page renders "not computed"
-  where they are absent. The lever this requires — a verified per-resource
-  forced rebuild in `grr_manage` — is part of the epic.
+  where they are absent.
+- **The rollout lever is a forced rebuild** — verified and pinned in #774.
+  Forcing is therefore the only deliberate way to put the new statistics on
+  an already-built resource: `grr_manage resource-stats -r <resource_id> -f`
+  for one named resource, or `resource-info -f` when its page must re-render
+  too. The scope of each command, and the follow-up needed for the
+  repository-global artifacts, belong to the `grr_manage` documentation
+  rather than here.
 
 ## Rejected alternatives
 
