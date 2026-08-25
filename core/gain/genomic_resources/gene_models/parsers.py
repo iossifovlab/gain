@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -999,6 +1000,45 @@ def get_parser(
 
 INFERENCE_SAMPLE_ROWS = 50
 
+# refseq and ccds declare identical column layouts, so a headerless file
+# matching one matches the other; only the content of the transcript-name
+# column can separate them.
+_REFSEQ_TRANSCRIPT_NAME = re.compile(r"[NX][MR]_\d+(\.\d+)?")
+_CCDS_TRANSCRIPT_NAME = re.compile(r"CCDS\d+(\.\d+)?")
+
+# The evidence a tie-break verdict rests on, by winning format.
+_TIE_BREAK_EVIDENCE = {
+    "refseq": "every sampled transcript name is a RefSeq accession",
+    "ccds": "every sampled transcript name is a CCDS id",
+}
+
+
+def _break_refseq_ccds_tie(infile: IO, sampled_rows: int) -> str | None:
+    """Choose between refseq and ccds by transcript-name content.
+
+    Returns the winning format, or None when the sampled names do not all
+    share one format's accession shape.
+    """
+    # header=None keeps a header row, if there is one, in the sample where
+    # the explicit check below can see it. na_filter=False keeps a blank
+    # name field a string, so it fails both shapes instead of crashing the
+    # match.
+    infile.seek(0)
+    names = pd.read_csv(
+        infile, sep="\t", header=None, usecols=[1], dtype=str,
+        nrows=sampled_rows, na_filter=False,
+    )[1].tolist()
+    assert names, "the tie-break runs only after both formats parsed records"
+    if names[0] == "name":
+        # A headered file collides on this pair too, and headered files
+        # keep their pre-tie-break behavior: the header row opts out.
+        return None
+    if all(_REFSEQ_TRANSCRIPT_NAME.fullmatch(name) for name in names):
+        return "refseq"
+    if all(_CCDS_TRANSCRIPT_NAME.fullmatch(name) for name in names):
+        return "ccds"
+    return None
+
 
 def _describe_exception(ex: Exception) -> str:
     """Render an exception as a rejection reason.
@@ -1028,13 +1068,24 @@ class FormatInference:
     matched: tuple[str, ...]
     rejected: tuple[tuple[str, str], ...]
     sampled_rows: int
+    tie_break: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.tie_break is not None and self.tie_break not in self.matched:
+            raise ValueError(
+                f"tie-break winner {self.tie_break!r} is not among the "
+                f"matched formats {self.matched!r}")
 
     @property
     def file_format(self) -> str | None:
-        """The inferred format, or None unless exactly one format matched."""
+        """The inferred format, or None when the file stays ambiguous.
+
+        Exactly one matching format is an inference; a multi-format
+        collision resolved by a content tie-break is one too.
+        """
         if len(self.matched) == 1:
             return self.matched[0]
-        return None
+        return self.tie_break
 
     def report(self) -> str:
         """Render why inference did not settle on a single format."""
@@ -1055,9 +1106,14 @@ class FormatInference:
                 f"{self.sampled_rows} records"
             )
         lines = [headline, "formats tried:"]
-        lines.extend(
-            f"  {fmt}: matched the sampled records" for fmt in self.matched
-        )
+        for fmt in self.matched:
+            line = f"  {fmt}: matched the sampled records"
+            if self.tie_break is not None and fmt != self.tie_break:
+                line += (
+                    " but lost the content tie-break: "
+                    f"{_TIE_BREAK_EVIDENCE[self.tie_break]}"
+                )
+            lines.append(line)
         lines.extend(
             f"  {fmt}: {reason}" for fmt, reason in self.rejected
         )
@@ -1101,11 +1157,18 @@ def infer_gene_models_format(infile: IO) -> FormatInference:
                  "has this format's column layout but yielded no "
                  "transcript models"))
 
+    tie_break = None
+    # matched is sorted by construction -- the loop iterates the supported
+    # formats in sorted order.
+    if matched == ["ccds", "refseq"]:
+        tie_break = _break_refseq_ccds_tie(infile, sampled_rows)
+
     logger.info("inferred file formats: %s", matched)
     return FormatInference(
         matched=tuple(matched),
         rejected=tuple(rejected),
         sampled_rows=sampled_rows,
+        tie_break=tie_break,
     )
 
 

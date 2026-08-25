@@ -12,7 +12,6 @@ from io import StringIO
 
 import pytest
 from gain.genomic_resources.gene_models import parsers
-from gain.genomic_resources.gene_models.gene_models import GeneModels
 from gain.genomic_resources.gene_models.gene_models_factory import (
     build_gene_models_from_file,
 )
@@ -22,13 +21,18 @@ from gain.genomic_resources.gene_models.parsers import (
     parse_default_gene_models_format,
 )
 
+from tests.small.genomic_resources.gene_models.conftest import (
+    build_from_content,
+)
+
 # Matches no supported gene models format.
 UNINFERRABLE_CONTENT = "this is not any gene models format at all\n"
 
-# A headerless refseq record. Its 16 columns are also ccds' column count, so
-# both formats parse it and inference cannot choose between them.
+# A headerless record with the refseq/ccds column layout. Both formats parse
+# it, and its transcript name has neither format's accession shape, so the
+# gain#869 content tie-break cannot settle the collision either.
 AMBIGUOUS_CONTENT = (
-    "0\tNM_000546\t17\t-\t7571719\t7590868\t7572826\t7590856\t2\t"
+    "0\tENST00000269305\t17\t-\t7571719\t7590868\t7572826\t7590856\t2\t"
     "7571719,7572926\t7573008,7573009\t0\tTP53\tcmpl\tcmpl\t0,0\n"
 )
 
@@ -51,19 +55,6 @@ REFFLAT_CONTENT = (
     "TP53\tNM_000546\t17\t-\t7571719\t7590868\t7572826\t7590856\t2\t"
     "7571719,7572926\t7573008,7573009\n"
 )
-
-
-def build_from_content(
-    tmp_path: pathlib.Path, name: str, content: str,
-) -> GeneModels:
-    """Write `content` to a named file and build gene models from it.
-
-    The name matters: these tests are about what the diagnostics say, and
-    the file name is part of what they have to say.
-    """
-    path = tmp_path / name
-    path.write_text(content)
-    return build_gene_models_from_file(str(path))
 
 
 @pytest.fixture
@@ -178,9 +169,10 @@ def test_ambiguous_format_names_the_candidates(
 ) -> None:
     """An ambiguous file is as undiagnosable as an unmatched one.
 
-    A headerless refseq record has the column count of ccds too, so both
-    formats parse it and inference refuses to choose -- a valid file that
-    will not load, previously reported as "can't infer".
+    A headerless file with the refseq/ccds column layout matches both
+    formats, and a transcript name with neither accession shape keeps the
+    tie-break out of it, so inference refuses to choose -- a valid file
+    that will not load, previously reported as "can't infer".
     """
     gene_models = build_from_content(
         tmp_path, "ambiguous_gene_models.txt", AMBIGUOUS_CONTENT)
