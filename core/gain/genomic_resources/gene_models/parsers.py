@@ -742,11 +742,11 @@ def _parse_gtf_attributes(data: str) -> dict[str, str]:
 #: ``transcript``; FlyBase instead names the transcript by its biotype. Every
 #: entry here is handled identically -- it creates a transcript model keyed by
 #: ``transcript_id``. Supporting a flavour usually takes more than this set:
-#: FlyBase also relies on the ``5UTR``/``3UTR`` spellings tolerated below and
-#: on ``gene_symbol`` as its gene label. So check a new file's
-#: ``cut -f3 | sort -u`` against the whole loop, not just this list. Flavour
-#: is an intake concern only -- ``serialization.py`` normalises back out,
-#: always writing ``transcript`` and ``gene_name``.
+#: FlyBase also relies on the ``5UTR``/``3UTR`` spellings in
+#: ``GTF_IGNORED_FEATURES`` and on ``gene_symbol`` as its gene label. Check a
+#: new file's ``cut -f3 | sort -u`` against the module's ``GTF_*`` constants.
+#: Flavour is an intake concern only -- ``serialization.py`` normalises back
+#: out, always writing ``transcript`` and ``gene_name``.
 GTF_TRANSCRIPT_FEATURES = frozenset({
     "transcript",
     "mRNA",
@@ -767,6 +767,31 @@ GTF_TRANSCRIPT_FEATURES = frozenset({
 GTF_EXONLESS_TRANSCRIPT_FEATURES = frozenset({
     "miRNA",
     "pre_miRNA",
+})
+
+#: Features whose records contribute nothing to the models and are skipped
+#: outright, before attribute parsing -- so an ignored record is not
+#: required to carry a ``transcript_id`` (Ensembl ``gene`` records genuinely
+#: lack one). ``gene`` restates what every transcript-level record already
+#: carries, the UTR spellings are implied by the exons, and ``CDS`` is
+#: reconstructed from the codon records instead. The exonless biotypes are
+#: deliberately not here: their skip runs after attribute parsing, so their
+#: children's errors can name the skipped transcript.
+GTF_IGNORED_FEATURES = frozenset({
+    "gene",
+    "UTR",
+    "5UTR",
+    "3UTR",
+    "five_prime_utr",
+    "three_prime_utr",
+    "CDS",
+})
+
+#: Features that delimit the coding sequence. Each record widens its
+#: transcript's ``cds`` interval to cover the codon's span.
+GTF_CODON_FEATURES = frozenset({
+    "start_codon",
+    "stop_codon",
 })
 
 
@@ -833,7 +858,7 @@ def parse_gtf_gene_models_format(
 
     for rec in df.to_dict(orient="records"):
         feature = rec["feature"]
-        if feature == "gene":
+        if feature in GTF_IGNORED_FEATURES:
             continue
         attributes = _parse_gtf_attributes(rec["attributes"])
         if feature in GTF_EXONLESS_TRANSCRIPT_FEATURES:
@@ -880,12 +905,7 @@ def parse_gtf_gene_models_format(
             )
             transcript_model.exons.append(exon)
             continue
-        if feature in {
-                "UTR", "5UTR", "3UTR", "five_prime_utr", "three_prime_utr",
-                "CDS",
-            }:
-            continue
-        if feature in {"start_codon", "stop_codon"}:
+        if feature in GTF_CODON_FEATURES:
             transcript_model = _parent_transcript(
                 transcript_models, feature, tr_id, skipped_transcripts)
             cds = transcript_model.cds
