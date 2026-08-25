@@ -321,6 +321,62 @@ Options:
    * - ``--logfile LOGFILE``
      - File to log output to. If not set, logs to console.
 
+Rebuilding on demand: ``--force`` and ``--dry-run``
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+The ``*-manifest``, ``*-stats``, ``*-info`` and ``*-repair`` commands accept
+these two, in both their repository- and resource-scoped forms. They are
+mutually exclusive: given both, the tool warns and fails rather than
+guessing which one you meant. (``repo-fix-histograms`` writes inside
+resource directories too but offers neither flag, and ``repo-init`` and
+``repo-index`` rebuild nothing.)
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Option
+     - Description
+   * - ``-n, --dry-run``
+     - Report what would be rebuilt and write nothing — no manifest and no
+       recorded file state, so the run leaves the repository byte-identical
+       and seeds nothing for the next run to reuse. Exits with the number
+       of resources needing an update.
+   * - ``-f, --force``
+     - Act regardless of whether anything looks out of date: save the
+       manifest even when it is already current, and rebuild the statistics
+       even when the stored ``stats_hash`` still matches. Note that this
+       does *not* make GAIn distrust the file states it has recorded — a
+       file whose size and timestamp are unchanged still keeps its recorded
+       md5 sum. Re-hashing file content is what ``-D/--without-dvc`` does.
+
+**Why forcing is sometimes the only option.** Statistics are rebuilt only
+when a resource's ``stats_hash`` no longer matches what its configuration
+and data hash to — the gate that makes re-running these commands over a
+large repository cheap. It also means a resource is *not* rebuilt merely
+because a newer GAIn would compute more statistics for it than the version
+that last built it: such a resource has a perfectly current hash and is
+skipped, and its info page reports the newer statistics as not computed.
+
+``--force`` is the deliberate way out. To put a newer GAIn's statistics
+onto one already-built resource::
+
+    grr_manage resource-stats -r <resource_id> -R <repository_path> -f
+
+Mind the scope. Beyond the ``resource-*`` limits described above,
+``resource-stats`` does not re-render the resource's *own* info page
+either — so the statistics it writes are on disk but not yet displayed. To
+rebuild the statistics *and* the pages that show them, use the ``info``
+command instead::
+
+    grr_manage resource-info -r <resource_id> -R <repository_path> -f
+
+and follow up with ``grr_manage repo-index`` when the repository-global
+artifacts should reflect the change too. The repository-scoped ``repo-stats
+-f`` and ``repo-repair -f`` do the same for every resource at once, which
+on a large GRR is a full recomputation — reach for the per-resource form
+unless you mean it.
+
 
 grr_browse
 ^^^^^^^^^^
