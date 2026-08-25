@@ -34,22 +34,25 @@ def test_validate_target_fires_at_the_validation_endpoint() -> None:
     assert payload["config"].startswith("- position_score: x")
 
 
-def test_each_request_of_a_validate_burst_carries_a_distinct_config() -> None:
-    """A burst must present the endpoint's memo with N unseen keys (#833).
+def test_every_validate_request_carries_a_config_the_memo_has_not_seen(
+) -> None:
+    """Each call must mint a fresh config, not repeat one (#833).
 
-    The endpoint remembers a verdict by a digest of the config text, so N
-    identical bodies would be one build and N-1 lookups -- and this harness
-    exists to measure what N concurrent builds do to the process. The
-    distinguishing text is a yaml comment, which the parser discards, so
+    The endpoint remembers a verdict by a digest of the config text, so a
+    repeated body is a dictionary lookup rather than the build this harness
+    exists to measure -- and "repeated" reaches across runs as well as within
+    a burst, because the recorded recipe drives one long-lived server at
+    several K values inside a single TTL window
+    (``docs/833-validate-result-memo.md``). A per-call uuid covers both; a
+    per-burst index would only have covered the second.
+
+    The distinguishing text is a yaml comment, which the parser discards, so
     every request still builds the identical pipeline.
     """
     args = harness.build_parser().parse_args(
         ["--target", "validate", "--validate-config", "- position_score: x"])
 
-    configs = [
-        harness._slow_request_spec(args, index)[1]["config"]
-        for index in range(4)
-    ]
+    configs = [harness._slow_request_spec(args)[1]["config"] for _ in range(4)]
 
     assert len(set(configs)) == 4, configs
     assert all(c.startswith("- position_score: x") for c in configs)

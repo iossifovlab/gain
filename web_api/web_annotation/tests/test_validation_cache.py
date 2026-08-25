@@ -7,10 +7,26 @@ small, that a verdict cannot outlive the repository it was computed against,
 and that it cannot answer with something arbitrarily old.
 """
 
+from typing import cast
+
+from gain.genomic_resources.repository import GenomicResourceRepo
+
 from web_annotation.validation_cache import ValidationResultCache
 
-REPOSITORY = object()
-"""Stands in for the GRR: the memo compares generations by identity only."""
+
+def a_repository() -> GenomicResourceRepo:
+    """A stand-in for the GRR.
+
+    The memo compares generations by identity and never calls anything on
+    them, so a bare object is a faithful stand-in; the cast is what says
+    that is deliberate rather than a mis-wire. Typing the parameter is
+    what stops a caller passing the wrong attribute of the view -- which
+    would make the memo either always-clear or never-clear, both silent.
+    """
+    return cast(GenomicResourceRepo, object())
+
+
+REPOSITORY = a_repository()
 
 
 def test_a_verdict_is_remembered_and_returned() -> None:
@@ -170,23 +186,10 @@ def test_a_verdict_is_not_returned_for_a_different_repository() -> None:
     test would be describing a coupling that does not exist.
     """
     cache = ValidationResultCache(capacity=4, ttl_seconds=60)
-    first_repository, second_repository = object(), object()
+    first_repository, second_repository = a_repository(), a_repository()
     cache.put("config", "", repository=first_repository)
 
     assert cache.get("config", repository=second_repository) is None
-
-
-def test_a_verdict_is_returned_while_the_repository_is_the_same() -> None:
-    """The generation key must not make every lookup a miss.
-
-    Without this a memo that cleared on every call would satisfy the test
-    above and cache nothing at all.
-    """
-    cache = ValidationResultCache(capacity=4, ttl_seconds=60)
-    repository = object()
-    cache.put("config", "", repository=repository)
-
-    assert cache.get("config", repository=repository) == ""
 
 
 def test_a_repository_change_empties_the_memo() -> None:
@@ -196,7 +199,7 @@ def test_a_repository_change_empties_the_memo() -> None:
     answered from -- the whole bound spent on a repository that is gone.
     """
     cache = ValidationResultCache(capacity=4, ttl_seconds=60)
-    first_repository, second_repository = object(), object()
+    first_repository, second_repository = a_repository(), a_repository()
     cache.put("a", "", repository=first_repository)
     cache.put("b", "", repository=first_repository)
 
@@ -212,7 +215,7 @@ def test_the_new_repository_is_then_the_one_remembered_against() -> None:
     would pass the three tests above and still cache nothing from then on.
     """
     cache = ValidationResultCache(capacity=4, ttl_seconds=60)
-    first_repository, second_repository = object(), object()
+    first_repository, second_repository = a_repository(), a_repository()
     cache.put("config", "", repository=first_repository)
     cache.get("config", repository=second_repository)
 
@@ -237,3 +240,69 @@ def test_the_key_is_a_digest_not_the_config_text() -> None:
     assert len(key) == 64
     assert key == ValidationResultCache.key(config)
     assert key != ValidationResultCache.key(config + "\n")
+
+
+def test_an_enormous_verdict_is_not_stored() -> None:
+    """The bound on entries is only a bound on memory if entries are small.
+
+    The key is a digest and so is fixed-size, but the *value* is the endpoint's
+    ``errors`` string, and that is not: the annotator-configuration message
+    echoes the resource id back, so a 60 KB config the caller chose produces a
+    60 KB verdict. At capacity that would be ~15 MB of attacker-chosen text
+    held for the TTL -- bounded, but three orders of magnitude past what an
+    entry is supposed to cost.
+
+    Refusing to store it costs the caller nothing: the response is rendered
+    from the verdict either way, so an oversized one is simply rebuilt next
+    time rather than remembered.
+    """
+    cache = ValidationResultCache(capacity=4, ttl_seconds=60)
+    enormous = "e" * (ValidationResultCache.MAX_VERDICT_LENGTH + 1)
+
+    cache.put("config", enormous, repository=REPOSITORY)
+
+    assert cache.get("config", repository=REPOSITORY) is None
+    assert len(cache) == 0
+
+
+def test_a_verdict_at_the_size_limit_is_still_stored() -> None:
+    """The limit must leave room for every message the endpoint really emits.
+
+    Without this the refusal above could be satisfied by storing nothing at
+    all, and the memo would quietly do nothing for the failing configs it
+    exists to make cheap.
+    """
+    cache = ValidationResultCache(capacity=4, ttl_seconds=60)
+    at_limit = "e" * ValidationResultCache.MAX_VERDICT_LENGTH
+
+    cache.put("config", at_limit, repository=REPOSITORY)
+
+    assert cache.get("config", repository=REPOSITORY) == at_limit
+
+
+def test_the_digest_is_defined_for_text_utf_8_cannot_encode() -> None:
+    """Keying must be total: not every ``str`` is UTF-8-encodable.
+
+    ``json.loads`` accepts a lone surrogate and DRF's JSONParser passes it
+    through, so a two-byte ASCII body can put one in ``request.data``. The
+    digest is the first thing on the request path that encodes the config,
+    and a plain ``encode("utf-8")`` raises on it -- an anonymous 500 for a
+    config the endpoint used to answer 200.
+    """
+    assert len(ValidationResultCache.key("\ud800")) == 64
+
+
+def test_the_digest_does_not_collide_on_unencodable_text() -> None:
+    """Being total must not be bought with a lossy encode.
+
+    ``errors="replace"`` or ``"ignore"`` would also stop the raise, and both
+    map distinct texts onto one digest -- so the memo would answer one config
+    with another config's verdict, silently, both of them 200s. A memo may
+    miss; it may never answer the wrong question.
+    """
+    keys = {
+        ValidationResultCache.key(text)
+        for text in ("\ud800", "\ud801", "\ud800\ud801", "?", "??", "")
+    }
+
+    assert len(keys) == 6

@@ -535,11 +535,19 @@ ANNOTATION_MAX_WORKERS = resolve_annotation_max_workers(4)
 PIPELINES_CACHE_SIZE = 256
 
 # How many validation verdicts /api/pipelines/validate remembers (gain#833).
-# An entry is a digest and a short `errors` string -- tens of bytes, not a
-# pipeline -- so the bound is about keeping an anonymous caller from growing
-# the memo without limit, not about memory pressure from any legitimate use.
+# An entry is a 64-character digest and an `errors` string, the latter capped
+# at ValidationResultCache.MAX_VERDICT_LENGTH (4 KiB) -- so this bounds the
+# memo at a few megabytes worst case rather than at whatever an anonymous
+# caller can talk the endpoint into echoing back. Without that cap it would
+# not be a memory bound at all: the annotator-configuration message repeats
+# the resource id, so a 60 KB config yields a 60 KB verdict.
 # 256 is the pipeline cache's size, and generous for the thing it bounds: one
 # editing session settles on a handful of distinct texts.
+#
+# The memo's worst-case memory is this TIMES MAX_VERDICT_LENGTH -- ~1 MB at
+# these values. Raising this raises that product; the other factor lives on
+# the class rather than here because 4 KiB is a property of how long a message
+# the error formatter can produce, not of a deployment.
 VALIDATION_CACHE_SIZE = 256
 
 # The stated upper bound on how stale a remembered verdict may be (gain#833).

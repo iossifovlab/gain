@@ -2,6 +2,7 @@
 import asyncio
 import contextlib
 import itertools
+import json
 import logging
 import textwrap
 import threading
@@ -12,6 +13,7 @@ from typing import Any
 import pytest
 import pytest_mock
 from asgiref.sync import sync_to_async
+from django.conf import settings
 from django.test import AsyncClient
 
 from web_annotation.annotation_base_view import (
@@ -322,17 +324,16 @@ def an_unseen_valid_config() -> str:
     return f"{VALID_CONFIG}\n# {next(_unseen_configs)}\n"
 
 
-async def _fire_validate(config: str | None = None) -> int:
-    """POST one validation request; return its status code.
+async def _fire_validate() -> int:
+    """POST one validation of a config the memo has not seen; return status.
 
-    Defaults to a config the memo has not seen, because every caller of this
-    helper is measuring what a build costs; pass ``config`` explicitly when
-    the text itself is what the test is about.
+    Every caller of this helper is measuring what a build costs, so an unseen
+    config is the only thing it should ever send. A test that cares about the
+    config text posts it directly.
     """
     client = AsyncClient()
     response = await client.post(
-        VALIDATE_URL, {"config": an_unseen_valid_config()
-                       if config is None else config})
+        VALIDATE_URL, {"config": an_unseen_valid_config()})
     return response.status_code
 
 
@@ -1360,6 +1361,51 @@ async def test_a_refused_config_is_never_answered_from_the_memo(
     assert first.json() == expected
     assert second.status_code == 400, second.content
     assert second.json() == expected
+
+
+def test_the_memo_is_wired_to_its_settings() -> None:
+    """The two bounds must arrive the right way round.
+
+    ``VALIDATION_CACHE_SIZE`` (256) and ``VALIDATION_CACHE_TTL_SECONDS`` (300)
+    are both plain ints, so swapping them at the construction site -- capacity
+    300, TTL 256 seconds -- is silent: every other test in this file and in
+    ``test_validation_cache`` builds its own cache directly, so none of them
+    would notice. This is the only thing standing between the deployed bounds
+    and the ones the settings say.
+    """
+    cache = PipelineValidation.validation_cache
+
+    assert cache.capacity == settings.VALIDATION_CACHE_SIZE
+    assert cache.ttl_seconds == settings.VALIDATION_CACHE_TTL_SECONDS
+
+
+#: A lone UTF-16 surrogate. ``json.loads`` accepts one -- the stdlib does not
+#: reject them and DRF's JSONParser goes straight through it -- so a two-byte
+#: ASCII body puts a str in ``request.data`` that ``str.encode("utf-8")``
+#: refuses. The memo digests the config text, so it is the first thing on the
+#: path that encodes it, and an unguarded encode there is an anonymous 500.
+LONE_SURROGATE_CONFIG = "\ud800"
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_a_config_that_cannot_be_encoded_is_still_a_verdict() -> None:
+    """A config yaml rejects gets its 200, memo or no memo.
+
+    This one is not UTF-8-encodable at all, which is a property no other
+    config on this endpoint has. Before the memo nothing on the path encoded
+    the text, so it reached the parser and came back as an ordinary invalid
+    config; digesting it put an encode in front of that.
+    """
+    client = AsyncClient()
+
+    response = await client.post(
+        VALIDATE_URL,
+        json.dumps({"config": LONE_SURROGATE_CONFIG}),
+        content_type="application/json")
+
+    assert response.status_code == 200, response.content
+    assert response.json() == {"errors": "Invalid configuration"}
 
 
 @pytest.mark.asyncio

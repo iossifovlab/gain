@@ -103,23 +103,34 @@ singleton built at import (`annotation_base_view.GRR`). So the endpoint's
 verdict is *already* pinned to the process's snapshot of the repository, and a
 memo keyed to that same snapshot adds no staleness over the build it replaces.
 
-That is the primary key, and it is exact:
+So the honest statement is that **neither bound is load-bearing today** — the
+memo is exactly as stale as the build it replaces, for the measured reason
+above. Both exist for the day that stops being true, and they catch different
+things:
 
-- **Repository generation.** An entry is only ever returned to a caller
-  holding the same GRR object it was computed against. Handed a different
-  one, the memo drops everything rather than answer for a repository it
-  never saw.
+- **Repository generation** catches the repository *object* being replaced.
+  An entry is only ever returned to a caller holding the same GRR it was
+  computed against; handed a different one, the memo drops everything. In
+  `web_api` today nothing replaces that object (it is a module-level
+  singleton built at import), so this fires only in tests.
 
-It is deliberately not the only bound, because it is exact only for as long as
-the fact above holds. The GRRs are bind-mounted directories that grr-sync
-rewrites from GitHub under the running server, and `invalidate()` exists on the
-protocol. The day a repository object starts picking those rewrites up, the
-generation key would not change while the content moved beneath it. So:
-
-- **TTL**, `VALIDATION_CACHE_TTL_SECONDS`, five minutes. A stated upper bound
-  on the age of any answer, independent of what the repository is doing.
+- **TTL**, `VALIDATION_CACHE_TTL_SECONDS`, five minutes. This catches content
+  moving *under* an unchanged object — which the generation key provably
+  cannot see, identity being unchanged in that case. And that is the shape
+  the real risk has: the GRRs are bind-mounted directories grr-sync rewrites
+  while the server runs, and `invalidate()` exists on the protocol. So the
+  TTL is the operative bound of the two, not a backstop to it.
 
 Both are tested (`tests/test_validation_cache.py`).
+
+The mechanism that would make this exact against in-place invalidation is a
+monotone generation counter on `GenomicResourceRepoProtocol`, bumped by
+`invalidate()`, so a cache could key on `(repository, generation)`. That is a
+gain-core protocol change and out of scope here. Worth noting that
+`LRUPipelineCache` — which holds whole *built* pipelines against the same GRR
+for the life of the process, with no staleness key at all — has the same
+exposure and no bound, which is the sign this belongs on the repository
+rather than on one endpoint's memo.
 
 ## What was implemented, and what was not
 
@@ -128,10 +139,29 @@ first left behind.
 
 **Implemented — the bounded result memo.** Validation needs only the outcome,
 so an entry is a sha256 digest of the config text mapped to the `errors`
-string: tens of bytes, bounded at `VALIDATION_CACHE_SIZE` (256) entries, LRU.
-Digest keys are what make a bound on the *count* also a bound on memory, on an
-endpoint whose keys are anonymous and attacker-chosen. A repeat of any config
-in the table above goes from its row's total to a dictionary lookup.
+string. Bounded at `VALIDATION_CACHE_SIZE` (256) entries, LRU. A repeat of any
+config in the table above goes from its row's total to a dictionary lookup.
+
+Both halves of an entry have to be bounded for the entry count to bound
+memory, and only one of them is naturally. The digest is fixed-size; the
+verdict is not, because the annotator-configuration message echoes the
+resource id back — measured through the endpoint, a 60 KB config yields a
+**60112-character** `errors` string, so 256 of those would be ~15 MB of
+attacker-chosen text held for the TTL. Hence
+`ValidationResultCache.MAX_VERDICT_LENGTH` (4 KiB, against real messages in
+the tens to low hundreds of bytes): a verdict past it is returned to the
+caller unchanged but not remembered, so such a config is simply rebuilt next
+time.
+
+The digest is also `surrogatepass`, and both halves of that matter. It has to
+be **total**, because `json.loads` accepts a lone surrogate and DRF's
+JSONParser passes it through — so a two-byte ASCII body can put a str in
+`request.data` that plain `encode("utf-8")` refuses, and since the digest is
+the first thing on the path that encodes the config, that raise would be an
+anonymous 500 for a config the endpoint previously answered 200. And it has to
+stay **injective**, which `replace` and `ignore` are not: a lossy encode maps
+distinct texts onto one key, and a memo that does that answers one config with
+another config's verdict.
 
 The memo sits after every bound that refuses from the request alone — so a
 malformed request still gets its own accurate 400 — and *before* the admission
@@ -147,16 +177,39 @@ validation of resource configs is untouched for a config the memo has not
 seen, and reuse would cut it across *different* configs too, not only repeats.
 But that work belongs in gain core's resource layer rather than in `web_api` —
 the issue's own framing is that the memo wraps *around* `load_pipeline_from_yaml`,
-"not inside it" — so it is filed separately rather than folded in here.
+"not inside it" — so it is filed as **iossifovlab/gain#886** rather than
+folded in here.
+
+**Not implemented — in-flight coalescing.** Two concurrent POSTs of the same
+*unseen* text both miss, both build, and both take a pool slot; only the
+second one to *finish* leaves a verdict behind. A debounced editor that
+outruns one build produces exactly that. So "the repeat cost of a session
+collapses" is a claim about sequential repeats, which is what a debounce
+mostly produces. Coalescing them would mean sharing one in-flight build
+between callers — which is what `LRUPipelineCache` already does for the
+pipeline-id path, and a different piece of machinery from a result memo. Not
+in #833's scope; worth knowing before reading the numbers as a bound on
+concurrent work.
 
 ## A note for whoever re-runs the #659 numbers
 
 The memo changes what a burst of identical validations measures. Anything that
 fires N requests carrying one config text now measures one build and N-1
 lookups. `web_annotation/loadtest/cheap_endpoint_slo.py` therefore gives each
-request of a burst a distinct config (a trailing yaml comment, which the parser
-discards, so every request still builds the identical pipeline), and the
-in-process proofs in `tests/test_pipeline_validation_async.py` do the same
+request a distinct config (a trailing yaml comment, which the parser discards,
+so every request still builds the identical pipeline).
+
+Note that the distinguishing text carries **both** a per-request index and a
+per-run nonce, and the nonce is the load-bearing half. The recipe recorded in
+`659-validate-async-slo.md` drives *one long-lived server* at K = 8, 32, 64,
+96 with a 65 s gap between runs — every gap well inside the 300 s TTL. An
+index alone restarts at 0 each run, so the K=32 run would send 8 hits and 24
+builds, K=64 would send 32 hits, K=96 would send 64. Every request still
+answers 200 and nothing in the emitted record distinguishes a build from a
+lookup, so the harness would report a clean, wrong result. (`run_matrix.sh`
+starts a fresh server per K and would not have shown it.)
+
+The in-process proofs in `tests/test_pipeline_validation_async.py` do the same
 through `an_unseen_valid_config()`. If you add a new proof that times a build,
 use that helper — `test_the_burst_helper_still_buys_a_build_per_request` is
 the guard, but it can only guard the helper, not a fresh literal.
