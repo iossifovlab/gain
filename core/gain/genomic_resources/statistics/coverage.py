@@ -58,6 +58,13 @@ def length_histogram_bin_index(length: int) -> int:
     return min(length.bit_length() - 1, LENGTH_HISTOGRAM_BIN_COUNT - 1)
 
 
+# The same ladder as an array of lower edges, for the vectorized binning
+# in ``RegionCoverage.add_fragment_batch``.  Pinned equal to
+# ``length_histogram_bin_index`` by
+# test_the_batch_binning_agrees_with_the_per_length_one.
+_LENGTH_BIN_EDGES = 2 ** np.arange(LENGTH_HISTOGRAM_BIN_COUNT, dtype=np.int64)
+
+
 def _bin_edge_label(edge: int) -> str:
     for unit, factor in (("G", 2 ** 30), ("M", 2 ** 20), ("K", 2 ** 10)):
         if edge >= factor:
@@ -150,14 +157,18 @@ class RegionCoverage:
         self.start = start
         self.end = end
         # ONE fact about the kind being scanned, with two consequences.
-        # Rows that can neither overlap nor touch (a position score,
-        # whose validators refuse both) have an exact run algebra, so
-        # their segment summary is published; and they are pairwise
-        # disjoint, so the scan may hand this their FULL spans and the
-        # union stays additive across regions.  Rows that can overlap
-        # (fragments) publish no segment summary, and must be handed
-        # spans clipped to the region -- see
+        # Rows no two of which share a position (a position score, whose
+        # validators refuse a row beginning at or before its
+        # predecessor's end) have an exact run algebra, so their segment
+        # summary is published; and they cannot double-count a position,
+        # so the scan may hand this their FULL spans and the union stays
+        # additive across regions.  Rows that can overlap (fragments)
+        # publish no segment summary, and must be handed spans clipped
+        # to the region -- see
         # ``GenomicScoreImplementation._accumulate_coverage``.
+        #
+        # Disjoint, NOT "non-touching": adjacent rows are legal, and the
+        # stitch in ``_merge_runs`` depends on them being so.
         self._rows_are_disjoint = rows_are_disjoint
         self.covered = 0
         # The rightmost covered position so far; union means only the part
@@ -231,6 +242,32 @@ class RegionCoverage:
         self._fragments += 1
         self._fragment_bins[length_histogram_bin_index(length)] += 1
 
+    def add_fragment_batch(self, lengths: np.ndarray) -> None:
+        """Count a whole batch of fragment lengths at once.
+
+        The vectorized statement of :meth:`add_fragment`, and it lives
+        HERE beside that rule so the binning has one home.  Vectorized
+        because a genome-scale fragment score has hundreds of thousands
+        of rows, and this is the path ADR 0001 deleted the per-row
+        object churn from.
+
+        The bin is found by INTEGER comparison against the ladder's own
+        edges, not by ``log2``: the edges are part of the stored format,
+        and a float log of a large integer can land on the wrong side of
+        a power of two.  ``searchsorted`` clamps into the open-ended
+        last bin for free.
+        """
+        if not self._track_fragments or not lengths.size:
+            return
+        if lengths.min() < 1:
+            raise ValueError(
+                f"fragment length must be positive: {lengths.min()}")
+        indices = np.searchsorted(_LENGTH_BIN_EDGES, lengths, side="right") - 1
+        counts = np.bincount(indices, minlength=LENGTH_HISTOGRAM_BIN_COUNT)
+        for index, count in enumerate(counts.tolist()):
+            self._fragment_bins[index] += count
+        self._fragments += int(lengths.size)
+
     def fragment_summary(self) -> tuple[int, list[int]] | None:
         """Fragment count and length histogram, or ``None`` if unknown.
 
@@ -246,7 +283,7 @@ class RegionCoverage:
 
     @property
     def rows_are_disjoint(self) -> bool:
-        """Whether the scanned kind's rows can neither overlap nor touch.
+        """Whether no two of the scanned kind's rows share a position.
 
         Read by the scan to decide whether to clip the spans it hands
         :meth:`add_interval` -- see the constructor for the one fact and
@@ -385,15 +422,23 @@ class RegionCoverage:
             first_begin <= last_end + 1
             and last_values == first_values
         )
+        # The combined run ends at the wider of the two ends, the same
+        # maximum :meth:`add_interval` takes row by row.  Under the old
+        # boundary-abutting stitch the other run's end was wider by
+        # construction; the touching test that replaced it admits a run
+        # nested inside this one, and taking that end would report the
+        # segment short.
         if stitch and not other._closed_segments:
             # The other region is one run end to end; the combined run
             # stays open for the next merge.
-            self._run = (last_begin, other._run[1], last_values)
+            self._run = (
+                last_begin, max(last_end, other._run[1]), last_values)
             return
         for index, count in enumerate(other._interior_bins):
             self._interior_bins[index] += count
         if stitch:
-            self._record_closed((last_begin, first_end, last_values))
+            self._record_closed(
+                (last_begin, max(last_end, first_end), last_values))
             self._closed_segments += other._closed_segments
         else:
             self._record_closed(self._run)
@@ -412,7 +457,11 @@ class RegionCoverage:
         end: int,
         values: tuple,
     ) -> None:
-        """Fold one clipped row span into the coverage."""
+        """Fold one row span into the coverage.
+
+        Clipped to the region or not, as :attr:`rows_are_disjoint`
+        decides at the scan; this only unions what it is handed.
+        """
         if self._covered_through is None or begin > self._covered_through:
             self.covered += end - begin + 1
             self._covered_through = end
@@ -435,7 +484,7 @@ class RegionCoverage:
         right: np.ndarray,
         cells: list[np.ndarray],
     ) -> None:
-        """Fold a batch of clipped row spans, collapsed into runs.
+        """Fold a batch of row spans, collapsed into runs.
 
         The vectorized statement of the rule :meth:`add_interval`
         applies row by row — it lives HERE, beside that rule, so the
@@ -455,8 +504,10 @@ class RegionCoverage:
         segments are a position-score statistic), and a consumer that
         wants them must first give fragments an exact run algebra.
 
-        ``left``/``right`` are the already-clipped spans, ``cells`` one
-        kept column per scanned score, all equally long.
+        ``left``/``right`` are the spans as the scan decided to hand
+        them over -- clipped to the region for an overlapping kind, the
+        rows' own full extents for a disjoint one -- and ``cells`` is
+        one kept column per scanned score, all equally long.
         """
         count = left.shape[0]
         if not count:

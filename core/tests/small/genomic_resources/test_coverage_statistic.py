@@ -1,6 +1,7 @@
 # pylint: disable=C0114,C0116,W0212,W0621
 import json
 
+import numpy as np
 import pytest
 from gain.genomic_resources.statistics.coverage import (
     CoverageStatistics,
@@ -418,3 +419,77 @@ def test_na_values_compare_equal_when_extending_a_segment() -> None:
     cov.add_interval(13, 20, (None, 0.5))
 
     assert cov.segment_count == 1
+
+
+def _bin_of(length: int) -> int:
+    return length_histogram_bin_index(length)
+
+
+def test_a_stitch_never_shortens_the_run_it_merges_into() -> None:
+    # A region handed FULL spans has runs reaching past its own extent,
+    # so the other region's first run can END before this one's open run
+    # does.  The stitch must take the wider end -- the same maximum
+    # ``add_interval`` takes row by row -- or the merged segment is
+    # reported short.  The old boundary-abutting stitch made this
+    # unrepresentable; the touching test that replaced it does not.
+    left = RegionCoverage("chr1", 1, 10)
+    left.add_interval(5, 100, (0.5,))
+    right = RegionCoverage("chr1", 11, 20)
+    right.add_interval(11, 15, (0.5,))
+
+    left.merge(right)
+
+    assert left.segment_count == 1
+    histogram = left.segment_length_histogram()
+    assert histogram[_bin_of(96)] == 1, "5..100 is 96bp, not 5..15's 11"
+    assert sum(histogram) == 1
+
+
+def test_a_stitch_that_closes_a_run_also_keeps_the_wider_end() -> None:
+    # The other branch of the same decision: the other region carries a
+    # closed run, so the stitched run closes here instead of staying
+    # open.  It must close at the wider end too.
+    left = RegionCoverage("chr1", 1, 10)
+    left.add_interval(5, 100, (0.5,))
+    right = RegionCoverage("chr1", 11, 20)
+    right.add_interval(11, 15, (0.5,))
+    right.add_interval(30, 40, (0.9,))
+
+    left.merge(right)
+
+    assert left.segment_count == 2
+    histogram = left.segment_length_histogram()
+    assert histogram[_bin_of(96)] == 1, "the stitched run is 5..100"
+    assert histogram[_bin_of(11)] == 1
+    assert sum(histogram) == 2
+
+
+def test_the_batch_binning_agrees_with_the_per_length_one() -> None:
+    # Two statements of one ladder -- the per-record scan bins lengths
+    # one at a time, the bulk scan a whole array -- so they are pinned
+    # against each other across the edges, the ends and the clamp.
+    lengths = [
+        1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 96, 1000,
+        2 ** 30, 2 ** 31 - 1, 2 ** 31, 2 ** 31 + 1, 2 ** 40,
+    ]
+    per_length = RegionCoverage("chr1", 1, 10, track_fragments=True)
+    for length in lengths:
+        per_length.add_fragment(length)
+    batched = RegionCoverage("chr1", 1, 10, track_fragments=True)
+
+    batched.add_fragment_batch(np.array(lengths, dtype=np.int64))
+
+    summary = batched.fragment_summary()
+    assert summary == per_length.fragment_summary()
+    assert summary is not None
+    count, histogram = summary
+    assert count == len(lengths)
+    assert sum(histogram) == len(lengths)
+    # The clamp: 2**31, 2**31 + 1 and 2**40 all land in the last bin.
+    assert histogram[-1] == 3
+
+
+def test_the_batch_binning_refuses_a_non_positive_length() -> None:
+    region = RegionCoverage("chr1", 1, 10, track_fragments=True)
+    with pytest.raises(ValueError, match="positive"):
+        region.add_fragment_batch(np.array([5, 0], dtype=np.int64))

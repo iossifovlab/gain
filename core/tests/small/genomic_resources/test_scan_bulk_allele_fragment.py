@@ -606,7 +606,7 @@ def test_bulk_fragment_scan_agrees_across_batch_boundaries(
 @pytest.mark.parametrize("batch_size", _BATCH_SIZES)
 @pytest.mark.parametrize(
     ("region", "kept", "binned"), [((1, 30), 5, 4), ((12, 30), 2, 2)],
-    ids=["unclipped", "clipped"])
+    ids=["whole contig", "owned subset"])
 def test_bulk_allele_scan_agrees_across_batch_boundaries(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

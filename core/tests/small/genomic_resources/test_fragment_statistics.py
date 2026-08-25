@@ -1,5 +1,7 @@
 # pylint: disable=C0114,C0116,W0212,W0621
+import json
 import pathlib
+import re
 
 import pytest
 from gain.genomic_resources.histogram import NumberHistogramConfig
@@ -130,7 +132,9 @@ def test_bulk_and_per_record_scans_produce_the_same_fragment_statistics(
 
     assert bulk.fragment_summary() == per_record.fragment_summary()
     assert per_record.fragment_summary() == (4, _bins({3: 2, 4: 1, 6: 1}))
-    assert bulk.covered == per_record.covered
+    # Pinned absolutely, not just against each other: 10-100 unioned
+    # with 90-120 covers 10..120, and 20-30 is nested inside it.
+    assert bulk.covered == per_record.covered == 111
 
 
 def test_a_position_score_publishes_no_fragment_statistics(
@@ -167,6 +171,12 @@ def _fragments_section(page: str) -> str:
     return rest.split("<h2>", 1)[0]
 
 
+def _squashed(markup: str) -> str:
+    """Markup with whitespace between tags removed, so a row's cells can
+    be asserted as one adjacent pair rather than as loose fragments."""
+    return re.sub(r">\s+<", "><", markup)
+
+
 def _info_page(resource: GenomicResource) -> str:
     return build_score_implementation_from_resource(resource).get_info()
 
@@ -181,10 +191,11 @@ def test_the_info_page_renders_a_fragments_section(
 
     section = _fragments_section(_info_page(resource))
 
-    assert ">chr1<" in section
-    assert ">4<" in section
-    assert ">chr2<" in section
-    assert ">5<" in section
+    # Bound to their chromosomes: counts of {chr1: 1, chr2: 4} must not
+    # pass a test for "the page contains a 4 and a 1 somewhere".
+    assert "<td>chr1</td><td>4</td>" in _squashed(section)
+    assert "<td>chr2</td><td>1</td>" in _squashed(section)
+    assert "<td>all chromosomes</td><td>5</td>" in _squashed(section)
     assert section.count(
         "statistics/coverage_fragment_lengths.png") == 1
     assert resource.file_exists("statistics/coverage_fragment_lengths.png")
@@ -211,7 +222,7 @@ def test_the_fragments_section_is_absent_on_a_position_score(
     assert "Fragments" not in _info_page(resource)
 
 
-def test_a_fragment_resource_built_before_this_says_not_computed(
+def test_a_fragment_resource_with_no_statistics_file_says_not_computed(
     tmp_path: pathlib.Path,
 ) -> None:
     # The statistics roll out lazily, so a fragment resource can carry
@@ -226,3 +237,27 @@ def test_a_fragment_resource_built_before_this_says_not_computed(
 
     assert "not computed" in section
     assert "coverage_fragment_lengths.png" not in section
+
+
+def test_a_coverage_file_written_before_fragments_says_not_computed(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The state a real pre-gain#794 fragment resource is actually in:
+    # the file is there and its covered positions are fine, but it
+    # carries no fragment keys.  Deleting the whole file (above) does
+    # not exercise this -- the keys are read independently of it.
+    resource = _fragments(tmp_path)
+    GenomicScoreImplementation._do_noregion_histograms(resource)
+    stored = json.loads(
+        resource.get_file_content("statistics/coverage.json"))
+    for entry in [*stored["chromosomes"].values(), stored["global"]]:
+        entry.pop("fragment_count", None)
+        entry.pop("fragment_length_histogram", None)
+    with resource.proto.open_raw_file(
+            resource, "statistics/coverage.json", mode="wt") as outfile:
+        outfile.write(json.dumps(stored))
+
+    stats = _stored(resource)
+    assert stats.covered_by_chromosome() == {"chr1": 111, "chr2": 4}
+    assert stats.fragments_global() is None
+    assert "not computed" in _fragments_section(_info_page(resource))

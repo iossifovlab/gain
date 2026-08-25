@@ -134,7 +134,9 @@ _COVERAGE_SCAN_RESOURCE_TYPES = frozenset(
 # Named for the FACT rather than for one of its consequences, because it
 # has two: disjoint rows have an exact run algebra, so their segment
 # statistics are published; and they cannot double-count a position, so
-# the scan hands their coverage full unclipped spans.
+# the scan hands their coverage full unclipped spans.  Fragment rows
+# overlap, so they get neither (their counts are their own statistic --
+# gain#794).
 _NON_OVERLAPPING_ROW_RESOURCE_TYPES = frozenset(
     equivalent_resource_types("position_score"))
 
@@ -903,9 +905,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         and the value coercion are identical to the per-record path (pinned
         by the bulk-vs-per-record tests, and by both paths reading one
         statement of the per-kind rules); the dispatch restricts this to the
-        score and
-        histogram combinations :meth:`_can_bulk_histogram` admits, over
-        tabix/bigWig tables -- everything else keeps :meth:`_do_histogram`.
+        score and histogram combinations :meth:`_can_bulk_histogram`
+        admits, over tabix/bigWig tables -- everything else keeps
+        :meth:`_do_histogram`.
         """
         result: dict[str, Histogram] = {}
         for score_id, hist_conf in all_hist_confs.items():
