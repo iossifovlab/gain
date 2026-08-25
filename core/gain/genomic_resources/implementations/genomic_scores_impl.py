@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import json
 from collections.abc import Callable, Generator, Iterable
+from itertools import starmap
 from typing import Any, ClassVar, NamedTuple, TypeVar, cast
 
 import numpy as np
@@ -70,11 +71,14 @@ from gain.genomic_resources.statistics.alleles import (
     serves_allele_arrays,
 )
 from gain.genomic_resources.statistics.coverage import (
+    COVERAGE_FRAGMENT_LENGTHS_IMAGE_FILE,
     COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
     COVERAGE_STATISTICS_FILE,
     CoverageDisplay,
     CoverageRow,
     CoverageStatistics,
+    FragmentDisplay,
+    FragmentRow,
     RegionCoverage,
     accumulate_coverage,
     merge_region_coverage,
@@ -133,6 +137,15 @@ _COVERAGE_SCAN_RESOURCE_TYPES = frozenset(
 # the scan hands their coverage full unclipped spans.
 _NON_OVERLAPPING_ROW_RESOURCE_TYPES = frozenset(
     equivalent_resource_types("position_score"))
+
+# The kinds whose rows ARE fragments, in both spellings, and so publish
+# a fragment count and fragment-length histogram (gain#794).  A separate
+# statement from the one above rather than its complement: that these
+# are exactly the coverage-scanned kinds that overlap is true today and
+# incidental -- a future overlapping kind that is not a fragment score
+# would inherit fragment counts it has no business publishing.
+_FRAGMENT_STATISTICS_RESOURCE_TYPES = frozenset(
+    equivalent_resource_types("fragment_score"))
 
 
 def _allele_batches(
@@ -207,6 +220,11 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         """The info page's one statement of the global histogram's path."""
         return COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE
 
+    @staticmethod
+    def get_coverage_fragment_lengths_image_filename() -> str:
+        """The info page's one statement of the fragment image's path."""
+        return COVERAGE_FRAGMENT_LENGTHS_IMAGE_FILE
+
     def get_coverage_statistics(self) -> CoverageStatistics | None:
         """The resource's coverage statistics, or ``None`` if not built.
 
@@ -280,6 +298,23 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         else:
             global_fraction = None
         return CoverageDisplay(rows, global_fraction)
+
+    def get_fragment_display(self) -> FragmentDisplay | None:
+        """The Fragments section's payload, or ``None`` if not computed.
+
+        ``None`` covers both ways a fragment resource can have nothing
+        to show: no statistics file at all, and a file written before
+        fragment counts existed.  Both render the section's "not
+        computed" fallback -- these statistics roll out lazily, as
+        :meth:`get_coverage_statistics` explains.
+        """
+        coverage = self.get_coverage_statistics()
+        if coverage is None:
+            return None
+        if coverage.fragments_global() is None:
+            return None
+        counts = coverage.fragments_by_chromosome()
+        return FragmentDisplay(list(starmap(FragmentRow, counts.items())))
 
     def _resolve_chrom_lengths(
         self, chroms: Iterable[str],
@@ -814,6 +849,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                             left, right, normalize_values(rec))
                 if not owned:
                     continue
+                if coverage is not None:
+                    # A fragment is the row as stored, at its own span --
+                    # a no-op unless the kind publishes fragments.
+                    coverage.add_fragment(right - left + 1)
                 weight = right - left + 1 if weight_is_span else 1
                 for scr_index, scr_id in enumerate(score_ids):
 
@@ -1236,7 +1275,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             coverage = RegionCoverage(
                 chrom, start, end,
                 rows_are_disjoint=resource_type
-                in _NON_OVERLAPPING_ROW_RESOURCE_TYPES)
+                in _NON_OVERLAPPING_ROW_RESOURCE_TYPES,
+                track_fragments=resource_type
+                in _FRAGMENT_STATISTICS_RESOURCE_TYPES)
         score = build_score_implementation_from_resource(resource).score
         alleles = region_alleles_for(score, chrom, start, end)
         nucleotides = True
@@ -1457,8 +1498,17 @@ class FragmentScoreImplementation(GenomicScoreImplementation):
     Carries no statistics behaviour of its own: a fragment's weight-1 rule
     is declared on ``FragmentScore`` (``RECORD_WEIGHT_IS_SPAN``) and read by
     both scan paths from there.
+
+    It does carry its own info page, which is the genomic-score page plus
+    a Fragments section.  The section lives in a template that FILLS a
+    block the shared template leaves empty, so a kind with no fragments
+    renders no section at all -- rather than a heading permanently
+    reading "not computed", which is what gating one shared template on
+    a boolean produced for Coverage on allele scores.
     """
     # pylint: disable=useless-parent-delegation
+
+    template_name: ClassVar[str] = "fragment_score.jinja"
 
     def create_statistics_build_tasks(
         self, **kwargs: Any,

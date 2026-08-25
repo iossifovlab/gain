@@ -280,6 +280,80 @@ def test_coverage_is_chunk_invariant(
     assert merged.segment_length_histogram() == _expected_histogram()
 
 
+# Five fragments over chr1, scanned to 200.  Overlapping (10-100 and
+# 90-120), nested (20-30 inside 10-100) and duplicated (20-30 twice), so
+# a chunked scan has every shape of row to get wrong.
+_FRAGMENT_ROWS = ((10, 100), (20, 30), (20, 30), (90, 120), (150, 151))
+_FRAGMENT_CONTIG_END = 200
+
+
+def _fragment_chunk_fixture(tmp_path: pathlib.Path) -> GenomicResource:
+    rows = "\n".join(
+        f"            chr1   {begin}  {end}  0.{index + 1}"
+        for index, (begin, end) in enumerate(_FRAGMENT_ROWS))
+    return (
+        a_fragment_score()
+        .with_score("s", "float")
+        .with_data(f"            chrom  pos_begin  pos_end  s\n{rows}\n")
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+@pytest.mark.parametrize("region_size", [1, 2, 3, 7, 100])
+def test_fragment_statistics_are_chunk_invariant(
+    tmp_path: pathlib.Path,
+    region_size: int,
+) -> None:
+    # The sibling ``test_coverage_is_chunk_invariant`` discards the
+    # histograms it computes and scans a position score, which is immune
+    # to gain#816 -- which is why the defect survived it.  This one
+    # asserts the VALUE histograms too, on a fragment fixture.
+    resource = _fragment_chunk_fixture(tmp_path)
+    confs: dict = {"s": _hist_conf()}
+    starts = list(range(1, _FRAGMENT_CONTIG_END + 1, region_size))
+    # Vacuity guard: a chunk-invariance test where nothing is chunked
+    # passes trivially.  More than one region, and at least one fragment
+    # genuinely straddling a region boundary at THIS size.
+    assert len(starts) > 1
+    boundaries = [start - 1 for start in starts[1:]]
+    assert any(
+        begin <= boundary < end
+        for begin, end in _FRAGMENT_ROWS
+        for boundary in boundaries
+    )
+
+    results = [
+        GenomicScoreImplementation._do_histogram_task(
+            resource, confs, "chr1", start,
+            min(start + region_size - 1, _FRAGMENT_CONTIG_END))
+        for start in starts
+    ]
+    whole = GenomicScoreImplementation._do_histogram_task(
+        resource, confs, "chr1", 1, _FRAGMENT_CONTIG_END)
+
+    merged = GenomicScoreImplementation._merge_histograms(
+        resource, *(result.histograms for result in results))
+    assert merged["s"].bars.tolist() == whole.histograms["s"].bars.tolist()
+    assert merged["s"].bars.sum() == len(_FRAGMENT_ROWS)
+
+    stats = merge_region_coverage(
+        resource.resource_id, (result.coverage for result in results))
+    assert stats is not None
+    assert stats.covered_by_chromosome() == {"chr1": 113}
+    assert stats.fragments_global() == len(_FRAGMENT_ROWS)
+    # 91, 11, 11, 31 and 2 base pairs on the fixed log2 bins.
+    assert stats.fragment_lengths_global() == _length_bins(
+        {1: 1, 3: 2, 4: 1, 6: 1})
+
+
+def _length_bins(counts: dict[int, int]) -> list[int]:
+    histogram = [0] * 32
+    for index, count in counts.items():
+        histogram[index] = count
+    return histogram
+
+
 def test_statistics_hash_is_untouched_by_the_coverage_build(
     tmp_path: pathlib.Path,
 ) -> None:
