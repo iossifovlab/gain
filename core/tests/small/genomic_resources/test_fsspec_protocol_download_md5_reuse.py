@@ -2,29 +2,11 @@
 import pathlib
 from typing import Any
 
-from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     build_inmemory_test_protocol,
 )
 from pytest_mock import MockerFixture
-
-
-def _called_filename(call: Any) -> str | None:
-    """Return the filename a recorded compute_md5_sum call was given."""
-    if len(call.args) > 1:
-        return str(call.args[1])
-    filename = call.kwargs.get("filename")
-    return None if filename is None else str(filename)
-
-
-def _empty_dest_proto(
-    tmp_path: pathlib.Path,
-) -> FsspecReadWriteProtocol:
-    """Return a read-write filesystem protocol over an empty directory."""
-    dest_root = tmp_path / "dest"
-    dest_root.mkdir()
-    return build_filesystem_test_protocol(dest_root)
 
 
 def test_copy_resource_reuses_the_verified_download_md5(
@@ -39,20 +21,21 @@ def test_copy_resource_reuses_the_verified_download_md5(
     stored object is a second full read of every file -- a second transfer
     when the destination is remote. See gain#865.
     """
-    # Given a source resource and a destination that does not have it yet
+    # Given a source resource and a destination that does not have it yet.
+    # The manifest must be non-empty, or the zero asserted at the end is
+    # vacuous: an empty resource downloads nothing and so trivially
+    # recomputes nothing.
     src_proto = build_inmemory_test_protocol(content_fixture)
     src_resource = src_proto.get_resource("one")
     expected_files = sorted(
         entry.name for entry in src_resource.get_manifest())
-    assert expected_files, (
-        "at least one file must actually be copied, or the zero below is "
-        "vacuous -- an empty manifest downloads nothing and so trivially "
-        "recomputes nothing")
     assert expected_files == [
         "data.txt", "data.txt.gz", "genomic_resource.yaml"], \
         "fixture changed; update this pin"
 
-    dest_proto = _empty_dest_proto(tmp_path)
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+    dest_proto = build_filesystem_test_protocol(dest_root)
     assert dest_proto.get_all_resources_dict() == {}
 
     recompute = mocker.spy(dest_proto, "compute_md5_sum")
@@ -73,4 +56,4 @@ def test_copy_resource_reuses_the_verified_download_md5(
     # ...and not one byte of it was read back to recompute a known digest
     assert recompute.call_count == 0, (
         f"destination files re-read to recompute md5: "
-        f"{[_called_filename(call) for call in recompute.call_args_list]}")
+        f"{[call.args[1] for call in recompute.call_args_list]}")
