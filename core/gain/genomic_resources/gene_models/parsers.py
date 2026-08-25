@@ -744,9 +744,10 @@ def _parse_gtf_attributes(data: str) -> dict[str, str]:
 #: ``transcript_id``. Supporting a flavour usually takes more than this set:
 #: FlyBase also relies on the ``5UTR``/``3UTR`` spellings in
 #: ``GTF_IGNORED_FEATURES`` and on ``gene_symbol`` as its gene label. Check a
-#: new file's ``cut -f3 | sort -u`` against the module's ``GTF_*`` constants.
-#: Flavour is an intake concern only -- ``serialization.py`` normalises back
-#: out, always writing ``transcript`` and ``gene_name``.
+#: new file's ``cut -f3 | sort -u`` against the module's ``GTF_*`` constants
+#: plus the loop's literal ``exon`` and ``Selenocysteine`` branches. Flavour
+#: is an intake concern only -- ``serialization.py`` normalises back out,
+#: always writing ``transcript`` and ``gene_name``.
 GTF_TRANSCRIPT_FEATURES = frozenset({
     "transcript",
     "mRNA",
