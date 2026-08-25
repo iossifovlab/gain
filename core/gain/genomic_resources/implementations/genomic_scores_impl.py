@@ -3,7 +3,6 @@ from __future__ import annotations
 import functools
 import json
 from collections.abc import Callable, Generator, Iterable
-from itertools import starmap
 from typing import Any, ClassVar, NamedTuple, TypeVar, cast
 
 import numpy as np
@@ -75,14 +74,15 @@ from gain.genomic_resources.statistics.coverage import (
     COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
     COVERAGE_STATISTICS_FILE,
     CoverageDisplay,
-    CoverageRow,
     CoverageStatistics,
     FragmentDisplay,
-    FragmentRow,
     RegionCoverage,
     accumulate_coverage,
+    build_coverage_display,
+    build_fragment_display,
     merge_region_coverage,
     normalize_values,
+    resolve_chrom_lengths,
     save_and_plot_coverage,
 )
 from gain.genomic_resources.statistics.min_max import MinMaxValue
@@ -269,49 +269,22 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def get_coverage_display(self) -> CoverageDisplay | None:
         """The Coverage section's payload: raw counts plus fractions.
 
-        Fractions are computed here, at render time, against a resolved
-        denominator; the stored statistic stays raw counts (see
-        :class:`CoverageStatistics`).  ``None`` when the statistic is not
-        built.  Any failure to resolve a denominator degrades to
-        raw-counts-only rendering, never a page-build failure.
-
-        The genome rung of the denominator ladder resolves against the
+        ``None`` when the statistic is not built.  This frame's whole
+        job is the genome rung of the denominator ladder -- it needs the
         repository handed to the enclosing :meth:`get_info` /
-        :meth:`get_statistics_info` call; invoked outside a page build,
-        no repository is available and that rung resolves nothing.
+        :meth:`get_statistics_info` call, and the cache it goes through
+        is shared with the scan's contig splitting.  Invoked outside a
+        page build no repository is available and that rung resolves
+        nothing, which degrades to raw counts rather than failing.
         """
         coverage = self.get_coverage_statistics()
         if coverage is None:
             return None
-        covered = coverage.covered_by_chromosome()
-        lengths = self._resolve_chrom_lengths(covered)
-        for chrom, length in list(lengths.items()):
-            if length <= 0 or covered[chrom] > length:
-                # A denominator smaller than what it must bound proves the
-                # resolved source wrong for this contig (a zero-length .fai
-                # record, a mislabeled genome).  Degrade the row to raw
-                # counts rather than render a zero-division or a >100%.
-                logger.warning(
-                    "implausible length %s for contig %s of %s "
-                    "(covered positions: %s); rendering raw counts for it",
-                    length, chrom, self.resource.resource_id, covered[chrom])
-                del lengths[chrom]
-        segments = coverage.segments_by_chromosome()
-        rows = [
-            CoverageRow(
-                chrom,
-                count,
-                count / lengths[chrom] if chrom in lengths else None,
-                segments.get(chrom),
-            )
-            for chrom, count in covered.items()
-        ]
-        if lengths and len(lengths) == len(covered):
-            global_fraction: float | None = (
-                coverage.covered_global() / sum(lengths.values()))
-        else:
-            global_fraction = None
-        return CoverageDisplay(rows, global_fraction)
+        lengths = resolve_chrom_lengths(
+            self.resource, self.score, self._render_genome(),
+            coverage.covered_by_chromosome())
+        return build_coverage_display(
+            self.resource.resource_id, coverage, lengths)
 
     def get_fragment_display(self) -> FragmentDisplay | None:
         """The Fragments section's payload, or ``None`` if not computed.
@@ -325,85 +298,27 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         coverage = self.get_coverage_statistics()
         if coverage is None:
             return None
-        if coverage.fragments_global() is None:
-            return None
-        counts = coverage.fragments_by_chromosome()
-        return FragmentDisplay(list(starmap(FragmentRow, counts.items())))
+        return build_fragment_display(coverage)
 
-    def _resolve_chrom_lengths(
-        self, chroms: Iterable[str],
-    ) -> dict[str, int]:
-        """Resolve chromosome lengths for the render-time denominator.
+    def _render_genome(self) -> ReferenceGenome | None:
+        """The resource's labelled reference genome, at render time.
 
-        The ladder: the ``reference_genome`` label's genome resource,
-        falling back to the bigWig header's chromosome sizes for a
-        bigWig-backed score, or raw counts (an empty mapping) when
-        nothing resolves.  A chromosome absent from the resolved source
-        is simply absent from the result.
+        A label naming something that is not a genome is a reason to
+        degrade to raw counts, not to fail the page build.
         """
         genome_id = cast(
             str | None,
             self.resource.get_labels().get("reference_genome"),
         )
         try:
-            ref_genome = self._get_reference_genome_cached(
+            return self._get_reference_genome_cached(
                 self._render_repo, genome_id)
         except ValueError:
-            # The label names a resource that is not a genome.  At render
-            # time that is a reason to degrade, not to fail the page build.
             logger.warning(
                 "reference_genome label %r of %s does not name a genome "
                 "resource; ignoring it for coverage fractions",
                 genome_id, self.resource.resource_id)
-            ref_genome = None
-        if ref_genome is not None:
-            all_lengths = ref_genome.get_all_chrom_lengths()
-            return {
-                chrom: all_lengths[chrom]
-                for chrom in chroms
-                if chrom in all_lengths
-            }
-        if self.score.table.chrom_lengths_are_exact:
-            return self._table_exact_lengths(chroms)
-        logger.info(
-            "no coverage denominator resolvable for %s; "
-            "rendering raw counts only", self.resource.resource_id)
-        return {}
-
-    def _table_exact_lengths(
-        self, chroms: Iterable[str],
-    ) -> dict[str, int]:
-        """Contig lengths from a backend that declares them exact.
-
-        Only consulted when the table's ``chrom_lengths_are_exact``
-        capability holds (the bigWig header; mapping-aware).  Opens the
-        score if it is closed, and closes it again only in that case --
-        an already-open score stays open for its owner.
-        """
-        opened_here = not self.score.is_open()
-        if opened_here:
-            self.score.open()
-        try:
-            lengths: dict[str, int] = {}
-            for chrom in chroms:
-                try:
-                    length = self.score.table.find_chromosome_length(chrom)
-                except ValueError:
-                    # The backend raises ValueError both for a contig it
-                    # does not list and for a closed table; the open()
-                    # above rules the latter out, so this is the
-                    # unknown-contig case.
-                    logger.warning(
-                        "contig %s has no exact table length in %s; "
-                        "rendering raw counts for it",
-                        chrom, self.resource.resource_id)
-                    continue
-                if isinstance(length, int):
-                    lengths[chrom] = length
-            return lengths
-        finally:
-            if opened_here:
-                self.score.close()
+            return None
 
     @staticmethod
     def _do_noregion_histograms(
