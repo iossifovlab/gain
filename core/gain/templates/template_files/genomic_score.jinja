@@ -192,6 +192,38 @@
     {%- endfor %}
 </table>
 </div>
+<h3>Substitution matrix</h3>
+{% set allele_display = global_alleles.display() %}
+{% if allele_display is not none %}
+<div class="scrollable-table-container">
+<table>
+    <thead>
+        <tr>
+            <th>ref &rarr; alt</th>
+            {%- for alt in allele_display.nucleotides %}
+            <th>{{ alt }}</th>
+            {%- endfor %}
+        </tr>
+    </thead>
+    {%- for ref, cells in allele_display.matrix_rows() -%}
+        <tr>
+            <th>{{ ref }}</th>
+            {%- for count in cells -%}
+            <td>{{ count }}</td>
+            {%- endfor -%}
+        </tr>
+    {%- endfor %}
+</table>
+</div>
+<p>ts/tv ratio:
+{%- if allele_display.ts_tv is not none %}
+{{ "%.2f"|format(allele_display.ts_tv) }}
+{%- else %}
+not applicable
+{%- endif %}</p>
+{% else %}
+<p>not computed</p>
+{% endif %}
 {% else %}
 <p>not computed</p>
 {% endif %}

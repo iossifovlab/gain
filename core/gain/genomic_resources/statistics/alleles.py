@@ -30,6 +30,7 @@ from typing import Any, NamedTuple
 import numpy as np
 
 from gain.genomic_resources.allele_classification import (
+    ALLELE_BASES,
     AlleleClass,
     classify_allele,
 )
@@ -64,6 +65,18 @@ ALLELE_STATISTICS_FILE = "statistics/alleles.json"
 CLASS_NAMES: tuple[str, ...] = tuple(
     allele_class.value for allele_class in AlleleClass)
 
+#: The nucleotides an allele may be written with, in the order the
+#: classifier's alphabet states them.  The substitution matrix's cells
+#: are keyed and serialized in this one order, so two builds of one
+#: resource produce byte-identical JSON however the rows arrived.
+NUCLEOTIDES: tuple[str, ...] = tuple(ALLELE_BASES)
+
+#: The sixteen ref->alt cells of the substitution matrix, row-major in
+#: :data:`NUCLEOTIDES` order.  The identity pairs are cells like any
+#: other: ADR 0020 classifies ``A>A`` as a substitution.
+MATRIX_CELLS: tuple[tuple[str, str], ...] = tuple(
+    (ref, alt) for ref in NUCLEOTIDES for alt in NUCLEOTIDES)
+
 #: How a failed fold of these regions is named in the message.
 _MERGE_FAILURE = "allele statistics"
 
@@ -74,11 +87,62 @@ class AlleleCounts(NamedTuple):
     ``class_counts`` is keyed by the class names in :data:`CLASS_NAMES`
     and sums to ``allele_count``: every row classifies, ``other``
     absorbing what does not parse as alleles.
+
+    ``substitution_matrix`` is keyed by the ref/alt cells in
+    :data:`MATRIX_CELLS`, upper-cased, and sums to the ``substitution``
+    class count: a cell holds the rows whose pair classifies as a
+    substitution of that cell, and nothing else lands in any cell.  It
+    is ``None`` -- data unknown, distinct from a matrix of zeros --
+    when restored from a file written before the matrix existed.
     """
 
     allele_count: int
     covered_positions: int
     class_counts: dict[str, int]
+    substitution_matrix: dict[tuple[str, str], int] | None
+
+    def display(self) -> AlleleDisplay | None:
+        """This entry's matrix render payload, ``None`` matrix unknown.
+
+        Collapsing "the file carries no matrix" into ``None`` follows
+        the fragment display's precedent; a genuinely empty matrix
+        still renders, as zeros.  Everything derived is computed here,
+        at render time, and never stored: transitions are the four
+        ``A<->G`` / ``C<->T`` cells and transversions the eight
+        remaining OFF-DIAGONAL cells -- never "substitutions minus
+        transitions", which would silently count the diagonal's
+        identity rows as transversions.
+        """
+        matrix = self.substitution_matrix
+        if matrix is None:
+            return None
+        transitions = sum(
+            count for cell, count in matrix.items()
+            if cell in _TRANSITION_CELLS)
+        transversions = sum(
+            count for (ref, alt), count in matrix.items()
+            if ref != alt and (ref, alt) not in _TRANSITION_CELLS)
+        return AlleleDisplay(
+            dict(matrix),
+            transitions,
+            transversions,
+            transitions / transversions if transversions else None)
+
+
+def _merged_matrix(
+    left: dict[tuple[str, str], int] | None,
+    right: dict[tuple[str, str], int] | None,
+) -> dict[tuple[str, str], int] | None:
+    """The elementwise sum of two matrices, unknown if either is.
+
+    The one statement of the all-or-nothing rule -- as the coverage
+    segments roll up: a total over a partially-unknown set would
+    silently understate, so an unknown side makes the whole merge
+    unknown rather than a smaller number.
+    """
+    if left is None or right is None:
+        return None
+    return {cell: left[cell] + right[cell] for cell in MATRIX_CELLS}
 
 
 def _total(counts: Iterable[AlleleCounts]) -> AlleleCounts:
@@ -91,12 +155,50 @@ def _total(counts: Iterable[AlleleCounts]) -> AlleleCounts:
     class_counts = dict.fromkeys(CLASS_NAMES, 0)
     allele_count = 0
     covered = 0
+    matrix: dict[tuple[str, str], int] | None = dict.fromkeys(
+        MATRIX_CELLS, 0)
     for entry in counts:
         allele_count += entry.allele_count
         covered += entry.covered_positions
         for name, count in entry.class_counts.items():
             class_counts[name] = class_counts.get(name, 0) + count
-    return AlleleCounts(allele_count, covered, class_counts)
+        matrix = _merged_matrix(matrix, entry.substitution_matrix)
+    return AlleleCounts(allele_count, covered, class_counts, matrix)
+
+
+def _serialized(counts: AlleleCounts) -> dict[str, Any]:
+    """One entry's JSON shape, the matrix nested ref -> alt -> count.
+
+    The keys follow :data:`NUCLEOTIDES` order, so the file is
+    byte-identical however the rows arrived.  An unknown matrix is
+    OMITTED rather than written empty: absent must stay distinguishable
+    from a genuine matrix of zeros.
+    """
+    entry: dict[str, Any] = {
+        "allele_count": counts.allele_count,
+        "covered_positions": counts.covered_positions,
+        "class_counts": counts.class_counts,
+    }
+    if counts.substitution_matrix is not None:
+        matrix = counts.substitution_matrix
+        entry["substitution_matrix"] = {
+            ref: {alt: matrix[ref, alt] for alt in NUCLEOTIDES}
+            for ref in NUCLEOTIDES
+        }
+    return entry
+
+
+def _deserialized_matrix(
+    entry: dict[str, Any],
+) -> dict[tuple[str, str], int] | None:
+    """The stored matrix back onto its cell keys, ``None`` when absent."""
+    stored = entry.get("substitution_matrix")
+    if stored is None:
+        return None
+    return {
+        (ref, alt): int(stored[ref][alt])
+        for ref, alt in MATRIX_CELLS
+    }
 
 
 class RegionAlleles:
@@ -136,6 +238,13 @@ class RegionAlleles:
         self.allele_count = 0
         self.covered_positions = 0
         self._class_counts: dict[str, int] = dict.fromkeys(CLASS_NAMES, 0)
+        # ``None`` only on a region restored from a file that predates
+        # the matrix -- a scanned region always carries one, however
+        # empty.  The keys are upper-cased into the cells: the scan
+        # hands the nucleotides over RAW, and a matrix keyed on ``a``
+        # would silently drop soft-masked rows no cell claims.
+        self._substitution_matrix: dict[tuple[str, str], int] | None = \
+            dict.fromkeys(MATRIX_CELLS, 0)
         self._last_pos: int | None = None
 
     @classmethod
@@ -145,13 +254,22 @@ class RegionAlleles:
         allele_count: int,
         covered_positions: int,
         class_counts: dict[str, int],
+        substitution_matrix: dict[tuple[str, str], int] | None = None,
     ) -> RegionAlleles:
-        """A region restored from serialized counts, with no scan state."""
+        """A region restored from serialized counts, with no scan state.
+
+        ``substitution_matrix`` is ``None`` for a file written before
+        the matrix existed -- data unknown, not a matrix of zeros.
+        """
         region = cls(chrom, None, None)
         region.allele_count = allele_count
         region.covered_positions = covered_positions
         region._class_counts = {
             name: class_counts.get(name, 0) for name in CLASS_NAMES}
+        region._substitution_matrix = None \
+            if substitution_matrix is None else {
+                cell: substitution_matrix.get(cell, 0)
+                for cell in MATRIX_CELLS}
         return region
 
     def counts(self) -> AlleleCounts:
@@ -159,7 +277,9 @@ class RegionAlleles:
         return AlleleCounts(
             self.allele_count,
             self.covered_positions,
-            dict(self._class_counts))
+            dict(self._class_counts),
+            None if self._substitution_matrix is None
+            else dict(self._substitution_matrix))
 
     def _owns(self, pos: int) -> bool:
         """Whether this region owns the row sitting at ``pos``."""
@@ -170,6 +290,27 @@ class RegionAlleles:
             self.covered_positions += 1
             self._last_pos = pos
 
+    def _count_pair(
+        self, ref: str | None, alt: str | None, multiplicity: int,
+    ) -> None:
+        """Fold ``multiplicity`` rows of one ref/alt pair into the tallies.
+
+        The one statement of what lands in the substitution matrix:
+        exactly the pairs the classifier calls substitutions -- the
+        identity pairs included -- keyed upper-cased, so a soft-masked
+        ``a>g`` lands in the cell of the base it masks and the matrix
+        total stays the ``substitution`` class count.
+        """
+        classification = classify_allele(ref, alt)
+        self._class_counts[
+            classification.allele_class.value] += multiplicity
+        if classification.allele_class is AlleleClass.SUBSTITUTION \
+                and self._substitution_matrix is not None:
+            assert ref is not None
+            assert alt is not None
+            self._substitution_matrix[
+                ref.upper(), alt.upper()] += multiplicity
+
     def add_allele(
         self, pos: int, ref: str | None, alt: str | None,
     ) -> None:
@@ -178,7 +319,7 @@ class RegionAlleles:
             return
         self.allele_count += 1
         self._count_position(pos)
-        self._class_counts[classify_allele(ref, alt).allele_class.value] += 1
+        self._count_pair(ref, alt, 1)
 
     def add_record(self, record: Record) -> None:
         """Fold one raw record.
@@ -240,8 +381,7 @@ class RegionAlleles:
 
         for pair, multiplicity in Counter(
                 zip(refs.tolist(), alts.tolist(), strict=True)).items():
-            self._class_counts[
-                classify_allele(*pair).allele_class.value] += multiplicity
+            self._count_pair(*pair, multiplicity)
 
     def merge(self, other: RegionAlleles) -> None:
         """Fold the adjacent region to the right into this one.
@@ -256,6 +396,8 @@ class RegionAlleles:
         for name in CLASS_NAMES:
             self._class_counts[name] += \
                 other._class_counts[name]
+        self._substitution_matrix = _merged_matrix(
+            self._substitution_matrix, other._substitution_matrix)
         if other._last_pos is not None:
             self._last_pos = other._last_pos
         self.end = other.end
@@ -274,7 +416,8 @@ class AlleleStatistics(Statistic):
     def __init__(self) -> None:
         super().__init__(
             "alleles",
-            "Allele counts, covered positions and class totals")
+            "Allele counts, covered positions, class totals and the "
+            "substitution matrix")
         self._regions: dict[str, RegionAlleles] = {}
 
     def fold_region(self, region: RegionAlleles) -> None:
@@ -313,10 +456,10 @@ class AlleleStatistics(Statistic):
         return json.dumps({
             "format_version": 1,
             "chromosomes": {
-                chrom: counts._asdict()
+                chrom: _serialized(counts)
                 for chrom, counts in chromosomes.items()
             },
-            "global": _total(chromosomes.values())._asdict(),
+            "global": _serialized(_total(chromosomes.values())),
         }, indent=2)
 
     @staticmethod
@@ -337,8 +480,48 @@ class AlleleStatistics(Statistic):
                     name: int(count)
                     for name, count in counts["class_counts"].items()
                 },
+                _deserialized_matrix(counts),
             ))
         return result
+
+
+#: The four transition cells: purine to purine and pyrimidine to
+#: pyrimidine.  Everything else OFF the diagonal is a transversion; the
+#: diagonal's identity pairs are neither.
+_TRANSITION_CELLS: frozenset[tuple[str, str]] = frozenset(
+    (("A", "G"), ("G", "A"), ("C", "T"), ("T", "C")))
+
+
+class AlleleDisplay(NamedTuple):
+    """The Alleles section's substitution-matrix render payload.
+
+    Raw cells come from the stored statistic; the derived numbers are
+    computed by :meth:`AlleleCounts.display` -- which builds this --
+    and never stored, as the coverage display derives its fractions.
+    """
+
+    substitution_matrix: dict[tuple[str, str], int]
+    #: The four ``A<->G`` / ``C<->T`` cells.
+    transitions: int
+    #: The eight off-diagonal cells that are not transitions; the
+    #: diagonal's identity pairs are neither.
+    transversions: int
+    #: ``None`` when there are no transversions; the template renders
+    #: "not applicable" rather than dividing.
+    ts_tv: float | None
+
+    @property
+    def nucleotides(self) -> tuple[str, ...]:
+        """The matrix's axis labels, in stored order."""
+        return NUCLEOTIDES
+
+    def matrix_rows(self) -> list[tuple[str, list[int]]]:
+        """The matrix as table rows: reference base, then a cell per alt."""
+        return [
+            (ref, [self.substitution_matrix[ref, alt]
+                   for alt in NUCLEOTIDES])
+            for ref in NUCLEOTIDES
+        ]
 
 
 def region_alleles_for(

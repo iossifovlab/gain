@@ -1,4 +1,5 @@
 # pylint: disable=C0114,C0116,W0212,W0621
+import json
 import pathlib
 import re
 from collections.abc import Callable
@@ -25,8 +26,9 @@ from gain.genomic_resources.testing.builders import (
 
 # One fixture carries every class and both counting rules: three rows at
 # chr1:10 (two of them the SAME (chrom, pos, ref, alt) -- legitimate
-# per-transcript data), then one row per remaining class, then a second
-# contig.
+# per-transcript data), then one row per remaining class, a soft-masked
+# and an identity substitution (the matrix's two edge rows), then a
+# second contig.
 _MIXED_TABLE = """
     chrom  pos_begin  reference  alternative  score
     chr1   10         A          G            0.1
@@ -36,6 +38,8 @@ _MIXED_TABLE = """
     chr1   30         CT         C            0.5
     chr1   40         AC         GT           0.6
     chr1   50         N          A            0.7
+    chr1   60         a          g            0.8
+    chr1   70         T          T            0.9
     chr2   10         G          T            0.8
 """
 
@@ -79,14 +83,15 @@ def test_build_counts_alleles_per_chromosome(
     assert {
         chrom: counts.allele_count
         for chrom, counts in stats.by_chromosome().items()
-    } == {"chr1": 7, "chr2": 1}
+    } == {"chr1": 9, "chr2": 1}
 
 
 def test_rows_sharing_a_position_count_one_covered_position(
     tmp_path: pathlib.Path,
 ) -> None:
     # chr1 carries three rows at position 10 -- two of them the same
-    # (chrom, pos, ref, alt) -- and one each at 20, 30, 40 and 50.
+    # (chrom, pos, ref, alt) -- and one each at 20, 30, 40, 50, 60
+    # and 70.
     resource = _mixed_allele_score(tmp_path)
 
     stats = _built_statistics(tmp_path, resource)
@@ -94,20 +99,21 @@ def test_rows_sharing_a_position_count_one_covered_position(
     assert {
         chrom: counts.covered_positions
         for chrom, counts in stats.by_chromosome().items()
-    } == {"chr1": 5, "chr2": 1}
+    } == {"chr1": 7, "chr2": 1}
 
 
 def test_build_totals_every_allele_class_globally(
     tmp_path: pathlib.Path,
 ) -> None:
-    # A>G twice and A>C once on chr1, G>T on chr2; A>AT anchored
-    # insertion, CT>C anchored deletion, AC>GT complex, N>A other.
+    # A>G twice, A>C, soft-masked a>g and identity T>T on chr1, G>T on
+    # chr2; A>AT anchored insertion, CT>C anchored deletion, AC>GT
+    # complex, N>A other.
     resource = _mixed_allele_score(tmp_path)
 
     stats = _built_statistics(tmp_path, resource)
 
     assert stats.global_counts().class_counts == {
-        "substitution": 4,
+        "substitution": 6,
         "insertion": 1,
         "deletion": 1,
         "complex": 1,
@@ -124,6 +130,41 @@ def test_class_totals_sum_to_the_allele_count(
 
     for counts in (*stats.by_chromosome().values(), stats.global_counts()):
         assert sum(counts.class_counts.values()) == counts.allele_count
+
+
+def test_build_stores_a_matrix_that_totals_the_substitution_class(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _mixed_allele_score(tmp_path)
+
+    stats = _built_statistics(tmp_path, resource)
+
+    for counts in (*stats.by_chromosome().values(), stats.global_counts()):
+        matrix = counts.substitution_matrix
+        assert matrix is not None
+        assert sum(matrix.values()) == counts.class_counts["substitution"]
+
+
+def test_the_stored_matrix_merges_lowercase_and_diagonal_rows(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Global A>G is 3 -- two A>G rows plus the soft-masked a>g -- and
+    # the identity T>T sits on the diagonal; the global matrix is the
+    # elementwise merge of the per-chromosome ones.
+    resource = _mixed_allele_score(tmp_path)
+
+    stats = _built_statistics(tmp_path, resource)
+
+    matrix = stats.global_counts().substitution_matrix
+    assert matrix is not None
+    assert matrix["A", "G"] == 3
+    assert matrix["A", "C"] == 1
+    assert matrix["T", "T"] == 1
+    assert matrix["G", "T"] == 1
+    chr2 = stats.by_chromosome()["chr2"].substitution_matrix
+    assert chr2 is not None
+    assert chr2["G", "T"] == 1
+    assert sum(chr2.values()) == 1
 
 
 def _mixed_np_score(tmp_path: pathlib.Path) -> GenomicResource:
@@ -233,6 +274,9 @@ def test_a_row_spanning_several_chunks_is_counted_once(
     counts = AlleleStatistics.deserialize(
         whole.get_file_content(ALLELE_STATISTICS_FILE)).global_counts()
     assert (counts.allele_count, counts.covered_positions) == (4, 3)
+    assert counts.substitution_matrix is not None
+    assert sum(counts.substitution_matrix.values()) \
+        == counts.class_counts["substitution"]
     assert chunked.get_file_content(ALLELE_STATISTICS_FILE) \
         == whole.get_file_content(ALLELE_STATISTICS_FILE)
 
@@ -274,6 +318,8 @@ def test_a_table_with_no_key_columns_counts_every_row_as_other(
     assert counts.allele_count == 3
     assert counts.covered_positions == 2
     assert counts.class_counts["other"] == 3
+    assert counts.substitution_matrix is not None
+    assert sum(counts.substitution_matrix.values()) == 0
 
 
 def test_a_backend_refusing_the_nucleotides_takes_the_per_record_path(
@@ -406,6 +452,8 @@ def test_a_table_declaring_only_one_key_column_counts_every_row_as_other(
     counts = stats.global_counts()
     assert counts.allele_count == 3
     assert counts.class_counts["other"] == 3
+    assert counts.substitution_matrix is not None
+    assert sum(counts.substitution_matrix.values()) == 0
 
 
 def _alleles_section(page: str) -> str:
@@ -430,7 +478,7 @@ def test_info_page_renders_a_row_per_chromosome(
     section = _alleles_section(
         GenomicScoreImplementation(resource).get_info())
 
-    assert "<td>chr1</td><td>5</td><td>7</td>" in section
+    assert "<td>chr1</td><td>7</td><td>9</td>" in section
     assert "<td>chr2</td><td>1</td><td>1</td>" in section
 
 
@@ -443,11 +491,103 @@ def test_info_page_renders_the_global_class_summary(
     section = _alleles_section(
         GenomicScoreImplementation(resource).get_info())
 
-    assert "<td>substitution</td><td>4</td>" in section
+    assert "<td>substitution</td><td>6</td>" in section
     assert "<td>insertion</td><td>1</td>" in section
     assert "<td>deletion</td><td>1</td>" in section
     assert "<td>complex</td><td>1</td>" in section
     assert "<td>other</td><td>1</td>" in section
+
+
+def test_info_page_renders_the_substitution_matrix(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    # Rows in A, C, G, T order; the A row holds A>C 1 and A>G 3 (the
+    # soft-masked a>g merged in), the T row its identity diagonal.
+    assert "<th>A</th><td>0</td><td>1</td><td>3</td><td>0</td>" in section
+    assert "<th>T</th><td>0</td><td>0</td><td>0</td><td>1</td>" in section
+
+
+def test_info_page_renders_the_ts_tv_ratio(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Three transitions (A>G twice, a>g) over two transversions (A>C,
+    # G>T); the identity T>T is neither.
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    assert "1.50" in section
+
+
+def test_info_page_without_transversions_says_not_applicable(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        an_allele_score()
+        .with_score("score", "float")
+        .with_data("""
+            chrom  pos_begin  reference  alternative  score
+            chr1   10         A          G            0.1
+            chr1   20         C          T            0.2
+        """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    assert "not applicable" in section
+
+
+def test_info_page_over_a_matrixless_file_says_matrix_not_computed(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A statistics file written between gain#777 and this slice: counts
+    # and class totals, no matrix.  The section must keep its tables and
+    # mark the matrix not computed -- never render a 4x4 of zeros next
+    # to a non-zero substitution total.
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    stored = json.loads(resource.get_file_content(ALLELE_STATISTICS_FILE))
+    for entry in (*stored["chromosomes"].values(), stored["global"]):
+        del entry["substitution_matrix"]
+    with resource.proto.open_raw_file(
+            resource, ALLELE_STATISTICS_FILE, mode="wt") as outfile:
+        outfile.write(json.dumps(stored))
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    assert "<td>chr1</td><td>7</td><td>9</td>" in section
+    assert "<td>substitution</td><td>6</td>" in section
+    assert "not computed" in section
+    assert "<th>A</th>" not in section
+
+
+def test_info_page_renders_an_all_other_matrix_as_zeros(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Every row classifies as ``other``, so the matrix is genuinely
+    # all-zero -- which renders as a populated table of zeros with an
+    # inapplicable ratio, NOT as the matrixless "not computed" above.
+    resource = _alt_only_score(an_allele_score, tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    assert "<th>A</th><td>0</td><td>0</td><td>0</td><td>0</td>" in section
+    assert "not applicable" in section
 
 
 def test_info_page_without_the_statistics_file_says_not_computed(
@@ -463,6 +603,31 @@ def test_info_page_without_the_statistics_file_says_not_computed(
         GenomicScoreImplementation(resource).get_info())
 
     assert "not computed" in section
+
+
+def test_one_page_render_reads_the_statistics_file_once(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The Alleles section asks for the statistic twice -- the tables and
+    # the matrix payload -- and over an HTTP or S3 repository each ask
+    # would be a network round trip, so the read is cached per
+    # implementation object, as the coverage statistic's is.
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    impl = GenomicScoreImplementation(resource)
+    reads = []
+    original = type(resource).get_file_content
+
+    def counting(self: GenomicResource, path: str, **kwargs: Any) -> Any:
+        if path == ALLELE_STATISTICS_FILE:
+            reads.append(path)
+        return original(self, path, **kwargs)
+
+    monkeypatch.setattr(type(resource), "get_file_content", counting)
+    impl.get_info()
+
+    assert len(reads) == 1
 
 
 def test_statistics_hash_is_untouched_by_the_allele_build(
