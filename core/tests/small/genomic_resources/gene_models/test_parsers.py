@@ -568,7 +568,7 @@ def test_parse_gtf_ignores_gene_feature() -> None:
 def test_parse_gtf_codon_for_unseen_transcript_names_it(
     feature: str,
 ) -> None:
-    """A codon whose transcript never appeared must not leak a KeyError."""
+    """A codon preceding its transcript record must not leak a KeyError."""
     data = StringIO(
         f"chr1\ttest\t{feature}\t10\t12\t.\t+\t0\t"
         'gene_id "G"; transcript_id "T1";\n'

@@ -871,7 +871,7 @@ def parse_gtf_gene_models_format(
         if feature == "exon":
             if tr_id not in transcript_models:
                 raise _missing_parent_transcript_error(
-                    "exon or CDS", tr_id, skipped_transcripts)
+                    "exon", tr_id, skipped_transcripts)
             transcript_model = transcript_models[tr_id]
             if feature == "exon":
                 exon = Exon(

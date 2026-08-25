@@ -182,11 +182,23 @@ def test_an_exon_child_of_a_skipped_biotype_blames_the_parent(
     with pytest.raises(
             ValueError,
             match=(
-                f"transcript FBtr0070000 was skipped as "
+                f"exon transcript FBtr0070000 was skipped as "
                 f"exonless feature {feature}"
             )):
         _gene_models(
             _record(feature, 19961689, 19968479, TRANSCRIPT_ATTRIBUTES),
+            _record("exon", 19961689, 19961845, TRANSCRIPT_ATTRIBUTES),
+        )
+
+
+def test_an_exon_of_a_never_seen_transcript_names_it() -> None:
+    with pytest.raises(
+            ValueError,
+            match=(
+                "exon transcript FBtr0070000 not found "
+                "in transcript models"
+            )):
+        _gene_models(
             _record("exon", 19961689, 19961845, TRANSCRIPT_ATTRIBUTES),
         )
 
