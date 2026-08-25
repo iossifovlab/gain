@@ -564,6 +564,23 @@ def test_parse_gtf_ignores_gene_feature() -> None:
     assert len(result) == 1  # Only transcript, not gene
 
 
+@pytest.mark.parametrize("feature", ["start_codon", "stop_codon"])
+def test_parse_gtf_codon_for_unseen_transcript_names_it(
+    feature: str,
+) -> None:
+    """A codon whose transcript never appeared must not leak a KeyError."""
+    data = StringIO(
+        f"chr1\ttest\t{feature}\t10\t12\t.\t+\t0\t"
+        'gene_id "G"; transcript_id "T1";\n'
+        "chr1\ttest\ttranscript\t10\t100\t.\t+\t.\t"
+        'gene_id "G"; transcript_id "T1";\n')
+
+    with pytest.raises(
+            ValueError,
+            match=f"{feature} transcript T1 not found in transcript models"):
+        parse_gtf_gene_models_format(data)
+
+
 def test_parse_gtf_with_nrows() -> None:
     """Test parsing GTF with nrows limit."""
     data = StringIO(

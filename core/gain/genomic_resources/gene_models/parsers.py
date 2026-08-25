@@ -770,6 +770,26 @@ GTF_EXONLESS_TRANSCRIPT_FEATURES = frozenset({
 })
 
 
+def _missing_parent_transcript_error(
+    child: str,
+    tr_id: str,
+    skipped_transcripts: dict[str, str],
+) -> ValueError:
+    """Explain a child record whose parent transcript is absent.
+
+    Distinguishes a transcript that was never seen from one that was
+    seen but skipped as an exonless feature.
+    """
+    if tr_id in skipped_transcripts:
+        return ValueError(
+            f"{child} transcript {tr_id} was skipped as "
+            f"exonless feature {skipped_transcripts[tr_id]}",
+        )
+    return ValueError(
+        f"{child} transcript {tr_id} not found in transcript models",
+    )
+
+
 def parse_gtf_gene_models_format(
     infile: IO,
     gene_mapping: dict[str, str] | None = None,
@@ -804,12 +824,17 @@ def parse_gtf_gene_models_format(
     if gene_mapping is None:
         gene_mapping = {}
     transcript_models = {}
+    skipped_transcripts: dict[str, str] = {}
 
     for rec in df.to_dict(orient="records"):
         feature = rec["feature"]
         if feature == "gene":
             continue
         if feature in GTF_EXONLESS_TRANSCRIPT_FEATURES:
+            skipped_tr_id = _parse_gtf_attributes(
+                rec["attributes"]).get("transcript_id")
+            if skipped_tr_id is not None:
+                skipped_transcripts[skipped_tr_id] = feature
             continue
         attributes = _parse_gtf_attributes(rec["attributes"])
         tr_id = attributes["transcript_id"]
@@ -845,10 +870,8 @@ def parse_gtf_gene_models_format(
             continue
         if feature == "exon":
             if tr_id not in transcript_models:
-                raise ValueError(
-                    f"exon or CDS transcript {tr_id} not found "
-                    f"in transcript models",
-                )
+                raise _missing_parent_transcript_error(
+                    "exon or CDS", tr_id, skipped_transcripts)
             transcript_model = transcript_models[tr_id]
             if feature == "exon":
                 exon = Exon(
@@ -862,6 +885,9 @@ def parse_gtf_gene_models_format(
             }:
             continue
         if feature in {"start_codon", "stop_codon"}:
+            if tr_id not in transcript_models:
+                raise _missing_parent_transcript_error(
+                    feature, tr_id, skipped_transcripts)
             transcript_model = transcript_models[tr_id]
             cds = transcript_model.cds
             transcript_model.cds = \
