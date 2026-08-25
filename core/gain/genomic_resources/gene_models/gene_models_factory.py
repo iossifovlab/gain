@@ -15,7 +15,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_INMEMORY_CACHE: dict[tuple[str | None, ...], GeneModels] = {}
+# Resource-based entries are keyed (full_id, repo_url); file-based
+# entries are keyed on the path plus every config-shaping argument.
+# The two shapes must stay distinct so the key families cannot collide.
+_ResourceCacheKey = tuple[str, str]
+_FileCacheKey = tuple[str, str | None, str | None, str | None, str]
+_INMEMORY_CACHE: dict[_ResourceCacheKey | _FileCacheKey, GeneModels] = {}
 _INMEMORY_CACHE_LOCK = Lock()
 
 

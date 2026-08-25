@@ -219,9 +219,8 @@ def test_build_from_file_chrom_mapping_in_cache_key(
     """Test that calls differing only in chrom mapping are not aliased."""
     chrom_mapping_file = tmp_path / "chrom_mapping.txt"
     chrom_mapping_file.write_text(convert_to_tab_separated("""
-        chrom  file_chrom
-        chr1   1
-        chr17  17
+        1   chr1
+        17  chr17
     """))
 
     gene_models_plain = build_gene_models_from_file(
@@ -236,8 +235,34 @@ def test_build_from_file_chrom_mapping_in_cache_key(
 
     assert gene_models_plain is not gene_models_remapped
     assert len(_INMEMORY_CACHE) == 2
-    assert "chrom_mapping" not in gene_models_plain.resource.get_config()
-    assert "chrom_mapping" in gene_models_remapped.resource.get_config()
+
+    gene_models_plain.load()
+    gene_models_remapped.load()
+    plain_chroms = {
+        tm.chrom for tm in gene_models_plain.transcript_models.values()}
+    remapped_chroms = {
+        tm.chrom for tm in gene_models_remapped.transcript_models.values()}
+    assert plain_chroms == {"1", "17"}
+    assert remapped_chroms == {"chr1", "chr17"}
+
+
+def test_build_from_file_two_explicit_formats_not_aliased(
+    temp_gene_file: pathlib.Path,
+) -> None:
+    """Test that calls with different explicit formats are not aliased."""
+    gene_models_refflat = build_gene_models_from_file(
+        str(temp_gene_file),
+        file_format="refflat",
+    )
+    gene_models_gtf = build_gene_models_from_file(
+        str(temp_gene_file),
+        file_format="gtf",
+    )
+
+    assert gene_models_refflat is not gene_models_gtf
+    assert len(_INMEMORY_CACHE) == 2
+    assert gene_models_refflat.resource.get_config()["format"] == "refflat"
+    assert gene_models_gtf.resource.get_config()["format"] == "gtf"
 
 
 def test_build_from_file_none_and_omitted_share_cache_entry(
