@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import asyncio
 import contextlib
+import itertools
 import logging
 import textwrap
 import threading
@@ -304,10 +305,34 @@ def _record_parse_threads(mocker: pytest_mock.MockerFixture) -> list[str]:
     return threads
 
 
-async def _fire_validate(config: str = VALID_CONFIG) -> int:
-    """POST one validation request; return its status code."""
+_unseen_configs = itertools.count()
+
+
+def an_unseen_valid_config() -> str:
+    """Return a config that builds and that the memo has never seen (#833).
+
+    ``VALID_CONFIG`` with a trailing comment: yaml discards it, so the
+    pipeline built and the work it costs are identical, but the text -- and
+    so the memo key, which is a digest of the text -- is new every time.
+
+    Needed wherever a test is measuring the *build*. The memo answers a
+    repeat without building, so a proof that fires N validations of one
+    fixed config would be timing one build and N-1 dictionary lookups.
+    """
+    return f"{VALID_CONFIG}\n# {next(_unseen_configs)}\n"
+
+
+async def _fire_validate(config: str | None = None) -> int:
+    """POST one validation request; return its status code.
+
+    Defaults to a config the memo has not seen, because every caller of this
+    helper is measuring what a build costs; pass ``config`` explicitly when
+    the text itself is what the test is about.
+    """
     client = AsyncClient()
-    response = await client.post(VALIDATE_URL, {"config": config})
+    response = await client.post(
+        VALIDATE_URL, {"config": an_unseen_valid_config()
+                       if config is None else config})
     return response.status_code
 
 
@@ -372,9 +397,13 @@ async def test_concurrent_validate_builds_do_not_serialize(
 ) -> None:
     """Concurrent validations overlap instead of queueing on one thread.
 
-    Nothing dedupes these builds -- each request builds its own pipeline --
-    so on the shared single-threaded path N of them cost N x one build. Off
-    it, they overlap on the bounded validation pool and cost about one.
+    Each request builds its own pipeline, so on the shared single-threaded
+    path N of them cost N x one build. Off it, they overlap on the bounded
+    validation pool and cost about one.
+
+    The three configs are distinct (``_fire_validate`` mints a fresh one per
+    call, #833): the memo dedupes repeats, and a burst of one repeated
+    config would cost one build however the work was scheduled.
     """
     start = time.monotonic()
     statuses = await asyncio.gather(*[_fire_validate() for _ in range(3)])
@@ -832,11 +861,16 @@ async def test_validate_build_delay_is_a_no_op_when_unset(
     client = AsyncClient()
     # Warm the first-request cost (imports, GRR/table open) out of the
     # measurement; it is not what this test is about.
-    warmup = await client.post(VALIDATE_URL, {"config": VALID_CONFIG})
+    warmup = await client.post(
+        VALIDATE_URL, {"config": an_unseen_valid_config()})
     assert warmup.status_code == 200, warmup.content
 
+    # A config the warm-up did not use, so this times the build rather than
+    # a memo lookup (#833). Reusing the warm-up's text would make the test
+    # pass however slow the hook was.
     start = time.monotonic()
-    response = await client.post(VALIDATE_URL, {"config": VALID_CONFIG})
+    response = await client.post(
+        VALIDATE_URL, {"config": an_unseen_valid_config()})
     elapsed = time.monotonic() - start
 
     assert response.status_code == 200, response.content
@@ -1248,3 +1282,110 @@ async def test_a_memoised_config_is_answered_by_a_saturated_server() -> None:
 
     assert response.status_code == 200, response.content
     assert response.json() == {"errors": ""}
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_a_failed_verdict_is_remembered_with_its_reason(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A config that does not build has a verdict too, and it is memoised.
+
+    Remembering only the successes would leave the commonest thing a
+    debounced editor sends -- a config mid-edit, referring to a resource
+    whose name is half-typed -- rebuilding on every keystroke. The reason
+    string is what the editor shows, so it has to come back verbatim.
+    """
+    client = AsyncClient()
+
+    first = await client.post(VALIDATE_URL, {"config": INVALID_CONFIG})
+    assert first.status_code == 200, first.content
+    assert first.json() == {"errors": INVALID_CONFIG_ERRORS}
+
+    build = mocker.patch(
+        "web_annotation.pipelines.views.load_pipeline_from_yaml",
+        return_value=None)
+
+    second = await client.post(VALIDATE_URL, {"config": INVALID_CONFIG})
+
+    assert second.status_code == 200, second.content
+    assert second.json() == {"errors": INVALID_CONFIG_ERRORS}
+    build.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_two_configs_do_not_answer_for_each_other() -> None:
+    """Distinct texts keep distinct verdicts.
+
+    The memo would be worse than useless if a hit could be another config's
+    answer -- the editor would show a green state for a config that does not
+    build. Cheap to state, and the one thing a keying mistake would break.
+    """
+    client = AsyncClient()
+
+    valid = await client.post(VALIDATE_URL, {"config": VALID_CONFIG})
+    invalid = await client.post(VALIDATE_URL, {"config": INVALID_CONFIG})
+    valid_again = await client.post(VALIDATE_URL, {"config": VALID_CONFIG})
+
+    assert valid.json() == {"errors": ""}
+    assert invalid.json() == {"errors": INVALID_CONFIG_ERRORS}
+    assert valid_again.json() == {"errors": ""}
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_a_refused_config_is_never_answered_from_the_memo(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A 400 is not a verdict, so repeating it must still be a 400.
+
+    The memo answers with a 200 and an ``errors`` string, so an entry made
+    for a refused request would turn that refusal into an acceptance the
+    second time it was sent -- the editor would go green on a config the
+    server will not accept. The refusals stay outside the memo entirely.
+    """
+    mocker.patch.object(PipelineValidation, "MAX_EXPANDED_ANNOTATORS", 4)
+    client = AsyncClient()
+    config = "- position_score: '*'\n" * 3
+    expected = {"error": (
+        "annotation config expands to too many annotators: 9, "
+        "at most 4 are accepted"
+    )}
+
+    first = await client.post(VALIDATE_URL, {"config": config})
+    second = await client.post(VALIDATE_URL, {"config": config})
+
+    assert first.status_code == 400, first.content
+    assert first.json() == expected
+    assert second.status_code == 400, second.content
+    assert second.json() == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_the_burst_helper_still_buys_a_build_per_request(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """``_fire_validate`` must post a config the memo has not seen.
+
+    Everything the #659 proofs measure -- that N concurrent builds overlap,
+    that a slow build does not stall the loop or the sync-view thread -- is
+    measured by firing N validations and timing them. The memo answers a
+    repeat without building, so a helper that posted one fixed config would
+    turn those bursts into one build and N-1 lookups, and every one of those
+    proofs would pass while measuring nothing.
+
+    This is the guard on that: two calls, two builds.
+    """
+    build = mocker.patch(
+        "web_annotation.pipelines.views.load_pipeline_from_yaml",
+        return_value=None)
+
+    assert await _fire_validate() == 200
+    assert await _fire_validate() == 200
+
+    assert build.call_count == 2, (
+        "the burst helper reused a config, so the second request was "
+        "answered from the memo -- the #659 proofs above measure nothing"
+    )

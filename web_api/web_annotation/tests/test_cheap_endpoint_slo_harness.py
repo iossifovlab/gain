@@ -31,7 +31,28 @@ def test_validate_target_fires_at_the_validation_endpoint() -> None:
     path, payload = harness._slow_request_spec(args)
 
     assert path == harness.VALIDATE_PATH
-    assert payload == {"config": "- position_score: x"}
+    assert payload["config"].startswith("- position_score: x")
+
+
+def test_each_request_of_a_validate_burst_carries_a_distinct_config() -> None:
+    """A burst must present the endpoint's memo with N unseen keys (#833).
+
+    The endpoint remembers a verdict by a digest of the config text, so N
+    identical bodies would be one build and N-1 lookups -- and this harness
+    exists to measure what N concurrent builds do to the process. The
+    distinguishing text is a yaml comment, which the parser discards, so
+    every request still builds the identical pipeline.
+    """
+    args = harness.build_parser().parse_args(
+        ["--target", "validate", "--validate-config", "- position_score: x"])
+
+    configs = [
+        harness._slow_request_spec(args, index)[1]["config"]
+        for index in range(4)
+    ]
+
+    assert len(set(configs)) == 4, configs
+    assert all(c.startswith("- position_score: x") for c in configs)
 
 
 def test_record_reports_the_target_it_drove() -> None:
