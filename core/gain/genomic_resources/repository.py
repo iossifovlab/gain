@@ -2151,16 +2151,26 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
     def build_resource_file_state(
             self, resource: GenomicResource,
             filename: str,
-            **kwargs: str | float | int | None) -> ResourceFileState:
-        """Build resource file state."""
+            *,
+            md5: str | None = None,
+            timestamp: float | None = None,
+            size: int | None = None) -> ResourceFileState:
+        """Build resource file state.
+
+        Each of ``md5``, ``timestamp`` and ``size`` is read off the stored
+        file when it is not supplied. Supplying a digest that is already in
+        hand -- the download path verifies one against the manifest before
+        publishing the file -- saves reading the whole file back out of the
+        store, which for a remote store is a second transfer of it.
+
+        The parameters are keyword-only and named explicitly so that a
+        misspelled one is a TypeError here rather than a silently ignored
+        value and an extra read. See gain#865.
+        """
         if not self.file_exists(resource, filename):
             raise ValueError(
                 f"can't build resource state for not existing resource file "
                 f"{resource.resource_id} > {filename}")
-
-        md5 = kwargs.get("md5")
-        timestamp = kwargs.get("timestamp")
-        size = kwargs.get("size")
 
         if md5 is None:
             md5 = self.compute_md5_sum(resource, filename)
@@ -2171,11 +2181,7 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         if size is None:
             size = self.get_resource_file_size(resource, filename)
 
-        return ResourceFileState(
-            filename,
-            cast(int, size),
-            cast(float, timestamp),
-            cast(str, md5))
+        return ResourceFileState(filename, size, timestamp, md5)
 
     @abc.abstractmethod
     def save_resource_file_state(
