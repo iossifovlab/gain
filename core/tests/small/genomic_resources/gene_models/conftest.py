@@ -57,13 +57,17 @@ def fixture_dirname() -> Callable[[str], str]:
 def clean_gene_models_cache(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
-    """Empty the path-keyed gene-models cache for this test.
+    """Empty both gene-models caches for this test.
 
-    ``build_gene_models_from_file`` caches on the path alone, so without
-    this a module that loads one fixture under two formats gets the first
-    result back.
+    The factories memoise what they build for the lifetime of the
+    process, so without this a module gets back an instance another test
+    already loaded.
     """
     mocker.patch(
         "gain.genomic_resources.gene_models."
-        "gene_models_factory._INMEMORY_CACHE",
+        "gene_models_factory._FILE_CACHE",
+        {})
+    mocker.patch(
+        "gain.genomic_resources.gene_models."
+        "gene_models_factory._RESOURCE_CACHE",
         {})
