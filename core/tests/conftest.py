@@ -44,6 +44,9 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
 
 ALL_GRR_SCHEMES = frozenset({"file", "inmemory", "http", "s3"})
 
+# The schemes that cost nothing to run, and so are always available.
+FREE_GRR_SCHEMES = frozenset({"file", "inmemory"})
+
 
 def grr_schemes_for_marks(
     mark_names: Iterable[str],
@@ -61,7 +64,7 @@ def grr_schemes_for_marks(
     would abort at collection. Sorting here is what makes collection order
     seed-independent.
     """
-    schemes = {"inmemory", "file"}
+    schemes = set(FREE_GRR_SCHEMES)
     if enable_s3:
         schemes.add("s3")
     if enable_http:
@@ -70,6 +73,8 @@ def grr_schemes_for_marks(
     marked_schemes = {
         name[4:] for name in mark_names if name.startswith("grr_")
     }
+    if "local" in marked_schemes:
+        marked_schemes |= FREE_GRR_SCHEMES
     if "rw" in marked_schemes:
         marked_schemes.add("file")
         marked_schemes.add("s3")
