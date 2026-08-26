@@ -11,6 +11,7 @@ resource knows which child it came from (#841, and #838 for the same
 correction at the single-allele call site).
 """
 import pathlib
+from typing import Any
 
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -61,16 +62,23 @@ def a_score_at(
     a_position_score().realize_into(resources_dir / resource_id)
 
 
+def a_repo_over(
+    directory: pathlib.Path, public_url: str | None = None,
+) -> GenomicResourceRepo:
+    """Build a directory GRR, optionally advertising a public mirror."""
+    definition: dict[str, Any] = {
+        "id": "main", "type": "dir", "directory": str(directory),
+    }
+    if public_url is not None:
+        definition["public_url"] = public_url
+    return build_genomic_resource_repository(definition)
+
+
 def test_resource_is_linked_on_the_grrs_public_url(
     tmp_path: pathlib.Path,
 ) -> None:
     a_score_at(tmp_path / "grr")
-    repo = build_genomic_resource_repository({
-        "id": "main",
-        "type": "dir",
-        "directory": str(tmp_path / "grr"),
-        "public_url": "http://grr.example.org",
-    })
+    repo = a_repo_over(tmp_path / "grr", "http://grr.example.org")
 
     html = render_doc(repo, tmp_path / "work")
 
@@ -81,12 +89,7 @@ def test_histogram_image_is_sourced_from_the_grrs_public_url(
     tmp_path: pathlib.Path,
 ) -> None:
     a_score_at(tmp_path / "grr")
-    repo = build_genomic_resource_repository({
-        "id": "main",
-        "type": "dir",
-        "directory": str(tmp_path / "grr"),
-        "public_url": "http://grr.example.org",
-    })
+    repo = a_repo_over(tmp_path / "grr", "http://grr.example.org")
 
     html = render_doc(repo, tmp_path / "work")
 
@@ -141,16 +144,11 @@ def test_a_definition_without_a_public_url_falls_back_to_the_repo_url(
     # mirror still has to render a document rather than raise, and the
     # addresses it carries stay the ones it carried before #841.
     a_score_at(tmp_path / "grr")
-    repo = build_genomic_resource_repository({
-        "id": "main",
-        "type": "dir",
-        "directory": str(tmp_path / "grr"),
-    })
+    repo = a_repo_over(tmp_path / "grr")
 
     html = render_doc(repo, tmp_path / "work")
 
     resource = repo.get_resource("scores/pos1")
-    assert resource.get_public_url() == resource.get_url()
     assert f'href="{resource.get_url()}/index.html"' in html
 
 
@@ -160,12 +158,7 @@ def test_a_public_url_ending_in_a_slash_does_not_double_it(
     # A deployment writes ``public_url`` by hand, so both spellings turn
     # up; neither may put a "//" in the middle of a link or an image.
     a_score_at(tmp_path / "grr")
-    repo = build_genomic_resource_repository({
-        "id": "main",
-        "type": "dir",
-        "directory": str(tmp_path / "grr"),
-        "public_url": "http://grr.example.org/",
-    })
+    repo = a_repo_over(tmp_path / "grr", "http://grr.example.org/")
 
     html = render_doc(repo, tmp_path / "work")
 

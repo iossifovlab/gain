@@ -176,6 +176,37 @@ _RESOURCE_NAME_SEPARATOR = re.compile(r"[/\\]")
 _WINDOWS_DRIVE = re.compile(r"[a-zA-Z]:")
 
 
+def _join_resource_path(base: str, path: str) -> str:
+    """Join ``path`` under ``base``, tolerating a trailing separator.
+
+    Both of a resource's addresses are a repository url with the resource
+    id hung off it, and both bases are written by hand in a deployment's
+    GRR definition -- ``public_url`` and ``directory`` alike -- so a
+    trailing "/" is a spelling that turns up and must not reach the
+    address as "//" (#841, and #838 where the same correction was made at
+    the single-allele call site).
+
+    The two addresses share this rather than each spelling its own join:
+    when ``public_url`` is not declared the protocol reports the
+    repository's own url for both, and that fallback is only worth
+    anything if the two agree for EVERY spelling of the root.
+
+    The separators a scheme owns are not stray ones, so a root that is
+    nothing but a scheme keeps them: "https://" takes the id directly.
+
+    The normalisation lives here, at the join, and not in the protocol.
+    A protocol reports ``public_url`` exactly as its caller wrote it --
+    that is its display identity, echoed back in the rebuild-divergence
+    error. Nor could a protocol cover this: ``build_fsspec_protocol``
+    takes a ``public_url`` directly, so construction does not always go
+    through a GRR definition, while every address goes through this join.
+    """
+    trimmed = base.rstrip("/")
+    if trimmed.endswith(":"):
+        return f"{base}{path}"
+    return f"{trimmed}/{path}"
+
+
 def is_generated_info_page(name: str) -> bool:
     """Return True if ``name`` is a page ``resource-info`` generates.
 
@@ -1005,25 +1036,14 @@ class GenomicResource:
         return self.proto.get_public_url()
 
     def get_public_url(self) -> str:
-        """Return this resource's address on the GRR's public mirror.
-
-        The base is stripped of a trailing separator before the id is
-        joined to it. ``public_url`` is written by hand in a deployment's
-        GRR definition, so a trailing "/" is a spelling that turns up, and
-        it must not reach the address as "//" -- neither here nor in the
-        histogram image urls built on top of this (#841, and #838 where
-        the same correction was made at the single-allele call site).
-
-        The normalisation belongs here, at the join, and NOT in the
-        protocol: a protocol reports its ``public_url`` exactly as its
-        caller wrote it, which is what lets a rebuild tell a differently
-        spelled url from a genuinely different one.
-        """
-        base = self.get_repo_public_url().rstrip("/")
-        return f"{base}/{self.get_full_id()}"
+        """Return this resource's address on the GRR's public mirror."""
+        return _join_resource_path(
+            self.get_repo_public_url(), self.get_full_id())
 
     def get_url(self) -> str:
-        return f"{self.get_repo_url()}/{self.get_full_id()}"
+        """Return this resource's address on the repository's own url."""
+        return _join_resource_path(
+            self.get_repo_url(), self.get_full_id())
 
     def get_labels(self) -> dict[str, Any]:
         """Return resource labels.

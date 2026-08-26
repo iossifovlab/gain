@@ -9,8 +9,10 @@ subject -- including the part a deployment gets to spell by hand, the
 trailing separator (#841).
 """
 import pathlib
+from typing import Any
 
 from gain.genomic_resources.genomic_scores import build_score_from_resource
+from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
@@ -23,16 +25,23 @@ def a_score_at(
     a_position_score().realize_into(resources_dir / resource_id)
 
 
+def a_repo_over(
+    directory: str, public_url: str | None = None,
+) -> GenomicResourceRepo:
+    """Build a directory GRR, optionally advertising a public mirror."""
+    definition: dict[str, Any] = {
+        "id": "main", "type": "dir", "directory": directory,
+    }
+    if public_url is not None:
+        definition["public_url"] = public_url
+    return build_genomic_resource_repository(definition)
+
+
 def test_the_resource_id_is_joined_to_the_advertised_public_url(
     tmp_path: pathlib.Path,
 ) -> None:
     a_score_at(tmp_path)
-    repo = build_genomic_resource_repository({
-        "id": "main",
-        "type": "dir",
-        "directory": str(tmp_path),
-        "public_url": "http://grr.example.org",
-    })
+    repo = a_repo_over(str(tmp_path), "http://grr.example.org")
 
     resource = repo.get_resource("scores/pos1")
 
@@ -46,12 +55,7 @@ def test_a_public_url_ending_in_a_slash_does_not_double_it(
     # A deployment writes ``public_url`` by hand, so both spellings turn
     # up, and neither may produce a "//" in the middle of the address.
     a_score_at(tmp_path)
-    repo = build_genomic_resource_repository({
-        "id": "main",
-        "type": "dir",
-        "directory": str(tmp_path),
-        "public_url": "http://grr.example.org/",
-    })
+    repo = a_repo_over(str(tmp_path), "http://grr.example.org/")
 
     resource = repo.get_resource("scores/pos1")
 
@@ -66,12 +70,7 @@ def test_the_histogram_image_url_inherits_the_same_join(
     # trailing separator would otherwise reach it as a "//" that no call
     # site could repair -- the whole address is assembled internally.
     a_score_at(tmp_path)
-    repo = build_genomic_resource_repository({
-        "id": "main",
-        "type": "dir",
-        "directory": str(tmp_path),
-        "public_url": "http://grr.example.org/",
-    })
+    repo = a_repo_over(str(tmp_path), "http://grr.example.org/")
 
     score = build_score_from_resource(repo.get_resource("scores/pos1"))
 
@@ -86,16 +85,41 @@ def test_a_repository_without_a_public_url_falls_back_to_its_own_url(
     # mirror still has to produce an address rather than raise, and it is
     # the one it produced before the mirror existed.
     a_score_at(tmp_path)
-    repo = build_genomic_resource_repository({
-        "id": "main",
-        "type": "dir",
-        "directory": str(tmp_path),
-    })
+    repo = a_repo_over(str(tmp_path))
 
     resource = repo.get_resource("scores/pos1")
 
     assert resource.get_public_url() == resource.get_url()
     assert str(tmp_path) in resource.get_public_url()
+
+
+def test_the_fallback_holds_when_the_repository_root_ends_in_a_slash(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The fallback above is only worth anything if it holds for every
+    # spelling of the root, and a ``directory`` is written by hand too.
+    # The two joins have to agree, which they cannot if only one of them
+    # tolerates the separator.
+    a_score_at(tmp_path)
+    repo = a_repo_over(f"{tmp_path}/")
+
+    resource = repo.get_resource("scores/pos1")
+
+    assert resource.get_public_url() == resource.get_url()
+    assert "//" not in resource.get_url().removeprefix("file://")
+
+
+def test_a_scheme_only_root_keeps_its_own_separators(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Stripping must not eat the "//" that belongs to the scheme itself:
+    # those separators are the url's, not a hand-written stray one.
+    a_score_at(tmp_path)
+    repo = a_repo_over(str(tmp_path), "https://")
+
+    resource = repo.get_resource("scores/pos1")
+
+    assert resource.get_public_url() == "https://scores/pos1"
 
 
 def test_each_child_of_a_group_advertises_its_own_host(
