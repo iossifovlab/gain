@@ -51,6 +51,23 @@ GENE_ONLY_GTF_CONTENT = (
     'gene_id "ENSG001";\n'
 )
 
+# GTF-shaped, with the attributes column left off the second record --
+# the gain#907 shape. pandas reads the missing cell as a float NaN.
+BLANK_GTF_ATTRIBUTES_CONTENT = (
+    'chr1\ttest\ttranscript\t100\t200\t.\t+\t.\t'
+    'gene_id "ENSG001"; transcript_id "ENST001";\n'
+    "chr1\ttest\texon\t100\t150\t.\t+\t.\n"
+)
+
+# The columnar half of the same shape: a refseq/ccds layout whose second
+# record has an empty exonStarts cell.
+BLANK_EXON_STARTS_CONTENT = (
+    "0\tNM_000546\t17\t-\t7571719\t7590868\t7572826\t7590856\t2\t"
+    "7571719,7572926,\t7573008,7573009,\t0\tTP53\tcmpl\tcmpl\t0,0\n"
+    "0\tNM_001126\t17\t-\t7571719\t7590868\t7572826\t7590856\t2\t"
+    "\t7573008,7573009,\t0\tTP53\tcmpl\tcmpl\t0,0\n"
+)
+
 # A headerless refflat record -- inference settles on exactly one format.
 REFFLAT_CONTENT = (
     "TP53\tNM_000546\t17\t-\t7571719\t7590868\t7572826\t7590856\t2\t"
@@ -224,6 +241,52 @@ def test_underlying_parse_error_reaches_the_reader(
     assert "malformed GTF attribute" in str(excinfo.value)
     # Both channels, so neither can be dropped without a test going red.
     assert "malformed GTF attribute" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "expected"),
+    [
+        pytest.param(
+            "blank_attributes.gtf", BLANK_GTF_ATTRIBUTES_CONTENT,
+            "exon record at chr1:100-150 has an empty attributes column",
+            id="gtf",
+        ),
+        pytest.param(
+            "blank_exon_starts.txt", BLANK_EXON_STARTS_CONTENT,
+            "transcript NM_001126 at 17 has an unparsable exonStarts column",
+            id="columnar",
+        ),
+    ],
+)
+def test_a_blank_cell_reaches_the_reader_naming_the_record(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    filename: str,
+    content: str,
+    expected: str,
+) -> None:
+    """gain#907, through the reader rather than through the parser.
+
+    A blank cell used to reach this ledger as ``AttributeError: 'float'
+    object has no attribute 'split'``, which reads as a bug in gain
+    rather than as a fault in the file. Driving it through the resource
+    is what proves the rejection reason survives as far as the person who
+    has to fix the file.
+
+    The last assertion is not made redundant by ``pytest.raises``: the
+    ledger prefixes every entry with its exception type, so a *different*
+    format still failing that way would put the text back in the
+    aggregate message.
+    """
+    caplog.set_level(logging.ERROR)
+    gene_models = build_from_content(tmp_path, filename, content)
+
+    with pytest.raises(ValueError) as excinfo:
+        gene_models.load()
+
+    assert expected in str(excinfo.value)
+    assert expected in caplog.text
+    assert "'float' object" not in str(excinfo.value)
 
 
 def test_layout_match_without_records_is_its_own_reason(
