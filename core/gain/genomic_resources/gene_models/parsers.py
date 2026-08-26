@@ -120,6 +120,46 @@ def _parse_coordinate(
         raise _unparsable(column, tr_name, chrom, text) from ex
 
 
+def _record_identity(
+    rec: dict, record: int, name_column: str, chrom_column: str,
+) -> tuple[str, str]:
+    """Read the two columns that say which record a columnar row is.
+
+    Both used to be taken as they came. A blank one became a float
+    ``NaN`` in the model: a ``NaN`` chromosome keys the transcript index
+    all by itself, so the record is unreachable by every location query,
+    and a ``NaN`` transcript name reaches serialization as the literal
+    token ``nan`` -- and is suffixed into a transcript id of ``nan_1``,
+    an identifier no file ever carried (gain#929).
+
+    These two are what every other message here names a record by, so
+    they cannot be named that way themselves. Each falls back to the
+    record's position in the file, plus whichever of the pair is still
+    readable.
+
+    Whitespace decides only whether a cell counts as blank; the value
+    returned is the file's own, so that records which parse today keep
+    the names they have.
+    """
+    tr_name = _cell_text(rec[name_column])
+    chrom = _cell_text(rec[chrom_column])
+    if not tr_name.strip():
+        raise _blank_identifier(
+            name_column, record, f" at {chrom}" if chrom.strip() else "")
+    if not chrom.strip():
+        raise _blank_identifier(
+            chrom_column, record, f" (transcript {tr_name})")
+    return tr_name, chrom
+
+
+def _blank_identifier(column: str, record: int, context: str) -> ValueError:
+    """Report an identifying column that the record cannot be named by."""
+    return ValueError(
+        f"gene models record {record}{context} "
+        f"has a blank {column} column",
+    )
+
+
 def _parse_exon_bounds(
     rec: dict, tr_name: object, chrom: object,
 ) -> tuple[list[int], list[int]]:
@@ -203,9 +243,9 @@ def parse_default_gene_models_format(
 
     transcript_models = {}
     records = df.to_dict(orient="records")
-    for line in records:
+    for record, line in enumerate(records, start=1):
         line = cast(dict, line)
-        tr_name, chrom = line["trID"], line["chr"]
+        tr_name, chrom = _record_identity(line, record, "trID", "chr")
         exon_starts = _parse_exon_positions(
             line["exonStarts"], "exonStarts", tr_name, chrom)
         exon_ends = _parse_exon_positions(
@@ -276,11 +316,10 @@ def parse_ref_flat_gene_models_format(
         gene_mapping = {}
 
     transcript_models = {}
-    for rec in records:
+    for record, rec in enumerate(records, start=1):
         gene = rec["#geneName"]
         gene = gene_mapping.get(gene, gene)
-        tr_name = rec["name"]
-        chrom = rec["chrom"]
+        tr_name, chrom = _record_identity(rec, record, "name", "chrom")
         strand = rec["strand"]
         tx, cds = _parse_transcript_bounds(  # pylint: disable=invalid-name
             rec, tr_name, chrom)
@@ -350,12 +389,11 @@ def parse_ref_seq_gene_models_format(
     if gene_mapping is None:
         gene_mapping = {}
     transcript_models = {}
-    for rec in records:
+    for record, rec in enumerate(records, start=1):
         gene = rec["name2"]
         gene = gene_mapping.get(gene, gene)
 
-        tr_name = rec["name"]
-        chrom = rec["chrom"]
+        tr_name, chrom = _record_identity(rec, record, "name", "chrom")
         strand = rec["strand"]
         tx, cds = _parse_transcript_bounds(  # pylint: disable=invalid-name
             rec, tr_name, chrom)
@@ -491,12 +529,11 @@ def parse_ccds_gene_models_format(
         gene_mapping = {}
 
     transcript_models = {}
-    for rec in records:
+    for record, rec in enumerate(records, start=1):
         gene = rec["name"]
         gene = gene_mapping.get(gene, gene)
 
-        tr_name = rec["name"]
-        chrom = rec["chrom"]
+        tr_name, chrom = _record_identity(rec, record, "name", "chrom")
         strand = rec["strand"]
         tx, cds = _parse_transcript_bounds(  # pylint: disable=invalid-name
             rec, tr_name, chrom)
@@ -575,12 +612,11 @@ def parse_known_gene_models_format(
     if gene_mapping is None:
         gene_mapping = {}
     transcript_models = {}
-    for rec in records:
+    for record, rec in enumerate(records, start=1):
         gene = rec["name"]
         gene = gene_mapping.get(gene, gene)
 
-        tr_name = rec["name"]
-        chrom = rec["chrom"]
+        tr_name, chrom = _record_identity(rec, record, "name", "chrom")
         strand = rec["strand"]
         tx, cds = _parse_transcript_bounds(  # pylint: disable=invalid-name
             rec, tr_name, chrom)
@@ -694,14 +730,13 @@ def parse_ucscgenepred_models_format(
     if gene_mapping is None:
         gene_mapping = {}
     transcript_models = {}
-    for rec in records:
+    for record, rec in enumerate(records, start=1):
         gene = rec.get("name2")
         if not gene:
             gene = rec["name"]
         gene = gene_mapping.get(gene, gene)
 
-        tr_name = rec["name"]
-        chrom = rec["chrom"]
+        tr_name, chrom = _record_identity(rec, record, "name", "chrom")
         strand = rec["strand"]
         tx, cds = _parse_transcript_bounds(  # pylint: disable=invalid-name
             rec, tr_name, chrom)

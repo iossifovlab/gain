@@ -112,11 +112,19 @@ def test_unrecognized_transcript_names_leave_the_collision_standing() -> None:
     assert set(inference.matched) == {"ccds", "refseq"}
 
 
-def test_an_empty_transcript_name_leaves_the_collision_standing() -> None:
-    """A blank name field is an unrecognized name, not a crash.
+def test_an_empty_transcript_name_is_refused_by_the_colliding_pair() -> None:
+    """A blank name field is a malformed record, and says so.
 
-    An empty field must not count toward "every sampled name matches" --
-    and must not take inference down with it either.
+    This once left the collision standing: both formats parsed the file,
+    each building a transcript named ``nan`` with an id of ``nan_1``.
+    gain#929 made a record with no transcript name a malformed record, so
+    both formats now reject the file and the ledger names the record --
+    which is the reason the reader needed either way, and a better one.
+
+    The tie-break's own tolerance of a blank name (the ``na_filter=False``
+    of gain#869) is not what keeps this file from crashing any more: the
+    tie-break runs only once both formats have parsed records, so a blank
+    name in the sample no longer reaches it at all.
     """
     content = (
         headerless_record("NM_000546", "TP53")
@@ -126,7 +134,11 @@ def test_an_empty_transcript_name_leaves_the_collision_standing() -> None:
     inference = infer_gene_models_format(StringIO(content))
 
     assert inference.file_format is None
-    assert set(inference.matched) == {"ccds", "refseq"}
+    assert set(inference.matched) == set()
+    assert dict(inference.rejected)["refseq"] == (
+        "ValueError: gene models record 2 at 17 "
+        "has a blank name column"
+    )
 
 
 def test_headered_refseq_ccds_collision_is_not_tie_broken() -> None:
