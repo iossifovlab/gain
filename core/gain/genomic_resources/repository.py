@@ -61,6 +61,7 @@ from collections.abc import (
     Sequence,
 )
 from dataclasses import asdict, dataclass
+from operator import itemgetter
 from typing import IO, Any, cast
 from urllib.parse import unquote
 
@@ -853,6 +854,33 @@ class SearchIndexUnavailableError(ValueError):
         )
 
 
+def _canonical_config(value: Any) -> Any:
+    """Return ``value`` with the order it was written in taken out.
+
+    A mapping becomes a tuple of pairs sorted by key, so two configs
+    differing only in the order their keys were written canonicalise
+    alike; a sequence keeps its order. Keys are stringified first, a bare
+    number being a legal yaml key that cannot be sorted against a string
+    one, and the sort looks at the key alone, so values of unrelated
+    types are never compared. Leaves are returned untouched: the caller
+    ``repr``\\ s the result, so a value with no JSON spelling -- a bare
+    date -- needs no handling of its own.
+
+    The result is not injective. Two keys that differ only until they are
+    stringified collapse together, as do a mapping and a sequence of
+    pairs that canonicalise alike; neither is reachable from a parsed
+    ``genomic_resource.yaml``. A config holding itself recurses until the
+    stack runs out.
+    """
+    if isinstance(value, Mapping):
+        return tuple(sorted(
+            ((str(key), _canonical_config(val)) for key, val in value.items()),
+            key=itemgetter(0)))
+    if isinstance(value, (list, tuple)):
+        return tuple(_canonical_config(val) for val in value)
+    return value
+
+
 class GenomicResource:
     """Represents a single genomic resource with metadata and file access.
 
@@ -898,6 +926,30 @@ class GenomicResource:
         # makes ``a == b`` imply ``hash(a) == hash(b)``.  ``config`` is
         # a dict and unhashable; leaving it out only coarsens the hash.
         return hash((self.resource_id, self.version))
+
+    def get_memo_key(self) -> tuple[str, str, str]:
+        """Return a key identifying everything this resource denotes.
+
+        For memoising an object *built from* a resource -- gene models, a
+        gene score, a gene set collection, a liftover chain. Two resources
+        that would build different objects have different keys.
+
+        The config is part of the key because a resource at the repository
+        root, spelled ``"."``, takes its whole meaning from it: its id and
+        repository url alone do not separate it from another root resource
+        over the same directory. The repository url is part of the key too,
+        so the same resource reached through two repositories is memoised
+        once per repository.
+
+        The key is finer than value identity, never coarser, so a miss
+        costs a rebuild rather than a wrong answer. Raises ``ValueError``
+        if the resource carries no config.
+        """
+        return (
+            self.get_full_id(),
+            self.get_repo_url(),
+            repr(_canonical_config(self.get_config())),
+        )
 
     def invalidate(self) -> None:
         """Clean up cached attributes like manifest, etc."""

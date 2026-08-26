@@ -425,7 +425,7 @@ class GeneScoresDb:
         return len(self.score_descs)
 
 
-_INMEMORY_CACHE: dict[tuple[str, str], GeneScore] = {}
+_INMEMORY_CACHE: dict[tuple[str, str, str], GeneScore] = {}
 _INMEMORY_CACHE_LOCK = Lock()
 
 
@@ -440,7 +440,7 @@ def build_gene_score_from_resource(resource: GenomicResource) -> GeneScore:
             "%s as gene scores", resource.resource_id, resource.get_type())
         raise ValueError(f"invalid resource type: {resource.resource_id}")
 
-    cache_id = (resource.get_full_id(), resource.get_repo_url())
+    cache_id = resource.get_memo_key()
     with _INMEMORY_CACHE_LOCK:
         if cache_id in _INMEMORY_CACHE:
             return _INMEMORY_CACHE[cache_id]

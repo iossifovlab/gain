@@ -330,7 +330,7 @@ class GeneSetCollection(
             return None
 
 
-_RESOURCE_CACHE: dict[tuple[str, str], GeneSetCollection] = {}
+_RESOURCE_CACHE: dict[tuple[str, str, str], GeneSetCollection] = {}
 _FILE_CACHE: dict[tuple[str, str], GeneSetCollection] = {}
 _INMEMORY_CACHE_LOCK = Lock()
 
@@ -411,7 +411,7 @@ def build_gene_set_collection_from_resource(
     resource: GenomicResource,
 ) -> GeneSetCollection:
     """Return a Gene Set Collection built from a resource."""
-    cache_id = (resource.get_full_id(), resource.get_repo_url())
+    cache_id = resource.get_memo_key()
     with _INMEMORY_CACHE_LOCK:
         if cache_id in _RESOURCE_CACHE:
             return _RESOURCE_CACHE[cache_id]

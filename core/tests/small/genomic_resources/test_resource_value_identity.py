@@ -16,7 +16,9 @@ and compare equal; identity, not equality, is what tells them apart -- see
 ``__hash__`` therefore hashes a strict subset of the fields ``__eq__``
 compares, which is what makes ``a == b`` imply ``hash(a) == hash(b)``.
 """
+import datetime
 import pathlib
+from typing import Any
 from unittest import mock
 
 import pytest
@@ -207,3 +209,49 @@ def test_differently_named_resources_are_not_the_same_value(
         "another", resource.version, resource.proto, config=resource.config)
 
     assert resource != other
+
+
+def _a_resource_configured(
+    resource: GenomicResource, config: dict[Any, Any],
+) -> GenomicResource:
+    """Return a resource denoting the same thing, carrying ``config``."""
+    return GenomicResource(
+        resource.resource_id, resource.version, resource.proto, config=config)
+
+
+def test_the_memo_key_is_total_over_a_config_json_cannot_spell(
+    resource: GenomicResource,
+) -> None:
+    """A config is whatever the resource's yaml parsed to.
+
+    That includes a bare date, which has no JSON spelling, and a bare
+    number as a *key*, which cannot be sorted against a string one.  The
+    memo key has to be derived from all of it without raising -- a
+    derivation that refused such a config would turn a call that works
+    today into an error -- and the exotic parts still have to tell two
+    configs apart.
+    """
+    early = _a_resource_configured(
+        resource, {"released": datetime.date(2026, 8, 26), 1: "one"})
+    late = _a_resource_configured(
+        resource, {"released": datetime.date(2026, 8, 27), 1: "one"})
+
+    assert all(isinstance(part, str) for part in early.get_memo_key())
+    assert early.get_memo_key() != late.get_memo_key()
+
+
+def test_a_config_written_in_another_key_order_keeps_its_memo_key(
+    resource: GenomicResource,
+) -> None:
+    """Key order is how a config was written, not what it says.
+
+    Two resources whose configs differ only in the order the keys were
+    written denote the same thing and must share a memo entry -- otherwise
+    memoisation quietly stops working for them.
+    """
+    one_way = _a_resource_configured(
+        resource, {"type": "basic", "meta": {"a": 1, "b": 2}})
+    other_way = _a_resource_configured(
+        resource, {"meta": {"b": 2, "a": 1}, "type": "basic"})
+
+    assert one_way.get_memo_key() == other_way.get_memo_key()
