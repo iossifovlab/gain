@@ -4,7 +4,7 @@ import re
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import IO, cast
+from typing import IO, Any, cast
 
 import pandas as pd
 
@@ -32,6 +32,69 @@ GeneModelsParser = Callable[
     [IO, dict[str, str] | None, int | None],
     dict[str, TranscriptModel] | None,
 ]
+
+
+#: How much of a cell to quote back when reporting it. Shared with
+#: `_scan_gtf_attributes`, so that the two messages truncate alike.
+_QUOTED_TEXT_LIMIT = 60
+
+
+def _parse_exon_positions(
+    value: Any, column: str, tr_name: object, chrom: object,
+) -> list[int]:
+    """Read a comma-separated coordinate column, naming its record.
+
+    pandas delivers a blank cell as a float ``NaN``, which used to reach
+    ``str.strip`` and escape as an ``AttributeError`` naming a float
+    (gain#907). Text that is simply not a coordinate list fails ``int``
+    the same way, and leaves the reader just as stuck, so both are
+    reported here as one thing: this record's column could not be read.
+
+    Where a GTF record has to be placed by feature and position -- its
+    ``transcript_id`` being what tends to be missing -- a columnar record
+    is named by the transcript name and chromosome every columnar layout
+    carries in columns of their own.
+
+    The quoted cell is what pandas made of the column, not the file's own
+    bytes: a blank cell reads back as ``''``, and so does every other
+    spelling pandas takes for a missing value, ``NA`` and ``NULL`` among
+    them, which this message therefore cannot tell apart (gain#931). The
+    ``int`` failure stays on the chain, so the offending token survives
+    the truncation.
+
+    ``value`` is annotated ``Any`` rather than ``object`` because
+    ``pd.isna`` has no overload for the latter.
+    """
+    # This runs once per record per column on files that reach into the
+    # hundreds of thousands of records, so the well-formed cell -- a
+    # string, always -- takes the cheapest path through, and the message
+    # is not built until there is a message to build.
+    text = value if isinstance(value, str) else \
+        "" if pd.isna(value) else str(value)
+    try:
+        return list(map(int, text.strip(",").split(",")))
+    except ValueError as ex:
+        raise ValueError(
+            f"transcript {tr_name} at {chrom} has an unparsable "
+            f"{column} column: {text[:_QUOTED_TEXT_LIMIT]!r}",
+        ) from ex
+
+
+def _parse_exon_bounds(
+    rec: dict, tr_name: object, chrom: object,
+) -> tuple[list[int], list[int]]:
+    """Read the paired exon-position columns of a columnar record.
+
+    Every columnar layout but the default one spells the pair the same
+    way, so they share this rather than repeating the pair of reads and
+    the length check between them.
+    """
+    exon_starts = _parse_exon_positions(
+        rec["exonStarts"], "exonStarts", tr_name, chrom)
+    exon_ends = _parse_exon_positions(
+        rec["exonEnds"], "exonEnds", tr_name, chrom)
+    assert len(exon_starts) == len(exon_ends)
+    return exon_starts, exon_ends
 
 
 def parse_default_gene_models_format(
@@ -84,9 +147,13 @@ def parse_default_gene_models_format(
     records = df.to_dict(orient="records")
     for line in records:
         line = cast(dict, line)
-        exon_starts = list(map(int, line["exonStarts"].split(",")))
-        exon_ends = list(map(int, line["exonEnds"].split(",")))
-        exon_frames = list(map(int, line["exonFrames"].split(",")))
+        tr_name, chrom = line["trID"], line["chr"]
+        exon_starts = _parse_exon_positions(
+            line["exonStarts"], "exonStarts", tr_name, chrom)
+        exon_ends = _parse_exon_positions(
+            line["exonEnds"], "exonEnds", tr_name, chrom)
+        exon_frames = _parse_exon_positions(
+            line["exonFrames"], "exonFrames", tr_name, chrom)
         assert len(exon_starts) == len(exon_ends) == len(exon_frames)
 
         exons = []
@@ -157,11 +224,8 @@ def parse_ref_flat_gene_models_format(
             int(rec["txStart"]) + 1, int(rec["txEnd"]))
         cds = (int(rec["cdsStart"]) + 1, int(rec["cdsEnd"]))
 
-        exon_starts = list(map(
-            int, str(rec["exonStarts"]).strip(",").split(",")))
-        exon_ends = list(map(
-            int, str(rec["exonEnds"]).strip(",").split(",")))
-        assert len(exon_starts) == len(exon_ends)
+        exon_starts, exon_ends = _parse_exon_bounds(
+            rec, tr_name, chrom)
 
         exons = [
             Exon(start + 1, end)
@@ -236,11 +300,8 @@ def parse_ref_seq_gene_models_format(
             int(rec["txStart"]) + 1, int(rec["txEnd"]))
         cds = (int(rec["cdsStart"]) + 1, int(rec["cdsEnd"]))
 
-        exon_starts = list(map(
-            int, rec["exonStarts"].strip(",").split(",")))
-        exon_ends = list(map(
-            int, rec["exonEnds"].strip(",").split(",")))
-        assert len(exon_starts) == len(exon_ends)
+        exon_starts, exon_ends = _parse_exon_bounds(
+            rec, tr_name, chrom)
 
         exons = [
             Exon(start + 1, end)
@@ -381,11 +442,8 @@ def parse_ccds_gene_models_format(
             int(rec["txStart"]) + 1, int(rec["txEnd"]))
         cds = (int(rec["cdsStart"]) + 1, int(rec["cdsEnd"]))
 
-        exon_starts = list(map(
-            int, rec["exonStarts"].strip(",").split(",")))
-        exon_ends = list(map(
-            int, rec["exonEnds"].strip(",").split(",")))
-        assert len(exon_starts) == len(exon_ends)
+        exon_starts, exon_ends = _parse_exon_bounds(
+            rec, tr_name, chrom)
 
         exons = [
             Exon(start + 1, end)
@@ -469,11 +527,8 @@ def parse_known_gene_models_format(
             int(rec["txStart"]) + 1, int(rec["txEnd"]))
         cds = (int(rec["cdsStart"]) + 1, int(rec["cdsEnd"]))
 
-        exon_starts = list(map(
-            int, rec["exonStarts"].strip(",").split(",")))
-        exon_ends = list(map(
-            int, rec["exonEnds"].strip(",").split(",")))
-        assert len(exon_starts) == len(exon_ends)
+        exon_starts, exon_ends = _parse_exon_bounds(
+            rec, tr_name, chrom)
 
         exons = [
             Exon(start + 1, end)
@@ -594,11 +649,8 @@ def parse_ucscgenepred_models_format(
             int(rec["txStart"]) + 1, int(rec["txEnd"]))
         cds = (int(rec["cdsStart"]) + 1, int(rec["cdsEnd"]))
 
-        exon_starts = list(map(
-            int, rec["exonStarts"].strip(",").split(",")))
-        exon_ends = list(map(
-            int, rec["exonEnds"].strip(",").split(",")))
-        assert len(exon_starts) == len(exon_ends)
+        exon_starts, exon_ends = _parse_exon_bounds(
+            rec, tr_name, chrom)
 
         exons = [
             Exon(start + 1, end)
@@ -713,7 +765,7 @@ def _scan_gtf_attributes(data: str) -> dict[str, str]:
             if closing == -1:
                 raise ValueError(
                     f"unterminated quote in GTF attribute {key!r}: "
-                    f"{data[index:index + 60]!r}",
+                    f"{data[index:index + _QUOTED_TEXT_LIMIT]!r}",
                 )
             value = data[index + 1:closing]
             index = _end_of_gtf_attribute(data, closing + 1)
@@ -895,7 +947,20 @@ def parse_gtf_gene_models_format(
         feature = rec["feature"]
         if feature in GTF_IGNORED_FEATURES:
             continue
-        attributes = _parse_gtf_attributes(rec["attributes"])
+        # The scanner takes text, and this column does not always arrive
+        # as text: pandas reads a blank cell as a float ``NaN`` (whether
+        # the row is short or ends on an empty column), and infers a
+        # numeric dtype for a column that is numeric throughout. Either
+        # would escape as an ``AttributeError`` naming a float and neither
+        # the record nor the file, which is gain#907. A blank column names
+        # the record; anything else is coerced and left to the scanner,
+        # which rejects it as the malformed attribute it is.
+        attributes_column = rec["attributes"]
+        if pd.isna(attributes_column):
+            raise ValueError(
+                f"{_record_location(rec)} has an empty attributes column",
+            )
+        attributes = _parse_gtf_attributes(str(attributes_column))
         if feature in GTF_EXONLESS_TRANSCRIPT_FEATURES:
             skipped_tr_id = attributes.get("transcript_id")
             if skipped_tr_id is not None:
