@@ -1005,7 +1005,22 @@ class GenomicResource:
         return self.proto.get_public_url()
 
     def get_public_url(self) -> str:
-        return f"{self.get_repo_public_url()}/{self.get_full_id()}"
+        """Return this resource's address on the GRR's public mirror.
+
+        The base is stripped of a trailing separator before the id is
+        joined to it. ``public_url`` is written by hand in a deployment's
+        GRR definition, so a trailing "/" is a spelling that turns up, and
+        it must not reach the address as "//" -- neither here nor in the
+        histogram image urls built on top of this (#841, and #838 where
+        the same correction was made at the single-allele call site).
+
+        The normalisation belongs here, at the join, and NOT in the
+        protocol: a protocol reports its ``public_url`` exactly as its
+        caller wrote it, which is what lets a rebuild tell a differently
+        spelled url from a genuinely different one.
+        """
+        base = self.get_repo_public_url().rstrip("/")
+        return f"{base}/{self.get_full_id()}"
 
     def get_url(self) -> str:
         return f"{self.get_repo_url()}/{self.get_full_id()}"
