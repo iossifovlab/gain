@@ -119,7 +119,7 @@ _HEADER_MODES = ("file", "none", "list")
 
 @dataclasses.dataclass(frozen=True)
 class _TableScoreBuilder(MetaMixin):
-    """Immutable base for the tabular position/np/allele score builders.
+    """Immutable base for the tabular position/allele score builders.
 
     The three table-score resource types share nearly everything: score
     declaration (:class:`ScoreSpec`), header validation, YAML rendering,
@@ -129,10 +129,11 @@ class _TableScoreBuilder(MetaMixin):
 
     * ``SCORE_TYPE`` -- the ``type:`` config value.
     * ``TRAILING_COLUMNS`` -- extra required base columns after the position
-      columns (``reference``/``alternative`` for np/allele; none for
+      columns (``reference``/``alternative`` for an allele score; none for
       position).
     * ``TABLE_EXTRA_CONFIG`` -- extra lines spliced into the ``table:`` block
-      (the ``reference``/``alternative`` name mapping for np/allele).  Under
+      (the ``reference``/``alternative`` name mapping for an allele
+      score).  Under
       ``header_mode: none`` there is no header for a name to match, so those
       base columns are rendered by index instead -- see
       :meth:`with_header_mode`.
@@ -170,7 +171,8 @@ class _TableScoreBuilder(MetaMixin):
     LEADING_COLUMNS: ClassVar[tuple[str, ...]] = ("chrom", "pos_begin")
     TRAILING_COLUMNS: ClassVar[tuple[str, ...]] = ()
     # ``pos_end`` is an allowed optional column for EVERY table score type,
-    # np/allele included: they realize onto the same genomic_position_table
+    # the allele score included: it realizes onto the same
+    # genomic_position_table
     # backend, which derives ``pos_end_key`` from the header and range-matches
     # a query position inside a record's [pos_begin, pos_end] span.  Shared,
     # not position-only -- so it stays on the base and is inherited.
@@ -658,7 +660,7 @@ class PositionScoreBuilder(_TableScoreBuilder):
 
 
 # The ``reference``/``alternative`` column mapping spliced into the ``table:``
-# block of an np/allele score config; both types locate their ref/alt columns
+# block of an allele score config; it locates its ref/alt columns
 # by name (matching the ``reference``/``alternative`` data columns).
 _REF_ALT_TABLE_CONFIG = (
     "    reference:\n"
@@ -667,9 +669,9 @@ _REF_ALT_TABLE_CONFIG = (
     "      name: alternative\n"
 )
 
-# np/allele default data: chrom/pos_begin plus the ref/alt columns and one
+# allele default data: chrom/pos_begin plus the ref/alt columns and one
 # default float score.
-_NP_ALLELE_DEFAULT_DATA = """
+_ALLELE_DEFAULT_DATA = """
     chrom  pos_begin  reference  alternative  score
     1      10         A          G            0.1
     1      10         A          C            0.2
@@ -686,23 +688,28 @@ class AlleleScoreBuilder(_TableScoreBuilder):
 
     Had a twin, ``NPScoreBuilder``, differing only in emitting
     ``type: np_score``.  It was retired with the type itself in 2026.8.5
-    (gain#920): a builder can only produce resources GAIn still reads, and
-    every fixture it used to make now has to declare ``allele_score`` --
-    with ``allele_score_mode: substitutions`` where the old default was
-    what the test was relying on.
+    (gain#920): a builder can only produce resources GAIn still reads.
+
+    Its fixtures moved here unchanged apart from the type.  None needed
+    ``allele_score_mode: substitutions`` to keep behaving the same, even
+    though the mode default differs between the two spellings -- nothing
+    in gain reads ``AlleleScore.mode`` outside ``substitutions_mode()``
+    and ``alleles_mode()``, and no migrated fixture consults either.  The
+    mode hazard the removal warns about is real for a GRR holder whose
+    own code asks; it was inert in this suite.
     """
 
     SCORE_TYPE: ClassVar[str] = "allele_score"
     TRAILING_COLUMNS: ClassVar[tuple[str, ...]] = ("reference", "alternative")
     TABLE_EXTRA_CONFIG: ClassVar[str] = _REF_ALT_TABLE_CONFIG
-    DEFAULT_DATA: ClassVar[str] = _NP_ALLELE_DEFAULT_DATA
+    DEFAULT_DATA: ClassVar[str] = _ALLELE_DEFAULT_DATA
 
 
 @dataclasses.dataclass(frozen=True)
 class FragmentScoreBuilder(_TableScoreBuilder):
     """Immutable builder for a single fragment score resource.
 
-    Shares the tabular-score machinery with the position/np/allele
+    Shares the tabular-score machinery with the position/allele
     builders, differing only in the type value.  A fragment is a region
     rather than a point, so the default data carries the optional
     ``pos_end`` column.  Reads back through ``FragmentScore``, which

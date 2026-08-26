@@ -860,7 +860,7 @@ def build_resource_implementation(
     # type GAIn never knew.  Both reach the same `builder is None` below,
     # and only one of them has a migration to offer.
     reject_retired_resource_type(
-        res.get_type(), found_in=f"Resource <{res.resource_id}>")
+        res.get_type(), found_in=f"Resource {res.resource_id}")
 
     builder = get_resource_implementation_builder(res.get_type())
     if builder is None:

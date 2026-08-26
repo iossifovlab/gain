@@ -39,6 +39,9 @@ from gain.genomic_resources.genomic_scores import (
     build_position_score_from_resource,
 )
 from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.resource_types import (
+    reject_retired_resource_type,
+)
 from gain.genomic_resources.score_filter import ScoreFilterError
 from gain.templates import get_template
 
@@ -53,6 +56,12 @@ def get_genomic_resource(
         raise ValueError(f"The {info} has not 'resource_id' parameters")
     resource_id = info.parameters["resource_id"]
     resource = pipeline.repository.get_resource(resource_id)
+    # Before the membership test: a retired spelling is a type GAIn used to
+    # accept, and the generic message below would only say the annotator
+    # wants something else -- true, and no help to someone holding a
+    # resource that worked last release (gain#920).
+    reject_retired_resource_type(
+        resource.get_type(), found_in=f"Resource {resource.get_id()}")
     if resource.get_type() not in resource_types:
         raise ValueError(
             f"The {info} requires 'resource_id' to point to a "
@@ -381,7 +390,7 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
 
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
         resource = get_genomic_resource(
-            pipeline, info, {"np_score", "allele_score"})
+            pipeline, info, {"allele_score"})
         self.allele_score = build_allele_score_from_resource(resource)
         self.allele_filter = None
         allele_filter_str = info.parameters.get("allele_filter")

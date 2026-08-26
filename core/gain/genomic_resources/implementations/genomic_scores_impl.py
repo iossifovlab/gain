@@ -1156,7 +1156,11 @@ class GenomicScoreImplementation(ScoreImplementationBase):
           class states them, in ``RECORD_WEIGHT_IS_SPAN`` and in its own
           ``validate_record_arrays`` body.  This excluded the deprecated
           ``np_score`` until 2026.8.5 removed it (gain#920); the set now
-          names every score kind GAIn accepts;
+          names every score kind GAIn accepts, so the test below cannot
+          currently fail.  It is kept deliberately: it states which kinds
+          this path is exercised against, and the next kind added to the
+          entry points gets the per-record path until someone says
+          otherwise here, rather than the bulk one by default;
         * every score of a value type the column parse defines
           (``float``, ``int``, ``str``) -- asked of the score, which owns
           that parse;

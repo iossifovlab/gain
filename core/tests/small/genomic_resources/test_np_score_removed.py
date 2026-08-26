@@ -9,7 +9,10 @@ that a repository still declaring it gets told *what to write instead*.
 The bare failure the removal produces for free is
 ``unsupported resource implementation type <np_score>``, which names no
 replacement.  That is the failure mode these tests exist to prevent, at
-each of the two seams a legacy resource is reached through.
+each of the seams a legacy resource is reached through -- the score
+factory, the implementation builder, an annotation pipeline, and
+``AlleleScore`` itself.  Four, because there is no single seam they all
+pass through; ADR 0011 records the same for the fragment-score warning.
 
 The migration is not a rename.  ``np_score`` defaulted to substitutions
 mode and ``allele_score`` defaults to alleles mode, so a holder who only
@@ -27,6 +30,10 @@ either changed, the refusal below would be handing out a migration that
 does not work, and those tests fail first.
 """
 import pytest
+from gain.annotation.annotation_config import (
+    AnnotationConfigurationError,
+)
+from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     build_score_from_resource,
@@ -34,7 +41,10 @@ from gain.genomic_resources.genomic_scores import (
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
-from gain.genomic_resources.testing import build_inmemory_test_resource
+from gain.genomic_resources.testing import (
+    build_inmemory_test_repository,
+    build_inmemory_test_resource,
+)
 
 #: What the removal produces on its own, once the entry point is gone.
 #:
@@ -75,7 +85,7 @@ def test_building_a_score_from_a_np_score_resource_names_the_replacement(
 
     message = str(excinfo.value)
     assert "np_score" in message
-    assert "allele_score" in message
+    assert "write 'allele_score' instead" in message
     # The mode guidance is the half a plain rename loses, so it is asserted
     # separately: a message naming only the replacement type would satisfy
     # the line above while still leading the reader into a silent change.
@@ -98,7 +108,31 @@ def test_building_an_implementation_from_a_np_score_resource_guides_too(
 
     message = str(excinfo.value)
     assert _UNHELPFUL_REFUSAL not in message
-    assert "allele_score" in message
+    assert "write 'allele_score' instead" in message
+    assert "allele_score_mode: substitutions" in message
+
+
+def test_an_annotation_pipeline_naming_a_np_score_resource_is_guided_too(
+) -> None:
+    """The seam a user is most likely to meet, and the easiest to regress.
+
+    An annotator resolves its resource through ``get_genomic_resource``,
+    which checks the declared type against the set the annotator accepts
+    before anything builds a score.  That check raises an error of its
+    own, so narrowing its set without guarding it first would swap this
+    migration message for a bare "requires 'resource_id' to point to a
+    resource of type {'allele_score'}" -- true, and useless to someone
+    holding a resource that used to work.
+    """
+    repo = build_inmemory_test_repository(
+        {"retired": _RETIRED_NP_SCORE_RESOURCE})
+
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        load_pipeline_from_yaml(
+            "- allele_score:\n    resource_id: retired\n", repo)
+
+    message = str(excinfo.value)
+    assert "write 'allele_score' instead" in message
     assert "allele_score_mode: substitutions" in message
 
 
@@ -118,5 +152,5 @@ def test_constructing_an_allele_score_from_a_np_score_resource_is_refused(
         AlleleScore(resource)
 
     message = str(excinfo.value)
-    assert "allele_score" in message
+    assert "write 'allele_score' instead" in message
     assert "allele_score_mode: substitutions" in message
