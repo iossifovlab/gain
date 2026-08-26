@@ -9,11 +9,11 @@ Release Notes
       that relied on the old default must also declare
       ``allele_score_mode: substitutions`` to keep reading as it did.
       A resource still declaring ``np_score`` is refused with a message
-      naming both, from whichever seam opens it -- the score factories,
-      ``AlleleScore`` itself, and the implementation builder that
-      ``grr_manage`` sweeps with. The spelling had warned since
-      2024-11 and its removal was announced for this release (#781,
-      #918, #920).
+      naming both, from whichever seam opens it -- an annotation
+      pipeline, the score factories, ``AlleleScore`` itself, and the
+      implementation builder that ``grr_manage`` sweeps with. The
+      spelling had warned since 2024-11 and its removal was announced
+      for this release (#781, #918, #920).
     * The ``np_score`` test-data builders (``NPScoreBuilder``,
       ``a_np_score``) are retired with the type they built (#920).
 

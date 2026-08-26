@@ -38,8 +38,12 @@ from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     build_score_from_resource,
 )
+from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
+)
+from gain.genomic_resources.resource_types import (
+    retired_resource_type_message,
 )
 from gain.genomic_resources.testing import (
     build_inmemory_test_repository,
@@ -54,7 +58,7 @@ from gain.genomic_resources.testing import (
 _UNHELPFUL_REFUSAL = "unsupported resource implementation type"
 
 _RETIRED_NP_SCORE_RESOURCE = {
-    "genomic_resource.yaml": """
+    GR_CONF_FILE_NAME: """
         type: np_score
         table:
             filename: data.mem
@@ -131,9 +135,15 @@ def test_an_annotation_pipeline_naming_a_np_score_resource_is_guided_too(
         load_pipeline_from_yaml(
             "- allele_score:\n    resource_id: retired\n", repo)
 
-    message = str(excinfo.value)
-    assert "write 'allele_score' instead" in message
-    assert "allele_score_mode: substitutions" in message
+    # Compared whole, and only here: this is the one test whose resource
+    # has an id (the others build a bare resource, whose id is empty), so
+    # it is the only one that can pin the half of the message that says
+    # WHICH resource to edit.  Substring checks alone left `found_in`
+    # unasserted -- deleting it outright kept every other test green.
+    # `test_fragment_score_config_surface` compares whole for the same
+    # reason.
+    assert retired_resource_type_message(
+        found_in="Resource 'retired'") in str(excinfo.value)
 
 
 def test_constructing_an_allele_score_from_a_np_score_resource_is_refused(

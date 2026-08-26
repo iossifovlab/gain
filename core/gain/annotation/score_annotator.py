@@ -40,7 +40,8 @@ from gain.genomic_resources.genomic_scores import (
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_types import (
-    reject_retired_resource_type,
+    PREFERRED_ALLELE_SCORE_TYPE,
+    reject_retired_resource,
 )
 from gain.genomic_resources.score_filter import ScoreFilterError
 from gain.templates import get_template
@@ -60,8 +61,7 @@ def get_genomic_resource(
     # accept, and the generic message below would only say the annotator
     # wants something else -- true, and no help to someone holding a
     # resource that worked last release (gain#920).
-    reject_retired_resource_type(
-        resource.get_type(), found_in=f"Resource {resource.get_id()}")
+    reject_retired_resource(resource)
     if resource.get_type() not in resource_types:
         raise ValueError(
             f"The {info} requires 'resource_id' to point to a "
@@ -390,7 +390,7 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
 
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
         resource = get_genomic_resource(
-            pipeline, info, {"allele_score"})
+            pipeline, info, {PREFERRED_ALLELE_SCORE_TYPE})
         self.allele_score = build_allele_score_from_resource(resource)
         self.allele_filter = None
         allele_filter_str = info.parameters.get("allele_filter")

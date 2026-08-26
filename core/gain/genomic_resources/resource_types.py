@@ -1,4 +1,13 @@
-"""Resource ``type:`` values, and the spellings that mean the same thing.
+"""Resource ``type:`` values: which spellings are accepted, and which mean
+the same thing.
+
+Two different relations live here, and they are not the same.
+``fragment_score`` and ``cnv_collection`` are *equivalent* -- either
+resolves to the same thing, one is merely deprecated.  ``np_score`` is
+*retired*: it is no longer accepted at all, and it was never equivalent to
+its replacement, since it carried a different default read mode.  The
+first relation is served by :func:`equivalent_resource_types`, the second
+by :func:`reject_retired_resource`.
 
 Deliberately dependency-free and low in the import graph.  The equivalence
 below is needed by ``repository`` (which applies the type predicate in SQL),
@@ -11,10 +20,13 @@ predicate had been missed precisely because the helper was out of reach.
 See ``docs/adr/0003-fragment-score-vocabulary.md``, superseded by
 ``docs/adr/0011-deprecate-cnv-collection-vocabulary.md``.
 """
+from typing import Protocol
+
 # `from gain import logging`, not the stdlib module: the shim bootstraps the
 # TRACE / USER_INFO levels and is what every gain module is required to use
 # (gain#373, pinned by `test_no_gain_module_uses_stdlib_logging_directly`).
-# It is the only import here, and it imports nothing from this layer.
+# It is the only gain import here, and it imports nothing from this layer;
+# `typing` is stdlib and pulls in nothing at all.
 from gain import logging
 
 #: The preferred resource ``type:`` for a fragment score.
@@ -212,25 +224,62 @@ def retired_resource_type_message(*, found_in: str) -> str:
     )
 
 
-def reject_retired_resource_type(resource_type: str, *, found_in: str) -> None:
-    """Raise if ``resource_type`` names a spelling GAIn has removed.
+class RetirableResource(Protocol):
+    """The little of a resource :func:`reject_retired_resource` needs.
 
-    Called from each seam that turns a ``type:`` string into something --
-    the score factory, ``AlleleScore`` itself, and the implementation
-    builder.  Three call sites rather than one because there is no single
-    seam they all pass through: ADR 0011 established the same thing for the
-    fragment-score warning, and the statistics scan and the annotation
-    pipeline still reach a score by routes that share no common ancestor.
+    A structural type rather than ``GenomicResource`` itself: this module
+    is deliberately dependency-free and low in the import graph (see the
+    module docstring), and ``repository`` imports *it*, so naming the
+    class here would close a cycle.
+    """
+
+    def get_type(self) -> str:
+        """Return the resource's declared ``type:``."""
+        ...
+
+    def get_full_id(self) -> str:
+        """Return the resource's id, with version where it has one."""
+        ...
+
+
+def reject_retired_resource(resource: RetirableResource) -> None:
+    """Raise if ``resource`` declares a spelling GAIn has removed.
+
+    Called from each seam that turns a ``type:`` string into something:
+    the score factory (``build_score_from_resource``), ``AlleleScore``
+    itself, the implementation builder (what ``grr_manage`` sweeps with),
+    and the annotation pipeline's resource resolver.  Four call sites
+    rather than one because there is no single seam they all pass
+    through -- ADR 0011 established the same for the fragment-score
+    warning -- and each is reachable without the others: the pipeline's
+    own type check would otherwise pre-empt this message with a generic
+    one, and the implementation builder never constructs a score at all.
+
+    Not pushed down into ``GenomicResource`` itself, which would be the
+    only common ancestor: that is also the enumeration and display path
+    (``grr_manage list``, the web API's resource-types endpoint, the
+    repository's SQL type predicate), and refusing there would abort a
+    whole run over a repository that merely *contains* a retired
+    resource.  That is the failure ADR 0011 records as the reason its
+    predecessor expired.
 
     Raising here rather than letting the entry-point lookup fail is the
-    whole point of the function.  Deleting the registration already makes
-    an ``np_score`` resource fail, but it fails as
+    whole point.  Deleting the registration already makes an ``np_score``
+    resource fail, but it fails as
     ``unsupported resource implementation type <np_score>`` -- which tells
-    a holder that GAIn does not know the type, not that GAIn removed it and
-    what to write instead.
+    a holder that GAIn does not know the type, not that GAIn removed it
+    and what to write instead.
+
+    Named by full id, matching the fragment-score notice: a repository may
+    hold several versions of one resource id, each its own directory with
+    its own config to migrate, and the bare id would name none of them
+    precisely.  Rendered only on the failure path -- this runs on every
+    resource open, including the statistics scan's per-region rebuilds.
     """
-    if resource_type == RETIRED_ALLELE_SCORE_TYPE:
-        raise ValueError(retired_resource_type_message(found_in=found_in))
+    if resource.get_type() != RETIRED_ALLELE_SCORE_TYPE:
+        return
+    raise ValueError(retired_resource_type_message(
+        found_in=f"Resource '{resource.get_full_id()}'"))
 
 
 def require_fragment_score_type(resource_type: str) -> str:

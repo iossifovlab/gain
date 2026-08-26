@@ -36,7 +36,7 @@ from .repository import (
     is_safe_repo_id,
 )
 from .resource_implementation import GenomicResourceImplementation
-from .resource_types import reject_retired_resource_type
+from .resource_types import reject_retired_resource
 
 logger = logging.getLogger(__name__)
 
@@ -859,8 +859,7 @@ def build_resource_implementation(
     # is a resource GAIn used to read, so it has to be told apart from a
     # type GAIn never knew.  Both reach the same `builder is None` below,
     # and only one of them has a migration to offer.
-    reject_retired_resource_type(
-        res.get_type(), found_in=f"Resource {res.resource_id}")
+    reject_retired_resource(res)
 
     builder = get_resource_implementation_builder(res.get_type())
     if builder is None:

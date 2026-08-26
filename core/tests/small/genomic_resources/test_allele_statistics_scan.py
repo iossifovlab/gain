@@ -49,6 +49,17 @@ _MIXED_TABLE = """
 """
 
 
+def _maybe_tabix(builder: Any, *, tabix: bool) -> Any:
+    """Put a fixture on the bulk scan path, or leave it on the per-record one.
+
+    A tabix-indexed table serves column arrays and is bulk-eligible; a plain
+    text one is not, and ``_bulk_scan_eligible`` asks exactly that.  The
+    contrast used to be drawn with a ``np_score`` resource, excluded from
+    the bulk gate by type until gain#920 removed the type.
+    """
+    return builder.with_tabix() if tabix else builder
+
+
 def _hist_conf() -> NumberHistogramConfig:
     return NumberHistogramConfig.from_dict({
         "type": "number",
@@ -259,15 +270,12 @@ _WIDE_TABLE = """
 def _wide_score(
     tmp_path: pathlib.Path, *, tabix: bool,
 ) -> GenomicResource:
-    """Build the fixture on the bulk path (``tabix``) or the per-record one."""
     builder = (
         an_allele_score()
         .with_score("score", "float")
         .with_data(_WIDE_TABLE)
     )
-    if tabix:
-        builder = builder.with_tabix()
-    return builder.build_resource(tmp_path)
+    return _maybe_tabix(builder, tabix=tabix).build_resource(tmp_path)
 
 
 @pytest.mark.parametrize("tabix", [True, False])
@@ -310,16 +318,13 @@ _KEYLESS_TABLE = """
 def _keyless_score(
     tmp_path: pathlib.Path, *, tabix: bool,
 ) -> GenomicResource:
-    """Build the fixture on the bulk path (``tabix``) or the per-record one."""
     builder = (
         an_allele_score()
         .with_score("score", "float")
         .without_key_columns("reference", "alternative")
         .with_data(_KEYLESS_TABLE)
     )
-    if tabix:
-        builder = builder.with_tabix()
-    return builder.build_resource(tmp_path)
+    return _maybe_tabix(builder, tabix=tabix).build_resource(tmp_path)
 
 
 @pytest.mark.parametrize("tabix", [True, False])
@@ -435,16 +440,13 @@ _ALT_ONLY_TABLE = """
 def _alt_only_score(
     tmp_path: pathlib.Path, *, tabix: bool,
 ) -> GenomicResource:
-    """Build the fixture on the bulk path (``tabix``) or the per-record one."""
     builder = (
         an_allele_score()
         .with_score("score", "float")
         .without_key_columns("reference")
         .with_data(_ALT_ONLY_TABLE)
     )
-    if tabix:
-        builder = builder.with_tabix()
-    return builder.build_resource(tmp_path)
+    return _maybe_tabix(builder, tabix=tabix).build_resource(tmp_path)
 
 
 def test_a_table_declaring_only_one_key_column_is_still_bulk_served(

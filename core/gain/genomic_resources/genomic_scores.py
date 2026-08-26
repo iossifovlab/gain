@@ -62,7 +62,7 @@ from gain.genomic_resources.resource_types import (
     LEGACY_FRAGMENT_SCORE_TYPE,
     PREFERRED_ALLELE_SCORE_TYPE,
     PREFERRED_FRAGMENT_SCORE_TYPE,
-    reject_retired_resource_type,
+    reject_retired_resource,
     warn_deprecated_spelling,
 )
 from gain.genomic_resources.score_def import (
@@ -2371,12 +2371,12 @@ class AlleleScore(GenomicScore):
         # here, so it earns a message naming its replacement rather than
         # the generic "should be of 'allele_score' type" a never-supported
         # type gets (gain#920).
-        reject_retired_resource_type(
-            resource.get_type(), found_in=f"Resource {resource.get_id()}")
+        reject_retired_resource(resource)
         if resource.get_type() != PREFERRED_ALLELE_SCORE_TYPE:
             raise ValueError(
                 "The resource provided to AlleleScore should be of "
-                f"'allele_score' type, not a '{resource.get_type()}'")
+                f"'{PREFERRED_ALLELE_SCORE_TYPE}' type, "
+                f"not a '{resource.get_type()}'")
         super().__init__(resource)
         allele_score_mode = self.config.get("allele_score_mode")
         if allele_score_mode is None:
@@ -2385,7 +2385,7 @@ class AlleleScore(GenomicScore):
             # substitutions while `allele_score` defaults to alleles; with
             # `np_score` removed (gain#920) there is nothing left to ask.
             # That difference is why the removal is not a plain rename, and
-            # `reject_retired_resource_type` says so.
+            # `reject_retired_resource` says so.
             self.mode = AlleleScore.Mode.ALLELES
         else:
             self.mode = AlleleScore.Mode.from_name(allele_score_mode)
@@ -3107,8 +3107,7 @@ def build_score_from_resource(
     score it gets back and closing it affects nothing else.
     """
     resource_type = resource.get_type()
-    reject_retired_resource_type(
-        resource_type, found_in=f"Resource {resource.get_id()}")
+    reject_retired_resource(resource)
     if resource_type == "position_score":
         return build_position_score_from_resource(resource)
     if resource_type == PREFERRED_ALLELE_SCORE_TYPE:
