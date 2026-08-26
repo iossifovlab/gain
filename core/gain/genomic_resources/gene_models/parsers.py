@@ -56,28 +56,68 @@ def _parse_exon_positions(
     carries in columns of their own.
 
     The quoted cell is what pandas made of the column, not the file's own
-    bytes: a blank cell reads back as ``''``, and so does every other
-    spelling pandas takes for a missing value, ``NA`` and ``NULL`` among
-    them, which this message therefore cannot tell apart (gain#931). The
-    ``int`` failure stays on the chain, so the offending token survives
-    the truncation.
-
-    ``value`` is annotated ``Any`` rather than ``object`` because
-    ``pd.isna`` has no overload for the latter.
+    bytes -- see `_cell_text`. The ``int`` failure stays on the chain, so
+    the offending token survives the truncation.
     """
     # This runs once per record per column on files that reach into the
     # hundreds of thousands of records, so the well-formed cell -- a
     # string, always -- takes the cheapest path through, and the message
     # is not built until there is a message to build.
-    text = value if isinstance(value, str) else \
-        "" if pd.isna(value) else str(value)
+    text = _cell_text(value)
     try:
         return list(map(int, text.strip(",").split(",")))
     except ValueError as ex:
-        raise ValueError(
-            f"transcript {tr_name} at {chrom} has an unparsable "
-            f"{column} column: {text[:_QUOTED_TEXT_LIMIT]!r}",
-        ) from ex
+        raise _unparsable(column, tr_name, chrom, text) from ex
+
+
+def _cell_text(value: Any) -> str:
+    """Render what pandas made of a cell as the text the file held.
+
+    A blank cell arrives as a float ``NaN`` and reads back as ``''``, and
+    so does every other spelling pandas takes for a missing value, ``NA``
+    and ``NULL`` among them, which the messages built from this therefore
+    cannot tell apart (gain#931).
+
+    ``value`` is annotated ``Any`` rather than ``object`` because
+    ``pd.isna`` has no overload for the latter.
+    """
+    return value if isinstance(value, str) else \
+        "" if pd.isna(value) else str(value)
+
+
+def _unparsable(
+    column: str, tr_name: object, chrom: object, text: str,
+) -> ValueError:
+    """Report a cell that a record cannot be built from."""
+    return ValueError(
+        f"transcript {tr_name} at {chrom} has an unparsable "
+        f"{column} column: {text[:_QUOTED_TEXT_LIMIT]!r}",
+    )
+
+
+def _parse_coordinate(
+    value: Any, column: str, tr_name: object, chrom: object,
+) -> int:
+    """Read a single coordinate column, naming its record.
+
+    The columnar layouts already wrapped these in ``int()``, which does
+    reject a blank cell -- but as ``cannot convert float NaN to
+    integer``, naming neither the record nor the column, and the gain#856
+    ledger then offers that to the reader as the reason a format was
+    rejected. The default format did not convert at all, so a blank cell
+    became a transcript bound of ``NaN`` (gain#929).
+
+    A cell pandas has already typed as a number is converted from the
+    number rather than from its text, because that is what the parsers
+    did before this guard: a column spelled ``100.0`` throughout is
+    typed float, and ``int(100.0)`` is what kept it parsing.
+    """
+    text = _cell_text(value)
+    try:
+        return int(value) if text and not isinstance(value, str) \
+            else int(text)
+    except (TypeError, ValueError) as ex:
+        raise _unparsable(column, tr_name, chrom, text) from ex
 
 
 def _parse_exon_bounds(
@@ -95,6 +135,24 @@ def _parse_exon_bounds(
         rec["exonEnds"], "exonEnds", tr_name, chrom)
     assert len(exon_starts) == len(exon_ends)
     return exon_starts, exon_ends
+
+
+def _parse_transcript_bounds(
+    rec: dict, tr_name: object, chrom: object,
+) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Read the transcript and coding bounds of a columnar record.
+
+    The five UCSC-derived layouts spell these four columns the same way
+    and share the half-open convention that shifts each start by one, so
+    they share this rather than repeating it between them (gain#941).
+    """
+    tx = (
+        _parse_coordinate(rec["txStart"], "txStart", tr_name, chrom) + 1,
+        _parse_coordinate(rec["txEnd"], "txEnd", tr_name, chrom))
+    cds = (
+        _parse_coordinate(rec["cdsStart"], "cdsStart", tr_name, chrom) + 1,
+        _parse_coordinate(rec["cdsEnd"], "cdsEnd", tr_name, chrom))
+    return tx, cds
 
 
 def parse_default_gene_models_format(
@@ -172,8 +230,12 @@ def parse_default_gene_models_format(
             tr_name=line["trOrigId"],
             chrom=line["chr"],
             strand=line["strand"],
-            tx=(line["tsBeg"], line["txEnd"]),
-            cds=(line["cdsStart"], line["cdsEnd"]),
+            tx=(_parse_coordinate(line["tsBeg"], "tsBeg", tr_name, chrom),
+                _parse_coordinate(line["txEnd"], "txEnd", tr_name, chrom)),
+            cds=(_parse_coordinate(
+                     line["cdsStart"], "cdsStart", tr_name, chrom),
+                 _parse_coordinate(
+                     line["cdsEnd"], "cdsEnd", tr_name, chrom)),
             exons=exons,
             attributes=attributes,
         )
@@ -220,9 +282,8 @@ def parse_ref_flat_gene_models_format(
         tr_name = rec["name"]
         chrom = rec["chrom"]
         strand = rec["strand"]
-        tx = (  # pylint: disable=invalid-name
-            int(rec["txStart"]) + 1, int(rec["txEnd"]))
-        cds = (int(rec["cdsStart"]) + 1, int(rec["cdsEnd"]))
+        tx, cds = _parse_transcript_bounds(  # pylint: disable=invalid-name
+            rec, tr_name, chrom)
 
         exon_starts, exon_ends = _parse_exon_bounds(
             rec, tr_name, chrom)
@@ -296,9 +357,8 @@ def parse_ref_seq_gene_models_format(
         tr_name = rec["name"]
         chrom = rec["chrom"]
         strand = rec["strand"]
-        tx = (  # pylint: disable=invalid-name
-            int(rec["txStart"]) + 1, int(rec["txEnd"]))
-        cds = (int(rec["cdsStart"]) + 1, int(rec["cdsEnd"]))
+        tx, cds = _parse_transcript_bounds(  # pylint: disable=invalid-name
+            rec, tr_name, chrom)
 
         exon_starts, exon_ends = _parse_exon_bounds(
             rec, tr_name, chrom)
@@ -438,9 +498,8 @@ def parse_ccds_gene_models_format(
         tr_name = rec["name"]
         chrom = rec["chrom"]
         strand = rec["strand"]
-        tx = (  # pylint: disable=invalid-name
-            int(rec["txStart"]) + 1, int(rec["txEnd"]))
-        cds = (int(rec["cdsStart"]) + 1, int(rec["cdsEnd"]))
+        tx, cds = _parse_transcript_bounds(  # pylint: disable=invalid-name
+            rec, tr_name, chrom)
 
         exon_starts, exon_ends = _parse_exon_bounds(
             rec, tr_name, chrom)
@@ -523,9 +582,8 @@ def parse_known_gene_models_format(
         tr_name = rec["name"]
         chrom = rec["chrom"]
         strand = rec["strand"]
-        tx = (  # pylint: disable=invalid-name
-            int(rec["txStart"]) + 1, int(rec["txEnd"]))
-        cds = (int(rec["cdsStart"]) + 1, int(rec["cdsEnd"]))
+        tx, cds = _parse_transcript_bounds(  # pylint: disable=invalid-name
+            rec, tr_name, chrom)
 
         exon_starts, exon_ends = _parse_exon_bounds(
             rec, tr_name, chrom)
@@ -645,9 +703,8 @@ def parse_ucscgenepred_models_format(
         tr_name = rec["name"]
         chrom = rec["chrom"]
         strand = rec["strand"]
-        tx = (  # pylint: disable=invalid-name
-            int(rec["txStart"]) + 1, int(rec["txEnd"]))
-        cds = (int(rec["cdsStart"]) + 1, int(rec["cdsEnd"]))
+        tx, cds = _parse_transcript_bounds(  # pylint: disable=invalid-name
+            rec, tr_name, chrom)
 
         exon_starts, exon_ends = _parse_exon_bounds(
             rec, tr_name, chrom)
