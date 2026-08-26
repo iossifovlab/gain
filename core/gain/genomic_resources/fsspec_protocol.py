@@ -887,9 +887,19 @@ class FsspecReadOnlyProtocol(
         # are safe for narrower reasons: the url fields are derived from the
         # memo key, so they cannot differ; ``public_url`` and the filesystem
         # keywords are what ``__new__`` refuses a rebuild over; ``filesystem``
-        # is a freshly built but equivalent object, because every construction
-        # in the tree routes through ``build_fsspec_protocol``, which derives
-        # it from the key and those keywords. ``kwargs`` as a whole is NOT
+        # is a freshly built but equivalent object, because every production
+        # construction in the tree routes through ``build_fsspec_protocol``,
+        # which derives it from the key and those keywords.
+        #
+        # One test helper is deliberately outside that:
+        # ``testing.build_faulty_test_protocol`` hands in a scripted
+        # filesystem of its own, for which a rebind would NOT be equivalent
+        # -- it would give the incumbent's holders a filesystem scripted by
+        # somebody else. Nothing here can refuse that, because the rebuild
+        # guard compares the credential keywords and the public url and a
+        # filesystem instance has no value equality to compare; the helper
+        # closes it instead, by refusing to build twice over one root. See
+        # ADR 0021 and #874. ``kwargs`` as a whole is NOT
         # equal -- a keyword the protocol never reads (the factory's
         # ``cache_dir``) may differ, and the second caller's value wins.
         # Nothing reads those, and rebinding a reference is atomic, so a

@@ -124,6 +124,37 @@ gives docstrings that predate their rule. No standalone rewrite sweep:
 those tests are green and hardened, and a wholesale rewrite risks more than
 it buys.
 
+**A fault injected *at* the filesystem is its own tier, and stays
+`inmemory`-only.** The two-condition rule above governs faults injected
+*above* the filesystem boundary. It does not reach the tests introduced with
+the wrapper itself (#874): their fault sits at the boundary, failing
+condition 1, and about half of them also read destination-store state,
+failing condition 2 as well. Read literally the rule would demand a remote
+arm for those, which the construction pattern cannot supply anyway -- a
+directly-constructed protocol handed a scripted filesystem bypasses
+`build_fsspec_protocol` and with it the whole `grr_scheme` parametrization.
+
+That inability is the honest reason they are single-scheme, and it is
+sufficient. The tempting stronger claim -- that a real store could add no
+fidelity, because the wrapper rather than the backend decides what the
+protocol sees -- is *not* true in general, and the wrapper's own tests
+contain the counterexample. `MemoryFileSystem` commits an object at `open`,
+so a scripted close-failure leaves a real `.part` behind and the cleanup
+takes its `rm`-succeeds branch; on s3fs, where `close` is where the upload
+completes, the same fault would leave nothing at that path and the cleanup
+would take its `FileNotFoundError` branch instead. The assertion holds
+either way, so nothing is wrong with the test -- but the production code it
+runs through is not identical, and this ADR should not pretend otherwise
+thirty lines above where it cites `mv` being copy+delete on an object store
+as a reason to keep an arm.
+
+So the tier is defined by what the fault replaces, and bounded by candour
+about the cost. A test that lets the store answer for itself and observes
+what it says keeps its remote arm. A test that replaces the store's answer
+at the filesystem seam cannot have one, and gives up whatever store-specific
+branch that answer would have selected. Where that branch is the point of
+the test, the test does not belong in this tier.
+
 ## Why scoped this way
 
 The rule is deliberately conservative — two conditions, both required,
@@ -160,6 +191,13 @@ this: the rule governs which tests *carry* the marks, not what the marks do.
   make obvious, which tier it belongs to and why. A test that mocks at the
   Python level *and* asserts on store state is legal — it just cannot drop
   its remote arms.
+- Where a fault is injected is now a tiering input, not just an
+  implementation detail. A fault above the filesystem tiers by the
+  two-condition rule -- the judgement call. A fault *at* the filesystem is
+  `inmemory`-only, decided by construction rather than by judgement, and a
+  reviewer can check it by looking at what the test scripts. The price is
+  stated above: those tests cannot exercise a store-specific branch, so a
+  behaviour that only a real backend selects has to be tested elsewhere.
 - `memory://`-backed unit tests still cannot touch tabix/VCF/bigwig opens;
   htslib-facing behavior stays in the real-scheme tier by construction, and
   nothing in this decision pretends otherwise.

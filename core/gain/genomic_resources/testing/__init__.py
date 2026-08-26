@@ -34,6 +34,7 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceProtocolRepo,
 )
+from gain.genomic_resources.testing.faulty_filesystem import FaultyFileSystem
 
 logger = logging.getLogger(__name__)
 
@@ -380,6 +381,67 @@ def build_inmemory_test_protocol(
     with tempfile.TemporaryDirectory("embedded_test_protocol") as root_path:
         return build_inmemory_protocol(
             _derive_test_proto_id(root_path), root_path, content)
+
+
+#: Roots :func:`build_faulty_test_protocol` has already been asked for.
+#: Never evicted, and process-wide, because the protocol memo it guards
+#: is too -- a root released here would be answered by the memo, not
+#: rebuilt.
+_FAULTY_TEST_PROTOCOL_ROOTS: set[str] = set()
+
+
+def build_faulty_test_protocol(
+        root_path: pathlib.Path,
+        content: dict[str, Any] | None = None,
+) -> tuple[FsspecReadWriteProtocol, FaultyFileSystem]:
+    """Build a protocol whose filesystem can be scripted to fail.
+
+    The protocol is constructed directly, with its filesystem handed to it,
+    rather than through :func:`build_fsspec_protocol` -- that builder makes
+    a filesystem of its own from the url and would drop the scripted one.
+
+    ``root_path`` is what keeps one test's scripted filesystem out of the
+    next one's protocol. Protocols are memoized on ``(proto_id, url)`` and
+    a rebuild re-runs ``__init__`` on the live instance, rebinding its
+    ``filesystem``: two tests sharing a root would share one protocol, and
+    the second test's script would be answering the first test's holder.
+    A per-test ``tmp_path`` gives both halves of the key their uniqueness,
+    the same discipline :func:`build_filesystem_test_protocol` follows.
+
+    ``content``, when given, populates the repository *before* anything is
+    scripted, so a test scripts faults onto a repository that is already
+    whole.
+
+    Returns the protocol and its filesystem, because the filesystem is what
+    a test scripts and ``proto.filesystem`` is typed as the fsspec base.
+
+    A root is refused the second time it is asked for. Nothing else would
+    catch the mistake: ``_refuse_a_reconfiguring_rebuild`` compares the
+    credential kwargs and the public url, not ``filesystem``, so a repeat
+    root is answered with the incumbent protocol carrying the *new*
+    script -- a silent wrong-reason pass rather than an error. The natural
+    slip is wanting a source and a destination and reaching for
+    ``tmp_path`` for both; give them ``tmp_path / "src"`` and
+    ``tmp_path / "dst"``.
+    """
+    root = str(root_path)
+    if root in _FAULTY_TEST_PROTOCOL_ROOTS:
+        raise ValueError(
+            f"a faulty test protocol was already built over {root}; "
+            f"protocols are memoized on (proto_id, url) and a rebuild "
+            f"rebinds the filesystem of the instance the first caller "
+            f"still holds -- give this one a root of its own, e.g. a "
+            f"subdirectory of the test's tmp_path")
+    _FAULTY_TEST_PROTOCOL_ROOTS.add(root)
+
+    filesystem = FaultyFileSystem()
+    proto = FsspecReadWriteProtocol(
+        _derive_test_proto_id(root), f"memory://{root}",
+        filesystem=filesystem)
+    if content:
+        copy_proto_genomic_resources(
+            proto, build_inmemory_test_protocol(content))
+    return proto, filesystem
 
 
 def build_inmemory_test_repository(
