@@ -19,14 +19,22 @@ Both are covered for every format, because the offending lines are
 copies of one another (gain#941).
 """
 
+from dataclasses import replace
+
 import pytest
+from gain.genomic_resources.gene_models.parsers import (
+    infer_gene_models_format,
+)
 
 from tests.small.genomic_resources.gene_models.columnar_formats import (
     BAD_NAME,
     BAD_RECORD,
     CHROM,
+    DEFAULT,
     FORMAT_IDS,
     FORMATS,
+    GOOD_NAME,
+    REFSEQ,
     ColumnarFormat,
 )
 
@@ -110,4 +118,103 @@ def test_no_transcript_id_is_invented_from_a_blank_name(
     except ValueError:
         transcript_models = {}
 
-    assert [tr_id for tr_id in transcript_models if "nan" in tr_id] == []
+    # str(): without the guard the default format's id is not even a
+    # string -- it is the float NaN itself, keying the returned mapping.
+    assert [
+        tr_id for tr_id in transcript_models if "nan" in str(tr_id)
+    ] == []
+
+
+@pytest.mark.parametrize("fmt", FORMATS, ids=FORMAT_IDS)
+def test_a_blank_strand_names_the_record(fmt: ColumnarFormat) -> None:
+    """A strand is load-bearing the way a coordinate is.
+
+    It reaches `update_frames()`, so a record with no strand does not
+    merely carry an odd value -- its exon frames are computed as if from
+    a strand, and the output is quietly wrong rather than missing.
+
+    Both identifying columns are readable by the time this is reached, so
+    it is reported the way the coordinate columns are.
+    """
+    with pytest.raises(
+            ValueError,
+            match=(
+                f"transcript {BAD_NAME} at {CHROM} "
+                f"has a blank strand column"
+            )):
+        fmt.parse(fmt.file_with("strand", ""))
+
+
+def test_a_blank_original_transcript_name_names_the_record() -> None:
+    """`trOrigId` is a transcript-name column too.
+
+    Only gain's own format carries it, and only when the file was written
+    with one; the parser fills it from `trID` otherwise. A blank cell in
+    a file that does carry the column reaches serialization as the token
+    `nan`, exactly as a blank `trID` would.
+    """
+    columns = (*DEFAULT.columns, "trOrigId")
+    fields = (*DEFAULT.fields, GOOD_NAME)
+    with_orig_id = replace(DEFAULT, columns=columns, fields=fields)
+
+    with pytest.raises(
+            ValueError,
+            match=(
+                f"transcript {BAD_NAME} at {CHROM} "
+                f"has a blank trOrigId column"
+            )):
+        with_orig_id.parse(with_orig_id.file_with("trOrigId", ""))
+
+
+@pytest.mark.parametrize("fmt", FORMATS, ids=FORMAT_IDS)
+def test_mismatched_exon_columns_name_the_record(
+    fmt: ColumnarFormat,
+) -> None:
+    """A record with more exon starts than ends is malformed too.
+
+    Every parser checked this with a bare `assert`, which carries no
+    message -- and the gain#856 ledger, which renders whatever a parser
+    raised, therefore offered the reader `AssertionError (no message)` as
+    the reason a format was rejected.
+    """
+    with pytest.raises(
+            ValueError,
+            match=(
+                f"transcript {BAD_NAME} at {CHROM} has mismatched exon "
+                f"columns: exonStarts has 2, exonEnds has 1"
+            )):
+        fmt.parse(fmt.file_with("exonEnds", "200"))
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("chrom", ""),
+        ("name", ""),
+        ("strand", ""),
+        ("txStart", ""),
+        ("cdsEnd", "not-a-coordinate"),
+        ("exonEnds", "200"),
+    ],
+    ids=["chrom", "name", "strand", "txStart", "cdsEnd", "exonEnds"],
+)
+def test_the_rejection_ledger_never_says_no_message(
+    column: str, value: str,
+) -> None:
+    """The reader meets these messages through the gain#856 ledger.
+
+    Format inference catches whatever a parser raises and reports it as
+    the reason that format lost, so a message-less exception reaches the
+    reader as `AssertionError (no message)` -- which reads as a bug in
+    gain rather than as a malformed file. Every refusal added here has to
+    survive that rendering, so it is checked there rather than only at
+    the parser.
+    """
+    inference = infer_gene_models_format(REFSEQ.file_with(column, value))
+
+    assert inference.file_format is None
+    reason = dict(inference.rejected)["refseq"]
+    assert "no message" not in reason
+    assert reason.startswith("ValueError: ")
+    assert BAD_NAME in reason or f"record {BAD_RECORD}" in reason
+    assert "no message" not in inference.report()
