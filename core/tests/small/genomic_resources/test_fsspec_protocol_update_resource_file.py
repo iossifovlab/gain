@@ -214,7 +214,7 @@ class _ShortReadFile:
         return chunk
 
 
-@pytest.mark.grr_rw
+@pytest.mark.grr_local
 def test_copy_resource_file_raises_truncated_download_on_short_read(
         content_fixture: dict[str, Any],
         fsspec_proto: FsspecReadWriteProtocol,
@@ -328,7 +328,7 @@ class _CorruptingFile:
         return bytes(b ^ 0xFF for b in chunk)
 
 
-@pytest.mark.grr_rw
+@pytest.mark.grr_local
 def test_copy_resource_file_checksum_mismatch_records_size(
         content_fixture: dict[str, Any],
         fsspec_proto: FsspecReadWriteProtocol,
@@ -624,7 +624,7 @@ class _PartialThenStallingFile:
         return chunk
 
 
-@pytest.mark.grr_rw
+@pytest.mark.grr_local
 def test_copy_resource_file_on_bytes_rolls_back_on_retry(
         content_fixture: dict[str, Any],
         fsspec_proto: FsspecReadWriteProtocol,
@@ -677,7 +677,7 @@ def test_copy_resource_file_on_bytes_rolls_back_on_retry(
     assert sum(deltas) == expected_size
 
 
-@pytest.mark.grr_rw
+@pytest.mark.grr_local
 def test_copy_resource_file_raises_after_retries_exhausted(
         content_fixture: dict[str, Any],
         fsspec_proto: FsspecReadWriteProtocol,

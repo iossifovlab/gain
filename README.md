@@ -145,7 +145,7 @@ pytest -v -n 10 tests/
 
 Test markers and configuration are defined in
 `core/pytest.ini` (e.g., `grr_rw`, `grr_ro`,
-`grr_full`, `grr_http`, `grr_tabix`). Tests tagged
+`grr_full`, `grr_http`, `grr_tabix`, `grr_local`). Tests tagged
 `grr_http` / `grr_full` need fixture services from
 `docker-compose.yaml` running locally
 (`docker compose up -d`) and are gated behind

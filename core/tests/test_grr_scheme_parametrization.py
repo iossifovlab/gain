@@ -13,6 +13,7 @@ REPRESENTATIVE_MARKS = [
     ["grr_full"],
     ["grr_http"],
     ["grr_tabix"],
+    ["grr_local"],
     ["grr_rw", "grr_tabix"],
     ["grr_full", "grr_http"],
 ]
@@ -33,6 +34,17 @@ def test_grr_full_mark_narrows_to_the_full_rw_schemes() -> None:
         ([], True, False, ["file", "inmemory", "s3"]),
         ([], False, True, ["file", "http", "inmemory"]),
         ([], True, True, ["file", "http", "inmemory", "s3"]),
+        # An unmarked test broadens to every *enabled* scheme, so deleting a
+        # mark cannot de-tier a test; grr_local is what narrows one, under
+        # every gate combination. See docs/adr/0021-*.md and gain#875.
+        (["grr_local"], False, False, ["file", "inmemory"]),
+        (["grr_local"], True, False, ["file", "inmemory"]),
+        (["grr_local"], False, True, ["file", "inmemory"]),
+        (["grr_local"], True, True, ["file", "inmemory"]),
+        # It contributes schemes like the rest of the family, so combining it
+        # with a paid mark widens rather than narrows. Nothing does that today.
+        (["grr_local", "grr_tabix"], True, True, ["file", "http", "inmemory",
+                                                  "s3"]),
         (["grr_rw"], False, False, ["file", "inmemory"]),
         (["grr_rw"], True, True, ["file", "inmemory", "s3"]),
         (["grr_full"], True, False, ["file", "s3"]),

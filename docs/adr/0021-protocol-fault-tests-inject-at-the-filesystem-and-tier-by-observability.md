@@ -172,8 +172,19 @@ single plain test — that collapse is part of the lazy rewrite, not of mark
 surgery, so #875 stays mechanically reviewable.
 
 The scheme parametrization machinery itself (`grr_schemes_for_marks`, the
-`--enable-s3-testing`/`--enable-http-testing` gates) is untouched by all of
-this: the rule governs which tests *carry* the marks, not what the marks do.
+`--enable-s3-testing`/`--enable-http-testing` gates) needs one addition: a
+mark that narrows a test to the free schemes. The rule still governs which
+tests *carry* the marks rather than what the marks do.
+
+*Amended by gain#875:* this paragraph originally claimed the machinery was
+untouched, on the assumption that an unmarked test falls back to
+`file`+`inmemory`. It does not. The marks are narrowing intersections, not
+expansions — selection starts from every *enabled* scheme and intersects
+only when a mark contributes schemes — so an unmarked test broadens to
+everything the gates turn on. Deleting a mark de-tiers nothing; under both
+gates it keeps `[s3]` and *adds* an `[http]` arm, which for these tests is a
+read-only protocol that cannot serve `copy_resource_file` at all. No
+existing mark narrowed to the free schemes, so #875 added `grr_local`.
 
 ## Consequences
 
