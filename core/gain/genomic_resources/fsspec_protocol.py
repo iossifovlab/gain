@@ -158,6 +158,30 @@ class TruncatedDownloadError(OSError):
     """
 
 
+class CorruptedPublishError(OSError):
+    """A published object that differs in size from the verified download.
+
+    The download hashes and size-checks every byte it writes *before*
+    publishing, so both of those checks describe the temp file, not the
+    object the move actually landed. A move that publishes something else
+    -- a partial object-store copy, a rename that loses the tail -- would
+    otherwise be recorded under the digest of bytes that are no longer
+    stored: the state's size and timestamp come from the published object
+    and so agree with it, its md5 comes from the download and so agrees
+    with the manifest, and every later cache verdict passes. The file is
+    then served corrupt indefinitely (gain#880).
+
+    Only size-changing corruption is caught. Recomputing the digest from
+    the published object would catch the rest, but that is a second full
+    read of every downloaded file -- for a remote store, a second transfer
+    -- which is exactly the cost gain#865 removed. Detecting same-size
+    corruption is a deliberate non-goal here.
+
+    Retryable, like its siblings: the remedy is to download and publish the
+    file again, which the per-file retry loop already does.
+    """
+
+
 # aiohttp.ClientError is folded into the retryable set when aiohttp is
 # importable (it always is when an HTTP GRR is used).
 try:
@@ -177,6 +201,7 @@ _RETRYABLE_COPY_ERRORS: tuple[type[BaseException], ...] = (
     ConnectionError,
     TruncatedDownloadError,
     ChecksumMismatchError,
+    CorruptedPublishError,
     *_aiohttp_errors,
 )
 
@@ -1929,6 +1954,13 @@ class FsspecReadWriteProtocol(
         such, with both byte counts, rather than as an opaque checksum
         mismatch.
 
+        Both of those checks describe the temp file. The publish is
+        verified once more after the move -- the published object's size
+        must equal the number of bytes just verified -- because the digest
+        is carried over from the download rather than recomputed from the
+        store, and would otherwise be recorded against bytes that are no
+        longer there (gain#880).
+
         ``on_bytes``, when given, is called with the length of each chunk
         right after it is written, to drive a byte-level progress bar
         (see gain#77).
@@ -1977,6 +2009,19 @@ class FsspecReadWriteProtocol(
 
             self.filesystem.mv(tmp_filepath, dest_filepath)
             published = True
+
+            # Everything checked so far describes the temp file. Confirm
+            # the move landed that many bytes before the digest it was
+            # checked with is recorded against the published object
+            # (gain#880). The stat is the one the state needs anyway.
+            published_size = self.get_resource_file_size(
+                dest_resource, filename)
+            if published_size != bytes_written:
+                raise CorruptedPublishError(
+                    f"file publish is corrupt "
+                    f"{dest_resource.resource_id} ({filename}); "
+                    f"verified {bytes_written} bytes, "
+                    f"published {published_size}")
         finally:
             if not published:
                 self._discard_partial_download(tmp_filepath)
@@ -1984,7 +2029,8 @@ class FsspecReadWriteProtocol(
         state = self.build_resource_file_state(
             dest_resource,
             filename,
-            md5=md5)
+            md5=md5,
+            size=published_size)
 
         self.save_resource_file_state(dest_resource, state)
 
