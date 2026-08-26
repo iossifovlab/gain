@@ -109,12 +109,25 @@ def parse_coordinate(
     here only on the read path that infers a float column, so without it
     the two paths report the same file differently -- and the one that
     escaped named neither the record nor the column.
+
+    This runs four times per record on files reaching into the hundreds
+    of thousands, so the numeric cell -- the common one, since nothing
+    pins these columns to a string dtype -- converts straight from the
+    number, and its text is built only if there turns out to be a
+    message to build.
     """
-    text = cell_text(value)
+    if isinstance(value, str):
+        text = value
+    elif pd.isna(value):
+        text = ""
+    else:
+        try:
+            return int(value)
+        except (TypeError, ValueError, OverflowError) as ex:
+            raise unparsable(column, tr_name, chrom, str(value)) from ex
     try:
-        return int(value) if text and not isinstance(value, str) \
-            else int(text)
-    except (TypeError, ValueError, OverflowError) as ex:
+        return int(text)
+    except ValueError as ex:
         raise unparsable(column, tr_name, chrom, text) from ex
 
 
@@ -214,14 +227,21 @@ def require_equal_exon_counts(
     as the reason a format was rejected was ``AssertionError (no
     message)``. Naming the record and the counts costs nothing and is the
     whole of what the reader needed.
+
+    The counts themselves are only tallied once they disagree: this runs
+    once per record, and the records that reach it agree.
     """
+    lengths = iter(columns.values())
+    expected = len(next(lengths))
+    if all(len(values) == expected for values in lengths):
+        return
+
     counts = {column: len(values) for column, values in columns.items()}
-    if len(set(counts.values())) > 1:
-        raise ValueError(
-            f"transcript {tr_name} at {chrom} has mismatched exon "
-            "columns: " + ", ".join(
-                f"{column} has {count}" for column, count in counts.items()),
-        )
+    raise ValueError(
+        f"transcript {tr_name} at {chrom} has mismatched exon "
+        "columns: " + ", ".join(
+            f"{column} has {count}" for column, count in counts.items()),
+    )
 
 
 def parse_transcript_bounds(
