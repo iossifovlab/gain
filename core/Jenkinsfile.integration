@@ -102,7 +102,10 @@ pipeline {
         // mode, iossifovlab/grr-sync#20) and provisioned per agent by
         // seqpipe/infra#71 -- where it is NOT a uniform path: /tank/grr on
         // pooh (a dedicated ZFS dataset), /data/grr on the LVM agents. This
-        // job's label is `!dory`, so it can land on any of them. Resolve
+        // job's label is `builder`, so it can land on any of them — dory
+        // included: the `!dory` exclusion this comment used to name was
+        // retired in the builder-label sweep (#802), and reading it as still
+        // in force is what made gain#921 look impossible. Resolve
         // per-node: honour an explicit GRR_ROOT from the agent's node
         // environment if set, else auto-detect the first candidate that
         // exists. The `GRR pre-flight` stage then asserts grr_seqpipe
@@ -154,11 +157,47 @@ pipeline {
         // were byte-for-byte #345's numbers. A build that ran no tests must
         // report no tests, so the stale report is cleared before anything that
         // can fail. `web_e2e/Jenkinsfile.e2e` already orders its own
-        // `Prepare workspace` this way; this is the same ordering, not a new
+        // `Wipe workspace` this way; this is the same ordering, not a new
         // idea.
-        stage('Prepare workspace') {
+        //
+        // Staying ahead of `Checkout` is now load-bearing for a second
+        // reason: on a workspace with no git repo the git plugin wipes the
+        // whole workspace itself, as the agent user, and one root-owned
+        // leftover makes that throw `Failed to delete workspace`. Clearing
+        // such a leftover here is what keeps the build alive to reach it.
+        //
+        // Creating the artefact directory, though, has to happen AFTER
+        // `Checkout` -- that same wipe deletes anything made before it, which
+        // is how gain#917 broke the sibling job. It lives next to its one
+        // consumer in `Integration tests` instead.
+        stage('Wipe workspace') {
             steps {
-                sh 'rm -rf reports && mkdir -p reports/integration'
+                // `rm -rf` as the agent user is enough right up until a
+                // previous build leaves something root-owned, and this job
+                // manufactures exactly that: dockerd creates a MISSING bind
+                // source as root:root, so the first build in a cold
+                // workspace hands `reports/` to root. Unlinking a child
+                // needs write on that parent, so every later build in that
+                // workspace died here with `rm: cannot remove
+                // 'reports/integration': Permission denied` -- permanently,
+                // until an operator cleaned the host (gain#921, which hit
+                // dory's main workspace and totoro's @2).
+                //
+                // The container removes it as root, the way
+                // `web_e2e/Jenkinsfile.e2e` does. It is a FALLBACK rather
+                // than the default deliberately: pulling `alpine` would put
+                // Docker Hub in the path of a stage that otherwise touches
+                // no network, and a Hub timeout would then fail a build
+                // whose tests are fine -- the shape that already bites
+                // `gpf`'s unguarded `docker pull`. So the happy path stays
+                // local, and root is only involved when there is genuinely
+                // root-owned state to remove. `rm -rf` on an absent path
+                // succeeds, so a cold workspace does not reach for it.
+                sh '''
+                    rm -rf reports \
+                        || docker run --rm -v "$PWD:/wd" -w /wd alpine \
+                               rm -rf reports
+                '''
             }
         }
 
@@ -311,6 +350,18 @@ pipeline {
             when { expression { env.SUPERSEDED != 'true' } }
             steps {
                 sh '''
+                    # Create the bind source as the agent user, immediately
+                    # before the run that consumes it. dockerd creates a
+                    # MISSING one as root:root, and that root-owned directory
+                    # is what wedges every subsequent build in this workspace
+                    # (gain#921) -- so the fix is simply to never let it be
+                    # missing. It cannot live in `Wipe workspace`: that runs
+                    # before `Checkout`, whose cold-workspace clone path
+                    # deletes the whole workspace (gain#917). Keeping it in
+                    # the same script as the `docker run` is what stops the
+                    # two drifting apart again.
+                    mkdir -p reports/integration
+
                     # The image WORKDIR is /workspace/core, so tests/integration
                     # resolves relative to it.
                     #
