@@ -185,7 +185,10 @@ class GeneSetCollection(
             assert filename is not None
             res.add(filename)
             names_filename = filename.removesuffix(".gz")[:-4] + "names.txt"
-            if names_filename in self.resource.get_manifest():
+            # The same test ``load_gene_sets`` makes. Manifest membership
+            # would answer it too, but reading a manifest the resource has
+            # not got scans and writes state across the whole root (#911).
+            if self.resource.file_exists(names_filename):
                 res.add(names_filename)
         elif collection_format == "gmt":
             filename = self.config.filename
@@ -355,8 +358,8 @@ def build_gene_set_collection_from_file(
         web_format_str: str | None = None,
 ) -> GeneSetCollection:
     """Return a Gene Set Collection by adapting a file to a local resource."""
-    # The resource is rooted at the dirname, which for a bare relative name is
-    # the working directory -- normalising is what puts it into the cache key.
+    # Normalising is what puts the containing directory -- for a bare relative
+    # name, the working directory -- into the cache key.
     filename = os.path.abspath(filename)
     dirname = os.path.dirname(filename)
     basename = os.path.basename(filename)
@@ -373,9 +376,17 @@ def build_gene_set_collection_from_file(
         "web_label": web_label,
         "web_format_str": web_format_str,
     }
+    # A single file format is addressed by basename from the directory that
+    # holds it -- the dirname/basename split ADR 0010 records for these
+    # factories. The directory format has no such containing directory to
+    # fall back on: rooting it at the parent would put every unrelated
+    # sibling inside the resource, and reading a manifest scans -- and
+    # writes state beside -- everything under the root (#911).
     if collection_format == "directory":
-        config["directory"] = basename
+        root = filename
+        config["directory"] = "."
     else:
+        root = dirname
         config["filename"] = basename
 
     # Keyed on the serialized config so that every config-shaping argument --
@@ -390,7 +401,7 @@ def build_gene_set_collection_from_file(
         if cache_id in _FILE_CACHE:
             return _FILE_CACHE[cache_id]
 
-        resource = build_local_resource(dirname, config)
+        resource = build_local_resource(root, config)
         collection = GeneSetCollection(resource)
         _FILE_CACHE[cache_id] = collection
         return collection

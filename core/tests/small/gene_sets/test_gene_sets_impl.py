@@ -1,11 +1,13 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import json
 import pathlib
+import textwrap
 
 import pytest
 from gain.gene_sets.implementations.gene_sets_impl import GeneSetCollectionImpl
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.repository import (
+    GR_CONF_FILE_NAME,
     GenomicResourceRepo,
 )
 from gain.genomic_resources.testing import (
@@ -130,3 +132,48 @@ def test_gene_set_collection_statistics_hash(
     assert "files_md5" in result
     assert "genes_per_gene_set" in result
     assert "gene_sets_per_gene" in result
+
+
+def test_statistics_hash_skips_a_file_the_manifest_does_not_carry(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The hash is built from a manifest that can lag the files on disk.
+
+    A map collection reports its companion names file whenever the file
+    is there -- the question ``load_gene_sets`` asks before reading it.
+    The manifest is a separate record, and a resource whose manifest was
+    written before the names file arrived carries no entry for it, so
+    hashing every reported file by manifest lookup would fail on a
+    resource that loads perfectly well.
+    """
+    setup_directories(tmp_path, {
+        "stale": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_set_collection
+                id: stale
+                format: map
+                filename: test-map.txt
+                web_label: Stale
+                web_format_str: "key| (|count|)"
+            """),
+            "test-map.txt": "#geneNS\tsym\nPOGZ\ttest:01\n",
+            "test-mapnames.txt": "test:01\ttest_first\n",
+        },
+    })
+    repo = build_filesystem_test_repository(tmp_path)
+    resource = repo.get_resource("stale")
+    assert resource is not None
+
+    # Roll the manifest back to what it would have held had it been
+    # written before the names file arrived.  It has to happen after the
+    # repository is built, which manifests every resource it finds.
+    manifest = resource.get_manifest()
+    del manifest.entries["test-mapnames.txt"]
+    resource.proto.save_manifest(resource, manifest)
+    assert "test-mapnames.txt" not in resource.get_manifest()
+
+    impl = GeneSetCollectionImpl(resource)
+
+    result = json.loads(impl.calc_statistics_hash().decode())
+
+    assert sorted(result["files_md5"]) == ["test-map.txt"]

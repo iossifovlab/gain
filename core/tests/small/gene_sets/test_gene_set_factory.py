@@ -2,6 +2,7 @@
 """Tests for the gene set collection factory functions."""
 from __future__ import annotations
 
+import os
 import pathlib
 import threading
 from collections.abc import Iterator
@@ -71,6 +72,16 @@ def call_with_timeout(
 def alpha_gmt(tmp_path: pathlib.Path) -> pathlib.Path:
     path = tmp_path / "alpha.gmt"
     path.write_text(GMT_ALPHA)
+    return path
+
+
+@pytest.fixture
+def gene_sets_dir(tmp_path: pathlib.Path) -> pathlib.Path:
+    """A directory format collection, one gene set, inside ``tmp_path``."""
+    path = tmp_path / "GeneSets"
+    path.mkdir()
+    (path / "main_candidates.txt").write_text(
+        "main_candidates\nMain Candidates\nPOGZ\nCHD8\n")
     return path
 
 
@@ -300,6 +311,129 @@ def test_build_from_file_supports_the_directory_format(
 
     assert sorted(collection.load().gene_sets) == [
         "alt_candidates", "main_candidates"]
+
+
+def test_build_from_file_with_a_directory_leaves_the_parent_alone(
+    tmp_path: pathlib.Path,
+    gene_sets_dir: pathlib.Path,
+) -> None:
+    """A directory collection must not touch anything outside itself.
+
+    The synthetic resource was rooted at the *parent* of the gene sets
+    directory, so loading the collection built a manifest over the parent:
+    an md5 scan of every sibling, writing ``.grr/<name>.state`` beside
+    them.  ``unrelated.txt`` is here to give that scan something of its
+    own to emit -- under the defect the parent gains a ``.grr`` holding
+    ``unrelated.txt.state``, for a file no collection ever named.
+    """
+    (tmp_path / "unrelated.txt").write_text("no collection names this\n")
+
+    before = {entry.name for entry in tmp_path.iterdir()}
+
+    collection = call_with_timeout(
+        build_gene_set_collection_from_file, str(gene_sets_dir))
+    collection.load()
+
+    assert {entry.name for entry in tmp_path.iterdir()} == before
+
+
+def test_build_from_file_with_a_directory_needs_no_writable_parent(
+    tmp_path: pathlib.Path,
+    gene_sets_dir: pathlib.Path,
+) -> None:
+    """A gene sets directory may sit on a mount the caller cannot write.
+
+    Scanning the parent did not merely leave litter behind: it made the
+    parent's own permissions a precondition of loading, and raised
+    ``PermissionError`` from the state write when they did not allow it.
+    """
+    if os.geteuid() == 0:
+        pytest.skip("root writes into a read-only directory regardless")
+    read_only_parent = 0o500
+    tmp_path.chmod(read_only_parent)
+
+    try:
+        collection = call_with_timeout(
+            build_gene_set_collection_from_file, str(gene_sets_dir))
+
+        assert sorted(collection.load().gene_sets) == ["main_candidates"]
+    finally:
+        tmp_path.chmod(0o700)
+
+
+def test_directory_collection_names_its_files_relative_to_its_directory(
+    gene_sets_dir: pathlib.Path,
+) -> None:
+    """The gene sets directory is the root, so its files are named bare.
+
+    Rooting at the parent named them ``GeneSets/main_candidates.txt``;
+    rooting at the directory itself makes that ``main_candidates.txt``.
+    Loading twice exercises the second scan, the one that runs with the
+    ``.grr`` state tree loading has by then left in the root -- neither
+    it nor a non gene set file kept alongside may reach the collection.
+    (The scan already skips dotted names, and the format already filters
+    to ``.txt``, so this pins those two rather than introducing them.)
+    """
+    (gene_sets_dir / "README.md").write_text("notes, not a gene set\n")
+
+    first = call_with_timeout(
+        build_gene_set_collection_from_file, str(gene_sets_dir))
+    assert sorted(first.load().gene_sets) == ["main_candidates"]
+
+    # Drop the memo so the second build rescans, as a fresh process would.
+    _FILE_CACHE.clear()
+
+    second = call_with_timeout(
+        build_gene_set_collection_from_file, str(gene_sets_dir))
+
+    assert sorted(second.load().gene_sets) == ["main_candidates"]
+    assert second.files == {"main_candidates.txt"}
+
+
+def test_map_collection_files_leaves_the_containing_directory_alone(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Asking a map collection which files it uses must not scan for them.
+
+    A single file format is rightly rooted at the directory holding it, so
+    a manifest read here scans that whole directory.  ``load`` never asks
+    for one -- it tests for the companion names file with ``file_exists``
+    -- but ``files`` tested the same thing by manifest membership, which
+    reaches the caller's directory and writes ``.grr`` state across it.
+    """
+    (tmp_path / "test-map.txt").write_text(
+        "#geneNS\tsym\n"
+        "POGZ\ttest:01 test:02\n",
+    )
+    (tmp_path / "test-mapnames.txt").write_text("test:01\ttest_first\n")
+    (tmp_path / "unrelated.txt").write_text("no collection names this\n")
+
+    collection = call_with_timeout(
+        build_gene_set_collection_from_file, str(tmp_path / "test-map.txt"))
+    collection.load()
+    before = {entry.name for entry in tmp_path.iterdir()}
+
+    files = collection.files
+
+    assert files == {"test-map.txt", "test-mapnames.txt"}
+    assert {entry.name for entry in tmp_path.iterdir()} == before
+
+
+def test_published_map_collection_still_names_its_companion_file(
+    gene_sets_repo_in_memory: GenomicResourceRepo,
+) -> None:
+    """``files`` answers the same for a published resource as it did.
+
+    The companion names file used to be looked up in the manifest, which
+    a published resource always has; it is looked up with ``file_exists``
+    now, so pin the published answer here rather than leave it to the
+    file-built case alone.
+    """
+    resource = gene_sets_repo_in_memory.get_resource("test_mapping")
+
+    collection = build_gene_set_collection_from_resource(resource)
+
+    assert collection.files == {"test-map.txt", "test-mapnames.txt"}
 
 
 def test_resource_built_collections_are_still_memoised(
