@@ -160,8 +160,14 @@ deletion (nothing here is classified by size)
 **Complex**:
 The allele class for everything the anchored rules do not match — MNVs and
 unanchored indels alike — carrying both alleles' lengths rather than one
-length.
-_Avoid_: other (a different class), MNV, substitution of length n
+length. Those two lengths are published as a **complex grid**: a sparse
+`(len_ref, len_alt) → count` map whose cells are *exact* lengths, each clamped
+at 64, so a cell on the diagonal is an MNV of exactly that many bases (ADR
+0020 as amended by gain#779). Deliberately not the fixed log2 bins the
+**segment**, **fragment** and ins/del length histograms share — those would
+merge a 2→3 complex into the same cell as a 3bp MNV.
+_Avoid_: other (a different class), MNV, substitution of length n, complex
+histogram (it is a two-dimensional map, not a binned histogram)
 
 **Other**:
 The allele class for a ref/alt pair that does not parse as alleles: `N`, a

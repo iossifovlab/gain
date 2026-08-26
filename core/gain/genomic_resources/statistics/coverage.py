@@ -71,7 +71,7 @@ def length_histogram_bin_index(length: int) -> int:
 _LENGTH_BIN_EDGES = 2 ** np.arange(LENGTH_HISTOGRAM_BIN_COUNT, dtype=np.int64)
 
 
-def _accumulate_bins(target: list[int], source: Iterable[int]) -> None:
+def accumulate_bins(target: list[int], source: Iterable[int]) -> None:
     """Add one length histogram into another, bin for bin.
 
     The one statement of "counts are added, not replaced", for every
@@ -289,7 +289,7 @@ class RegionCoverage:
         if indices.min() < 0:
             raise ValueError(
                 f"fragment length must be positive: {lengths.min()}")
-        _accumulate_bins(
+        accumulate_bins(
             self._fragment_bins,
             np.bincount(
                 indices, minlength=LENGTH_HISTOGRAM_BIN_COUNT).tolist())
@@ -405,7 +405,7 @@ class RegionCoverage:
         self._track_fragments = \
             self._track_fragments and other._track_fragments
         self._fragments += other._fragments
-        _accumulate_bins(self._fragment_bins, other._fragment_bins)
+        accumulate_bins(self._fragment_bins, other._fragment_bins)
         if other._run is None:
             self.end = other.end
             return
@@ -458,7 +458,7 @@ class RegionCoverage:
             self._run = (
                 last_begin, max(last_end, other._run[1]), last_values)
             return
-        _accumulate_bins(self._interior_bins, other._interior_bins)
+        accumulate_bins(self._interior_bins, other._interior_bins)
         if stitch:
             self._record_closed(
                 (last_begin, max(last_end, first_end), last_values))
@@ -690,7 +690,7 @@ class CoverageStatistics(Statistic):
     def _binwise_sum(histograms: Iterable[list[int]]) -> list[int]:
         merged = [0] * LENGTH_HISTOGRAM_BIN_COUNT
         for histogram in histograms:
-            _accumulate_bins(merged, histogram)
+            accumulate_bins(merged, histogram)
         return merged
 
     def add_value(self, value: Any) -> None:  # noqa: ARG002

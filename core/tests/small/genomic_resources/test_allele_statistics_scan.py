@@ -14,6 +14,9 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.alleles import (
+    ALLELE_COMPLEX_GRID_IMAGE_FILE,
+    ALLELE_DELETION_LENGTHS_IMAGE_FILE,
+    ALLELE_INSERTION_LENGTHS_IMAGE_FILE,
     ALLELE_STATISTICS_FILE,
     AlleleStatistics,
     serves_allele_arrays,
@@ -824,3 +827,82 @@ def test_the_indel_groups_are_chunk_invariant(
 
     assert chunked.get_file_content(ALLELE_STATISTICS_FILE) \
         == whole.get_file_content(ALLELE_STATISTICS_FILE)
+
+
+def test_the_build_writes_one_global_image_per_group(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Three images, each referenced ONCE -- the count is what says there
+    # are no per-chromosome images, as the fragments section has it.
+    resource = _indel_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    for image in (
+        ALLELE_INSERTION_LENGTHS_IMAGE_FILE,
+        ALLELE_DELETION_LENGTHS_IMAGE_FILE,
+        ALLELE_COMPLEX_GRID_IMAGE_FILE,
+    ):
+        assert resource.file_exists(image)
+        assert section.count(image) == 1
+
+
+def test_info_page_over_a_pre_indel_file_says_the_groups_not_computed(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A file written between gain#778 and this slice: matrix, no
+    # lengths.  The groups are independently optional, so the matrix
+    # must still render while the three new sections say so.
+    resource = _indel_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    stored = json.loads(resource.get_file_content(ALLELE_STATISTICS_FILE))
+    for entry in (*stored["chromosomes"].values(), stored["global"]):
+        for key in (
+            "insertion_length_histogram",
+            "deletion_length_histogram",
+            "complex_grid",
+        ):
+            entry.pop(key, None)
+    with resource.proto.open_raw_file(
+            resource, ALLELE_STATISTICS_FILE, mode="wt") as outfile:
+        outfile.write(json.dumps(stored))
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    # Bound to their headings: "the page says 'not computed' somewhere"
+    # would pass while the wrong section said it.
+    assert "<th>A</th>" in section
+    assert "<h3>Indel lengths</h3><p>not computed</p>" in section
+    assert "<h3>Complex alleles</h3><p>not computed</p>" in section
+    assert ALLELE_COMPLEX_GRID_IMAGE_FILE not in section
+
+
+def test_info_page_says_a_resource_genuinely_has_no_complex_alleles(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Known-and-empty is not unknown: this resource was scanned and
+    # carries no complex row, which the page states rather than falling
+    # back to the "not computed" of a file that never had the group.
+    resource = (
+        an_allele_score()
+        .with_score("score", "float")
+        .with_data(
+            """
+            chrom  pos_begin  reference  alternative  score
+            chr1   10         A          G            0.1
+            chr1   20         A          AT           0.2
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    assert "<h3>Complex alleles</h3><p>no complex alleles</p>" in section
+    assert "<h3>Complex alleles</h3><p>not computed</p>" not in section
+    assert not resource.file_exists(ALLELE_COMPLEX_GRID_IMAGE_FILE)

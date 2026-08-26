@@ -252,6 +252,34 @@ def test_a_matrixless_file_yields_no_display() -> None:
     assert display is None
 
 
+def test_a_scanned_display_carries_every_group() -> None:
+    region = _region()
+    region.add_allele(10, "A", "AT")
+    region.add_allele(11, "AT", "ACG")
+
+    display = _display_of(region)
+
+    assert display is not None
+    assert display.insertion_lengths is not None
+    assert display.deletion_lengths is not None
+    assert display.complex_grid == {(2, 3): 1}
+
+
+def test_a_pre_indel_file_displays_its_matrix_and_nothing_else() -> None:
+    # A file written between gain#778 and this slice: the groups are
+    # independently optional, so its matrix must still render while the
+    # three new sections say "not computed".
+    display = _display_of(RegionAlleles.frozen(
+        "chr1", 1, 1, {"substitution": 1},
+        substitution_matrix={("A", "G"): 1}))
+
+    assert display is not None
+    assert display.substitution_matrix is not None
+    assert display.insertion_lengths is None
+    assert display.deletion_lengths is None
+    assert display.complex_grid is None
+
+
 def test_display_rows_follow_nucleotide_order() -> None:
     region = _region()
     region.add_allele(10, "T", "A")
