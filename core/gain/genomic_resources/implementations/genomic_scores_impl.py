@@ -59,6 +59,9 @@ from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
 )
 from gain.genomic_resources.statistics.alleles import (
+    ALLELE_COMPLEX_GRID_IMAGE_FILE,
+    ALLELE_DELETION_LENGTHS_IMAGE_FILE,
+    ALLELE_INSERTION_LENGTHS_IMAGE_FILE,
     ALLELE_STATISTICS_FILE,
     AlleleStatistics,
     RegionAlleles,
@@ -232,6 +235,21 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def get_coverage_fragment_lengths_image_filename() -> str:
         """The info page's one statement of the fragment image's path."""
         return COVERAGE_FRAGMENT_LENGTHS_IMAGE_FILE
+
+    @staticmethod
+    def get_allele_insertion_lengths_image_filename() -> str:
+        """The info page's one statement of the insertion image's path."""
+        return ALLELE_INSERTION_LENGTHS_IMAGE_FILE
+
+    @staticmethod
+    def get_allele_deletion_lengths_image_filename() -> str:
+        """The info page's one statement of the deletion image's path."""
+        return ALLELE_DELETION_LENGTHS_IMAGE_FILE
+
+    @staticmethod
+    def get_allele_complex_grid_image_filename() -> str:
+        """The info page's one statement of the complex grid's path."""
+        return ALLELE_COMPLEX_GRID_IMAGE_FILE
 
     def get_coverage_statistics(self) -> CoverageStatistics | None:
         """The resource's coverage statistics, or ``None`` if not built.

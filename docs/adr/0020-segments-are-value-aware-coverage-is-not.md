@@ -142,6 +142,40 @@ alt-minus-ref, not an absolute value.
   repository-global artifacts, belong to the `grr_manage` documentation
   rather than here.
 
+*Amended by gain#779:* the **Fixed log-scale bins** bullet above names the
+length histograms that share the ladder — segments, fragments, **indels** — and
+the ins/del histograms duly use it, binning the length change absolutely, since
+the class already names the direction and the shared bin index refuses a length
+below 1.
+The **complex `(len_ref, len_alt)` grid deliberately does not.** Its cells are
+the two lengths **exactly**, each clamped at a code-level maximum of 64, so
+the grid is a sparse map over a bounded 64×64 square.
+
+The ladder was the obvious choice and is wrong here, for a reason specific to
+this statistic. Its first bin is exactly length 1, which no complex pair can
+have — a 1→1 pair is a *substitution* — so the grid's `(0,0)` cell would be
+empty by construction. Its second bin is `{2, 3}`, so a 2→3 complex would land
+in the same cell as a 2bp *and* a 3bp MNV, and the diagonal would stop meaning
+"MNV of n bases" — which is precisely what the grid exists to show. With exact
+cells, `(n, n)` is an MNV of exactly n bases and `2→3` sits one cell off the
+diagonal from `3→3`.
+
+The clamp is **total**: every complex row lands in exactly one cell, so the
+grid's total is the `complex` class count and no overflow counter is needed.
+It also bounds the stored cells, which is what keeps the merge exact and
+order-independent — a *cap on distinct keys* would not, since which keys
+survived would depend on the order the rows arrived in, and this file is
+required to be byte-identical however a resource was chunked. For the same
+reason the cells are **written sorted**, not in encounter order.
+
+One caveat follows from the clamp and is worth stating rather than
+discovering: `(64, 64)` is the one diagonal cell that does not mean "MNV". A
+pair whose sides are both ≥64 but unequal — a 5000→70 complex — lands there
+too.
+
+Like the clamp, the ladder constant is part of the stored format: neither may
+change once resources carry statistics built from it.
+
 ## Rejected alternatives
 
 **Value-blind union segments — the original choice, reversed.** As first

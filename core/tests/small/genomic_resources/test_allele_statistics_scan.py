@@ -14,9 +14,15 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.alleles import (
+    ALLELE_COMPLEX_GRID_IMAGE_FILE,
+    ALLELE_DELETION_LENGTHS_IMAGE_FILE,
+    ALLELE_INSERTION_LENGTHS_IMAGE_FILE,
     ALLELE_STATISTICS_FILE,
     AlleleStatistics,
     serves_allele_arrays,
+)
+from gain.genomic_resources.statistics.length_histogram import (
+    length_histogram_bin_index,
 )
 from gain.genomic_resources.testing.builders import (
     a_np_score,
@@ -667,3 +673,257 @@ def test_a_position_score_writes_no_allele_statistics(
     assert not resource.file_exists(ALLELE_STATISTICS_FILE)
     assert GenomicScoreImplementation(resource).get_allele_statistics() \
         is None
+
+
+# A second fixture, deliberately separate from ``_MIXED_TABLE``: that one
+# carries one indel of each direction at the SAME minimum length, which
+# reconciles but cannot tell one length bin from another.  This one
+# varies the lengths and spreads the complex pairs on and off the
+# diagonal.
+#
+#   chr1: +1 -> bin 0, +4 -> bin 2, -3 -> bin 1, (2,2) MNV, (2,3)
+#   chr2: +2 -> bin 1, (3,3) MNV
+#
+# Every row carries a WIDE ``pos_end``, deliberately: an allele row
+# collapses to the point it sits at, but tabix answers it to every
+# region its span touches, so without one a point row reaches exactly
+# one region and the chunk-invariance parametrization below cannot tell
+# "the rows a region OWNS" from "the rows a region was HANDED".  The
+# spans change no count here -- an allele's pos_end reaches over
+# nothing -- they only make the double-hand case happen.
+_INDEL_TABLE = """
+    chrom  pos_begin  pos_end  reference  alternative  score
+    chr1   10         45       A          AT           0.1
+    chr1   20         55       A          ATTTT        0.2
+    chr1   30         60       ACGT       A            0.3
+    chr1   40         70       AC         GT           0.4
+    chr1   50         80       AT         ACG          0.5
+    chr2   10         40       A          AGG          0.6
+    chr2   20         50       ATG        CGA          0.7
+"""
+
+
+def _indel_allele_score(tmp_path: pathlib.Path) -> GenomicResource:
+    return (
+        an_allele_score()
+        .with_score("score", "float")
+        .with_data(_INDEL_TABLE)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+def _indel_np_score(tmp_path: pathlib.Path) -> GenomicResource:
+    return (
+        a_np_score()
+        .with_score("score", "float")
+        .with_data(_INDEL_TABLE)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+def test_build_stores_the_length_histograms_per_chromosome(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _indel_allele_score(tmp_path)
+
+    stats = _built_statistics(tmp_path, resource)
+
+    chromosomes = stats.by_chromosome()
+    chr1 = chromosomes["chr1"].insertion_lengths
+    chr2 = chromosomes["chr2"].insertion_lengths
+    assert chr1 is not None
+    assert chr2 is not None
+    assert {index: count for index, count in enumerate(chr1) if count} == {
+        length_histogram_bin_index(1): 1,
+        length_histogram_bin_index(4): 1,
+    }
+    assert {index: count for index, count in enumerate(chr2) if count} == {
+        length_histogram_bin_index(2): 1,
+    }
+
+
+def test_build_stores_the_complex_grid_per_chromosome(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _indel_allele_score(tmp_path)
+
+    stats = _built_statistics(tmp_path, resource)
+
+    chromosomes = stats.by_chromosome()
+    assert chromosomes["chr1"].complex_grid == {(2, 2): 1, (2, 3): 1}
+    assert chromosomes["chr2"].complex_grid == {(3, 3): 1}
+
+
+def test_the_global_groups_are_the_merge_of_the_chromosomes(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _indel_allele_score(tmp_path)
+
+    stats = _built_statistics(tmp_path, resource)
+
+    counts = stats.global_counts()
+    assert counts.insertion_lengths is not None
+    assert counts.deletion_lengths is not None
+    assert {
+        index: count
+        for index, count in enumerate(counts.insertion_lengths) if count
+    } == {
+        length_histogram_bin_index(1): 1,
+        length_histogram_bin_index(2): 1,
+        length_histogram_bin_index(4): 1,
+    }
+    assert {
+        index: count
+        for index, count in enumerate(counts.deletion_lengths) if count
+    } == {length_histogram_bin_index(3): 1}
+    assert counts.complex_grid == {(2, 2): 1, (2, 3): 1, (3, 3): 1}
+
+
+def test_the_group_totals_reconcile_with_the_class_counts(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The acceptance criterion that ties this slice to gain#777: every
+    # insertion, deletion and complex row is accounted for exactly once.
+    resource = _indel_allele_score(tmp_path)
+
+    stats = _built_statistics(tmp_path, resource)
+
+    for counts in (*stats.by_chromosome().values(), stats.global_counts()):
+        assert counts.insertion_lengths is not None
+        assert counts.deletion_lengths is not None
+        assert counts.complex_grid is not None
+        assert sum(counts.insertion_lengths) == \
+            counts.class_counts["insertion"]
+        assert sum(counts.deletion_lengths) == \
+            counts.class_counts["deletion"]
+        assert sum(counts.complex_grid.values()) == \
+            counts.class_counts["complex"]
+
+
+def test_the_indel_groups_match_across_the_two_scan_paths(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The gain#777 parity check, extended to the new groups: np_score is
+    # excluded from the bulk scan, so these two identical tables are
+    # read by genuinely different code paths.
+    allele = _indel_allele_score(tmp_path / "allele")
+    np_score = _indel_np_score(tmp_path / "np")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path / "allele"), "-j", "1"])
+    cli_manage(["repo-stats", "-R", str(tmp_path / "np"), "-j", "1"])
+
+    assert np_score.get_file_content(ALLELE_STATISTICS_FILE) \
+        == allele.get_file_content(ALLELE_STATISTICS_FILE)
+
+
+@pytest.mark.parametrize("builder", [_indel_allele_score, _indel_np_score])
+@pytest.mark.parametrize("region_size", [10, 20, 7, 1])
+def test_the_indel_groups_are_chunk_invariant(
+    tmp_path: pathlib.Path,
+    region_size: int,
+    builder: Callable[[pathlib.Path], GenomicResource],
+) -> None:
+    # Chunking meets the sparse grid's cells in different orders, which
+    # is why they are written sorted rather than as encountered.
+    #
+    # Parametrized over BOTH builders because the region's ownership
+    # rule is stated twice -- scalar on the per-record path, vectorized
+    # on the bulk one -- and np_score is excluded from the bulk-scan
+    # types.  With only the bulk-eligible fixture, breaking the scalar
+    # predicate leaves this green.
+    whole = builder(tmp_path / "whole")
+    chunked = builder(tmp_path / "chunked")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path / "whole"), "-j", "1"])
+    cli_manage([
+        "repo-stats", "-R", str(tmp_path / "chunked"), "-j", "1",
+        "--region-size", str(region_size)])
+
+    assert chunked.get_file_content(ALLELE_STATISTICS_FILE) \
+        == whole.get_file_content(ALLELE_STATISTICS_FILE)
+
+
+def test_the_build_writes_one_global_image_per_group(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Three images, each referenced ONCE -- the count is what says there
+    # are no per-chromosome images, as the fragments section has it.
+    resource = _indel_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    for image in (
+        ALLELE_INSERTION_LENGTHS_IMAGE_FILE,
+        ALLELE_DELETION_LENGTHS_IMAGE_FILE,
+        ALLELE_COMPLEX_GRID_IMAGE_FILE,
+    ):
+        assert resource.file_exists(image)
+        assert section.count(image) == 1
+
+
+def test_info_page_over_a_pre_indel_file_says_the_groups_not_computed(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A file written between gain#778 and this slice: matrix, no
+    # lengths.  The groups are independently optional, so the matrix
+    # must still render while the three new sections say so.
+    resource = _indel_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    stored = json.loads(resource.get_file_content(ALLELE_STATISTICS_FILE))
+    for entry in (*stored["chromosomes"].values(), stored["global"]):
+        for key in (
+            "insertion_length_histogram",
+            "deletion_length_histogram",
+            "complex_grid",
+        ):
+            entry.pop(key, None)
+    with resource.proto.open_raw_file(
+            resource, ALLELE_STATISTICS_FILE, mode="wt") as outfile:
+        outfile.write(json.dumps(stored))
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    # Bound to their headings: "the page says 'not computed' somewhere"
+    # would pass while the wrong section said it.
+    assert "<th>A</th>" in section
+    assert "<h3>Indel lengths</h3><p>not computed</p>" in section
+    assert "<h3>Complex alleles</h3><p>not computed</p>" in section
+    assert ALLELE_COMPLEX_GRID_IMAGE_FILE not in section
+
+
+def test_info_page_says_a_resource_genuinely_has_no_complex_alleles(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Known-and-empty is not unknown: this resource was scanned and
+    # carries no complex row, which the page states rather than falling
+    # back to the "not computed" of a file that never had the group.
+    resource = (
+        an_allele_score()
+        .with_score("score", "float")
+        .with_data(
+            """
+            chrom  pos_begin  reference  alternative  score
+            chr1   10         A          G            0.1
+            chr1   20         A          AT           0.2
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    assert "<h3>Complex alleles</h3><p>no complex alleles</p>" in section
+    assert "<h3>Complex alleles</h3><p>not computed</p>" not in section
+    assert "<p>no deletions</p>" in section
+    # A group with nothing to draw writes no image -- for either kind of
+    # empty group, not just the complex one.
+    assert not resource.file_exists(ALLELE_COMPLEX_GRID_IMAGE_FILE)
+    assert not resource.file_exists(ALLELE_DELETION_LENGTHS_IMAGE_FILE)
+    assert resource.file_exists(ALLELE_INSERTION_LENGTHS_IMAGE_FILE)

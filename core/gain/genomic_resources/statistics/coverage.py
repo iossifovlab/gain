@@ -18,7 +18,7 @@ import json
 import math
 from collections.abc import Callable, Iterable
 from itertools import starmap
-from typing import IO, Any, NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -36,6 +36,13 @@ from gain.genomic_resources.statistics.base_statistic import (
     refuse_unmergeable,
     regions_in_genomic_order,
 )
+from gain.genomic_resources.statistics.length_histogram import (
+    LENGTH_BIN_EDGES,
+    LENGTH_HISTOGRAM_BIN_COUNT,
+    accumulate_bins,
+    length_histogram_bin_index,
+    plot_length_histogram,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,94 +54,6 @@ COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE = \
     "statistics/coverage_segment_lengths.png"
 COVERAGE_FRAGMENT_LENGTHS_IMAGE_FILE = \
     "statistics/coverage_fragment_lengths.png"
-
-# Length histograms (segments here; fragments and indels reuse the same
-# contract, ADR 0020) use fixed log2 bins: bin ``i`` holds lengths in
-# ``[2**i, 2**(i + 1))``, and the last bin is open-ended.  The edges are
-# part of the stored format -- histograms binned on different edges
-# cannot be merged -- so this constant must not change once resources
-# carry statistics built from it.
-LENGTH_HISTOGRAM_BIN_COUNT = 32
-
-
-def length_histogram_bin_index(length: int) -> int:
-    """The fixed log2 bin a length of that many base pairs falls in."""
-    if length < 1:
-        raise ValueError(f"length must be positive: {length}")
-    return min(length.bit_length() - 1, LENGTH_HISTOGRAM_BIN_COUNT - 1)
-
-
-# The same ladder as an array of lower edges, for the vectorized binning
-# in ``RegionCoverage.add_fragment_batch``.  Pinned equal to
-# ``length_histogram_bin_index`` by
-# test_the_batch_binning_agrees_with_the_per_length_one.
-_LENGTH_BIN_EDGES = 2 ** np.arange(LENGTH_HISTOGRAM_BIN_COUNT, dtype=np.int64)
-
-
-def _accumulate_bins(target: list[int], source: Iterable[int]) -> None:
-    """Add one length histogram into another, bin for bin.
-
-    The one statement of "counts are added, not replaced", for every
-    place two histograms on the fixed ladder come together: a merge of
-    two regions, a batch of fresh counts, a global roll-up.
-    """
-    for index, count in enumerate(source):
-        target[index] += count
-
-
-def _bin_edge_label(edge: int) -> str:
-    for unit, factor in (("G", 2 ** 30), ("M", 2 ** 20), ("K", 2 ** 10)):
-        if edge >= factor:
-            return f"{edge // factor}{unit}"
-    return str(edge)
-
-
-def plot_length_histogram(
-    outfile: IO,
-    histogram: list[int],
-    item: str,
-) -> None:
-    """Render a length histogram on the fixed log2 bins as PNG.
-
-    Styled to sit beside the per-score value histograms on the resource
-    info page: same figure size and label font as
-    :mod:`gain.genomic_resources.histogram` renders.  ``item`` names
-    what was measured -- segments or fragments -- and appears in both
-    axis labels; the bins are the same ladder either way, which is what
-    lets one renderer serve both.  Required, with no default: a
-    fragment histogram silently labelled "segment" is the one mistake
-    this parameter exists to prevent.
-    """
-    # pylint: disable=import-outside-toplevel
-    import matplotlib
-    matplotlib.use("agg")
-    import matplotlib.pyplot as plt
-
-    from gain.genomic_resources.histogram import (
-        HISTOGRAM_LABELS_FONT_SIZE,
-    )
-
-    figure, axes = plt.subplots(figsize=(15, 10))
-    axes.bar(
-        range(len(histogram)), histogram, width=0.9, align="edge")
-    # Ticks at every fourth bin's lower edge; the last bin is
-    # open-ended, so its lower edge is labeled as a floor.
-    last = len(histogram) - 1
-    ticks = [*range(0, last, 4), last]
-    labels = [_bin_edge_label(2 ** tick) for tick in ticks[:-1]]
-    labels.append(f"≥{_bin_edge_label(2 ** last)}")
-    axes.set_xticks(ticks)
-    axes.set_xticklabels(labels, fontsize=HISTOGRAM_LABELS_FONT_SIZE)
-    axes.tick_params(axis="y", labelsize=HISTOGRAM_LABELS_FONT_SIZE)
-    axes.set_xlabel(
-        f"{item} length (bp)", fontsize=HISTOGRAM_LABELS_FONT_SIZE)
-    axes.set_ylabel(f"{item}s", fontsize=HISTOGRAM_LABELS_FONT_SIZE)
-    # Counts span orders of magnitude on genome-scale scores; symlog
-    # keeps the small bars visible while zero stays on the axis.
-    axes.set_yscale("symlog")
-    figure.tight_layout()
-    figure.savefig(outfile, format="png")
-    plt.close(figure)
 
 
 def normalize_values(values: Iterable[Any]) -> tuple:
@@ -282,14 +201,14 @@ class RegionCoverage:
         """
         if not self._track_fragments or not lengths.size:
             return
-        indices = np.searchsorted(_LENGTH_BIN_EDGES, lengths, side="right") - 1
+        indices = np.searchsorted(LENGTH_BIN_EDGES, lengths, side="right") - 1
         # A length below 1 sorts before the first edge and lands at -1;
         # reading that back is free, where a separate ``min()`` would be
         # another full pass over the batch.
         if indices.min() < 0:
             raise ValueError(
                 f"fragment length must be positive: {lengths.min()}")
-        _accumulate_bins(
+        accumulate_bins(
             self._fragment_bins,
             np.bincount(
                 indices, minlength=LENGTH_HISTOGRAM_BIN_COUNT).tolist())
@@ -405,7 +324,7 @@ class RegionCoverage:
         self._track_fragments = \
             self._track_fragments and other._track_fragments
         self._fragments += other._fragments
-        _accumulate_bins(self._fragment_bins, other._fragment_bins)
+        accumulate_bins(self._fragment_bins, other._fragment_bins)
         if other._run is None:
             self.end = other.end
             return
@@ -458,7 +377,7 @@ class RegionCoverage:
             self._run = (
                 last_begin, max(last_end, other._run[1]), last_values)
             return
-        _accumulate_bins(self._interior_bins, other._interior_bins)
+        accumulate_bins(self._interior_bins, other._interior_bins)
         if stitch:
             self._record_closed(
                 (last_begin, max(last_end, first_end), last_values))
@@ -690,7 +609,7 @@ class CoverageStatistics(Statistic):
     def _binwise_sum(histograms: Iterable[list[int]]) -> list[int]:
         merged = [0] * LENGTH_HISTOGRAM_BIN_COUNT
         for histogram in histograms:
-            _accumulate_bins(merged, histogram)
+            accumulate_bins(merged, histogram)
         return merged
 
     def add_value(self, value: Any) -> None:  # noqa: ARG002

@@ -12,9 +12,11 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
 from gain.genomic_resources.statistics.coverage import (
-    LENGTH_HISTOGRAM_BIN_COUNT,
     CoverageStatistics,
     RegionCoverage,
+)
+from gain.genomic_resources.statistics.length_histogram import (
+    LENGTH_HISTOGRAM_BIN_COUNT,
 )
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
