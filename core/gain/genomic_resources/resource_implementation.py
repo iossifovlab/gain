@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -436,6 +438,111 @@ class InfoImplementationMixin:
         )
 
 
+class _ThreadValidators(threading.local):
+    """One cerberus ``Validator`` per implementation type, per thread.
+
+    Subclassing ``threading.local`` rather than using one directly is what
+    makes ``__init__`` run once per thread, so the payload is simply there
+    on first access instead of being lazily created at every use.
+    """
+
+    # pylint: disable=too-few-public-methods
+    def __init__(self) -> None:
+        self.by_type: weakref.WeakKeyDictionary[type, Validator] = \
+            weakref.WeakKeyDictionary()
+
+
+class _ConfigValidatorCache:
+    """The resource-config schemas and validators, kept per type.
+
+    A resource's schema and the cerberus ``Validator`` compiled from it
+    depend on the implementation TYPE, never on the config being validated,
+    yet both were rebuilt on every call -- and constructing a ``Validator``
+    makes cerberus validate the schema definition itself.  Together that was
+    about a third of the cost of validating one resource, paid once per
+    resource, and a wildcard pipeline build validates hundreds (gain#905).
+
+    **The validator is deliberately not shared between threads.**  Cerberus
+    keeps per-call state on the instance -- ``validate()`` assigns
+    ``self.document`` and ``self._errors``, and the caller reads the
+    normalized document back off the instance on the next line -- so one
+    instance shared across threads can hand a caller another caller's
+    normalized config.  That is not theoretical: pipeline loads run on a
+    thread pool and loading a pipeline constructs resource implementations,
+    and a direct reproduction bled one read in 600.  Hence per thread; a
+    thread's validators die with it.
+
+    **The schema is shared between threads, for a narrower reason than
+    "cerberus treats it as read-only" -- it does not.**  ``DefinitionSchema``
+    *expands* the schema in place, rebinding nested rule values, both when a
+    validator is constructed and again on every ``validate()``.  What holds
+    is that the expansion is value-preserving for the schemas gain actually
+    has, none of which uses a rule cerberus rewrites non-trivially.  The
+    exposure is not new either: ``get_schema()`` splices in the *same*
+    module-level ``AGGREGATOR_SCHEMA`` object rather than a copy, so that
+    fragment was already being re-expanded concurrently on every call before
+    anything was cached.  Being by value is also why the guarding test
+    asserts ``==`` and not ``is``.
+
+    Nothing guards against re-entrancy: a nested validation of the same type
+    on the same thread would overwrite the outer call's document before it is
+    read.  No such path exists -- no gain schema carries a callable rule
+    (``check_with``/``coerce``/``default_setter``), and the only code between
+    ``validate()`` and the read is the failure branch's eagerly-evaluated log
+    call.  Adding a callable rule to a resource schema would change that.
+
+    Keys are held weakly so that an implementation type defined inside a test
+    does not outlive it; production types are module-level and immortal
+    anyway.
+    """
+
+    def __init__(self) -> None:
+        self._schemas: weakref.WeakKeyDictionary[type, dict] = \
+            weakref.WeakKeyDictionary()
+        self._validators = _ThreadValidators()
+
+    def schema_for(self, implementation: type) -> dict:
+        """Return ``implementation``'s schema, building it at most once.
+
+        Two threads racing to fill an entry both call ``get_schema()`` and
+        one overwrites the other, which is harmless -- the schemas are equal.
+        """
+        schema = self._schemas.get(implementation)
+        if schema is None:
+            schema = implementation.get_schema()  # type: ignore[attr-defined]
+            self._schemas[implementation] = schema
+        return schema
+
+    def validator_for(self, implementation: type) -> Validator:
+        """Return this thread's validator for ``implementation``."""
+        validator = self._validators.by_type.get(implementation)
+        if validator is None:
+            # pylint: disable=not-callable
+            validator = Validator(self.schema_for(implementation))
+            self._validators.by_type[implementation] = validator
+        return validator
+
+    def clear(self) -> None:
+        """Forget every schema, and this thread's validators.
+
+        Exists for tests.  The cache is process-wide and never invalidated,
+        which is right for a running gain -- the schema of a type does not
+        change -- and wrong across tests, which share one process and one
+        main thread: a validator built while ``Validator`` was monkeypatched
+        outlives the patch and would answer for a later test.
+
+        Only the calling thread's validators are forgotten.  Another live
+        thread's are not reachable from here, and a registry that made them
+        so would put a lock on the validation path to serve a test.
+        """
+        self._schemas.clear()
+        self._validators.by_type.clear()
+
+
+#: The process-wide resource-config validator cache.  See the class.
+CONFIG_VALIDATOR_CACHE = _ConfigValidatorCache()
+
+
 class ResourceConfigValidationMixin:
     """Mixin that provides validation of resource configuration."""
 
@@ -449,8 +556,7 @@ class ResourceConfigValidationMixin:
     def validate_and_normalize_schema(
             cls, config: dict, resource: GenomicResource) -> dict:
         """Validate the resource schema and return the normalized version."""
-        # pylint: disable=not-callable
-        validator = Validator(cls.get_schema())
+        validator = CONFIG_VALIDATOR_CACHE.validator_for(cls)
         if not validator.validate(config):
             logger.error(
                 "Resource %s of type %s has an invalid configuration. %s",
