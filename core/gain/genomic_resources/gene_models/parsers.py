@@ -1086,7 +1086,9 @@ def _break_refseq_ccds_tie(infile: IO, sampled_rows: int) -> str | None:
     # header=None keeps a header row, if there is one, in the sample where
     # the explicit check below can see it. na_filter=False keeps a blank
     # name field a string, so it fails both shapes instead of crashing the
-    # match.
+    # match -- belt and braces since gain#929, which refuses a record with
+    # a blank name outright: the tie-break runs only once both formats
+    # have parsed records, so such a file no longer reaches it.
     infile.seek(0)
     names = pd.read_csv(
         infile, sep="\t", header=None, usecols=[1], dtype=str,

@@ -103,18 +103,24 @@ def parse_coordinate(
     number rather than from its text, because that is what the parsers
     did before this guard: a column spelled ``100.0`` throughout is
     typed float, and ``int(100.0)`` is what kept it parsing.
+
+    ``OverflowError`` is caught alongside the rest because ``inf`` is a
+    coordinate pandas accepts and ``int()`` will not take. It reaches
+    here only on the read path that infers a float column, so without it
+    the two paths report the same file differently -- and the one that
+    escaped named neither the record nor the column.
     """
     text = cell_text(value)
     try:
         return int(value) if text and not isinstance(value, str) \
             else int(text)
-    except (TypeError, ValueError) as ex:
+    except (TypeError, ValueError, OverflowError) as ex:
         raise unparsable(column, tr_name, chrom, text) from ex
 
 
 def record_identity(
     rec: dict, record: int, name_column: str, chrom_column: str,
-) -> tuple[str, str]:
+) -> tuple[Any, Any]:
     """Read the two columns that say which record a columnar row is.
 
     Both used to be taken as they came. A blank one became a float
@@ -129,19 +135,25 @@ def record_identity(
     record's position in the file, plus whichever of the pair is still
     readable.
 
-    Whitespace decides only whether a cell counts as blank; the value
-    returned is the file's own, so that records which parse today keep
-    the names they have.
+    Blankness is decided on the text, but what is returned is the cell
+    pandas handed over, untouched. The headerless read path infers a
+    dtype, so a chromosome column of bare digits comes back as an int --
+    arguably the wrong type, since a transcript index keyed by the int
+    17 is unreachable by a query for "17", but it is what these files
+    produce today. Normalising it belongs to gain#931's work at the read
+    boundary; a guard meant only to reject must not re-type a cell that
+    parses.
     """
-    tr_name = cell_text(rec[name_column])
-    chrom = cell_text(rec[chrom_column])
-    if not tr_name.strip():
+    name_text = cell_text(rec[name_column])
+    chrom_text = cell_text(rec[chrom_column])
+    if not name_text.strip():
         raise _blank_identifier(
-            name_column, record, f" at {chrom}" if chrom.strip() else "")
-    if not chrom.strip():
+            name_column, record,
+            f" at {chrom_text}" if chrom_text.strip() else "")
+    if not chrom_text.strip():
         raise _blank_identifier(
-            chrom_column, record, f" (transcript {tr_name})")
-    return tr_name, chrom
+            chrom_column, record, f" (transcript {name_text})")
+    return rec[name_column], rec[chrom_column]
 
 
 def _blank_identifier(column: str, record: int, context: str) -> ValueError:
@@ -154,7 +166,7 @@ def _blank_identifier(column: str, record: int, context: str) -> ValueError:
 
 def require_cell(
     value: Any, column: str, tr_name: object, chrom: object,
-) -> str:
+) -> Any:
     """Read a load-bearing text column of an already-identified record.
 
     Blank is refused rather than carried: a strand reaches
@@ -162,16 +174,15 @@ def require_cell(
     odd value -- its exon frames come out as if it had a strand, and the
     output is quietly wrong rather than missing (gain#929).
 
-    Whitespace decides only whether the cell counts as blank; the value
-    returned is the file's own.
+    Blankness is decided on the text, but what is returned is the cell
+    pandas handed over, untouched -- see `record_identity`.
     """
-    text = cell_text(value)
-    if not text.strip():
+    if not cell_text(value).strip():
         raise ValueError(
             f"transcript {tr_name} at {chrom} "
             f"has a blank {column} column",
         )
-    return text
+    return value
 
 
 def parse_exon_bounds(

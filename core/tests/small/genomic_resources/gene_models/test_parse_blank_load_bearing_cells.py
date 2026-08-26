@@ -31,16 +31,16 @@ from tests.small.genomic_resources.gene_models.columnar_formats import (
     BAD_RECORD,
     CHROM,
     DEFAULT,
-    FORMAT_IDS,
-    FORMATS,
     GOOD_NAME,
+    READ_PATH_IDS,
+    READ_PATHS,
     REFSEQ,
     ColumnarFormat,
 )
 
 #: One case per bound column per format.
 FORMAT_BOUNDS = [
-    (fmt, column) for fmt in FORMATS for column in fmt.bound_columns
+    (fmt, column) for fmt in READ_PATHS for column in fmt.bound_columns
 ]
 FORMAT_BOUND_IDS = [f"{fmt.name}-{column}" for fmt, column in FORMAT_BOUNDS]
 
@@ -59,7 +59,7 @@ def test_a_blank_transcript_bound_names_the_record(
         fmt.parse(fmt.file_with(column, ""))
 
 
-@pytest.mark.parametrize("fmt", FORMATS, ids=FORMAT_IDS)
+@pytest.mark.parametrize("fmt", READ_PATHS, ids=READ_PATH_IDS)
 def test_a_blank_chromosome_names_the_record_by_position(
     fmt: ColumnarFormat,
 ) -> None:
@@ -84,7 +84,7 @@ def test_a_blank_chromosome_names_the_record_by_position(
         fmt.parse(fmt.file_with(fmt.chrom_column, ""))
 
 
-@pytest.mark.parametrize("fmt", FORMATS, ids=FORMAT_IDS)
+@pytest.mark.parametrize("fmt", READ_PATHS, ids=READ_PATH_IDS)
 def test_a_blank_transcript_name_names_the_record_by_position(
     fmt: ColumnarFormat,
 ) -> None:
@@ -92,7 +92,9 @@ def test_a_blank_transcript_name_names_the_record_by_position(
 
     It used to reach serialization as the literal token ``nan``, and the
     five UCSC-derived layouts suffixed it into a transcript id of
-    ``nan_1`` -- an identifier no file ever carried.
+    ``nan_1`` -- an identifier no file ever carried. Refusing the record
+    is what makes that id unconstructible: the parser returns nothing at
+    all, so there is no model left to carry a fabricated name.
     """
     with pytest.raises(
             ValueError,
@@ -103,29 +105,7 @@ def test_a_blank_transcript_name_names_the_record_by_position(
         fmt.parse(fmt.file_with(fmt.name_column, ""))
 
 
-@pytest.mark.parametrize("fmt", FORMATS, ids=FORMAT_IDS)
-def test_no_transcript_id_is_invented_from_a_blank_name(
-    fmt: ColumnarFormat,
-) -> None:
-    """The id, not just the message, is what this is protecting.
-
-    Naming the record in an error is worth little if the record is built
-    anyway; nothing the parser returns may carry an id derived from a
-    cell the file left empty.
-    """
-    try:
-        transcript_models = fmt.parse(fmt.file_with(fmt.name_column, "")) or {}
-    except ValueError:
-        transcript_models = {}
-
-    # str(): without the guard the default format's id is not even a
-    # string -- it is the float NaN itself, keying the returned mapping.
-    assert [
-        tr_id for tr_id in transcript_models if "nan" in str(tr_id)
-    ] == []
-
-
-@pytest.mark.parametrize("fmt", FORMATS, ids=FORMAT_IDS)
+@pytest.mark.parametrize("fmt", READ_PATHS, ids=READ_PATH_IDS)
 def test_a_blank_strand_names_the_record(fmt: ColumnarFormat) -> None:
     """A strand is load-bearing the way a coordinate is.
 
@@ -166,7 +146,7 @@ def test_a_blank_original_transcript_name_names_the_record() -> None:
         with_orig_id.parse(with_orig_id.file_with("trOrigId", ""))
 
 
-@pytest.mark.parametrize("fmt", FORMATS, ids=FORMAT_IDS)
+@pytest.mark.parametrize("fmt", READ_PATHS, ids=READ_PATH_IDS)
 def test_mismatched_exon_columns_name_the_record(
     fmt: ColumnarFormat,
 ) -> None:
@@ -186,20 +166,90 @@ def test_mismatched_exon_columns_name_the_record(
         fmt.parse(fmt.file_with("exonEnds", "200"))
 
 
+@pytest.mark.parametrize("fmt", READ_PATHS, ids=READ_PATH_IDS)
+def test_an_out_of_range_bound_names_the_record(fmt: ColumnarFormat) -> None:
+    """`inf` is a coordinate pandas accepts and `int()` cannot.
+
+    On the headerless path pandas types such a column as float, so the
+    conversion raises `OverflowError` rather than `ValueError` -- past
+    the guard, and back to a message naming neither record nor column,
+    which is the whole of what this issue is about.
+    """
+    column = fmt.bound_columns[0]
+
+    with pytest.raises(
+            ValueError,
+            match=(
+                f"transcript {BAD_NAME} at {CHROM} has an unparsable "
+                f"{column} column: 'inf'"
+            )):
+        fmt.parse(fmt.file_with(column, "inf"))
+
+
+@pytest.mark.parametrize("fmt", READ_PATHS, ids=READ_PATH_IDS)
+def test_an_unreadable_bound_keeps_its_cause(fmt: ColumnarFormat) -> None:
+    """The offending token must survive the message's truncation."""
+    with pytest.raises(ValueError) as excinfo:
+        fmt.parse(fmt.file_with(fmt.bound_columns[0], "twelve"))
+
+    assert excinfo.value.__cause__ is not None
+    assert "twelve" in str(excinfo.value.__cause__)
+
+
+@pytest.mark.parametrize("fmt", READ_PATHS, ids=READ_PATH_IDS)
+def test_a_whitespace_only_cell_counts_as_blank(
+    fmt: ColumnarFormat,
+) -> None:
+    """A cell holding only spaces names nothing either.
+
+    This is deliberately stricter than the code was: a name of " "
+    parsed before, and produced a transcript whose id was a space.
+    """
+    with pytest.raises(
+            ValueError,
+            match=f"has a blank {fmt.name_column} column"):
+        fmt.parse(fmt.file_with(fmt.name_column, "   "))
+
+
+@pytest.mark.parametrize("fmt", READ_PATHS, ids=READ_PATH_IDS)
+def test_a_cell_that_parses_keeps_the_value_the_file_gave(
+    fmt: ColumnarFormat,
+) -> None:
+    """Refusing a bad cell must not re-type a good one.
+
+    The five UCSC-derived layouts are read without a string dtype on the
+    headerless path, so pandas infers a numeric chromosome column as int.
+    That is arguably the wrong type -- a transcript index keyed by the
+    int 17 is unreachable by a query for "17" -- but it is what these
+    files produce today, and normalising it belongs to gain#931's work at
+    the read boundary, not to a guard that is only meant to reject.
+    """
+    numeric_chrom = fmt.parse(fmt._file(
+        fmt.row_with(fmt.chrom_column, "17")))
+
+    assert numeric_chrom is not None
+    chroms = [model.chrom for model in numeric_chrom.values()]
+    assert chroms == [17 if not fmt.header else "17"], (
+        f"{fmt.name}: chromosome came back as {chroms}"
+    )
+
+
 @pytest.mark.parametrize(
-    ("column", "value"),
+    ("column", "value", "names_by"),
     [
-        ("chrom", ""),
-        ("name", ""),
-        ("strand", ""),
-        ("txStart", ""),
-        ("cdsEnd", "not-a-coordinate"),
-        ("exonEnds", "200"),
+        # the two identifying columns name the record by its position...
+        ("chrom", "", f"record {BAD_RECORD}"),
+        ("name", "", f"record {BAD_RECORD}"),
+        # ...everything else by the transcript, which is readable by then
+        ("strand", "", BAD_NAME),
+        ("txStart", "", BAD_NAME),
+        ("cdsEnd", "not-a-coordinate", BAD_NAME),
+        ("exonEnds", "200", BAD_NAME),
     ],
     ids=["chrom", "name", "strand", "txStart", "cdsEnd", "exonEnds"],
 )
 def test_the_rejection_ledger_never_says_no_message(
-    column: str, value: str,
+    column: str, value: str, names_by: str,
 ) -> None:
     """The reader meets these messages through the gain#856 ledger.
 
@@ -216,5 +266,5 @@ def test_the_rejection_ledger_never_says_no_message(
     reason = dict(inference.rejected)["refseq"]
     assert "no message" not in reason
     assert reason.startswith("ValueError: ")
-    assert BAD_NAME in reason or f"record {BAD_RECORD}" in reason
+    assert names_by in reason
     assert "no message" not in inference.report()

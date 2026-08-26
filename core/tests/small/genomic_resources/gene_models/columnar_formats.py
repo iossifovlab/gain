@@ -13,7 +13,7 @@ gain#941 is about.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from io import StringIO
 from typing import IO
 
@@ -165,3 +165,17 @@ FORMATS = [
 ]
 
 FORMAT_IDS = [fmt.name for fmt in FORMATS]
+
+#: The same five layouts read through the other branch of `parse_raw`.
+#: A headerless file is recognised by counting columns and a headered one
+#: by matching their names, and the two branches read with different
+#: dtypes -- so a guard proven on one is not proven on the other. The
+#: default format is already read by name and has no second path.
+HEADERED_FORMATS = [
+    replace(fmt, name=f"{fmt.name}-headered", header=True)
+    for fmt in FORMATS if fmt is not DEFAULT
+]
+
+#: Every layout on every read path.
+READ_PATHS = [*FORMATS, *HEADERED_FORMATS]
+READ_PATH_IDS = [fmt.name for fmt in READ_PATHS]
