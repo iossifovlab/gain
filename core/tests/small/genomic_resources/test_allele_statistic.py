@@ -423,3 +423,21 @@ def test_a_resource_with_no_complex_rows_keeps_a_known_empty_grid() -> None:
     restored = AlleleStatistics.deserialize(statistics.serialize())
 
     assert restored.global_counts().complex_grid == {}
+
+
+def test_the_complex_grid_is_written_sorted_not_as_encountered() -> None:
+    # The cells are a sparse dict, so the written order is whatever the
+    # rows happened to produce.  Here the LARGER cell is met first, so
+    # an as-encountered write would put "3" before "2" -- and two builds
+    # that met the same pairs in different orders would disagree byte
+    # for byte while carrying identical counts.
+    statistics = AlleleStatistics()
+    region = _region()
+    region.add_allele(10, "ATG", "CGA")
+    region.add_allele(20, "AC", "GT")
+    statistics.fold_region(region)
+
+    written = statistics.serialize()
+
+    grid = json.loads(written)["chromosomes"]["chr1"]["complex_grid"]
+    assert list(grid) == ["2", "3"]

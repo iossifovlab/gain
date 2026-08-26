@@ -18,6 +18,9 @@ from gain.genomic_resources.statistics.alleles import (
     AlleleStatistics,
     serves_allele_arrays,
 )
+from gain.genomic_resources.statistics.coverage import (
+    length_histogram_bin_index,
+)
 from gain.genomic_resources.testing.builders import (
     a_np_score,
     a_position_score,
@@ -667,3 +670,157 @@ def test_a_position_score_writes_no_allele_statistics(
     assert not resource.file_exists(ALLELE_STATISTICS_FILE)
     assert GenomicScoreImplementation(resource).get_allele_statistics() \
         is None
+
+
+# A second fixture, deliberately separate from ``_MIXED_TABLE``: that one
+# carries one indel of each direction at the SAME minimum length, which
+# reconciles but cannot tell one length bin from another.  This one
+# varies the lengths and spreads the complex pairs on and off the
+# diagonal.
+#
+#   chr1: +1 -> bin 0, +4 -> bin 2, -3 -> bin 1, (2,2) MNV, (2,3)
+#   chr2: +2 -> bin 1, (3,3) MNV
+_INDEL_TABLE = """
+    chrom  pos_begin  reference  alternative  score
+    chr1   10         A          AT           0.1
+    chr1   20         A          ATTTT        0.2
+    chr1   30         ACGT       A            0.3
+    chr1   40         AC         GT           0.4
+    chr1   50         AT         ACG          0.5
+    chr2   10         A          AGG          0.6
+    chr2   20         ATG        CGA          0.7
+"""
+
+
+def _indel_allele_score(tmp_path: pathlib.Path) -> GenomicResource:
+    return (
+        an_allele_score()
+        .with_score("score", "float")
+        .with_data(_INDEL_TABLE)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+def _indel_np_score(tmp_path: pathlib.Path) -> GenomicResource:
+    return (
+        a_np_score()
+        .with_score("score", "float")
+        .with_data(_INDEL_TABLE)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+def test_build_stores_the_length_histograms_per_chromosome(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _indel_allele_score(tmp_path)
+
+    stats = _built_statistics(tmp_path, resource)
+
+    chromosomes = stats.by_chromosome()
+    chr1 = chromosomes["chr1"].insertion_lengths
+    chr2 = chromosomes["chr2"].insertion_lengths
+    assert chr1 is not None
+    assert chr2 is not None
+    assert {index: count for index, count in enumerate(chr1) if count} == {
+        length_histogram_bin_index(1): 1,
+        length_histogram_bin_index(4): 1,
+    }
+    assert {index: count for index, count in enumerate(chr2) if count} == {
+        length_histogram_bin_index(2): 1,
+    }
+
+
+def test_build_stores_the_complex_grid_per_chromosome(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _indel_allele_score(tmp_path)
+
+    stats = _built_statistics(tmp_path, resource)
+
+    chromosomes = stats.by_chromosome()
+    assert chromosomes["chr1"].complex_grid == {(2, 2): 1, (2, 3): 1}
+    assert chromosomes["chr2"].complex_grid == {(3, 3): 1}
+
+
+def test_the_global_groups_are_the_merge_of_the_chromosomes(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _indel_allele_score(tmp_path)
+
+    stats = _built_statistics(tmp_path, resource)
+
+    counts = stats.global_counts()
+    assert counts.insertion_lengths is not None
+    assert counts.deletion_lengths is not None
+    assert {
+        index: count
+        for index, count in enumerate(counts.insertion_lengths) if count
+    } == {
+        length_histogram_bin_index(1): 1,
+        length_histogram_bin_index(2): 1,
+        length_histogram_bin_index(4): 1,
+    }
+    assert {
+        index: count
+        for index, count in enumerate(counts.deletion_lengths) if count
+    } == {length_histogram_bin_index(3): 1}
+    assert counts.complex_grid == {(2, 2): 1, (2, 3): 1, (3, 3): 1}
+
+
+def test_the_group_totals_reconcile_with_the_class_counts(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The acceptance criterion that ties this slice to gain#777: every
+    # insertion, deletion and complex row is accounted for exactly once.
+    resource = _indel_allele_score(tmp_path)
+
+    stats = _built_statistics(tmp_path, resource)
+
+    for counts in (*stats.by_chromosome().values(), stats.global_counts()):
+        assert counts.insertion_lengths is not None
+        assert counts.deletion_lengths is not None
+        assert counts.complex_grid is not None
+        assert sum(counts.insertion_lengths) == \
+            counts.class_counts["insertion"]
+        assert sum(counts.deletion_lengths) == \
+            counts.class_counts["deletion"]
+        assert sum(counts.complex_grid.values()) == \
+            counts.class_counts["complex"]
+
+
+def test_the_indel_groups_match_across_the_two_scan_paths(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The gain#777 parity check, extended to the new groups: np_score is
+    # excluded from the bulk scan, so these two identical tables are
+    # read by genuinely different code paths.
+    allele = _indel_allele_score(tmp_path / "allele")
+    np_score = _indel_np_score(tmp_path / "np")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path / "allele"), "-j", "1"])
+    cli_manage(["repo-stats", "-R", str(tmp_path / "np"), "-j", "1"])
+
+    assert np_score.get_file_content(ALLELE_STATISTICS_FILE) \
+        == allele.get_file_content(ALLELE_STATISTICS_FILE)
+
+
+@pytest.mark.parametrize("region_size", [10, 20, 7, 1])
+def test_the_indel_groups_are_chunk_invariant(
+    tmp_path: pathlib.Path,
+    region_size: int,
+) -> None:
+    # Chunking meets the sparse grid's cells in different orders, which
+    # is why they are written sorted rather than as encountered.
+    whole = _indel_allele_score(tmp_path / "whole")
+    chunked = _indel_allele_score(tmp_path / "chunked")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path / "whole"), "-j", "1"])
+    cli_manage([
+        "repo-stats", "-R", str(tmp_path / "chunked"), "-j", "1",
+        "--region-size", str(region_size)])
+
+    assert chunked.get_file_content(ALLELE_STATISTICS_FILE) \
+        == whole.get_file_content(ALLELE_STATISTICS_FILE)
