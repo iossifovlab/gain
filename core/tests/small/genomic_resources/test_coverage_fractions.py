@@ -1,8 +1,9 @@
 # pylint: disable=C0114,C0116,W0212,W0621
+import gc
 import pathlib
 import textwrap
+import weakref
 
-import pytest
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
 )
@@ -18,13 +19,6 @@ from gain.genomic_resources.testing.builders import (
     a_position_score,
     a_reference_genome,
 )
-
-
-@pytest.fixture(autouse=True)
-def _clear_ref_genome_cache() -> None:
-    # The class-level cache is keyed by genome id alone; without a clear,
-    # one test's genome could answer for another test's same-named id.
-    GenomicScoreImplementation._REF_GENOME_CACHE.clear()
 
 
 def _a_chr1_score(genome_id: str | None = None):
@@ -55,6 +49,24 @@ def _built_impl(
     return GenomicScoreImplementation(repo.get_resource(resource_id))
 
 
+def _a_repo_with_genome(
+    where: pathlib.Path, chrom_length: int,
+) -> GenomicResourceRepo:
+    """A chr1 score, labelled with a genome of the given chr1 length.
+
+    The genome id is the same in every repository built here, which is
+    the point: it is what two repositories are allowed to share.
+    """
+    return (
+        a_grr()
+        .with_resource("scores/one", _a_chr1_score("genomes/shared"))
+        .with_resource(
+            "genomes/shared",
+            a_reference_genome().with_chromosome("chr1", "A" * chrom_length))
+        .build_repo(where)
+    )
+
+
 def test_genome_labeled_score_shows_percent_covered(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -72,6 +84,47 @@ def test_genome_labeled_score_shows_percent_covered(
 
     assert f">{COVERED}<" in page
     assert page.count(">9.00%<") == 2  # the chr1 row and the global row
+
+
+def test_two_repos_sharing_a_genome_id_do_not_cross_serve(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Each repository's score is measured against its OWN genome.
+
+    Two repositories are free to define the same genome id with
+    different content -- a private repository shadowing a public
+    ``genomes/hg38`` is the shape this takes in the wild.  The score is
+    identical in both, so only the denominator differs and the rendered
+    percentage is what tells the two genomes apart.
+    """
+    wide = _a_repo_with_genome(tmp_path / "wide", 100)
+    narrow = _a_repo_with_genome(tmp_path / "narrow", 50)
+
+    wide_page = _built_impl(wide, "scores/one").get_info(repo=wide)
+    narrow_page = _built_impl(narrow, "scores/one").get_info(repo=narrow)
+
+    assert wide_page.count(">9.00%<") == 2  # 9 of 100
+    assert narrow_page.count(">18.00%<") == 2  # 9 of 50
+
+
+def test_rendering_does_not_pin_the_repository(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A rendered repository stays collectable once its caller lets go.
+
+    The resolved-genome cache is keyed by repository, so it is exactly
+    the thing that could hold one forever.  A process that renders
+    against many repositories -- a test session is the extreme case --
+    must not accumulate them.
+    """
+    repo = _a_repo_with_genome(tmp_path, 100)
+    _built_impl(repo, "scores/one").get_info(repo=repo)
+    repo_ref = weakref.ref(repo)
+
+    del repo
+    gc.collect()
+
+    assert repo_ref() is None
 
 
 def test_score_without_a_denominator_renders_raw_counts_only(
