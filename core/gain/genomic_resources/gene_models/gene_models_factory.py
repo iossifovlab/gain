@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_RESOURCE_CACHE: dict[tuple[str, str], GeneModels] = {}
+_RESOURCE_CACHE: dict[tuple[str, str, str], GeneModels] = {}
 _FILE_CACHE: dict[tuple[str, str], GeneModels] = {}
 _INMEMORY_CACHE_LOCK = Lock()
 
@@ -92,7 +92,7 @@ def build_gene_models_from_resource(
             "%s as gene models", resource.resource_id, resource.get_type())
         raise ValueError(f"wrong resource type: {resource.resource_id}")
 
-    cache_id = (resource.get_full_id(), resource.get_repo_url())
+    cache_id = resource.get_memo_key()
     with _INMEMORY_CACHE_LOCK:
         if cache_id in _RESOURCE_CACHE:
             return _RESOURCE_CACHE[cache_id]

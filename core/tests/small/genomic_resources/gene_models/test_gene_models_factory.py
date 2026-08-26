@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
+from gain.genomic_resources.fsspec_protocol import build_local_resource
 from gain.genomic_resources.gene_models.gene_models import GeneModels
 from gain.genomic_resources.gene_models.gene_models_factory import (
     _FILE_CACHE,
@@ -562,6 +563,47 @@ def test_build_from_file_returns_unloaded_gene_models(
     # Should be able to load
     gene_models.load()
     assert gene_models.is_loaded()
+
+
+REFFLAT_ALPHA = """
+#geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
+TP53      tx1  1     +      10      100   12       95     1         10         100
+"""  # noqa
+
+REFFLAT_BETA = """
+#geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
+BRCA1     tx2  17    -      200     300   210      290    1         200        300
+"""  # noqa
+
+
+def test_two_caller_built_resources_keep_their_own_gene_models(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A caller built root resource is identified by the file it describes.
+
+    ``build_local_resource`` roots the resource at the repository root, so
+    two resources over one directory share an id and a repository url and
+    differ only in their config.  Keying the memo on identity alone makes
+    them collide -- the second caller is served the first caller's gene
+    models (#912).
+    """
+    (tmp_path / "alpha.txt").write_text(
+        convert_to_tab_separated(REFFLAT_ALPHA))
+    (tmp_path / "beta.txt").write_text(
+        convert_to_tab_separated(REFFLAT_BETA))
+
+    alpha_resource = build_local_resource(str(tmp_path), {
+        "type": "gene_models", "filename": "alpha.txt", "format": "refflat",
+    })
+    beta_resource = build_local_resource(str(tmp_path), {
+        "type": "gene_models", "filename": "beta.txt", "format": "refflat",
+    })
+
+    alpha = build_gene_models_from_resource(alpha_resource).load()
+    beta = build_gene_models_from_resource(beta_resource).load()
+
+    assert alpha.gene_names() == ["TP53"]
+    assert beta.gene_names() == ["BRCA1"]
 
 
 def test_cached_instance_remains_loaded(

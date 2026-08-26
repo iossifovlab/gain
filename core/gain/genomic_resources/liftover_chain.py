@@ -134,7 +134,7 @@ class LiftoverChain(ResourceConfigValidationMixin):
         }
 
 
-_INMEMORY_CACHE: dict[tuple[str, str], LiftoverChain] = {}
+_INMEMORY_CACHE: dict[tuple[str, str, str], LiftoverChain] = {}
 _INMEMORY_CACHE_LOCK = Lock()
 
 
@@ -152,7 +152,7 @@ def build_liftover_chain_from_resource(
             resource.resource_id, resource.get_type())
         raise ValueError(f"wrong resource type: {resource.resource_id}")
 
-    cache_id = (resource.get_full_id(), resource.get_repo_url())
+    cache_id = resource.get_memo_key()
     with _INMEMORY_CACHE_LOCK:
         if cache_id in _INMEMORY_CACHE:
             return _INMEMORY_CACHE[cache_id]

@@ -1,9 +1,11 @@
 # pylint: disable=redefined-outer-name,C0114,C0116,protected-access,fixme
 
+import pathlib
 from typing import Any
 
 import pytest
 import yaml
+from gain.genomic_resources.fsspec_protocol import build_local_resource
 from gain.genomic_resources.liftover_chain import (
     LiftoverChain,
     build_liftover_chain_from_resource,
@@ -118,3 +120,54 @@ def test_a_chain_whose_labels_are_not_a_mapping_still_builds(
 
     assert chain.source_genome_id is None
     assert chain.target_genome_id is None
+
+
+def test_two_caller_built_resources_keep_their_own_chain(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A caller built root resource is identified by the file it describes.
+
+    ``build_local_resource`` roots the resource at the repository root, so
+    two resources over one directory share an id and a repository url and
+    differ only in their config.  Keying the memo on identity alone makes
+    them collide -- the second caller is served the first caller's chain
+    (#912).
+
+    As above, constructing a chain never opens the chain file, so neither
+    file needs to exist for the memo to be exercised.
+    """
+    hg19_resource = build_local_resource(str(tmp_path), {
+        "type": "liftover_chain",
+        "filename": "hg19_to_hg38.chain.gz",
+        "meta": {"labels": {
+            "source_genome": "hg19", "target_genome": "hg38"}},
+    })
+    hg38_resource = build_local_resource(str(tmp_path), {
+        "type": "liftover_chain",
+        "filename": "hg38_to_hg19.chain.gz",
+        "meta": {"labels": {
+            "source_genome": "hg38", "target_genome": "hg19"}},
+    })
+
+    hg19_chain = build_liftover_chain_from_resource(hg19_resource)
+    hg38_chain = build_liftover_chain_from_resource(hg38_resource)
+
+    assert hg19_chain.source_genome_id == "hg19"
+    assert hg38_chain.source_genome_id == "hg38"
+    assert hg19_chain.files == {"hg19_to_hg38.chain.gz"}
+    assert hg38_chain.files == {"hg38_to_hg19.chain.gz"}
+
+
+def test_one_chain_resource_is_still_memoised(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Telling two resources apart must not stop reuse of either."""
+    resource = build_local_resource(str(tmp_path), {
+        "type": "liftover_chain",
+        "filename": "hg19_to_hg38.chain.gz",
+    })
+
+    first = build_liftover_chain_from_resource(resource)
+    second = build_liftover_chain_from_resource(resource)
+
+    assert first is second

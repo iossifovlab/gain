@@ -16,10 +16,23 @@ from gain.gene_sets.gene_set import (
     build_gene_set_collection_from_file,
     build_gene_set_collection_from_resource,
 )
+from gain.genomic_resources.fsspec_protocol import build_local_resource
 from gain.genomic_resources.repository import GenomicResourceRepo
 
 GMT_ALPHA = "ALPHA_SET\talpha description\tPOGZ\tCHD8\n"
 GMT_BETA = "BETA_SET\tbeta description\tANK2\n"
+
+
+def gene_set_config(collection_id: str, filename: str) -> dict[str, Any]:
+    """Return the config a gene set collection resource carries."""
+    return {
+        "type": "gene_set_collection",
+        "id": collection_id,
+        "format": "gmt",
+        "filename": filename,
+        "web_label": None,
+        "web_format_str": None,
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -434,6 +447,34 @@ def test_published_map_collection_still_names_its_companion_file(
     collection = build_gene_set_collection_from_resource(resource)
 
     assert collection.files == {"test-map.txt", "test-mapnames.txt"}
+
+
+def test_two_caller_built_resources_keep_their_own_gene_sets(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A caller may build the synthetic resource itself and pass it here.
+
+    ``build_local_resource`` roots the resource at the repository root, so
+    two resources over one directory share an id and a repository url and
+    differ only in their config.  Keying the memo on identity alone makes
+    them collide -- the second caller is served the first caller's file
+    (#912).  The assertion is on the loaded gene sets rather than on object
+    identity, because the damage that matters is a collection serving
+    another file's contents.
+    """
+    (tmp_path / "alpha.gmt").write_text(GMT_ALPHA)
+    (tmp_path / "beta.gmt").write_text(GMT_BETA)
+
+    alpha_resource = build_local_resource(
+        str(tmp_path), gene_set_config("alpha", "alpha.gmt"))
+    beta_resource = build_local_resource(
+        str(tmp_path), gene_set_config("beta", "beta.gmt"))
+
+    alpha_collection = build_gene_set_collection_from_resource(alpha_resource)
+    beta_collection = build_gene_set_collection_from_resource(beta_resource)
+
+    assert sorted(alpha_collection.load().gene_sets) == ["ALPHA_SET"]
+    assert sorted(beta_collection.load().gene_sets) == ["BETA_SET"]
 
 
 def test_resource_built_collections_are_still_memoised(
