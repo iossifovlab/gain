@@ -208,6 +208,62 @@ def test_unknown_extension_raises_then_succeeds_with_explicit_format(
     assert sorted(collection.load().gene_sets) == ["ALPHA_SET"]
 
 
+def test_sql_extension_is_refused_like_any_unknown_extension(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A ``.sql`` path is refused, and refusal is not the last word.
+
+    It used to auto-detect to a format that has no loader: the sqlite
+    backed collection was deleted long ago, but the extension mapping
+    outlived it, so a ``.sql`` path built a collection with no filename,
+    cached it, and only failed later at ``load()`` -- away from the call
+    that caused it.
+    """
+    path = tmp_path / "sets.sql"
+    path.write_text(GMT_ALPHA)
+
+    with pytest.raises(ValueError, match="Cannot find collection format"):
+        call_with_timeout(build_gene_set_collection_from_file, str(path))
+
+    assert not _FILE_CACHE
+
+    collection = call_with_timeout(
+        build_gene_set_collection_from_file, str(path),
+        collection_format="gmt")
+
+    assert sorted(collection.load().gene_sets) == ["ALPHA_SET"]
+
+
+def test_sqlite_format_gets_no_config_shape_of_its_own(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An explicitly asked for ``sqlite`` gets no config shape of its own.
+
+    The builder used to write a ``dbfile`` key for it. No schema field
+    reads that key, so validation dropped it and the collection came out
+    with no filename at all -- the config branch outlived the loader it
+    was written for.
+
+    The closing ``load()`` assertion characterises pre-existing
+    behaviour, and is deliberately not a contract: an explicit format is
+    not validated when the collection is built, so an unsupported one
+    fails on use rather than up front. It is here to show that removing
+    the branch did not quietly make the format half work.
+    """
+    path = tmp_path / "sets.dat"
+    path.write_text(GMT_ALPHA)
+
+    collection = call_with_timeout(
+        build_gene_set_collection_from_file, str(path),
+        collection_format="sqlite")
+
+    assert collection.config.filename == "sets.dat"
+    assert "dbfile" not in collection.resource.get_config()
+
+    with pytest.raises(ValueError, match="Invalid collection format type"):
+        collection.load()
+
+
 def test_build_from_file_supports_the_map_format(
     tmp_path: pathlib.Path,
 ) -> None:

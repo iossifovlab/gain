@@ -334,7 +334,6 @@ _INMEMORY_CACHE_LOCK = Lock()
 _FORMAT_BY_EXTENSION = {
     ".txt": "map",
     ".gmt": "gmt",
-    ".sql": "sqlite",
 }
 
 
@@ -376,8 +375,6 @@ def build_gene_set_collection_from_file(
     }
     if collection_format == "directory":
         config["directory"] = basename
-    elif collection_format == "sqlite":
-        config["dbfile"] = basename
     else:
         config["filename"] = basename
 
