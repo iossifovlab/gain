@@ -142,10 +142,18 @@ class GeneSetCollectionImpl(
 
     def calc_statistics_hash(self) -> bytes:
         manifest = self.resource.get_manifest()
+        # ``files`` reports what the collection reads, which it decides by
+        # asking whether the file is there -- so it can name a file the
+        # manifest has no entry for, on a resource whose manifest was
+        # written before that file arrived. Skipping it keeps the hash to
+        # the set the manifest knows, as it always has been. That a
+        # drifted manifest therefore hashes as if it had not drifted is
+        # open, not settled: see #923.
         result = {
             "files_md5": {
                 fn: manifest[fn].md5
                 for fn in self.gene_set_collection.files
+                if fn in manifest
             },
         }
         if self.gene_set_collection.config.histograms is not None:
