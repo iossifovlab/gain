@@ -119,9 +119,20 @@ pipeline {
         // core/Jenkinsfile.integration (#799) and Jenkinsfile.release.
         //
         // This makes the job responsible for its own workspace state:
-        // nothing before `Checkout` may assume a populated workspace.
-        // `Prepare workspace` (which runs first, on purpose — gain#489)
-        // only rm -rf's and mkdir -p's, so it is unaffected.
+        // nothing before `Checkout` may assume a populated workspace —
+        // and nothing before it may leave state behind either. On a
+        // workspace with no git repo the plugin takes the CLONE path,
+        // and git-client's clone command calls
+        // `Util.deleteContentsRecursive(workspace)` before `git init`:
+        // an unlogged wipe of everything in the workspace. Before this
+        // option the implicit checkout (wipe included) ran ahead of the
+        // first stage, so a pre-`Checkout` `mkdir` landed after the
+        // wipe and survived; with it, the only clone runs in
+        // `Checkout`, and anything created earlier is destroyed. That
+        // was gain#917. So `Wipe workspace` (which runs first, on
+        // purpose — gain#489) may only REMOVE; creating the
+        // directories the stack needs belongs after `Checkout`, in
+        // `Compose env`.
         skipDefaultCheckout(true)
     }
 
@@ -199,39 +210,45 @@ pipeline {
             }
         }
 
-        stage('Prepare workspace') {
+        stage('Wipe workspace') {
             steps {
-                // Playwright writes traces / videos to
-                // web_e2e/reports and the backend writes Django
-                // file-logs to web_infra/gpfwa-logs as root (no
-                // USER directive in either container), so the
-                // host Jenkins user can't `rm` them on the next
-                // build. Run the cleanup inside an alpine
-                // container as root to sidestep that. Wiping
-                // gpfwa-logs each build keeps the captured
-                // artefact attributable to this build only.
-                // Then mkdir runs on the host so the new reports
-                // dir is Jenkins-owned and the post-stage
-                // host-side `cp` can write into it.
+                // Playwright writes its traces / videos to
+                // web_e2e/reports as root — its image carries no USER
+                // directive and the compose service sets no `user:` —
+                // so the host Jenkins user can't `rm` them on the next
+                // build. (The backend, which writes Django file-logs
+                // to web_infra/gpfwa-logs, runs as the agent uid and
+                // no longer contributes root-owned artefacts; the
+                // suite container still does.) Run the cleanup inside
+                // an alpine container as root to sidestep that, for as
+                // long as any container here writes as root. Wiping
+                // gpfwa-logs each build keeps the captured artefact
+                // attributable to this build only. Both it and
+                // gpfwa-data are per-build scratch anyway: the stack
+                // is torn down with `down -v` and the DB starts empty
+                // every build.
                 //
-                // gpfwa-data/gpfwa-logs are wiped and re-created on
-                // the host for the same reason plus a new one: the
-                // backend now runs as the agent uid, and dockerd
-                // creates a *missing* bind source as root:root — a
-                // dir the non-root container could not write into.
-                // Creating them here (as `jenkins`) is what makes
-                // the non-root switch work. Both are per-build
-                // scratch: the stack is torn down with `down -v`
-                // and the DB starts empty every build.
+                // This has to stay AHEAD of `Checkout`. On a cold
+                // workspace the git plugin wipes the workspace itself,
+                // as the agent user, and one root-owned leftover makes
+                // that throw — the build then dies with `Failed to
+                // delete workspace` before any stage of ours runs. A
+                // root-capable wipe here is what keeps that from
+                // happening (and what stops this job wedging the way
+                // gain-core-integration did in gain#921).
                 //
+                // It may only REMOVE, though: the clone path deletes
+                // the whole workspace immediately after this stage, so
+                // anything created here is gone before it can be used.
+                // Creating the directories the stack needs is
+                // therefore `Compose env`'s job, after `Checkout`
+                // (gain#917). This stage was called `Prepare
+                // workspace` when it did both.
                 sh '''
                     docker run --rm -v "$PWD:/wd" -w /wd alpine \
                         rm -rf dist reports web_e2e/reports \
                                web_infra/gpfwa-logs \
                                web_infra/gpfwa-data
-                    mkdir -p reports/web_e2e \
-                             web_infra/gpfwa-logs \
-                             web_infra/gpfwa-data
                 '''
             }
         }
@@ -413,6 +430,56 @@ EOF
                             exit 1
                         fi
                         echo "OK: $repo -> $resolved"
+                    done
+                '''
+
+                // Create the workspace directories the stack needs,
+                // and PROVE each one is writable by the uid the
+                // containers run as.
+                //
+                // This runs here, and not in `Wipe workspace`, because
+                // `Checkout` sits between the two: on a cold workspace
+                // its clone path deletes the whole workspace, so a
+                // directory created before it does not survive to be
+                // used (gain#917). Everything downstream assumes these
+                // exist — compose binds gpfwa-logs / gpfwa-data, and
+                // the `Run e2e` capture block plus the post-stage
+                // archive write into reports/web_e2e.
+                //
+                // Creating them as the agent user is load-bearing, not
+                // tidiness: dockerd creates a *missing* bind source as
+                // root:root, the backend runs as AGENT_UID, and it
+                // cannot write into a root-owned dir — it just exits 1
+                // with nothing in the log to say why. That is the
+                // failure this stage exists to pre-empt, so assert it
+                // rather than trust it: an actual write beats reading
+                // permission bits, which say nothing useful when the
+                // caller happens to be root.
+                sh '''
+                    set -eu
+
+                    for d in reports/web_e2e \
+                             web_infra/gpfwa-logs \
+                             web_infra/gpfwa-data; do
+                        mkdir -p "$d" 2>/dev/null || true
+                        if [ ! -d "$d" ]; then
+                            echo "cannot create $d in the workspace" >&2
+                            echo "  (its parent is not writable by" >&2
+                            echo "   $(id -un) -- a root-owned leftover" >&2
+                            echo "   from an earlier build?)" >&2
+                            exit 1
+                        fi
+                        probe="$d/.write-probe.$$"
+                        if ! touch "$probe" 2>/dev/null; then
+                            echo "$d is not writable by $(id -un)" >&2
+                            echo "  (uid $(id -u); dockerd creates a" >&2
+                            echo "   MISSING bind source as root:root," >&2
+                            echo "   and the containers run as" >&2
+                            echo "   AGENT_UID -- see gain#917)" >&2
+                            exit 1
+                        fi
+                        rm -f "$probe"
+                        echo "OK: $d writable by $(id -un)"
                     done
                 '''
             }
@@ -653,6 +720,18 @@ EOF
                         } finally {
                             sh '''
                                 set -a; . ./web_infra/.env; set +a
+                                # The redirect below cannot create its
+                                # own parent directory, and this block
+                                # runs in a `finally` where raising
+                                # would mask the failure being
+                                # captured — so make the target exist
+                                # instead of relying on it. In gain#917
+                                # it did not exist, and because every
+                                # capture here is `|| true`, that was
+                                # indistinguishable from a clean run:
+                                # the one build that needed its logs
+                                # was the one that discarded them.
+                                mkdir -p reports/web_e2e
                                 # Wide combined log of every compose
                                 # service (db, mail, backend-migrate,
                                 # backend-e2e, frontend-e2e). One
