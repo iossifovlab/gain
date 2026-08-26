@@ -3,7 +3,8 @@
 
 Record-formatting stays per-module — chromosome names, coordinates and
 attribute syntax differ per GTF flavour — while building a resource out
-of the records and locating an on-disk fixture live here.
+of the records, locating an on-disk fixture, and saying what counts as
+an unchanged parse live here.
 """
 import os
 import pathlib
@@ -30,6 +31,25 @@ def build_from_content(
     path = tmp_path / name
     path.write_text(content)
     return build_gene_models_from_file(str(path))
+
+
+def transcript_digest(gene_models: GeneModels) -> dict[str, tuple]:
+    """Reduce parsed models to what an invariance test compares.
+
+    Every field a record could reach: the transcript bounds, the coding
+    interval, and each exon with the frame derived from that interval.
+    Shared so that a test asserting "parses as if these records were
+    absent" cannot quietly compare fewer fields than its sibling -- the
+    failure mode is a test that passes because it discarded the value
+    that varied.
+    """
+    return {
+        tr_id: (
+            tm.tx, tm.cds,
+            tuple((exon.start, exon.stop, exon.frame) for exon in tm.exons),
+        )
+        for tr_id, tm in gene_models.transcript_models.items()
+    }
 
 
 @pytest.fixture

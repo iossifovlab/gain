@@ -776,10 +776,9 @@ GTF_EXONLESS_TRANSCRIPT_FEATURES = frozenset({
 #: outright, before attribute parsing -- so an ignored record is not
 #: required to carry a ``transcript_id`` (Ensembl ``gene`` records genuinely
 #: lack one). ``gene`` restates what every transcript-level record already
-#: carries, the UTR spellings are implied by the exons, and ``CDS`` is
-#: reconstructed from the codon records instead. The exonless biotypes are
-#: deliberately not here: their skip runs after attribute parsing, so their
-#: children's errors can name the skipped transcript.
+#: carries, and the UTR spellings are implied by the exons. The exonless
+#: biotypes are deliberately not here: their skip runs after attribute
+#: parsing, so their children's errors can name the skipped transcript.
 GTF_IGNORED_FEATURES = frozenset({
     "gene",
     "UTR",
@@ -787,7 +786,6 @@ GTF_IGNORED_FEATURES = frozenset({
     "3UTR",
     "five_prime_utr",
     "three_prime_utr",
-    "CDS",
 })
 
 #: Features that append an exon to their transcript's model.
@@ -802,16 +800,27 @@ GTF_CODON_FEATURES = frozenset({
     "stop_codon",
 })
 
+#: Features that state the coding sequence itself, one record per coding
+#: stretch of an exon. Widened into ``cds`` exactly as the codon records
+#: are, and wherever a codon record is missing they are the only
+#: statement of the extent there is. For a complete transcript they add
+#: nothing: GENCODE and Ensembl exclude the stop codon from their ``CDS``
+#: records, so the codon span already covers them. NCBI includes it --
+#: folding both sources together answers the same under either
+#: convention, so this carries no assumption about flavour.
+GTF_CDS_FEATURES = frozenset({
+    "CDS",
+})
+
 #: Features that mark a site within their transcript and contribute
 #: nothing to the model. GENCODE emits one ``Selenocysteine`` record per
 #: recoded UGA codon of a selenoprotein. Taking no measurement from them
-#: is a policy, not a redundancy: ``cds`` is reconstructed from the codon
-#: records alone, so a transcript with no ``stop_codon`` keeps a stub
-#: that stops short of its own recoded site -- true of ten of the 88
-#: such transcripts in GENCODE v49 comprehensive, and captured as #909.
-#: Dispatched as child records, so that
-#: a record with no parent transcript is reported rather than silently
-#: turned into a transcript of its own.
+#: is a redundancy, not a policy: every such site falls inside a ``CDS``
+#: record of the same transcript, so ``cds`` already covers it -- all 130
+#: records across the 88 selenoproteins of GENCODE v49 comprehensive.
+#: Dispatched as child records, so that a record with no parent
+#: transcript is reported rather than silently turned into a transcript
+#: of its own.
 GTF_SELENOCYSTEINE_FEATURES = frozenset({
     "Selenocysteine",
 })
@@ -952,7 +961,7 @@ def parse_gtf_gene_models_format(
             )
             transcript_model.exons.append(exon)
             continue
-        if feature in GTF_CODON_FEATURES:
+        if feature in GTF_CODON_FEATURES or feature in GTF_CDS_FEATURES:
             transcript_model = _parent_transcript(
                 transcript_models, feature, tr_id, skipped_transcripts)
             cds = transcript_model.cds
