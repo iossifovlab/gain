@@ -32,6 +32,14 @@ from web_annotation.pipeline_cache import LRUPipelineCache
 from web_annotation.tasks import clean_old_jobs
 from web_annotation.testing import CustomWebsocketCommunicator
 
+#: Sanity bound on ``job.duration``, **not** a performance budget. These
+#: tests annotate a single variant, which costs well under a second; the
+#: bound exists only to catch a broken or unset timer -- for example one
+#: that recorded ``time.time()`` instead of the elapsed delta -- without
+#: encoding how loaded the CI agent happened to be. Wall-clock budgets
+#: were tried here and failed builds on agent contention alone (#944).
+MAX_PLAUSIBLE_JOB_DURATION_SECONDS = 600
+
 
 @pytest.fixture(autouse=True)
 def sequential_task_executor(
@@ -260,7 +268,7 @@ def test_annotate_vcf(
     saved_input = pathlib.Path(job.input_path)
 
     assert job.duration is not None
-    assert job.duration < 7.0
+    assert 0 <= job.duration < MAX_PLAUSIBLE_JOB_DURATION_SECONDS
     assert saved_input.exists()
     assert saved_input.read_text(encoding="utf-8") == vcf
 
@@ -349,7 +357,7 @@ def test_annotate_vcf_anonymous_user(
     saved_input = pathlib.Path(job.input_path)
 
     assert job.duration is not None
-    assert job.duration < 7.0
+    assert 0 <= job.duration < MAX_PLAUSIBLE_JOB_DURATION_SECONDS
     assert saved_input.exists()
     assert saved_input.read_text(encoding="utf-8") == vcf
 
@@ -802,7 +810,7 @@ def test_annotate_tabular(
 
     assert job.status == Job.Status.SUCCESS
     assert job.duration is not None
-    assert job.duration < 6.0
+    assert 0 <= job.duration < MAX_PLAUSIBLE_JOB_DURATION_SECONDS
 
     assert job.result_path.endswith(file_extension) is True
 
@@ -878,7 +886,7 @@ def test_annotate_tabular_t4c8(
 
     assert job.status == Job.Status.SUCCESS
     assert job.duration is not None
-    assert job.duration < 7.0
+    assert 0 <= job.duration < MAX_PLAUSIBLE_JOB_DURATION_SECONDS
 
     output = pathlib.Path(job.result_path).read_text(encoding="utf-8")
     lines = [line.split(",") for line in output.strip().split("\n")]
@@ -917,7 +925,7 @@ def test_annotate_tabular_anonymous_t4c8(
     assert job is not None
     assert job.status == Job.Status.SUCCESS
     assert job.duration is not None
-    assert job.duration < 7.0
+    assert 0 <= job.duration < MAX_PLAUSIBLE_JOB_DURATION_SECONDS
 
     output = pathlib.Path(job.result_path).read_text(encoding="utf-8")
     lines = [line.split(",") for line in output.strip().split("\n")]
@@ -1113,7 +1121,7 @@ def test_annotate_tabular_t4c8_gzipped(
 
     assert job.status == Job.Status.SUCCESS
     assert job.duration is not None
-    assert job.duration < 7.0
+    assert 0 <= job.duration < MAX_PLAUSIBLE_JOB_DURATION_SECONDS
 
     result_path = pathlib.Path(job.result_path)
     assert job.result_path.endswith(".gz"), str(result_path)
@@ -1201,7 +1209,7 @@ def test_annotate_vcf_bgzip(
     saved_input = pathlib.Path(job.input_path)
 
     assert job.duration is not None
-    assert job.duration < 7.0
+    assert 0 <= job.duration < MAX_PLAUSIBLE_JOB_DURATION_SECONDS
     assert saved_input.exists()
     assert gzip.decompress(saved_input.read_bytes()).decode() == vcf_content
 
