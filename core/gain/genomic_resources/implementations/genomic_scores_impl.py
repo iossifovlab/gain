@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import json
+import weakref
 from collections.abc import Callable, Generator, Iterable
 from typing import Any, ClassVar, NamedTuple, TypeVar, cast
 
@@ -462,7 +463,19 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
             return tasks
 
-    _REF_GENOME_CACHE: ClassVar[dict[str, Any]] = {}
+    #: Reference genomes already resolved, per repository.  Keyed by the
+    #: repository FIRST: an id only names a genome relative to one, so an
+    #: id-keyed cache hands a second repository defining the same id the
+    #: first one's chromosome lengths (gain#857).  The key is WEAK -- a
+    #: strong one would pin every repo ever seen -- and entries do free,
+    #: because no protocol holds its repo back.  Identity is the
+    #: comparison: the repo classes define no ``__eq__``.  Not held in
+    #: the factory below beside its four peers because a
+    #: ``ReferenceGenome`` owns a backend whose ``close()`` clears the
+    #: index -- one shared instance would let any caller blank it.
+    _REF_GENOME_CACHE: ClassVar[weakref.WeakKeyDictionary[
+        GenomicResourceRepo, dict[str, ReferenceGenome]]
+    ] = weakref.WeakKeyDictionary()
 
     @property
     def files(self) -> set[str]:
@@ -548,11 +561,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> ReferenceGenome | None:
         if genome_id is None or grr is None:
             return None
-        if genome_id in GenomicScoreImplementation._REF_GENOME_CACHE:
-            return cast(
-                ReferenceGenome,
-                GenomicScoreImplementation._REF_GENOME_CACHE[genome_id],
-            )
+        cache = GenomicScoreImplementation._REF_GENOME_CACHE
+        # ``get`` with a default reads without inserting.
+        if (resolved := cache.get(grr, {}).get(genome_id)) is not None:
+            return resolved
         try:
             ref_genome = build_reference_genome_from_resource(
                 grr.get_resource(genome_id),
@@ -566,8 +578,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 "Couldn't find reference genome %s",
                 genome_id,
             )
+            # Not remembered: it may be present next call, and callers
+            # cope (raw counts rendering, the table's own length scanning).
             return None
-        GenomicScoreImplementation._REF_GENOME_CACHE[genome_id] = ref_genome
+        cache.setdefault(grr, {})[genome_id] = ref_genome
         return ref_genome
 
     def _get_chrom_regions(

@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
 import json
+import logging
 import pathlib
 import re
 import textwrap
@@ -165,11 +166,11 @@ def test_get_reference_genome_cached(tmp_path: pathlib.Path) -> None:
 
     grr = build_filesystem_test_repository(tmp_path)
 
-    GenomicScoreImplementation._REF_GENOME_CACHE.clear()
     ref = GenomicScoreImplementation._get_reference_genome_cached(grr, "ref")
 
     assert ref is not None
-    assert "ref" in GenomicScoreImplementation._REF_GENOME_CACHE
+    # Resolved once and reused: the same repository and id give back the
+    # identical object rather than reopening the genome.
     cached = GenomicScoreImplementation._get_reference_genome_cached(
         grr,
         "ref",
@@ -179,6 +180,30 @@ def test_get_reference_genome_cached(tmp_path: pathlib.Path) -> None:
         GenomicScoreImplementation._get_reference_genome_cached(None, "ref")
         is None
     )
+
+
+def test_an_unresolvable_genome_is_reported_and_not_remembered(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A missing genome warns every time, rather than caching the miss.
+
+    The id is only ever absent because something is misconfigured, so
+    the operator needs the line -- and a genome that is missing now may
+    be present later, which a remembered failure would hide.
+    """
+    grr = a_grr().build_repo(tmp_path)
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(2):
+            assert GenomicScoreImplementation._get_reference_genome_cached(
+                grr, "no/such/genome",
+            ) is None
+
+    assert sum(
+        "Couldn't find reference genome" in record.getMessage()
+        for record in caplog.records
+    ) == 2
 
 
 def test_get_chrom_regions_region_size_zero() -> None:
