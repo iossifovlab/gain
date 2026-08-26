@@ -161,24 +161,20 @@ class TruncatedDownloadError(OSError):
 class CorruptedPublishError(OSError):
     """A published object that differs in size from the verified download.
 
-    The download hashes and size-checks every byte it writes *before*
-    publishing, so both of those checks describe the temp file, not the
-    object the move actually landed. A move that publishes something else
-    -- a partial object-store copy, a rename that loses the tail -- would
-    otherwise be recorded under the digest of bytes that are no longer
-    stored: the state's size and timestamp come from the published object
-    and so agree with it, its md5 comes from the download and so agrees
-    with the manifest, and every later cache verdict passes. The file is
-    then served corrupt indefinitely (gain#880).
+    The download's byte-count and md5 checks both run before the move, so
+    they describe the temp file, not the object the move landed. Since the
+    digest is carried across rather than recomputed from the store
+    (gain#865), a move that published something else -- a partial
+    object-store copy, a rename that lost the tail, one that left no
+    object at all -- would be recorded under the digest of bytes that are
+    no longer there: size and timestamp come from the published object and
+    agree with it, the md5 comes from the download and agrees with the
+    manifest, so every later cache verdict passes and the file is served
+    corrupt indefinitely (gain#880).
 
-    Only size-changing corruption is caught. Recomputing the digest from
-    the published object would catch the rest, but that is a second full
-    read of every downloaded file -- for a remote store, a second transfer
-    -- which is exactly the cost gain#865 removed. Detecting same-size
-    corruption is a deliberate non-goal here.
-
-    Retryable, like its siblings: the remedy is to download and publish the
-    file again, which the per-file retry loop already does.
+    Only size-changing corruption is caught. Catching the rest needs a
+    second full read of every downloaded file -- for a remote store, a
+    second transfer -- which is exactly the cost gain#865 removed.
     """
 
 
@@ -194,7 +190,8 @@ except ImportError:
 # stalled aiohttp read surfaces as fsspec's FSTimeoutError; ConnectionError
 # covers resets/refused connects; TruncatedDownloadError covers a silent short
 # read that ends the stream early (gain#292); ChecksumMismatchError covers a
-# full-length transfer whose bytes are corrupt.
+# full-length transfer whose bytes are corrupt; CorruptedPublishError covers a
+# move that published something other than the bytes just verified (gain#880).
 _RETRYABLE_COPY_ERRORS: tuple[type[BaseException], ...] = (
     fsspec.exceptions.FSTimeoutError,
     asyncio.TimeoutError,
@@ -1939,11 +1936,16 @@ class FsspecReadWriteProtocol(
         Opens a fresh remote handle and streams into a private temp file in
         the resource's ``.grr`` directory; the file is moved to its real
         path only once it has been verified, so the repository never holds
-        an unverified resource file and a failed attempt leaves nothing
-        behind at the real path (gain#273). On a local filesystem the move
-        is an atomic rename; on an object store it degrades to a
-        copy-and-delete, which loses the atomicity but keeps the
-        verify-then-publish order -- one code path for every scheme.
+        an unverified resource file and an attempt that fails *before* the
+        move leaves nothing behind at the real path (gain#273). An attempt
+        that fails *after* the move does leave the bad object there --
+        there is nowhere else for it to go by then; what the publish check
+        buys is that such an object is never recorded as good, so the
+        retry republishes over it and, failing that, the next cache
+        verdict fetches it again. On a local filesystem the move is an
+        atomic rename; on an object store it degrades to a copy-and-delete,
+        which loses the atomicity but keeps the verify-then-publish order
+        -- one code path for every scheme.
 
         The download is verified twice: the number of bytes written must
         equal the manifest's recorded size (a silent short read in the
@@ -1954,12 +1956,9 @@ class FsspecReadWriteProtocol(
         such, with both byte counts, rather than as an opaque checksum
         mismatch.
 
-        Both of those checks describe the temp file. The publish is
-        verified once more after the move -- the published object's size
-        must equal the number of bytes just verified -- because the digest
-        is carried over from the download rather than recomputed from the
-        store, and would otherwise be recorded against bytes that are no
-        longer there (gain#880).
+        Both of those checks describe the temp file; the move itself is
+        verified separately, once it has happened -- see
+        :class:`CorruptedPublishError`.
 
         ``on_bytes``, when given, is called with the length of each chunk
         right after it is written, to drive a byte-level progress bar
@@ -1971,7 +1970,7 @@ class FsspecReadWriteProtocol(
         if not self.filesystem.exists(tmp_parent):
             self.filesystem.makedirs(tmp_parent, exist_ok=True)
 
-        published = False
+        moved = False
         try:
             bytes_written = 0
             with remote_resource.open_raw_file(
@@ -2008,14 +2007,20 @@ class FsspecReadWriteProtocol(
                     f"{md5}!={expected_md5}")
 
             self.filesystem.mv(tmp_filepath, dest_filepath)
-            published = True
+            moved = True
 
-            # Everything checked so far describes the temp file. Confirm
-            # the move landed that many bytes before the digest it was
-            # checked with is recorded against the published object
-            # (gain#880). The stat is the one the state needs anyway.
-            published_size = self.get_resource_file_size(
-                dest_resource, filename)
+            # The stat is the one the state needs anyway, so checking the
+            # move costs nothing -- see :class:`CorruptedPublishError`.
+            try:
+                published_size = self.get_resource_file_size(
+                    dest_resource, filename)
+            except FileNotFoundError as err:
+                raise CorruptedPublishError(
+                    f"file publish is corrupt "
+                    f"{dest_resource.resource_id} ({filename}); "
+                    f"verified {bytes_written} bytes, "
+                    f"published nothing") from err
+
             if published_size != bytes_written:
                 raise CorruptedPublishError(
                     f"file publish is corrupt "
@@ -2023,7 +2028,7 @@ class FsspecReadWriteProtocol(
                     f"verified {bytes_written} bytes, "
                     f"published {published_size}")
         finally:
-            if not published:
+            if not moved:
                 self._discard_partial_download(tmp_filepath)
 
         state = self.build_resource_file_state(
@@ -2037,15 +2042,20 @@ class FsspecReadWriteProtocol(
         return state
 
     def _discard_partial_download(self, tmp_filepath: str) -> None:
-        """Remove the temp file of a download that was never published.
+        """Remove the temp file of a download that never reached the move.
 
         Called for every way out of :meth:`_download_resource_file` that
-        does not publish -- a checksum mismatch, a stalled read, an
-        interrupt -- so no attempt leaves a partial behind. The temp file
-        may not exist at all (the remote handle can fail before the first
-        write), and a removal that fails must not replace the failure that
-        got us here: the retry loop classifies the error it sees, and a
-        cleanup error in its place would be neither retryable nor true.
+        does not reach the move -- a checksum mismatch, a stalled read, an
+        interrupt -- so no attempt leaves a partial behind. A publish that
+        the move itself corrupted is past this point: the temp file is
+        already gone and the bad object sits at the real path, where only
+        a retry or the next cache verdict can replace it.
+
+        The temp file may not exist at all (the remote handle can fail
+        before the first write), and a removal that fails must not replace
+        the failure that got us here: the retry loop classifies the error
+        it sees, and a cleanup error in its place would be neither
+        retryable nor true.
         """
         try:
             self.filesystem.rm(tmp_filepath)
