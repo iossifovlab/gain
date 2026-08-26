@@ -157,7 +157,10 @@ class TranscriptModel:
             tx (tuple[int, int]): The transcript start and end positions.
                 (1-based, closed interval)
             cds (tuple[int, int]): The coding region start and end positions.
-                The CDS region includes the start and stop codons.
+                The CDS region includes the start and stop codons where the
+                source annotates them. An incomplete transcript may state a
+                coding extent without one or either codon, so neither end is
+                guaranteed to be a codon boundary.
                 (1-based, closed interval)
             exons (Optional[list[Exon]]): The list of exons. Defaults to
                 empty list.
@@ -258,7 +261,8 @@ class TranscriptModel:
             >>> extended = transcript.cds_regions(ss_extend=3)
 
         Note:
-            CDS regions include both start and stop codons. Use
+            CDS regions include both start and stop codons where the source
+            annotates them -- an incomplete transcript may have neither. Use
             collect_gtf_cds_regions() from serialization module to
             exclude the stop codon for GTF format.
         """

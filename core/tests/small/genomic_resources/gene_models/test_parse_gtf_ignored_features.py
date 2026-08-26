@@ -35,6 +35,7 @@ def test_the_ignored_set_claims_no_feature_handled_later() -> None:
         | parsers.GTF_EXONLESS_TRANSCRIPT_FEATURES
         | parsers.GTF_EXON_FEATURES
         | parsers.GTF_CODON_FEATURES
+        | parsers.GTF_CDS_FEATURES
         | parsers.GTF_SELENOCYSTEINE_FEATURES
     )
 

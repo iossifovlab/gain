@@ -36,7 +36,9 @@ def test_a_transcript_without_transcript_id_names_the_record(
 
 
 @pytest.mark.parametrize("feature", sorted(
-    parsers.GTF_EXON_FEATURES | parsers.GTF_CODON_FEATURES))
+    parsers.GTF_EXON_FEATURES
+    | parsers.GTF_CODON_FEATURES
+    | parsers.GTF_CDS_FEATURES))
 def test_a_child_without_transcript_id_names_the_record(
     gtf_gene_models: Callable[..., GeneModels],
     feature: str,

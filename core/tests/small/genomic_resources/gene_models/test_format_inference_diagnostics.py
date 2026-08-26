@@ -44,10 +44,11 @@ MALFORMED_GTF_CONTENT = (
     'gene_id "ENSG001"; transcript_id "ENST001"; tag;\n'
 )
 
-# GTF layout, but a lone CDS feature builds no transcript models.
-CDS_ONLY_GTF_CONTENT = (
-    'chr1\ttest\tCDS\t100\t200\t.\t+\t0\t'
-    'gene_id "ENSG001"; transcript_id "ENST001";\n'
+# GTF layout, but a lone gene feature builds no transcript models. ``gene``
+# is ignored outright, and an Ensembl one carries no transcript_id at all.
+GENE_ONLY_GTF_CONTENT = (
+    'chr1\ttest\tgene\t100\t200\t.\t+\t.\t'
+    'gene_id "ENSG001";\n'
 )
 
 # A headerless refflat record -- inference settles on exactly one format.
@@ -230,11 +231,11 @@ def test_layout_match_without_records_is_its_own_reason(
 ) -> None:
     """The third rejection channel: right columns, no transcript models.
 
-    A GTF carrying only a CDS feature has the GTF column layout but builds
+    A GTF carrying only a gene feature has the GTF column layout but builds
     nothing from it, which is neither a raise nor a layout mismatch.
     """
     gene_models = build_from_content(
-        tmp_path, "cds_only.gtf", CDS_ONLY_GTF_CONTENT)
+        tmp_path, "gene_only.gtf", GENE_ONLY_GTF_CONTENT)
 
     with pytest.raises(ValueError) as excinfo:
         gene_models.load()

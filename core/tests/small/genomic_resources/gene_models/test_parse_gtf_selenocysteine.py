@@ -4,8 +4,9 @@
 GENCODE marks the recoded UGA codons of a selenoprotein with a
 ``Selenocysteine`` record per site, always after the ``transcript``
 record it belongs to. The record contributes nothing to the model --
-the exons and the codon records already carry the transcript's extent --
-so the parser's only interest in it is that its parent exists.
+every site falls inside a ``CDS`` record of the same transcript, so the
+coding interval already covers it -- so the parser's only interest in it
+is that its parent exists.
 """
 
 from collections.abc import Callable
@@ -13,6 +14,10 @@ from collections.abc import Callable
 import pytest
 from gain.genomic_resources.gene_models import parsers
 from gain.genomic_resources.gene_models.gene_models import GeneModels
+
+from tests.small.genomic_resources.gene_models.conftest import (
+    transcript_digest,
+)
 
 
 def _attributes(**keys: str) -> str:
@@ -123,16 +128,6 @@ SELENOCYSTEINE_SITES = (
 )
 
 
-def _digest(gene_models: GeneModels) -> dict[str, tuple]:
-    return {
-        tr_id: (
-            tm.tx, tm.cds,
-            tuple((exon.start, exon.stop, exon.frame) for exon in tm.exons),
-        )
-        for tr_id, tm in gene_models.transcript_models.items()
-    }
-
-
 def test_a_well_formed_selenoprotein_parses_as_if_the_sites_were_absent(
     gtf_gene_models: Callable[..., GeneModels],
 ) -> None:
@@ -144,7 +139,8 @@ def test_a_well_formed_selenoprotein_parses_as_if_the_sites_were_absent(
     """
     annotated = gtf_gene_models(*WELL_FORMED, *SELENOCYSTEINE_SITES)
 
-    assert _digest(annotated) == _digest(gtf_gene_models(*WELL_FORMED))
+    assert transcript_digest(annotated) == transcript_digest(
+        gtf_gene_models(*WELL_FORMED))
     assert list(annotated.transcript_models) == ["ENST00000361547"]
 
     transcript = annotated.transcript_models["ENST00000361547"]
