@@ -3,22 +3,27 @@ from typing import Any
 
 import pytest
 from gain.genomic_resources.fsspec_protocol import (
+    _COPY_MAX_ATTEMPTS,
     CorruptedPublishError,
     FsspecReadWriteProtocol,
 )
 from gain.genomic_resources.testing import build_inmemory_test_protocol
 from pytest_mock import MockerFixture
 
-# The manifest digest and byte size of `sub/two`'s genes.gtf in
-# ``content_fixture`` -- what a healthy publish must leave behind.
-GENES_GTF_MD5 = "d9636a8dca9e5626851471d1c0ea92b1"
-GENES_GTF_SIZE = 17
-
-# A corrupt payload of a DIFFERENT length than the real file. The size is
+# Corrupt payloads of a DIFFERENT length than the real file. The length is
 # what makes the corruption detectable at all: the download's own byte-count
 # and md5 checks both ran before the publish, so only a post-publish stat can
 # still notice. Same-length corruption is deliberately out of reach (#880).
+#
+# One payload is shorter than the fixture file and one is longer. The guard
+# is an equality, and a test set that only ever shrank the object would let a
+# `<` pass just as happily.
 CORRUPT_PAYLOAD = b"corrupt"
+LONGER_CORRUPT_PAYLOAD = b"corrupt" * 10
+
+# Corrupt every attempt the retry loop will make. Tied to the loop's own cap
+# so the tests keep meaning "always" if that cap ever moves.
+EVERY_ATTEMPT = _COPY_MAX_ATTEMPTS
 
 
 class _CorruptingPublish:
@@ -37,7 +42,9 @@ class _CorruptingPublish:
     therefore the arm this guard most needs (ADR 0021).
 
     ``corrupt_first`` bounds how many publishes are corrupted, so a test can
-    corrupt only the first and let the retry publish cleanly.
+    corrupt only the first and let the retry publish cleanly. A ``payload``
+    of ``None`` publishes nothing at all -- the limit case of a partial
+    object-store copy, where the move leaves no object behind.
     """
 
     def __init__(
@@ -46,27 +53,61 @@ class _CorruptingPublish:
         filename: str,
         *,
         corrupt_first: int,
+        payload: bytes | None,
     ) -> None:
         self._real_mv = filesystem.mv
         self._filesystem = filesystem
         self._filename = filename
         self._corrupt_first = corrupt_first
+        self._payload = payload
         self.corrupted = 0
 
     def __call__(
         self, path1: str, path2: str, *args: Any, **kwargs: Any,
-    ) -> Any:
-        result = self._real_mv(path1, path2, *args, **kwargs)
-        if str(path2).endswith(self._filename) \
-                and self.corrupted < self._corrupt_first:
-            self.corrupted += 1
+    ) -> None:
+        self._real_mv(path1, path2, *args, **kwargs)
+        if not str(path2).endswith(self._filename) \
+                or self.corrupted >= self._corrupt_first:
+            return
+        self.corrupted += 1
+        if self._payload is None:
+            self._filesystem.rm(path2)
+        else:
             with self._filesystem.open(path2, "wb") as outfile:
-                outfile.write(CORRUPT_PAYLOAD)
-        return result
+                outfile.write(self._payload)
+
+
+def _corrupt_publishes_of(
+    proto: FsspecReadWriteProtocol,
+    filename: str,
+    mocker: MockerFixture,
+    *,
+    corrupt_first: int,
+    payload: bytes | None = CORRUPT_PAYLOAD,
+) -> _CorruptingPublish:
+    """Make ``proto``'s publishes of ``filename`` corrupt, and stop waiting.
+
+    Keeps the one ordering constraint in a single place: the fault has to
+    capture the real ``mv`` before the patch replaces it. Also silences the
+    retry backoff -- it is 5s, 15s then 45s, so a fault that outlives the
+    first attempt would otherwise put a full minute of real sleeping into
+    the suite.
+    """
+    corrupting = _CorruptingPublish(
+        proto.filesystem, filename,
+        corrupt_first=corrupt_first, payload=payload)
+    mocker.patch.object(proto.filesystem, "mv", side_effect=corrupting)
+    mocker.patch("gain.genomic_resources.fsspec_protocol.time.sleep")
+    return corrupting
 
 
 @pytest.mark.grr_rw
+@pytest.mark.parametrize("payload", [
+    pytest.param(CORRUPT_PAYLOAD, id="shrinks-the-object"),
+    pytest.param(LONGER_CORRUPT_PAYLOAD, id="grows-the-object"),
+])
 def test_copy_resource_file_refuses_a_corrupting_publish(
+        payload: bytes,
         content_fixture: dict[str, Any],
         fsspec_proto: FsspecReadWriteProtocol,
         mocker: MockerFixture) -> None:
@@ -81,11 +122,14 @@ def test_copy_resource_file_refuses_a_corrupting_publish(
 
     src_res = src_proto.get_resource("sub/two")
     dst_res = proto.get_resource("sub/two")
+    entry = src_res.get_manifest()["genes.gtf"]
 
-    corrupting = _CorruptingPublish(
-        proto.filesystem, "genes.gtf", corrupt_first=99)
-    mocker.patch.object(proto.filesystem, "mv", side_effect=corrupting)
-    mocker.patch("gain.genomic_resources.fsspec_protocol.time.sleep")
+    assert len(payload) != entry.size, \
+        "a same-length payload leaves the guard nothing to catch"
+
+    _corrupt_publishes_of(
+        proto, "genes.gtf", mocker,
+        corrupt_first=EVERY_ATTEMPT, payload=payload)
 
     # When / Then: the copy refuses rather than returning a state
     with pytest.raises(CorruptedPublishError) as excinfo:
@@ -93,19 +137,26 @@ def test_copy_resource_file_refuses_a_corrupting_publish(
 
     # ...and the message names both counts, so the fault is diagnosable
     message = str(excinfo.value)
-    assert str(GENES_GTF_SIZE) in message
-    assert str(len(CORRUPT_PAYLOAD)) in message
+    assert f"verified {entry.size} bytes" in message
+    assert f"published {len(payload)}" in message
     assert "genes.gtf" in message
 
 
 @pytest.mark.grr_rw
+@pytest.mark.parametrize("payload", [
+    pytest.param(CORRUPT_PAYLOAD, id="publishes-wrong-bytes"),
+    pytest.param(None, id="publishes-nothing"),
+])
 def test_copy_resource_file_repairs_a_corrupting_publish_by_retrying(
+        payload: bytes | None,
         content_fixture: dict[str, Any],
         fsspec_proto: FsspecReadWriteProtocol,
         mocker: MockerFixture) -> None:
     # A corrupting publish is retryable, like a stalled read or a bad
     # checksum: the file is downloaded and published again, and the caller
-    # gets a healthy file rather than an error. See #880.
+    # gets a healthy file rather than an error. That holds for a move which
+    # landed nothing at all, too -- otherwise the most extreme form of the
+    # fault would be the one form that never gets repaired. See #880.
 
     # Given a destination whose FIRST publish corrupts, and no other
     src_proto = build_inmemory_test_protocol(content_fixture)
@@ -113,10 +164,10 @@ def test_copy_resource_file_repairs_a_corrupting_publish_by_retrying(
 
     src_res = src_proto.get_resource("sub/two")
     dst_res = proto.get_resource("sub/two")
+    entry = src_res.get_manifest()["genes.gtf"]
 
-    corrupting = _CorruptingPublish(
-        proto.filesystem, "genes.gtf", corrupt_first=1)
-    mocker.patch.object(proto.filesystem, "mv", side_effect=corrupting)
+    corrupting = _corrupt_publishes_of(
+        proto, "genes.gtf", mocker, corrupt_first=1, payload=payload)
     sleep = mocker.patch(
         "gain.genomic_resources.fsspec_protocol.time.sleep")
 
@@ -128,12 +179,11 @@ def test_copy_resource_file_repairs_a_corrupting_publish_by_retrying(
     assert sleep.call_count == 1
 
     assert state is not None
-    assert state.md5 == GENES_GTF_MD5
-    assert state.size == GENES_GTF_SIZE
+    assert state.md5 == entry.md5
+    assert state.size == entry.size
 
     # ...and the state describes what is actually stored
-    assert proto.get_resource_file_size(dst_res, "genes.gtf") \
-        == GENES_GTF_SIZE
+    assert proto.get_resource_file_size(dst_res, "genes.gtf") == entry.size
 
 
 @pytest.mark.grr_rw
@@ -155,10 +205,8 @@ def test_a_corrupt_published_file_is_scheduled_for_redownload(
     src_res = src_proto.get_resource("sub/two")
     dst_res = proto.get_resource("sub/two")
 
-    corrupting = _CorruptingPublish(
-        proto.filesystem, "genes.gtf", corrupt_first=99)
-    mocker.patch.object(proto.filesystem, "mv", side_effect=corrupting)
-    mocker.patch("gain.genomic_resources.fsspec_protocol.time.sleep")
+    _corrupt_publishes_of(
+        proto, "genes.gtf", mocker, corrupt_first=EVERY_ATTEMPT)
 
     with pytest.raises(CorruptedPublishError):
         proto.copy_resource_file(src_res, dst_res, "genes.gtf")
@@ -180,11 +228,14 @@ def test_a_healthy_download_stats_the_published_object_once(
         content_fixture: dict[str, Any],
         fsspec_proto: FsspecReadWriteProtocol,
         mocker: MockerFixture) -> None:
-    # Verifying the publish costs nothing: the size it checks is the one the
-    # state was going to be built from anyway, so it is stat'ed once and
-    # passed on, not stat'ed again. On a remote store every stat is a round
-    # trip, which is the same reasoning that stopped the digest being
-    # recomputed there (#865). See #880.
+    # Verifying the publish costs no extra stat of its own: the size it
+    # checks is the one the state was going to be built from anyway, so it
+    # is measured once and passed on rather than measured again. On a
+    # remote store that would be a second round trip -- the same reasoning
+    # that stopped the digest being recomputed there (#865). See #880.
+    #
+    # This pins the size accessor specifically; it is not a budget for
+    # every metadata call the state build makes.
 
     # Given a source and a destination, publishing normally
     src_proto = build_inmemory_test_protocol(content_fixture)
@@ -192,6 +243,7 @@ def test_a_healthy_download_stats_the_published_object_once(
 
     src_res = src_proto.get_resource("sub/two")
     dst_res = proto.get_resource("sub/two")
+    entry = src_res.get_manifest()["genes.gtf"]
 
     stat = mocker.spy(proto, "get_resource_file_size")
 
@@ -200,8 +252,8 @@ def test_a_healthy_download_stats_the_published_object_once(
 
     # Then the file published cleanly...
     assert state is not None
-    assert state.md5 == GENES_GTF_MD5
-    assert state.size == GENES_GTF_SIZE
+    assert state.md5 == entry.md5
+    assert state.size == entry.size
 
     # ...having been measured exactly once
     assert stat.call_count == 1
