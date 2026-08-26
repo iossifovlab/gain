@@ -29,6 +29,23 @@ LEGACY_FRAGMENT_SCORE_TYPE = "cnv_collection"
 #: that does not say when it bites cannot be scheduled against.
 LEGACY_VOCABULARY_REMOVAL_RELEASE = "2027.1.0"
 
+#: The resource ``type:`` for an allele score.
+PREFERRED_ALLELE_SCORE_TYPE = "allele_score"
+
+#: The retired resource ``type:`` that used to name an allele score.
+#:
+#: Deprecated since 2024-11 and removed in
+#: ``RETIRED_VOCABULARY_REMOVAL_RELEASE`` (gain#920).  Unlike the fragment
+#: score's legacy spelling above this one is no longer accepted, so it
+#: survives here only to be recognised and refused with a message that
+#: names the replacement.
+RETIRED_ALLELE_SCORE_TYPE = "np_score"
+
+#: The GAIn release that removed ``np_score`` (gain#781, announced in
+#: gain#918).  Named in the refusal so a reader who meets it in an old
+#: environment can tell which upgrade changed under them.
+RETIRED_VOCABULARY_REMOVAL_RELEASE = "2026.8.5"
+
 #: The resource ``type:`` values that name a fragment score.
 #:
 #: Two spellings.  ``fragment_score`` is what a resource should declare, and
@@ -164,6 +181,56 @@ def equivalent_resource_types(resource_type: str) -> tuple[str, ...]:
     if resource_type in FRAGMENT_SCORE_TYPES:
         return FRAGMENT_SCORE_TYPES
     return (resource_type,)
+
+
+def retired_resource_type_message(*, found_in: str) -> str:
+    """Return the refusal text for one use of the retired ``np_score``.
+
+    ``found_in`` names where the type was written -- a resource id -- for
+    the same reason the deprecation messages above carry it: the stack at
+    the point of recognition runs through GAIn's own config parsing, not
+    through the YAML the reader has to edit.
+
+    The mode sentence is not padding.  ``np_score`` is the one retired
+    spelling that was never a pure alias: ``AlleleScore`` used to read the
+    default mode off the resource type, so ``np_score`` meant substitutions
+    while ``allele_score`` means alleles.  A holder who swaps only the type
+    string gets a resource that loads and reads differently, which is a
+    silent wrong answer rather than an error -- so the replacement and the
+    mode key have to arrive together or the message causes the bug it is
+    warning about.
+    """
+    return (
+        f"{found_in} declares resource type "
+        f"'{RETIRED_ALLELE_SCORE_TYPE}', which was removed in GAIn "
+        f"{RETIRED_VOCABULARY_REMOVAL_RELEASE}; write "
+        f"'{PREFERRED_ALLELE_SCORE_TYPE}' instead. This is not a plain "
+        f"rename: '{RETIRED_ALLELE_SCORE_TYPE}' read in substitutions mode "
+        f"while '{PREFERRED_ALLELE_SCORE_TYPE}' reads in alleles mode by "
+        f"default, so add 'allele_score_mode: substitutions' to keep the "
+        f"previous behaviour."
+    )
+
+
+def reject_retired_resource_type(resource_type: str, *, found_in: str) -> None:
+    """Raise if ``resource_type`` names a spelling GAIn has removed.
+
+    Called from each seam that turns a ``type:`` string into something --
+    the score factory, ``AlleleScore`` itself, and the implementation
+    builder.  Three call sites rather than one because there is no single
+    seam they all pass through: ADR 0011 established the same thing for the
+    fragment-score warning, and the statistics scan and the annotation
+    pipeline still reach a score by routes that share no common ancestor.
+
+    Raising here rather than letting the entry-point lookup fail is the
+    whole point of the function.  Deleting the registration already makes
+    an ``np_score`` resource fail, but it fails as
+    ``unsupported resource implementation type <np_score>`` -- which tells
+    a holder that GAIn does not know the type, not that GAIn removed it and
+    what to write instead.
+    """
+    if resource_type == RETIRED_ALLELE_SCORE_TYPE:
+        raise ValueError(retired_resource_type_message(found_in=found_in))
 
 
 def require_fragment_score_type(resource_type: str) -> str:

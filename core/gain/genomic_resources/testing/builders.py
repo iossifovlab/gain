@@ -678,29 +678,18 @@ _NP_ALLELE_DEFAULT_DATA = """
 
 
 @dataclasses.dataclass(frozen=True)
-class NPScoreBuilder(_TableScoreBuilder):
-    """Immutable builder for a single ``np_score`` resource.
-
-    Shares the whole tabular-score machinery with the position and allele
-    builders (see :class:`_TableScoreBuilder`); it differs only in the
-    ``np_score`` type, the required ``reference``/``alternative`` base columns
-    and the ``table:`` ref/alt name mapping.  Reads back through
-    ``AlleleScore``.
-    """
-
-    SCORE_TYPE: ClassVar[str] = "np_score"
-    TRAILING_COLUMNS: ClassVar[tuple[str, ...]] = ("reference", "alternative")
-    TABLE_EXTRA_CONFIG: ClassVar[str] = _REF_ALT_TABLE_CONFIG
-    DEFAULT_DATA: ClassVar[str] = _NP_ALLELE_DEFAULT_DATA
-
-
-@dataclasses.dataclass(frozen=True)
 class AlleleScoreBuilder(_TableScoreBuilder):
     """Immutable builder for a single ``allele_score`` resource.
 
-    Identical to :class:`NPScoreBuilder` apart from the ``allele_score``
-    type value; both require ``reference``/``alternative`` columns and read
-    back through ``AlleleScore``.
+    Requires ``reference``/``alternative`` columns and reads back through
+    ``AlleleScore``.
+
+    Had a twin, ``NPScoreBuilder``, differing only in emitting
+    ``type: np_score``.  It was retired with the type itself in 2026.8.5
+    (gain#920): a builder can only produce resources GAIn still reads, and
+    every fixture it used to make now has to declare ``allele_score`` --
+    with ``allele_score_mode: substitutions`` where the old default was
+    what the test was relying on.
     """
 
     SCORE_TYPE: ClassVar[str] = "allele_score"
@@ -810,7 +799,7 @@ class BigWigScoreBuilder(MetaMixin):
         this backend; ``fragment_score`` is not among them, since a bigWig
         record is a point value rather than an attributed interval.
         """
-        allowed = ("position_score", "allele_score", "np_score")
+        allowed = ("position_score", "allele_score")
         if resource_type not in allowed:
             raise ResourceValidationError(
                 f"with_resource_type: {resource_type!r} is not a score type "
@@ -1667,11 +1656,6 @@ def a_reference_genome() -> ReferenceGenomeBuilder:
 def a_position_score() -> PositionScoreBuilder:
     """Return an immutable position-score builder."""
     return PositionScoreBuilder()
-
-
-def a_np_score() -> NPScoreBuilder:
-    """Return an immutable np-score builder."""
-    return NPScoreBuilder()
 
 
 def an_allele_score() -> AlleleScoreBuilder:

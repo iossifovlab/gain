@@ -36,6 +36,7 @@ from .repository import (
     is_safe_repo_id,
 )
 from .resource_implementation import GenomicResourceImplementation
+from .resource_types import reject_retired_resource_type
 
 logger = logging.getLogger(__name__)
 
@@ -853,6 +854,13 @@ def build_resource_implementation(
     """Build a resource implementation from a resource."""
     # pylint: disable=import-outside-toplevel
     from gain.genomic_resources import get_resource_implementation_builder
+
+    # Before the lookup, not inside its failure branch: a retired spelling
+    # is a resource GAIn used to read, so it has to be told apart from a
+    # type GAIn never knew.  Both reach the same `builder is None` below,
+    # and only one of them has a migration to offer.
+    reject_retired_resource_type(
+        res.get_type(), found_in=f"Resource <{res.resource_id}>")
 
     builder = get_resource_implementation_builder(res.get_type())
     if builder is None:

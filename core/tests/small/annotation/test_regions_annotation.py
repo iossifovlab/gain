@@ -35,7 +35,7 @@ def fixture_repo() -> GenomicResourceRepo:
         },
         "np_score1": {
             "genomic_resource.yaml": textwrap.dedent("""
-            type: np_score
+            type: allele_score
             table:
                 filename: data.mem
                 reference:

@@ -109,9 +109,12 @@ _AccT = TypeVar("_AccT")
 # (``fragment_score`` and the deprecated ``cnv_collection``, gain#471), and
 # a literal set
 # naming only one of them would send the other silently back to the per-record
-# path -- no error, no failing test, just the slow path forever.  ``np_score``
-# is deliberately absent: no production GRR has one, so the bulk path is not
-# exercised against it (gain#421).
+# path -- no error, no failing test, just the slow path forever.
+#
+# The deprecated ``np_score`` used to be excluded here deliberately, as a
+# spelling the bulk path was never exercised against (gain#421).  It was
+# removed in 2026.8.5 (gain#920), so the exclusion is no longer this set's
+# to make: such a resource is now refused when it is opened.
 _BULK_SCAN_RESOURCE_TYPES = frozenset(
     spelling
     for resource_type in ("position_score", "allele_score", "fragment_score")
@@ -1151,8 +1154,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
           (:data:`_BULK_SCAN_RESOURCE_TYPES`): a position, allele or fragment
           score.  Their record semantics are not assumed here -- the score
           class states them, in ``RECORD_WEIGHT_IS_SPAN`` and in its own
-          ``validate_record_arrays`` body -- so what this excludes is
-          ``np_score``, of which no production GRR has one;
+          ``validate_record_arrays`` body.  This excluded the deprecated
+          ``np_score`` until 2026.8.5 removed it (gain#920); the set now
+          names every score kind GAIn accepts;
         * every score of a value type the column parse defines
           (``float``, ``int``, ``str``) -- asked of the score, which owns
           that parse;
