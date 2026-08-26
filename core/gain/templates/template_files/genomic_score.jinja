@@ -224,22 +224,31 @@ not applicable
 {% else %}
 <p>not computed</p>
 {% endif %}
+{# Each group asks for ITSELF.  The two are written together today, but
+   gating the deletion image on the insertion group would silently drop
+   a known histogram the day that stops holding. #}
 <h3>Indel lengths</h3>
-{% if allele_display is not none and allele_display.insertion_lengths is not none %}
-{% if allele_display.insertion_lengths | sum %}
+{% if allele_display is none
+   or (allele_display.insertion_lengths is none
+       and allele_display.deletion_lengths is none) %}
+<p>not computed</p>
+{% else %}
+{% if allele_display.insertion_lengths is none %}
+<p>insertion lengths not computed</p>
+{% elif allele_display.insertion_lengths | sum %}
 <img src="{{ impl.get_allele_insertion_lengths_image_filename() }}"
      alt="insertion length histogram" style="width:50%">
 {% else %}
 <p>no insertions</p>
 {% endif %}
-{% if allele_display.deletion_lengths | sum %}
+{% if allele_display.deletion_lengths is none %}
+<p>deletion lengths not computed</p>
+{% elif allele_display.deletion_lengths | sum %}
 <img src="{{ impl.get_allele_deletion_lengths_image_filename() }}"
      alt="deletion length histogram" style="width:50%">
 {% else %}
 <p>no deletions</p>
 {% endif %}
-{% else %}
-<p>not computed</p>
 {% endif %}
 <h3>Complex alleles</h3>
 {% if allele_display is not none and allele_display.complex_grid is not none %}

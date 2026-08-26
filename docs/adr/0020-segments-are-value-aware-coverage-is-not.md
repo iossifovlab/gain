@@ -142,10 +142,11 @@ alt-minus-ref, not an absolute value.
   repository-global artifacts, belong to the `grr_manage` documentation
   rather than here.
 
-*Amended by gain#779:* the bullet above names the length histograms that
-share the fixed ladder — segments, fragments, **indels** — and the ins/del
-histograms duly use it, binning the length change absolutely, since the class
-already names the direction and the shared bin index refuses a length below 1.
+*Amended by gain#779:* the **Fixed log-scale bins** bullet above names the
+length histograms that share the ladder — segments, fragments, **indels** — and
+the ins/del histograms duly use it, binning the length change absolutely, since
+the class already names the direction and the shared bin index refuses a length
+below 1.
 The **complex `(len_ref, len_alt)` grid deliberately does not.** Its cells are
 the two lengths **exactly**, each clamped at a code-level maximum of 64, so
 the grid is a sparse map over a bounded 64×64 square.

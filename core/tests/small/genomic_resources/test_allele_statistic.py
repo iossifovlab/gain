@@ -8,7 +8,7 @@ from gain.genomic_resources.statistics.alleles import (
     AlleleStatistics,
     RegionAlleles,
 )
-from gain.genomic_resources.statistics.coverage import (
+from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
 )
 
@@ -455,17 +455,35 @@ def test_a_resource_with_no_complex_rows_keeps_a_known_empty_grid() -> None:
 
 def test_the_complex_grid_is_written_sorted_not_as_encountered() -> None:
     # The cells are a sparse dict, so the written order is whatever the
-    # rows happened to produce.  Here the LARGER cell is met first, so
-    # an as-encountered write would put "3" before "2" -- and two builds
-    # that met the same pairs in different orders would disagree byte
-    # for byte while carrying identical counts.
+    # rows happened to produce.  Both axes are met LARGEST FIRST here --
+    # (3,3) before (2,4) before (2,2) -- so an as-encountered write
+    # disagrees on the outer key, and one sorted only by the outer key
+    # still disagrees on the inner.  Two builds that met the same pairs
+    # in different orders would then differ byte for byte while carrying
+    # identical counts.
     statistics = AlleleStatistics()
     region = _region()
     region.add_allele(10, "ATG", "CGA")
-    region.add_allele(20, "AC", "GT")
+    region.add_allele(20, "AT", "ACGG")
+    region.add_allele(30, "AC", "GT")
     statistics.fold_region(region)
 
     written = statistics.serialize()
 
     grid = json.loads(written)["chromosomes"]["chr1"]["complex_grid"]
     assert list(grid) == ["2", "3"]
+    assert list(grid["2"]) == ["2", "4"]
+
+
+def test_a_display_of_the_new_groups_survives_a_missing_matrix() -> None:
+    # The seam returns nothing only when EVERY group is unknown, which
+    # is observable only the other way round from the pre-indel file:
+    # groups present, matrix absent.
+    display = _display_of(RegionAlleles.frozen(
+        "chr1", 1, 1, {"complex": 1}, complex_grid={(2, 3): 1}))
+
+    assert display is not None
+    assert display.substitution_matrix is None
+    assert display.transitions is None
+    assert display.ts_tv is None
+    assert display.complex_grid == {(2, 3): 1}

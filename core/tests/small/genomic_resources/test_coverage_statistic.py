@@ -6,6 +6,8 @@ import pytest
 from gain.genomic_resources.statistics.coverage import (
     CoverageStatistics,
     RegionCoverage,
+)
+from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
 )
 

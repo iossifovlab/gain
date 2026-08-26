@@ -21,7 +21,7 @@ from gain.genomic_resources.statistics.alleles import (
     AlleleStatistics,
     serves_allele_arrays,
 )
-from gain.genomic_resources.statistics.coverage import (
+from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
 )
 from gain.genomic_resources.testing.builders import (
@@ -683,15 +683,23 @@ def test_a_position_score_writes_no_allele_statistics(
 #
 #   chr1: +1 -> bin 0, +4 -> bin 2, -3 -> bin 1, (2,2) MNV, (2,3)
 #   chr2: +2 -> bin 1, (3,3) MNV
+#
+# Every row carries a WIDE ``pos_end``, deliberately: an allele row
+# collapses to the point it sits at, but tabix answers it to every
+# region its span touches, so without one a point row reaches exactly
+# one region and the chunk-invariance parametrization below cannot tell
+# "the rows a region OWNS" from "the rows a region was HANDED".  The
+# spans change no count here -- an allele's pos_end reaches over
+# nothing -- they only make the double-hand case happen.
 _INDEL_TABLE = """
-    chrom  pos_begin  reference  alternative  score
-    chr1   10         A          AT           0.1
-    chr1   20         A          ATTTT        0.2
-    chr1   30         ACGT       A            0.3
-    chr1   40         AC         GT           0.4
-    chr1   50         AT         ACG          0.5
-    chr2   10         A          AGG          0.6
-    chr2   20         ATG        CGA          0.7
+    chrom  pos_begin  pos_end  reference  alternative  score
+    chr1   10         45       A          AT           0.1
+    chr1   20         55       A          ATTTT        0.2
+    chr1   30         60       ACGT       A            0.3
+    chr1   40         70       AC         GT           0.4
+    chr1   50         80       AT         ACG          0.5
+    chr2   10         40       A          AGG          0.6
+    chr2   20         50       ATG        CGA          0.7
 """
 
 
@@ -810,15 +818,23 @@ def test_the_indel_groups_match_across_the_two_scan_paths(
         == allele.get_file_content(ALLELE_STATISTICS_FILE)
 
 
+@pytest.mark.parametrize("builder", [_indel_allele_score, _indel_np_score])
 @pytest.mark.parametrize("region_size", [10, 20, 7, 1])
 def test_the_indel_groups_are_chunk_invariant(
     tmp_path: pathlib.Path,
     region_size: int,
+    builder: Callable[[pathlib.Path], GenomicResource],
 ) -> None:
     # Chunking meets the sparse grid's cells in different orders, which
     # is why they are written sorted rather than as encountered.
-    whole = _indel_allele_score(tmp_path / "whole")
-    chunked = _indel_allele_score(tmp_path / "chunked")
+    #
+    # Parametrized over BOTH builders because the region's ownership
+    # rule is stated twice -- scalar on the per-record path, vectorized
+    # on the bulk one -- and np_score is excluded from the bulk-scan
+    # types.  With only the bulk-eligible fixture, breaking the scalar
+    # predicate leaves this green.
+    whole = builder(tmp_path / "whole")
+    chunked = builder(tmp_path / "chunked")
 
     cli_manage(["repo-stats", "-R", str(tmp_path / "whole"), "-j", "1"])
     cli_manage([
@@ -905,4 +921,9 @@ def test_info_page_says_a_resource_genuinely_has_no_complex_alleles(
 
     assert "<h3>Complex alleles</h3><p>no complex alleles</p>" in section
     assert "<h3>Complex alleles</h3><p>not computed</p>" not in section
+    assert "<p>no deletions</p>" in section
+    # A group with nothing to draw writes no image -- for either kind of
+    # empty group, not just the complex one.
     assert not resource.file_exists(ALLELE_COMPLEX_GRID_IMAGE_FILE)
+    assert not resource.file_exists(ALLELE_DELETION_LENGTHS_IMAGE_FILE)
+    assert resource.file_exists(ALLELE_INSERTION_LENGTHS_IMAGE_FILE)

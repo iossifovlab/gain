@@ -3,8 +3,10 @@
 Vocabulary per ``CONTEXT.md`` and ADR 0020.  Where the coverage statistic
 answers *where* a score holds data, this one answers *what* its rows are:
 how many **alleles** a resource carries, over how many **covered
-positions**, and how those alleles distribute over the five **allele
-classes**.
+positions**, how those alleles distribute over the five **allele
+classes**, and what the classes with structure look like inside -- the
+4x4 ref->alt matrix for substitutions, length histograms for the two
+anchored classes, and the **complex grid** for the rest.
 
 An allele row collapses to the point it sits at, so its coverage is a
 DISTINCT-POSITION count rather than the span union
@@ -54,7 +56,7 @@ from gain.genomic_resources.statistics.base_statistic import (
     refuse_unmergeable,
     regions_in_genomic_order,
 )
-from gain.genomic_resources.statistics.coverage import (
+from gain.genomic_resources.statistics.length_histogram import (
     LENGTH_HISTOGRAM_BIN_COUNT,
     accumulate_bins,
     length_histogram_bin_index,
@@ -590,8 +592,9 @@ class AlleleStatistics(Statistic):
     def __init__(self) -> None:
         super().__init__(
             "alleles",
-            "Allele counts, covered positions, class totals and the "
-            "substitution matrix")
+            "Allele counts, covered positions, class totals, the "
+            "substitution matrix, the indel length histograms and the "
+            "complex grid")
         self._regions: dict[str, RegionAlleles] = {}
 
     def fold_region(self, region: RegionAlleles) -> None:
@@ -911,6 +914,17 @@ def save_allele_statistics(
     image per group that has something to draw.  A group the resource
     publishes nothing for writes no image -- the info page's section is
     what says whether that is "not computed" or "genuinely none".
+
+    It skips an EMPTY group where the coverage twin skips only an
+    unknown one, and the difference is deliberate.  Coverage's unknown
+    means "this kind has no such group", but every group here applies to
+    every allele score, so matching it would put an all-zero deletion
+    histogram on each of the many scores that carry only substitutions.
+    The cost of that is paid by every resource; the cost of skipping --
+    a previous build's image left behind when a group empties out -- is
+    paid only when the underlying data changes, which rewrites the
+    statistics anyway.  Nothing links the leftover: the page reads the
+    stored counts, not the directory.
     """
     if statistics is None:
         return
