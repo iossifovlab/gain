@@ -745,10 +745,11 @@ def _parse_gtf_attributes(data: str) -> dict[str, str]:
 #: ``transcript_id``. Supporting a flavour usually takes more than this set:
 #: FlyBase also relies on the ``5UTR``/``3UTR`` spellings in
 #: ``GTF_IGNORED_FEATURES`` and on ``gene_symbol`` as its gene label. Check a
-#: new file's ``cut -f3 | sort -u`` against the module's ``GTF_*`` constants
-#: plus the loop's literal ``Selenocysteine`` branch. Flavour
-#: is an intake concern only -- ``serialization.py`` normalises back out,
-#: always writing ``transcript`` and ``gene_name``.
+#: new file's ``cut -f3 | sort -u`` against the module's ``GTF_*``
+#: constants, which between them spell out the whole vocabulary the loop
+#: dispatches on. Flavour is an intake concern only --
+#: ``serialization.py`` normalises back out, always writing
+#: ``transcript`` and ``gene_name``.
 GTF_TRANSCRIPT_FEATURES = frozenset({
     "transcript",
     "mRNA",
@@ -799,6 +800,20 @@ GTF_EXON_FEATURES = frozenset({
 GTF_CODON_FEATURES = frozenset({
     "start_codon",
     "stop_codon",
+})
+
+#: Features that mark a site within their transcript and contribute
+#: nothing to the model. GENCODE emits one ``Selenocysteine`` record per
+#: recoded UGA codon of a selenoprotein. Taking no measurement from them
+#: is a policy, not a redundancy: ``cds`` is reconstructed from the codon
+#: records alone, so a transcript with no ``stop_codon`` keeps a stub
+#: that stops short of its own recoded site -- true of ten of the 88
+#: such transcripts in GENCODE v49 comprehensive, and captured as #909.
+#: Dispatched as child records, so that
+#: a record with no parent transcript is reported rather than silently
+#: turned into a transcript of its own.
+GTF_SELENOCYSTEINE_FEATURES = frozenset({
+    "Selenocysteine",
 })
 
 
@@ -894,10 +909,7 @@ def parse_gtf_gene_models_format(
             raise ValueError(
                 f"{_record_location(rec)} has no transcript_id attribute",
             )
-        if feature in GTF_TRANSCRIPT_FEATURES or feature == "Selenocysteine":
-            if feature == "Selenocysteine" and \
-                    tr_id in transcript_models:
-                continue
+        if feature in GTF_TRANSCRIPT_FEATURES:
             if tr_id in transcript_models:
                 raise ValueError(
                     f"{tr_id} of {feature} already in transcript models",
@@ -946,6 +958,11 @@ def parse_gtf_gene_models_format(
             cds = transcript_model.cds
             transcript_model.cds = \
                 (min(cds[0], rec["start"]), max(cds[1], rec["end"]))
+            continue
+        if feature in GTF_SELENOCYSTEINE_FEATURES:
+            # Called for the parent check alone; nothing to record.
+            _parent_transcript(
+                transcript_models, feature, tr_id, skipped_transcripts)
             continue
 
         raise ValueError(
