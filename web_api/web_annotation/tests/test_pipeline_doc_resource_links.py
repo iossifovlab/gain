@@ -11,7 +11,6 @@ resource knows which child it came from (#841, and #838 for the same
 correction at the single-allele call site).
 """
 import pathlib
-import tempfile
 
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -40,7 +39,8 @@ TWO_CHILD_PIPELINE = """
 
 
 def render_doc(
-    repo: GenomicResourceRepo, pipeline_config: str = PIPELINE,
+    repo: GenomicResourceRepo, work_dir: pathlib.Path,
+    pipeline_config: str = PIPELINE,
 ) -> str:
     """Render the downloadable document for ``pipeline_config``.
 
@@ -48,11 +48,10 @@ def render_doc(
     whatever the pipeline cache hands it, which is always a
     ``ThreadSafePipeline``.
     """
-    with tempfile.TemporaryDirectory() as work_dir:
-        pipeline = load_pipeline_from_yaml(
-            pipeline_config, repo, work_dir=pathlib.Path(work_dir))
-        return PipelineDoc._render_doc(
-            ThreadSafePipeline(pipeline, "test-pipeline"))
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, repo, work_dir=work_dir)
+    return PipelineDoc._render_doc(
+        ThreadSafePipeline(pipeline, "test-pipeline"))
 
 
 def a_score_at(
@@ -65,15 +64,15 @@ def a_score_at(
 def test_resource_is_linked_on_the_grrs_public_url(
     tmp_path: pathlib.Path,
 ) -> None:
-    a_score_at(tmp_path)
+    a_score_at(tmp_path / "grr")
     repo = build_genomic_resource_repository({
         "id": "main",
         "type": "dir",
-        "directory": str(tmp_path),
+        "directory": str(tmp_path / "grr"),
         "public_url": "http://grr.example.org",
     })
 
-    html = render_doc(repo)
+    html = render_doc(repo, tmp_path / "work")
 
     assert 'href="http://grr.example.org/scores/pos1/index.html"' in html
 
@@ -81,15 +80,15 @@ def test_resource_is_linked_on_the_grrs_public_url(
 def test_histogram_image_is_sourced_from_the_grrs_public_url(
     tmp_path: pathlib.Path,
 ) -> None:
-    a_score_at(tmp_path)
+    a_score_at(tmp_path / "grr")
     repo = build_genomic_resource_repository({
         "id": "main",
         "type": "dir",
-        "directory": str(tmp_path),
+        "directory": str(tmp_path / "grr"),
         "public_url": "http://grr.example.org",
     })
 
-    html = render_doc(repo)
+    html = render_doc(repo, tmp_path / "work")
 
     assert (
         'src="http://grr.example.org'
@@ -127,7 +126,7 @@ def test_each_resource_is_linked_on_the_host_of_its_own_child_repo(
 
     # Named attributes: two bare position scores would both contribute an
     # attribute called "score", which the pipeline refuses as a repeat.
-    html = render_doc(repo, TWO_CHILD_PIPELINE)
+    html = render_doc(repo, tmp_path / "work", TWO_CHILD_PIPELINE)
 
     assert 'href="http://grr.example.org/scores/pos1/index.html"' in html
     assert (
@@ -141,14 +140,14 @@ def test_a_definition_without_a_public_url_falls_back_to_the_repo_url(
     # ``public_url`` is optional -- a GRR that never declared a public
     # mirror still has to render a document rather than raise, and the
     # addresses it carries stay the ones it carried before #841.
-    a_score_at(tmp_path)
+    a_score_at(tmp_path / "grr")
     repo = build_genomic_resource_repository({
         "id": "main",
         "type": "dir",
-        "directory": str(tmp_path),
+        "directory": str(tmp_path / "grr"),
     })
 
-    html = render_doc(repo)
+    html = render_doc(repo, tmp_path / "work")
 
     resource = repo.get_resource("scores/pos1")
     assert resource.get_public_url() == resource.get_url()
@@ -160,15 +159,15 @@ def test_a_public_url_ending_in_a_slash_does_not_double_it(
 ) -> None:
     # A deployment writes ``public_url`` by hand, so both spellings turn
     # up; neither may put a "//" in the middle of a link or an image.
-    a_score_at(tmp_path)
+    a_score_at(tmp_path / "grr")
     repo = build_genomic_resource_repository({
         "id": "main",
         "type": "dir",
-        "directory": str(tmp_path),
+        "directory": str(tmp_path / "grr"),
         "public_url": "http://grr.example.org/",
     })
 
-    html = render_doc(repo)
+    html = render_doc(repo, tmp_path / "work")
 
     assert "http://grr.example.org//" not in html
     assert 'href="http://grr.example.org/scores/pos1/index.html"' in html
