@@ -3,9 +3,13 @@ import json
 
 import pytest
 from gain.genomic_resources.statistics.alleles import (
+    COMPLEX_LENGTH_CLAMP,
     AlleleDisplay,
     AlleleStatistics,
     RegionAlleles,
+)
+from gain.genomic_resources.statistics.coverage import (
+    length_histogram_bin_index,
 )
 
 
@@ -274,3 +278,148 @@ def test_merging_two_statistics_of_one_chromosome_needs_adjacency() -> None:
 
     with pytest.raises(ValueError, match="adjacent-and-in-order"):
         left.merge(right)
+
+
+def test_an_insertion_is_binned_by_the_bases_it_adds() -> None:
+    region = _region()
+
+    region.add_allele(10, "A", "ATTT")
+
+    lengths = region.counts().insertion_lengths
+    assert lengths is not None
+    assert sum(lengths) == 1
+    assert lengths[length_histogram_bin_index(3)] == 1
+
+
+def test_a_deletion_is_binned_by_the_bases_it_removes() -> None:
+    region = _region()
+
+    region.add_allele(10, "ACGT", "A")
+
+    lengths = region.counts().deletion_lengths
+    assert lengths is not None
+    assert sum(lengths) == 1
+    assert lengths[length_histogram_bin_index(3)] == 1
+
+
+def test_the_global_roll_up_sums_the_length_histograms() -> None:
+    statistics = AlleleStatistics()
+    for chrom in ("chr1", "chr2"):
+        region = RegionAlleles(chrom, 1, 100)
+        region.add_allele(10, "A", "AT")
+        statistics.fold_region(region)
+
+    lengths = statistics.global_counts().insertion_lengths
+
+    assert lengths is not None
+    assert lengths[length_histogram_bin_index(1)] == 2
+
+
+def test_an_unknown_histogram_makes_the_whole_roll_up_unknown() -> None:
+    # The all-or-nothing rule the matrix merge already states: a total
+    # over a partially-unknown set would silently understate.
+    statistics = AlleleStatistics()
+    scanned = RegionAlleles("chr1", 1, 100)
+    scanned.add_allele(10, "A", "AT")
+    statistics.fold_region(scanned)
+    statistics.fold_region(RegionAlleles.frozen("chr2", 1, 1, {}))
+
+    assert statistics.global_counts().insertion_lengths is None
+
+
+def test_merge_adds_the_length_histograms_of_the_adjacent_region() -> None:
+    left = _region(start=1, end=10)
+    left.add_allele(5, "A", "AT")
+    right = _region(start=11, end=20)
+    right.add_allele(11, "A", "AT")
+    right.add_allele(12, "ACGT", "A")
+
+    left.merge(right)
+
+    counts = left.counts()
+    assert counts.insertion_lengths is not None
+    assert counts.insertion_lengths[length_histogram_bin_index(1)] == 2
+    assert counts.deletion_lengths is not None
+    assert counts.deletion_lengths[length_histogram_bin_index(3)] == 1
+
+
+def test_a_complex_row_lands_at_its_exact_length_cell() -> None:
+    # The grill's whole point: an unanchored 2->3 and a 3bp MNV are
+    # different events and must not share a cell.
+    region = _region()
+
+    region.add_allele(10, "AT", "ACG")
+    region.add_allele(11, "ATG", "CGA")
+
+    grid = region.counts().complex_grid
+    assert grid is not None
+    assert grid[2, 3] == 1
+    assert grid[3, 3] == 1
+
+
+def test_lengths_at_or_above_the_clamp_share_the_grid_edge() -> None:
+    # The documented caveat: the clamped corner is the one diagonal
+    # cell that does not mean "MNV" -- a 5000 -> 70 pair lands there
+    # too, and its sides are not equal.
+    region = _region()
+
+    region.add_allele(10, "A" * 5000, "C" * 70)
+    region.add_allele(11, "G" * COMPLEX_LENGTH_CLAMP, "TT")
+
+    grid = region.counts().complex_grid
+    assert grid is not None
+    assert grid[COMPLEX_LENGTH_CLAMP, COMPLEX_LENGTH_CLAMP] == 1
+    assert grid[COMPLEX_LENGTH_CLAMP, 2] == 1
+
+
+def test_the_complex_grid_round_trips_through_the_file() -> None:
+    statistics = AlleleStatistics()
+    region = _region()
+    region.add_allele(10, "AT", "ACG")
+    region.add_allele(11, "ATG", "CGA")
+    statistics.fold_region(region)
+
+    restored = AlleleStatistics.deserialize(statistics.serialize())
+
+    assert restored.by_chromosome() == statistics.by_chromosome()
+    assert restored.global_counts().complex_grid == {(2, 3): 1, (3, 3): 1}
+
+
+def test_a_file_without_the_indel_groups_reads_as_unknown() -> None:
+    # Files written between gain#778 and this slice carry the matrix but
+    # no lengths.  Unknown must stay distinguishable from "the resource
+    # genuinely has none", and must not resurface as zeros on rewrite.
+    content = json.dumps({
+        "format_version": 1,
+        "chromosomes": {
+            "chr1": {
+                "allele_count": 2,
+                "covered_positions": 1,
+                "class_counts": {"insertion": 2},
+            },
+        },
+    })
+
+    statistics = AlleleStatistics.deserialize(content)
+
+    counts = statistics.global_counts()
+    assert counts.insertion_lengths is None
+    assert counts.deletion_lengths is None
+    assert counts.complex_grid is None
+    written = statistics.serialize()
+    assert "insertion_length_histogram" not in written
+    assert "complex_grid" not in written
+
+
+def test_a_resource_with_no_complex_rows_keeps_a_known_empty_grid() -> None:
+    # Known-and-empty is not unknown: this resource HAS been scanned and
+    # genuinely carries no complex alleles, which the page must be able
+    # to say rather than falling back to "not computed".
+    statistics = AlleleStatistics()
+    region = _region()
+    region.add_allele(10, "A", "G")
+    statistics.fold_region(region)
+
+    restored = AlleleStatistics.deserialize(statistics.serialize())
+
+    assert restored.global_counts().complex_grid == {}

@@ -54,6 +54,11 @@ from gain.genomic_resources.statistics.base_statistic import (
     refuse_unmergeable,
     regions_in_genomic_order,
 )
+from gain.genomic_resources.statistics.coverage import (
+    LENGTH_HISTOGRAM_BIN_COUNT,
+    _accumulate_bins,
+    length_histogram_bin_index,
+)
 
 ALLELE_STATISTICS_FILE = "statistics/alleles.json"
 
@@ -76,6 +81,20 @@ NUCLEOTIDES: tuple[str, ...] = tuple(ALLELE_BASES)
 #: other: ADR 0020 classifies ``A>A`` as a substitution.
 MATRIX_CELLS: tuple[tuple[str, str], ...] = tuple(
     (ref, alt) for ref in NUCLEOTIDES for alt in NUCLEOTIDES)
+
+#: The longest allele length the complex grid resolves exactly.  A
+#: length at or above it lands in the grid's top row or column, which
+#: therefore reads "this many bases or more".  The clamp is TOTAL --
+#: every complex row lands in exactly one cell, so the grid's total is
+#: the complex class count and no overflow counter is needed.
+#:
+#: Exact lengths rather than the shared log2 ladder (gain#779): that
+#: ladder's first bin is exactly length 1, which no complex pair can
+#: have -- a 1->1 pair is a substitution -- and its second bin is
+#: {2, 3}, which would put a 2->3 complex in the same cell as a 3bp
+#: MNV and empty the diagonal of its meaning.  Part of the stored
+#: format: it must not change once resources carry grids built from it.
+COMPLEX_LENGTH_CLAMP = 64
 
 #: How a failed fold of these regions is named in the message.
 _MERGE_FAILURE = "allele statistics"
@@ -100,6 +119,9 @@ class AlleleCounts(NamedTuple):
     covered_positions: int
     class_counts: dict[str, int]
     substitution_matrix: dict[tuple[str, str], int] | None
+    insertion_lengths: list[int] | None = None
+    deletion_lengths: list[int] | None = None
+    complex_grid: dict[tuple[int, int], int] | None = None
 
     def display(self) -> AlleleDisplay | None:
         """This entry's matrix render payload, ``None`` matrix unknown.
@@ -145,6 +167,22 @@ def _merged_matrix(
     return {cell: left[cell] + right[cell] for cell in MATRIX_CELLS}
 
 
+def _merged_bins(
+    left: list[int] | None,
+    right: list[int] | None,
+) -> list[int] | None:
+    """The binwise sum of two length histograms, unknown if either is.
+
+    The :func:`_merged_matrix` rule on the fixed ladder: an unknown side
+    makes the whole merge unknown rather than a smaller number.
+    """
+    if left is None or right is None:
+        return None
+    merged = list(left)
+    _accumulate_bins(merged, right)
+    return merged
+
+
 def _total(counts: Iterable[AlleleCounts]) -> AlleleCounts:
     """The roll-up of several chromosomes' counts into one.
 
@@ -157,13 +195,21 @@ def _total(counts: Iterable[AlleleCounts]) -> AlleleCounts:
     covered = 0
     matrix: dict[tuple[str, str], int] | None = dict.fromkeys(
         MATRIX_CELLS, 0)
+    insertions: list[int] | None = [0] * LENGTH_HISTOGRAM_BIN_COUNT
+    deletions: list[int] | None = [0] * LENGTH_HISTOGRAM_BIN_COUNT
+    grid: dict[tuple[int, int], int] | None = {}
     for entry in counts:
         allele_count += entry.allele_count
         covered += entry.covered_positions
         for name, count in entry.class_counts.items():
             class_counts[name] = class_counts.get(name, 0) + count
         matrix = _merged_matrix(matrix, entry.substitution_matrix)
-    return AlleleCounts(allele_count, covered, class_counts, matrix)
+        insertions = _merged_bins(insertions, entry.insertion_lengths)
+        deletions = _merged_bins(deletions, entry.deletion_lengths)
+        grid = _merged_grid(grid, entry.complex_grid)
+    return AlleleCounts(
+        allele_count, covered, class_counts, matrix,
+        insertions, deletions, grid)
 
 
 def _serialized(counts: AlleleCounts) -> dict[str, Any]:
@@ -185,7 +231,65 @@ def _serialized(counts: AlleleCounts) -> dict[str, Any]:
             ref: {alt: matrix[ref, alt] for alt in NUCLEOTIDES}
             for ref in NUCLEOTIDES
         }
+    if counts.insertion_lengths is not None:
+        entry["insertion_length_histogram"] = list(counts.insertion_lengths)
+    if counts.deletion_lengths is not None:
+        entry["deletion_length_histogram"] = list(counts.deletion_lengths)
+    if counts.complex_grid is not None:
+        # Written ref-then-alt SORTED, not in encounter order: the cells
+        # are a sparse dict, and two chunkings of one resource meet the
+        # same pairs in different orders.  Sorting is what makes the
+        # file byte-identical however the rows arrived.
+        grid = counts.complex_grid
+        nested: dict[str, dict[str, int]] = {}
+        for ref_length, alt_length in sorted(grid):
+            nested.setdefault(str(ref_length), {})[str(alt_length)] = \
+                grid[ref_length, alt_length]
+        entry["complex_grid"] = nested
     return entry
+
+
+def _deserialized_grid(
+    entry: dict[str, Any],
+) -> dict[tuple[int, int], int] | None:
+    """The stored complex grid back onto its cell keys, ``None`` absent."""
+    stored = entry.get("complex_grid")
+    if stored is None:
+        return None
+    return {
+        (int(ref_length), int(alt_length)): int(count)
+        for ref_length, row in stored.items()
+        for alt_length, count in row.items()
+    }
+
+
+def _merged_grid(
+    left: dict[tuple[int, int], int] | None,
+    right: dict[tuple[int, int], int] | None,
+) -> dict[tuple[int, int], int] | None:
+    """The cellwise sum of two complex grids, unknown if either is.
+
+    The :func:`_merged_matrix` rule again, over a SPARSE key set: a cell
+    either side carries is a cell of the sum.
+    """
+    if left is None or right is None:
+        return None
+    merged = dict(left)
+    for cell, count in right.items():
+        merged[cell] = merged.get(cell, 0) + count
+    return merged
+
+
+def _deserialized_bins(
+    entry: dict[str, Any], key: str,
+) -> list[int] | None:
+    """A stored length histogram, ``None`` when the file carries none."""
+    stored = entry.get(key)
+    if stored is None:
+        return None
+    bins = [0] * LENGTH_HISTOGRAM_BIN_COUNT
+    _accumulate_bins(bins, (int(count) for count in stored))
+    return bins
 
 
 def _deserialized_matrix(
@@ -245,6 +349,11 @@ class RegionAlleles:
         # would silently drop soft-masked rows no cell claims.
         self._substitution_matrix: dict[tuple[str, str], int] | None = \
             dict.fromkeys(MATRIX_CELLS, 0)
+        self._insertion_lengths: list[int] | None = \
+            [0] * LENGTH_HISTOGRAM_BIN_COUNT
+        self._deletion_lengths: list[int] | None = \
+            [0] * LENGTH_HISTOGRAM_BIN_COUNT
+        self._complex_grid: dict[tuple[int, int], int] | None = {}
         self._last_pos: int | None = None
 
     @classmethod
@@ -254,7 +363,11 @@ class RegionAlleles:
         allele_count: int,
         covered_positions: int,
         class_counts: dict[str, int],
+        *,
         substitution_matrix: dict[tuple[str, str], int] | None = None,
+        insertion_lengths: list[int] | None = None,
+        deletion_lengths: list[int] | None = None,
+        complex_grid: dict[tuple[int, int], int] | None = None,
     ) -> RegionAlleles:
         """A region restored from serialized counts, with no scan state.
 
@@ -270,6 +383,9 @@ class RegionAlleles:
             if substitution_matrix is None else {
                 cell: substitution_matrix.get(cell, 0)
                 for cell in MATRIX_CELLS}
+        region._insertion_lengths = insertion_lengths
+        region._deletion_lengths = deletion_lengths
+        region._complex_grid = complex_grid
         return region
 
     def counts(self) -> AlleleCounts:
@@ -279,7 +395,13 @@ class RegionAlleles:
             self.covered_positions,
             dict(self._class_counts),
             None if self._substitution_matrix is None
-            else dict(self._substitution_matrix))
+            else dict(self._substitution_matrix),
+            None if self._insertion_lengths is None
+            else list(self._insertion_lengths),
+            None if self._deletion_lengths is None
+            else list(self._deletion_lengths),
+            None if self._complex_grid is None
+            else dict(self._complex_grid))
 
     def _owns(self, pos: int) -> bool:
         """Whether this region owns the row sitting at ``pos``."""
@@ -310,6 +432,25 @@ class RegionAlleles:
             assert alt is not None
             self._substitution_matrix[
                 ref.upper(), alt.upper()] += multiplicity
+        if classification.allele_class is AlleleClass.INSERTION \
+                and self._insertion_lengths is not None:
+            assert classification.length_change is not None
+            self._insertion_lengths[length_histogram_bin_index(
+                abs(classification.length_change))] += multiplicity
+        if classification.allele_class is AlleleClass.DELETION \
+                and self._deletion_lengths is not None:
+            assert classification.length_change is not None
+            self._deletion_lengths[length_histogram_bin_index(
+                abs(classification.length_change))] += multiplicity
+        if classification.allele_class is AlleleClass.COMPLEX \
+                and self._complex_grid is not None:
+            assert classification.ref_length is not None
+            assert classification.alt_length is not None
+            cell = (
+                min(classification.ref_length, COMPLEX_LENGTH_CLAMP),
+                min(classification.alt_length, COMPLEX_LENGTH_CLAMP))
+            self._complex_grid[cell] = \
+                self._complex_grid.get(cell, 0) + multiplicity
 
     def add_allele(
         self, pos: int, ref: str | None, alt: str | None,
@@ -398,6 +539,12 @@ class RegionAlleles:
                 other._class_counts[name]
         self._substitution_matrix = _merged_matrix(
             self._substitution_matrix, other._substitution_matrix)
+        self._insertion_lengths = _merged_bins(
+            self._insertion_lengths, other._insertion_lengths)
+        self._deletion_lengths = _merged_bins(
+            self._deletion_lengths, other._deletion_lengths)
+        self._complex_grid = _merged_grid(
+            self._complex_grid, other._complex_grid)
         if other._last_pos is not None:
             self._last_pos = other._last_pos
         self.end = other.end
@@ -480,7 +627,12 @@ class AlleleStatistics(Statistic):
                     name: int(count)
                     for name, count in counts["class_counts"].items()
                 },
-                _deserialized_matrix(counts),
+                substitution_matrix=_deserialized_matrix(counts),
+                insertion_lengths=_deserialized_bins(
+                    counts, "insertion_length_histogram"),
+                deletion_lengths=_deserialized_bins(
+                    counts, "deletion_length_histogram"),
+                complex_grid=_deserialized_grid(counts),
             ))
         return result
 
