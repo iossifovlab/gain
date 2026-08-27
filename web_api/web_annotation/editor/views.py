@@ -11,10 +11,12 @@ from gain.annotation.annotation_config import (
     AnnotatorInfo,
 )
 from gain.annotation.annotation_factory import (
+    RETIRED_ANNOTATOR_NAMES,
     build_pipeline_annotator,
     check_for_repeated_attributes_in_pipeline,
     get_annotator_factory,
     get_available_annotator_types,
+    retired_annotator_message,
 )
 from gain.genomic_resources.aggregators import (
     AGGREGATOR_CLASS_DICT,
@@ -38,6 +40,20 @@ class _InvalidSearchTermError(Exception):
     the factory build (master's order) and have the async caller map it to the
     same 400 ("Search term must be a string").
     """
+
+
+def _unavailable_annotator_message(annotator_type: str) -> str:
+    """Return what to tell a client that named an unusable annotator type.
+
+    Every editor endpoint checks the available types before it reaches
+    GAIn's registry, so the registry's own message for a retired name never
+    surfaces here. This restates it, and otherwise keeps the generic text:
+    a name GAIn never had has no replacement to name, and inventing one
+    would be a guess.
+    """
+    if annotator_type in RETIRED_ANNOTATOR_NAMES:
+        return retired_annotator_message(annotator_type)
+    return f"Unknown annotator_type: {annotator_type}"
 
 
 class EditorMixin:  # pylint: disable=too-few-public-methods
@@ -83,7 +99,8 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
         """
 
         if annotator_type not in get_available_annotator_types():
-            raise ValueError(f"Unknown annotator_type: {annotator_type}")
+            raise ValueError(
+                _unavailable_annotator_message(annotator_type))
 
         if annotator_type == "position_score_annotator":
             return {
@@ -317,7 +334,18 @@ class AnnotatorConfig(EditorView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        result = self._get_annotator_config_template(annotator_type)
+        # The three sibling endpoints answer an unusable annotator_type with
+        # a 400; this one let the helper's ValueError escape as a 500, so a
+        # client naming a retired -- or merely misspelt -- annotator got no
+        # usable error at all. Pre-existing, and fixed here because #919
+        # requires this endpoint to deliver the migration message.
+        try:
+            result = self._get_annotator_config_template(annotator_type)
+        except ValueError as error:
+            return Response(
+                {"error": str(error)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         for key, value in data.items():
             if key in result:
@@ -395,7 +423,7 @@ class AnnotatorAttributes(AsyncEditorView):
 
         if annotator_type not in get_available_annotator_types():
             return Response(
-                {"error": f"Unknown annotator_type: {annotator_type}"},
+                {"error": _unavailable_annotator_message(annotator_type)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -579,7 +607,7 @@ class AnnotatorYAML(AsyncEditorView):
 
         if annotator_type not in get_available_annotator_types():
             return Response(
-                {"error": f"Unknown annotator_type: {annotator_type}"},
+                {"error": _unavailable_annotator_message(annotator_type)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -841,7 +869,7 @@ class AnnotatorAggregators(AsyncEditorView):
 
         if annotator_type not in get_available_annotator_types():
             return Response(
-                {"error": f"Unknown annotator_type: {annotator_type}"},
+                {"error": _unavailable_annotator_message(annotator_type)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

@@ -14,6 +14,22 @@ Release Notes
       implementation builder that ``grr_manage`` sweeps with. The
       spelling had warned since 2024-11 and its removal was announced
       for this release (#781, #918, #920).
+    * **Behavior change:** the deprecated ``np_score`` and
+      ``np_score_annotator`` *annotator* names are removed. Write
+      ``allele_score`` and ``allele_score_annotator`` instead -- each
+      retired name maps to the replacement of the same shape, so a
+      migration is a one-word edit. A pipeline still naming one is
+      refused with a message naming its replacement and this release,
+      rather than the bare ``unsupported annotator type`` the removal
+      would otherwise give; the annotation editor's endpoints say the
+      same. Unlike the resource ``type:`` below this is a plain rename:
+      the annotator name never selected the read mode. The names had
+      warned since 2024-11 and their removal was announced for this
+      release (#781, #918, #919).
+    * **Fixed:** the annotation editor's ``annotator_config`` endpoint
+      answered an unknown ``annotator_type`` with a 500 instead of the
+      400 its sibling endpoints return, so a misspelt or retired
+      annotator name produced no usable error (#919).
     * The ``np_score`` test-data builders (``NPScoreBuilder``,
       ``a_np_score``) are retired with the type they built (#920).
 
