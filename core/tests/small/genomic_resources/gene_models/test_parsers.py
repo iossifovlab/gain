@@ -259,14 +259,10 @@ def test_supported_formats_are_inferrable() -> None:
 #: below sees the format parsers and nothing else. Note it is ``_models_``
 #: that excludes them: matching a bare ``_format`` suffix would sweep up
 #: ``parse_columnar_format``, which is the shared record loop and is
-#: registered under no name of its own.
-#:
-#: One width is deliberately not its own format: genePredExt is the second
-#: attempt of ``parse_ucscgenepred_models_format``, and the fixture suite
-#: carries a ``ucscgenepredext`` entry for it. Should that width ever get a
-#: wrapper of its own, it would match this pattern while staying
-#: unregistered on purpose -- register it or rename it, rather than
-#: loosening the scan to let it through.
+#: registered under no name of its own. The one name that could match
+#: while being unregistered on purpose is a wrapper for genePredExt, the
+#: second width of ``parse_ucscgenepred_models_format``; give it a name in
+#: the registry rather than loosening this pattern to let it through.
 _FORMAT_PARSER_NAME = re.compile(r"parse_\w+_models_format")
 
 

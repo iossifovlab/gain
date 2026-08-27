@@ -970,12 +970,10 @@ def load_gene_mapping(resource: GenomicResource) -> dict[str, str]:
 # format that loads when spelled explicitly and is never inferred from
 # content, with no complaint at either seam.
 #
-# Both are settled at import: the set is a snapshot of these keys, not a
-# view of them, and each value is the function object itself rather than a
-# name looked up per call. Registering a format after import would revive
-# exactly the divergence above, and rebinding a parser's module attribute
-# no longer reaches `get_parser` -- a test that patched one and exercised
-# it through here would be testing unpatched code.
+# Both are settled at import -- the set is a snapshot of these keys, and
+# each value is the function object rather than a name resolved per call.
+# So rebinding a parser's module attribute no longer reaches `get_parser`:
+# a test patching one and exercising it through here runs unpatched code.
 _PARSERS: dict[str, GeneModelsParser] = {
     "default": parse_default_gene_models_format,
     "refflat": parse_ref_flat_gene_models_format,
