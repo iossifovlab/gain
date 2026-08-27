@@ -44,6 +44,24 @@ class _InvalidSearchTermError(Exception):
     """
 
 
+class _NoEditorTemplateError(Exception):
+    """Raised for a registered annotator type the editor cannot draw a form for.
+
+    Deliberately distinct from the ``ValueError`` that means "GAIn does not
+    have this annotator at all": these are different answers to a client.
+    ``AnnotatorConfig`` refuses with a 400 that says which of the two
+    happened, because collapsing them would either tell a user that
+    ``chrom_mapping`` is unknown -- it is not, it is usable in a pipeline
+    -- or make an unregistered name look like a temporary gap here.
+
+    ``ResourceAnnotators`` also catches it, to skip a type it cannot offer
+    a form for. That branch does not currently fire: that endpoint walks
+    ``_get_annotator_types()``, and every one of those nine is templated.
+    It is carried because the two lists are maintained independently, so
+    the day they diverge decides between one skipped annotator and a 500.
+    """
+
+
 def _unavailable_annotator_message(annotator_type: str) -> str:
     """Return what to tell a client that named an unusable annotator type.
 
@@ -122,7 +140,7 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                 },
             }
         # Both spellings, for the same reason the fragment score below takes
-        # two: the refusal for the retired `np_score` sends its reader here
+        # three: the refusal for the retired `np_score` sends its reader here
         # to write `allele_score`, and this template *emits* that spelling,
         # so an endpoint that took only the suffixed one would 500 on both
         # its own migration advice and its own output (#919).
@@ -182,13 +200,18 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                     "optional": False,
                 },
             }
-        # Both spellings resolve to the same template, so a pipeline saved
-        # with the legacy name still opens in the editor -- but what the
-        # template EMITS is the new vocabulary, so anything saved from here
-        # is written the new way, and re-saving a legacy pipeline is how a
-        # user clears the deprecation warning (gain#538).
+        # All three spellings resolve to the same template, so a pipeline
+        # saved with the legacy name still opens in the editor -- but what
+        # the template EMITS is the new vocabulary, so anything saved from
+        # here is written the new way, and re-saving a legacy pipeline is
+        # how a user clears the deprecation warning (gain#538).  That is
+        # also why `fragment_score` itself is accepted: the template emits
+        # it, so refusing it would refuse this endpoint's own output --
+        # the round trip gain#919 restored for the allele score (gain#959).
         if annotator_type in (
-                "fragment_score_annotator", "cnv_collection_annotator"):
+                "fragment_score_annotator",
+                "fragment_score",
+                "cnv_collection_annotator"):
             return {
                 "annotator_type": "fragment_score",
                 "documentation_url": (
@@ -298,7 +321,10 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                 },
             }
 
-        raise KeyError(f"Unknown annotator_type: {annotator_type}")
+        # Registry-HAS only -- see `_NoEditorTemplateError`.
+        raise _NoEditorTemplateError(
+            "No editor configuration template for annotator_type: "
+            f"{annotator_type}")
 
 
 class EditorView(EditorMixin, AnnotationBaseView):
@@ -348,7 +374,7 @@ class AnnotatorConfig(EditorView):
         # requires this endpoint to deliver the migration message.
         try:
             result = self._get_annotator_config_template(annotator_type)
-        except ValueError as error:
+        except (ValueError, _NoEditorTemplateError) as error:
             return Response(
                 {"error": str(error)},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -698,7 +724,7 @@ class ResourceAnnotators(EditorView):
             matched = False
             try:
                 template = self._get_annotator_config_template(annotator_type)
-            except KeyError:
+            except _NoEditorTemplateError:
                 continue
             for field_name, field in template.items():
                 if isinstance(field, dict):
