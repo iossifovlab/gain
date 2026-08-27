@@ -18,6 +18,7 @@ from io import StringIO
 from gain.genomic_resources.gene_models.default_attributes import (
     format_default_attributes,
 )
+from gain.genomic_resources.gene_models.gene_models import GeneModels
 from gain.genomic_resources.gene_models.gene_models_factory import (
     build_gene_models_from_resource,
 )
@@ -32,7 +33,7 @@ from gain.genomic_resources.testing import build_inmemory_test_resource
 from tests.small.genomic_resources.gene_models.columnar_formats import REFSEQ
 
 
-def refseq_row(name: str, score: str) -> str:
+def refseq_row_with(name: str, **cells: str) -> str:
     """One refSeq row, built from the shared layout table.
 
     The columns and their well-formed values live in `columnar_formats`;
@@ -41,8 +42,47 @@ def refseq_row(name: str, score: str) -> str:
     """
     fields = list(REFSEQ.fields)
     fields[REFSEQ.columns.index("name")] = name
-    fields[REFSEQ.columns.index("score")] = score
+    for column, value in cells.items():
+        fields[REFSEQ.columns.index(column)] = value
     return "\t".join(fields) + "\n"
+
+
+def refseq_row(name: str, score: str) -> str:
+    """One refSeq row whose `score` is the cell under test."""
+    return refseq_row_with(name, score=score)
+
+
+def models_of(source: str, file_format: str) -> GeneModels:
+    """The models a source file in `file_format` loads as."""
+    gene_models = build_gene_models_from_resource(build_inmemory_test_resource(
+        content={
+            "genomic_resource.yaml":
+                f"{{type: gene_models, filename: genes.txt, "
+                f"format: {file_format}}}",
+            "genes.txt": source,
+        }))
+    gene_models.load()
+    return gene_models
+
+
+def written_out(gene_models: GeneModels) -> str:
+    """The default-format file these models serialize to."""
+    written = StringIO()
+    _save_as_default_gene_models(gene_models, written)
+    return written.getvalue()
+
+
+def cell_of(written: str, tr_id: str, column: str) -> str:
+    """One named cell of one record of a written default-format file.
+
+    The column is found through the header the file carries rather than
+    by a fixed position, so this says which cell it means in the
+    format's own terms.
+    """
+    header, *rows = written.splitlines()
+    index = header.split("\t").index(column)
+    [row] = [r for r in rows if r.split("\t")[1] == tr_id]
+    return row.split("\t")[index]
 
 
 def shape(transcript: TranscriptModel) -> tuple:
@@ -109,6 +149,47 @@ def test_a_record_with_a_blank_cell_survives_the_round_trip() -> None:
     again = StringIO()
     _save_as_default_gene_models(reloaded, again)
     assert again.getvalue() == written.getvalue()
+
+
+def test_a_zero_coordinate_survives_the_round_trip() -> None:
+    """A coding bound of `0` comes back the value it went out as.
+
+    The UCSC layouts spell an empty coding region `cdsStart == cdsEnd ==
+    0`, and only `cdsEnd` reaches the model holding `0`: those layouts
+    are half-open, so the parser shifts `cdsStart` by one and a `0`
+    there becomes a `1`. Under a truthiness guard that surviving `0`
+    left the file as a blank cell, and the read side then refused the
+    file gain had just written (gain#951).
+
+    The first record's bounds are well-formed, so this pins the
+    neighbour as well as the `0` itself.
+    """
+    genes = refseq_row_with("NM_000546") \
+        + refseq_row_with("NM_001126", cdsEnd="0")
+    gene_models = models_of(genes, "refseq")
+
+    written = written_out(gene_models)
+    reloaded = models_of(written, "default")
+
+    assert shapes(reloaded.transcript_models) == \
+        shapes(gene_models.transcript_models)
+
+
+def test_a_zero_coordinate_is_written_out_as_zero() -> None:
+    """What lands in the file is the digit, not an empty cell.
+
+    The round trip above would be satisfied by any spelling that reads
+    back as `0` -- `0.0` among them, which the coordinate parser
+    accepts. This is the half that says which spelling: the coordinate
+    as the model holds it.
+    """
+    gene_models = models_of(
+        refseq_row_with("NM_001126", cdsEnd="0"), "refseq")
+    [tr_id] = gene_models.transcript_models
+
+    written = written_out(gene_models)
+
+    assert cell_of(written, tr_id, "cdsEnd") == "0"
 
 
 def test_a_blank_cell_is_written_out_as_nothing() -> None:
