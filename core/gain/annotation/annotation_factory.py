@@ -22,7 +22,8 @@ from gain.annotation.annotation_pipeline import (
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.resource_types import (
-    RETIRED_VOCABULARY_REMOVAL_RELEASE,
+    RETIRED_ANNOTATOR_NAMES,
+    retired_annotator_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,42 +48,6 @@ def _get_default_work_dir() -> Path:
         _DEFAULT_WORK_DIR = Path(
             tempfile.mkdtemp(prefix="gain-annotation-work-"))
     return _DEFAULT_WORK_DIR
-
-
-#: Annotator names GAIn no longer accepts, mapped to what to write instead.
-#:
-#: Both spellings of the allele-score annotator were retired in
-#: ``RETIRED_VOCABULARY_REMOVAL_RELEASE`` (gain#919, announced in
-#: gain#781/#918).  They are kept here only to be recognised and refused
-#: with a message naming the replacement -- the failure the removal gives
-#: for free, ``unsupported annotator type``, names none.
-#:
-#: Each maps to the replacement of the *same shape*: the bare name to the
-#: bare name, the ``_annotator`` suffix to the suffixed one.  A migration
-#: is then a one-word edit, and nobody is told to change two things at
-#: once.
-RETIRED_ANNOTATOR_NAMES = {
-    "np_score": "allele_score",
-    "np_score_annotator": "allele_score_annotator",
-}
-
-
-def retired_annotator_message(annotator_type: str) -> str:
-    """Return the refusal text for one use of a retired annotator name.
-
-    Deliberately silent about ``allele_score_mode``, unlike the refusal for
-    the retired resource ``type:``.  The mode was only ever derived from the
-    resource, and this name is refused before any resource is opened, so a
-    pipeline that names both retired spellings is told about the annotator
-    first and about the resource -- with its mode advice -- once that is
-    fixed.  Repeating it here would attach the warning to the surface it
-    does not apply to.
-    """
-    return (
-        f"annotator '{annotator_type}' was removed in GAIn "
-        f"{RETIRED_VOCABULARY_REMOVAL_RELEASE}; write "
-        f"'{RETIRED_ANNOTATOR_NAMES[annotator_type]}' instead"
-    )
 
 
 def _load_annotator_factory_plugins() -> None:
@@ -117,10 +82,8 @@ def get_annotator_factory(
     """
     _load_annotator_factory_plugins()
     if annotator_type not in _ANNOTATOR_FACTORY_REGISTRY:
-        # Only reached once the name resolves to nothing, so this cannot
-        # change which pipelines build -- only what the failure says.  A
-        # third party that registers one of these names itself, through
-        # `register_annotator_factory`, keeps it.
+        # Inside the miss, so a third party that registers one of these
+        # names itself through `register_annotator_factory` keeps it.
         if annotator_type in RETIRED_ANNOTATOR_NAMES:
             raise ValueError(retired_annotator_message(annotator_type))
         raise ValueError(f"unsupported annotator type: {annotator_type}")

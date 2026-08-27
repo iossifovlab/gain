@@ -1,4 +1,4 @@
-# pylint: disable=W0621,C0114,C0116,W0212,W0613
+# pylint: disable=W0621
 """The retired ``np_score`` annotator names, and what a config author is told.
 
 Counterpart to ``test_np_score_removed.py``, which covers the resource
@@ -26,9 +26,12 @@ from gain.annotation.annotation_factory import (
     get_annotator_factory,
     get_available_annotator_types,
     load_pipeline_from_yaml,
-    retired_annotator_message,
 )
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
+from gain.genomic_resources.resource_types import (
+    RETIRED_ANNOTATOR_NAMES,
+    retired_annotator_message,
+)
 from gain.genomic_resources.testing import (
     build_inmemory_test_repository,
 )
@@ -69,38 +72,47 @@ def grr():
     })
 
 
-def test_np_score_annotator_name_is_refused_naming_its_replacement(
-    grr,
+@pytest.mark.parametrize("retired", list(RETIRED_ANNOTATOR_NAMES))
+def test_a_retired_annotator_name_is_refused_naming_its_replacement(
+    grr, retired: str,
 ) -> None:
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        load_pipeline_from_yaml("""
-            - np_score:
+        load_pipeline_from_yaml(f"""
+            - {retired}:
                 resource_id: a_score
         """, grr)
 
     message = str(excinfo.value)
-    assert retired_annotator_message("np_score") in message
+    assert retired_annotator_message(retired) in message
     assert _UNHELPFUL_REFUSAL not in message
 
 
-def test_np_score_annotator_suffix_is_refused_with_the_suffixed_name(
-    grr,
+@pytest.mark.parametrize("retired", list(RETIRED_ANNOTATOR_NAMES))
+def test_a_retired_name_is_refused_before_a_wildcard_is_resolved(
+    grr, retired: str,
 ) -> None:
-    """The suffixed spelling is sent to the suffixed replacement.
+    """A wildcard ``resource_id`` must not swallow the migration message.
 
-    Both retired names would satisfy a "mentions allele_score" assertion,
-    since one replacement is a prefix of the other.  This pins the mapping
-    that makes each migration a one-word edit: the ``_annotator`` spelling
-    must not be answered with the bare one.
+    Wildcards are expanded while the config is *parsed*, against a map of
+    annotator name to the resource types it consumes -- and a retired name
+    is absent from that map, so it matches nothing.  The reader would be
+    told their wildcard selected no resources: true, and useless, since
+    no wildcard would have worked.
+
+    This seam is reached before ``get_annotator_factory``, so the guard
+    there cannot cover it.  ``reject_retired_resource`` needed four call
+    sites for the same reason on the resource-type side (gain#920), which
+    ADR 0011 records for the fragment-score warning before it.
     """
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        load_pipeline_from_yaml("""
-            - np_score_annotator:
-                resource_id: a_score
+        load_pipeline_from_yaml(f"""
+            - {retired}:
+                resource_id: a_*
         """, grr)
 
-    assert retired_annotator_message("np_score_annotator") in str(
-        excinfo.value)
+    message = str(excinfo.value)
+    assert retired_annotator_message(retired) in message
+    assert "No resources match the wildcard" not in message
 
 
 def test_the_refusal_names_the_replacement_and_the_release() -> None:

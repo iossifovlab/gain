@@ -11,18 +11,20 @@ from gain.annotation.annotation_config import (
     AnnotatorInfo,
 )
 from gain.annotation.annotation_factory import (
-    RETIRED_ANNOTATOR_NAMES,
     build_pipeline_annotator,
     check_for_repeated_attributes_in_pipeline,
     get_annotator_factory,
     get_available_annotator_types,
-    retired_annotator_message,
 )
 from gain.genomic_resources.aggregators import (
     AGGREGATOR_CLASS_DICT,
     NUMERIC_ONLY_AGGREGATORS,
 )
-from gain.genomic_resources.resource_types import equivalent_resource_types
+from gain.genomic_resources.resource_types import (
+    RETIRED_ANNOTATOR_NAMES,
+    equivalent_resource_types,
+    retired_annotator_message,
+)
 from rest_framework.views import Request, Response, status
 
 from web_annotation.annotation_base_view import (

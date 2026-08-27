@@ -924,23 +924,9 @@ def test_allele_score_value_count_aggregator_on_string_attribute(
     assert result_pos20["classification"] == {"benign": 2, "vus": 1}
 
 
-# The two tests below came from `test_np_score_annotator.py`, retired with
-# the `np_score` annotator name in 2026.8.5 (gain#919).  They were never
-# about that name -- it was an alias for this annotator -- and they cover
-# shapes nothing else here does: indel annotatables aggregated in region
-# mode, and the only tabix-backed allele score in the annotation tests.
-# Moved rather than deleted for that reason.  A third, an exact-match
-# lookup, was dropped instead: `test_allele_score_exact_match_allele_
-# attribute` above already covers it, and the in-memory repository it
-# used is still exercised by the region test below.
-
-#  hg19
-#  chrom - 1
-#  pos   - 14970
-#
-#  T   A   C   C    C    T    T    G    C    G
-#  67  68  69  70   71   72   73   74   75   76
-#
+# The two tests below cover shapes nothing else in this file does: indel
+# annotatables aggregated in region mode, and the only tabix-backed allele
+# score in the annotation tests.
 _INMEMORY_ALLELE_SCORE_REPO = {
     "allele_score1": {
         "genomic_resource.yaml":
@@ -1084,15 +1070,12 @@ def test_allele_score_annotator_tabix_multiple_scores(
               name: s2
         """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, tabix_allele_score_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, tabix_allele_score_repo)
 
     annotatable = VCFAllele(*variant)
-    assert annotatable is not None
-
-    result = None
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(annotatable)
 
-    assert result is not None
     assert result.get("s1") == pytest.approx(s1, rel=1e-2), annotatable
     assert result.get("s2") == pytest.approx(s2, rel=1e-2), annotatable

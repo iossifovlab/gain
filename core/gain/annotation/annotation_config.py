@@ -23,7 +23,11 @@ from gain.genomic_resources.resource_query import (
     ResourceQuery,
     ResourceQueryParseError,
 )
-from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
+from gain.genomic_resources.resource_types import (
+    FRAGMENT_SCORE_TYPES,
+    RETIRED_ANNOTATOR_NAMES,
+    retired_annotator_message,
+)
 from gain.utils.log_safety import escape_unsafe_characters
 
 if TYPE_CHECKING:
@@ -372,6 +376,16 @@ class AnnotationConfigParser:
             "cnv_collection_annotator": FRAGMENT_SCORE_TYPES,
             "gene_score_annotator": {"gene_score"},
         }
+
+        # Before the query runs, because a retired annotator name is absent
+        # from the map above and so matches nothing -- the reader would be
+        # told their wildcard selected no resources, which is true and
+        # useless, instead of that the annotator name is the problem
+        # (gain#919). `get_annotator_factory` cannot cover this: parsing
+        # gets here first, and raises.
+        if annotator_type in RETIRED_ANNOTATOR_NAMES:
+            raise AnnotationConfigurationError(
+                retired_annotator_message(annotator_type))
 
         try:
             parsed_query = ResourceQuery.parse(resource_query)

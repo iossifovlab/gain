@@ -1,4 +1,4 @@
-# pylint: disable=W0621,C0114,C0116,W0212,W0613
+# pylint: disable=W0621
 """What the editor tells someone who types a retired annotator name.
 
 ``np_score`` and ``np_score_annotator`` were retired in GAIn 2026.8.5
@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 from django.test import Client
-from gain.annotation.annotation_factory import retired_annotator_message
+from gain.genomic_resources.resource_types import retired_annotator_message
 
 #: The bare refusal each endpoint gives before this is fixed.
 _UNHELPFUL_REFUSAL = "Unknown annotator_type"
@@ -51,12 +51,12 @@ _ENDPOINTS: dict[str, dict[str, Any]] = {
         ("np_score_annotator", "allele_score_annotator"),
     ])
 def test_retired_annotator_name_is_refused_with_its_replacement(
-    clients: dict[str, Client],
+    user_client: Client,
     endpoint: str,
     retired: str,
     replacement: str,
 ) -> None:
-    response = clients["user"].post(
+    response = user_client.post(
         endpoint,
         data={"annotator_type": retired, **_ENDPOINTS[endpoint]},
         content_type="application/json",
@@ -77,7 +77,7 @@ def test_retired_annotator_name_is_refused_with_its_replacement(
         ("np_score_annotator", "allele_score_annotator"),
     ])
 def test_the_replacement_the_refusal_names_is_one_this_endpoint_accepts(
-    clients: dict[str, Client],
+    user_client: Client,
     retired: str,
     replacement: str,
 ) -> None:
@@ -90,7 +90,7 @@ def test_the_replacement_the_refusal_names_is_one_this_endpoint_accepts(
     than the bare one it replaced, so the loop is closed here rather than
     assumed: refuse, then take the endpoint at its word.
     """
-    refusal = clients["user"].post(
+    refusal = user_client.post(
         "/api/editor/annotator_config",
         data={"annotator_type": retired},
         content_type="application/json",
@@ -98,7 +98,7 @@ def test_the_replacement_the_refusal_names_is_one_this_endpoint_accepts(
     assert refusal.status_code == 400
     assert f"'{replacement}' instead" in refusal.json()["error"]
 
-    accepted = clients["user"].post(
+    accepted = user_client.post(
         "/api/editor/annotator_config",
         data={"annotator_type": replacement},
         content_type="application/json",
@@ -108,7 +108,7 @@ def test_the_replacement_the_refusal_names_is_one_this_endpoint_accepts(
 
 @pytest.mark.parametrize("endpoint", list(_ENDPOINTS))
 def test_a_name_gain_never_had_still_gets_the_generic_refusal(
-    clients: dict[str, Client],
+    user_client: Client,
     endpoint: str,
 ) -> None:
     """An invented name has no replacement to name, so it keeps the old text.
@@ -116,7 +116,7 @@ def test_a_name_gain_never_had_still_gets_the_generic_refusal(
     Without this, the retired-name branch could widen into a catch-all
     that tells every typo to write ``allele_score``.
     """
-    response = clients["user"].post(
+    response = user_client.post(
         endpoint,
         data={"annotator_type": "no_such", **_ENDPOINTS[endpoint]},
         content_type="application/json",
