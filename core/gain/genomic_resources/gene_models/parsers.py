@@ -960,37 +960,33 @@ def load_gene_mapping(resource: GenomicResource) -> dict[str, str]:
         return alt_names
 
 
-SUPPORTED_GENE_MODELS_FILE_FORMATS: set[str] = {
-    "default",
-    "refflat",
-    "refseq",
-    "ccds",
-    "knowngene",
-    "gtf",
-    "ucscgenepred",
+# The one place a format name is bound to a parser. The two structures
+# below both derive from it, which is what keeps them from disagreeing:
+# they are read by different callers, and a divergence between them is
+# silent rather than loud. `infer_gene_models_format` iterates the
+# supported names -- they are the inference candidate list -- while
+# `get_parser` is the gate that decides whether a format named outright in
+# a resource config is accepted at all. A name wired into one but not the
+# other used to mean a format that loads when spelled explicitly and is
+# never inferred from content, with no complaint at either seam.
+_PARSERS: dict[str, GeneModelsParser] = {
+    "default": parse_default_gene_models_format,
+    "refflat": parse_ref_flat_gene_models_format,
+    "refseq": parse_ref_seq_gene_models_format,
+    "ccds": parse_ccds_gene_models_format,
+    "knowngene": parse_known_gene_models_format,
+    "gtf": parse_gtf_gene_models_format,
+    "ucscgenepred": parse_ucscgenepred_models_format,
 }
+
+SUPPORTED_GENE_MODELS_FILE_FORMATS: set[str] = set(_PARSERS)
 
 
 def get_parser(
     fileformat: str,
 ) -> GeneModelsParser | None:
     """Get gene models parser based on file format."""
-    # pylint: disable=too-many-return-statements
-    if fileformat == "default":
-        return parse_default_gene_models_format
-    if fileformat == "refflat":
-        return parse_ref_flat_gene_models_format
-    if fileformat == "refseq":
-        return parse_ref_seq_gene_models_format
-    if fileformat == "ccds":
-        return parse_ccds_gene_models_format
-    if fileformat == "knowngene":
-        return parse_known_gene_models_format
-    if fileformat == "gtf":
-        return parse_gtf_gene_models_format
-    if fileformat == "ucscgenepred":
-        return parse_ucscgenepred_models_format
-    return None
+    return _PARSERS.get(fileformat)
 
 
 INFERENCE_SAMPLE_ROWS = 50
