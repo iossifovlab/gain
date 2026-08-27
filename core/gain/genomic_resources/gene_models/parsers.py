@@ -4,7 +4,7 @@ import re
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import IO, cast
+from typing import IO, Any, cast
 
 import pandas as pd
 
@@ -17,6 +17,7 @@ from gain.utils.log_safety import escape_unsafe_characters
 from .default_attributes import parse_default_attributes
 from .record_cells import (
     QUOTED_TEXT_LIMIT,
+    cell_text,
     parse_coordinate,
     parse_exon_bounds,
     parse_exon_positions,
@@ -52,9 +53,16 @@ def parse_default_gene_models_format(
     """Parse default gene models file format."""
     # pylint: disable=too-many-locals
     infile.seek(0)
-    df = pd.read_csv(
+    # The four bound columns are deliberately left to inference: they are
+    # converted by `parse_coordinate` either way, and pinning them here
+    # would say something this format does not mean -- gain writes them,
+    # and writes them as integers. `na_filter=False` is what keeps a
+    # blank cell the empty text it was rather than a float ``NaN``, which
+    # `gene` -- the one column here that is neither load-bearing nor an
+    # attribute -- carried into serialization as the token ``nan``
+    # (gain#931).
+    df = read_gene_models_tsv(
         infile,
-        sep="\t",
         nrows=nrows,
         dtype={
             "chr": str,
@@ -314,29 +322,85 @@ def probe_columns(
         list(range(len(expected_columns)))
 
 
+def read_gene_models_tsv(infile: IO, **kwargs: Any) -> pd.DataFrame:
+    """Read a gene-models table, keeping every cell as its own text.
+
+    Every read that builds records goes through here, so that
+    ``na_filter`` is off in one place rather than five. pandas otherwise
+    reads a blank cell -- and several spellings that are not blank,
+    ``NA`` and ``NULL`` among them -- as a float ``NaN``, which reaches
+    serialization as the fabricated token ``nan`` and re-types the
+    column around it (gain#931).
+
+    `probe_header` and `probe_columns` do not: they read one row to
+    recognise a layout and never look at a value, so what a blank cell
+    becomes there cannot reach a record.
+
+    That the setting had to be repeated per call site is how a read got
+    missed: the gene mapping kept filtering long after the two model
+    reads stopped, and wrote ``nan`` into the gene column.
+
+    What each caller pins with ``dtype`` still differs, and is theirs to
+    decide -- the layouts do not agree on which columns are text.
+    """
+    return cast(
+        pd.DataFrame,
+        pd.read_csv(infile, sep="\t", na_filter=False, **kwargs))
+
+
+#: The columns a columnar record is identified by, and the only ones the
+#: headerless read pins to text. Pinning the whole frame would do it too,
+#: but an all-object frame makes pandas' own ``to_dict`` much slower --
+#: measured at +13% over a 196k-record refSeq file, against +2% for these
+#: two -- and every other column is converted by `record_cells` anyway.
+_IDENTIFYING_COLUMNS = ("name", "chrom")
+
+
 def parse_raw(
     infile: IO, expected_columns: list[str],
     nrows: int | None = None, comment: str | None = None,
 ) -> pd.DataFrame | None:
-    """Parse raw gene models data based on expected columns."""
+    """Parse raw gene models data based on expected columns.
+
+    Both branches keep a blank cell as the empty string it was. Letting
+    pandas filter it instead made what a cell became a property of its
+    whole column rather than of itself: one blank re-typed the column, so
+    a well-formed record serialized differently depending on whether some
+    *other* row was blank, and the blank itself reached serialization as
+    the fabricated token ``nan`` (gain#931).
+
+    What each branch pins differs, and only because of what it costs. The
+    headered branch has always pinned every column to text. The
+    headerless branch pins `_IDENTIFYING_COLUMNS`, which is what settles
+    the typing gain#929 left here -- a chromosome column of bare digits
+    was handed over as the int 17, and a transcript index keyed by that
+    is unreachable by a query for "17". The two read the same values
+    either way; the pin decides only how much of the frame is object.
+
+    The GTF reader shares this and names none of these columns, so it
+    keeps the inference its own arithmetic depends on. It does not
+    escape ``na_filter``: a blank cell reaches it as ``''`` too, which
+    is what its blank-attributes guard now decides on.
+    """
     if probe_header(infile, expected_columns, comment=comment):
         infile.seek(0)
-        df = pd.read_csv(
-            infile, sep="\t", nrows=nrows, comment=comment,
-            dtype=str,
-        )
+        df = read_gene_models_tsv(
+            infile, nrows=nrows, comment=comment, dtype=str)
         assert list(df.columns) == expected_columns
         return df
 
     if probe_columns(infile, expected_columns, comment=comment):
         infile.seek(0)
-        df = pd.read_csv(
+        df = read_gene_models_tsv(
             infile,
-            sep="\t",
             nrows=nrows,
             header=None,
             names=expected_columns,
             comment=comment,
+            dtype={
+                column: str for column in _IDENTIFYING_COLUMNS
+                if column in expected_columns
+            },
         )
         assert list(df.columns) == expected_columns
         return df
@@ -882,13 +946,11 @@ def parse_gtf_gene_models_format(
     ]
 
     infile.seek(0)
-    df = parse_raw(
-        infile, expected_columns, nrows=nrows, comment="#")
+    df = parse_raw(infile, expected_columns, nrows=nrows, comment="#")
     if df is None:
         expected_columns.append("comment")
         infile.seek(0)
-        df = parse_raw(
-            infile, expected_columns, nrows=nrows, comment="#")
+        df = parse_raw(infile, expected_columns, nrows=nrows, comment="#")
         if df is None:
             return None
 
@@ -902,15 +964,19 @@ def parse_gtf_gene_models_format(
         if feature in GTF_IGNORED_FEATURES:
             continue
         # The scanner takes text, and this column does not always arrive
-        # as text: pandas reads a blank cell as a float ``NaN`` (whether
-        # the row is short or ends on an empty column), and infers a
-        # numeric dtype for a column that is numeric throughout. Either
-        # would escape as an ``AttributeError`` naming a float and neither
-        # the record nor the file, which is gain#907. A blank column names
-        # the record; anything else is coerced and left to the scanner,
-        # which rejects it as the malformed attribute it is.
+        # as text: a column that is numeric throughout is inferred as a
+        # number, which would escape as an ``AttributeError`` naming a
+        # float and neither the record nor the file (gain#907). A blank
+        # column names the record; anything else is coerced and left to
+        # the scanner, which rejects it as the malformed attribute it is.
+        #
+        # Blankness is decided on the text rather than by ``pd.isna``:
+        # since gain#931 the read keeps a blank cell -- and a row that
+        # stops short of this column -- as ``''``, which ``pd.isna``
+        # does not report. Whitespace is deliberately not stripped here:
+        # a cell holding spaces went to the scanner before and still does.
         attributes_column = rec["attributes"]
-        if pd.isna(attributes_column):
+        if not cell_text(attributes_column):
             raise ValueError(
                 f"{_record_location(rec)} has an empty attributes column",
             )
@@ -1014,7 +1080,14 @@ def load_gene_mapping(resource: GenomicResource) -> dict[str, str]:
         logger.debug(
             "loading gene mapping from %s", gene_mapping_filename)
 
-        df = pd.read_csv(infile, sep="\t")
+        # Read as text, for the reasons `parse_raw` gives: a blank
+        # replacement label became a float ``NaN`` and was written into
+        # the gene column as the token ``nan``, and a label spelled
+        # ``NA`` was rewritten as ``nan`` -- a value the file did give,
+        # replaced by one it never did. Inference also typed a
+        # bare-digit transcript id as a number, which no lookup by the
+        # model's own string id could ever match (gain#931).
+        df = read_gene_models_tsv(infile, dtype=str)
         assert len(df.columns) == 2
 
         df = df.rename(columns={df.columns[0]: "tr_id", df.columns[1]: "gene"})
@@ -1090,9 +1163,9 @@ def _break_refseq_ccds_tie(infile: IO, sampled_rows: int) -> str | None:
     # a blank name outright: the tie-break runs only once both formats
     # have parsed records, so such a file no longer reaches it.
     infile.seek(0)
-    names = pd.read_csv(
-        infile, sep="\t", header=None, usecols=[1], dtype=str,
-        nrows=sampled_rows, na_filter=False,
+    names = read_gene_models_tsv(
+        infile, header=None, usecols=[1], dtype=str,
+        nrows=sampled_rows,
     )[1].tolist()
     assert names, "the tie-break runs only after both formats parsed records"
     if names[0] == "name":

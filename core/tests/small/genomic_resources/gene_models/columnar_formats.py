@@ -1,15 +1,16 @@
 """The six columnar gene-models layouts, as one table.
 
-gain#907 needed the same one-line fix in all six parsers, and gain#929
-needs the same guard in all six again. A test that covers one of them
-proves nothing about the other five, so both suites drive every format
-through this table rather than picking a representative.
+gain#907 needed the same one-line fix in all six parsers, gain#929 the
+same guard in all six again, and gain#931 the same read for all of them
+a third time. A test that covers one layout proves nothing about the
+others, so every suite drives the whole table rather than picking a
+representative.
 
-The table lives here rather than in either suite because it describes the
-layouts, not the defect: it is shared by the exon-position suite
-(gain#907) and the load-bearing-cell suite (gain#929). Production has no
-such table -- that it exists only in the tests is the observation
-gain#941 is about.
+The table lives here rather than in any one suite because it describes
+the layouts, not the defect: it is shared by the exon-position suite
+(gain#907), the load-bearing-cell suite (gain#929) and the cell-type and
+optional-cell suites (gain#931). Production has no such table -- that it
+exists only in the tests is the observation gain#941 is about.
 """
 
 from collections.abc import Callable
@@ -67,6 +68,12 @@ class ColumnarFormat:
         "txStart", "txEnd", "cdsStart", "cdsEnd")
     #: The default format is read by column name, so it needs its header.
     header: bool = False
+    #: The columns this layout copies straight into
+    #: `TranscriptModel.attributes`, and so out through serialization. A
+    #: blank one is not load-bearing -- the record parses without it --
+    #: which is exactly why what a blank one serializes as went unnoticed
+    #: (gain#931). The three layouts that carry none leave this empty.
+    optional_columns: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         assert len(self.columns) == len(self.fields), self.name
@@ -96,6 +103,20 @@ class ColumnarFormat:
         recognise the layout at all -- then the offending one."""
         return self._file(self.good_row(), self.row_with(column, value))
 
+    def file_with_column(self, column: str, value: str) -> IO:
+        """Both rows carrying `value` in `column`.
+
+        What dtype a read infers is a property of the whole column, so a
+        test about the inferred type has to spell every cell of it the
+        same way: one odd cell leaves the column an object column, which
+        is a different read from the one under test.
+        """
+        fields = list(self.fields)
+        fields[self.columns.index(column)] = value
+        second = list(fields)
+        second[self.columns.index(self.name_column)] = BAD_NAME
+        return self._file(self._row(fields), self._row(second))
+
 
 UCSC_COORDINATES = ("100", "400", "150", "350", "2", "100,300,", "200,400,")
 
@@ -120,9 +141,17 @@ GENEPRED_COLUMNS = (
 )
 GENEPRED_FIELDS = (GOOD_NAME, CHROM, "+", *UCSC_COORDINATES)
 
+#: refSeq and CCDS copy these six out of the record and into the model's
+#: attributes; `score`, `#bin` and `exonCount` are spelled as bare digits,
+#: which is what lets one blank cell re-type the whole column.
+REFSEQ_OPTIONAL = (
+    "#bin", "score", "exonCount", "cdsStartStat", "cdsEndStat", "exonFrames",
+)
+
 REFSEQ = ColumnarFormat(
     "refseq", parse_ref_seq_gene_models_format,
     REFSEQ_COLUMNS, REFSEQ_FIELDS, first_exon_start=101,
+    optional_columns=REFSEQ_OPTIONAL,
 )
 
 #: gain's own output format: read by column name rather than by
@@ -146,6 +175,7 @@ FORMATS = [
     ColumnarFormat(
         "ccds", parse_ccds_gene_models_format,
         REFSEQ_COLUMNS, REFSEQ_FIELDS, first_exon_start=101,
+        optional_columns=REFSEQ_OPTIONAL,
     ),
     ColumnarFormat(
         "refflat", parse_ref_flat_gene_models_format,
@@ -156,21 +186,37 @@ FORMATS = [
         "knowngene", parse_known_gene_models_format,
         (*GENEPRED_COLUMNS, "proteinID", "alignID"),
         (*GENEPRED_FIELDS, "P04637", "uc002gig.1"), first_exon_start=101,
+        optional_columns=("proteinID", "alignID"),
     ),
     ColumnarFormat(
         "ucscgenepred", parse_ucscgenepred_models_format,
         GENEPRED_COLUMNS, GENEPRED_FIELDS, first_exon_start=101,
+    ),
+    # genePredExt: the same parser's second attempt, five columns wider.
+    # Those five are the ones it copies into attributes, so the layout
+    # the narrow entry above covers has no optional cell at all.
+    ColumnarFormat(
+        "ucscgenepredext", parse_ucscgenepred_models_format,
+        (*GENEPRED_COLUMNS, "score", "name2", "cdsStartStat",
+         "cdsEndStat", "exonFrames"),
+        (*GENEPRED_FIELDS, "0", "TP53", "cmpl", "cmpl", "0,0"),
+        first_exon_start=101,
+        # `name2` is optional here in the same way it is for refSeq: the
+        # parser falls back to `name` when it is blank, so the record
+        # still parses and the blank still reaches the attributes.
+        optional_columns=("score", "name2", "cdsStartStat", "cdsEndStat",
+                          "exonFrames"),
     ),
     DEFAULT,
 ]
 
 FORMAT_IDS = [fmt.name for fmt in FORMATS]
 
-#: The same five layouts read through the other branch of `parse_raw`.
-#: A headerless file is recognised by counting columns and a headered one
-#: by matching their names, and the two branches read with different
-#: dtypes -- so a guard proven on one is not proven on the other. The
-#: default format is already read by name and has no second path.
+#: The same layouts read through the other branch of `parse_raw`. A
+#: headerless file is recognised by counting columns and a headered one
+#: by matching their names -- two separate reads, so a guard proven on
+#: one is not proven on the other. The default format is already read by
+#: name and has no second path.
 HEADERED_FORMATS = [
     replace(fmt, name=f"{fmt.name}-headered", header=True)
     for fmt in FORMATS if fmt is not DEFAULT
@@ -179,3 +225,20 @@ HEADERED_FORMATS = [
 #: Every layout on every read path.
 READ_PATHS = [*FORMATS, *HEADERED_FORMATS]
 READ_PATH_IDS = [fmt.name for fmt in READ_PATHS]
+
+#: The read paths whose layout carries optional cells. Both branches of
+#: `parse_raw` are here deliberately: they are separate code, recognising
+#: the file by different means, so what a cell becomes on one says
+#: nothing about the other.
+OPTIONAL_CELL_PATHS = [fmt for fmt in READ_PATHS if fmt.optional_columns]
+
+#: One (layout, column) pair per optional cell, so a failure names the
+#: column rather than reporting the layout as a whole.
+OPTIONAL_CELLS = [
+    (fmt, column)
+    for fmt in OPTIONAL_CELL_PATHS
+    for column in fmt.optional_columns
+]
+OPTIONAL_CELL_CASE_IDS = [
+    f"{fmt.name}-{column}" for fmt, column in OPTIONAL_CELLS
+]
