@@ -260,30 +260,40 @@ def test_supported_formats_are_inferrable() -> None:
 #: that excludes them: matching a bare ``_format`` suffix would sweep up
 #: ``parse_columnar_format``, which is the shared record loop and is
 #: registered under no name of its own.
+#:
+#: One width is deliberately not its own format: genePredExt is the second
+#: attempt of ``parse_ucscgenepred_models_format``, and the fixture suite
+#: carries a ``ucscgenepredext`` entry for it. Should that width ever get a
+#: wrapper of its own, it would match this pattern while staying
+#: unregistered on purpose -- register it or rename it, rather than
+#: loosening the scan to let it through.
 _FORMAT_PARSER_NAME = re.compile(r"parse_\w+_models_format")
 
 
-def test_every_format_parser_is_reachable_through_get_parser() -> None:
-    """A parser under no format name is dead code no caller can reach.
+def test_the_format_parsers_are_exactly_the_ones_reachable_by_name() -> None:
+    """Neither a parser under no name nor a name-only parser is allowed.
 
-    ``test_supported_formats_are_inferrable`` covers the other direction --
-    every supported name resolves to a parser. Together they pin the two
-    structures to each other; neither alone catches a one-sided edit.
+    ``test_supported_formats_are_inferrable`` covers one direction only --
+    every supported name resolves to a parser -- so a parser registered
+    under no name at all passes it.
+
+    Comparing the two sets rather than subtracting one way also keeps the
+    scan honest: were the naming convention to move, ``defined`` would
+    quietly shrink, and a one-way check would report nothing missing
+    precisely because it had stopped looking.
     """
     defined = {
         obj
         for name, obj in vars(parsers).items()
         if _FORMAT_PARSER_NAME.fullmatch(name) and inspect.isfunction(obj)
     }
-    assert defined, \
-        "the format-parser naming convention moved; this scan matched nothing"
-
     reachable = {get_parser(fmt) for fmt in SUPPORTED_GENE_MODELS_FILE_FORMATS}
 
-    unreachable = defined - reachable
-    assert not unreachable, (
-        "format parsers registered under no name: "
-        f"{sorted(parser.__name__ for parser in unreachable)}"
+    assert defined == reachable, (
+        "registered under no name: "
+        f"{sorted(fn.__name__ for fn in defined - reachable)}; "
+        "reachable but not scanned as a format parser: "
+        f"{sorted(str(fn) for fn in reachable - defined)}"
     )
 
 

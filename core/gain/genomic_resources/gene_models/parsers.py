@@ -960,15 +960,22 @@ def load_gene_mapping(resource: GenomicResource) -> dict[str, str]:
         return alt_names
 
 
-# The one place a format name is bound to a parser. The two structures
-# below both derive from it, which is what keeps them from disagreeing:
-# they are read by different callers, and a divergence between them is
-# silent rather than loud. `infer_gene_models_format` iterates the
-# supported names -- they are the inference candidate list -- while
-# `get_parser` is the gate that decides whether a format named outright in
-# a resource config is accepted at all. A name wired into one but not the
-# other used to mean a format that loads when spelled explicitly and is
-# never inferred from content, with no complaint at either seam.
+# The one place a format name is bound to a parser. What follows derives
+# from it, so the two cannot be edited apart -- which matters because they
+# are read by different callers, and a divergence between them was silent
+# rather than loud. `infer_gene_models_format` iterates the supported names
+# -- they are the inference candidate list -- while `get_parser` is the
+# gate that decides whether a format named outright in a resource config is
+# accepted at all. A name wired into one but not the other used to mean a
+# format that loads when spelled explicitly and is never inferred from
+# content, with no complaint at either seam.
+#
+# Both are settled at import: the set is a snapshot of these keys, not a
+# view of them, and each value is the function object itself rather than a
+# name looked up per call. Registering a format after import would revive
+# exactly the divergence above, and rebinding a parser's module attribute
+# no longer reaches `get_parser` -- a test that patched one and exercised
+# it through here would be testing unpatched code.
 _PARSERS: dict[str, GeneModelsParser] = {
     "default": parse_default_gene_models_format,
     "refflat": parse_ref_flat_gene_models_format,
