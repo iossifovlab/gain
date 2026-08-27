@@ -69,20 +69,28 @@ def test_a_bare_digit_chromosome_is_text(fmt: ColumnarFormat) -> None:
 #: Spellings pandas reads as a missing value when left to itself. A
 #: gene-models column is text the file chose, so each of these is a value
 #: and none of them is an absence.
-MISSING_VALUE_SPELLINGS = ["NA", "NULL", "N/A", "nan", "NaN", "None", "-"]
+MISSING_VALUE_SPELLINGS = ["NA", "NULL", "N/A", "nan", "NaN", "None"]
+
+#: `-` is deliberately not in the list above: it is not one of pandas'
+#: default `na_values`, so it survived the read before this change too.
+#: It is here as the control -- if it ever started failing, the test
+#: would be measuring something other than the filtering.
+SURVIVES_EITHER_WAY = "-"
 
 
-@pytest.mark.parametrize("spelling", MISSING_VALUE_SPELLINGS)
+@pytest.mark.parametrize(
+    "spelling", [*MISSING_VALUE_SPELLINGS, SURVIVES_EITHER_WAY])
 def test_a_cell_spelling_a_missing_value_keeps_what_it_said(
     spelling: str,
 ) -> None:
     """`NA` is the text "NA", and is not the same as a blank cell.
 
-    pandas takes all of these for missing values and hands back the same
-    float `NaN` for each, so the record could not say `NULL` and be
-    heard, and an error message quoting the cell could not tell any of
-    them from a genuinely empty one -- which is what `cell_text`'s
-    docstring recorded as unfixable while the read still filtered them.
+    pandas took each of `MISSING_VALUE_SPELLINGS` for a missing value
+    and handed back the same float `NaN`, so the record could not say
+    `NULL` and be heard, and an error message quoting the cell could not
+    tell any of them from a genuinely empty one -- which is what
+    `cell_text`'s docstring recorded as unfixable while the read still
+    filtered them.
     """
     fmt = REFSEQ
     models = fmt.parse(fmt.file_with("score", spelling))
@@ -120,3 +128,23 @@ def test_a_float_spelled_bound_reads_as_the_same_coordinate(
     assert floated is not None
     assert [tm.tx for tm in floated.values()] == \
         [tm.tx for tm in plain.values()]
+
+
+@pytest.mark.parametrize("fmt", READ_PATHS, ids=READ_PATH_IDS)
+@pytest.mark.parametrize("spelling", ["100.7", "0.5", "-3.9"])
+def test_a_fractional_bound_names_the_record(
+    fmt: ColumnarFormat, spelling: str,
+) -> None:
+    """A coordinate between two bases is not a coordinate.
+
+    Accepting `100.0` must not mean accepting `100.7`. Truncating it
+    would put the record a base away from where the file said, silently
+    -- and reading a bound is exactly where gain#856, gain#907 and
+    gain#929 all agreed the reader has to be told which record is wrong.
+    """
+    column = fmt.bound_columns[0]
+
+    with pytest.raises(
+            ValueError,
+            match=f"has an unparsable {column} column: '{spelling}'"):
+        fmt.parse(fmt.file_with_column(column, spelling))

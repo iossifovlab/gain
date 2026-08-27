@@ -342,8 +342,14 @@ def parse_raw(
 
     ``infer_dtypes`` restores the inference for the one caller that
     wants it. The GTF reader converts its own columns and is not a
-    columnar layout; pinning it to text is a separate change from this
-    one, so it opts out and keeps the read it had.
+    columnar layout, so pinning its coordinates to text is a separate
+    change from this one and it opts out.
+
+    It does not opt out of ``na_filter``: a blank cell reaches the GTF
+    reader as ``''`` too. That is deliberate rather than incidental --
+    the GTF reader has its own blank-attributes guard, and deciding
+    blankness on the text is what keeps that guard firing for both a
+    blank cell and a row that stops short of the column.
     """
     dtype = None if infer_dtypes else str
     if probe_header(infile, expected_columns, comment=comment):
@@ -933,18 +939,17 @@ def parse_gtf_gene_models_format(
         if feature in GTF_IGNORED_FEATURES:
             continue
         # The scanner takes text, and this column does not always arrive
-        # as text: a short row leaves it a float ``NaN``, and a column
-        # that is numeric throughout is inferred as a number. Either
-        # would escape as an ``AttributeError`` naming a float and neither
-        # the record nor the file, which is gain#907. A blank column names
-        # the record; anything else is coerced and left to the scanner,
-        # which rejects it as the malformed attribute it is.
+        # as text: a column that is numeric throughout is inferred as a
+        # number, which would escape as an ``AttributeError`` naming a
+        # float and neither the record nor the file (gain#907). A blank
+        # column names the record; anything else is coerced and left to
+        # the scanner, which rejects it as the malformed attribute it is.
         #
-        # Blankness is decided on the text because the two spellings of it
-        # no longer arrive alike: since gain#931 the read keeps a blank
-        # cell as ``''`` and only a short row still yields ``NaN``.
-        # Whitespace is deliberately not stripped here -- a cell holding
-        # spaces went to the scanner before and still does.
+        # Blankness is decided on the text rather than by ``pd.isna``:
+        # since gain#931 the read keeps a blank cell -- and a row that
+        # stops short of this column -- as ``''``, which ``pd.isna``
+        # does not report. Whitespace is deliberately not stripped here:
+        # a cell holding spaces went to the scanner before and still does.
         attributes_column = rec["attributes"]
         if not cell_text(attributes_column):
             raise ValueError(
@@ -1050,7 +1055,14 @@ def load_gene_mapping(resource: GenomicResource) -> dict[str, str]:
         logger.debug(
             "loading gene mapping from %s", gene_mapping_filename)
 
-        df = pd.read_csv(infile, sep="\t")
+        # Read as text, for the reasons `parse_raw` gives: a blank
+        # replacement label became a float ``NaN`` and was written into
+        # the gene column as the token ``nan``, and a label spelled
+        # ``NA`` was rewritten as ``nan`` -- a value the file did give,
+        # replaced by one it never did. Inference also typed a
+        # bare-digit transcript id as a number, which no lookup by the
+        # model's own string id could ever match (gain#931).
+        df = pd.read_csv(infile, sep="\t", dtype=str, na_filter=False)
         assert len(df.columns) == 2
 
         df = df.rename(columns={df.columns[0]: "tr_id", df.columns[1]: "gene"})

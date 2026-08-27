@@ -28,9 +28,13 @@ from gain.genomic_resources.gene_models.default_attributes import (
     format_default_attributes,
     parse_default_attributes,
 )
+from gain.genomic_resources.gene_models.gene_models_factory import (
+    build_gene_models_from_resource,
+)
 from gain.genomic_resources.gene_models.transcript_models import (
     TranscriptModel,
 )
+from gain.genomic_resources.testing import build_inmemory_test_resource
 
 from tests.small.genomic_resources.gene_models.columnar_formats import (
     BAD_NAME,
@@ -102,6 +106,42 @@ def test_a_blank_cell_leaves_another_record_untouched(
 
     assert serialized_attribute(with_a_blank, GOOD_NAME, column) == \
         serialized_attribute(baseline, GOOD_NAME, column)
+
+
+def test_a_blank_gene_mapping_cell_is_not_a_float() -> None:
+    """The gene mapping is a third read, and it had the same defect.
+
+    A resource may carry a `gene_mapping` file relabelling transcripts,
+    and it is read separately from the models themselves -- so the fix
+    to the two model reads did not reach it. A blank replacement label
+    became the float `NaN` and was written into the `gene` column as the
+    token `nan`, and a label the file spelled `NA` was rewritten as
+    `nan` too: a value the file did give, replaced by one it never did.
+    """
+    genes = "".join(
+        "\t".join([
+            "0", name, "chr17", "+", "100", "400", "150", "350", "2",
+            "100,300,", "200,400,", "0", name, "cmpl", "cmpl", "0,0",
+        ]) + "\n"
+        for name in ("NM_000546", "NM_001126")
+    )
+    resource = build_inmemory_test_resource(content={
+        "genomic_resource.yaml":
+            "{type: gene_models, filename: genes.txt, format: refseq,"
+            " gene_mapping: map.txt}",
+        "genes.txt": genes,
+        # the first label is blank, the second is the word NA
+        "map.txt": "name\tsym\nNM_000546\t\nNM_001126\tNA\n",
+    })
+    gene_models = build_gene_models_from_resource(resource)
+    gene_models.load()
+
+    genes_by_name = {
+        tm.tr_name: tm.gene
+        for tm in gene_models.transcript_models.values()
+    }
+
+    assert genes_by_name == {"NM_000546": "", "NM_001126": "NA"}
 
 
 def test_a_blank_gene_in_the_default_format_is_not_a_float() -> None:

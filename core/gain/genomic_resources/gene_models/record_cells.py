@@ -40,10 +40,13 @@ def cell_text(value: Any) -> str:
     ``NULL`` and ``nan`` among them -- are the words they are, and the
     messages built from this can say which one it read.
 
-    ``NaN`` still reaches here from a row that stops short of a column,
-    where the value is absent rather than blank, and reads back as
-    ``''``: for a record that has to be rejected either way, the two are
-    the same thing.
+    No read in this module produces a ``NaN`` any more -- a row that
+    stops short of a column yields ``''`` as well, on both the columnar
+    and the GTF paths (measured on pandas 3.0.2). The ``pd.isna`` branch
+    is kept anyway: it costs one comparison on a path that is already
+    building an error message, `parse_coordinate` relies on it to tell a
+    missing number from one it should convert, and the supported pandas
+    range is wider than the version this was measured on.
 
     ``value`` is annotated ``Any`` rather than ``object`` because
     ``pd.isna`` has no overload for the latter.
@@ -121,33 +124,53 @@ def parse_coordinate(
     escaped named neither the record nor the column.
 
     This runs four times per record on files reaching into the hundreds
-    of thousands, so the numeric cell -- the common one, since nothing
-    pins these columns to a string dtype -- converts straight from the
-    number, and its text is built only if there turns out to be a
-    message to build.
+    of thousands, so neither path builds a message until there is one to
+    build. Since gain#931 the text path is the common one -- the five
+    UCSC-derived layouts pin every column to a string dtype -- and the
+    numeric path is reached by the default format's four bound columns,
+    which are the ones left to inference.
     """
     if isinstance(value, str):
         text = value
     elif pd.isna(value):
         text = ""
     else:
-        try:
-            return int(value)
-        except (TypeError, ValueError, OverflowError) as ex:
-            raise unparsable(column, tr_name, chrom, str(value)) from ex
+        return _whole_number(value, column, tr_name, chrom, str(value))
     try:
         return int(text)
     except ValueError:
         pass
     # ``int`` will not take the text of a whole number spelled as a
     # decimal, so the float conversion is what reads ``100.0``. It is
-    # tried second because it also accepts spellings a coordinate column
-    # has no business holding -- ``nan`` and ``inf`` among them, which
-    # ``int`` then refuses, the latter by ``OverflowError``.
+    # tried second because it accepts a great deal a coordinate column
+    # has no business holding -- ``nan`` and ``inf``, and every fraction
+    # between two bases -- so what it produces still has to be a whole
+    # number to be a coordinate.
     try:
-        return int(float(text))
-    except (ValueError, OverflowError) as ex:
+        number = float(text)
+    except ValueError as ex:
         raise unparsable(column, tr_name, chrom, text) from ex
+    return _whole_number(number, column, tr_name, chrom, text)
+
+
+def _whole_number(
+    value: Any, column: str, tr_name: object, chrom: object, text: str,
+) -> int:
+    """Read a number that names a base, refusing one that falls between.
+
+    ``int()`` rounds towards zero, so on its own it turns ``100.7`` into
+    a coordinate a base away from the one the file gave, without saying
+    so. Comparing the result back against what it was made from is what
+    tells a spelling of a whole number from a fraction; ``nan`` and
+    ``inf`` never get that far, failing the conversion itself.
+    """
+    try:
+        whole = int(value)
+    except (TypeError, ValueError, OverflowError) as ex:
+        raise unparsable(column, tr_name, chrom, text) from ex
+    if whole != value:
+        raise unparsable(column, tr_name, chrom, text)
+    return whole
 
 
 def record_identity(
