@@ -1,12 +1,22 @@
-"""A record with a blank cell survives being written out and read back.
+"""What gain writes out, gain reads back -- cell by cell.
 
 Serializing to gain's own format and parsing the result is what a
 published GRR gene-models resource is: the columnar file is read once,
-and everything downstream reads what gain wrote. So a blank cell has to
-survive that trip unchanged, and the fabricated `nan` did not -- it was
-written as a token the source never held and came back as the string
-`"nan"`, a different value from the one the round trip started with
-(gain#931).
+and everything downstream reads what gain wrote. So every cell has to
+survive that trip unchanged.
+
+Two cells have failed to. A blank one was written as a fabricated `nan`
+-- a token the source never held, which came back as the string `"nan"`,
+a different value from the one the round trip started with (gain#931).
+And a coordinate of `0` was written as a blank, which since gain#929 is
+a hard parse error, so the file gain wrote was one gain could not read
+back at all (gain#957).
+
+Each of the two is covered by a pair of tests: one that the models
+survive the trip, and one that says which token was written. Neither
+half stands on its own -- the round trip is satisfied by any token that
+survives it, and the written token means nothing if the models it came
+from are wrong -- so the pairs are load-bearing. Do not drop one half.
 
 The file here is built with real tabs rather than through
 `convert_to_tab_separated`, which spells an empty cell as `.` and so
@@ -29,19 +39,28 @@ from gain.genomic_resources.gene_models.transcript_models import (
 )
 from gain.genomic_resources.testing import build_inmemory_test_resource
 
-from tests.small.genomic_resources.gene_models.columnar_formats import REFSEQ
+from tests.small.genomic_resources.gene_models.columnar_formats import (
+    DEFAULT,
+    REFSEQ,
+)
 
 
-def refseq_row(name: str, score: str) -> str:
+def refseq_row(name: str, score: str, **overrides: str) -> str:
     """One refSeq row, built from the shared layout table.
 
     The columns and their well-formed values live in `columnar_formats`;
     spelling a second copy of them here would be a second thing to keep
     in step with the parsers.
+
+    `overrides` names any further column by its layout-table name, so a
+    row that varies a coordinate does not need a second hand-spelled
+    copy of the sixteen columns either.
     """
     fields = list(REFSEQ.fields)
     fields[REFSEQ.columns.index("name")] = name
     fields[REFSEQ.columns.index("score")] = score
+    for column, value in overrides.items():
+        fields[REFSEQ.columns.index(column)] = value
     return "\t".join(fields) + "\n"
 
 
@@ -69,6 +88,18 @@ def shape(transcript: TranscriptModel) -> tuple:
               for exon in transcript.exons),
         format_default_attributes(transcript.attributes),
     )
+
+
+def default_file(**overrides: str) -> str:
+    """gain's own format: a header and one row, from the shared table.
+
+    Unlike the UCSC layouts this one is headered, so the columns are
+    written out rather than left to position.
+    """
+    fields = list(DEFAULT.fields)
+    for column, value in overrides.items():
+        fields[DEFAULT.columns.index(column)] = value
+    return "\t".join(DEFAULT.columns) + "\n" + "\t".join(fields) + "\n"
 
 
 def shapes(models: dict[str, TranscriptModel]) -> dict[str, tuple]:
@@ -109,6 +140,116 @@ def test_a_record_with_a_blank_cell_survives_the_round_trip() -> None:
     again = StringIO()
     _save_as_default_gene_models(reloaded, again)
     assert again.getvalue() == written.getvalue()
+
+
+def test_a_zero_coordinate_survives_the_round_trip() -> None:
+    """A bound of `0` is a coordinate, not an absent cell.
+
+    Written as a blank cell it stops being a coordinate at all, and
+    since #929 a blank coordinate is a hard parse error, so the file
+    gain wrote is one gain cannot read back (#957).
+
+    A zero reaches serialization from either direction. Out of a UCSC
+    layout it is `cdsEnd`: the half-open shift lifts the start clear of
+    falsiness and leaves the end as it was, so a source that spells "no
+    CDS" as the pair `0`/`0` keeps a `cdsEnd` of `0`. That spelling is a
+    departure from the UCSC convention, which spells no-CDS as
+    `cdsStart == cdsEnd == txEnd` -- no record in the published hg38
+    refSeq resource has a `cdsEnd` of `0`. Out of gain's own format
+    there is no shift at all, so `tsBeg` and `cdsStart` reach `0` too,
+    which is what re-serializing a default-format resource does. This
+    covers the first; `test_a_zero_bound_of_our_own_format_round_trips`
+    covers the second.
+
+    The first record keeps the layout table's own non-zero bounds, so
+    this pins the neighbour as well as the zero: the reload fails for
+    the whole file, not just for the record that provoked it.
+    """
+    genes = (refseq_row("NM_000546", "0")
+             + refseq_row("NR_000001", "0", cdsStart="0", cdsEnd="0"))
+    resource = build_inmemory_test_resource(content={
+        "genomic_resource.yaml":
+            "{type: gene_models, filename: genes.txt, format: refseq}",
+        "genes.txt": genes,
+    })
+    gene_models = build_gene_models_from_resource(resource)
+    gene_models.load()
+
+    written = StringIO()
+    _save_as_default_gene_models(gene_models, written)
+    reloaded = build_gene_models_from_resource(build_inmemory_test_resource(
+        content={
+            "genomic_resource.yaml":
+                "{type: gene_models, filename: genes.txt, format: default}",
+            "genes.txt": written.getvalue(),
+        }))
+    reloaded.load()
+
+    assert shapes(reloaded.transcript_models) == \
+        shapes(gene_models.transcript_models)
+
+    again = StringIO()
+    _save_as_default_gene_models(reloaded, again)
+    assert again.getvalue() == written.getvalue()
+
+
+def test_a_zero_bound_of_our_own_format_round_trips() -> None:
+    """Re-serializing our own format is where the other bounds reach 0.
+
+    The UCSC layouts shift each start by one, which lifts `tsBeg` and
+    `cdsStart` clear of falsiness before serialization ever sees them.
+    Our own format is already 1-based and shifts nothing, so a resource
+    written in it can hold a `0` in any of the four bounds -- and
+    re-serializing such a resource is exactly what the GRR build step
+    does. Reading one back out and writing it again has to keep them.
+    """
+    resource = build_inmemory_test_resource(content={
+        "genomic_resource.yaml":
+            "{type: gene_models, filename: genes.txt, format: default}",
+        "genes.txt": default_file(
+            tsBeg="0", cdsStart="0", exonStarts="0,300"),
+    })
+    gene_models = build_gene_models_from_resource(resource)
+    gene_models.load()
+    assert [tm.tx[0] for tm in gene_models.transcript_models.values()] == [0]
+
+    written = StringIO()
+    _save_as_default_gene_models(gene_models, written)
+    reloaded = build_gene_models_from_resource(build_inmemory_test_resource(
+        content={
+            "genomic_resource.yaml":
+                "{type: gene_models, filename: genes.txt, format: default}",
+            "genes.txt": written.getvalue(),
+        }))
+    reloaded.load()
+
+    assert shapes(reloaded.transcript_models) == \
+        shapes(gene_models.transcript_models)
+
+
+def test_a_zero_coordinate_is_written_out_as_zero() -> None:
+    """What lands in the file is the coordinate, not an empty cell.
+
+    The round trip above is satisfied by anything that reads back as
+    `0`. This is the half that says which token, and it is read out of
+    the column the header names rather than by position, so it keeps
+    pointing at the coordinate if the layout ever grows a column.
+    """
+    genes = refseq_row("NR_000001", "0", cdsStart="0", cdsEnd="0")
+    resource = build_inmemory_test_resource(content={
+        "genomic_resource.yaml":
+            "{type: gene_models, filename: genes.txt, format: refseq}",
+        "genes.txt": genes,
+    })
+    gene_models = build_gene_models_from_resource(resource)
+    gene_models.load()
+
+    written = StringIO()
+    _save_as_default_gene_models(gene_models, written)
+
+    header, record = written.getvalue().strip("\n").split("\n")
+    cells = dict(zip(header.split("\t"), record.split("\t"), strict=True))
+    assert cells["cdsEnd"] == "0"
 
 
 def test_a_blank_cell_is_written_out_as_nothing() -> None:

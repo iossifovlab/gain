@@ -385,7 +385,20 @@ def _save_as_default_gene_models(
             exon_frames,
             add_atts,
         ]
-        outfile.write("\t".join([str(x) if x else "" for x in columns]))
+        # Only an absent value is an absent cell. Rendering on falsiness
+        # instead spelled a coordinate of ``0`` as a blank -- and since
+        # gain#929 a blank coordinate is a hard parse error, so the file
+        # written here was one gain could not read back (gain#957).
+        #
+        # The ``None`` arm is what the falsy rule was for, and it is
+        # kept rather than dropped for a bare ``str``: it is the only
+        # rendering of an absent value that does not fabricate a token
+        # the source never held. No test pins it, because nothing can
+        # reach it -- the five text columns are typed ``str`` and every
+        # parser fills them, and a blank cell arrives from pandas as
+        # ``NaN``, never as ``None``.
+        outfile.write(
+            "\t".join(["" if x is None else str(x) for x in columns]))
         outfile.write("\n")
 
 
