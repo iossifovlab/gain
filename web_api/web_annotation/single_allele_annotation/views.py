@@ -49,14 +49,10 @@ def resource_index_url(resource: GenomicResource) -> str:
     hosts, and only the resource knows which of them it came from
     (#838).
 
-    The repository's public URL and the resource id are joined here
-    rather than through ``get_public_url()``, which joins them verbatim:
-    ``public_url`` is written by hand in a deployment's GRR definition,
-    so a trailing separator is a spelling that turns up, and it must not
-    reach the link as ``//``.
+    Spelling the address is the join's business, not this caller's; see
+    ``GenomicResource.get_public_url``.
     """
-    base = resource.get_repo_public_url().rstrip("/")
-    return f"{base}/{resource.get_full_id()}/index.html"
+    return f"{resource.get_public_url()}/index.html"
 
 
 def get_histogram_genomic_score(

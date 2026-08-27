@@ -415,12 +415,12 @@ class PipelineDoc(AsyncAnnotationBaseView):
     def _render_doc(pipeline: ThreadSafePipeline) -> str:
         """Render the annotate_doc HTML off the loop (touches GRR metadata)."""
         def make_resource_url(resource: GenomicResource) -> str:
-            return resource.get_url()
+            return resource.get_public_url()
 
         def make_histogram_url(
             score: GenomicScore, score_id: str,
         ) -> str | None:
-            return score.get_histogram_image_url(score_id)
+            return score.get_histogram_image_public_url(score_id)
 
         template = get_template("annotate_doc_pipeline_template.jinja")
         return template.render(
