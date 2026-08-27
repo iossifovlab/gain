@@ -76,6 +76,7 @@ def grr():
 def test_a_retired_annotator_name_is_refused_naming_its_replacement(
     grr, retired: str,
 ) -> None:
+    """A pipeline naming either retired spelling is told what to write."""
     with pytest.raises(AnnotationConfigurationError) as excinfo:
         load_pipeline_from_yaml(f"""
             - {retired}:

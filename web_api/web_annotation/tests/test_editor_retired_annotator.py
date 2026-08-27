@@ -56,6 +56,11 @@ def test_retired_annotator_name_is_refused_with_its_replacement(
     retired: str,
     replacement: str,
 ) -> None:
+    """Every gate answers a retired name with the registry's own message.
+
+    Each endpoint checks the available types itself, so each is its own
+    opportunity to answer ``Unknown annotator_type`` instead.
+    """
     response = user_client.post(
         endpoint,
         data={"annotator_type": retired, **_ENDPOINTS[endpoint]},
