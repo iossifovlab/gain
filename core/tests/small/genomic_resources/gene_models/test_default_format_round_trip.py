@@ -28,6 +28,7 @@ from io import StringIO
 from gain.genomic_resources.gene_models.default_attributes import (
     format_default_attributes,
 )
+from gain.genomic_resources.gene_models.gene_models import GeneModels
 from gain.genomic_resources.gene_models.gene_models_factory import (
     build_gene_models_from_resource,
 )
@@ -106,30 +107,36 @@ def shapes(models: dict[str, TranscriptModel]) -> dict[str, tuple]:
     return {tr_id: shape(tm) for tr_id, tm in models.items()}
 
 
+def models_from(text: str, fmt: str) -> GeneModels:
+    """Load gene models from a file of `fmt` held in memory."""
+    resource = build_inmemory_test_resource(content={
+        "genomic_resource.yaml":
+            f"{{type: gene_models, filename: genes.txt, format: {fmt}}}",
+        "genes.txt": text,
+    })
+    gene_models = build_gene_models_from_resource(resource)
+    gene_models.load()
+    return gene_models
+
+
+def written_out(gene_models: GeneModels) -> str:
+    """The file gain's own serializer makes of these models."""
+    outfile = StringIO()
+    _save_as_default_gene_models(gene_models, outfile)
+    return outfile.getvalue()
+
+
 def test_a_record_with_a_blank_cell_survives_the_round_trip() -> None:
     """Written out and read back, the models are the ones we started with.
 
     The second record's `score` is blank; the first record's is not, so
     this pins the neighbour as well as the blank itself.
     """
-    genes = refseq_row("NM_000546", "0") + refseq_row("NM_001126", "")
-    resource = build_inmemory_test_resource(content={
-        "genomic_resource.yaml":
-            "{type: gene_models, filename: genes.txt, format: refseq}",
-        "genes.txt": genes,
-    })
-    gene_models = build_gene_models_from_resource(resource)
-    gene_models.load()
+    gene_models = models_from(
+        refseq_row("NM_000546", "0") + refseq_row("NM_001126", ""), "refseq")
 
-    written = StringIO()
-    _save_as_default_gene_models(gene_models, written)
-    reloaded = build_gene_models_from_resource(build_inmemory_test_resource(
-        content={
-            "genomic_resource.yaml":
-                "{type: gene_models, filename: genes.txt, format: default}",
-            "genes.txt": written.getvalue(),
-        }))
-    reloaded.load()
+    written = written_out(gene_models)
+    reloaded = models_from(written, "default")
 
     assert shapes(reloaded.transcript_models) == \
         shapes(gene_models.transcript_models)
@@ -137,9 +144,7 @@ def test_a_record_with_a_blank_cell_survives_the_round_trip() -> None:
     # and the file itself is a fixpoint: writing the models that were
     # read back reproduces the bytes they were read from. This is the
     # type-independent half -- it compares the format to itself.
-    again = StringIO()
-    _save_as_default_gene_models(reloaded, again)
-    assert again.getvalue() == written.getvalue()
+    assert written_out(reloaded) == written
 
 
 def test_a_zero_coordinate_survives_the_round_trip() -> None:
@@ -165,32 +170,16 @@ def test_a_zero_coordinate_survives_the_round_trip() -> None:
     this pins the neighbour as well as the zero: the reload fails for
     the whole file, not just for the record that provoked it.
     """
-    genes = (refseq_row("NM_000546", "0")
-             + refseq_row("NR_000001", "0", cdsStart="0", cdsEnd="0"))
-    resource = build_inmemory_test_resource(content={
-        "genomic_resource.yaml":
-            "{type: gene_models, filename: genes.txt, format: refseq}",
-        "genes.txt": genes,
-    })
-    gene_models = build_gene_models_from_resource(resource)
-    gene_models.load()
+    gene_models = models_from(
+        refseq_row("NM_000546", "0")
+        + refseq_row("NR_000001", "0", cdsStart="0", cdsEnd="0"), "refseq")
 
-    written = StringIO()
-    _save_as_default_gene_models(gene_models, written)
-    reloaded = build_gene_models_from_resource(build_inmemory_test_resource(
-        content={
-            "genomic_resource.yaml":
-                "{type: gene_models, filename: genes.txt, format: default}",
-            "genes.txt": written.getvalue(),
-        }))
-    reloaded.load()
+    written = written_out(gene_models)
+    reloaded = models_from(written, "default")
 
     assert shapes(reloaded.transcript_models) == \
         shapes(gene_models.transcript_models)
-
-    again = StringIO()
-    _save_as_default_gene_models(reloaded, again)
-    assert again.getvalue() == written.getvalue()
+    assert written_out(reloaded) == written
 
 
 def test_a_zero_bound_of_our_own_format_round_trips() -> None:
@@ -203,28 +192,16 @@ def test_a_zero_bound_of_our_own_format_round_trips() -> None:
     re-serializing such a resource is exactly what the GRR build step
     does. Reading one back out and writing it again has to keep them.
     """
-    resource = build_inmemory_test_resource(content={
-        "genomic_resource.yaml":
-            "{type: gene_models, filename: genes.txt, format: default}",
-        "genes.txt": default_file(
-            tsBeg="0", cdsStart="0", exonStarts="0,300"),
-    })
-    gene_models = build_gene_models_from_resource(resource)
-    gene_models.load()
+    gene_models = models_from(
+        default_file(tsBeg="0", cdsStart="0", exonStarts="0,300"), "default")
     assert [tm.tx[0] for tm in gene_models.transcript_models.values()] == [0]
 
-    written = StringIO()
-    _save_as_default_gene_models(gene_models, written)
-    reloaded = build_gene_models_from_resource(build_inmemory_test_resource(
-        content={
-            "genomic_resource.yaml":
-                "{type: gene_models, filename: genes.txt, format: default}",
-            "genes.txt": written.getvalue(),
-        }))
-    reloaded.load()
+    written = written_out(gene_models)
+    reloaded = models_from(written, "default")
 
     assert shapes(reloaded.transcript_models) == \
         shapes(gene_models.transcript_models)
+    assert written_out(reloaded) == written
 
 
 def test_a_zero_coordinate_is_written_out_as_zero() -> None:
@@ -235,19 +212,10 @@ def test_a_zero_coordinate_is_written_out_as_zero() -> None:
     the column the header names rather than by position, so it keeps
     pointing at the coordinate if the layout ever grows a column.
     """
-    genes = refseq_row("NR_000001", "0", cdsStart="0", cdsEnd="0")
-    resource = build_inmemory_test_resource(content={
-        "genomic_resource.yaml":
-            "{type: gene_models, filename: genes.txt, format: refseq}",
-        "genes.txt": genes,
-    })
-    gene_models = build_gene_models_from_resource(resource)
-    gene_models.load()
+    written = written_out(models_from(
+        refseq_row("NR_000001", "0", cdsStart="0", cdsEnd="0"), "refseq"))
 
-    written = StringIO()
-    _save_as_default_gene_models(gene_models, written)
-
-    header, record = written.getvalue().strip("\n").split("\n")
+    header, record = written.strip("\n").split("\n")
     cells = dict(zip(header.split("\t"), record.split("\t"), strict=True))
     assert cells["cdsEnd"] == "0"
 
@@ -259,17 +227,7 @@ def test_a_blank_cell_is_written_out_as_nothing() -> None:
     it, `nan` included, as long as it came back unchanged. This is the
     half that says which token: none.
     """
-    genes = refseq_row("NM_001126", "")
-    resource = build_inmemory_test_resource(content={
-        "genomic_resource.yaml":
-            "{type: gene_models, filename: genes.txt, format: refseq}",
-        "genes.txt": genes,
-    })
-    gene_models = build_gene_models_from_resource(resource)
-    gene_models.load()
+    written = written_out(models_from(refseq_row("NM_001126", ""), "refseq"))
 
-    written = StringIO()
-    _save_as_default_gene_models(gene_models, written)
-
-    assert "nan" not in written.getvalue()
-    assert "score:;" in written.getvalue()
+    assert "nan" not in written
+    assert "score:;" in written
