@@ -60,6 +60,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
+from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass
 from operator import itemgetter
 from typing import IO, Any, cast
@@ -2155,6 +2156,24 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
 
         return manifest_update.manifest
 
+    @abc.abstractmethod
+    def publish_raw_file(
+            self, resource: GenomicResource, filename: str,
+            mode: str = "wt") -> AbstractContextManager[IO]:
+        """Open a resource file for a write that replaces it, or does not.
+
+        The publishing counterpart of :meth:`open_raw_file`: what the
+        caller writes reaches ``filename`` only once the handle has closed
+        cleanly. A write that fails part-way -- and an interrupt -- leaves
+        whatever was published before exactly as it was, rather than
+        truncating it in place with nothing to roll back to (gain#933).
+
+        A separate name rather than a flag on :meth:`open_raw_file`: the
+        two differ in what they guarantee, not in a parameter, and the
+        callers that need the guarantee are not the ones that need a plain
+        handle.
+        """
+
     def save_manifest(
             self, resource: GenomicResource, manifest: Manifest) -> None:
         """Save manifest into genomic resource's directory."""
@@ -2162,14 +2181,15 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             "save manifest of resource %s from %s", resource.resource_id,
             self.proto_id)
 
-        with self.open_raw_file(
-                resource, GR_MANIFEST_FILE_NAME, "wt") as outfile:
+        with self.publish_raw_file(
+                resource, GR_MANIFEST_FILE_NAME) as outfile:
             yaml.dump(manifest.to_manifest_entries(), outfile)
         resource.invalidate()
 
     def save_index(self, resource: GenomicResource, contents: str) -> None:
         """Save an index HTML file into the genomic resource's directory."""
-        with self.open_raw_file(resource, GR_INDEX_FILE_NAME, "wt") as outfile:
+        with self.publish_raw_file(
+                resource, GR_INDEX_FILE_NAME) as outfile:
             outfile.write(contents)
 
     def get_manifest(self, resource: GenomicResource) -> Manifest:
