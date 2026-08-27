@@ -275,7 +275,7 @@ class ColumnarLayout:
     #: the fifteen-column `genePredExt`. Both branches of `parse_raw`
     #: recognise a layout by its width, so an attempt at one can never
     #: consume a file of the other.
-    layouts: tuple[tuple[str, ...], ...]
+    column_layouts: tuple[tuple[str, ...], ...]
 
     #: Where the gene label comes from, best candidate first. The first
     #: column carrying a non-empty cell wins; when none does, the last
@@ -336,30 +336,35 @@ _GENEPRED_EXT_COLUMNS = (
 )
 
 REF_FLAT_LAYOUT = ColumnarLayout(
-    layouts=(("#geneName", *_GENEPRED_COLUMNS),),
+    column_layouts=(("#geneName", *_GENEPRED_COLUMNS),),
     gene_columns=("#geneName",),
 )
 
 REF_SEQ_LAYOUT = ColumnarLayout(
-    layouts=(_REFSEQ_COLUMNS,),
+    column_layouts=(_REFSEQ_COLUMNS,),
     gene_columns=("name2",),
     attribute_columns=_REFSEQ_ATTRIBUTES,
 )
 
 CCDS_LAYOUT = ColumnarLayout(
-    layouts=(_REFSEQ_COLUMNS,),
+    column_layouts=(_REFSEQ_COLUMNS,),
     gene_columns=("name",),
     attribute_columns=_REFSEQ_ATTRIBUTES,
 )
 
 KNOWN_GENE_LAYOUT = ColumnarLayout(
-    layouts=((*_GENEPRED_COLUMNS, "proteinID", "alignID"),),
+    column_layouts=((*_GENEPRED_COLUMNS, "proteinID", "alignID"),),
     gene_columns=("name",),
     attribute_columns=("proteinID", "alignID"),
 )
 
+#: The only layout accepting two widths, and the only one whose gene
+#: label has a fallback: the narrow form has no alternate-name column at
+#: all, and the wide form may carry a blank one. UCSC's own `genePred`
+#: and `genePredExt` table definitions -- the sole specification either
+#: width has -- are quoted in `parse_ucscgenepred_models_format`.
 UCSC_GENEPRED_LAYOUT = ColumnarLayout(
-    layouts=(_GENEPRED_COLUMNS, _GENEPRED_EXT_COLUMNS),
+    column_layouts=(_GENEPRED_COLUMNS, _GENEPRED_EXT_COLUMNS),
     gene_columns=("name2", "name"),
     attribute_columns=_GENEPRED_EXT_COLUMNS[len(_GENEPRED_COLUMNS):],
 )
@@ -380,7 +385,7 @@ def parse_columnar_format(
     """
     # pylint: disable=too-many-locals
     df = None
-    for columns in layout.layouts:
+    for columns in layout.column_layouts:
         infile.seek(0)
         df = parse_raw(infile, list(columns), nrows=nrows)
         if df is not None:

@@ -21,16 +21,29 @@ from gain.genomic_resources.gene_models.transcript_models import (
 
 from tests.small.genomic_resources.gene_models.columnar_formats import (
     DEFAULT,
-    FORMATS,
+    READ_PATHS,
     ColumnarFormat,
 )
 
-#: The UCSC-derived layouts, which are what the table drives. gain's own
-#: output format is read by column name and builds its attributes by
-#: parsing a dedicated column rather than by copying whole cells, so it
-#: is not on this axis at all.
-COLUMNAR_FORMATS = [fmt for fmt in FORMATS if fmt is not DEFAULT]
+#: The UCSC-derived layouts, which are what the table drives, on both
+#: read paths -- a headerless file is recognised by counting columns and
+#: a headered one by matching their names, and they pin different columns
+#: to text. gain's own output format is read by column name and builds
+#: its attributes by parsing a dedicated column rather than by copying
+#: whole cells, so it is not on this axis at all.
+COLUMNAR_FORMATS = [
+    fmt for fmt in READ_PATHS if not fmt.name.startswith(DEFAULT.name)
+]
 COLUMNAR_IDS = [fmt.name for fmt in COLUMNAR_FORMATS]
+
+#: genePred is the one layout whose gene label has a fallback: it reads
+#: the alternate-name column when there is one, and the transcript name
+#: otherwise. Only its wide form carries that column at all.
+GENEPRED_EXT_PATHS = [
+    fmt for fmt in COLUMNAR_FORMATS
+    if fmt.name.startswith("ucscgenepredext")
+]
+GENEPRED_EXT_IDS = [fmt.name for fmt in GENEPRED_EXT_PATHS]
 
 
 def _sole_model(fmt: ColumnarFormat) -> TranscriptModel:
@@ -89,3 +102,28 @@ def test_layout_takes_each_attribute_from_its_own_column(
         column: str(value) for column, value in model.attributes.items()
     }
     assert as_text == expected, fmt.name
+
+
+@pytest.mark.parametrize("fmt", GENEPRED_EXT_PATHS, ids=GENEPRED_EXT_IDS)
+def test_genepred_falls_back_to_transcript_name_when_alternate_is_blank(
+    fmt: ColumnarFormat,
+) -> None:
+    """A blank alternate name falls back the way an absent one does.
+
+    genePred's gene label reads the alternate-name column when it holds
+    something and the transcript name otherwise, and "otherwise" covers
+    two different files: the narrow layout, which has no such column at
+    all, and the wide one carrying a blank cell in it.
+
+    Only the first was pinned. The second turns on the fallback testing
+    the cell rather than its presence, which is one token in the layout
+    table -- and a table that tested presence instead would leave every
+    other test green while quietly labelling these records with the
+    empty string.
+    """
+    result = fmt.parse(fmt.file_with_column("name2", ""), None, None)
+
+    assert result is not None, fmt.name
+    assert len(result) == 2, fmt.name
+    for model in result.values():
+        assert model.gene == model.tr_name, fmt.name
