@@ -135,7 +135,7 @@ def parse_coordinate(
     elif pd.isna(value):
         text = ""
     else:
-        return _whole_number(value, column, tr_name, chrom, str(value))
+        return _whole_number(value, column, tr_name, chrom)
     try:
         return int(text)
     except ValueError:
@@ -154,7 +154,8 @@ def parse_coordinate(
 
 
 def _whole_number(
-    value: Any, column: str, tr_name: object, chrom: object, text: str,
+    value: Any, column: str, tr_name: object, chrom: object,
+    text: str | None = None,
 ) -> int:
     """Read a number that names a base, refusing one that falls between.
 
@@ -163,13 +164,23 @@ def _whole_number(
     so. Comparing the result back against what it was made from is what
     tells a spelling of a whole number from a fraction; ``nan`` and
     ``inf`` never get that far, failing the conversion itself.
+
+    ``text`` is what the message quotes. A caller that started from text
+    passes it, so the file's own spelling is what gets quoted rather
+    than a re-rendering of the number; a caller that started from a
+    number leaves it out, and it is rendered only if there turns out to
+    be a message to render.
     """
+    cause: Exception | None = None
     try:
         whole = int(value)
+        exact = whole == value
     except (TypeError, ValueError, OverflowError) as ex:
-        raise unparsable(column, tr_name, chrom, text) from ex
-    if whole != value:
-        raise unparsable(column, tr_name, chrom, text)
+        cause, exact = ex, False
+    if not exact:
+        raise unparsable(
+            column, tr_name, chrom,
+            str(value) if text is None else text) from cause
     return whole
 
 

@@ -201,7 +201,10 @@ FORMATS = [
          "cdsEndStat", "exonFrames"),
         (*GENEPRED_FIELDS, "0", "TP53", "cmpl", "cmpl", "0,0"),
         first_exon_start=101,
-        optional_columns=("score", "cdsStartStat", "cdsEndStat",
+        # `name2` is optional here in the same way it is for refSeq: the
+        # parser falls back to `name` when it is blank, so the record
+        # still parses and the blank still reaches the attributes.
+        optional_columns=("score", "name2", "cdsStartStat", "cdsEndStat",
                           "exonFrames"),
     ),
     DEFAULT,

@@ -15,11 +15,11 @@ cannot express the thing under test.
 
 from io import StringIO
 
+from gain.genomic_resources.gene_models.default_attributes import (
+    format_default_attributes,
+)
 from gain.genomic_resources.gene_models.gene_models_factory import (
     build_gene_models_from_resource,
-)
-from gain.genomic_resources.gene_models.parsers import (
-    parse_default_gene_models_format,
 )
 from gain.genomic_resources.gene_models.serialization import (
     _save_as_default_gene_models,
@@ -29,18 +29,20 @@ from gain.genomic_resources.gene_models.transcript_models import (
 )
 from gain.genomic_resources.testing import build_inmemory_test_resource
 
-REFSEQ_COLUMNS = (
-    "#bin", "name", "chrom", "strand", "txStart", "txEnd", "cdsStart",
-    "cdsEnd", "exonCount", "exonStarts", "exonEnds", "score", "name2",
-    "cdsStartStat", "cdsEndStat", "exonFrames",
-)
+from tests.small.genomic_resources.gene_models.columnar_formats import REFSEQ
 
 
 def refseq_row(name: str, score: str) -> str:
-    return "\t".join([
-        "0", name, "chr17", "+", "100", "400", "150", "350", "2",
-        "100,300,", "200,400,", score, "TP53", "cmpl", "cmpl", "0,0",
-    ])
+    """One refSeq row, built from the shared layout table.
+
+    The columns and their well-formed values live in `columnar_formats`;
+    spelling a second copy of them here would be a second thing to keep
+    in step with the parsers.
+    """
+    fields = list(REFSEQ.fields)
+    fields[REFSEQ.columns.index("name")] = name
+    fields[REFSEQ.columns.index("score")] = score
+    return "\t".join(fields) + "\n"
 
 
 def shape(transcript: TranscriptModel) -> tuple:
@@ -48,6 +50,13 @@ def shape(transcript: TranscriptModel) -> tuple:
 
     The models carry no equality of their own, so "the same models" is
     spelled out here rather than left to identity.
+
+    The attributes are compared as the text they serialize to, not as
+    the dict. A layout that leaves its optional columns to pandas hands
+    them over as pandas' own numbers -- refSeq's `score` arrives as an
+    integer -- and gain's own format has only text to write them as, so
+    the dicts differ by type on a trip that changed nothing. What the
+    format can represent is the text, and that is what has to survive.
     """
     return (
         transcript.gene,
@@ -58,7 +67,7 @@ def shape(transcript: TranscriptModel) -> tuple:
         transcript.cds,
         tuple((exon.start, exon.stop, exon.frame)
               for exon in transcript.exons),
-        transcript.attributes,
+        format_default_attributes(transcript.attributes),
     )
 
 
@@ -72,10 +81,7 @@ def test_a_record_with_a_blank_cell_survives_the_round_trip() -> None:
     The second record's `score` is blank; the first record's is not, so
     this pins the neighbour as well as the blank itself.
     """
-    genes = "\n".join([
-        refseq_row("NM_000546", "0"),
-        refseq_row("NM_001126", ""),
-    ]) + "\n"
+    genes = refseq_row("NM_000546", "0") + refseq_row("NM_001126", "")
     resource = build_inmemory_test_resource(content={
         "genomic_resource.yaml":
             "{type: gene_models, filename: genes.txt, format: refseq}",
@@ -86,11 +92,23 @@ def test_a_record_with_a_blank_cell_survives_the_round_trip() -> None:
 
     written = StringIO()
     _save_as_default_gene_models(gene_models, written)
-    reparsed = parse_default_gene_models_format(
-        StringIO(written.getvalue()))
+    reloaded = build_gene_models_from_resource(build_inmemory_test_resource(
+        content={
+            "genomic_resource.yaml":
+                "{type: gene_models, filename: genes.txt, format: default}",
+            "genes.txt": written.getvalue(),
+        }))
+    reloaded.load()
 
-    assert reparsed is not None
-    assert shapes(reparsed) == shapes(gene_models.transcript_models)
+    assert shapes(reloaded.transcript_models) == \
+        shapes(gene_models.transcript_models)
+
+    # and the file itself is a fixpoint: writing the models that were
+    # read back reproduces the bytes they were read from. This is the
+    # type-independent half -- it compares the format to itself.
+    again = StringIO()
+    _save_as_default_gene_models(reloaded, again)
+    assert again.getvalue() == written.getvalue()
 
 
 def test_a_blank_cell_is_written_out_as_nothing() -> None:
@@ -100,7 +118,7 @@ def test_a_blank_cell_is_written_out_as_nothing() -> None:
     it, `nan` included, as long as it came back unchanged. This is the
     half that says which token: none.
     """
-    genes = refseq_row("NM_001126", "") + "\n"
+    genes = refseq_row("NM_001126", "")
     resource = build_inmemory_test_resource(content={
         "genomic_resource.yaml":
             "{type: gene_models, filename: genes.txt, format: refseq}",
