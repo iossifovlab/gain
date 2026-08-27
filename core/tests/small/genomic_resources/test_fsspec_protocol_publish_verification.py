@@ -7,6 +7,7 @@ from gain.genomic_resources.fsspec_protocol import (
     CorruptedPublishError,
     FsspecReadWriteProtocol,
 )
+from gain.genomic_resources.repository import GR_CONTENTS_FILE_NAME
 from gain.genomic_resources.testing import build_inmemory_test_protocol
 from pytest_mock import MockerFixture
 
@@ -257,3 +258,32 @@ def test_a_healthy_download_stats_the_published_object_once(
 
     # ...having been measured exactly once
     assert stat.call_count == 1
+
+
+@pytest.mark.grr_rw
+@pytest.mark.parametrize("payload", [
+    pytest.param(CORRUPT_PAYLOAD, id="publishes-wrong-bytes"),
+    pytest.param(None, id="publishes-nothing"),
+])
+def test_build_content_file_refuses_a_corrupting_publish(
+        payload: bytes | None,
+        fsspec_proto: FsspecReadWriteProtocol,
+        mocker: MockerFixture) -> None:
+    # The repository's own artifacts publish through the same
+    # write-temp-verify-move seam as a downloaded file (#933), so the
+    # post-move check guards them too: a move that lands a short object,
+    # or none at all, must be reported rather than left as the contents
+    # index every client of the repository reads.
+    proto = fsspec_proto
+
+    # Given a repository whose publish of the contents index corrupts it
+    _corrupt_publishes_of(
+        proto, GR_CONTENTS_FILE_NAME, mocker,
+        corrupt_first=1, payload=payload)
+
+    # When / Then: the publish refuses rather than returning content
+    with pytest.raises(CorruptedPublishError) as excinfo:
+        proto.build_content_file()
+
+    # ...naming the artifact, so the fault is diagnosable
+    assert GR_CONTENTS_FILE_NAME in str(excinfo.value)

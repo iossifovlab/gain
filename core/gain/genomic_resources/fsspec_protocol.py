@@ -17,7 +17,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable, Generator, Iterable
-from contextlib import AbstractContextManager, suppress
+from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import asdict
 from threading import Event, Lock, get_ident
 from typing import (
@@ -175,6 +175,15 @@ class CorruptedPublishError(OSError):
     Only size-changing corruption is caught. Catching the rest needs a
     second full read of every downloaded file -- for a remote store, a
     second transfer -- which is exactly the cost gain#865 removed.
+
+    Raised on a second, digest-free path since gain#933: the repository's
+    own artifacts publish through :meth:`_publish_file`, which compares
+    the published object against the bytes it staged rather than against
+    a manifest. The reasoning above is about the download, but the guard
+    is the same one -- it lives on the move, so everything that moves
+    gets it. Membership in ``_RETRYABLE_COPY_ERRORS`` is the download
+    path's classification only; no publish of a repository artifact
+    retries.
     """
 
 
@@ -1793,6 +1802,191 @@ class FsspecReadWriteProtocol(
             resource_url, GRR_INTERNAL_DIR,
             f"{filename}.{uuid.uuid4().hex}.part")
 
+    def publish_raw_file(
+            self, resource: GenomicResource, filename: str,
+            mode: str = "wt") -> AbstractContextManager[IO]:
+        # No directory creation here on purpose: staging the temp already
+        # makes the whole chain, and doing it here would run at CALL time,
+        # before the returned context manager is entered -- a side effect
+        # on a seam whose whole point is that nothing happens unless the
+        # write completes.
+        return self._publish_file(
+            self.get_resource_file_url(resource, filename), mode)
+
+    def _verify_published_size(
+        self, published_size: Callable[[], int],
+        *, wrote: int, what: str, verb: str,
+    ) -> int:
+        """Check what a move actually landed, and report it if it differs.
+
+        The guard gain#880 put on the download's move, shared with the
+        publish seam gain#933 put the repository's own artifacts behind:
+        both stat the object the move produced and refuse a size that is
+        not the one they handed it. Written once so the two cannot drift
+        -- the discard step beside it is shared for the same reason.
+
+        What the two callers keep of their own is only what they can say
+        truthfully: the download has *verified* its bytes against a
+        manifest md5 before the move, and a publish has merely *written*
+        them, so the ``verb`` and the ``what`` prefix are theirs. So is
+        ``published_size``: the download reads it through
+        :meth:`get_resource_file_size`, whose single call it pins, and a
+        publish through the plain path stat.
+
+        Returns the published size, which the download path records in
+        the file's state.
+        """
+        try:
+            published = published_size()
+        except FileNotFoundError as err:
+            raise CorruptedPublishError(
+                f"{what}; {verb} {wrote} bytes, "
+                f"published nothing") from err
+
+        if published != wrote:
+            raise CorruptedPublishError(
+                f"{what}; {verb} {wrote} bytes, "
+                f"published {published}")
+
+        return published
+
+    def _get_file_publish_path(self, filepath: str) -> str:
+        """Return a unique path to publish ``filepath`` through.
+
+        Inside a ``.grr`` directory beside the target, so the temp is
+        always on the same filesystem as the file it will become and the
+        move stays a rename wherever the scheme has one. For a resource
+        file that is the resource's own ``.grr``, next to the ``.state``
+        and ``.lockfile`` a download already stages in; for one of the
+        repository's own artifacts -- the contents index, the index page,
+        the rendered ``about.html``, which belong to no resource -- it is
+        the repository root's. One rule covers both.
+
+        Nothing enumerates what lands there: a name starting with "." is
+        passed over by both the resource walk and the file scan, so a
+        temp in flight is invisible to a repository scan and to a manifest
+        build alike.
+
+        The ``uuid`` component keeps two concurrent publishes of the same
+        artifact from writing the same temp path, for the same reason
+        :meth:`_get_resource_file_download_path` carries one.
+
+        Deliberately NOT that method's rule, though, and the difference
+        shows on a nested name: a download of ``sub/data.txt`` stages
+        under the resource's single ``.grr``, while publishing it stages
+        at ``<resource>/sub/.grr/`` -- always beside the target, which is
+        what keeps the temp on the target's own filesystem whether the
+        target is a resource file or one of the repository's own
+        artifacts. Both are contained and both are skipped by the walks;
+        only the location differs.
+
+        The directory outlives the temp: it is created on demand and not
+        removed, so a repository accumulates an empty ``.grr`` at its root
+        and at each directory published into. Empty directories are
+        nothing to git, which is what the published GRRs are, but a
+        repository copied by other means carries them along. See gain#933.
+        """
+        return os.path.join(
+            os.path.dirname(filepath), GRR_INTERNAL_DIR,
+            f"{os.path.basename(filepath)}.{uuid.uuid4().hex}.part")
+
+    @contextmanager
+    def _publish_file(
+        self, filepath: str, mode: str,
+        *, encoding: str | None = None,
+    ) -> Generator[IO, None, None]:
+        """Yield a handle whose bytes reach ``filepath`` only if it closes.
+
+        The repository's own artifacts used to be opened at their live
+        path and written in place, so an interrupted write left a
+        truncated artifact where every consumer reads one and nothing to
+        roll back to -- a truncated ``.CONTENTS.json.gz`` breaks the whole
+        repository for every client, and ``.MANIFEST`` is what every
+        download-path md5 check compares against (gain#933).
+
+        This is gain#273's write-temp-verify-move, hoisted off the
+        download path so the repository's own writes get it too: the
+        caller writes into a private temp, and the temp is moved onto the
+        target only once the handle has closed cleanly. A failure
+        anywhere before the move -- an open that never lands, a write that
+        fails mid-stream, a close that does, an interrupt -- leaves the
+        previously published artifact exactly as it was, and leaves no
+        temp behind either. On a local filesystem the move is an atomic
+        rename; on an object store it degrades to a copy-and-delete,
+        which loses the atomicity but keeps the verify-then-publish
+        order -- one code path for every scheme, as on the download side.
+
+        Because the check lives on the move, gain#880's post-move
+        verification comes with it: the published object is stated and
+        must match what was written, so a move that lands nothing or
+        lands a short object is reported rather than published silently.
+        Only size-changing corruption is caught, for the reason
+        :class:`CorruptedPublishError` gives.
+
+        What that check buys here is a report, not a repair. Past the
+        move the previous artifact is gone and there is nothing to roll
+        back to, and unlike ``copy_resource_file`` -- which retries a
+        corrupting publish until the object lands intact -- the callers
+        of this seam publish once and propagate. A move-time corruption
+        therefore leaves the repository needing a republish; it is only
+        guaranteed not to leave it needing one *silently*.
+
+        One further difference from writing in place, harmless for the
+        artifacts published today but real: the move replaces the inode,
+        so the published file takes a fresh identity rather than
+        inheriting the mode of the file it replaces, and a target that
+        was a symlink is replaced by a regular file instead of being
+        written through. The download path has always had this property.
+        """
+        # A mode that is not a write would be actively destructive here:
+        # the handle is opened on an EMPTY temp, so "at" appends to
+        # nothing and the move then replaces the artifact with just the
+        # appended part. Refused rather than documented, because the
+        # damage is silent and this is a public seam that will acquire
+        # callers.
+        if "w" not in mode:
+            raise ValueError(
+                f"publishing {filepath} needs a write mode, got {mode!r}: "
+                f"a publish replaces the file, it cannot extend it")
+
+        tmp_filepath = self._get_file_publish_path(filepath)
+        # Unconditional: ``exist_ok`` already tolerates the directory being
+        # there, so a preceding ``exists`` only adds a round trip to the
+        # common case. That matters because ``save_manifest`` publishes
+        # once per resource, so this is paid per resource across a whole
+        # repository -- on an object store, per resource over the network.
+        self.filesystem.makedirs(os.path.dirname(tmp_filepath), exist_ok=True)
+
+        open_kwargs: dict[str, Any] = {}
+        if encoding is not None:
+            open_kwargs["encoding"] = encoding
+
+        moved = False
+        try:
+            # Redacted like every other open on this protocol: the sinks
+            # that reach here used to go through ``_open_fsspec_file``,
+            # and a publish to a credential-bearing url must not put the
+            # userinfo into a traceback just because the write now stages.
+            handle = _run_redacting_userinfo(
+                lambda: self.filesystem.open(
+                    tmp_filepath, mode, **open_kwargs))
+            with handle as outfile:
+                yield outfile
+
+            written = self._get_filepath_size(tmp_filepath)
+
+            self.filesystem.mv(tmp_filepath, filepath)
+            moved = True
+
+            self._verify_published_size(
+                lambda: self._get_filepath_size(filepath),
+                wrote=written,
+                what=f"artifact publish is corrupt {filepath}",
+                verb="wrote")
+        finally:
+            if not moved:
+                self._discard_unpublished_file(tmp_filepath)
+
     def get_resource_file_timestamp(
             self, resource: GenomicResource, filename: str) -> float:
         url = self.get_resource_file_url(resource, filename)
@@ -2021,25 +2215,16 @@ class FsspecReadWriteProtocol(
 
             # The stat is the one the state needs anyway, so checking the
             # move costs nothing -- see :class:`CorruptedPublishError`.
-            try:
-                published_size = self.get_resource_file_size(
-                    dest_resource, filename)
-            except FileNotFoundError as err:
-                raise CorruptedPublishError(
+            published_size = self._verify_published_size(
+                lambda: self.get_resource_file_size(dest_resource, filename),
+                wrote=bytes_written,
+                what=(
                     f"file publish is corrupt "
-                    f"{dest_resource.resource_id} ({filename}); "
-                    f"verified {bytes_written} bytes, "
-                    f"published nothing") from err
-
-            if published_size != bytes_written:
-                raise CorruptedPublishError(
-                    f"file publish is corrupt "
-                    f"{dest_resource.resource_id} ({filename}); "
-                    f"verified {bytes_written} bytes, "
-                    f"published {published_size}")
+                    f"{dest_resource.resource_id} ({filename})"),
+                verb="verified")
         finally:
             if not moved:
-                self._discard_partial_download(tmp_filepath)
+                self._discard_unpublished_file(tmp_filepath)
 
         state = self.build_resource_file_state(
             dest_resource,
@@ -2051,11 +2236,12 @@ class FsspecReadWriteProtocol(
 
         return state
 
-    def _discard_partial_download(self, tmp_filepath: str) -> None:
-        """Remove the temp file of a download that never reached the move.
+    def _discard_unpublished_file(self, tmp_filepath: str) -> None:
+        """Remove the temp file of a write that never reached the move.
 
-        Called for every way out of :meth:`_download_resource_file` that
-        does not reach the move -- a checksum mismatch, a stalled read, an
+        Called for every way out of :meth:`_download_resource_file` and of
+        :meth:`_publish_file` that does not reach the move -- a checksum
+        mismatch, a stalled read, a write that failed mid-stream, an
         interrupt -- so no attempt leaves a partial behind. A publish that
         the move itself corrupted is past this point: the temp file is
         already gone and the bad object sits at the real path, where only
@@ -2073,7 +2259,7 @@ class FsspecReadWriteProtocol(
             pass
         except Exception:  # noqa: BLE001  pylint: disable=broad-except
             logger.warning(
-                "unable to remove the partial download %s",
+                "unable to remove the unpublished temp file %s",
                 tmp_filepath, exc_info=True)
 
     def classify_resource_file(
@@ -2222,7 +2408,7 @@ class FsspecReadWriteProtocol(
             mtime=0)
         gz = gz[:9] + b"\xff" + gz[10:]
 
-        with self.filesystem.open(content_filepath, "wb") as outfile:
+        with self._publish_file(content_filepath, "wb") as outfile:
             outfile.write(gz)
 
         # Left where it is rather than deleted: in the GRRs that carry
@@ -2288,7 +2474,7 @@ class FsspecReadWriteProtocol(
                 )
                 raise ValueError from e
 
-            with self.filesystem.open(
+            with self._publish_file(
                 os.path.join(self.url, "about.html"), "wt", encoding="utf8",
             ) as outfile:
                 if about_template is not None:
@@ -2305,7 +2491,7 @@ class FsspecReadWriteProtocol(
             sqlite3_hash = hashlib.md5(gz_bytes).hexdigest()  # noqa: S324
 
         content_filepath = os.path.join(self.url, GR_INDEX_FILE_NAME)
-        with self.filesystem.open(
+        with self._publish_file(
                 content_filepath, "wt", encoding="utf8") as outfile:
             outfile.write(get_template(repository_template).render(
                 data=result,
