@@ -144,161 +144,6 @@ def parse_default_gene_models_format(
     return transcript_models
 
 
-def parse_ref_flat_gene_models_format(
-    infile: IO,
-    gene_mapping: dict[str, str] | None = None,
-    nrows: int | None = None,
-) -> dict[str, TranscriptModel] | None:
-    """Parse refFlat gene models file format."""
-    # pylint: disable=too-many-locals
-    expected_columns = [
-        "#geneName",
-        "name",
-        "chrom",
-        "strand",
-        "txStart",
-        "txEnd",
-        "cdsStart",
-        "cdsEnd",
-        "exonCount",
-        "exonStarts",
-        "exonEnds",
-    ]
-
-    infile.seek(0)
-    df = parse_raw(infile, expected_columns, nrows=nrows)
-    if df is None:
-        return None
-
-    records = df.to_dict(orient="records")
-
-    transcript_ids_counter: dict[str, int] = defaultdict(int)
-    if gene_mapping is None:
-        gene_mapping = {}
-
-    transcript_models = {}
-    for record, rec in enumerate(records, start=1):
-        gene = rec["#geneName"]
-        gene = gene_mapping.get(gene, gene)
-        tr_name, chrom = record_identity(rec, record, "name", "chrom")
-        strand = require_cell(rec["strand"], "strand", tr_name, chrom)
-        tx, cds = parse_transcript_bounds(  # pylint: disable=invalid-name
-            rec, tr_name, chrom)
-
-        exon_starts, exon_ends = parse_exon_bounds(
-            rec, tr_name, chrom)
-
-        exons = [
-            Exon(start + 1, end)
-            for start, end in zip(exon_starts, exon_ends, strict=True)
-        ]
-
-        transcript_ids_counter[tr_name] += 1
-        tr_id = f"{tr_name}_{transcript_ids_counter[tr_name]}"
-
-        transcript_model = TranscriptModel(
-            gene=gene,
-            tr_id=tr_id,
-            tr_name=tr_name,
-            chrom=chrom,
-            strand=strand,
-            tx=tx,
-            cds=cds,
-            exons=exons,
-        )
-        transcript_model.update_frames()
-        assert transcript_model.tr_id not in transcript_models
-        transcript_models[transcript_model.tr_id] = transcript_model
-
-    return transcript_models
-
-
-def parse_ref_seq_gene_models_format(
-    infile: IO,
-    gene_mapping: dict[str, str] | None = None,
-    nrows: int | None = None,
-) -> dict[str, TranscriptModel] | None:
-    """Parse refSeq gene models file format."""
-    # pylint: disable=too-many-locals
-    expected_columns = [
-        "#bin",
-        "name",
-        "chrom",
-        "strand",
-        "txStart",
-        "txEnd",
-        "cdsStart",
-        "cdsEnd",
-        "exonCount",
-        "exonStarts",
-        "exonEnds",
-        "score",
-        "name2",
-        "cdsStartStat",
-        "cdsEndStat",
-        "exonFrames",
-    ]
-
-    infile.seek(0)
-    df = parse_raw(infile, expected_columns, nrows=nrows)
-    if df is None:
-        return None
-
-    records = df.to_dict(orient="records")
-
-    transcript_ids_counter: dict[str, int] = defaultdict(int)
-    if gene_mapping is None:
-        gene_mapping = {}
-    transcript_models = {}
-    for record, rec in enumerate(records, start=1):
-        gene = rec["name2"]
-        gene = gene_mapping.get(gene, gene)
-
-        tr_name, chrom = record_identity(rec, record, "name", "chrom")
-        strand = require_cell(rec["strand"], "strand", tr_name, chrom)
-        tx, cds = parse_transcript_bounds(  # pylint: disable=invalid-name
-            rec, tr_name, chrom)
-
-        exon_starts, exon_ends = parse_exon_bounds(
-            rec, tr_name, chrom)
-
-        exons = [
-            Exon(start + 1, end)
-            for start, end in zip(exon_starts, exon_ends, strict=True)
-        ]
-
-        transcript_ids_counter[tr_name] += 1
-        tr_id = f"{tr_name}_{transcript_ids_counter[tr_name]}"
-
-        attributes = {
-            k: rec[k]
-            for k in [
-                "#bin",
-                "score",
-                "exonCount",
-                "cdsStartStat",
-                "cdsEndStat",
-                "exonFrames",
-            ]
-        }
-        transcript_model = TranscriptModel(
-            gene=gene,
-            tr_id=tr_id,
-            tr_name=tr_name,
-            chrom=chrom,
-            strand=strand,
-            tx=tx,
-            cds=cds,
-            exons=exons,
-            attributes=attributes,
-        )
-        transcript_model.update_frames()
-        assert transcript_model.tr_id not in transcript_models
-        transcript_models[transcript_model.tr_id] = transcript_model
-
-    return transcript_models
-
-
 def probe_header(
     infile: IO, expected_columns: list[str],
     comment: str | None = None,
@@ -407,35 +252,139 @@ def parse_raw(
     return None
 
 
-def parse_ccds_gene_models_format(
+@dataclass(frozen=True)
+class ColumnarLayout:
+    """One UCSC-derived columnar gene-models layout.
+
+    The five layouts gain reads -- refFlat, refSeq, CCDS, knownGene and
+    UCSC genePred -- are one record loop over one raw read. They differ
+    on three axes and no others, which are the three fields below
+    (gain#941). Everything else the loop does is the same for all of
+    them and lives in `parse_columnar_format`: the half-open-to-inclusive
+    coordinate shift, suffixing a transcript name into a unique id, the
+    exon read, and `update_frames()`.
+
+    gain's own output format is deliberately not one of these. It is read
+    by column name rather than by position, is already in gain's
+    coordinates, carries a third exon column, and builds its attributes
+    by parsing a dedicated column rather than by copying whole cells.
+    """
+
+    #: The column layouts this format accepts, tried in order. Only
+    #: genePred has more than one -- the ten-column `genePred` core and
+    #: the fifteen-column `genePredExt`. Both branches of `parse_raw`
+    #: recognise a layout by its width, so an attempt at one can never
+    #: consume a file of the other.
+    layouts: tuple[tuple[str, ...], ...]
+
+    #: Where the gene label comes from, best candidate first. The first
+    #: column carrying a non-empty cell wins; when none does, the last
+    #: column named here supplies its cell anyway, empty or absent or
+    #: not. A one-column rule is therefore just that column, read
+    #: unconditionally, which is what four of the five layouts want.
+    gene_columns: tuple[str, ...]
+
+    #: The columns copied straight into `TranscriptModel.attributes`, in
+    #: this order -- attributes are written back out in iteration order,
+    #: so the order is part of the layout. A column absent from the
+    #: record is skipped rather than faulted, which is what lets
+    #: genePred's narrow layout share this list with its wide one.
+    attribute_columns: tuple[str, ...] = ()
+
+    def gene_label(self, rec: dict) -> Any:
+        """Read this layout's gene label out of a record."""
+        for column in self.gene_columns[:-1]:
+            value = rec.get(column)
+            if value:
+                return value
+        return rec[self.gene_columns[-1]]
+
+    def attributes(self, rec: dict) -> dict[str, Any]:
+        """Copy this layout's attribute columns out of a record."""
+        return {
+            column: rec[column]
+            for column in self.attribute_columns
+            if column in rec
+        }
+
+
+#: refSeq and CCDS declare the same sixteen columns and copy the same six
+#: of them into attributes; which column the gene label comes from is the
+#: whole of the difference between the two formats. Because the layouts
+#: are indistinguishable, a headerless file matching one matches the
+#: other, which is what `_break_refseq_ccds_tie` exists to settle
+#: (gain#869) -- so these must stay two entries, not one.
+_REFSEQ_COLUMNS = (
+    "#bin", "name", "chrom", "strand", "txStart", "txEnd", "cdsStart",
+    "cdsEnd", "exonCount", "exonStarts", "exonEnds", "score", "name2",
+    "cdsStartStat", "cdsEndStat", "exonFrames",
+)
+_REFSEQ_ATTRIBUTES = (
+    "#bin", "score", "exonCount", "cdsStartStat", "cdsEndStat", "exonFrames",
+)
+
+#: The genePred core. refFlat is this with a leading gene-name column and
+#: knownGene is this with two trailing identifier columns, so both are
+#: spelled as extensions of it.
+_GENEPRED_COLUMNS = (
+    "name", "chrom", "strand", "txStart", "txEnd", "cdsStart", "cdsEnd",
+    "exonCount", "exonStarts", "exonEnds",
+)
+_GENEPRED_EXT_COLUMNS = (
+    *_GENEPRED_COLUMNS,
+    "score", "name2", "cdsStartStat", "cdsEndStat", "exonFrames",
+)
+
+REF_FLAT_LAYOUT = ColumnarLayout(
+    layouts=(("#geneName", *_GENEPRED_COLUMNS),),
+    gene_columns=("#geneName",),
+)
+
+REF_SEQ_LAYOUT = ColumnarLayout(
+    layouts=(_REFSEQ_COLUMNS,),
+    gene_columns=("name2",),
+    attribute_columns=_REFSEQ_ATTRIBUTES,
+)
+
+CCDS_LAYOUT = ColumnarLayout(
+    layouts=(_REFSEQ_COLUMNS,),
+    gene_columns=("name",),
+    attribute_columns=_REFSEQ_ATTRIBUTES,
+)
+
+KNOWN_GENE_LAYOUT = ColumnarLayout(
+    layouts=((*_GENEPRED_COLUMNS, "proteinID", "alignID"),),
+    gene_columns=("name",),
+    attribute_columns=("proteinID", "alignID"),
+)
+
+UCSC_GENEPRED_LAYOUT = ColumnarLayout(
+    layouts=(_GENEPRED_COLUMNS, _GENEPRED_EXT_COLUMNS),
+    gene_columns=("name2", "name"),
+    attribute_columns=_GENEPRED_EXT_COLUMNS[len(_GENEPRED_COLUMNS):],
+)
+
+
+def parse_columnar_format(
+    layout: ColumnarLayout,
     infile: IO,
     gene_mapping: dict[str, str] | None = None,
     nrows: int | None = None,
 ) -> dict[str, TranscriptModel] | None:
-    """Parse CCDS gene models file format."""
-    # pylint: disable=too-many-locals
-    expected_columns = [
-        # CCDS is identical with RefSeq
-        "#bin",
-        "name",
-        "chrom",
-        "strand",
-        "txStart",
-        "txEnd",
-        "cdsStart",
-        "cdsEnd",
-        "exonCount",
-        "exonStarts",
-        "exonEnds",
-        "score",
-        "name2",
-        "cdsStartStat",
-        "cdsEndStat",
-        "exonFrames",
-    ]
+    """Parse a columnar gene-models file against one layout.
 
-    infile.seek(0)
-    df = parse_raw(infile, expected_columns, nrows=nrows)
+    Returns ``None`` when the file matches none of the layout's column
+    layouts. Format inference reads that back as "this format is not the
+    file's", so it must stay distinct from an empty dict, which says the
+    layout matched but no transcript model came of it.
+    """
+    # pylint: disable=too-many-locals
+    df = None
+    for columns in layout.layouts:
+        infile.seek(0)
+        df = parse_raw(infile, list(columns), nrows=nrows)
+        if df is not None:
+            break
     if df is None:
         return None
 
@@ -447,7 +396,7 @@ def parse_ccds_gene_models_format(
 
     transcript_models = {}
     for record, rec in enumerate(records, start=1):
-        gene = rec["name"]
+        gene = layout.gene_label(rec)
         gene = gene_mapping.get(gene, gene)
 
         tr_name, chrom = record_identity(rec, record, "name", "chrom")
@@ -455,8 +404,7 @@ def parse_ccds_gene_models_format(
         tx, cds = parse_transcript_bounds(  # pylint: disable=invalid-name
             rec, tr_name, chrom)
 
-        exon_starts, exon_ends = parse_exon_bounds(
-            rec, tr_name, chrom)
+        exon_starts, exon_ends = parse_exon_bounds(rec, tr_name, chrom)
 
         exons = [
             Exon(start + 1, end)
@@ -466,17 +414,6 @@ def parse_ccds_gene_models_format(
         transcript_ids_counter[tr_name] += 1
         tr_id = f"{tr_name}_{transcript_ids_counter[tr_name]}"
 
-        attributes = {
-            k: rec[k]
-            for k in [
-                "#bin",
-                "score",
-                "exonCount",
-                "cdsStartStat",
-                "cdsEndStat",
-                "exonFrames",
-            ]
-        }
         transcript_model = TranscriptModel(
             gene=gene,
             tr_id=tr_id,
@@ -486,13 +423,47 @@ def parse_ccds_gene_models_format(
             tx=tx,
             cds=cds,
             exons=exons,
-            attributes=attributes,
+            attributes=layout.attributes(rec),
         )
         transcript_model.update_frames()
         assert transcript_model.tr_id not in transcript_models
         transcript_models[transcript_model.tr_id] = transcript_model
 
     return transcript_models
+
+
+def parse_ref_flat_gene_models_format(
+    infile: IO,
+    gene_mapping: dict[str, str] | None = None,
+    nrows: int | None = None,
+) -> dict[str, TranscriptModel] | None:
+    """Parse refFlat gene models file format."""
+    return parse_columnar_format(
+        REF_FLAT_LAYOUT, infile, gene_mapping, nrows)
+
+
+def parse_ref_seq_gene_models_format(
+    infile: IO,
+    gene_mapping: dict[str, str] | None = None,
+    nrows: int | None = None,
+) -> dict[str, TranscriptModel] | None:
+    """Parse refSeq gene models file format."""
+    return parse_columnar_format(
+        REF_SEQ_LAYOUT, infile, gene_mapping, nrows)
+
+
+def parse_ccds_gene_models_format(
+    infile: IO,
+    gene_mapping: dict[str, str] | None = None,
+    nrows: int | None = None,
+) -> dict[str, TranscriptModel] | None:
+    """Parse CCDS gene models file format.
+
+    CCDS declares the same columns as refSeq and differs only in taking
+    its gene label from the transcript-name column, so a CCDS model's
+    gene and transcript name are the same string.
+    """
+    return parse_columnar_format(CCDS_LAYOUT, infile, gene_mapping, nrows)
 
 
 def parse_known_gene_models_format(
@@ -501,71 +472,8 @@ def parse_known_gene_models_format(
     nrows: int | None = None,
 ) -> dict[str, TranscriptModel] | None:
     """Parse known gene models file format."""
-    # pylint: disable=too-many-locals
-    expected_columns = [
-        "name",
-        "chrom",
-        "strand",
-        "txStart",
-        "txEnd",
-        "cdsStart",
-        "cdsEnd",
-        "exonCount",
-        "exonStarts",
-        "exonEnds",
-        "proteinID",
-        "alignID",
-    ]
-
-    infile.seek(0)
-    df = parse_raw(infile, expected_columns, nrows=nrows)
-    if df is None:
-        return None
-
-    records = df.to_dict(orient="records")
-
-    transcript_ids_counter: dict[str, int] = defaultdict(int)
-
-    if gene_mapping is None:
-        gene_mapping = {}
-    transcript_models = {}
-    for record, rec in enumerate(records, start=1):
-        gene = rec["name"]
-        gene = gene_mapping.get(gene, gene)
-
-        tr_name, chrom = record_identity(rec, record, "name", "chrom")
-        strand = require_cell(rec["strand"], "strand", tr_name, chrom)
-        tx, cds = parse_transcript_bounds(  # pylint: disable=invalid-name
-            rec, tr_name, chrom)
-
-        exon_starts, exon_ends = parse_exon_bounds(
-            rec, tr_name, chrom)
-
-        exons = [
-            Exon(start + 1, end)
-            for start, end in zip(exon_starts, exon_ends, strict=True)
-        ]
-
-        transcript_ids_counter[tr_name] += 1
-        tr_id = f"{tr_name}_{transcript_ids_counter[tr_name]}"
-
-        attributes = {k: rec[k] for k in ["proteinID", "alignID"]}
-        transcript_model = TranscriptModel(
-            gene=gene,
-            tr_id=tr_id,
-            tr_name=tr_name,
-            chrom=chrom,
-            strand=strand,
-            tx=tx,
-            cds=cds,
-            exons=exons,
-            attributes=attributes,
-        )
-        transcript_model.update_frames()
-        assert transcript_model.tr_id not in transcript_models
-        transcript_models[transcript_model.tr_id] = transcript_model
-
-    return transcript_models
+    return parse_columnar_format(
+        KNOWN_GENE_LAYOUT, infile, gene_mapping, nrows)
 
 
 def parse_ucscgenepred_models_format(
@@ -614,81 +522,8 @@ def parse_ucscgenepred_models_format(
         lstring exonFrames; 	"Exon frame offsets {0,1,2}"
         )
     """
-    # pylint: disable=too-many-locals
-    expected_columns = [
-        "name",
-        "chrom",
-        "strand",
-        "txStart",
-        "txEnd",
-        "cdsStart",
-        "cdsEnd",
-        "exonCount",
-        "exonStarts",
-        "exonEnds",
-        "score",
-        "name2",
-        "cdsStartStat",
-        "cdsEndStat",
-        "exonFrames",
-    ]
-
-    infile.seek(0)
-    df = parse_raw(infile, expected_columns[:10], nrows=nrows)
-    if df is None:
-        infile.seek(0)
-        df = parse_raw(infile, expected_columns, nrows=nrows)
-        if df is None:
-            return None
-
-    records = df.to_dict(orient="records")
-
-    transcript_ids_counter: dict[str, int] = defaultdict(int)
-    if gene_mapping is None:
-        gene_mapping = {}
-    transcript_models = {}
-    for record, rec in enumerate(records, start=1):
-        gene = rec.get("name2")
-        if not gene:
-            gene = rec["name"]
-        gene = gene_mapping.get(gene, gene)
-
-        tr_name, chrom = record_identity(rec, record, "name", "chrom")
-        strand = require_cell(rec["strand"], "strand", tr_name, chrom)
-        tx, cds = parse_transcript_bounds(  # pylint: disable=invalid-name
-            rec, tr_name, chrom)
-
-        exon_starts, exon_ends = parse_exon_bounds(
-            rec, tr_name, chrom)
-
-        exons = [
-            Exon(start + 1, end)
-            for start, end in zip(exon_starts, exon_ends, strict=True)
-        ]
-
-        transcript_ids_counter[tr_name] += 1
-        tr_id = f"{tr_name}_{transcript_ids_counter[tr_name]}"
-
-        attributes = {}
-        for attr in expected_columns[10:]:
-            if attr in rec:
-                attributes[attr] = rec.get(attr)
-        transcript_model = TranscriptModel(
-            gene=gene,
-            tr_id=tr_id,
-            tr_name=tr_name,
-            chrom=chrom,
-            strand=strand,
-            tx=tx,
-            cds=cds,
-            exons=exons,
-            attributes=attributes,
-        )
-        transcript_model.update_frames()
-        assert transcript_model.tr_id not in transcript_models
-        transcript_models[transcript_model.tr_id] = transcript_model
-
-    return transcript_models
+    return parse_columnar_format(
+        UCSC_GENEPRED_LAYOUT, infile, gene_mapping, nrows)
 
 
 def _find_gtf_closing_quote(data: str, start: int) -> int:
