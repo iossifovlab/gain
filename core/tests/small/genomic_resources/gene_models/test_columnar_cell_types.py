@@ -22,8 +22,11 @@ would notice.
 import pytest
 
 from tests.small.genomic_resources.gene_models.columnar_formats import (
+    BAD_NAME,
+    GOOD_NAME,
     READ_PATH_IDS,
     READ_PATHS,
+    REFSEQ,
     ColumnarFormat,
 )
 
@@ -61,6 +64,34 @@ def test_a_bare_digit_chromosome_is_text(fmt: ColumnarFormat) -> None:
     chroms = {transcript.chrom for transcript in models.values()}
 
     assert chroms == {"17"}
+
+
+#: Spellings pandas reads as a missing value when left to itself. A
+#: gene-models column is text the file chose, so each of these is a value
+#: and none of them is an absence.
+MISSING_VALUE_SPELLINGS = ["NA", "NULL", "N/A", "nan", "NaN", "None", "-"]
+
+
+@pytest.mark.parametrize("spelling", MISSING_VALUE_SPELLINGS)
+def test_a_cell_spelling_a_missing_value_keeps_what_it_said(
+    spelling: str,
+) -> None:
+    """`NA` is the text "NA", and is not the same as a blank cell.
+
+    pandas takes all of these for missing values and hands back the same
+    float `NaN` for each, so the record could not say `NULL` and be
+    heard, and an error message quoting the cell could not tell any of
+    them from a genuinely empty one -- which is what `cell_text`'s
+    docstring recorded as unfixable while the read still filtered them.
+    """
+    fmt = REFSEQ
+    models = fmt.parse(fmt.file_with("score", spelling))
+    assert models is not None
+
+    scores = {tm.tr_name: tm.attributes["score"] for tm in models.values()}
+
+    assert scores[BAD_NAME] == spelling
+    assert scores[GOOD_NAME] == "0"
 
 
 @pytest.mark.parametrize("fmt", READ_PATHS, ids=READ_PATH_IDS)

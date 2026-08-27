@@ -34,10 +34,16 @@ QUOTED_TEXT_LIMIT = 60
 def cell_text(value: Any) -> str:
     """Render what pandas made of a cell as the text the file held.
 
-    A blank cell arrives as a float ``NaN`` and reads back as ``''``, and
-    so does every other spelling pandas takes for a missing value, ``NA``
-    and ``NULL`` among them, which the messages built from this therefore
-    cannot tell apart (gain#931).
+    Since gain#931 the reads keep a cell as its own text, so what the
+    file said is what arrives: a blank cell is ``''``, and the spellings
+    pandas would otherwise have taken for missing values -- ``NA``,
+    ``NULL`` and ``nan`` among them -- are the words they are, and the
+    messages built from this can say which one it read.
+
+    ``NaN`` still reaches here from a row that stops short of a column,
+    where the value is absent rather than blank, and reads back as
+    ``''``: for a record that has to be rejected either way, the two are
+    the same thing.
 
     ``value`` is annotated ``Any`` rather than ``object`` because
     ``pd.isna`` has no overload for the latter.
@@ -162,13 +168,13 @@ def record_identity(
     readable.
 
     Blankness is decided on the text, but what is returned is the cell
-    pandas handed over, untouched. The headerless read path infers a
-    dtype, so a chromosome column of bare digits comes back as an int --
-    arguably the wrong type, since a transcript index keyed by the int
-    17 is unreachable by a query for "17", but it is what these files
-    produce today. Normalising it belongs to gain#931's work at the read
-    boundary; a guard meant only to reject must not re-type a cell that
-    parses.
+    pandas handed over, untouched -- a guard meant only to reject must
+    not re-type a cell that parses. It used to matter which read path
+    handed it over: the headerless one inferred a dtype, so a chromosome
+    column of bare digits came back as the int 17, and a transcript
+    index keyed by that is unreachable by a query for "17". gain#931
+    settled that at the read boundary, where it belonged, so both paths
+    now hand over text.
     """
     name_text = cell_text(rec[name_column])
     chrom_text = cell_text(rec[chrom_column])
