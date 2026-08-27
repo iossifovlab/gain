@@ -34,6 +34,7 @@ from gain.genomic_resources.gene_models.transcript_models import (
 
 from tests.small.genomic_resources.gene_models.columnar_formats import (
     BAD_NAME,
+    GOOD_NAME,
     OPTIONAL_CELL_CASE_IDS,
     OPTIONAL_CELLS,
     ColumnarFormat,
@@ -76,3 +77,27 @@ def test_a_blank_optional_cell_is_not_serialized_as_nan(
     assert models is not None
 
     assert serialized_attribute(models, BAD_NAME, column) == ""
+
+
+@pytest.mark.parametrize(
+    ("fmt", "column"), OPTIONAL_CELLS, ids=OPTIONAL_CELL_CASE_IDS)
+def test_a_blank_cell_leaves_another_record_untouched(
+    fmt: ColumnarFormat, column: str,
+) -> None:
+    """One record's blank must not reach a different record's output.
+
+    The two files here differ in exactly one cell, and it belongs to the
+    record this test does not look at. A bare-digit column is read as
+    integers, so the blank floats the column and the *well-formed*
+    record's `0` is serialized as `0.0` -- which is what makes "existing
+    behaviour is unchanged" already false: what a record serializes as
+    depends on whether some other row was blank.
+    """
+    unblemished = fmt.fields[fmt.columns.index(column)]
+    baseline = fmt.parse(fmt.file_with(column, unblemished))
+    with_a_blank = fmt.parse(fmt.file_with(column, ""))
+    assert baseline is not None
+    assert with_a_blank is not None
+
+    assert serialized_attribute(with_a_blank, GOOD_NAME, column) == \
+        serialized_attribute(baseline, GOOD_NAME, column)
