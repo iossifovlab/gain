@@ -253,9 +253,13 @@ def test_supported_formats_are_inferrable() -> None:
 
 
 #: A format parser is named for the format it reads. The shared helpers the
-#: parsers module also carries -- ``parse_raw``, ``parse_transcript_bounds``,
-#: ``parse_exon_bounds``, ``parse_default_attributes`` -- deliberately do not
-#: match, so the scan below sees the format parsers and nothing else.
+#: parsers module also carries -- ``parse_columnar_format``, ``parse_raw``,
+#: ``parse_transcript_bounds``, ``parse_exon_bounds``,
+#: ``parse_default_attributes`` -- deliberately do not match, so the scan
+#: below sees the format parsers and nothing else. Note it is ``_models_``
+#: that excludes them: matching a bare ``_format`` suffix would sweep up
+#: ``parse_columnar_format``, which is the shared record loop and is
+#: registered under no name of its own.
 _FORMAT_PARSER_NAME = re.compile(r"parse_\w+_models_format")
 
 
