@@ -217,19 +217,23 @@ def test_a_cell_that_parses_keeps_the_value_the_file_gave(
 ) -> None:
     """Refusing a bad cell must not re-type a good one.
 
-    The five UCSC-derived layouts are read without a string dtype on the
-    headerless path, so pandas infers a numeric chromosome column as int.
-    That is arguably the wrong type -- a transcript index keyed by the
-    int 17 is unreachable by a query for "17" -- but it is what these
-    files produce today, and normalising it belongs to gain#931's work at
-    the read boundary, not to a guard that is only meant to reject.
+    The guard reads a cell to decide whether to reject it and hands back
+    what it was given, so a chromosome spelled `17` keeps whatever the
+    read made of it.
+
+    That used to differ by read path: the headerless one inferred a
+    numeric chromosome column as int, which is the wrong type -- a
+    transcript index keyed by the int 17 is unreachable by a query for
+    "17". gain#931 settled it at the read boundary, where it belonged,
+    by pinning both paths to text; this now reads the same on either.
+    The type itself is pinned by the cell-type suite.
     """
     numeric_chrom = fmt.parse(fmt._file(
         fmt.row_with(fmt.chrom_column, "17")))
 
     assert numeric_chrom is not None
     chroms = [model.chrom for model in numeric_chrom.values()]
-    assert chroms == [17 if not fmt.header else "17"], (
+    assert chroms == ["17"], (
         f"{fmt.name}: chromosome came back as {chroms}"
     )
 

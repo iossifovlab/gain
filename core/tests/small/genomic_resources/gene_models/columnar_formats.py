@@ -102,6 +102,20 @@ class ColumnarFormat:
         recognise the layout at all -- then the offending one."""
         return self._file(self.good_row(), self.row_with(column, value))
 
+    def file_with_column(self, column: str, value: str) -> IO:
+        """Both rows carrying `value` in `column`.
+
+        What dtype a read infers is a property of the whole column, so a
+        test about the inferred type has to spell every cell of it the
+        same way: one odd cell leaves the column an object column, which
+        is a different read from the one under test.
+        """
+        fields = list(self.fields)
+        fields[self.columns.index(column)] = value
+        second = list(fields)
+        second[self.columns.index(self.name_column)] = BAD_NAME
+        return self._file(self._row(fields), self._row(second))
+
 
 UCSC_COORDINATES = ("100", "400", "150", "350", "2", "100,300,", "200,400,")
 

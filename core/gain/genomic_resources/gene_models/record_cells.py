@@ -99,10 +99,14 @@ def parse_coordinate(
     rejected. The default format did not convert at all, so a blank cell
     became a transcript bound of ``NaN`` (gain#929).
 
-    A cell pandas has already typed as a number is converted from the
-    number rather than from its text, because that is what the parsers
-    did before this guard: a column spelled ``100.0`` throughout is
-    typed float, and ``int(100.0)`` is what kept it parsing.
+    A coordinate spelled ``100.0`` is read as ``100`` whether it arrives
+    as text or as a number. It used to be only the latter: a column
+    spelled that way throughout was inferred as float on the headerless
+    path and ``int(100.0)`` kept it parsing, while the headered path
+    pinned it to text and ``int("100.0")`` did not, so the same file
+    parsed or failed depending on which branch recognised it. Since
+    gain#931 reads every columnar cell as text, the text conversion is
+    the one that has to accept both spellings.
 
     ``OverflowError`` is caught alongside the rest because ``inf`` is a
     coordinate pandas accepts and ``int()`` will not take. It reaches
@@ -127,7 +131,16 @@ def parse_coordinate(
             raise unparsable(column, tr_name, chrom, str(value)) from ex
     try:
         return int(text)
-    except ValueError as ex:
+    except ValueError:
+        pass
+    # ``int`` will not take the text of a whole number spelled as a
+    # decimal, so the float conversion is what reads ``100.0``. It is
+    # tried second because it also accepts spellings a coordinate column
+    # has no business holding -- ``nan`` and ``inf`` among them, which
+    # ``int`` then refuses, the latter by ``OverflowError``.
+    try:
+        return int(float(text))
+    except (ValueError, OverflowError) as ex:
         raise unparsable(column, tr_name, chrom, text) from ex
 
 

@@ -318,13 +318,30 @@ def probe_columns(
 def parse_raw(
     infile: IO, expected_columns: list[str],
     nrows: int | None = None, comment: str | None = None,
+    *, infer_dtypes: bool = False,
 ) -> pd.DataFrame | None:
-    """Parse raw gene models data based on expected columns."""
+    """Parse raw gene models data based on expected columns.
+
+    Both branches read every column as text and keep a blank cell as the
+    empty string it was. Letting pandas infer instead made what a cell
+    became a property of its whole column rather than of itself: one
+    blank re-typed the column, so a well-formed record serialized
+    differently depending on whether some *other* row was blank, and the
+    blank itself reached serialization as the fabricated token ``nan``
+    (gain#931). It also decided a chromosome column of bare digits was
+    numeric, which gain#929 left here to settle.
+
+    ``infer_dtypes`` restores the inference for the one caller that
+    wants it. The GTF reader converts its own columns and is not a
+    columnar layout; pinning it to text is a separate change from this
+    one, so it opts out and keeps the read it had.
+    """
+    dtype = None if infer_dtypes else str
     if probe_header(infile, expected_columns, comment=comment):
         infile.seek(0)
         df = pd.read_csv(
             infile, sep="\t", nrows=nrows, comment=comment,
-            dtype=str, na_filter=False,
+            dtype=dtype, na_filter=False,
         )
         assert list(df.columns) == expected_columns
         return df
@@ -338,6 +355,7 @@ def parse_raw(
             header=None,
             names=expected_columns,
             comment=comment,
+            dtype=dtype,
             na_filter=False,
         )
         assert list(df.columns) == expected_columns
@@ -885,12 +903,14 @@ def parse_gtf_gene_models_format(
 
     infile.seek(0)
     df = parse_raw(
-        infile, expected_columns, nrows=nrows, comment="#")
+        infile, expected_columns, nrows=nrows, comment="#",
+        infer_dtypes=True)
     if df is None:
         expected_columns.append("comment")
         infile.seek(0)
         df = parse_raw(
-            infile, expected_columns, nrows=nrows, comment="#")
+            infile, expected_columns, nrows=nrows, comment="#",
+            infer_dtypes=True)
         if df is None:
             return None
 
