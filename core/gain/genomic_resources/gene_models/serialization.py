@@ -385,7 +385,12 @@ def _save_as_default_gene_models(
             exon_frames,
             add_atts,
         ]
-        outfile.write("\t".join([str(x) if x else "" for x in columns]))
+        # Presence, not truthiness: a coordinate of ``0`` is a value the
+        # file has to carry, and a truthiness guard wrote it as a blank
+        # cell that the read side then refused -- gain could not read
+        # back what gain had written (gain#951).
+        outfile.write(
+            "\t".join([str(x) if x is not None else "" for x in columns]))
         outfile.write("\n")
 
 
