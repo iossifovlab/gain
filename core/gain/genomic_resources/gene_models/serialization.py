@@ -415,6 +415,15 @@ def _save_as_default_gene_models(
         # file has to carry, and a truthiness guard wrote it as a blank
         # cell that the read side then refused -- gain could not read
         # back what gain had written (gain#951).
+        #
+        # ``None`` still blanks rather than being refused the way an
+        # unset exon frame is. The reads cannot produce one -- the
+        # columnar reader passes ``na_filter=False``, so a missing cell
+        # arrives as the empty string -- and the blank an ``atts`` of
+        # ``None`` writes is the cell that column is meant to have when
+        # a record carries no attributes. An unset *frame* has no such
+        # spelling: the column is one value per exon, so there is no
+        # empty cell to fall back to.
         outfile.write(
             "\t".join([str(x) if x is not None else "" for x in columns]))
         outfile.write("\n")
