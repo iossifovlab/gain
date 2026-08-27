@@ -80,14 +80,14 @@ def written_out(gene_models: GeneModels) -> str:
 def cell_of(written: str, tr_id: str, column: str) -> str:
     """One named cell of one record of a written default-format file.
 
-    The column is found through the header the file carries rather than
-    by a fixed position, so this says which cell it means in the
-    format's own terms.
+    Both the record and the column are found through the header the
+    file carries rather than by a fixed position, so this says which
+    cell it means in the format's own terms.
     """
     header, *rows = written.splitlines()
-    index = header.split("\t").index(column)
-    [row] = [r for r in rows if r.split("\t")[1] == tr_id]
-    return row.split("\t")[index]
+    columns = header.split("\t")
+    names = [row.split("\t")[columns.index("trID")] for row in rows]
+    return rows[names.index(tr_id)].split("\t")[columns.index(column)]
 
 
 def shape(transcript: TranscriptModel) -> tuple:
@@ -127,23 +127,10 @@ def test_a_record_with_a_blank_cell_survives_the_round_trip() -> None:
     this pins the neighbour as well as the blank itself.
     """
     genes = refseq_row("NM_000546", "0") + refseq_row("NM_001126", "")
-    resource = build_inmemory_test_resource(content={
-        "genomic_resource.yaml":
-            "{type: gene_models, filename: genes.txt, format: refseq}",
-        "genes.txt": genes,
-    })
-    gene_models = build_gene_models_from_resource(resource)
-    gene_models.load()
+    gene_models = models_of(genes, "refseq")
 
-    written = StringIO()
-    _save_as_default_gene_models(gene_models, written)
-    reloaded = build_gene_models_from_resource(build_inmemory_test_resource(
-        content={
-            "genomic_resource.yaml":
-                "{type: gene_models, filename: genes.txt, format: default}",
-            "genes.txt": written.getvalue(),
-        }))
-    reloaded.load()
+    written = written_out(gene_models)
+    reloaded = models_of(written, "default")
 
     assert shapes(reloaded.transcript_models) == \
         shapes(gene_models.transcript_models)
@@ -151,9 +138,7 @@ def test_a_record_with_a_blank_cell_survives_the_round_trip() -> None:
     # and the file itself is a fixpoint: writing the models that were
     # read back reproduces the bytes they were read from. This is the
     # type-independent half -- it compares the format to itself.
-    again = StringIO()
-    _save_as_default_gene_models(reloaded, again)
-    assert again.getvalue() == written.getvalue()
+    assert written_out(reloaded) == written
 
 
 def test_a_zero_coordinate_survives_the_round_trip() -> None:
@@ -202,12 +187,16 @@ def test_a_zero_transcript_start_survives_the_round_trip() -> None:
 
     gain's own format is not half-open -- it is already in gain's
     coordinates -- so a `tsBeg` of 0 is read as 0 rather than shifted to
-    1. This is the trip that starts and ends in the format under test,
-    so it compares the format to itself: what gain wrote, gain has to be
-    able to read (gain#951).
+    1, which is what puts a second column through the guard. gain would
+    not itself emit this file: its coordinates are 1-based and closed,
+    so 0 is off-spec, and the file here is hand-made rather than
+    gain-written. What it pins is the guard, not a bound gain produces.
+
+    The first record's start is well-formed, so this pins the neighbour
+    as well as the 0 itself.
     """
     gene_models = models_of(
-        DEFAULT.file_with_column("tsBeg", "0").read(), "default")
+        DEFAULT.file_with("tsBeg", "0").read(), "default")
 
     written = written_out(gene_models)
     reloaded = models_of(written, "default")
@@ -253,17 +242,9 @@ def test_a_blank_cell_is_written_out_as_nothing() -> None:
     it, `nan` included, as long as it came back unchanged. This is the
     half that says which token: none.
     """
-    genes = refseq_row("NM_001126", "")
-    resource = build_inmemory_test_resource(content={
-        "genomic_resource.yaml":
-            "{type: gene_models, filename: genes.txt, format: refseq}",
-        "genes.txt": genes,
-    })
-    gene_models = build_gene_models_from_resource(resource)
-    gene_models.load()
+    gene_models = models_of(refseq_row("NM_001126", ""), "refseq")
 
-    written = StringIO()
-    _save_as_default_gene_models(gene_models, written)
+    written = written_out(gene_models)
 
-    assert "nan" not in written.getvalue()
-    assert "score:;" in written.getvalue()
+    assert "nan" not in written
+    assert "score:;" in written
