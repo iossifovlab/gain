@@ -335,6 +335,33 @@ def transcript_to_gtf(transcript: TranscriptModel) -> list[GTFRecord]:
     return record_buffer
 
 
+def _format_exon_frames(transcript_model: TranscriptModel) -> str:
+    """Pack the exon reading frames into the ``exonFrames`` column.
+
+    An ``Exon`` built without a frame holds ``None``, which ``str()``
+    spells as the literal ``None`` -- a token the format cannot express
+    and the read side refuses, so the record could not be read back
+    (gain#951). A non-coding exon is ``-1`` here, not ``None``; see
+    ``TranscriptModel.calc_frames``.
+
+    Every parser fills the frames in through ``update_frames()`` before
+    the models escape, so nothing gain has read reaches this. What it
+    guards is a model built by hand whose frames were never computed,
+    and it refuses rather than substituting the ``-1`` such an exon
+    would most likely have taken: writing a value the model never held
+    is what made the fabricated ``nan`` of gain#931 a defect.
+    """
+    for exon in transcript_model.exons:
+        if exon.frame is None:
+            raise ValueError(
+                f"transcript {transcript_model.tr_id} at "
+                f"{transcript_model.chrom} has an exon with no frame "
+                f"to write in the exonFrames column; the frames are "
+                f"computed by update_frames()",
+            )
+    return ",".join([str(exon.frame) for exon in transcript_model.exons])
+
+
 def _save_as_default_gene_models(
     gene_models: GeneModels,
     outfile: IO,
@@ -365,8 +392,7 @@ def _save_as_default_gene_models(
             str(e.start) for e in transcript_model.exons])
         exon_ends = ",".join([
             str(e.stop) for e in transcript_model.exons])
-        exon_frames = ",".join([
-            str(e.frame) for e in transcript_model.exons])
+        exon_frames = _format_exon_frames(transcript_model)
 
         add_atts = format_default_attributes(transcript_model.attributes)
 
