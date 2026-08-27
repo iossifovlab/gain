@@ -17,6 +17,7 @@ from gain.utils.log_safety import escape_unsafe_characters
 from .default_attributes import parse_default_attributes
 from .record_cells import (
     QUOTED_TEXT_LIMIT,
+    cell_text,
     parse_coordinate,
     parse_exon_bounds,
     parse_exon_positions,
@@ -323,7 +324,7 @@ def parse_raw(
         infile.seek(0)
         df = pd.read_csv(
             infile, sep="\t", nrows=nrows, comment=comment,
-            dtype=str,
+            dtype=str, na_filter=False,
         )
         assert list(df.columns) == expected_columns
         return df
@@ -337,6 +338,7 @@ def parse_raw(
             header=None,
             names=expected_columns,
             comment=comment,
+            na_filter=False,
         )
         assert list(df.columns) == expected_columns
         return df
@@ -902,15 +904,20 @@ def parse_gtf_gene_models_format(
         if feature in GTF_IGNORED_FEATURES:
             continue
         # The scanner takes text, and this column does not always arrive
-        # as text: pandas reads a blank cell as a float ``NaN`` (whether
-        # the row is short or ends on an empty column), and infers a
-        # numeric dtype for a column that is numeric throughout. Either
+        # as text: a short row leaves it a float ``NaN``, and a column
+        # that is numeric throughout is inferred as a number. Either
         # would escape as an ``AttributeError`` naming a float and neither
         # the record nor the file, which is gain#907. A blank column names
         # the record; anything else is coerced and left to the scanner,
         # which rejects it as the malformed attribute it is.
+        #
+        # Blankness is decided on the text because the two spellings of it
+        # no longer arrive alike: since gain#931 the read keeps a blank
+        # cell as ``''`` and only a short row still yields ``NaN``.
+        # Whitespace is deliberately not stripped here -- a cell holding
+        # spaces went to the scanner before and still does.
         attributes_column = rec["attributes"]
-        if pd.isna(attributes_column):
+        if not cell_text(attributes_column):
             raise ValueError(
                 f"{_record_location(rec)} has an empty attributes column",
             )

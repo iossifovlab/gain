@@ -67,6 +67,12 @@ class ColumnarFormat:
         "txStart", "txEnd", "cdsStart", "cdsEnd")
     #: The default format is read by column name, so it needs its header.
     header: bool = False
+    #: The columns this layout copies straight into
+    #: `TranscriptModel.attributes`, and so out through serialization. A
+    #: blank one is not load-bearing -- the record parses without it --
+    #: which is exactly why what a blank one serializes as went unnoticed
+    #: (gain#931). The three layouts that carry none leave this empty.
+    optional_columns: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         assert len(self.columns) == len(self.fields), self.name
@@ -120,9 +126,17 @@ GENEPRED_COLUMNS = (
 )
 GENEPRED_FIELDS = (GOOD_NAME, CHROM, "+", *UCSC_COORDINATES)
 
+#: refSeq and CCDS copy these six out of the record and into the model's
+#: attributes; `score`, `#bin` and `exonCount` are spelled as bare digits,
+#: which is what lets one blank cell re-type the whole column.
+REFSEQ_OPTIONAL = (
+    "#bin", "score", "exonCount", "cdsStartStat", "cdsEndStat", "exonFrames",
+)
+
 REFSEQ = ColumnarFormat(
     "refseq", parse_ref_seq_gene_models_format,
     REFSEQ_COLUMNS, REFSEQ_FIELDS, first_exon_start=101,
+    optional_columns=REFSEQ_OPTIONAL,
 )
 
 #: gain's own output format: read by column name rather than by
@@ -146,6 +160,7 @@ FORMATS = [
     ColumnarFormat(
         "ccds", parse_ccds_gene_models_format,
         REFSEQ_COLUMNS, REFSEQ_FIELDS, first_exon_start=101,
+        optional_columns=REFSEQ_OPTIONAL,
     ),
     ColumnarFormat(
         "refflat", parse_ref_flat_gene_models_format,
@@ -156,6 +171,7 @@ FORMATS = [
         "knowngene", parse_known_gene_models_format,
         (*GENEPRED_COLUMNS, "proteinID", "alignID"),
         (*GENEPRED_FIELDS, "P04637", "uc002gig.1"), first_exon_start=101,
+        optional_columns=("proteinID", "alignID"),
     ),
     ColumnarFormat(
         "ucscgenepred", parse_ucscgenepred_models_format,
@@ -179,3 +195,20 @@ HEADERED_FORMATS = [
 #: Every layout on every read path.
 READ_PATHS = [*FORMATS, *HEADERED_FORMATS]
 READ_PATH_IDS = [fmt.name for fmt in READ_PATHS]
+
+#: The read paths whose layout carries optional cells. Both branches of
+#: `parse_raw` are here deliberately: they read with different dtypes, so
+#: what a blank cell becomes on one says nothing about the other.
+OPTIONAL_CELL_PATHS = [fmt for fmt in READ_PATHS if fmt.optional_columns]
+OPTIONAL_CELL_IDS = [fmt.name for fmt in OPTIONAL_CELL_PATHS]
+
+#: One (layout, column) pair per optional cell, so a failure names the
+#: column rather than reporting the layout as a whole.
+OPTIONAL_CELLS = [
+    (fmt, column)
+    for fmt in OPTIONAL_CELL_PATHS
+    for column in fmt.optional_columns
+]
+OPTIONAL_CELL_CASE_IDS = [
+    f"{fmt.name}-{column}" for fmt, column in OPTIONAL_CELLS
+]
