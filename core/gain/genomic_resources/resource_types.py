@@ -1,5 +1,8 @@
-"""Resource ``type:`` values: which spellings are accepted, and which mean
+"""GAIn's config vocabulary: which spellings are accepted, and which mean
 the same thing.
+
+Mostly resource ``type:`` values, plus the annotator names that were
+retired alongside one of them.
 
 Two different relations live here, and they are not the same.
 ``fragment_score`` and ``cnv_collection`` are *equivalent* -- either
@@ -7,7 +10,8 @@ resolves to the same thing, one is merely deprecated.  ``np_score`` is
 *retired*: it is no longer accepted at all, and it was never equivalent to
 its replacement, since it carried a different default read mode.  The
 first relation is served by :func:`equivalent_resource_types`, the second
-by :func:`reject_retired_resource`.
+by :func:`reject_retired_resource` and, for the annotator names,
+:func:`retired_annotator_message`.
 
 Deliberately dependency-free and low in the import graph.  The equivalence
 below is needed by ``repository`` (which applies the type predicate in SQL),
@@ -221,6 +225,39 @@ def retired_resource_type_message(*, found_in: str) -> str:
         f"while '{PREFERRED_ALLELE_SCORE_TYPE}' reads in alleles mode by "
         f"default, so add 'allele_score_mode: substitutions' to keep the "
         f"previous behaviour."
+    )
+
+
+#: Annotator names GAIn no longer accepts, mapped to what to write instead.
+#:
+#: The annotator half of the same retirement (gain#919): these named the
+#: allele-score annotator in a pipeline's YAML, as ``np_score`` named its
+#: resource type.  Each maps to the replacement of the same shape, so a
+#: migration is a one-word edit.
+#:
+#: Here rather than in the annotation package because two seams need it and
+#: they are on opposite sides of an import edge: ``annotation_factory``
+#: turns the name into a factory, and ``annotation_config`` turns it into a
+#: resource set while parsing -- and the former imports the latter.
+RETIRED_ANNOTATOR_NAMES = {
+    "np_score": "allele_score",
+    "np_score_annotator": "allele_score_annotator",
+}
+
+
+def retired_annotator_message(annotator_type: str) -> str:
+    """Return the refusal text for one use of a retired annotator name.
+
+    Silent about ``allele_score_mode``, unlike its resource-type sibling
+    above: the mode was only ever derived from the resource, and an
+    annotator name is refused before any resource is opened, so a pipeline
+    naming both retired spellings is told about the annotator first and
+    about the resource -- with its mode advice -- once that is fixed.
+    """
+    return (
+        f"annotator '{annotator_type}' was removed in GAIn "
+        f"{RETIRED_VOCABULARY_REMOVAL_RELEASE}; write "
+        f"'{RETIRED_ANNOTATOR_NAMES[annotator_type]}' instead"
     )
 
 

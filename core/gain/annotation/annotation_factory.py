@@ -21,6 +21,10 @@ from gain.annotation.annotation_pipeline import (
     ValueTransformAnnotatorDecorator,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.resource_types import (
+    RETIRED_ANNOTATOR_NAMES,
+    retired_annotator_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +82,10 @@ def get_annotator_factory(
     """
     _load_annotator_factory_plugins()
     if annotator_type not in _ANNOTATOR_FACTORY_REGISTRY:
+        # Inside the miss, so a third party that registers one of these
+        # names itself through `register_annotator_factory` keeps it.
+        if annotator_type in RETIRED_ANNOTATOR_NAMES:
+            raise ValueError(retired_annotator_message(annotator_type))
         raise ValueError(f"unsupported annotator type: {annotator_type}")
     return _ANNOTATOR_FACTORY_REGISTRY[annotator_type]
 

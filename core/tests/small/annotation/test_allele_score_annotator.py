@@ -17,8 +17,10 @@ from gain.genomic_resources.repository_factory import (
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
+    build_inmemory_test_repository,
     convert_to_tab_separated,
     setup_directories,
+    setup_tabix,
     setup_vcf,
 )
 
@@ -920,3 +922,160 @@ def test_allele_score_value_count_aggregator_on_string_attribute(
 
     assert result_pos10["classification"] == {"pathogenic": 2, "benign": 1}
     assert result_pos20["classification"] == {"benign": 2, "vus": 1}
+
+
+# The two tests below cover shapes nothing else in this file does: indel
+# annotatables aggregated in region mode, and the only tabix-backed allele
+# score in the annotation tests.
+_INMEMORY_ALLELE_SCORE_REPO = {
+    "allele_score1": {
+        "genomic_resource.yaml":
+        """\
+        type: allele_score
+        table:
+            filename: data.mem
+            reference:
+              name: reference
+            alternative:
+              name: alternative
+        scores:
+        - id: test_raw
+          type: float
+          desc: "test values"
+          name: raw
+        """,
+        "data.mem": """
+            chrom  pos_begin  reference alternative raw
+            1      14968      A         C           0.00001
+            1      14968      A         G           0.00002
+            1      14968      A         T           0.00004
+            1      14969      C         A           0.0001
+            1      14969      C         G           0.0002
+            1      14969      C         T           0.0004
+            1      14970      C         A           0.001
+            1      14970      C         G           0.002
+            1      14970      C         T           0.004
+            1      14971      C         A           0.01
+            1      14971      C         G           0.02
+            1      14971      C         T           0.04
+            1      14972      T         A           0.1
+            1      14972      T         C           0.2
+            1      14972      T         G           0.4
+        """,
+    },
+}
+
+
+@pytest.mark.parametrize("variant,aggregator,expected", [
+    (("1", 14970, "CA", "C"), "max", 0.4),
+    (("1", 14970, "C", "CA"), "max", 0.04),
+])
+def test_allele_score_annotator_inmemory_region_indels(
+        variant: tuple, aggregator: str, expected: float) -> None:
+    repo = build_inmemory_test_repository(_INMEMORY_ALLELE_SCORE_REPO)
+    pipeline_config = textwrap.dedent(f"""
+        - allele_score:
+            resource_id: allele_score1
+            mode: region
+            attributes:
+            - source: test_raw
+              name: test
+              aggregator: {aggregator}
+        """)
+    pipeline = load_pipeline_from_yaml(pipeline_config, repo)
+    with pipeline.open() as work_pipeline:
+        result = work_pipeline.annotate(VCFAllele(*variant))
+        assert result is not None
+        assert result.get("test") == pytest.approx(expected, rel=1e-2)
+
+
+@pytest.fixture(scope="module")
+def tabix_allele_score_repo(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> GenomicResourceRepo:
+    root_path = tmp_path_factory.mktemp("tabix_allele_score")
+    setup_directories(
+        root_path / "allele_score2", {
+            "genomic_resource.yaml": """
+                type: allele_score
+                table:
+                    filename: data.txt.gz
+                    format: tabix
+                    reference:
+                      name: ref
+                    alternative:
+                      name: alt
+                scores:
+                    - id: s1
+                      type: float
+                      name: s1
+
+                    - id: s2
+                      type: float
+                      name: s2
+            """,
+        })
+    setup_tabix(
+        root_path / "allele_score2" / "data.txt.gz",
+        textwrap.dedent("""
+            #chrom  pos_begin  ref  alt  s1    s2
+            chr1    1          A    G    0.1   1.0
+            chr1    1          A    C    0.1   1.0
+            chr1    1          A    T    0.1   1.0
+            chr1    11         A    G    0.2   2.0
+            chr1    11         A    C    0.3   na
+            chr1    11         A    T    0.4   na
+            chr1    21         C    A    na    3.0
+            chr1    21         C    G    na    4.0
+            chr1    21         C    T    0.5   5.0
+            chr1    31         C    A    na    3.0
+            chr1    31         C    G    0.4   na
+            chr1    31         C    T    na   5.0
+
+            chr1    41         A    G    0.1   1.0
+            chr1    41         A    C    0.1   1.0
+            chr1    41         A    G    0.1   1.0
+
+            chr1    51         A    G    0.3   3.0
+            chr1    51         A    C    0.33  3.3
+
+            chr1    60         A    G    0.3   3.0
+            chr1    60         A    C    0.33  3.3
+            chr1    60         A    G    0.4   4.0
+            chr1    60         A    C    0.44  4.4
+
+        """).strip(),
+        seq_col=0, start_col=1, end_col=1, line_skip=1)
+    return build_filesystem_test_repository(root_path)
+
+
+@pytest.mark.parametrize("variant,s1,s2", [
+    (("chr1", 1, "A", "G"), 0.1, 1.0),
+    (("chr1", 60, "A", "G"), 0.3, 3.0),
+    (("chr1", 60, "A", "C"), 0.33, 3.3),
+])
+def test_allele_score_annotator_tabix_multiple_scores(
+    tabix_allele_score_repo: GenomicResourceRepo,
+    variant: tuple,
+    s1: float,
+    s2: float,
+) -> None:
+    pipeline_config = textwrap.dedent("""
+        - allele_score:
+            resource_id: allele_score2
+            attributes:
+            - source: s1
+              name: s1
+            - source: s2
+              name: s2
+        """)
+
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, tabix_allele_score_repo)
+
+    annotatable = VCFAllele(*variant)
+    with pipeline.open() as work_pipeline:
+        result = work_pipeline.annotate(annotatable)
+
+    assert result.get("s1") == pytest.approx(s1, rel=1e-2), annotatable
+    assert result.get("s2") == pytest.approx(s2, rel=1e-2), annotatable

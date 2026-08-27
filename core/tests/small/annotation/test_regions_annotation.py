@@ -33,7 +33,7 @@ def fixture_repo() -> GenomicResourceRepo:
                 chr1   30         39       3.0
             """,
         },
-        "np_score1": {
+        "allele_score_raw": {
             "genomic_resource.yaml": textwrap.dedent("""
             type: allele_score
             table:
@@ -135,7 +135,7 @@ def test_position_score_annotator(
     (("chr1", 10, 13), "min", 0.00001),
     (("chr1", 10, 14), "max", 0.4),
 ])
-def test_np_score_annotator(
+def test_allele_score_region_annotator(
         region: tuple,
         aggregator: str, expected: float,
         fixture_repo: GenomicResourceRepo) -> None:
@@ -143,8 +143,8 @@ def test_np_score_annotator(
     annotatable = Region(*region)
 
     pipeline_config = textwrap.dedent(f"""
-        - np_score:
-            resource_id: np_score1
+        - allele_score:
+            resource_id: allele_score_raw
             attributes:
             - source: test_raw
               name: test
@@ -166,7 +166,7 @@ def test_np_score_annotator(
     (("chr1", 10, 13), "max", None),
     (("chr1", 10, 14), "max", None),
 ])
-def test_np_score_annotator_region_length_cutoff(
+def test_allele_score_region_length_cutoff(
         region: tuple,
         aggregator: str, expected: float,
         fixture_repo: GenomicResourceRepo) -> None:
@@ -174,8 +174,8 @@ def test_np_score_annotator_region_length_cutoff(
     annotatable = Region(*region)
 
     pipeline_config = textwrap.dedent(f"""
-        - np_score:
-            resource_id: np_score1
+        - allele_score:
+            resource_id: allele_score_raw
             region_length_cutoff: 3
             attributes:
             - source: test_raw
