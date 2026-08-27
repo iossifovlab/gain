@@ -1,8 +1,11 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """Tests for gain.genomic_resources.gene_models.parsers module."""
+import inspect
+import re
 from io import StringIO
 
 import pytest
+from gain.genomic_resources.gene_models import parsers
 from gain.genomic_resources.gene_models.parsers import (
     SUPPORTED_GENE_MODELS_FILE_FORMATS,
     _parse_gtf_attributes,
@@ -161,22 +164,37 @@ def test_parse_gtf_attributes_with_values_containing_spaces() -> None:
     assert result["gene_id"] == "ENSG001"
 
 
-@pytest.mark.parametrize(
-    "format_name,expected_parser",
-    [
-        ("default", parse_default_gene_models_format),
-        ("refflat", parse_ref_flat_gene_models_format),
-        ("refseq", parse_ref_seq_gene_models_format),
-        ("ccds", parse_ccds_gene_models_format),
-        ("knowngene", parse_known_gene_models_format),
-        ("gtf", parse_gtf_gene_models_format),
-        ("ucscgenepred", parse_ucscgenepred_models_format),
-    ],
-)
+#: Which parser each format name is meant to reach, spelled out rather than
+#: read back from the registry under test -- a lookup keyed by the same dict
+#: would agree with any binding, including a wrong one. Swapping two rows
+#: here has to fail, so the pairs stay written by hand; the test below keeps
+#: the list from drifting out of step with the supported formats.
+_GET_PARSER_CASES = [
+    ("default", parse_default_gene_models_format),
+    ("refflat", parse_ref_flat_gene_models_format),
+    ("refseq", parse_ref_seq_gene_models_format),
+    ("ccds", parse_ccds_gene_models_format),
+    ("knowngene", parse_known_gene_models_format),
+    ("gtf", parse_gtf_gene_models_format),
+    ("ucscgenepred", parse_ucscgenepred_models_format),
+]
+
+
+@pytest.mark.parametrize("format_name,expected_parser", _GET_PARSER_CASES)
 def test_get_parser(format_name: str, expected_parser) -> None:  # type: ignore
     """Test get_parser returns correct parser for supported formats."""
     parser = get_parser(format_name)
     assert parser is expected_parser
+
+
+def test_get_parser_cases_cover_every_supported_format() -> None:
+    """Every supported format has its binding pinned above.
+
+    Without this, adding a format is only half-tested: the new name reaches
+    a parser, but nothing says it reaches the intended one.
+    """
+    covered = {format_name for format_name, _ in _GET_PARSER_CASES}
+    assert covered == SUPPORTED_GENE_MODELS_FILE_FORMATS
 
 
 def test_get_parser_unsupported() -> None:
@@ -232,6 +250,37 @@ def test_supported_formats_are_inferrable() -> None:
     for fmt in SUPPORTED_GENE_MODELS_FILE_FORMATS:
         parser = get_parser(fmt)
         assert parser is not None, f"Format {fmt} has no parser"
+
+
+#: A format parser is named for the format it reads. The shared helpers the
+#: parsers module also carries -- ``parse_raw``, ``parse_transcript_bounds``,
+#: ``parse_exon_bounds``, ``parse_default_attributes`` -- deliberately do not
+#: match, so the scan below sees the format parsers and nothing else.
+_FORMAT_PARSER_NAME = re.compile(r"parse_\w+_models_format")
+
+
+def test_every_format_parser_is_reachable_through_get_parser() -> None:
+    """A parser under no format name is dead code no caller can reach.
+
+    ``test_supported_formats_are_inferrable`` covers the other direction --
+    every supported name resolves to a parser. Together they pin the two
+    structures to each other; neither alone catches a one-sided edit.
+    """
+    defined = {
+        obj
+        for name, obj in vars(parsers).items()
+        if _FORMAT_PARSER_NAME.fullmatch(name) and inspect.isfunction(obj)
+    }
+    assert defined, \
+        "the format-parser naming convention moved; this scan matched nothing"
+
+    reachable = {get_parser(fmt) for fmt in SUPPORTED_GENE_MODELS_FILE_FORMATS}
+
+    unreachable = defined - reachable
+    assert not unreachable, (
+        "format parsers registered under no name: "
+        f"{sorted(parser.__name__ for parser in unreachable)}"
+    )
 
 
 def test_load_gene_mapping_simple() -> None:
