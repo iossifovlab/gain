@@ -96,8 +96,6 @@ ann_data = "gain.genomic_resources.implementations.ann_data_resource_impl:AnnDat
 [project.entry-points."gain.annotation.annotators"]
 allele_score = "gain.annotation.score_annotator:build_allele_score_annotator"
 allele_score_annotator = "gain.annotation.score_annotator:build_allele_score_annotator"
-np_score = "gain.annotation.score_annotator:build_np_score_annotator"
-np_score_annotator = "gain.annotation.score_annotator:build_np_score_annotator"
 position_score = "gain.annotation.score_annotator:build_position_score_annotator"
 position_score_annotator = "gain.annotation.score_annotator:build_position_score_annotator"
 effect_annotator = "gain.annotation.effect_annotator:build_effect_annotator"

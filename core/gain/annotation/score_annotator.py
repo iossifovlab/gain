@@ -1,7 +1,7 @@
-"""This contains the implementation of the three score annotators.
+"""This contains the implementation of the two score annotators.
 
-Genomic score annotators defined are position_score_annotator,
-np_score_annotator, and allele_score_annotator.
+Genomic score annotators defined are position_score_annotator and
+allele_score_annotator.
 """
 import abc
 import textwrap
@@ -335,14 +335,6 @@ phastCons, phyloP, FitCons2, etc.
         if not any(raw.values()):
             return self._empty_result()
         return raw
-
-
-def build_np_score_annotator(pipeline: AnnotationPipeline,
-                             info: AnnotatorInfo) -> Annotator:
-    logger.warning(
-        "usage of 'np_score_annotator' is deprecated, "
-        "use 'allele_score_annotator' instead")
-    return AlleleScoreAnnotator(pipeline, info)
 
 
 def build_allele_score_annotator(pipeline: AnnotationPipeline,

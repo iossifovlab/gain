@@ -46,7 +46,7 @@ def genomic_resources_repo() -> GenomicResourceRepo:
                 1      14976      14977    0.4      4    40
             """,
         },
-        "np_score1": {
+        "allele_score1": {
             "genomic_resource.yaml":
             """\
             type: allele_score
@@ -83,8 +83,8 @@ def genomic_resources_repo() -> GenomicResourceRepo:
 def test_annotation_pipeline_schema_basics(
         genomic_resources_repo: GenomicResourceRepo) -> None:
     pipeline = load_pipeline_from_yaml("""
-        - np_score:
-            resource_id: np_score1
+        - allele_score:
+            resource_id: allele_score1
             attributes:
             - source: test_raw
               name: test
@@ -101,8 +101,8 @@ def test_annotation_pipeline_schema_with_internal(
         genomic_resources_repo: GenomicResourceRepo) -> None:
 
     pipeline = load_pipeline_from_yaml("""
-        - np_score:
-            resource_id: np_score1
+        - allele_score:
+            resource_id: allele_score1
             attributes:
             - name: test
               source: test_raw

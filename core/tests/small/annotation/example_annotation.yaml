@@ -11,9 +11,9 @@
 
 
 
-- np_score: hg38/TESTphastCons100way
+- allele_score: hg38/TESTphastCons100way
    # The Annotbor should treat this as equivalent to:
-   # - np_score: 
+   # - allele_score: 
    #     resrouce_id: hg38/TESTphastCons100way
    # 
    # If 'default_annotation_attributes' is present in the configuration for the resource,
@@ -40,7 +40,7 @@
     - score2
     - score3
 # This should be equivallent to:
-- np_score: 
+- allele_score: 
     resource_id: hg38/TESTCADD
     attributes:
     - destiantion: score1
@@ -51,7 +51,7 @@
       source: score3
 # if the default scores for the hg38/TESTCADD are score1, score2, and score3, 
 # the above is equivallent to:
-# - np_score: hg38/TESTCADD
+# - allele_score: hg38/TESTCADD
 
 
 # liftover_annotator SHULD try operate on all annotatables
@@ -78,7 +78,7 @@
       source: liftover_annotable
       internal: yes
 
-- np_score:
+- allele_score:
     resource: hg19/MPC
     input_annotable: liftover_annotable
 
