@@ -15,6 +15,7 @@ cannot express the thing under test.
 
 from io import StringIO
 
+import pytest
 from gain.genomic_resources.gene_models.default_attributes import (
     format_default_attributes,
 )
@@ -26,11 +27,15 @@ from gain.genomic_resources.gene_models.serialization import (
     _save_as_default_gene_models,
 )
 from gain.genomic_resources.gene_models.transcript_models import (
+    Exon,
     TranscriptModel,
 )
 from gain.genomic_resources.testing import build_inmemory_test_resource
 
-from tests.small.genomic_resources.gene_models.columnar_formats import REFSEQ
+from tests.small.genomic_resources.gene_models.columnar_formats import (
+    DEFAULT,
+    REFSEQ,
+)
 
 
 def refseq_row_with(name: str, **cells: str) -> str:
@@ -190,6 +195,55 @@ def test_a_zero_coordinate_is_written_out_as_zero() -> None:
     written = written_out(gene_models)
 
     assert cell_of(written, tr_id, "cdsEnd") == "0"
+
+
+def test_a_zero_transcript_start_survives_the_round_trip() -> None:
+    """The transcript start is the other bound that reaches a model as 0.
+
+    gain's own format is not half-open -- it is already in gain's
+    coordinates -- so a `tsBeg` of 0 is read as 0 rather than shifted to
+    1. This is the trip that starts and ends in the format under test,
+    so it compares the format to itself: what gain wrote, gain has to be
+    able to read (gain#951).
+    """
+    gene_models = models_of(
+        DEFAULT.file_with_column("tsBeg", "0").read(), "default")
+
+    written = written_out(gene_models)
+    reloaded = models_of(written, "default")
+
+    assert shapes(reloaded.transcript_models) == \
+        shapes(gene_models.transcript_models)
+    # and writing the models that were read back reproduces the bytes
+    # they were read from
+    assert written_out(reloaded) == written
+
+
+def test_an_exon_with_no_frame_is_refused_rather_than_written() -> None:
+    """An unset frame stops the write, naming the record and the column.
+
+    An `Exon` built without a frame holds `None`, and `str()` inside the
+    exon-frame column spelled that as the literal `None` -- a token the
+    format cannot express and the read side refuses. Every parser fills
+    the frames in through `update_frames()` before the models escape, so
+    nothing gain reads can reach here; this guards the caller that built
+    a model by hand and never computed them.
+
+    Refusing is what the read side does with a cell it cannot use, and
+    the write side reports the same way. Writing `-1` instead would put
+    a value in the file that the model never held.
+    """
+    gene_models = models_of(refseq_row_with("NM_001126"), "refseq")
+    [tr_id] = gene_models.transcript_models
+    transcript = gene_models.transcript_models[tr_id]
+    transcript.exons = [Exon(exon.start, exon.stop)
+                        for exon in transcript.exons]
+
+    with pytest.raises(ValueError, match="exonFrames") as error:
+        written_out(gene_models)
+
+    assert tr_id in str(error.value)
+    assert transcript.chrom in str(error.value)
 
 
 def test_a_blank_cell_is_written_out_as_nothing() -> None:

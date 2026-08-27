@@ -21,7 +21,11 @@ class Exon:
         start (int): Genomic start position (1-based, inclusive).
         stop (int): Genomic end position (1-based, inclusive).
         frame (int | None): Codon reading frame (0, 1, or 2) for coding
-            exons, or None for non-coding exons or UTR regions.
+            exons, and -1 for a non-coding one -- see `calc_frames`.
+            None means the frame has not been computed yet, not that
+            the exon is non-coding: it is what an exon built without
+            one holds until `update_frames` fills it in. Serializing a
+            model still holding None is refused rather than guessed.
 
     Example:
         >>> exon = Exon(start=100, stop=200, frame=0)
