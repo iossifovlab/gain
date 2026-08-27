@@ -9,8 +9,18 @@ representative.
 The table lives here rather than in any one suite because it describes
 the layouts, not the defect: it is shared by the exon-position suite
 (gain#907), the load-bearing-cell suite (gain#929) and the cell-type and
-optional-cell suites (gain#931). Production has no such table -- that it
-exists only in the tests is the observation gain#941 is about.
+optional-cell suites (gain#931).
+
+That this table existed only in the tests is the observation gain#941 is
+about, and production now has one of its own: `ColumnarLayout` in
+`gain.genomic_resources.gene_models.parsers`. The two are deliberately
+not shared. This one is spelled independently so that it can be evidence
+about the other: a suite that built its fixture rows from the production
+table and then asserted against that same table would assert only that
+the parser copies the columns it was told to copy, which is true of a
+wrong table too. They also say different things -- the entries here
+describe what one file of one width carries, where a layout there is the
+union over the widths it accepts.
 """
 
 from collections.abc import Callable
