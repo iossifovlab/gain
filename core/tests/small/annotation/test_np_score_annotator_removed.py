@@ -26,6 +26,7 @@ from gain.annotation.annotation_factory import (
     get_annotator_factory,
     get_available_annotator_types,
     load_pipeline_from_yaml,
+    retired_annotator_message,
 )
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import (
@@ -78,9 +79,7 @@ def test_np_score_annotator_name_is_refused_naming_its_replacement(
         """, grr)
 
     message = str(excinfo.value)
-    assert "np_score" in message
-    assert "allele_score" in message
-    assert "2026.8.5" in message
+    assert retired_annotator_message("np_score") in message
     assert _UNHELPFUL_REFUSAL not in message
 
 
@@ -100,7 +99,30 @@ def test_np_score_annotator_suffix_is_refused_with_the_suffixed_name(
                 resource_id: a_score
         """, grr)
 
-    assert "'allele_score_annotator' instead" in str(excinfo.value)
+    assert retired_annotator_message("np_score_annotator") in str(
+        excinfo.value)
+
+
+def test_the_refusal_names_the_replacement_and_the_release() -> None:
+    """The exact text, pinned once and whole.
+
+    The tests around this one assert only that the message is *delivered*
+    at a seam, through the same function that builds it -- so none of them
+    would notice half the sentence going missing. This owns the content.
+
+    The release is spelled out rather than read from
+    ``RETIRED_VOCABULARY_REMOVAL_RELEASE``: it is the removal window
+    announced in gain#918, so a change to it should fail here and be
+    argued about, not follow the constant silently. Same for the
+    replacements -- taking those from ``RETIRED_ANNOTATOR_NAMES`` would
+    assert the map against itself.
+    """
+    assert retired_annotator_message("np_score") == (
+        "annotator 'np_score' was removed in GAIn 2026.8.5; "
+        "write 'allele_score' instead")
+    assert retired_annotator_message("np_score_annotator") == (
+        "annotator 'np_score_annotator' was removed in GAIn 2026.8.5; "
+        "write 'allele_score_annotator' instead")
 
 
 def test_a_name_gain_never_had_still_gets_the_generic_refusal() -> None:

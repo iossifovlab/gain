@@ -119,7 +119,12 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                     "optional": True,
                 },
             }
-        if annotator_type == "allele_score_annotator":
+        # Both spellings, for the same reason the fragment score below takes
+        # two: the refusal for the retired `np_score` sends its reader here
+        # to write `allele_score`, and this template *emits* that spelling,
+        # so an endpoint that took only the suffixed one would 500 on both
+        # its own migration advice and its own output (#919).
+        if annotator_type in ("allele_score_annotator", "allele_score"):
             return {
                 "annotator_type": "allele_score",
                 "documentation_url": (

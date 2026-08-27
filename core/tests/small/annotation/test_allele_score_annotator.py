@@ -924,12 +924,15 @@ def test_allele_score_value_count_aggregator_on_string_attribute(
     assert result_pos20["classification"] == {"benign": 2, "vus": 1}
 
 
-# The three tests below came from `test_np_score_annotator.py`, retired with
+# The two tests below came from `test_np_score_annotator.py`, retired with
 # the `np_score` annotator name in 2026.8.5 (gain#919).  They were never
-# about that name -- it was an alias for this annotator -- and two of them
-# cover shapes nothing else here does: substitution *and* indel annotatables
-# aggregated in region mode, and the only tabix-backed allele score in the
-# annotation tests.  Moved rather than deleted for that reason.
+# about that name -- it was an alias for this annotator -- and they cover
+# shapes nothing else here does: indel annotatables aggregated in region
+# mode, and the only tabix-backed allele score in the annotation tests.
+# Moved rather than deleted for that reason.  A third, an exact-match
+# lookup, was dropped instead: `test_allele_score_exact_match_allele_
+# attribute` above already covers it, and the in-memory repository it
+# used is still exercised by the region test below.
 
 #  hg19
 #  chrom - 1
@@ -975,22 +978,6 @@ _INMEMORY_ALLELE_SCORE_REPO = {
         """,
     },
 }
-
-
-def test_allele_score_annotator_inmemory_exact_match() -> None:
-    repo = build_inmemory_test_repository(_INMEMORY_ALLELE_SCORE_REPO)
-    pipeline_config = textwrap.dedent("""
-        - allele_score:
-            resource_id: allele_score1
-            attributes:
-            - source: test_raw
-              name: test
-        """)
-    pipeline = load_pipeline_from_yaml(pipeline_config, repo)
-    with pipeline.open() as work_pipeline:
-        result = work_pipeline.annotate(VCFAllele("1", 14970, "C", "A"))
-        assert result is not None
-        assert result.get("test") == pytest.approx(0.001, rel=1e-2)
 
 
 @pytest.mark.parametrize("variant,aggregator,expected", [

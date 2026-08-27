@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 from django.test import Client
+from gain.annotation.annotation_factory import retired_annotator_message
 
 #: The bare refusal each endpoint gives before this is fixed.
 _UNHELPFUL_REFUSAL = "Unknown annotator_type"
@@ -63,9 +64,46 @@ def test_retired_annotator_name_is_refused_with_its_replacement(
 
     assert response.status_code == 400, response.content
     error = response.json()["error"]
+    # Whole, so the editor cannot drift into paraphrasing the registry;
+    # plus the replacement literally, which `retired_annotator_message`
+    # cannot pin against itself.
+    assert error == retired_annotator_message(retired)
     assert f"'{replacement}' instead" in error
-    assert "2026.8.5" in error
-    assert _UNHELPFUL_REFUSAL not in error
+
+
+@pytest.mark.parametrize(
+    "retired,replacement", [
+        ("np_score", "allele_score"),
+        ("np_score_annotator", "allele_score_annotator"),
+    ])
+def test_the_replacement_the_refusal_names_is_one_this_endpoint_accepts(
+    clients: dict[str, Client],
+    retired: str,
+    replacement: str,
+) -> None:
+    """Following the migration advice has to actually work.
+
+    ``annotator_config`` serves templates by name, and served only the
+    suffixed spelling -- so it answered ``np_score`` with "write
+    'allele_score' instead" and then answered ``allele_score`` with a 500.
+    A refusal that names a replacement the same endpoint rejects is worse
+    than the bare one it replaced, so the loop is closed here rather than
+    assumed: refuse, then take the endpoint at its word.
+    """
+    refusal = clients["user"].post(
+        "/api/editor/annotator_config",
+        data={"annotator_type": retired},
+        content_type="application/json",
+    )
+    assert refusal.status_code == 400
+    assert f"'{replacement}' instead" in refusal.json()["error"]
+
+    accepted = clients["user"].post(
+        "/api/editor/annotator_config",
+        data={"annotator_type": replacement},
+        content_type="application/json",
+    )
+    assert accepted.status_code == 200, accepted.content
 
 
 @pytest.mark.parametrize("endpoint", list(_ENDPOINTS))

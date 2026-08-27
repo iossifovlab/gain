@@ -22,14 +22,17 @@ Release Notes
       refused with a message naming its replacement and this release,
       rather than the bare ``unsupported annotator type`` the removal
       would otherwise give; the annotation editor's endpoints say the
-      same. Unlike the resource ``type:`` below this is a plain rename:
+      same. Unlike the resource ``type:`` above this is a plain rename:
       the annotator name never selected the read mode. The names had
       warned since 2024-11 and their removal was announced for this
       release (#781, #918, #919).
     * **Fixed:** the annotation editor's ``annotator_config`` endpoint
-      answered an unknown ``annotator_type`` with a 500 instead of the
-      400 its sibling endpoints return, so a misspelt or retired
-      annotator name produced no usable error (#919).
+      answered an ``annotator_type`` it does not serve with a 500 rather
+      than the 400 its sibling endpoints return, so a misspelt or retired
+      annotator name produced no usable error. It also served the
+      allele-score template under its suffixed name only, so the spelling
+      that template itself emits -- and that the refusal above tells a
+      reader to write -- was answered with a 500 (#919).
     * The ``np_score`` test-data builders (``NPScoreBuilder``,
       ``a_np_score``) are retired with the type they built (#920).
 
