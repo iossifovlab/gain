@@ -31,23 +31,27 @@ from tests.small.genomic_resources.gene_models.columnar_formats import (
 #: to text. gain's own output format is read by column name and builds
 #: its attributes by parsing a dedicated column rather than by copying
 #: whole cells, so it is not on this axis at all.
-COLUMNAR_FORMATS = [
-    fmt for fmt in READ_PATHS if not fmt.name.startswith(DEFAULT.name)
-]
+COLUMNAR_FORMATS = [fmt for fmt in READ_PATHS if fmt is not DEFAULT]
 COLUMNAR_IDS = [fmt.name for fmt in COLUMNAR_FORMATS]
 
 #: genePred is the one layout whose gene label has a fallback: it reads
 #: the alternate-name column when there is one, and the transcript name
-#: otherwise. Only its wide form carries that column at all.
+#: otherwise. Only its wide form carries that column at all, so this is
+#: the one entry that has to be picked out by name -- the headered
+#: variants are `replace()` copies, which have no identity to test.
 GENEPRED_EXT_PATHS = [
     fmt for fmt in COLUMNAR_FORMATS
     if fmt.name.startswith("ucscgenepredext")
 ]
 GENEPRED_EXT_IDS = [fmt.name for fmt in GENEPRED_EXT_PATHS]
 
+# Selecting by name goes quiet rather than red when a name changes, and a
+# parametrization over nothing passes. Both read paths must be here.
+assert len(GENEPRED_EXT_PATHS) == 2, GENEPRED_EXT_IDS
+
 
 def _sole_model(fmt: ColumnarFormat) -> TranscriptModel:
-    result = fmt.parse(fmt.good_file(), None, None)
+    result = fmt.parse(fmt.good_file())
     assert result is not None, fmt.name
     assert len(result) == 1, fmt.name
     return next(iter(result.values()))
@@ -121,7 +125,7 @@ def test_genepred_falls_back_to_transcript_name_when_alternate_is_blank(
     other test green while quietly labelling these records with the
     empty string.
     """
-    result = fmt.parse(fmt.file_with_column("name2", ""), None, None)
+    result = fmt.parse(fmt.file_with_column("name2", ""))
 
     assert result is not None, fmt.name
     assert len(result) == 2, fmt.name

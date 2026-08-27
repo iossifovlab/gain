@@ -270,12 +270,13 @@ class ColumnarLayout:
     by parsing a dedicated column rather than by copying whole cells.
     """
 
-    #: The column layouts this format accepts, tried in order. Only
+    #: The column lists this format accepts, tried in order. Only
     #: genePred has more than one -- the ten-column `genePred` core and
-    #: the fifteen-column `genePredExt`. Both branches of `parse_raw`
-    #: recognise a layout by its width, so an attempt at one can never
-    #: consume a file of the other.
-    column_layouts: tuple[tuple[str, ...], ...]
+    #: the fifteen-column `genePredExt`. Neither attempt can consume the
+    #: other's file, though the two branches of `parse_raw` rule that out
+    #: differently: `probe_header` matches the header against these names
+    #: and `probe_columns` counts them.
+    accepted_columns: tuple[tuple[str, ...], ...]
 
     #: Where the gene label comes from, best candidate first. The first
     #: column carrying a non-empty cell wins; when none does, the last
@@ -284,28 +285,14 @@ class ColumnarLayout:
     #: unconditionally, which is what four of the five layouts want.
     gene_columns: tuple[str, ...]
 
-    #: The columns copied straight into `TranscriptModel.attributes`, in
-    #: this order -- attributes are written back out in iteration order,
-    #: so the order is part of the layout. A column absent from the
-    #: record is skipped rather than faulted, which is what lets
-    #: genePred's narrow layout share this list with its wide one.
+    #: The columns copied into `TranscriptModel.attributes`, in this
+    #: order -- attributes are written back out in iteration order, so
+    #: the order is part of the layout. This is the union over the
+    #: accepted column lists, not a subset any one file carries: it is
+    #: how genePred's two widths share one row, the narrow one carrying
+    #: none of these five. `parse_columnar_format` narrows it to the
+    #: width that actually matched, once, before reading any record.
     attribute_columns: tuple[str, ...] = ()
-
-    def gene_label(self, rec: dict) -> Any:
-        """Read this layout's gene label out of a record."""
-        for column in self.gene_columns[:-1]:
-            value = rec.get(column)
-            if value:
-                return value
-        return rec[self.gene_columns[-1]]
-
-    def attributes(self, rec: dict) -> dict[str, Any]:
-        """Copy this layout's attribute columns out of a record."""
-        return {
-            column: rec[column]
-            for column in self.attribute_columns
-            if column in rec
-        }
 
 
 #: refSeq and CCDS declare the same sixteen columns and copy the same six
@@ -330,30 +317,33 @@ _GENEPRED_COLUMNS = (
     "name", "chrom", "strand", "txStart", "txEnd", "cdsStart", "cdsEnd",
     "exonCount", "exonStarts", "exonEnds",
 )
-_GENEPRED_EXT_COLUMNS = (
-    *_GENEPRED_COLUMNS,
+#: What genePredExt adds to that core, and exactly what it copies into
+#: attributes -- the wide layout carries no other column the narrow one
+#: lacks.
+_GENEPRED_EXT_ONLY_COLUMNS = (
     "score", "name2", "cdsStartStat", "cdsEndStat", "exonFrames",
 )
+_GENEPRED_EXT_COLUMNS = (*_GENEPRED_COLUMNS, *_GENEPRED_EXT_ONLY_COLUMNS)
 
 REF_FLAT_LAYOUT = ColumnarLayout(
-    column_layouts=(("#geneName", *_GENEPRED_COLUMNS),),
+    accepted_columns=(("#geneName", *_GENEPRED_COLUMNS),),
     gene_columns=("#geneName",),
 )
 
 REF_SEQ_LAYOUT = ColumnarLayout(
-    column_layouts=(_REFSEQ_COLUMNS,),
+    accepted_columns=(_REFSEQ_COLUMNS,),
     gene_columns=("name2",),
     attribute_columns=_REFSEQ_ATTRIBUTES,
 )
 
 CCDS_LAYOUT = ColumnarLayout(
-    column_layouts=(_REFSEQ_COLUMNS,),
+    accepted_columns=(_REFSEQ_COLUMNS,),
     gene_columns=("name",),
     attribute_columns=_REFSEQ_ATTRIBUTES,
 )
 
 KNOWN_GENE_LAYOUT = ColumnarLayout(
-    column_layouts=((*_GENEPRED_COLUMNS, "proteinID", "alignID"),),
+    accepted_columns=((*_GENEPRED_COLUMNS, "proteinID", "alignID"),),
     gene_columns=("name",),
     attribute_columns=("proteinID", "alignID"),
 )
@@ -364,9 +354,9 @@ KNOWN_GENE_LAYOUT = ColumnarLayout(
 #: and `genePredExt` table definitions -- the sole specification either
 #: width has -- are quoted in `parse_ucscgenepred_models_format`.
 UCSC_GENEPRED_LAYOUT = ColumnarLayout(
-    column_layouts=(_GENEPRED_COLUMNS, _GENEPRED_EXT_COLUMNS),
+    accepted_columns=(_GENEPRED_COLUMNS, _GENEPRED_EXT_COLUMNS),
     gene_columns=("name2", "name"),
-    attribute_columns=_GENEPRED_EXT_COLUMNS[len(_GENEPRED_COLUMNS):],
+    attribute_columns=_GENEPRED_EXT_ONLY_COLUMNS,
 )
 
 
@@ -378,20 +368,42 @@ def parse_columnar_format(
 ) -> dict[str, TranscriptModel] | None:
     """Parse a columnar gene-models file against one layout.
 
-    Returns ``None`` when the file matches none of the layout's column
-    layouts. Format inference reads that back as "this format is not the
-    file's", so it must stay distinct from an empty dict, which says the
-    layout matched but no transcript model came of it.
+    Returns ``None`` when the file matches none of the layout's accepted
+    column lists -- the `GeneModelsParser` rejection convention, which
+    format inference reads back to say why a format lost.
+
+    Both of the layout's per-record rules are resolved against the width
+    that matched before any record is read, rather than re-derived per
+    record. That is not only for speed, though it is worth about 250ns a
+    record over files that run to the hundreds of thousands: which
+    columns a record carries is settled by the match, because `parse_raw`
+    asserts the frame's columns are exactly the ones it was given.
     """
     # pylint: disable=too-many-locals
     df = None
-    for columns in layout.column_layouts:
+    matched: tuple[str, ...] = ()
+    for columns in layout.accepted_columns:
         infile.seek(0)
         df = parse_raw(infile, list(columns), nrows=nrows)
         if df is not None:
+            matched = columns
             break
     if df is None:
         return None
+
+    # Both rules narrow to the width that matched. A gene candidate this
+    # width does not carry drops out entirely -- that is how genePred's
+    # narrow layout, which has no alternate-name column, falls straight
+    # through to the transcript name -- and the attribute subset keeps
+    # only what the record will have, which for that same narrow layout
+    # is none of the five.
+    *candidates, gene_fallback = layout.gene_columns
+    gene_candidates = tuple(
+        column for column in candidates if column in matched
+    )
+    attribute_columns = tuple(
+        column for column in layout.attribute_columns if column in matched
+    )
 
     records = df.to_dict(orient="records")
 
@@ -401,10 +413,15 @@ def parse_columnar_format(
 
     transcript_models = {}
     for record, rec in enumerate(records, start=1):
-        gene = layout.gene_label(rec)
+        for column in gene_candidates:
+            gene = rec[column]
+            if gene:
+                break
+        else:
+            gene = rec[gene_fallback]
         gene = gene_mapping.get(gene, gene)
 
-        tr_name, chrom = record_identity(rec, record, "name", "chrom")
+        tr_name, chrom = record_identity(rec, record, *_IDENTIFYING_COLUMNS)
         strand = require_cell(rec["strand"], "strand", tr_name, chrom)
         tx, cds = parse_transcript_bounds(  # pylint: disable=invalid-name
             rec, tr_name, chrom)
@@ -428,7 +445,9 @@ def parse_columnar_format(
             tx=tx,
             cds=cds,
             exons=exons,
-            attributes=layout.attributes(rec),
+            attributes={
+                column: rec[column] for column in attribute_columns
+            },
         )
         transcript_model.update_frames()
         assert transcript_model.tr_id not in transcript_models
@@ -464,9 +483,8 @@ def parse_ccds_gene_models_format(
 ) -> dict[str, TranscriptModel] | None:
     """Parse CCDS gene models file format.
 
-    CCDS declares the same columns as refSeq and differs only in taking
-    its gene label from the transcript-name column, so a CCDS model's
-    gene and transcript name are the same string.
+    A CCDS model's gene and transcript name are the same string; see
+    `_REFSEQ_COLUMNS` for why this format and refSeq are two entries.
     """
     return parse_columnar_format(CCDS_LAYOUT, infile, gene_mapping, nrows)
 
