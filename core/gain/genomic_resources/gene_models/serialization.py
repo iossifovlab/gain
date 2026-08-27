@@ -351,6 +351,7 @@ def _format_exon_frames(transcript_model: TranscriptModel) -> str:
     would most likely have taken: writing a value the model never held
     is what made the fabricated ``nan`` of gain#931 a defect.
     """
+    frames = []
     for exon in transcript_model.exons:
         if exon.frame is None:
             raise ValueError(
@@ -359,7 +360,8 @@ def _format_exon_frames(transcript_model: TranscriptModel) -> str:
                 f"to write in the exonFrames column; the frames are "
                 f"computed by update_frames()",
             )
-    return ",".join([str(exon.frame) for exon in transcript_model.exons])
+        frames.append(str(exon.frame))
+    return ",".join(frames)
 
 
 def _save_as_default_gene_models(
@@ -416,14 +418,14 @@ def _save_as_default_gene_models(
         # cell that the read side then refused -- gain could not read
         # back what gain had written (gain#951).
         #
-        # ``None`` still blanks rather than being refused the way an
-        # unset exon frame is. The reads cannot produce one -- the
-        # columnar reader passes ``na_filter=False``, so a missing cell
-        # arrives as the empty string -- and the blank an ``atts`` of
-        # ``None`` writes is the cell that column is meant to have when
-        # a record carries no attributes. An unset *frame* has no such
-        # spelling: the column is one value per exon, so there is no
-        # empty cell to fall back to.
+        # Nothing reaching here holds ``None`` any more: the exon frame
+        # was the one optional field in the row, and it is refused
+        # above. The reads cannot produce one either -- the columnar
+        # reader passes ``na_filter=False``, so a missing cell arrives
+        # as the empty string. The branch is kept for the presence
+        # check itself, which is what this line is about; refusing on
+        # it as well would be guarding a state the model's own types
+        # do not offer.
         outfile.write(
             "\t".join([str(x) if x is not None else "" for x in columns]))
         outfile.write("\n")

@@ -38,7 +38,7 @@ from tests.small.genomic_resources.gene_models.columnar_formats import (
 )
 
 
-def refseq_row_with(name: str, **cells: str) -> str:
+def refseq_row(name: str, score: str) -> str:
     """One refSeq row, built from the shared layout table.
 
     The columns and their well-formed values live in `columnar_formats`;
@@ -47,14 +47,8 @@ def refseq_row_with(name: str, **cells: str) -> str:
     """
     fields = list(REFSEQ.fields)
     fields[REFSEQ.columns.index("name")] = name
-    for column, value in cells.items():
-        fields[REFSEQ.columns.index(column)] = value
+    fields[REFSEQ.columns.index("score")] = score
     return "\t".join(fields) + "\n"
-
-
-def refseq_row(name: str, score: str) -> str:
-    """One refSeq row whose `score` is the cell under test."""
-    return refseq_row_with(name, score=score)
 
 
 def models_of(source: str, file_format: str) -> GeneModels:
@@ -86,8 +80,11 @@ def cell_of(written: str, tr_id: str, column: str) -> str:
     """
     header, *rows = written.splitlines()
     columns = header.split("\t")
-    names = [row.split("\t")[columns.index("trID")] for row in rows]
-    return rows[names.index(tr_id)].split("\t")[columns.index(column)]
+    for row in rows:
+        cells = row.split("\t")
+        if cells[columns.index("trID")] == tr_id:
+            return cells[columns.index(column)]
+    raise AssertionError(f"no record {tr_id} in the written file")
 
 
 def shape(transcript: TranscriptModel) -> tuple:
@@ -154,9 +151,8 @@ def test_a_zero_coordinate_survives_the_round_trip() -> None:
     The first record's bounds are well-formed, so this pins the
     neighbour as well as the `0` itself.
     """
-    genes = refseq_row_with("NM_000546") \
-        + refseq_row_with("NM_001126", cdsEnd="0")
-    gene_models = models_of(genes, "refseq")
+    gene_models = models_of(
+        REFSEQ.file_with("cdsEnd", "0").read(), "refseq")
 
     written = written_out(gene_models)
     reloaded = models_of(written, "default")
@@ -173,8 +169,7 @@ def test_a_zero_coordinate_is_written_out_as_zero() -> None:
     accepts. This is the half that says which spelling: the coordinate
     as the model holds it.
     """
-    gene_models = models_of(
-        refseq_row_with("NM_001126", cdsEnd="0"), "refseq")
+    gene_models = models_of(REFSEQ.row_with("cdsEnd", "0"), "refseq")
     [tr_id] = gene_models.transcript_models
 
     written = written_out(gene_models)
@@ -222,7 +217,7 @@ def test_an_exon_with_no_frame_is_refused_rather_than_written() -> None:
     the write side reports the same way. Writing `-1` instead would put
     a value in the file that the model never held.
     """
-    gene_models = models_of(refseq_row_with("NM_001126"), "refseq")
+    gene_models = models_of(REFSEQ.good_row(), "refseq")
     [tr_id] = gene_models.transcript_models
     transcript = gene_models.transcript_models[tr_id]
     transcript.exons = [Exon(exon.start, exon.stop)
