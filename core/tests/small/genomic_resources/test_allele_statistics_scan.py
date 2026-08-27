@@ -25,7 +25,6 @@ from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
 )
 from gain.genomic_resources.testing.builders import (
-    a_np_score,
     a_position_score,
     an_allele_score,
 )
@@ -48,6 +47,17 @@ _MIXED_TABLE = """
     chr1   70         T          T            0.9
     chr2   10         G          T            0.8
 """
+
+
+def _maybe_tabix(builder: Any, *, tabix: bool) -> Any:
+    """Put a fixture on the bulk scan path, or leave it on the per-record one.
+
+    A tabix-indexed table serves column arrays and is bulk-eligible; a plain
+    text one is not, and ``_bulk_scan_eligible`` asks exactly that.  The
+    contrast used to be drawn with a ``np_score`` resource, excluded from
+    the bulk gate by type until gain#920 removed the type.
+    """
+    return builder.with_tabix() if tabix else builder
 
 
 def _hist_conf() -> NumberHistogramConfig:
@@ -173,12 +183,23 @@ def test_the_stored_matrix_merges_lowercase_and_diagonal_rows(
     assert sum(chr2.values()) == 1
 
 
-def _mixed_np_score(tmp_path: pathlib.Path) -> GenomicResource:
+def _mixed_per_record_score(tmp_path: pathlib.Path) -> GenomicResource:
+    """The same table as ``_mixed_allele_score``, read a record at a time.
+
+    Its twin declares ``.with_tabix()`` and is served by the vectorized
+    bulk scan; this one does not, so its backend offers no column arrays
+    and the scan falls back to the per-record read.
+
+    Until 2026.8.5 the contrast was drawn with a ``np_score`` resource,
+    which the bulk scan excluded by resource type (gain#920 removed the
+    type).  The backend is the better discriminator anyway: array support
+    is what ``_bulk_scan_eligible`` actually asks, where the type was only
+    ever a proxy for it.
+    """
     return (
-        a_np_score()
+        an_allele_score()
         .with_score("score", "float")
         .with_data(_MIXED_TABLE)
-        .with_tabix()
         .build_resource(tmp_path)
     )
 
@@ -186,28 +207,28 @@ def _mixed_np_score(tmp_path: pathlib.Path) -> GenomicResource:
 def test_the_two_fixtures_take_different_scan_paths(
     tmp_path: pathlib.Path,
 ) -> None:
-    # The premise of the parity test below: ``np_score`` is excluded
-    # from the bulk-scan resource types, so the identical tables are
-    # read by genuinely different scans.
+    # The premise of the parity test below: only one of the two backends
+    # serves column arrays, so the identical tables are read by genuinely
+    # different scans.
     allele = _mixed_allele_score(tmp_path / "allele")
-    np_score = _mixed_np_score(tmp_path / "np")
+    per_record = _mixed_per_record_score(tmp_path / "per_record")
     confs: dict = {"score": _hist_conf()}
 
     assert GenomicScoreImplementation._can_bulk_histogram(allele, confs)
     assert not GenomicScoreImplementation._can_bulk_histogram(
-        np_score, confs)
+        per_record, confs)
 
 
-def test_np_score_statistics_match_the_allele_score_byte_for_byte(
+def test_the_per_record_statistics_match_the_bulk_ones_byte_for_byte(
     tmp_path: pathlib.Path,
 ) -> None:
     allele = _mixed_allele_score(tmp_path / "allele")
-    np_score = _mixed_np_score(tmp_path / "np")
+    per_record = _mixed_per_record_score(tmp_path / "per_record")
 
     cli_manage(["repo-stats", "-R", str(tmp_path / "allele"), "-j", "1"])
-    cli_manage(["repo-stats", "-R", str(tmp_path / "np"), "-j", "1"])
+    cli_manage(["repo-stats", "-R", str(tmp_path / "per_record"), "-j", "1"])
 
-    assert np_score.get_file_content(ALLELE_STATISTICS_FILE) \
+    assert per_record.get_file_content(ALLELE_STATISTICS_FILE) \
         == allele.get_file_content(ALLELE_STATISTICS_FILE)
 
 
@@ -247,30 +268,29 @@ _WIDE_TABLE = """
 
 
 def _wide_score(
-    builder: Callable[[], Any], tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, *, tabix: bool,
 ) -> GenomicResource:
-    return (
-        builder()
+    builder = (
+        an_allele_score()
         .with_score("score", "float")
         .with_data(_WIDE_TABLE)
-        .with_tabix()
-        .build_resource(tmp_path)
     )
+    return _maybe_tabix(builder, tabix=tabix).build_resource(tmp_path)
 
 
-@pytest.mark.parametrize("builder", [an_allele_score, a_np_score])
+@pytest.mark.parametrize("tabix", [True, False])
 @pytest.mark.parametrize("region_size", [10, 20, 7])
 def test_a_row_spanning_several_chunks_is_counted_once(
     tmp_path: pathlib.Path,
-    builder: Callable[[], Any],
+    tabix: bool,
     region_size: int,
 ) -> None:
-    # Parametrized over both builders because the ownership rule is
-    # stated twice -- scalar on the per-record path (``np_score``, which
-    # the bulk scan excludes) and vectorized on the bulk one
-    # (``allele_score``) -- and a rule stated twice can drift.
-    whole = _wide_score(builder, tmp_path / "whole")
-    chunked = _wide_score(builder, tmp_path / "chunked")
+    # Parametrized over both scan paths because the ownership rule is
+    # stated twice -- scalar on the per-record path (no column arrays
+    # from the backend) and vectorized on the bulk one -- and a rule
+    # stated twice can drift.
+    whole = _wide_score(tmp_path / "whole", tabix=tabix)
+    chunked = _wide_score(tmp_path / "chunked", tabix=tabix)
 
     cli_manage(["repo-stats", "-R", str(tmp_path / "whole"), "-j", "1"])
     cli_manage([
@@ -296,27 +316,26 @@ _KEYLESS_TABLE = """
 
 
 def _keyless_score(
-    builder: Callable[[], Any], tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, *, tabix: bool,
 ) -> GenomicResource:
-    return (
-        builder()
+    builder = (
+        an_allele_score()
         .with_score("score", "float")
         .without_key_columns("reference", "alternative")
         .with_data(_KEYLESS_TABLE)
-        .with_tabix()
-        .build_resource(tmp_path)
     )
+    return _maybe_tabix(builder, tabix=tabix).build_resource(tmp_path)
 
 
-@pytest.mark.parametrize("builder", [an_allele_score, a_np_score])
+@pytest.mark.parametrize("tabix", [True, False])
 def test_a_table_with_no_key_columns_counts_every_row_as_other(
     tmp_path: pathlib.Path,
-    builder: Callable[[], Any],
+    tabix: bool,
 ) -> None:
     # ``reference`` and ``alternative`` are independently optional, and
     # a row missing an allele is still a row: it classifies as ``other``
     # rather than being dropped or raising (ADR 0020).
-    resource = _keyless_score(builder, tmp_path)
+    resource = _keyless_score(tmp_path, tabix=tabix)
 
     stats = _built_statistics(tmp_path, resource)
 
@@ -338,7 +357,7 @@ def test_a_backend_refusing_the_nucleotides_takes_the_per_record_path(
     # statistic with no class data.  Making the bulk path fatal is what
     # turns this from a restatement of the two predicates into an
     # observation of the routing.
-    resource = _keyless_score(an_allele_score, tmp_path)
+    resource = _keyless_score(tmp_path, tabix=True)
     confs: dict = {"score": _hist_conf()}
     score = build_score_implementation_from_resource(resource).score
     assert GenomicScoreImplementation._can_bulk_histogram(resource, confs)
@@ -362,7 +381,7 @@ def test_the_reroute_leaves_the_histograms_unchanged(
     # The nucleotide gate moves the HISTOGRAM build off the bulk path
     # too, for a resource the bulk path would otherwise have served.
     # The two paths must still agree on what they build.
-    resource = _keyless_score(an_allele_score, tmp_path)
+    resource = _keyless_score(tmp_path, tabix=True)
 
     per_record = GenomicScoreImplementation._do_histogram(
         resource, {"score": _hist_conf()}, "chr1", 1, 100)
@@ -398,15 +417,15 @@ def test_the_two_paths_agree_at_a_chunked_region_size(
     # two paths rather than within one: the wide-``pos_end`` fixture is
     # the shape where a chunk boundary and a path difference could
     # compound.
-    allele = _wide_score(an_allele_score, tmp_path / "allele")
-    np_score = _wide_score(a_np_score, tmp_path / "np")
+    allele = _wide_score(tmp_path / "allele", tabix=True)
+    per_record = _wide_score(tmp_path / "per_record", tabix=False)
 
-    for name in ("allele", "np"):
+    for name in ("allele", "per_record"):
         cli_manage([
             "repo-stats", "-R", str(tmp_path / name), "-j", "1",
             "--region-size", str(region_size)])
 
-    assert np_score.get_file_content(ALLELE_STATISTICS_FILE) \
+    assert per_record.get_file_content(ALLELE_STATISTICS_FILE) \
         == allele.get_file_content(ALLELE_STATISTICS_FILE)
 
 
@@ -419,16 +438,15 @@ _ALT_ONLY_TABLE = """
 
 
 def _alt_only_score(
-    builder: Callable[[], Any], tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, *, tabix: bool,
 ) -> GenomicResource:
-    return (
-        builder()
+    builder = (
+        an_allele_score()
         .with_score("score", "float")
         .without_key_columns("reference")
         .with_data(_ALT_ONLY_TABLE)
-        .with_tabix()
-        .build_resource(tmp_path)
     )
+    return _maybe_tabix(builder, tabix=tabix).build_resource(tmp_path)
 
 
 def test_a_table_declaring_only_one_key_column_is_still_bulk_served(
@@ -440,18 +458,18 @@ def test_a_table_declaring_only_one_key_column_is_still_bulk_served(
     # needs both, so such a resource is all ``other``; that is the
     # statistic this slice wants, taken deliberately rather than
     # inherited (gain#777).
-    resource = _alt_only_score(an_allele_score, tmp_path)
+    resource = _alt_only_score(tmp_path, tabix=True)
     score = build_score_implementation_from_resource(resource).score
 
     assert serves_allele_arrays(score, ["score"])
 
 
-@pytest.mark.parametrize("builder", [an_allele_score, a_np_score])
+@pytest.mark.parametrize("tabix", [True, False])
 def test_a_table_declaring_only_one_key_column_counts_every_row_as_other(
     tmp_path: pathlib.Path,
-    builder: Callable[[], Any],
+    tabix: bool,
 ) -> None:
-    resource = _alt_only_score(builder, tmp_path)
+    resource = _alt_only_score(tmp_path, tabix=tabix)
 
     stats = _built_statistics(tmp_path, resource)
 
@@ -586,7 +604,7 @@ def test_info_page_renders_an_all_other_matrix_as_zeros(
     # Every row classifies as ``other``, so the matrix is genuinely
     # all-zero -- which renders as a populated table of zeros with an
     # inapplicable ratio, NOT as the matrixless "not computed" above.
-    resource = _alt_only_score(an_allele_score, tmp_path)
+    resource = _alt_only_score(tmp_path, tabix=True)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     section = _alleles_section(
@@ -713,12 +731,12 @@ def _indel_allele_score(tmp_path: pathlib.Path) -> GenomicResource:
     )
 
 
-def _indel_np_score(tmp_path: pathlib.Path) -> GenomicResource:
+def _indel_per_record_score(tmp_path: pathlib.Path) -> GenomicResource:
+    """``_indel_allele_score``'s table, read per-record (see gain#920)."""
     return (
-        a_np_score()
+        an_allele_score()
         .with_score("score", "float")
         .with_data(_INDEL_TABLE)
-        .with_tabix()
         .build_resource(tmp_path)
     )
 
@@ -805,20 +823,21 @@ def test_the_group_totals_reconcile_with_the_class_counts(
 def test_the_indel_groups_match_across_the_two_scan_paths(
     tmp_path: pathlib.Path,
 ) -> None:
-    # The gain#777 parity check, extended to the new groups: np_score is
-    # excluded from the bulk scan, so these two identical tables are
-    # read by genuinely different code paths.
+    # The gain#777 parity check, extended to the new groups: only one of
+    # the two backends serves column arrays, so these two identical tables
+    # are read by genuinely different code paths.
     allele = _indel_allele_score(tmp_path / "allele")
-    np_score = _indel_np_score(tmp_path / "np")
+    per_record = _indel_per_record_score(tmp_path / "per_record")
 
     cli_manage(["repo-stats", "-R", str(tmp_path / "allele"), "-j", "1"])
-    cli_manage(["repo-stats", "-R", str(tmp_path / "np"), "-j", "1"])
+    cli_manage(["repo-stats", "-R", str(tmp_path / "per_record"), "-j", "1"])
 
-    assert np_score.get_file_content(ALLELE_STATISTICS_FILE) \
+    assert per_record.get_file_content(ALLELE_STATISTICS_FILE) \
         == allele.get_file_content(ALLELE_STATISTICS_FILE)
 
 
-@pytest.mark.parametrize("builder", [_indel_allele_score, _indel_np_score])
+@pytest.mark.parametrize(
+    "builder", [_indel_allele_score, _indel_per_record_score])
 @pytest.mark.parametrize("region_size", [10, 20, 7, 1])
 def test_the_indel_groups_are_chunk_invariant(
     tmp_path: pathlib.Path,
@@ -828,10 +847,10 @@ def test_the_indel_groups_are_chunk_invariant(
     # Chunking meets the sparse grid's cells in different orders, which
     # is why they are written sorted rather than as encountered.
     #
-    # Parametrized over BOTH builders because the region's ownership
+    # Parametrized over BOTH fixtures because the region's ownership
     # rule is stated twice -- scalar on the per-record path, vectorized
-    # on the bulk one -- and np_score is excluded from the bulk-scan
-    # types.  With only the bulk-eligible fixture, breaking the scalar
+    # on the bulk one -- and only the tabix-backed fixture serves column
+    # arrays.  With only the bulk-eligible fixture, breaking the scalar
     # predicate leaves this green.
     whole = builder(tmp_path / "whole")
     chunked = builder(tmp_path / "chunked")

@@ -60,7 +60,9 @@ from gain.genomic_resources.resource_implementation import (
 from gain.genomic_resources.resource_types import (
     FRAGMENT_SCORE_TYPES,
     LEGACY_FRAGMENT_SCORE_TYPE,
+    PREFERRED_ALLELE_SCORE_TYPE,
     PREFERRED_FRAGMENT_SCORE_TYPE,
+    reject_retired_resource,
     warn_deprecated_spelling,
 )
 from gain.genomic_resources.score_def import (
@@ -260,7 +262,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         A genomic score resource requires a YAML configuration file
         (genomic_resource.yaml) specifying:
 
-        - **type**: Resource type (position_score, allele_score, np_score)
+        - **type**: Resource type (position_score, allele_score)
         - **table**: Table configuration with filename, format, and column
           mappings for chrom, pos_begin, pos_end (and ref/alt for allele scores)
         - **scores**: List of score definitions with id, type, name/index,
@@ -2365,27 +2367,28 @@ class AlleleScore(GenomicScore):
             raise ValueError(f"unknown allele mode: {name}")
 
     def __init__(self, resource: GenomicResource):
-        if resource.get_type() not in {"allele_score", "np_score"}:
+        # Ahead of the type check below: `np_score` used to be accepted
+        # here, so it earns a message naming its replacement rather than
+        # the generic "should be of 'allele_score' type" a never-supported
+        # type gets (gain#920).
+        reject_retired_resource(resource)
+        if resource.get_type() != PREFERRED_ALLELE_SCORE_TYPE:
             raise ValueError(
                 "The resource provided to AlleleScore should be of "
-                f"'allele_score' type, not a '{resource.get_type()}'")
-        if resource.get_type() == "np_score":
-            logger.warning(
-                "The resource type `np_score` is deprecated. "
-                "Please use `allele_score` instead for resource %s.",
-                resource.get_id())
+                f"'{PREFERRED_ALLELE_SCORE_TYPE}' type, "
+                f"not a '{resource.get_type()}'")
         super().__init__(resource)
-        if self.config.get("allele_score_mode") is None:
-            if resource.get_type() == "np_score":
-                self.mode = AlleleScore.Mode.SUBSTITUTIONS
-            elif resource.get_type() == "allele_score":
-                self.mode = AlleleScore.Mode.ALLELES
-            else:
-                raise ValueError(
-                    f"unknown resource type {resource.get_type()}")
+        allele_score_mode = self.config.get("allele_score_mode")
+        if allele_score_mode is None:
+            # One accepted type, so one default.  This branched on the
+            # resource type until 2026.8.5, because `np_score` defaulted to
+            # substitutions while `allele_score` defaults to alleles; with
+            # `np_score` removed (gain#920) there is nothing left to ask.
+            # That difference is why the removal is not a plain rename, and
+            # `reject_retired_resource` says so.
+            self.mode = AlleleScore.Mode.ALLELES
         else:
-            self.mode = AlleleScore.Mode.from_name(
-                self.config.get("allele_score_mode", "substitutions"))
+            self.mode = AlleleScore.Mode.from_name(allele_score_mode)
 
     def substitutions_mode(self) -> bool:
         """Return True if the score is in substitutions mode."""
@@ -3050,10 +3053,13 @@ def build_allele_score_from_resource(
 ) -> AlleleScore:
     """Build an allele score from an `allele_score` resource.
 
-    The deprecated `np_score` resource type is accepted as well. It builds
-    an `AlleleScore` that defaults to substitutions mode -- unless the
-    resource configures `allele_score_mode` explicitly, which is honoured
-    for either resource type.
+    Defaults to alleles mode unless the resource configures
+    `allele_score_mode` explicitly.
+
+    The deprecated `np_score` type was accepted here until 2026.8.5, and
+    defaulted to substitutions mode instead (gain#920).  A resource still
+    declaring it is refused with a message naming both the replacement type
+    and the mode key needed to keep the old reading.
     """
     return AlleleScore(resource)
 
@@ -3101,9 +3107,10 @@ def build_score_from_resource(
     score it gets back and closing it affects nothing else.
     """
     resource_type = resource.get_type()
+    reject_retired_resource(resource)
     if resource_type == "position_score":
         return build_position_score_from_resource(resource)
-    if resource_type in {"allele_score", "np_score"}:
+    if resource_type == PREFERRED_ALLELE_SCORE_TYPE:
         return build_allele_score_from_resource(resource)
     if resource_type in FRAGMENT_SCORE_TYPES:
         return build_fragment_score_from_resource(resource)

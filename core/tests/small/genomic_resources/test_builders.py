@@ -35,7 +35,6 @@ from gain.genomic_resources.testing.builders import (
     a_fragment_score,
     a_gene_score,
     a_grr,
-    a_np_score,
     a_position_score,
     a_reference_genome,
     a_vcf_info_score,
@@ -1144,17 +1143,8 @@ def test_build_resource_tempdir_reads_back_and_cleans_up() -> None:
 
 
 # ---------------------------------------------------------------------------
-# sub-feature 4: a_np_score / an_allele_score builders
+# sub-feature 4: an_allele_score builder
 # ---------------------------------------------------------------------------
-
-def test_bare_np_score_is_readable_minimal(
-    tmp_path: pathlib.Path,
-) -> None:
-    res = a_np_score().build_resource(tmp_path)
-    assert res.get_type() == "np_score"
-    score = AlleleScore(res).open()
-    assert len(score.get_all_scores()) == 1
-
 
 def test_bare_allele_score_is_readable_minimal(
     tmp_path: pathlib.Path,
@@ -1163,27 +1153,6 @@ def test_bare_allele_score_is_readable_minimal(
     assert res.get_type() == "allele_score"
     score = AlleleScore(res).open()
     assert len(score.get_all_scores()) == 1
-
-
-def test_np_score_reads_back_by_ref_alt(
-    tmp_path: pathlib.Path,
-) -> None:
-    res = (
-        a_np_score()
-        .with_score("cadd_raw", "float")
-        .with_data("""
-            chrom  pos_begin  reference  alternative  cadd_raw
-            1      10         A          G            0.02
-            1      10         A          C            0.03
-            1      16         C          T            0.04
-        """)
-        .build_resource(tmp_path)
-    )
-    score = AlleleScore(res).open()
-    assert score.get_all_scores() == ["cadd_raw"]
-    assert score.fetch_allele_scores("1", 10, "A", "C") == {"cadd_raw": 0.03}
-    assert score.fetch_allele_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
-    assert score.fetch_allele_scores("1", 16, "C", "T") == {"cadd_raw": 0.04}
 
 
 def test_allele_score_reads_back_by_ref_alt(
@@ -1206,14 +1175,14 @@ def test_allele_score_reads_back_by_ref_alt(
     assert score.fetch_allele_scores("1", 16, "C", "A") == {"freq": 0.05}
 
 
-def test_np_score_with_pos_end_range_reads_back(
+def test_allele_score_with_pos_end_range_reads_back(
     tmp_path: pathlib.Path,
 ) -> None:
-    # np/allele scores realize onto the shared genomic_position_table backend,
-    # which supports an optional pos_end column: a record spanning
+    # An allele score realizes onto the shared genomic_position_table
+    # backend, which supports an optional pos_end column: a record spanning
     # [pos_begin, pos_end] range-matches a query at any position inside it.
     res = (
-        a_np_score()
+        an_allele_score()
         .with_score("cadd_raw", "float")
         .with_data("""
             chrom  pos_begin  pos_end  reference  alternative  cadd_raw
@@ -1229,11 +1198,11 @@ def test_np_score_with_pos_end_range_reads_back(
     assert score.fetch_allele_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
 
 
-def test_np_score_with_score_line_matches_with_data(
+def test_allele_score_with_score_line_matches_with_data(
     tmp_path: pathlib.Path,
 ) -> None:
     typed = (
-        a_np_score()
+        an_allele_score()
         .with_score("cadd_raw", "float")
         .with_score_line(
             chrom="1", pos_begin=10, reference="A", alternative="G",
@@ -1248,11 +1217,11 @@ def test_np_score_with_score_line_matches_with_data(
     assert score.fetch_allele_scores("1", 10, "A", "C") == {"cadd_raw": 0.03}
 
 
-def test_np_score_with_tabix_reads_back(
+def test_allele_score_with_tabix_reads_back(
     tmp_path: pathlib.Path,
 ) -> None:
     res = (
-        a_np_score()
+        an_allele_score()
         .with_score("cadd_raw", "float")
         .with_tabix()
         .with_data("""
@@ -1269,14 +1238,14 @@ def test_np_score_with_tabix_reads_back(
     assert score.fetch_allele_scores("1", 16, "C", "T") == {"cadd_raw": 0.04}
 
 
-def test_grr_composes_np_and_allele_scores(
+def test_grr_composes_several_allele_scores(
     tmp_path: pathlib.Path,
 ) -> None:
     repo = (
         a_grr()
         .with_resource(
-            "scores/np",
-            a_np_score()
+            "scores/cadd",
+            an_allele_score()
             .with_score("cadd", "float")
             .with_data("""
                 chrom  pos_begin  reference  alternative  cadd
@@ -1292,22 +1261,23 @@ def test_grr_composes_np_and_allele_scores(
             """))
         .build_repo(tmp_path)
     )
-    np_score = AlleleScore(repo.get_resource("scores/np")).open()
-    assert np_score.fetch_allele_scores("1", 10, "A", "G") == {"cadd": 0.02}
+    cadd = AlleleScore(repo.get_resource("scores/cadd")).open()
+    assert cadd.fetch_allele_scores("1", 10, "A", "G") == {"cadd": 0.02}
     allele_score = AlleleScore(repo.get_resource("scores/allele")).open()
     assert allele_score.fetch_allele_scores("1", 10, "A", "C") == {"freq": 0.03}
 
 
-def test_np_score_builder_no_cross_variation_leak(
+def test_allele_score_builder_no_score_line_cross_variation_leak(
     tmp_path: pathlib.Path,
 ) -> None:
-    # From one shared np-score base, two siblings declare DIFFERENT scores
+    # From one shared allele-score base, two siblings declare DIFFERENT
+    # scores
     # AND author DIFFERENT typed rows; BOTH are realized and each must read
     # back ONLY its own score and values through AlleleScore.  If the
     # builder accumulated scores/rows into a shared mutable field (append in
     # place) instead of a fresh tuple per with_score/with_score_line, the
     # siblings would carry each other's declarations and this would fail.
-    base = a_np_score()
+    base = an_allele_score()
     sibling_a = (
         base
         .with_score("sa", "float")
@@ -1468,13 +1438,14 @@ def test_score_line_partial_pos_end_raises(
         builder.build_resource(tmp_path)
 
 
-def test_np_score_data_missing_reference_column_raises(
+def test_allele_score_data_missing_reference_column_raises(
     tmp_path: pathlib.Path,
 ) -> None:
-    # np/allele scores require reference + alternative base columns; a data
-    # block missing one is rejected by the base_required header check.
+    # An allele score requires reference + alternative base columns; a
+    # data block missing one is rejected by the base_required header check.
+    # Its sibling below covers the `alternative` half.
     builder = (
-        a_np_score()
+        an_allele_score()
         .with_score("cadd_raw", "float")
         .with_data("""
             chrom  pos_begin  alternative  cadd_raw
@@ -2221,11 +2192,9 @@ def test_header_mode_none_plain_matches_tabix_readback(
 def test_header_mode_none_allele_score_addresses_ref_alt_by_index(
     tmp_path: pathlib.Path,
 ) -> None:
-    # np/allele locate reference/alternative by NAME by default; with no
-    # header there is no name to locate, so the mapping is rendered by index
-    # -- from the same authored header.  Built and read back as an
-    # `allele_score`: reading an `a_np_score()` resource back through
-    # `AlleleScore` works, but only through a deprecation warning.
+    # An allele score locates reference/alternative by NAME by default;
+    # with no header there is no name to locate, so the mapping is rendered
+    # by index -- from the same authored header.
     resource = (
         an_allele_score()
         .with_score("freq", "float", column_index=4)

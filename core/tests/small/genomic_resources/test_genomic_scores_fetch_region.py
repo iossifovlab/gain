@@ -282,7 +282,7 @@ def np_score2(tmp_path_factory: pytest.TempPathFactory) -> AlleleScore:
     setup_directories(
         root_path, {
             "genomic_resource.yaml": textwrap.dedent("""
-                type: np_score
+                type: allele_score
                 table:
                     filename: data.txt.gz
                     format: tabix

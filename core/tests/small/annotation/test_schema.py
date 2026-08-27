@@ -49,7 +49,7 @@ def genomic_resources_repo() -> GenomicResourceRepo:
         "np_score1": {
             "genomic_resource.yaml":
             """\
-            type: np_score
+            type: allele_score
             table:
                 filename: data.mem
             scores:

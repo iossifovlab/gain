@@ -25,7 +25,6 @@ from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
-    a_np_score,
     a_vcf_info_score,
     an_allele_score,
 )
@@ -269,16 +268,6 @@ def test_vcf_backed_allele_score_is_not_bulk_scan_eligible(
     assert not G._bulk_scan_eligible(resource, ["score"])
 
 
-def test_np_score_is_not_bulk_scan_eligible(tmp_path: pathlib.Path) -> None:
-    # Deliberately left out: no production GRR has an np_score, so the bulk
-    # path is not exercised against one.
-    resource = (
-        a_np_score().with_score("score", "float").with_tabix()
-        .build_resource(tmp_path)
-    )
-    assert not G._bulk_scan_eligible(resource, ["score"])
-
-
 def test_categorical_histogram_keeps_the_per_record_path(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -426,14 +415,20 @@ def test_dispatch_uses_bulk_for_allele_and_fragment(
 def test_dispatch_keeps_an_ineligible_score_off_the_bulk_path(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The spy's own control: an np_score is deliberately excluded, so neither
-    # task may enter a bulk function.  Without this, an empty call log in the
-    # test above could mean "the spy never fires" rather than "the bulk path
-    # ran".
+    # The spy's own control: an allele score with no tabix index serves no
+    # column arrays, so neither task may enter a bulk function.  Without
+    # this, an empty call log in the test above could mean "the spy never
+    # fires" rather than "the bulk path ran".
+    #
+    # This control used to be an ``np_score``, excluded from the bulk gate
+    # by resource type until gain#920 removed the type.  Backend array
+    # support is the same control expressed through the predicate that
+    # survives.
     resource = (
-        a_np_score().with_score("score", "float").with_tabix()
+        an_allele_score().with_score("score", "float")
         .build_resource(tmp_path)
     )
+    assert not G._bulk_scan_eligible(resource, ["score"])
     confs: dict = {"score": _hist_conf()}
     calls = _spy_on_bulk(monkeypatch)
     G._do_histogram_task(resource, confs, "1", 1, 20)

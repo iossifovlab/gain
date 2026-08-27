@@ -219,40 +219,6 @@ def test_allele_score_mode_substitutions_config() -> None:
     assert not score.alleles_mode()
 
 
-def test_allele_score_np_score_defaults_to_substitutions(
-        caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level("WARNING")
-    res = build_allele_resource(
-        """
-        type: np_score
-        table:
-            filename: data.mem
-            reference:
-                name: reference
-            alternative:
-                name: alternative
-        scores:
-            - id: freq
-              type: float
-              desc: ""
-              name: freq
-        """,
-        """
-        chrom  pos_begin  reference  alternative  freq
-        1      10         A          G            0.02
-        """,
-    )
-
-    score = AlleleScore(res)
-
-    assert score.substitutions_mode()
-    assert not score.alleles_mode()
-    # Exactly one -- the warning lives in AlleleScore.__init__ alone; the
-    # build_score_from_resource dispatcher used to emit a second copy.
-    assert len(
-        [rec for rec in caplog.records if "deprecated" in rec.message]) == 1
-
-
 def test_allele_score_fetch_scores_invalid_chromosome() -> None:
     res = build_allele_resource(
         """

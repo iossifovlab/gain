@@ -33,7 +33,6 @@ from gain.genomic_resources.testing.builders import (
     a_fragment_score,
     a_gene_score,
     a_grr,
-    a_np_score,
     a_position_score,
     an_allele_score,
 )
@@ -59,7 +58,6 @@ def grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
         a_grr()
         .with_resource("scores/pos", a_position_score())
         .with_resource("scores/allele", an_allele_score())
-        .with_resource("scores/np", a_np_score())
         .with_resource("scores/fragment", a_fragment_score())
         .build_repo(tmp_path)
     )
@@ -68,7 +66,6 @@ def grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
 @pytest.mark.parametrize("factory,resource_id,expected", [
     (build_position_score_from_resource, "scores/pos", PositionScore),
     (build_allele_score_from_resource, "scores/allele", AlleleScore),
-    (build_allele_score_from_resource, "scores/np", AlleleScore),
     (build_fragment_score_from_resource, "scores/fragment", FragmentScore),
 ])
 def test_from_resource_returns_the_concrete_type(
@@ -84,7 +81,6 @@ def test_from_resource_returns_the_concrete_type(
 @pytest.mark.parametrize("factory,resource_id,expected", [
     (build_position_score_from_resource_id, "scores/pos", PositionScore),
     (build_allele_score_from_resource_id, "scores/allele", AlleleScore),
-    (build_allele_score_from_resource_id, "scores/np", AlleleScore),
     (build_fragment_score_from_resource_id, "scores/fragment", FragmentScore),
 ])
 def test_from_resource_id_returns_the_concrete_type(

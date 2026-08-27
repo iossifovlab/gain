@@ -19,8 +19,8 @@ from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
     a_grr,
-    a_np_score,
     a_position_score,
+    an_allele_score,
 )
 
 
@@ -577,16 +577,22 @@ def test_bulk_matches_per_record_float_underscore_token(
     assert bulk["s"].max_value == 1000.0
 
 
-def test_np_score_is_not_bulk_eligible(tmp_path: pathlib.Path) -> None:
-    # An np_score is deliberately left out of the bulk gate: no production GRR
-    # has one, so the bulk path is not exercised against it and is not opened
-    # to it untested.  The exclusion is NOT about accumulator semantics -- an
-    # np_score reads with the same per-allele (weight-1, several records at a
-    # position) rules an allele score does, and gain#421 admitted those by
-    # having both scan paths read the kind's own record facts.  The dispatch
-    # must keep such scores on the per-record path -- and never raise.
+def test_a_score_without_column_arrays_is_not_bulk_eligible(
+    tmp_path: pathlib.Path,
+) -> None:
+    # An allele score whose backend serves no column arrays stays on the
+    # per-record path.  The exclusion is NOT about accumulator semantics --
+    # it reads with the same per-allele (weight-1, several records at a
+    # position) rules its tabix-backed twin does, and gain#421 admitted
+    # those by having both scan paths read the kind's own record facts.
+    # The dispatch must keep such scores on the per-record path -- and
+    # never raise.
+    #
+    # This was an ``np_score`` until gain#920 removed the type; the gate
+    # excluded it by resource type, where the surviving discriminator is
+    # the backend's array support.
     resource = (
-        a_np_score().with_score("score", "float").with_tabix()
+        an_allele_score().with_score("score", "float")
         .build_resource(tmp_path)
     )
     confs: dict = {"score": _hist_conf()}

@@ -142,9 +142,10 @@ and no **other**), effect
 An allele class: strictly one reference base to one alternative base, the
 identity pair included. Never a multi-base event — that is what keeps the 4×4
 ref→alt matrix exact. Not to be confused with an allele score's
-`substitutions` **mode** (`allele_score_mode`, and the default for
-`np_score`-typed resources), which selects how a whole resource is *read* —
-a property of the score, not a classification of any one of its rows.
+`substitutions` **mode** (`allele_score_mode`), which selects how a whole
+resource is *read* — a property of the score, not a classification of any
+one of its rows. It is opt-in: an `allele_score` reads in `alleles` mode
+unless it says otherwise.
 _Avoid_: SNV, SNP (both read as "one variant" rather than one class of row),
 MNV (an MNV is **complex**)
 

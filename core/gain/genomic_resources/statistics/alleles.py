@@ -734,14 +734,18 @@ def region_alleles_for(
 ) -> RegionAlleles | None:
     """A region accumulator for an allele score, ``None`` for other kinds.
 
-    Gated on the BUILT SCORE CLASS rather than the resource type string:
-    ``allele_score`` and the deprecated ``np_score`` both build an
-    :class:`~gain.genomic_resources.genomic_scores.AlleleScore`, and
-    ``equivalent_resource_types`` does not alias them -- it aliases only
-    the two fragment-score spellings.  A gate written on the type
-    strings would therefore skip ``np_score`` with no error and no
-    failing test, which is precisely the deprecated spelling this
-    statistic must keep serving (gain#777).
+    Gated on the BUILT SCORE CLASS rather than the resource type string.
+
+    Until 2026.8.5 that was load-bearing: ``allele_score`` and the
+    deprecated ``np_score`` both built an
+    :class:`~gain.genomic_resources.genomic_scores.AlleleScore` while
+    ``equivalent_resource_types`` aliased neither to the other, so a gate
+    written on type strings skipped ``np_score`` silently (gain#777).
+    ``np_score`` is gone (gain#920) and only one spelling reaches here now,
+    but the class gate stays: it is the property this statistic actually
+    depends on -- that the score reads alleles -- and a type-string gate
+    would have to be revisited by the next spelling that builds an
+    ``AlleleScore``.
     """
     if not isinstance(score, AlleleScore):
         return None

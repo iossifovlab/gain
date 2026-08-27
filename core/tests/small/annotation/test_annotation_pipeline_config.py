@@ -150,7 +150,7 @@ def test_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
                 },
                 "score_three": {
                     "genomic_resource.yaml": textwrap.dedent("""
-                        type: np_score
+                        type: allele_score
                         table:
                             filename: data.txt
                             reference:
@@ -214,7 +214,7 @@ def test_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
                     "scoredir_three": {
                         "subscore": {
                             "genomic_resource.yaml": textwrap.dedent("""
-                                type: np_score
+                                type: allele_score
                                 table:
                                     filename: data.txt
                                     reference:
