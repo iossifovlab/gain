@@ -53,10 +53,19 @@ def parse_default_gene_models_format(
     """Parse default gene models file format."""
     # pylint: disable=too-many-locals
     infile.seek(0)
+    # The four bound columns are deliberately left to inference: they are
+    # converted by `parse_coordinate` either way, and pinning them here
+    # would say something this format does not mean -- gain writes them,
+    # and writes them as integers. `na_filter=False` is what keeps a
+    # blank cell the empty text it was rather than a float ``NaN``, which
+    # `gene` -- the one column here that is neither load-bearing nor an
+    # attribute -- carried into serialization as the token ``nan``
+    # (gain#931).
     df = pd.read_csv(
         infile,
         sep="\t",
         nrows=nrows,
+        na_filter=False,
         dtype={
             "chr": str,
             "trID": str,

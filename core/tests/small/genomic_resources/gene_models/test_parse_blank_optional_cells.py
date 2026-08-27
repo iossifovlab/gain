@@ -34,6 +34,7 @@ from gain.genomic_resources.gene_models.transcript_models import (
 
 from tests.small.genomic_resources.gene_models.columnar_formats import (
     BAD_NAME,
+    DEFAULT,
     GOOD_NAME,
     OPTIONAL_CELL_CASE_IDS,
     OPTIONAL_CELLS,
@@ -101,3 +102,19 @@ def test_a_blank_cell_leaves_another_record_untouched(
 
     assert serialized_attribute(with_a_blank, GOOD_NAME, column) == \
         serialized_attribute(baseline, GOOD_NAME, column)
+
+
+def test_a_blank_gene_in_the_default_format_is_not_a_float() -> None:
+    """The default format has its own read, and its own blank to lose.
+
+    `gene` is the one cell of gain's own output format that is neither
+    load-bearing -- gain#929 guards the four that are -- nor an
+    attribute, so it is the one this issue's other tests do not reach. A
+    blank one became the float `NaN`, which is truthy, so serialization
+    wrote it out as the token `nan` rather than as the nothing the file
+    held.
+    """
+    models = DEFAULT.parse(DEFAULT.file_with("gene", ""))
+    assert models is not None
+
+    assert transcript_named(models, BAD_NAME).gene == ""
