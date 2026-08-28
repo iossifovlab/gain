@@ -35,6 +35,7 @@ from gain.genomic_resources.statistics.alleles import (
     ALLELE_COMPLEX_GRID_IMAGE_FILE,
     ALLELE_DELETION_LENGTHS_IMAGE_FILE,
     ALLELE_INSERTION_LENGTHS_IMAGE_FILE,
+    COMPLEX_GRID_TABLE_MAX_CELLS,
 )
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
@@ -228,6 +229,25 @@ def _indel_allele_score(tmp_path: pathlib.Path) -> GenomicResource:
     )
 
 
+def _dense_complex_allele_score(tmp_path: pathlib.Path) -> GenomicResource:
+    """An allele score whose complex grid is DRAWN rather than tabled.
+
+    At or below ``COMPLEX_GRID_TABLE_MAX_CELLS`` occupied cells the page
+    lists the cells and writes no image at all (gain#989), so the figure
+    this file is about would not exist -- ``_indel_allele_score``'s one
+    complex row is far below it.  Each row's pair of lengths is distinct,
+    so the occupied-cell count is the row count.
+    """
+    builder = an_allele_score().with_score("score", "float")
+    for index in range(COMPLEX_GRID_TABLE_MAX_CELLS + 1):
+        builder = builder.with_score_line(
+            chrom="chr1", pos_begin=(index + 1) * 10,
+            reference="A" + "C" * (1 + index // 6),
+            alternative="G" + "T" * (1 + index % 6),
+            score=0.1)
+    return builder.with_tabix().build_resource(tmp_path)
+
+
 def _built_page(resource: GenomicResource) -> str:
     GenomicScoreImplementation._do_noregion_histograms(resource)
     return build_score_implementation_from_resource(resource).get_info()
@@ -247,8 +267,10 @@ _FIGURES: list[tuple[str, _Builder, str]] = [
      _indel_allele_score, ALLELE_INSERTION_LENGTHS_IMAGE_FILE),
     ("deletion lengths",
      _indel_allele_score, ALLELE_DELETION_LENGTHS_IMAGE_FILE),
+    # Its own resource: this is the one figure whose existence depends
+    # on the DATA and not just on the group being present.
     ("complex grid",
-     _indel_allele_score, ALLELE_COMPLEX_GRID_IMAGE_FILE),
+     _dense_complex_allele_score, ALLELE_COMPLEX_GRID_IMAGE_FILE),
 ]
 
 
