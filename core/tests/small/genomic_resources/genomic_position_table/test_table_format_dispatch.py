@@ -6,10 +6,19 @@ explicit ``format:`` key.  They used to disagree -- the suffix branch matched
 one bigWig spelling exactly (``.bw``), the explicit branch matched two in any
 case (``bw``/``bigwig``) -- so a resource named with UCSC's other spelling and
 no ``format:`` was routed to the in-memory text parser.  These tests pin the
-one rule that now governs both: the suffix is matched case-insensitively, over
-the same vocabulary the explicit key accepts.
+rule the suffix branch now follows: every suffix is matched
+case-insensitively, and the bigWig arm accepts both spellings the explicit
+key accepts.
+
+The two branches are NOT fully symmetric even so, and these tests do not
+claim they are: the explicit branch still exact-matches its non-bigWig
+values, so ``format: TSV`` remains an error.  Widening what ``format:``
+accepts is out of scope for gain#348 -- what had to stop was the two
+branches disagreeing about the same *file*.
 """
+import gzip
 import pathlib
+import textwrap
 
 import pytest
 from gain.genomic_resources.genomic_position_table.record import (
@@ -20,8 +29,14 @@ from gain.genomic_resources.genomic_position_table.record import (
 from gain.genomic_resources.genomic_position_table.table_bigwig import (
     BigWigTable,
 )
+from gain.genomic_resources.genomic_position_table.table_inmemory import (
+    InmemoryGenomicPositionTable,
+)
 from gain.genomic_resources.genomic_position_table.table_tabix import (
     TabixGenomicPositionTable,
+)
+from gain.genomic_resources.genomic_position_table.table_vcf import (
+    VCFGenomicPositionTable,
 )
 from gain.genomic_resources.genomic_position_table.utils import (
     build_genomic_position_table,
@@ -31,8 +46,8 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     build_filesystem_test_resource,
     setup_directories,
-    setup_gzip,
     setup_tabix,
+    setup_vcf,
 )
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
@@ -86,22 +101,45 @@ def test_explicit_format_wins_over_a_suffix_mapping_elsewhere(
         assert len(tuple(table.get_all_records())) == 3
 
 
-def test_uppercase_csv_suffix_selects_the_csv_backend(
-    tmp_path: pathlib.Path,
+# The last column carries a SPACE, which is what makes each case below
+# discriminating rather than decorative.  ``tsv``/``csv`` split on their one
+# separator and read it as a single field; ``mem`` -- the fallback an
+# unrecognised suffix lands on -- splits on any whitespace, so it sees a fifth
+# column and dies on "Inconsistent number of columns".  Without the space,
+# ``mem`` parses these fixtures identically and the tests pass either way.
+_TAB_ROWS = "chrom\tpos_begin\tpos_end\tc2\n1\t10\t12\t3 14\n1\t11\t11\t4 14\n"
+_COMMA_ROWS = "chrom,pos_begin,pos_end,c2\n1,10,12,3 14\n1,11,11,4 14\n"
+
+
+@pytest.mark.parametrize(("filename", "rows", "gzipped"), [
+    ("DATA.TXT", _TAB_ROWS, False),
+    ("DATA.TSV", _TAB_ROWS, False),
+    ("DATA.CSV", _COMMA_ROWS, False),
+    ("DATA.TXT.GZ", _TAB_ROWS, True),
+    ("DATA.TSV.GZ", _TAB_ROWS, True),
+    ("DATA.CSV.GZ", _COMMA_ROWS, True),
+])
+def test_uppercase_text_suffix_selects_its_separator_backend(
+    tmp_path: pathlib.Path, filename: str, rows: str, *, gzipped: bool,
 ) -> None:
     """Case-insensitivity is one rule, not a bigWig special case.
 
-    The ``csv`` backend splits on commas; ``mem`` -- what an unrecognised
-    suffix falls back to -- splits on whitespace and would see each line as a
-    single column.  Reading the columns back apart is what says which backend
-    was picked.
+    The ``.GZ`` cases additionally pin that the suffix rule and the in-memory
+    backend's own decompression check AGREE: routing ``.TXT.GZ`` to ``tsv``
+    only helps if that backend then recognises the file as gzipped, and its
+    ``.gz`` test was case-sensitive in exactly the same way.  Both halves have
+    to be lowered -- either one alone leaves these red.
     """
+    path = tmp_path / filename
+    if gzipped:
+        with gzip.open(path, "wt") as outfile:
+            outfile.write(rows)
+    else:
+        path.write_text(rows)
     setup_directories(tmp_path, {
-        "genomic_resource.yaml": """
+        "genomic_resource.yaml": f"""
             table:
-                filename: DATA.CSV""",
-        "DATA.CSV":
-            "chrom,pos_begin,pos_end,c2\n1,10,12,3.14\n1,11,11,4.14\n",
+                filename: {filename}""",
     })
     res = build_filesystem_test_resource(tmp_path)
     assert res.config is not None
@@ -114,8 +152,56 @@ def test_uppercase_csv_suffix_selects_the_csv_backend(
     ]
 
 
-def test_binary_payload_reaching_the_mem_backend_names_the_misconfiguration(
+def test_explicit_format_can_also_send_a_bigwig_suffix_to_the_text_parser(
     tmp_path: pathlib.Path,
+) -> None:
+    """Precedence runs both ways: the new bigWig default is still a DEFAULT.
+
+    The complement of the override test above, and the direction the widened
+    suffix rule could plausibly have broken -- a ``.bw``-named text file whose
+    config states ``format: mem`` must still reach the in-memory backend.
+    """
+    setup_directories(tmp_path, {
+        "genomic_resource.yaml": """
+            table:
+                filename: data.BW
+                format: mem""",
+        "data.BW": "chrom pos_begin pos_end c2\n1 10 12 3.14\n1 11 11 4.14\n",
+    })
+    res = build_filesystem_test_resource(tmp_path)
+    assert res.config is not None
+
+    with build_genomic_position_table(res, res.config["table"]) as table:
+        assert isinstance(table, InmemoryGenomicPositionTable)
+        assert len(list(table.get_all_records())) == 2
+
+
+_HEADER_FROM_FILE_TABLE = """
+                table:
+                    filename: data.dat"""
+
+# ``header_mode: none`` skips the header scan entirely, so the FIRST row this
+# backend pulls is in the record loop rather than the header loop.  The two
+# loops decode separately, and a fixture that only ever trips the header one
+# leaves the record loop's diagnostic unexercised.
+_HEADERLESS_TABLE = """
+                table:
+                    filename: data.dat
+                    header_mode: none
+                    chrom:
+                        column_index: 0
+                    pos_begin:
+                        column_index: 1
+                    pos_end:
+                        column_index: 2"""
+
+
+@pytest.mark.parametrize("table_config", [
+    pytest.param(_HEADER_FROM_FILE_TABLE, id="header-read-from-file"),
+    pytest.param(_HEADERLESS_TABLE, id="headerless"),
+])
+def test_binary_payload_reaching_the_mem_backend_names_the_misconfiguration(
+    tmp_path: pathlib.Path, table_config: str,
 ) -> None:
     """A binary file in the text parser is always a misconfiguration.
 
@@ -124,6 +210,9 @@ def test_binary_payload_reaching_the_mem_backend_names_the_misconfiguration(
     decision is checked against the payload.  What the diagnostic has to carry
     is the three facts that turn the failure into a one-line config fix: which
     resource, which file, and which format was chosen for it.
+
+    Run against both header modes because they fail in different loops --
+    see ``_HEADERLESS_TABLE``.
 
     ``UnicodeDecodeError`` is itself a ``ValueError``, so the raised type is
     asserted rather than merely caught -- ``pytest.raises(ValueError)`` alone
@@ -135,9 +224,7 @@ def test_binary_payload_reaching_the_mem_backend_names_the_misconfiguration(
             type: directory
             directory: {tmp_path!s}""",
         "one_score": {
-            "genomic_resource.yaml": """
-                table:
-                    filename: data.dat""",
+            "genomic_resource.yaml": table_config,
         },
     })
     # bigWig magic, i.e. the payload the reporter arrived with -- any
@@ -185,34 +272,43 @@ def test_uppercase_bgz_suffix_selects_the_tabix_backend(
         assert len(list(table.get_all_records())) == 2
 
 
-def test_uppercase_gz_suffix_is_still_decompressed(
+def test_uppercase_vcf_gz_suffix_selects_the_vcf_backend(
     tmp_path: pathlib.Path,
 ) -> None:
-    """The suffix rule and the decompression check must agree too.
+    """Routing a suffix somewhere it then crashes is not resolving it.
 
-    Routing ``.TXT.GZ`` to the ``tsv`` backend only helps if that backend then
-    recognises the file as gzipped -- its own ``.gz`` test was case-sensitive
-    in exactly the same way, so an upper-case name reached the text parser as
-    raw deflate bytes.
+    The VCF backend derives its header sidecar by splitting the filename at
+    ``.vcf``, which was case-sensitive in the same way the dispatch was -- so
+    lowering the suffix rule alone would hand ``.VCF.GZ`` to a backend that
+    dies in its constructor with a bare ``substring not found``, naming
+    neither the resource nor the file.  That is the gain#348 failure mode
+    relocated, not fixed.
     """
     setup_directories(tmp_path, {
         "genomic_resource.yaml": """
             table:
-                filename: DATA.TXT.GZ""",
+                filename: DATA.VCF.GZ""",
     })
-    setup_gzip(tmp_path / "data.txt.gz", """
-        chrom pos_begin pos_end c2
-        1     10        12      3.14
-        1     11        11      4.14
-    """)
-    (tmp_path / "data.txt.gz").rename(tmp_path / "DATA.TXT.GZ")
+    setup_vcf(tmp_path / "data.vcf.gz", textwrap.dedent("""
+##fileformat=VCFv4.1
+##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">
+#CHROM POS ID REF ALT QUAL FILTER  INFO
+chr1   5   .  A   T   .    .       A=1
+chr1   15  .  A   T   .    .       A=2
+    """))
+    # setup_vcf writes the pair under the lower-case names it derives itself;
+    # the suffix under test is ``.VCF.GZ``, so move all four onto it.
+    for src, dst in (
+        ("data.vcf.gz", "DATA.VCF.GZ"),
+        ("data.vcf.gz.tbi", "DATA.VCF.GZ.tbi"),
+        ("data.header.vcf.gz", "DATA.header.VCF.GZ"),
+        ("data.header.vcf.gz.tbi", "DATA.header.VCF.GZ.tbi"),
+    ):
+        (tmp_path / src).rename(tmp_path / dst)
 
     res = build_filesystem_test_resource(tmp_path)
     assert res.config is not None
 
     with build_genomic_position_table(res, res.config["table"]) as table:
-        records = list(table.get_all_records())
-
-    assert [(rec[CHROM], rec[POS_BEGIN], rec[POS_END]) for rec in records] == [
-        ("1", 10, 12), ("1", 11, 11),
-    ]
+        assert isinstance(table, VCFGenomicPositionTable)
+        assert len(list(table.get_all_records())) == 2

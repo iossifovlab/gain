@@ -84,13 +84,17 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
     def _not_text_error(self) -> ValueError:
         """Describe a payload this backend was given but cannot decode.
 
-        A binary file reaching the text parser is always a misconfiguration --
-        there is no valid resource whose in-memory table is not text.  Left
-        alone it surfaces as a bare ``UnicodeDecodeError`` from whichever row
-        the decoder choked on, naming neither the resource, the file, nor the
-        format decision that routed it here: the reader lands several layers
-        below the mistake with nothing to act on.  Naming all three is what
-        turns it into a one-line config fix (gain#348).
+        Left alone this surfaces as a bare ``UnicodeDecodeError`` from
+        whichever row the decoder choked on, naming neither the resource, the
+        file, nor the format decision that routed it here: the reader lands
+        several layers below the mistake with nothing to act on.  Naming all
+        three is what turns it into a one-line fix (gain#348).
+
+        The message states the two causes and does not pick between them,
+        because the backend cannot tell: a binary payload routed here by its
+        suffix is the common one, but a genuinely textual file in some other
+        encoding fails identically, and telling THAT reader to change the
+        table's ``format:`` would be advice that cannot work.
 
         Raised around the row loops rather than at ``open_raw_file`` because
         decoding is lazy -- the handle opens fine and the failure only
@@ -100,11 +104,12 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
             f"the table of resource "
             f"<{self.genomic_resource.get_full_id()}> selected the "
             f"'{self.format}' format, which reads "
-            f"{self.definition.filename} as text, but that file is not "
-            f"valid UTF-8 -- it looks like a binary payload (a bigWig, or a "
-            f"compressed file whose suffix was not recognised). Set an "
-            f"explicit 'format:' on the table, or give the file a suffix "
-            f"the format auto-detection knows")
+            f"{self.definition.filename} as text, but that file could not be "
+            f"decoded as UTF-8. Either it is a binary payload the format "
+            f"auto-detection did not recognise (a bigWig, or a compressed "
+            f"file) -- set an explicit 'format:' on the table, or give the "
+            f"file a suffix the auto-detection knows; or it is text in "
+            f"another encoding, and must be converted to UTF-8")
 
     def open(self) -> "InmemoryGenomicPositionTable":
         compression = None
