@@ -2005,18 +2005,14 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
 
         pre_state = self.load_resource_file_state(resource, entry.name)
         if pre_state is not None:
-            timestamp = self.get_resource_file_timestamp(
-                resource, entry.name)
-            size = self.get_resource_file_size(resource, entry.name)
-            if abs(timestamp - pre_state.timestamp) <= 1e-2 \
-                    and size == pre_state.size:
+            if self._state_describes_stored_file(
+                    resource, pre_state, timestamp_tolerance=1e-2):
                 entry.md5 = pre_state.md5
                 entry.size = pre_state.size
                 return None
             logger.debug(
-                "timestamp (%s) or size (%s) mismatch for %s in %s; "
+                "%s in %s no longer matches its recorded state; "
                 "recomputing md5...",
-                pre_state.timestamp - timestamp, pre_state.size - size,
                 entry.name, resource.resource_id)
 
         if dvc_entry is not None:

@@ -15,6 +15,7 @@ make the first failure go away and quietly buy the second one, because
 same-size rewrites land in the same whole second routinely.
 """
 import pytest
+import yaml
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 
 
@@ -54,3 +55,95 @@ def test_a_same_size_rewrite_is_detected_without_a_pause(
     assert verdict.needs_download, (
         "a same-size rewrite went unnoticed, so the state kept an md5 sum "
         "that no longer describes the stored bytes")
+
+
+@pytest.mark.grr_full
+def test_the_manifest_scan_rehashes_a_same_size_rewrite(
+        fsspec_proto: FsspecReadWriteProtocol,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """A manifest must never publish an md5 sum of bytes that are gone.
+
+    The scan trusts a recorded state whose file looks unchanged and
+    copies the md5 sum straight out of it, which is what makes a rebuild
+    cheap. A same-size rewrite it cannot see therefore does not merely
+    cost nothing -- it writes the *previous* md5 sum into the
+    ``.MANIFEST``, a committed artefact every client trusts.
+
+    The modification time is forced to whole seconds here, which is what
+    a store that reports it that way would give. Against MinIO the scan
+    is saved by an accident rather than by the rule: it lists, and the
+    listing reports milliseconds where the recorded state came from a
+    ``head_object`` that reports whole seconds, so the two disagree and
+    the file is re-hashed for the wrong reason. Take that disagreement
+    away -- as a store with a second-granular clock does, and real S3 is
+    believed to be one -- and the timestamp can no longer tell these two
+    versions apart at all. The change token still can.
+    """
+    proto = fsspec_proto
+    resource = proto.get_resource("one")
+
+    if proto.get_resource_file_change_token(resource, "data.txt") is None:
+        pytest.skip(
+            "store offers no change token, so a second-granular clock "
+            "leaves nothing that could tell the two versions apart")
+
+    # Given a store whose modification time only counts whole seconds
+    unpatched = type(proto)._get_filepath_timestamp
+    monkeypatch.setattr(
+        type(proto), "_get_filepath_timestamp",
+        lambda self, filepath: float(int(unpatched(self, filepath))))
+
+    # ...and a file with a recorded state describing the bytes stored now
+    with proto.open_raw_file(resource, "data.txt", "rt") as infile:
+        original = infile.read()
+    proto.save_resource_file_state(
+        resource, proto.build_resource_file_state(resource, "data.txt"))
+    superseded_md5 = proto.compute_md5_sum(resource, "data.txt")
+
+    # When it is overwritten with different bytes of the very same length
+    with proto.open_raw_file(resource, "data.txt", "wt") as outfile:
+        outfile.write(_different_bytes_of_the_same_length(original))
+
+    # Then the manifest describes the bytes that are there now
+    manifest = proto.build_manifest(resource)
+
+    assert manifest["data.txt"].md5 != superseded_md5, (
+        "the manifest published the md5 sum of the overwritten bytes")
+    assert manifest["data.txt"].md5 == proto.compute_md5_sum(
+        resource, "data.txt")
+
+
+@pytest.mark.grr_full
+def test_a_state_written_before_there_were_tokens_still_loads(
+        fsspec_proto: FsspecReadWriteProtocol) -> None:
+    """A ``.state`` already on disk has no token key, and must still work.
+
+    The document is written from the dataclass, so every state written
+    from now on carries the key; every state written before this does
+    not. Reading one of those must not fail, and the file it describes
+    must still be judged by the modification time it was recorded
+    against, until something rebuilds it.
+    """
+    proto = fsspec_proto
+    resource = proto.get_resource("one")
+    proto.save_resource_file_state(
+        resource, proto.build_resource_file_state(resource, "data.txt"))
+
+    # Given the state document as it was written before tokens existed
+    path = proto._get_resource_file_state_path(resource, "data.txt")
+    with proto.filesystem.open(path, "rt") as infile:
+        document = yaml.safe_load(infile.read())
+    del document["change_token"]
+    with proto.filesystem.open(path, "wt") as outfile:
+        outfile.write(yaml.safe_dump(document))
+
+    # When it is loaded
+    state = proto.load_resource_file_state(resource, "data.txt")
+
+    # Then it loads, carrying no token
+    assert state is not None
+    assert state.change_token is None
+
+    # ...and the untouched file it describes is still up to date
+    verdict = proto.classify_resource_file(resource, resource, "data.txt")
+    assert not verdict.needs_download
