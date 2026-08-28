@@ -32,6 +32,7 @@ import ast
 import pathlib
 
 import pytest
+from gain.annotation import pipeline_doc
 
 #: The ``web_api`` project root: this file is ``web_annotation/tests/``.
 WEB_API_SRC = pathlib.Path(__file__).resolve().parents[2]
@@ -277,3 +278,49 @@ def _dynamically_imported_names(call: ast.Call) -> set[str]:
     if isinstance(first, ast.Constant) and isinstance(first.value, str):
         return {first.value}
     return set()
+
+
+#: The pipeline documentation template, spelled out rather than imported
+#: from ``gain``.  A fence that scans for a name its own subject supplies
+#: goes blind the moment the subject renames it.  Kept honest by
+#: ``test_the_doc_template_fence_names_what_the_renderer_binds``.
+DOC_TEMPLATE = "annotate_doc_pipeline_template.jinja"
+
+
+def test_the_doc_template_fence_names_what_the_renderer_binds() -> None:
+    """The literal above must be the name ``gain``'s renderer asks for."""
+    assert pipeline_doc.DOC_TEMPLATE_NAME == DOC_TEMPLATE
+
+
+def test_no_web_api_module_binds_the_pipeline_doc_template() -> None:
+    """The pipeline documentation page is rendered by ``gain``, not here.
+
+    This project used to hold a second renderer of that template, in the
+    download view, with its own copy of the resource/histogram address
+    pair.  It drifted: ``d8624b787`` moved ``gain``'s addresses onto the
+    GRR's public mirror and left this copy on the repository's own url,
+    where it stayed for two months (#841).  Since #952 the view calls
+    ``gain.annotation.pipeline_doc.render_pipeline_doc`` and names no
+    template of its own.
+
+    This is the half of the fence that ``core`` cannot reach: its CI image
+    copies only ``core/``, so the sweep there sees ``gain`` alone -- and
+    ``gain`` is not where the drift happened.
+
+    Test modules are not swept.  Binding the template in a test builds a
+    fixture, not a second renderer; what the rule forbids is shipping one.
+    ``test_the_fence_can_see_the_project_it_polices`` above is what stops
+    this sweep passing by finding nothing.
+    """
+    offenders = sorted(
+        str(py.relative_to(WEB_API_SRC))
+        for py in WEB_API_SRC.rglob("*.py")
+        if "tests" not in py.parts and DOC_TEMPLATE in py.read_text()
+    )
+
+    assert offenders == [], (
+        f"these web_api modules name {DOC_TEMPLATE} instead of calling "
+        f"`from gain.annotation.pipeline_doc import render_pipeline_doc`: "
+        f"{offenders}. A second binder here is exactly how this project's "
+        f"copy of the address policy drifted from gain's (#841, #952)"
+    )

@@ -37,7 +37,6 @@ from web_annotation.models import (
     WebAnnotationAnonymousUser,
 )
 from web_annotation.pipeline_cache import (
-    ThreadSafePipeline,
     _load_test_build_delay,
     await_build,
 )
@@ -399,29 +398,21 @@ class PipelineDoc(AsyncAnnotationBaseView):
         # The render touches GRR metadata and does CPU-bound markdown/Jinja
         # work; run it off the loop. Byte-for-byte identical to the prior sync
         # render.
-        html_doc = await sync_to_async(self._render_doc)(pipeline)
+        #
+        # The document, and the addresses it carries, belong to ``gain``: the
+        # CLI and the ``annotation_pipeline`` resource pages render through
+        # the same function (#952). This endpoint wants its default
+        # public-mirror policy and names no pipeline file, so it passes
+        # nothing but the pipeline. Deviating from the shared default here is
+        # what left this endpoint's links on the repository's own url for two
+        # months (#841).
+        html_doc = await sync_to_async(render_pipeline_doc)(pipeline)
 
         response = HttpResponse(html_doc, content_type="text/html")
         response["Content-Disposition"] = (
             f'attachment; filename="{pipeline_id}.html"'
         )
         return response
-
-    @staticmethod
-    def _render_doc(pipeline: ThreadSafePipeline) -> str:
-        """Render the annotate_doc HTML off the loop (touches GRR metadata).
-
-        The render itself, and the addresses the document carries, belong to
-        ``gain`` -- the CLI and the ``annotation_pipeline`` resource pages go
-        through the same function (#952). This endpoint wants the default
-        public-mirror policy, and names no pipeline file, so it passes
-        nothing but the pipeline.
-
-        Kept as a named seam rather than inlined at the call site: it is what
-        the tests render through, and it is where a download-specific
-        deviation from the shared default would go if one is ever needed.
-        """
-        return render_pipeline_doc(pipeline)
 
 
 def _count_annotators(content: str) -> int | None:

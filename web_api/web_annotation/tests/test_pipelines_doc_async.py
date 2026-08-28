@@ -116,6 +116,36 @@ async def test_async_pipeline_doc_does_not_expose_pipeline_path() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
+async def test_the_downloaded_doc_addresses_resources_on_the_public_url(
+) -> None:
+    """The served document links the GRR's public mirror (#841).
+
+    The download is opened in the user's own browser, so an address only
+    the server can resolve -- production's GRR is a group of directory
+    repositories mounted read-only into the container -- resolves nowhere
+    once the file leaves. What the deployment publishes its GRR as is the
+    child repository's ``public_url``.
+
+    Asserted on the response bytes rather than on the render helper.
+    Since #952 the document comes from ``gain``'s one renderer, whose
+    default policy is pinned in ``core``; what is this project's own, and
+    what actually regressed in #841, is that the *endpoint* serves that
+    document unaltered. A test one call further in cannot see a view that
+    stops calling the shared renderer.
+    """
+    client = AsyncClient()
+    response = await client.get(
+        f"{DOC_URL}?pipeline_id=t4c8/t4c8_pipeline",
+    )
+
+    assert response.status_code == 200, response.content
+    content = response.content.decode()
+    assert 'href="http://test/t4c8/t4c8_genes/index.html"' in content
+    assert 'href="http://test/t4c8/t4c8_genome/index.html"' in content
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
 async def test_async_pipeline_doc_missing_pipeline_id_returns_400() -> None:
     """Response path: the early DRF ``Response`` 400 survives async dispatch.
 
