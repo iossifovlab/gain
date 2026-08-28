@@ -16,15 +16,26 @@ def build_genomic_position_table(
     """Instantiate a genome position table from a genomic resource."""
     filename = table_definition["filename"]
 
-    if filename.endswith(".bgz"):
+    # Suffix matching is CASE-INSENSITIVE, and the bigWig branch accepts the
+    # same two spellings the explicit `format:` branch below already does
+    # (`bw`/`bigwig` -- UCSC ships both).  The two branches decide the same
+    # thing from different inputs, so a vocabulary they do not share is a
+    # vocabulary they can disagree about: `hg38.phastCons7way.bigWig` with no
+    # `format:` used to miss every test here, fall through to `mem`, and hand
+    # a binary file to the text parser (gain#348).  One rule for every suffix
+    # rather than a bigWig special case -- an upper-case `.CSV` was the same
+    # trap.
+    suffix_source = filename.lower()
+
+    if suffix_source.endswith(".bgz"):
         default_format = "tabix"
-    elif filename.endswith(".vcf.gz"):
+    elif suffix_source.endswith(".vcf.gz"):
         default_format = "vcf_info"
-    elif filename.endswith((".txt", ".txt.gz", ".tsv", ".tsv.gz")):
+    elif suffix_source.endswith((".txt", ".txt.gz", ".tsv", ".tsv.gz")):
         default_format = "tsv"
-    elif filename.endswith((".csv", ".csv.gz")):
+    elif suffix_source.endswith((".csv", ".csv.gz")):
         default_format = "csv"
-    elif filename.endswith(".bw"):
+    elif suffix_source.endswith((".bw", ".bigwig")):
         default_format = "bw"
     else:
         default_format = "mem"
