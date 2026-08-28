@@ -20,6 +20,8 @@ shipped green.
 import pathlib
 from typing import Any
 
+import gain
+from gain.annotation import pipeline_doc
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.pipeline_doc import render_pipeline_doc
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -218,3 +220,36 @@ def test_no_pipeline_path_block_when_the_caller_names_no_file(
     html = render(repo, tmp_path / "work")
 
     assert "Pipeline path:" not in html
+
+
+#: Spelled out here rather than imported from the module under test. A guard
+#: that scans for a name the subject supplies goes blind the moment the
+#: subject renames it -- the scan would stop matching an unconverted copy
+#: still binding the old name, and pass. ``test_the_guard_scans_for_the_name
+#: _the_renderer_actually_binds`` keeps this literal honest.
+DOC_TEMPLATE = "annotate_doc_pipeline_template.jinja"
+
+#: The whole point of #952: one module binds the document's template. Adding
+#: a second is how the CLI and the endpoint drifted apart for two months.
+EXPECTED_BINDING_MODULES = {"gain/annotation/pipeline_doc.py"}
+
+
+def _modules_binding_the_doc_template() -> set[str]:
+    gain_root = pathlib.Path(gain.__file__).parent
+    return {
+        path.relative_to(gain_root.parent).as_posix()
+        for path in gain_root.rglob("*.py")
+        if DOC_TEMPLATE in path.read_text()
+    }
+
+
+def test_exactly_one_module_binds_the_document_template() -> None:
+    # Compared as sets, not as a one-way "nothing unexpected" subtraction:
+    # the latter also passes when the scan matches nothing at all.
+    assert _modules_binding_the_doc_template() == EXPECTED_BINDING_MODULES
+
+
+def test_the_guard_scans_for_the_name_the_renderer_actually_binds() -> None:
+    # If the template is ever renamed, this fails and sends the author to
+    # the guard above rather than letting it quietly stop matching.
+    assert pipeline_doc.DOC_TEMPLATE_NAME == DOC_TEMPLATE
