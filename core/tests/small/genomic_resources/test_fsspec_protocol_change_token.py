@@ -17,11 +17,21 @@ same-size rewrites land in the same whole second routinely.
 import pytest
 import yaml
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
+from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.testing.faulty_filesystem import (
+    corrupt_same_length,
+)
 
 
-def _different_bytes_of_the_same_length(text: str) -> str:
-    """Replace every character, keeping the length exactly."""
-    return "".join("y" if char != "y" else "z" for char in text)
+def _record_state_for(
+        proto: FsspecReadWriteProtocol, resource: GenomicResource,
+        filename: str) -> str:
+    """Record a state describing what is stored now, and return the text."""
+    with proto.open_raw_file(resource, filename, "rt") as infile:
+        original = str(infile.read())
+    proto.save_resource_file_state(
+        resource, proto.build_resource_file_state(resource, filename))
+    return original
 
 
 @pytest.mark.grr_full
@@ -64,17 +74,16 @@ def test_a_same_size_rewrite_is_detected_without_a_pause(
 
     # Given a file this test wrote itself...
     with proto.open_raw_file(resource, "data.txt", "rt") as infile:
-        original = infile.read()
+        carried_over = infile.read()
     with proto.open_raw_file(resource, "data.txt", "wt") as outfile:
-        outfile.write(original)
+        outfile.write(carried_over)
 
     # ...whose recorded state describes the bytes stored now
-    proto.save_resource_file_state(
-        resource, proto.build_resource_file_state(resource, "data.txt"))
+    original = _record_state_for(proto, resource, "data.txt")
 
     # When it is overwritten with different bytes of the very same length
     with proto.open_raw_file(resource, "data.txt", "wt") as outfile:
-        outfile.write(_different_bytes_of_the_same_length(original))
+        outfile.write(corrupt_same_length(original))
 
     # Then classifying it against the manifest -- which still carries the
     # md5 sum of the original bytes -- reports that it must be fetched
@@ -116,14 +125,11 @@ def test_the_cache_decision_does_not_forgive_one_tick(
         lambda _self, _filepath: reported[0])
 
     # Given a state recorded when the store reported one instant...
-    with proto.open_raw_file(resource, "data.txt", "rt") as infile:
-        original = infile.read()
-    proto.save_resource_file_state(
-        resource, proto.build_resource_file_state(resource, "data.txt"))
+    original = _record_state_for(proto, resource, "data.txt")
 
     # ...and a rewrite the store reports one tick later
     with proto.open_raw_file(resource, "data.txt", "wt") as outfile:
-        outfile.write(_different_bytes_of_the_same_length(original))
+        outfile.write(corrupt_same_length(original))
     reported[0] = 0.01
 
     # Then the cache decision treats the file as changed
@@ -180,15 +186,12 @@ def test_the_manifest_scan_rehashes_a_same_size_rewrite(
         lambda self, filepath: float(int(unpatched(self, filepath))))
 
     # ...and a file with a recorded state describing the bytes stored now
-    with proto.open_raw_file(resource, "data.txt", "rt") as infile:
-        original = infile.read()
-    proto.save_resource_file_state(
-        resource, proto.build_resource_file_state(resource, "data.txt"))
+    original = _record_state_for(proto, resource, "data.txt")
     superseded_md5 = proto.compute_md5_sum(resource, "data.txt")
 
     # When it is overwritten with different bytes of the very same length
     with proto.open_raw_file(resource, "data.txt", "wt") as outfile:
-        outfile.write(_different_bytes_of_the_same_length(original))
+        outfile.write(corrupt_same_length(original))
 
     # Then the manifest describes the bytes that are there now
     manifest = proto.build_manifest(resource)
@@ -212,8 +215,7 @@ def test_a_state_written_before_there_were_tokens_still_loads(
     """
     proto = fsspec_proto
     resource = proto.get_resource("one")
-    proto.save_resource_file_state(
-        resource, proto.build_resource_file_state(resource, "data.txt"))
+    _record_state_for(proto, resource, "data.txt")
 
     # Given the state document as it was written before tokens existed
     path = proto._get_resource_file_state_path(resource, "data.txt")

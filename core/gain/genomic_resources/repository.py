@@ -2347,28 +2347,28 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             token = self.get_resource_file_change_token(
                 resource, state.filename)
             if token is not None:
-                if token == state.change_token:
-                    return True
-                logger.debug(
-                    "change token of %s in %s moved from %s to %s",
-                    state.filename, resource.resource_id,
-                    state.change_token, token)
-                return False
+                describes = token == state.change_token
+                if not describes:
+                    logger.debug(
+                        "change token of %s in %s moved from %s to %s",
+                        state.filename, resource.resource_id,
+                        state.change_token, token)
+                return describes
 
         timestamp = self.get_resource_file_timestamp(
             resource, state.filename)
         size = self.get_resource_file_size(resource, state.filename)
-        if abs(timestamp - state.timestamp) <= timestamp_tolerance \
-                and size == state.size:
-            return True
-        # The two deltas are how this class of defect gets diagnosed --
-        # gain#881 was found by reading them -- so they are named here
-        # rather than left to a caller that only sees a bool.
-        logger.debug(
-            "timestamp (%s) or size (%s) mismatch for %s in %s",
-            state.timestamp - timestamp, state.size - size,
-            state.filename, resource.resource_id)
-        return False
+        describes = abs(timestamp - state.timestamp) <= timestamp_tolerance \
+            and size == state.size
+        if not describes:
+            # The two deltas are how this class of defect gets diagnosed
+            # -- gain#881 was found by reading them -- so they are named
+            # here rather than left to a caller that only sees a bool.
+            logger.debug(
+                "timestamp (%s) or size (%s) mismatch for %s in %s",
+                state.timestamp - timestamp, state.size - size,
+                state.filename, resource.resource_id)
+        return describes
 
     @abc.abstractmethod
     def save_resource_file_state(

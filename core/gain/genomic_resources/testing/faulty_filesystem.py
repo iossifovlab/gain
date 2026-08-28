@@ -110,7 +110,7 @@ class _FaultyFile:
             # stream, the shape that produced #292.
             return data[:fault.after_bytes]
         # Corruption: full length, wrong bytes.
-        return _corrupt(data)
+        return corrupt_same_length(data)
 
     def read(self, *args: Any, **kwargs: Any) -> Any:
         """Read through the inner handle, under the script."""
@@ -152,7 +152,7 @@ class _FaultyFile:
         return getattr(self._inner, name)
 
 
-def _corrupt(data: Any) -> Any:
+def corrupt_same_length(data: Any) -> Any:
     """Return ``data`` of the same length with different content."""
     if isinstance(data, bytes):
         return bytes((byte + 1) % 256 for byte in data)
