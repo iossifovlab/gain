@@ -782,6 +782,8 @@ class BigWigScoreBuilder(MetaMixin):
 
     score_id: str = "score"
     value_type: str = "float"
+    filename: str | None = None
+    table_format: str | None = None
     data: str | None = None
     chrom_lens: dict[str, int] | None = None
     histogram: dict[str, Any] | None = None
@@ -828,6 +830,32 @@ class BigWigScoreBuilder(MetaMixin):
         """Name the single score this bigWig exposes."""
         return dataclasses.replace(
             self, score_id=score_id, value_type=value_type)
+
+    def with_format(self, table_format: str) -> Self:
+        """Emit an explicit ``format:`` in the ``table:`` config.
+
+        The key the suffix only supplies a default for.  Authoring it makes
+        a test able to state the precedence between the two inputs --
+        pairing it with a :meth:`with_filename` whose suffix maps elsewhere
+        is the only way to observe that the explicit key wins (gain#348).
+        Emitted verbatim, so a test can also author the case variants the
+        dispatch accepts.
+        """
+        return dataclasses.replace(self, table_format=table_format)
+
+    def with_filename(self, filename: str) -> Self:
+        """Name the bigWig file, overriding the default ``data.bw``.
+
+        The suffix is not decoration: with no ``format:`` key it is the
+        whole input to the backend decision
+        (``build_genomic_position_table``), so a test about that decision
+        has to author it.  Any name is accepted, including one whose suffix
+        maps elsewhere -- proving that an explicit ``format:`` overrides the
+        suffix needs exactly such a resource.  The bigWig payload itself is
+        written by ``pyBigWig``, which reads the handle rather than the name
+        (gain#348).
+        """
+        return dataclasses.replace(self, filename=filename)
 
     def with_na_values(self, na_values: str | list[str]) -> Self:
         """Declare the NA sentinel(s) for the single bigWig score.
@@ -883,7 +911,9 @@ class BigWigScoreBuilder(MetaMixin):
         self._validate(data, chrom_lens)
         setup_directories(
             resource_dir, {GR_CONF_FILE_NAME: self._render_config()})
-        setup_bigwig(resource_dir / _BIGWIG_FILENAME, data, chrom_lens)
+        setup_bigwig(
+            resource_dir / (self.filename or _BIGWIG_FILENAME),
+            data, chrom_lens)
 
     def build_resource(self, tmp_path: pathlib.Path) -> GenomicResource:
         """Realize this single resource (repo id ``""``) into ``tmp_path``."""
@@ -919,10 +949,14 @@ class BigWigScoreBuilder(MetaMixin):
         )
         zero_based_line = (
             "    zero_based: true\n" if self.zero_based else "")
+        format_line = (
+            f"    format: {self.table_format}\n"
+            if self.table_format is not None else "")
         config = (
             f"type: {self.resource_type or 'position_score'}\n"
             "table:\n"
-            f"    filename: {_BIGWIG_FILENAME}\n"
+            f"    filename: {self.filename or _BIGWIG_FILENAME}\n"
+            f"{format_line}"
             f"{zero_based_line}"
             f"{budget_lines}"
             "scores:\n"

@@ -81,9 +81,39 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
         self.zero_based = table_definition.get("zero_based", False)
         super().__init__(genomic_resource, table_definition)
 
+    def _not_text_error(self) -> ValueError:
+        """Describe a payload this backend was given but cannot decode.
+
+        A binary file reaching the text parser is always a misconfiguration --
+        there is no valid resource whose in-memory table is not text.  Left
+        alone it surfaces as a bare ``UnicodeDecodeError`` from whichever row
+        the decoder choked on, naming neither the resource, the file, nor the
+        format decision that routed it here: the reader lands several layers
+        below the mistake with nothing to act on.  Naming all three is what
+        turns it into a one-line config fix (gain#348).
+
+        Raised around the row loops rather than at ``open_raw_file`` because
+        decoding is lazy -- the handle opens fine and the failure only
+        arrives once a row is pulled.
+        """
+        return ValueError(
+            f"the table of resource "
+            f"<{self.genomic_resource.get_full_id()}> selected the "
+            f"'{self.format}' format, which reads "
+            f"{self.definition.filename} as text, but that file is not "
+            f"valid UTF-8 -- it looks like a binary payload (a bigWig, or a "
+            f"compressed file whose suffix was not recognised). Set an "
+            f"explicit 'format:' on the table, or give the file a suffix "
+            f"the format auto-detection knows")
+
     def open(self) -> "InmemoryGenomicPositionTable":
         compression = None
-        if self.definition.filename.endswith(".gz"):
+        # Case-insensitive, like the suffix rule that routes a file here in
+        # the first place (``build_genomic_position_table``, gain#348).  The
+        # two are one decision split across two modules: a ``.TXT.GZ`` that
+        # now resolves to this backend has to be recognised as gzipped once
+        # it arrives, or it reaches the text parser as raw deflate bytes.
+        if self.definition.filename.lower().endswith(".gz"):
             compression = "gzip"
         self.str_stream = self.genomic_resource.open_raw_file(
             self.definition.filename, mode="rt", compression=compression)
@@ -92,12 +122,15 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
             InmemoryGenomicPositionTable.FORMAT_DEF[self.format]
         if self.header_mode == "file":
             hcs = None
-            for row in self.str_stream:
-                row = row.strip(strip_chars)
-                if not row:
-                    continue
-                hcs = row.split(clmn_sep)
-                break
+            try:
+                for row in self.str_stream:
+                    row = row.strip(strip_chars)
+                    if not row:
+                        continue
+                    hcs = row.split(clmn_sep)
+                    break
+            except UnicodeDecodeError as exc:
+                raise self._not_text_error() from exc
             if not hcs:
                 raise ValueError("No header found")
 
@@ -119,19 +152,23 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
         # live).  The tabix migration must NOT buffer -- see #236-#238.
         raw_rows: list[tuple[str, ...]] = []
         seen_chromosomes: set[str] = set()
-        for row in self.str_stream:
-            row = row.strip(strip_chars)
-            if not row:
-                continue
-            columns = tuple(row.split(clmn_sep))
-            if col_number and len(columns) != col_number:
-                raise ValueError("Inconsistent number of columns")
+        try:
+            for row in self.str_stream:
+                row = row.strip(strip_chars)
+                if not row:
+                    continue
+                columns = tuple(row.split(clmn_sep))
+                if col_number and len(columns) != col_number:
+                    raise ValueError("Inconsistent number of columns")
 
-            col_number = len(columns)
-            if space_replacement:
-                columns = tuple("" if v == "EMPTY" else v for v in columns)
-            raw_rows.append(columns)
-            seen_chromosomes.add(columns[self.chrom_key])
+                col_number = len(columns)
+                if space_replacement:
+                    columns = tuple(
+                        "" if v == "EMPTY" else v for v in columns)
+                raw_rows.append(columns)
+                seen_chromosomes.add(columns[self.chrom_key])
+        except UnicodeDecodeError as exc:
+            raise self._not_text_error() from exc
 
         self._scanned_chromosomes = sorted(seen_chromosomes)
         self._build_chrom_mapping()
