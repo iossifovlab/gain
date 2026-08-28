@@ -6,6 +6,7 @@ FlyBase emits ``mRNA``, ``ncRNA``, ``tRNA`` and friends, and labels genes with
 ``gene_symbol`` rather than ``gene_name``.
 """
 
+import logging
 from collections.abc import Callable
 
 import pytest
@@ -77,15 +78,30 @@ def test_exon_bearing_biotype_is_a_transcript_level_feature(
 @pytest.mark.parametrize("feature", ["miRNA", "pre_miRNA"])
 def test_exonless_biotype_yields_no_transcript_model(
     gtf_gene_models: Callable[..., GeneModels],
+    caplog: pytest.LogCaptureFixture,
     feature: str,
 ) -> None:
-    """FlyBase gives these no ``exon`` records, so they carry no sequence."""
-    gene_models = gtf_gene_models(
-        _record("gene", 19961297, 19969323, GENE_ATTRIBUTES),
-        _record(feature, 19961689, 19968479, TRANSCRIPT_ATTRIBUTES),
-    )
+    """FlyBase gives these no ``exon`` records, so they carry no sequence.
+
+    Two routes now end with no model: this skip, which never builds one,
+    and the drop of a transcript that finishes the parse with no exons
+    (gain#965). An empty mapping alone no longer tells them apart -- with
+    the spelling moved into ``GTF_TRANSCRIPT_FEATURES`` this assertion
+    stays green, because the drop removes what the skip would have
+    refused to build. The absent warning is what pins the skip: it says
+    no model was ever built to drop.
+    """
+    with caplog.at_level(logging.WARNING):
+        gene_models = gtf_gene_models(
+            _record("gene", 19961297, 19969323, GENE_ATTRIBUTES),
+            _record(feature, 19961689, 19968479, TRANSCRIPT_ATTRIBUTES),
+        )
 
     assert gene_models.transcript_models == {}
+    assert not [
+        record for record in caplog.records
+        if "dropping transcript" in record.getMessage()
+    ]
 
 
 def test_a_skipped_biotype_needs_no_transcript_id(

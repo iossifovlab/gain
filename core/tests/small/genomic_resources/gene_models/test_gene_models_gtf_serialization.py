@@ -251,32 +251,25 @@ def test_save_as_gtf_noncoding(
     assert tm.strand == "-"
 
 
-def test_save_as_gtf_no_exons(
+def test_an_exonless_transcript_is_dropped_before_serialization(
     gtf_example_no_exons: GeneModels,
 ) -> None:
+    """The drop happens at parse, so there is nothing left to write.
+
+    The GTF writer was never the problem here -- carrying an exonless
+    model through to the *default* writer is what produced three blank
+    exon columns the read side refuses (gain#965).
+
+    The fixture is a real GENCODE lncRNA annotated at transcript level
+    only, so the record dropped here is one a published source actually
+    spells. The exon-bearing cases above are the positive control for
+    the writer itself.
+    """
     example_models = gtf_example_no_exons
     example_models.load()
-    serialized = gene_models_to_gtf(example_models).getvalue()
 
-    gene_models = build_gene_models_from_resource(build_inmemory_test_resource(
-        content={
-            "genomic_resource.yaml":
-                "{type: gene_models, filename: gencode.txt, format: gtf}",
-            "gencode.txt": serialized,
-        }))
-    gene_models.load()
-    assert len(gene_models.gene_models) == 1
-    assert len(gene_models.transcript_models) == 1
-    assert "ENSG00000238009" in gene_models.gene_models
-    assert "ENST00000466430.5" in gene_models.transcript_models
-    tm = gene_models.transcript_models["ENST00000466430.5"]
-
-    assert tm.tr_id == "ENST00000466430.5"
-    assert tm.cds == (120932, 89295)
-    assert tm.tx == (89295, 120932)
-    assert tm.is_coding() is False
-    assert len(tm.exons) == 0
-    assert tm.strand == "-"
+    assert example_models.transcript_models == {}
+    assert gene_models_to_gtf(example_models).getvalue() == ""
 
 
 def test_save_as_gtf_split_start_stop_codons(
