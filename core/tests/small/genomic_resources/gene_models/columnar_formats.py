@@ -130,11 +130,23 @@ class ColumnarFormat:
         test about the inferred type has to spell every cell of it the
         same way: one odd cell leaves the column an object column, which
         is a different read from the one under test.
+
+        The second row is renamed so the two records can be told apart,
+        except when the column under test is the one that would be
+        renamed. Doing it unconditionally quietly broke the promise in
+        the line above for the three layouts whose gene label is the
+        transcript name: the second cell got `BAD_NAME` back, the column
+        was no longer uniform, and a test meaning to ask what a
+        bare-digit column infers as was asking about a mixed one
+        instead -- and passing for the wrong reason (gain#963). Those
+        records stay distinguishable regardless, by the counter that
+        suffixes a repeated transcript name into a unique id.
         """
         fields = list(self.fields)
         fields[self.columns.index(column)] = value
         second = list(fields)
-        second[self.columns.index(self.name_column)] = BAD_NAME
+        if column != self.name_column:
+            second[self.columns.index(self.name_column)] = BAD_NAME
         return self._file(self._row(fields), self._row(second))
 
 

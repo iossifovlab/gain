@@ -90,11 +90,16 @@ def test_layout_takes_each_attribute_from_its_own_column(
 
     Compared as text, because what type a cell arrives as is a property
     of the read path rather than of the layout: the headerless branch
-    pins only the identifying columns to text, so a column of bare
-    digits like `score` arrives as an int there and as a string on the
-    headered branch (gain#929, gain#931). Pinning the type here would
-    pin that trade-off in the wrong suite; what this is about is that
-    the value came from the right column.
+    pins the identifying columns and the layout's gene columns, and
+    nothing else, so a column of bare digits like `score` arrives as an
+    int there and as a string on the headered branch (gain#929,
+    gain#931). Pinning the type here would pin that trade-off in the
+    wrong suite; what this is about is that the value came from the
+    right column.
+
+    genePredExt's `name2` is on both lists -- it is that layout's gene
+    label and one of its attributes -- so since gain#963 it is text on
+    either path while `score` beside it is not.
     """
     model = _sole_model(fmt)
 
@@ -106,6 +111,29 @@ def test_layout_takes_each_attribute_from_its_own_column(
         column: str(value) for column, value in model.attributes.items()
     }
     assert as_text == expected, fmt.name
+
+
+@pytest.mark.parametrize("fmt", COLUMNAR_FORMATS, ids=COLUMNAR_IDS)
+def test_a_gene_label_keeps_the_padding_the_file_gave_it(
+    fmt: ColumnarFormat,
+) -> None:
+    """Deciding blankness on the stripped text does not strip the cell.
+
+    The rule that picks a gene label asks `cell_text(...).strip()`
+    whether the cell says anything, which is the same question
+    `require_cell` and `record_identity` ask -- and like them it hands
+    back what the file held, not what it asked the question about. A
+    label of `" TP53 "` is padded, and padded is not blank.
+
+    This pins the boundary rather than endorsing it: the natural way to
+    get the blankness test wrong in the other direction is to strip the
+    value too, which would silently rewrite every gene label in a file
+    whose columns are padded.
+    """
+    models = fmt.parse(fmt.file_with_column(fmt.gene_column, " TP53 "))
+
+    assert models is not None, fmt.name
+    assert {model.gene for model in models.values()} == {" TP53 "}, fmt.name
 
 
 #: What an alternate-name column can say instead of a gene. A cell
