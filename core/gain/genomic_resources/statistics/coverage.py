@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Callable, Iterable
-from itertools import starmap
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -35,6 +34,9 @@ from gain.genomic_resources.statistics.base_statistic import (
     Statistic,
     refuse_unmergeable,
     regions_in_genomic_order,
+)
+from gain.genomic_resources.statistics.chromosome_order import (
+    natural_chromosome_key,
 )
 from gain.genomic_resources.statistics.length_histogram import (
     LENGTH_BIN_EDGES,
@@ -866,7 +868,8 @@ def build_coverage_display(
             count / lengths[chrom] if chrom in lengths else None,
             segments.get(chrom),
         )
-        for chrom, count in covered.items()
+        for chrom, count in sorted(
+            covered.items(), key=lambda item: natural_chromosome_key(item[0]))
     ]
     global_fraction: float | None = None
     if lengths and len(lengths) == len(covered):
@@ -881,7 +884,10 @@ def build_fragment_display(
     if statistics.fragments_global() is None:
         return None
     counts = statistics.fragments_by_chromosome()
-    return FragmentDisplay(list(starmap(FragmentRow, counts.items())))
+    return FragmentDisplay([
+        FragmentRow(chrom, counts[chrom])
+        for chrom in sorted(counts, key=natural_chromosome_key)
+    ])
 
 
 def accumulate_coverage(

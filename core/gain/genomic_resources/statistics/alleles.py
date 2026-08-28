@@ -56,6 +56,9 @@ from gain.genomic_resources.statistics.base_statistic import (
     refuse_unmergeable,
     regions_in_genomic_order,
 )
+from gain.genomic_resources.statistics.chromosome_order import (
+    natural_chromosome_key,
+)
 from gain.genomic_resources.statistics.length_histogram import (
     LENGTH_HISTOGRAM_BIN_COUNT,
     accumulate_bins,
@@ -606,9 +609,15 @@ class AlleleStatistics(Statistic):
             held.merge(region)
 
     def by_chromosome(self) -> dict[str, AlleleCounts]:
+        """The per-chromosome counts, in natural chromosome order.
+
+        Ordered here rather than at the template because this dict IS
+        what the info page's Alleles table iterates; the fold keys
+        regions in whatever order they arrived.
+        """
         return {
-            chrom: region.counts()
-            for chrom, region in self._regions.items()
+            chrom: self._regions[chrom].counts()
+            for chrom in sorted(self._regions, key=natural_chromosome_key)
         }
 
     def global_counts(self) -> AlleleCounts:
