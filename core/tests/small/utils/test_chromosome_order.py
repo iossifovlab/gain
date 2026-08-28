@@ -1,11 +1,12 @@
-# pylint: disable=C0114,C0116,W0212,W0621
-from gain.genomic_resources.statistics.chromosome_order import (
-    natural_chromosome_key,
-)
+# pylint: disable=C0114,C0116
+from gain.utils.chromosome_order import natural_chromosome_key
 
 
 def test_a_shorter_number_sorts_before_a_longer_one() -> None:
-    assert natural_chromosome_key("chr2") < natural_chromosome_key("chr10")
+    longer = natural_chromosome_key("chr10")
+
+    assert natural_chromosome_key("chr2") < longer
+    assert natural_chromosome_key("chr9") < longer
 
 
 def test_a_numbered_contig_sorts_before_a_lettered_one() -> None:

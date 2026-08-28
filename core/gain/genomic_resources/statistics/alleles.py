@@ -56,15 +56,13 @@ from gain.genomic_resources.statistics.base_statistic import (
     refuse_unmergeable,
     regions_in_genomic_order,
 )
-from gain.genomic_resources.statistics.chromosome_order import (
-    natural_chromosome_key,
-)
 from gain.genomic_resources.statistics.length_histogram import (
     LENGTH_HISTOGRAM_BIN_COUNT,
     accumulate_bins,
     length_histogram_bin_index,
     plot_length_histogram,
 )
+from gain.utils.chromosome_order import natural_chromosome_key
 
 ALLELE_STATISTICS_FILE = "statistics/alleles.json"
 
@@ -612,8 +610,16 @@ class AlleleStatistics(Statistic):
         """The per-chromosome counts, in natural chromosome order.
 
         Ordered here rather than at the template because this dict IS
-        what the info page's Alleles table iterates; the fold keys
-        regions in whatever order they arrived.
+        what the info page's Alleles table iterates.  What it replaces
+        is not arrival order but the plain string sort
+        :func:`regions_in_genomic_order` applies before the fold --
+        exactly the order iossifovlab/gain#983 calls wrong.
+
+        :meth:`serialize` reads it too, so the order reaches
+        ``statistics/alleles.json``.  Nothing downstream reads that
+        file positionally: :meth:`deserialize` and :func:`_total` are
+        both order-blind, and ``calc_statistics_hash`` hashes the config
+        and the source files, never the statistics content.
         """
         return {
             chrom: self._regions[chrom].counts()
@@ -621,8 +627,13 @@ class AlleleStatistics(Statistic):
         }
 
     def global_counts(self) -> AlleleCounts:
-        """The roll-up over every chromosome."""
-        return _total(self.by_chromosome().values())
+        """The roll-up over every chromosome.
+
+        Off the regions directly rather than through
+        :meth:`by_chromosome`: ``_total`` is order-blind, so the
+        ordering that accessor does would be paid and thrown away.
+        """
+        return _total(region.counts() for region in self._regions.values())
 
     def add_value(self, value: Any) -> None:  # noqa: ARG002
         raise TypeError(

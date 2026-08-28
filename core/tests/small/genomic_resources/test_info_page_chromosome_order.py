@@ -1,7 +1,9 @@
-# pylint: disable=C0114,C0116,W0212,W0621
+# pylint: disable=C0114,C0116,W0212
 import pathlib
 import re
+from collections.abc import Callable
 
+import pytest
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
     build_score_implementation_from_resource,
@@ -15,8 +17,10 @@ from gain.genomic_resources.testing.builders import (
 
 _ROW = re.compile(r"<tr[^>]*>\s*<td>([^<]*)</td>")
 
-# chr10 sorts above chr2 in the stored statistics; the page must not.
-_UNSORTED_CONTIGS = ["chr1", "chr10", "chr2"]
+# Every fixture below carries these three contigs.  They reach the
+# stored statistics sorted as plain strings -- chr1, chr10, chr2 -- so a
+# page rendering them in this order is rendering the natural key.
+_NATURAL_ORDER = ["chr1", "chr2", "chr10", "all chromosomes"]
 
 
 def _chromosome_column(page: str, heading: str) -> list[str]:
@@ -48,46 +52,8 @@ def _position_score(tmp_path: pathlib.Path) -> GenomicResource:
     )
 
 
-def test_coverage_rows_render_in_natural_chromosome_order(
-    tmp_path: pathlib.Path,
-) -> None:
-    resource = _position_score(tmp_path)
-
-    page = _built_page(resource)
-
-    assert _chromosome_column(page, "Coverage") == [
-        "chr1", "chr2", "chr10", "all chromosomes",
-    ]
-
-
-def test_fragment_rows_render_in_natural_chromosome_order(
-    tmp_path: pathlib.Path,
-) -> None:
-    resource = (
-        a_fragment_score()
-        .with_score("s", "float")
-        .with_data(
-            """
-            chrom  pos_begin  pos_end  s
-            chr1   1          5        0.1
-            chr2   1          5        0.2
-            chr10  1          5        0.3
-            """)
-        .with_tabix()
-        .build_resource(tmp_path)
-    )
-
-    page = _built_page(resource)
-
-    assert _chromosome_column(page, "Fragments") == [
-        "chr1", "chr2", "chr10", "all chromosomes",
-    ]
-
-
-def test_allele_rows_render_in_natural_chromosome_order(
-    tmp_path: pathlib.Path,
-) -> None:
-    resource = (
+def _allele_score(tmp_path: pathlib.Path) -> GenomicResource:
+    return (
         an_allele_score()
         .with_score("score", "float")
         .with_data(
@@ -101,8 +67,33 @@ def test_allele_rows_render_in_natural_chromosome_order(
         .build_resource(tmp_path)
     )
 
-    page = _built_page(resource)
 
-    assert _chromosome_column(page, "Alleles") == [
-        "chr1", "chr2", "chr10", "all chromosomes",
-    ]
+def _fragment_score(tmp_path: pathlib.Path) -> GenomicResource:
+    return (
+        a_fragment_score()
+        .with_score("s", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  s
+            chr1   1          5        0.1
+            chr2   1          5        0.2
+            chr10  1          5        0.3
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+@pytest.mark.parametrize(("build_resource", "heading"), [
+    (_position_score, "Coverage"),
+    (_allele_score, "Alleles"),
+    (_fragment_score, "Fragments"),
+])
+def test_per_chromosome_rows_render_in_natural_order(
+    tmp_path: pathlib.Path,
+    build_resource: Callable[[pathlib.Path], GenomicResource],
+    heading: str,
+) -> None:
+    page = _built_page(build_resource(tmp_path))
+
+    assert _chromosome_column(page, heading) == _NATURAL_ORDER

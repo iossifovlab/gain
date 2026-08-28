@@ -35,9 +35,6 @@ from gain.genomic_resources.statistics.base_statistic import (
     refuse_unmergeable,
     regions_in_genomic_order,
 )
-from gain.genomic_resources.statistics.chromosome_order import (
-    natural_chromosome_key,
-)
 from gain.genomic_resources.statistics.length_histogram import (
     LENGTH_BIN_EDGES,
     LENGTH_HISTOGRAM_BIN_COUNT,
@@ -45,6 +42,7 @@ from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
     plot_length_histogram,
 )
+from gain.utils.chromosome_order import natural_chromosome_key
 
 logger = logging.getLogger(__name__)
 
@@ -864,12 +862,11 @@ def build_coverage_display(
     rows = [
         CoverageRow(
             chrom,
-            count,
-            count / lengths[chrom] if chrom in lengths else None,
+            covered[chrom],
+            covered[chrom] / lengths[chrom] if chrom in lengths else None,
             segments.get(chrom),
         )
-        for chrom, count in sorted(
-            covered.items(), key=lambda item: natural_chromosome_key(item[0]))
+        for chrom in sorted(covered, key=natural_chromosome_key)
     ]
     global_fraction: float | None = None
     if lengths and len(lengths) == len(covered):
