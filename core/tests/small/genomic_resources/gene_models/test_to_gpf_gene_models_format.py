@@ -328,3 +328,49 @@ def test_to_gpf_gene_models_format_with_format_refflat(
     gene_models.load()
 
     assert len(gene_models.transcript_models) == 4
+
+
+# A GTF whose second transcript record has no `exon` children -- the shape a
+# pseudogene or ncRNA takes in a source that annotates it at transcript level
+# only.
+GTF_WITH_EXONLESS_TRANSCRIPT = """
+chr17	test	transcript	100	200	.	+	.	gene_id "G1"; transcript_id "TR1";
+chr17	test	exon	100	200	.	+	.	gene_id "G1"; transcript_id "TR1";
+chr17	test	transcript	500	800	.	+	.	gene_id "G2"; transcript_id "TR2"; transcript_type "pseudogene";
+"""  # noqa
+
+
+@pytest.fixture
+def gtf_file_with_exonless_transcript(tmp_path: pathlib.Path) -> pathlib.Path:
+    input_file = tmp_path / "exonless_genes.gtf"
+    input_file.write_text(GTF_WITH_EXONLESS_TRANSCRIPT.strip())
+    return input_file
+
+
+def test_converting_a_gtf_with_an_exonless_transcript_reloads(
+    gtf_file_with_exonless_transcript: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    """What gain writes here, gain has to be able to read back.
+
+    This is the whole trip a GRR `build.sh` performs: a GTF source in,
+    a default-format payload out, and every consumer of the published
+    resource reading that payload. The exonless record used to reach
+    serialization with an empty exon list and write three blank cells,
+    which the read side refuses -- and because the refusal happens
+    during format inference, the whole resource failed to load rather
+    than the one bad record.
+    """
+    output_file = tmp_path / "output_genes.txt"
+
+    main([
+        str(gtf_file_with_exonless_transcript),
+        str(output_file),
+        "--gm-format", "gtf",
+    ])
+
+    gene_models = build_gene_models_from_file(
+        str(output_file.with_suffix(".txt.gz")))
+    gene_models.load()
+
+    assert list(gene_models.transcript_models) == ["TR1"]

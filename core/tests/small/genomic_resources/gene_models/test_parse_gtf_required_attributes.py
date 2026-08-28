@@ -5,6 +5,12 @@ identifies the record.
 There is no ``transcript_id`` to name such a record by -- that is the
 attribute at issue -- so the message identifies it by feature and
 position instead.
+
+Where a case here expects a transcript to survive the parse, its records
+include an ``exon``. That is not part of what the case is about: a
+transcript that ends the parse with no exons is dropped (gain#965), so
+without one the model would not be there to assert against and the case
+would fail for a reason that has nothing to do with attributes.
 """
 
 from collections.abc import Callable
@@ -87,6 +93,7 @@ def test_an_empty_gene_label_falls_through_to_the_next_spelling(
     gene_models = gtf_gene_models(
         _record("transcript", 100, 200,
                 'gene_name ""; gene_id "G1"; transcript_id "T1";'),
+        _record("exon", 100, 200, 'transcript_id "T1";'),
     )
 
     assert gene_models.transcript_models["T1"].gene == "G1"
@@ -103,6 +110,7 @@ def test_an_empty_transcript_id_is_still_a_transcript_id(
     """
     gene_models = gtf_gene_models(
         _record("transcript", 100, 200, 'gene_id "G1"; transcript_id "";'),
+        _record("exon", 100, 200, 'transcript_id "";'),
     )
 
     assert list(gene_models.transcript_models) == [""]
@@ -116,6 +124,7 @@ def test_gene_labels_that_are_all_present_but_empty_are_not_missing(
         _record("transcript", 100, 200,
                 'gene_name ""; gene_symbol ""; gene_id ""; '
                 'transcript_id "T1";'),
+        _record("exon", 100, 200, 'transcript_id "T1";'),
     )
 
     assert gene_models.transcript_models["T1"].gene == ""

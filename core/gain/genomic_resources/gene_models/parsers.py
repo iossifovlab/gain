@@ -715,10 +715,14 @@ GTF_TRANSCRIPT_FEATURES = frozenset({
 
 #: Transcript-level features FlyBase emits with no ``exon`` records at all,
 #: so admitting them would add hundreds of transcript models carrying no
-#: sequence. This is a policy about these two spellings, not an invariant the
-#: parser enforces -- any accepted feature with no ``exon`` child still yields
-#: an empty exon list. Moving one of these into ``GTF_TRANSCRIPT_FEATURES``
-#: should be deliberate, not a silent behaviour change.
+#: sequence. This is a policy about these two spellings: it skips them up
+#: front, before their children are read, which is what lets a child record
+#: be reported against a named skipped transcript. An accepted feature that
+#: turns out to have no ``exon`` child is a separate matter -- it is dropped
+#: after the whole file is read (gain#965), so no transcript reaches the
+#: models with an empty exon list by either route. Moving one of these into
+#: ``GTF_TRANSCRIPT_FEATURES`` should be deliberate, not a silent behaviour
+#: change.
 GTF_EXONLESS_TRANSCRIPT_FEATURES = frozenset({
     "miRNA",
     "pre_miRNA",
@@ -943,6 +947,41 @@ def parse_gtf_gene_models_format(
 
         raise ValueError(
             f"unknown feature {feature} found in gtf gene models")
+
+    # Known only now: a transcript's exons arrive as separate records,
+    # so "this one has none" cannot be decided until the whole file has
+    # been read. The early skip of GTF_EXONLESS_TRANSCRIPT_FEATURES is
+    # keyed on the feature name and so cannot catch a transcript of any
+    # other spelling that simply turns out to have no exons -- which
+    # serialized to three blank exon columns that the read side then
+    # refused, leaving gain unable to read back what it had written
+    # (gain#965).
+    #
+    # Only on a whole-file parse, hence the `nrows` guard: format
+    # inference parses a prefix, where the evidence for this simply is
+    # not in yet. A feature-sorted GTF introduces its transcripts before
+    # any of their exons, so dropping on prefix evidence emptied the
+    # sample, and a well-formed file stopped being recognised as a GTF
+    # at all unless its format was declared.
+    parsed_whole_file = nrows is None
+    if parsed_whole_file:
+        parsed = len(transcript_models)
+        exonless = [
+            tr_id
+            for tr_id, transcript_model in transcript_models.items()
+            if not transcript_model.exons
+        ]
+        for tr_id in exonless:
+            dropped = transcript_models.pop(tr_id)
+            logger.warning(
+                "dropping transcript %s at %s: it has no exon records",
+                tr_id, dropped.chrom,
+            )
+        if exonless:
+            logger.warning(
+                "dropped %d of %d transcripts with no exon records",
+                len(exonless), parsed,
+            )
 
     for transcript_model in transcript_models.values():
         transcript_model.exons = sorted(
