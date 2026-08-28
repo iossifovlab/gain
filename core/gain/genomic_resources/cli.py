@@ -569,7 +569,14 @@ def _create_contents_db(
     resource, not only the ones the command selected; the ids returned are
     always the offending ones, never the selected one (gain#364).
     """
-    sqlite_filepath = os.path.join(proto.root_path, ".CONTENTS.sqlite3")
+    # Read with local-filesystem calls against the protocol's root path,
+    # while the publish below goes through the protocol at its url. The
+    # two are the same location for the `file` scheme this build supports
+    # -- it needs a local path for the database engine anyway -- but they
+    # are no longer the same expression, so a scheme where they diverge
+    # sees this read miss and rebuild rather than short-circuit. Routing
+    # the read too is deliberately not part of gain#948, which fixes the
+    # write.
     gzip_sqlite_filepath = os.path.join(
         proto.root_path, GR_SQLITE_META_FILE_NAME)
 
@@ -591,11 +598,6 @@ def _create_contents_db(
                 "Could not read existing contents db; rebuilding",
                 exc_info=True,
             )
-
-    if os.path.exists(sqlite_filepath):
-        os.remove(sqlite_filepath)
-    if os.path.exists(gzip_sqlite_filepath):
-        os.remove(gzip_sqlite_filepath)
 
     collected: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
     failed: set[str] = set()
@@ -642,7 +644,15 @@ def _create_contents_db(
         index_infos.append((header, row))
     columns = [spelling for spelling, _ in claimed.values()]
 
-    with apsw.Connection(sqlite_filepath) as conn:
+    # Built in memory and serialized, rather than built into a file that
+    # then has to be read back and cleaned up. The database used to be
+    # made inside the repository and removed on the way out, so a build
+    # that raised left its scratch behind; with no file there is no
+    # scratch to leave, on any path out (gain#948). The read above
+    # already treats this database as an image rather than a file, which
+    # is the same trade in the other direction.
+    conn = apsw.Connection(":memory:")
+    with conn:
         conn.execute(
             "CREATE TABLE contents_metadata (key TEXT PRIMARY KEY, value TEXT)",
         )
@@ -676,17 +686,24 @@ def _create_contents_db(
                 )
                 conn.execute(insert_sql, full_row)
 
+    raw_data = bytes(conn.serialize("main"))
+
     # mtime=0 strips the current-time stamp from the gzip header
     # so re-running this on an unchanged repo produces identical
     # bytes (gzip.open's default writes the wall-clock time, which
     # changes every run). The OS byte at offset 9 is normalised to
     # 0xff for cross-Python-distribution determinism — see the
     # matching note in fsspec_protocol.build_content_file.
-    raw_data = pathlib.Path(sqlite_filepath).read_bytes()
     gz = gzip.compress(raw_data, mtime=0)
     gz = gz[:9] + b"\xff" + gz[10:]
-    pathlib.Path(gzip_sqlite_filepath).write_bytes(gz)
-    os.remove(sqlite_filepath)
+
+    # Published through the protocol's seam, not written at the live path:
+    # the index that is already there is replaced by a completed one in a
+    # single move, or not at all. It used to be deleted before the build
+    # even started, so an interrupted rebuild left the repository with no
+    # search index at all and nothing to roll back to (gain#948).
+    with proto.publish_repository_file(GR_SQLITE_META_FILE_NAME) as outfile:
+        outfile.write(gz)
     return frozenset(failed)
 
 
