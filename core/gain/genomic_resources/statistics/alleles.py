@@ -62,6 +62,7 @@ from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
     plot_length_histogram,
 )
+from gain.utils.chromosome_order import natural_chromosome_key
 
 ALLELE_STATISTICS_FILE = "statistics/alleles.json"
 
@@ -606,14 +607,33 @@ class AlleleStatistics(Statistic):
             held.merge(region)
 
     def by_chromosome(self) -> dict[str, AlleleCounts]:
+        """The per-chromosome counts, in natural chromosome order.
+
+        Ordered here rather than at the template because this dict IS
+        what the info page's Alleles table iterates.  What it replaces
+        is not arrival order but the plain string sort
+        :func:`regions_in_genomic_order` applies before the fold --
+        exactly the order iossifovlab/gain#983 calls wrong.
+
+        :meth:`serialize` reads it too, so the order reaches
+        ``statistics/alleles.json``.  Nothing downstream reads that
+        file positionally: :meth:`deserialize` and :func:`_total` are
+        both order-blind, and ``calc_statistics_hash`` hashes the config
+        and the source files, never the statistics content.
+        """
         return {
-            chrom: region.counts()
-            for chrom, region in self._regions.items()
+            chrom: self._regions[chrom].counts()
+            for chrom in sorted(self._regions, key=natural_chromosome_key)
         }
 
     def global_counts(self) -> AlleleCounts:
-        """The roll-up over every chromosome."""
-        return _total(self.by_chromosome().values())
+        """The roll-up over every chromosome.
+
+        Off the regions directly rather than through
+        :meth:`by_chromosome`: ``_total`` is order-blind, so the
+        ordering that accessor does would be paid and thrown away.
+        """
+        return _total(region.counts() for region in self._regions.values())
 
     def add_value(self, value: Any) -> None:  # noqa: ARG002
         raise TypeError(
