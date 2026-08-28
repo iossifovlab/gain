@@ -4,6 +4,7 @@ import pathlib
 from collections.abc import Callable
 
 import pytest
+from gain.genomic_resources.cli import _create_contents_db
 from gain.genomic_resources.fsspec_protocol import (
     GRR_INTERNAL_DIR,
     FsspecReadWriteProtocol,
@@ -12,10 +13,13 @@ from gain.genomic_resources.repository import (
     GR_CONTENTS_FILE_NAME,
     GR_INDEX_FILE_NAME,
     GR_MANIFEST_FILE_NAME,
+    GR_SQLITE_META_FILE_NAME,
     GenomicResource,
 )
 from gain.genomic_resources.testing import (
     build_faulty_test_protocol,
+    build_filesystem_test_protocol,
+    setup_directories,
 )
 from pytest_mock import MockerFixture
 
@@ -62,7 +66,7 @@ def _write_about_md(proto: FsspecReadWriteProtocol) -> None:
         outfile.write("# about\n")
 
 
-# The five artifacts the repository publishes, each as the pair of "how to
+# The six artifacts the repository publishes, each as the pair of "how to
 # publish it" and "where it lands". Each publish is idempotent, so the same
 # callable both establishes the baseline and makes the attempt that fails.
 
@@ -120,6 +124,27 @@ def _about_page_path(
     return os.path.join(proto.url, _ABOUT_PAGE)
 
 
+def _publish_search_index(
+        proto: FsspecReadWriteProtocol, res: GenomicResource) -> None:
+    """Rebuild and publish the repository's FTS search index.
+
+    The build reads the contents index to decide whether the published
+    index is still current, so one has to exist -- but publishing it
+    again on the second call would be a *second* publish inside tests
+    that script exactly one, and the fault would fire on the contents
+    index instead of on the search index it is aimed at. Hence
+    established once and skipped afterwards.
+    """
+    if not proto.filesystem.exists(_contents_index_path(proto, res)):
+        proto.build_content_file()
+    _create_contents_db(proto)
+
+
+def _search_index_path(
+        proto: FsspecReadWriteProtocol, res: GenomicResource) -> str:
+    return os.path.join(proto.url, GR_SQLITE_META_FILE_NAME)
+
+
 #: ``pattern`` matches the live artifact AND the temp staged beside it, so
 #: a fault scripted on it fires whether the publish stages or writes in
 #: place -- which is what makes these tests fail on a seam that regressed.
@@ -139,6 +164,9 @@ SINKS = [
     pytest.param(
         _publish_about_page, _about_page_path,
         f"*{_ABOUT_PAGE}*", id="about-page"),
+    pytest.param(
+        _publish_search_index, _search_index_path,
+        f"*{GR_SQLITE_META_FILE_NAME}*", id="search-index"),
 ]
 
 
@@ -367,4 +395,133 @@ def test_republishing_the_contents_file_lands_identical_bytes(
 
     assert _read_bytes(
         proto, os.path.join(proto.url, GR_CONTENTS_FILE_NAME)) == first
+    assert _temp_leftovers(proto) == []
+
+
+#: The scratch database the index build used to leave in the repository
+#: root when it failed: built there, and removed only on the way out of a
+#: successful build.
+_SCRATCH_DB = ".CONTENTS.sqlite3"
+
+
+def _index_repository(tmp_path: pathlib.Path) -> FsspecReadWriteProtocol:
+    """A local repository with its contents index published.
+
+    The tests below inject above the filesystem boundary and read
+    destination-store state, so ADR 0021's second condition fails and the
+    rule asks for a remote arm. Their justification for having none, which
+    a reviewer can falsify by reading their Then sections: every one of
+    them asserts on something only a local repository has. The scratch
+    database is looked for at ``proto.root_path``, which is where the
+    build puts it and a local path by construction; the unchanged-rebuild
+    test compares ``st_ino``, which no object store answers. The index
+    build is local-only in the first place (gain#948 routes its publish,
+    not its reads), so a remote arm could not run these at all.
+    """
+    root_path = tmp_path / "grr"
+    setup_directories(root_path, RESOURCE_LAYOUT)
+    proto = build_filesystem_test_protocol(root_path)
+    # The index build reads the contents index to date the index it finds.
+    proto.build_content_file()
+    return proto
+
+
+def test_a_successful_index_build_leaves_no_scratch_database_behind(
+    tmp_path: pathlib.Path,
+) -> None:
+    proto = _index_repository(tmp_path)
+    root_path = pathlib.Path(proto.root_path)
+
+    _create_contents_db(proto)
+
+    assert (root_path / GR_SQLITE_META_FILE_NAME).exists()
+    assert not (root_path / _SCRATCH_DB).exists()
+
+
+def test_a_failed_index_build_leaves_no_scratch_database_behind(
+    tmp_path: pathlib.Path,
+    mocker: MockerFixture,
+) -> None:
+    # The database used to be built into the repository's own
+    # `.CONTENTS.sqlite3` and removed only on the way out of a successful
+    # build, so a build that raised left it in the repository root. The
+    # build now assembles the database in memory and serializes it, so
+    # there is no file to leave anywhere.
+    #
+    # The fault is scripted after the database is built and before
+    # anything is published -- the window in which the old build had its
+    # scratch on disk. On the first build of this repository, not a
+    # rebuild: a rebuild of an unchanged repository short-circuits before
+    # it reaches the fault.
+    proto = _index_repository(tmp_path)
+    root_path = pathlib.Path(proto.root_path)
+
+    mocker.patch(
+        "gain.genomic_resources.cli.gzip.compress",
+        side_effect=OSError("scripted failure after the build"))
+
+    with pytest.raises(OSError, match="scripted failure after the build"):
+        _create_contents_db(proto)
+
+    assert not (root_path / _SCRATCH_DB).exists()
+    assert _temp_leftovers(proto) == []
+
+
+def test_an_interrupted_rebuild_leaves_the_published_index_in_place(
+    tmp_path: pathlib.Path,
+    mocker: MockerFixture,
+) -> None:
+    # gain#948 itself: the published index was deleted *before* the walk
+    # that builds its replacement, so anything escaping that walk -- an
+    # interrupt, a kill -- left the repository with no search index at
+    # all, for the whole length of the walk, with nothing to roll back to.
+    #
+    # The interrupt is a KeyboardInterrupt on purpose. Every per-resource
+    # failure inside the walk is caught and reported by id, so what is
+    # actually exposed is what that guard does not catch.
+    proto = _index_repository(tmp_path)
+    index_path = pathlib.Path(proto.root_path) / GR_SQLITE_META_FILE_NAME
+
+    _create_contents_db(proto)
+    published = index_path.read_bytes()
+    assert published
+
+    # The repository has to have moved on, or the rebuild short-circuits
+    # on the recorded contents md5 and never reaches the walk at all.
+    res = proto.get_resource(RESOURCE_ID)
+    with proto.open_raw_file(res, "data.txt", "wt") as outfile:
+        outfile.write("alabala, and then some")
+    proto.save_manifest(res, proto.build_manifest(res))
+    proto.build_content_file()
+
+    # Patched after the arrangement above, which walks the repository too.
+    mocker.patch.object(
+        type(proto), "get_all_resources", side_effect=KeyboardInterrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        _create_contents_db(proto)
+
+    assert index_path.read_bytes() == published
+
+
+def test_rebuilding_an_unchanged_repository_republishes_nothing(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The build short-circuits when the published index already records
+    # the repository's contents md5. Publishing through the seam must not
+    # cost that: the move gives the published file a fresh identity, so a
+    # rebuild that republished regardless would replace the file -- and in
+    # the GRRs published as git trees, dirty the tree -- even though
+    # nothing about the repository changed.
+    proto = _index_repository(tmp_path)
+    index_path = pathlib.Path(proto.root_path) / GR_SQLITE_META_FILE_NAME
+
+    _create_contents_db(proto)
+    published = index_path.read_bytes()
+    identity = index_path.stat().st_ino
+
+    _create_contents_db(proto)
+
+    assert index_path.read_bytes() == published
+    assert index_path.stat().st_ino == identity
     assert _temp_leftovers(proto) == []

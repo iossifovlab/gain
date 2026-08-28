@@ -370,9 +370,12 @@ def test_repo_repair_survives_a_cross_resource_case_collision(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # End to end: a collision must cost the repository the offending
-    # resource, not its whole index -- _create_contents_db removes the
-    # published index before rebuilding it, so an escaping error would
-    # leave the repository with no index at all.
+    # resource, not its whole index. The stake used to be the whole
+    # index -- the build removed the published one before rebuilding it,
+    # so an escaping error left none at all. Since gain#948 the index is
+    # published by a move and an escaping error costs the rebuild rather
+    # than the index, but a collision must still be contained to the
+    # resource, which is what this asserts.
     build_grr(tmp_path, {
         "alpha": {"assay": "chip"},
         "zeta": {"Assay": "rna"},
@@ -389,7 +392,10 @@ def test_repo_repair_survives_a_cross_resource_case_collision(
     )
 
     assert (tmp_path / ".CONTENTS.sqlite3.gz").exists()
-    # ... and not the half-built uncompressed one an escaping error leaves.
+    # ... and no uncompressed scratch database beside it. Since gain#948
+    # the build makes that file in a temp of its own, so this now guards
+    # against a regression that put it back in the repository rather than
+    # against the half-built one an escaping error used to leave.
     assert not (tmp_path / ".CONTENTS.sqlite3").exists()
 
     proto = build_filesystem_test_protocol(tmp_path, repair=False)

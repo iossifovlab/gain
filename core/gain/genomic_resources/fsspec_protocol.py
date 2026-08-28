@@ -1813,6 +1813,38 @@ class FsspecReadWriteProtocol(
         return self._publish_file(
             self.get_resource_file_url(resource, filename), mode)
 
+    def publish_repository_file(
+            self, filename: str,
+            mode: str = "wb") -> AbstractContextManager[IO]:
+        """Publish one of the repository's own artifacts, by file name.
+
+        The counterpart of :meth:`publish_raw_file` for the artifacts that
+        belong to no resource. The artifacts this protocol builds itself
+        reach :meth:`_publish_file` directly; this is the way in for one
+        that is built somewhere else and handed over as bytes -- the FTS
+        search index, which the CLI assembles from every resource's
+        implementation and cannot build from in here without importing
+        the layer above it (gain#948).
+
+        Same seam, so the same guarantee: the artifact already published
+        is replaced by a completed one in a single move, or not at all.
+
+        Binary by default, unlike :meth:`publish_raw_file`: a repository
+        artifact is a built object -- gzipped bytes, a rendered page --
+        and not the text a resource file usually is.
+
+        ``filename`` names an artifact of the repository itself and is
+        joined to its url unvalidated, which is safe only while callers
+        pass a constant. There is no containment rule to check it against:
+        the resource-file joins each re-run
+        :func:`validate_resource_file_name` (gain#467), but that rule is
+        about staying inside a *resource*, and these artifacts sit beside
+        the resources rather than in one. A caller that ever wants to
+        publish a name it did not author needs such a rule written first.
+        """
+        return self._publish_file(
+            os.path.join(self.url, filename), mode)
+
     def _verify_published_size(
         self, published_size: Callable[[], int],
         *, wrote: int, what: str, verb: str,
