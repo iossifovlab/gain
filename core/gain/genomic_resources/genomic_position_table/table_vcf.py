@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Generator
 from typing import ClassVar
 
 import pysam
 
 from gain.genomic_resources.repository import GenomicResource
+from gain.utils.fs_utils import find_ci
 
 from .record import Record
 from .table_tabix import TabixGenomicPositionTable
@@ -197,22 +197,19 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
         """
         assert self.definition.get("header_mode", "file") == "file"
         filename = self.definition.filename
-        # Case-insensitive, like the suffix rule that routes a file to this
-        # backend (``build_genomic_position_table``, gain#348).  A plain
-        # ``.index(".vcf")`` raises a bare "substring not found" from this
-        # constructor for a ``.VCF.GZ`` resource -- the auto-detection now
-        # sends one here, and dying without naming the resource or the file
-        # is the very failure gain#348 is about.  The match is located
-        # case-insensitively but the name is rebuilt from the ORIGINAL
-        # filename, so the sidecar keeps the resource's own spelling.
-        match = re.search(r"\.vcf", filename, re.IGNORECASE)
-        if match is None:
+        # Case-insensitively, matching the suffix rule that routes a file to
+        # this backend (gain#348).  A plain ``.index(".vcf")`` raised a bare
+        # "substring not found" from this constructor for a ``.VCF.GZ``
+        # resource, naming neither the resource nor the file.  The name is
+        # spliced out of the ORIGINAL filename at the match, so the sidecar
+        # keeps the resource's own spelling.
+        idx = find_ci(filename, ".vcf")
+        if idx < 0:
             raise ValueError(
                 f"the table of resource "
                 f"<{self.genomic_resource.get_full_id()}> is a VCF table, "
                 f"but its filename {filename} has no '.vcf' in it, so the "
                 f"accompanying '.header.vcf.gz' file cannot be named")
-        idx = match.start()
         header_filename = filename[:idx] + ".header" + filename[idx:]
         assert self.genomic_resource.file_exists(header_filename), \
             "VCF tables must have an accompanying *.header.vcf.gz file!"

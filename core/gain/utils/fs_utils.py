@@ -1,5 +1,6 @@
 import datetime
 import os
+import re
 import shutil
 from collections.abc import Sequence
 from pathlib import Path
@@ -142,6 +143,35 @@ def glob(path: str) -> list[str]:
     """Find files by glob-matching."""
     fs, relative_path = url_to_fs(path)
     return cast(list[str], fs.glob(relative_path))
+
+
+def endswith_ci(filename: str, suffixes: str | tuple[str, ...]) -> bool:
+    """Case-insensitively test a filename's suffix.
+
+    The one place the "a suffix means the same thing whatever its case"
+    rule is written down.  It exists because the alternative -- each site
+    lowering the name itself -- is what gain#348 was: two places deciding
+    the same thing about the same file from suffix vocabularies that had
+    silently drifted apart, one of them case-sensitive.
+
+    ``suffixes`` must be given in lower case; they are matched against the
+    lowered filename.
+    """
+    return filename.lower().endswith(suffixes)
+
+
+def find_ci(filename: str, substring: str) -> int:
+    """Case-insensitively locate ``substring``, or return -1.
+
+    The position-returning companion to :func:`endswith_ci`, for a caller
+    that has to splice the original filename at the match rather than just
+    test it.  Implemented with a regex rather than ``lower().find()`` so the
+    index is an offset into the filename as GIVEN: lower-casing is not
+    guaranteed to preserve length, and the caller rebuilds a name from this
+    offset.
+    """
+    match = re.search(re.escape(substring), filename, re.IGNORECASE)
+    return -1 if match is None else match.start()
 
 
 COMPRESSED_EXTENSIONS = (".gz", ".bgz")

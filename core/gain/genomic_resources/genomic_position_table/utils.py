@@ -1,5 +1,6 @@
 from gain import logging
 from gain.genomic_resources.repository import GenomicResource
+from gain.utils.fs_utils import endswith_ci
 
 from .table import GenomicPositionTable
 from .table_bigwig import BigWigTable
@@ -16,26 +17,24 @@ def build_genomic_position_table(
     """Instantiate a genome position table from a genomic resource."""
     filename = table_definition["filename"]
 
-    # Suffix matching is CASE-INSENSITIVE, and the bigWig branch accepts the
-    # same two spellings the explicit `format:` branch below already does
-    # (`bw`/`bigwig` -- UCSC ships both).  The two branches decide the same
-    # thing from different inputs, so a vocabulary they do not share is a
-    # vocabulary they can disagree about: `hg38.phastCons7way.bigWig` with no
-    # `format:` used to miss every test here, fall through to `mem`, and hand
-    # a binary file to the text parser (gain#348).  One rule for every suffix
-    # rather than a bigWig special case -- an upper-case `.CSV` was the same
-    # trap.
-    suffix_source = filename.lower()
-
-    if suffix_source.endswith(".bgz"):
+    # Matching is CASE-INSENSITIVE (`endswith_ci`), and the bigWig branch
+    # accepts the same two spellings the explicit `format:` branch below
+    # already does (`bw`/`bigwig` -- UCSC ships both).  The two branches
+    # decide the same thing from different inputs, so a vocabulary they do
+    # not share is a vocabulary they can disagree about:
+    # `hg38.phastCons7way.bigWig` with no `format:` used to miss every test
+    # here, fall through to `mem`, and hand a binary file to the text parser
+    # (gain#348).  One rule for every suffix rather than a bigWig special
+    # case -- an upper-case `.CSV` was the same trap.
+    if endswith_ci(filename, ".bgz"):
         default_format = "tabix"
-    elif suffix_source.endswith(".vcf.gz"):
+    elif endswith_ci(filename, ".vcf.gz"):
         default_format = "vcf_info"
-    elif suffix_source.endswith((".txt", ".txt.gz", ".tsv", ".tsv.gz")):
+    elif endswith_ci(filename, (".txt", ".txt.gz", ".tsv", ".tsv.gz")):
         default_format = "tsv"
-    elif suffix_source.endswith((".csv", ".csv.gz")):
+    elif endswith_ci(filename, (".csv", ".csv.gz")):
         default_format = "csv"
-    elif suffix_source.endswith((".bw", ".bigwig")):
+    elif endswith_ci(filename, (".bw", ".bigwig")):
         default_format = "bw"
     else:
         default_format = "mem"
