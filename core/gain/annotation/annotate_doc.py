@@ -44,11 +44,11 @@ def cli(raw_args: list[str] | None = None) -> None:
     context_providers_init(**vars(args))
 
     context = get_genomic_context()
-    # The sibling annotate tools' idiom. An unconfigured pipeline cannot be
-    # reached from here today -- an argument that names neither a file nor a
-    # GRR resource is refused earlier, by ``context_providers_init`` -- but
-    # the document renderer takes a pipeline, not an optional one, and this
-    # is where the other tools already turn that case into a clear error.
+    # The sibling annotate tools' idiom, and a reachable case: the pipeline
+    # argument is optional, so running the tool without one leaves the
+    # context with no pipeline to describe.  That used to reach the template
+    # as ``None`` and surface as ``UndefinedError: 'None' has no attribute
+    # 'preamble'``; it now says what is actually wrong.
     pipeline = get_pipeline_from_context(context)
 
     pipeline_path = None

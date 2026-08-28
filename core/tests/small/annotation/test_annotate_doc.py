@@ -88,3 +88,21 @@ def test_annotate_doc(
     assert "asdf summary" in output_template
     assert "sample description" in output_template
     assert f'<a href="file://{tmp_path}/acgt/index.html">' in output_template
+
+
+def test_running_without_a_pipeline_says_so(
+    tmp_path: pathlib.Path,
+    annotate_doc_root: pathlib.Path,
+) -> None:
+    """The pipeline argument is optional, so this is a reachable mistake.
+
+    It used to reach the template as ``None`` and come back as
+    ``UndefinedError: 'None' has no attribute 'preamble'`` -- a Jinja
+    traceback naming an attribute the user never heard of.  #952 routed the
+    tool through the same guard its sibling annotate tools use.
+    """
+    with pytest.raises(ValueError, match="no valid annotation pipeline"):
+        cli([
+            "-o", str(tmp_path / "output.html"),
+            "-g", str(annotate_doc_root / "grr.yaml"),
+        ])

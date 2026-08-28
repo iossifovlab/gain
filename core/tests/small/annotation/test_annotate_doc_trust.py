@@ -21,14 +21,17 @@ gainweb, GRR prose rendered into an authenticated origin -- then re-read ADR
 Do not "fix" these tests to make a sanitizer pass.
 
 **What is pinned, and what is not.**  This file covers
-``annotate_doc_pipeline_template.jinja`` and the two renderers of it that a
-``core`` test can reach.  Deliberately *not* covered: the third renderer
-(``web_api/web_annotation/pipelines/views.py``, a separate package with its own
-CI image -- it pins the same boundary in its own suite, see
-``web_api/web_annotation/tests/test_pipeline_doc_bogus_tag_rescue.py``),
-``resource_template.jinja``'s ``meta.description`` sink, and the
-``about.md`` render in ``fsspec_protocol.py`` that ADR 0016 lists as unfiled.
-Green here is not a statement about those.
+``annotate_doc_pipeline_template.jinja`` through the two call sites a ``core``
+test can reach.  Since #952 there is one *renderer* --
+``gain.annotation.pipeline_doc.render_pipeline_doc`` -- and three callers of
+it; the third is the web API download endpoint, which lives in a separate
+package with its own CI image and so cannot be reached from here.  It no
+longer renders anything of its own, and that it stays that way is pinned in
+``web_api/web_annotation/tests/test_pipeline_doc_delegation.py``.
+Also deliberately *not* covered: ``resource_template.jinja``'s
+``meta.description`` sink, and the ``about.md`` render in
+``fsspec_protocol.py`` that ADR 0016 lists as unfiled.  Green here is not a
+statement about those.
 
 The mirror image of this file is
 ``core/tests/small/templates/test_resource_page_escaping.py``, which pins the
@@ -192,15 +195,17 @@ def render_pipeline_resource_page(
 ) -> str:
     """Render the page ``grr_manage`` builds for a pipeline resource.
 
-    A second *renderer*, not a second call site:
-    ``AnnotationPipelineImplementation`` binds the same template as the
-    ``annotate_doc`` CLI, from its own module.  gain#623's review round 1
-    found exactly this class of gap -- a change that converted two of the
-    three renderers and left the third -- so every renderer a ``core`` test
-    can reach is pinned.
+    A distinct route to the template, not a repeat of the CLI's:
+    ``AnnotationPipelineImplementation`` reaches the shared renderer from its
+    own module and supplies its own, repository-relative address policy.
+    gain#623's review round 1 found exactly this class of gap -- a change
+    that converted two of the three call sites and left the third -- so
+    every one a ``core`` test can reach is pinned.
 
-    This is also the renderer with the widest blast radius: its output is
+    This is also the call site with the widest blast radius: its output is
     published as the static resource pages under ``grr-*.iossifovlab.com``.
+    That those pages keep their relative addresses is pinned separately, by
+    ``test_the_rendered_page_carries_the_relative_addresses``.
     """
     root_path = tmp_path / "grr"
     (a_position_score()
@@ -222,10 +227,12 @@ def render_pipeline_resource_page(
         repo.get_resource("pipeline")).get_info(repo=repo)
 
 
-#: Every renderer of ``annotate_doc_pipeline_template.jinja`` a ``core`` test
-#: can reach.  Each payload below runs against all of them, so a change that
-#: converts one renderer and not another goes red -- and a new renderer is one
-#: entry here rather than a new bespoke test.
+#: Every call site of ``annotate_doc_pipeline_template.jinja`` a ``core`` test
+#: can reach.  (Before #952 these were separate *renderers*, each binding the
+#: template itself; they now share one, but they still reach it by different
+#: routes and with different address policies, so each is still worth running
+#: every payload through.)  A change that converts one and not another goes
+#: red -- and a new call site is one entry here rather than a bespoke test.
 RENDERERS: list[tuple[str, Callable[[pathlib.Path, str], str]]] = [
     ("annotate_doc_cli", render_doc_page),
     ("pipeline_resource_impl", render_pipeline_resource_page),

@@ -109,3 +109,28 @@ def test_pipeline_doc_histogram_url(
         == "../one/statistics/histogram_s1.png"
     assert impl._make_histogram_url(other_score, "s1") == \
         other_score.get_histogram_image_url("s1")
+
+
+def test_the_rendered_page_carries_the_relative_addresses(
+    grr_fixture: GenomicResourceRepo,
+) -> None:
+    """The page must *use* this implementation's own address policy.
+
+    The two tests above call the address helpers directly, so they stay
+    green even if the page stops asking for them -- and since #952 the
+    renderer is shared, and its default is the public mirror.  Dropping
+    the ``res_url``/``hist_url`` arguments would therefore silently
+    republish every static page under ``grr-*.iossifovlab.com`` with
+    addresses that resolve nowhere from inside the GRR tree.  This is the
+    test that renders and looks.
+    """
+    impl = AnnotationPipelineImplementation(
+        grr_fixture.get_resource("pipeline"))
+
+    page = impl.get_info(repo=grr_fixture)
+
+    # The image is addressed by the score's *id*, which is what the
+    # template hands the policy; the helper tests above pass the column
+    # name "s1" by hand and so never exercise that.
+    assert 'href="../one/index.html"' in page
+    assert 'src="../one/statistics/histogram_score.png"' in page

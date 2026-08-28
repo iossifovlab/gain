@@ -6,20 +6,27 @@ Since #952 there is one renderer of the pipeline documentation page, in
 here is the part that is this project's own: that the download goes
 through that renderer, and carries the default public-mirror addresses.
 
-The document's *content* is pinned in ``core``, next to the renderer --
-the address policy in ``tests/small/annotation/test_pipeline_doc.py`` and
-the markdown rescue in ``test_annotate_doc_bogus_tag_rescue.py``. This
-file deliberately does not restate them.
+The *general* contracts of the document stay in ``core``, next to the
+renderer: the full address policy in
+``tests/small/annotation/test_pipeline_doc.py`` (child repos, missing
+``public_url``, trailing slashes) and the markdown rescue in
+``test_annotate_doc_bogus_tag_rescue.py``. Only the two addresses this
+endpoint's own regression was about (#841) are restated below, so that
+the guard against it is legible here rather than by inference.
 
 That split replaces a mirror of both suites that used to live here. The
 mirror existed because this endpoint was a *separate renderer* that could
 drift -- and did: it rendered through raw ``markdown2`` after the other
 sinks moved to the shared wrapper (#742), and it addressed resources on
 the repository's own url for two months after the CLI was corrected
-(#841). It is no longer a separate renderer, and
-``test_the_download_is_exactly_the_shared_document`` is what keeps it from
-becoming one again: if the view ever re-inlines a render, that test goes
-red without needing a copy of the content assertions to go red with it.
+(#841).
+
+What ``test_the_download_is_exactly_the_shared_document`` pins is that the
+endpoint's document never *diverges* from the shared one. To be plain
+about its limits: it compares outputs, so a re-inlined copy that still
+produced identical bytes would pass it. It fails the moment such a copy
+starts to differ -- which is exactly how both #742 and #841 presented,
+and neither was caught here at the time.
 """
 from __future__ import annotations
 
@@ -37,15 +44,16 @@ from web_annotation.pipelines.views import PipelineDoc
 
 PIPELINE = "- position_score: scores/pos1\n"
 
-#: Prose whose "<thresh" a browser reads as the start of a tag. Carried
-#: through a real annotator's documentation so the document under test is
-#: one with content worth comparing, not an empty shell.
+#: Prose whose "<thresh" a browser reads as the start of a tag. Carried in a
+#: score's ``desc`` -- the template's *attribute* documentation sink, not the
+#: annotator's -- so the document under test is one with content worth
+#: comparing, not an empty shell.
 DESC = "values <thresh are dropped -- gainrescue952 -- and the rest kept"
 
+PUBLIC_URL = "http://grr.example.org"
 
-def a_pipeline(
-    tmp_path: pathlib.Path, public_url: str | None = "http://grr.example.org",
-) -> ThreadSafePipeline:
+
+def a_pipeline(tmp_path: pathlib.Path) -> ThreadSafePipeline:
     """Realize a one-score GRR and load the pipeline that annotates with it."""
     grr_dir = tmp_path / "grr"
     (a_position_score()
@@ -53,12 +61,12 @@ def a_pipeline(
      .with_data("chrom  pos_begin  s1\nchr1   4          0.01\n")
      .realize_into(grr_dir / "scores" / "pos1"))
 
-    definition: dict[str, object] = {
-        "id": "main", "type": "dir", "directory": str(grr_dir),
-    }
-    if public_url is not None:
-        definition["public_url"] = public_url
-    repo = build_genomic_resource_repository(definition)
+    repo = build_genomic_resource_repository({
+        "id": "main",
+        "type": "dir",
+        "directory": str(grr_dir),
+        "public_url": PUBLIC_URL,
+    })
 
     pipeline = load_pipeline_from_yaml(
         PIPELINE, repo, work_dir=tmp_path / "work")
