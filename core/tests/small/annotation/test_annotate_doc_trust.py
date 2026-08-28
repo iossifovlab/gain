@@ -26,8 +26,10 @@ test can reach.  Since #952 there is one *renderer* --
 ``gain.annotation.pipeline_doc.render_pipeline_doc`` -- and three callers of
 it; the third is the web API download endpoint, which lives in a separate
 package with its own CI image and so cannot be reached from here.  It no
-longer renders anything of its own, and that it stays that way is pinned in
-``web_api/web_annotation/tests/test_pipeline_doc_delegation.py``.
+longer renders anything of its own: that no ``web_api`` module binds this
+template is pinned in ``web_api/web_annotation/tests/test_architecture.py``,
+and that the document it serves carries the shared renderer's addresses is
+pinned in ``web_api/web_annotation/tests/test_pipelines_doc_async.py``.
 Also deliberately *not* covered: ``resource_template.jinja``'s
 ``meta.description`` sink, and the ``about.md`` render in
 ``fsspec_protocol.py`` that ADR 0016 lists as unfiled.  Green here is not a

@@ -6,6 +6,7 @@ import os
 import pathlib
 
 import pytest
+from gain.annotation import pipeline_doc
 from pytestarch import EvaluableArchitecture, get_evaluable_architecture
 
 GAIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -360,6 +361,64 @@ def test_markdown_rendering_goes_through_the_one_wrapper_module() -> None:
         f"{offenders}. Un-rescued output leaves prose like "
         f"'values <thresh are dropped' to be eaten as a bogus tag (#736)"
     )
+
+
+#: The pipeline documentation template, spelled out rather than imported
+#: from the module under test.  A fence that scans for a name its own
+#: subject supplies goes blind the moment the subject renames it: the scan
+#: would stop matching an unconverted copy still binding the old name, and
+#: pass.  ``test_the_fence_names_the_template_the_renderer_binds`` keeps
+#: this literal honest.
+DOC_TEMPLATE = "annotate_doc_pipeline_template.jinja"
+
+
+def test_the_fence_names_the_template_the_renderer_binds() -> None:
+    """The literal above must be the name the renderer actually asks for.
+
+    Without this, renaming the template would leave the fence scanning for
+    a string nothing spells any more -- collecting no offenders, and
+    passing while policing nothing.
+    """
+    assert pipeline_doc.DOC_TEMPLATE_NAME == DOC_TEMPLATE
+
+
+def test_the_pipeline_doc_template_is_bound_in_one_module() -> None:
+    """One module renders the pipeline documentation page (#952).
+
+    The page had three renderers, each binding this template and building
+    its own resource/histogram address pair.  They drifted: ``d8624b787``
+    moved the CLI's addresses onto the GRR's public mirror and left the
+    web API's on the repository's own url, where they stayed for two
+    months (#841).  Since #952 ``gain.annotation.pipeline_doc`` is the one
+    binder, and the three callers differ only in the address policy they
+    pass it.
+
+    Two limits, so this is not read as stronger than it is.  It matches
+    the *literal* name, so a second binder spelled
+    ``get_template(pipeline_doc.DOC_TEMPLATE_NAME)`` would slip past --
+    though that spelling still routes through the one module, so it is
+    not the drift being guarded against.  And it sweeps ``core/gain``
+    only: the copy that caused #841 lived in ``web_api``, which the
+    ``core`` CI image does not contain.  That half is fenced by
+    ``web_api/web_annotation/tests/test_architecture.py``.
+    """
+    allowed = {
+        pathlib.Path(GAIN_SRC) / "annotation" / "pipeline_doc.py",
+    }
+    offenders = sorted(
+        str(py.relative_to(GAIN_SRC))
+        for py in pathlib.Path(GAIN_SRC).rglob("*.py")
+        if py not in allowed and DOC_TEMPLATE in py.read_text()
+    )
+    assert offenders == [], (
+        f"these gain modules name {DOC_TEMPLATE} instead of calling "
+        f"`from gain.annotation.pipeline_doc import render_pipeline_doc`: "
+        f"{offenders}. A second binder is how the CLI's and the web API's "
+        f"copies of the address policy drifted apart (#841, #952)"
+    )
+    assert allowed == {
+        py for py in allowed if py.is_file()
+    }, f"the one permitted binder is not where the fence expects it: {allowed}"
 
 
 @functools.cache

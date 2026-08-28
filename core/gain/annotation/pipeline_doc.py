@@ -23,7 +23,7 @@ from gain.genomic_resources.repository import GenomicResource
 from gain.templates import get_template
 
 #: Address of a resource's documentation page, as the document should carry
-#: it.  Takes the resource; returns a url.
+#: it.
 ResourceUrl = Callable[[GenomicResource], str]
 
 #: Address of a score's histogram image for one score id, or ``None`` when
