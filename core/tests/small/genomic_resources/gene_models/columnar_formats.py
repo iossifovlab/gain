@@ -248,14 +248,30 @@ FORMATS = [
 
 FORMAT_IDS = [fmt.name for fmt in FORMATS]
 
+#: The layouts that have a second read path, as headerless files. Six
+#: entries for five layouts: genePred is accepted at two widths, and
+#: only the wider one carries an alternate-name column, so the two
+#: disagree about where the gene label comes from. gain's own output
+#: format is not here -- it is read by column name and has no second
+#: path to differ from.
+#:
+#: Named once because three things need it: the headered twins below,
+#: and any suite that pairs a layout with its own twin rather than
+#: driving the two paths independently.
+TWO_PATH_FORMATS = [fmt for fmt in FORMATS if fmt is not DEFAULT]
+TWO_PATH_IDS = [fmt.name for fmt in TWO_PATH_FORMATS]
+
+# Selecting by exclusion goes quiet rather than red if the table it
+# selects from is renamed, and a parametrization over nothing passes.
+assert len(TWO_PATH_FORMATS) == 6, TWO_PATH_IDS
+
 #: The same layouts read through the other branch of `parse_raw`. A
 #: headerless file is recognised by counting columns and a headered one
 #: by matching their names -- two separate reads, so a guard proven on
-#: one is not proven on the other. The default format is already read by
-#: name and has no second path.
+#: one is not proven on the other.
 HEADERED_FORMATS = [
     replace(fmt, name=f"{fmt.name}-headered", header=True)
-    for fmt in FORMATS if fmt is not DEFAULT
+    for fmt in TWO_PATH_FORMATS
 ]
 
 #: Every layout on every read path.

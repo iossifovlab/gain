@@ -25,28 +25,14 @@ import pytest
 
 from tests.small.genomic_resources.gene_models.columnar_formats import (
     BAD_NAME,
-    DEFAULT,
-    FORMATS,
     GOOD_NAME,
     READ_PATH_IDS,
     READ_PATHS,
     REFSEQ,
+    TWO_PATH_FORMATS,
+    TWO_PATH_IDS,
     ColumnarFormat,
 )
-
-#: The UCSC-derived layouts as headerless files, each paired below with
-#: its own headered twin. gain's own output format is not here: it is
-#: read by column name and has no second read path to differ from.
-#:
-#: Six entries for five layouts -- genePred is accepted at two widths,
-#: and only the wider one carries an alternate-name column at all, so
-#: the two disagree about where the gene label comes from.
-TWO_PATH_FORMATS = [fmt for fmt in FORMATS if fmt is not DEFAULT]
-TWO_PATH_IDS = [fmt.name for fmt in TWO_PATH_FORMATS]
-
-# A parametrization over nothing passes, and selecting by exclusion goes
-# quiet rather than red if the table is renamed out from under it.
-assert len(TWO_PATH_FORMATS) == 6, TWO_PATH_IDS
 
 
 @pytest.mark.parametrize("fmt", READ_PATHS, ids=READ_PATH_IDS)
