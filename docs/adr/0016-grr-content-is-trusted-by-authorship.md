@@ -154,7 +154,7 @@ cheap to re-verify, and any one of them changing is a trigger below.
   pipeline and the GRR. `annotation_pipeline_impl.py` and `resource_template.jinja`
   produce static pages under `grr-*.iossifovlab.com`, where the content author *is* the
   site publisher. `PipelineDoc` serves its page as
-  `Content-Disposition: attachment` (`web_api/web_annotation/pipelines/views.py:409`), so
+  `Content-Disposition: attachment` (`web_api/web_annotation/pipelines/views.py:405`), so
   it downloads rather than executing in the gainweb origin.
 
 ### The cost of learning this on gain#623

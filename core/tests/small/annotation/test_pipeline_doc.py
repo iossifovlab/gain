@@ -235,6 +235,15 @@ EXPECTED_BINDING_MODULES = {"gain/annotation/pipeline_doc.py"}
 
 
 def _modules_binding_the_doc_template() -> set[str]:
+    """Modules under ``gain`` that name the document's template.
+
+    Two things this deliberately does not catch, so it is not read as
+    stronger than it is: it matches the *literal* name, so a second binder
+    spelled ``get_template(pipeline_doc.DOC_TEMPLATE_NAME)`` slips past it;
+    and it scans ``gain`` only, so it could never have seen the copy that
+    caused #841, which lived in ``web_api``. That one is pinned instead by
+    ``web_annotation/tests/test_pipeline_doc_delegation.py``.
+    """
     gain_root = pathlib.Path(gain.__file__).parent
     return {
         path.relative_to(gain_root.parent).as_posix()
