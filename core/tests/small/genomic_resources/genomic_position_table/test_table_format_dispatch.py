@@ -54,6 +54,20 @@ from gain.genomic_resources.testing.builders import (
 )
 
 
+def _assert_dispatches_to_bigwig(resource: GenomicResource) -> None:
+    """Assert the resource's table is a bigWig one that reads its records.
+
+    Reading the records matters as much as the type: the in-memory backend
+    this used to be routed to fails only when a row is pulled, so a table
+    that is merely *built* proves less than one that is read.
+    """
+    assert resource.config is not None
+    with build_genomic_position_table(
+            resource, resource.config["table"]) as table:
+        assert isinstance(table, BigWigTable)
+        assert len(tuple(table.get_all_records())) == 3
+
+
 @pytest.mark.parametrize("filename", [
     "data.bw",
     "data.BW",
@@ -64,17 +78,8 @@ from gain.genomic_resources.testing.builders import (
 def test_bigwig_suffix_spelling_autodetected_without_format(
     tmp_path: pathlib.Path, filename: str,
 ) -> None:
-    resource: GenomicResource = (
-        a_bigwig_score()
-        .with_filename(filename)
-        .build_resource(tmp_path)
-    )
-    assert resource.config is not None
-
-    with build_genomic_position_table(
-            resource, resource.config["table"]) as table:
-        assert isinstance(table, BigWigTable)
-        assert len(tuple(table.get_all_records())) == 3
+    _assert_dispatches_to_bigwig(
+        a_bigwig_score().with_filename(filename).build_resource(tmp_path))
 
 
 @pytest.mark.parametrize("table_format", ["bw", "bigwig", "BW", "bigWig"])
@@ -87,18 +92,11 @@ def test_explicit_format_wins_over_a_suffix_mapping_elsewhere(
     read this file at all -- so a table that opens and yields the bigWig's
     records proves the explicit key, not the suffix, chose the backend.
     """
-    resource: GenomicResource = (
+    _assert_dispatches_to_bigwig(
         a_bigwig_score()
         .with_filename("data.txt")
         .with_format(table_format)
-        .build_resource(tmp_path)
-    )
-    assert resource.config is not None
-
-    with build_genomic_position_table(
-            resource, resource.config["table"]) as table:
-        assert isinstance(table, BigWigTable)
-        assert len(tuple(table.get_all_records())) == 3
+        .build_resource(tmp_path))
 
 
 # The last column carries a SPACE, which is what makes each case below

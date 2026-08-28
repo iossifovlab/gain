@@ -3,6 +3,7 @@ from collections.abc import Generator
 from typing import IO, ClassVar, cast
 
 from gain.genomic_resources.repository import GenomicResource
+from gain.utils.fs_utils import endswith_ci
 
 from .record import (
     CHROM,
@@ -118,7 +119,7 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
         # two are one decision split across two modules: a ``.TXT.GZ`` that
         # now resolves to this backend has to be recognised as gzipped once
         # it arrives, or it reaches the text parser as raw deflate bytes.
-        if self.definition.filename.lower().endswith(".gz"):
+        if endswith_ci(self.definition.filename, ".gz"):
             compression = "gzip"
         self.str_stream = self.genomic_resource.open_raw_file(
             self.definition.filename, mode="rt", compression=compression)
