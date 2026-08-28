@@ -110,6 +110,24 @@ MATRIX_CELLS: tuple[tuple[str, str], ...] = tuple(
 #: format: it must not change once resources carry grids built from it.
 COMPLEX_LENGTH_CLAMP = 64
 
+#: How many occupied cells the complex grid may hold and still render as
+#: a table of those cells rather than as the heatmap (gain#989).
+#:
+#: A judgement call, not a derivation: 32 rows is about where a table
+#: stops being scannable, and a 64x64 grid starts having enough lit
+#: cells to show shape.  Unlike :data:`COMPLEX_LENGTH_CLAMP` this is a
+#: RENDERING choice and no part of the stored format.
+#:
+#: RAISING it is free: a resource built under the old value keeps a PNG
+#: its page no longer references, which is the leftover image
+#: :func:`save_allele_statistics` already documents.  LOWERING it needs
+#: the resources rebuilt with ``--force``: a grid between the two
+#: values would start asking for a PNG that was never written, and a
+#: plain ``repo-stats`` will not notice -- the statistics hash covers
+#: the table config, the score definitions and the data files, none of
+#: which a constant here moves.
+COMPLEX_GRID_TABLE_MAX_CELLS = 32
+
 #: How a failed fold of these regions is named in the message.
 _MERGE_FAILURE = "allele statistics"
 
@@ -151,6 +169,48 @@ def percentages_over[K](
         percentages[key] = \
             "<0.01%" if count and rendered == "0.00%" else rendered
     return percentages
+
+
+def _length_label(length: int) -> str:
+    """A complex-cell length, ``≥64`` at the clamp.
+
+    Spelled with the SIGN rather than ``>=``, exactly as
+    :func:`plot_complex_grid` labels its axes, so the table and the
+    heatmap say the same thing about the same cell in the same
+    characters.
+    """
+    if length >= COMPLEX_LENGTH_CLAMP:
+        return f"≥{COMPLEX_LENGTH_CLAMP}"
+    return str(length)
+
+
+def _occupied_cells(
+    grid: dict[tuple[int, int], int],
+) -> list[tuple[tuple[int, int], int]]:
+    """The grid's cells that hold alleles, most populated first.
+
+    A zero-count cell is NOT occupied: the heatmap masks it out rather
+    than colouring it, so it must not become a table row nor count
+    towards :data:`COMPLEX_GRID_TABLE_MAX_CELLS` either.
+
+    Ties break on the cell itself, so one resource's table lists its
+    rows in the same order however the counts arrived.
+    """
+    return sorted(
+        ((cell, count) for cell, count in grid.items() if count),
+        key=lambda item: (-item[1], item[0]))
+
+
+def _renders_as_table(grid: dict[tuple[int, int], int]) -> bool:
+    """Whether these complex cells render as a table, not as a heatmap.
+
+    The ONE statement of the choice: the info page asks it through
+    :attr:`AlleleDisplay.complex_grid_renders_as_table` and
+    :func:`save_allele_statistics` asks it directly, and a second
+    spelling would cost either an image written for a page that renders
+    a table or a page pointing at an image that was never written.
+    """
+    return len(_occupied_cells(grid)) <= COMPLEX_GRID_TABLE_MAX_CELLS
 
 
 class AlleleCounts(NamedTuple):
@@ -824,6 +884,51 @@ class AlleleDisplay(NamedTuple):
             for ref in NUCLEOTIDES
         ]
 
+    @property
+    def complex_grid_renders_as_table(self) -> bool:
+        """Whether the complex cells render as a table, not a heatmap.
+
+        ``False`` without a grid, which the page never asks: it gates on
+        the grid itself first, as it does for the matrix.
+        """
+        grid = self.complex_grid
+        return grid is not None and _renders_as_table(grid)
+
+    def complex_rows(self) -> list[tuple[str, str, int, str]]:
+        """The occupied complex cells as table rows, most alleles first.
+
+        A row is reference length, alternative length, alleles and the
+        share of the complex class -- the lengths labelled as the
+        heatmap's axes label them, so a clamped cell reads ``≥64`` in
+        both.  Empty without a grid; the page gates on the grid itself
+        rather than reading this to find out.
+
+        The shares come from :func:`percentages_over`, the one rule the
+        Alleles section writes a share by, so a rare cell reads ``<0.01%``
+        here exactly as it does in the classes column.  Its denominator
+        is the grid's own total, which the TOTAL clamp makes exactly the
+        complex class count: every complex row lands in one cell, so
+        these rows sum to 100%.
+
+        That denominator is zero only when no cell is occupied, and then
+        there are no rows to carry a share anyway -- so the helper's "no
+        percentage at all" answer and this method's empty result are the
+        same answer, and it is returned as one.
+        """
+        grid = self.complex_grid
+        if grid is None:
+            return []
+        cells = _occupied_cells(grid)
+        percentages = percentages_over(
+            dict(cells), sum(count for _, count in cells))
+        if percentages is None:
+            return []
+        return [
+            (_length_label(ref_length), _length_label(alt_length),
+             count, percentages[ref_length, alt_length])
+            for (ref_length, alt_length), count in cells
+        ]
+
 
 def region_alleles_for(
     score: GenomicScore,
@@ -988,8 +1093,11 @@ def plot_complex_grid(
         interpolation="nearest",
         aspect="equal")
     ticks = [1, *range(8, side + 1, 8)]
-    labels = [str(tick) for tick in ticks[:-1]]
-    labels.append(f"≥{side}")
+    # Through the same label the table's clamped rows are written with,
+    # so "the picture and the table say the same thing about the same
+    # cell" is enforced by the code rather than asserted in a comment:
+    # the last tick IS the clamp, and only that one reads with the sign.
+    labels = [_length_label(tick) for tick in ticks]
     for set_ticks, set_labels in (
         (axes.set_xticks, axes.set_xticklabels),
         (axes.set_yticks, axes.set_yticklabels),
@@ -1043,7 +1151,11 @@ def save_allele_statistics(
             continue
         with resource.open_raw_file(image, mode="wb") as imagefile:
             plot_length_histogram(imagefile, lengths, item)
-    if counts.complex_grid:
+    # The same question the page asks: a grid sparse enough to be
+    # tabled publishes no image, so writing one would leave a file
+    # nothing references (gain#989).
+    if counts.complex_grid \
+            and not _renders_as_table(counts.complex_grid):
         with resource.open_raw_file(
                 ALLELE_COMPLEX_GRID_IMAGE_FILE, mode="wb") as imagefile:
             plot_complex_grid(imagefile, counts.complex_grid)

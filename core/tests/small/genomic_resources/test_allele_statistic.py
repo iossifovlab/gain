@@ -3,6 +3,7 @@ import json
 
 import pytest
 from gain.genomic_resources.statistics.alleles import (
+    COMPLEX_GRID_TABLE_MAX_CELLS,
     COMPLEX_LENGTH_CLAMP,
     AlleleDisplay,
     AlleleStatistics,
@@ -211,6 +212,15 @@ def _display_of(region: RegionAlleles) -> AlleleDisplay | None:
     statistics = AlleleStatistics()
     statistics.fold_region(region)
     return statistics.global_counts().display()
+
+
+def _complex_display(grid: dict[tuple[int, int], int]) -> AlleleDisplay:
+    """A display carrying exactly this complex grid and nothing else."""
+    alleles = sum(grid.values())
+    display = _display_of(RegionAlleles.frozen(
+        "chr1", alleles, alleles, {"complex": alleles}, complex_grid=grid))
+    assert display is not None
+    return display
 
 
 def test_ts_tv_splits_the_off_diagonal_and_skips_the_diagonal() -> None:
@@ -608,3 +618,78 @@ def test_a_display_of_the_new_groups_survives_a_missing_matrix() -> None:
     assert display.transitions is None
     assert display.ts_tv is None
     assert display.complex_grid == {(2, 3): 1}
+
+
+def test_the_complex_table_threshold_is_inclusive_at_its_constant() -> None:
+    # The one value in gain#989 worth arguing about, so it is pinned
+    # from BOTH sides: at the constant the cells are tabled, one cell
+    # further along they are drawn.  A bound checked from one side only
+    # stays green when the comparison slips by one.
+    at_threshold = {
+        (2, alt_length): 1
+        for alt_length in range(2, COMPLEX_GRID_TABLE_MAX_CELLS + 2)
+    }
+    assert len(at_threshold) == COMPLEX_GRID_TABLE_MAX_CELLS
+
+    assert _complex_display(at_threshold).complex_grid_renders_as_table
+    assert not _complex_display(
+        {**at_threshold, (3, 2): 1}).complex_grid_renders_as_table
+
+
+def test_an_empty_cell_is_not_a_table_row() -> None:
+    # A zero-count cell draws nothing on the heatmap -- it is masked out
+    # rather than coloured -- so it must not become a table row either.
+    display = _complex_display({(2, 3): 4, (5, 5): 0})
+
+    assert display.complex_rows() == [("2", "3", 4, "100.00%")]
+
+
+def test_an_empty_cell_does_not_count_towards_the_table_bound() -> None:
+    # The other half of the same rule, and the half a row assertion
+    # cannot see: a grid at the bound stays tabled however many empty
+    # cells it also carries.
+    grid: dict[tuple[int, int], int] = {
+        (2, alt_length): 1
+        for alt_length in range(2, COMPLEX_GRID_TABLE_MAX_CELLS + 2)
+    }
+    grid[3, 2] = 0
+
+    assert _complex_display(grid).complex_grid_renders_as_table
+
+
+def test_the_complex_table_lists_its_cells_most_populated_first() -> None:
+    display = _complex_display({(2, 2): 1, (3, 3): 7, (2, 4): 3})
+
+    assert display.complex_rows() == [
+        ("3", "3", 7, "63.64%"),
+        ("2", "4", 3, "27.27%"),
+        ("2", "2", 1, "9.09%"),
+    ]
+
+
+def test_a_clamped_complex_cell_reads_as_the_heatmap_axes_label_it() -> None:
+    # The table and the picture must say the same thing about the same
+    # cell, so the clamped length is spelled the way the axis spells it
+    # and the length just below it is spelled plainly.
+    display = _complex_display({
+        (COMPLEX_LENGTH_CLAMP, 2): 2,
+        (COMPLEX_LENGTH_CLAMP - 1, 2): 1,
+    })
+
+    assert [ref_length for ref_length, *_ in display.complex_rows()] == [
+        f"≥{COMPLEX_LENGTH_CLAMP}", str(COMPLEX_LENGTH_CLAMP - 1)]
+
+
+def test_a_cell_too_rare_to_show_is_not_reported_as_absent() -> None:
+    # A real score's complex class is 881 alleles in 727 million, which
+    # "%.2f" renders 0.00% -- exactly what it renders for a cell that
+    # does not exist.  Only the floor keeps the two apart (gain#988).
+    #
+    # The rest of the grid is split rather than left in one cell, so the
+    # fixture does not also exercise the UNdecided mirror of the floor:
+    # there is no ceiling, so a cell that is nearly-but-not-quite the
+    # whole class renders 100.00% and the column reads as over 100%.
+    # That belongs to gain#988, which owns the rule.
+    display = _complex_display({(2, 3): 1, (3, 3): 50_000, (4, 4): 49_999})
+
+    assert display.complex_rows()[2] == ("2", "3", 1, "<0.01%")

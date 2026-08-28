@@ -18,6 +18,7 @@ from gain.genomic_resources.statistics.alleles import (
     ALLELE_DELETION_LENGTHS_IMAGE_FILE,
     ALLELE_INSERTION_LENGTHS_IMAGE_FILE,
     ALLELE_STATISTICS_FILE,
+    COMPLEX_GRID_TABLE_MAX_CELLS,
     AlleleStatistics,
     serves_allele_arrays,
 )
@@ -991,7 +992,11 @@ def test_the_build_writes_one_global_image_per_group(
 ) -> None:
     # Three images, each referenced ONCE -- the count is what says there
     # are no per-chromosome images, as the fragments section has it.
-    resource = _indel_allele_score(tmp_path)
+    #
+    # The complex group needs a grid dense enough to be drawn at all: a
+    # sparse one publishes a table and no image (gain#989), which is
+    # asserted on its own rather than folded into this count.
+    resource = _all_groups_score(tmp_path)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     section = _alleles_section(
@@ -1004,6 +1009,173 @@ def test_the_build_writes_one_global_image_per_group(
     ):
         assert resource.file_exists(image)
         assert section.count(image) == 1
+
+
+def _allele_score_over(
+    tmp_path: pathlib.Path, rows: list[tuple[int, str, str]],
+) -> GenomicResource:
+    """A tabix allele score over ``(position, reference, alternative)``.
+
+    Rows go through ``with_score_line`` rather than a hand-written table
+    string: these rows are GENERATED from a count, and the builder owns
+    the header text and the column order that a literal would have to
+    restate.  The hand-written ``_MIXED_TABLE`` / ``_INDEL_TABLE`` above
+    stay as they are -- they are authored and commented row by row.
+    """
+    builder = an_allele_score().with_score("score", "float")
+    for pos, reference, alternative in rows:
+        builder = builder.with_score_line(
+            chrom="chr1", pos_begin=pos, reference=reference,
+            alternative=alternative, score=0.1)
+    return builder.with_tabix().build_resource(tmp_path)
+
+
+def _complex_cell_rows(cell_count: int) -> list[tuple[int, str, str]]:
+    """``cell_count`` rows, each occupying a distinct complex cell.
+
+    Reference and alternative differ at their first base, so no pair is
+    an insertion or a deletion, and each row's pair of lengths is unique
+    -- so the occupied-cell count is the row count, which is the number
+    the threshold is about.  Sizing the fixture is not enough on its own:
+    the same row count landing in fewer cells would test a threshold
+    that is not this one.
+    """
+    return [
+        ((index + 1) * 10,
+         "A" + "C" * (1 + index // 6),
+         "G" + "T" * (1 + index % 6))
+        for index in range(cell_count)
+    ]
+
+
+def _dense_complex_score(tmp_path: pathlib.Path) -> GenomicResource:
+    """A score whose complex grid has one cell more than the threshold."""
+    return _allele_score_over(
+        tmp_path, _complex_cell_rows(COMPLEX_GRID_TABLE_MAX_CELLS + 1))
+
+
+def _sparse_complex_score(tmp_path: pathlib.Path) -> GenomicResource:
+    """Three complex cells, of three DIFFERENT sizes.
+
+    Distinct counts, and a cell whose two lengths differ: a fixture of
+    equal counts would order the same ascending as descending, and one
+    of square cells would render the same with its two length columns
+    swapped.
+    """
+    return _allele_score_over(tmp_path, [
+        (10, "AC", "GT"),
+        (20, "AC", "GT"),
+        (30, "AC", "GT"),
+        (40, "AT", "ACG"),
+        (50, "AT", "ACG"),
+        (60, "ATG", "CGA"),
+    ])
+
+
+def _all_groups_score(tmp_path: pathlib.Path) -> GenomicResource:
+    """Every gain#779 group populated, the complex one too dense to table.
+
+    An insertion, a deletion, and enough complex cells that the grid is
+    drawn rather than tabled -- which is what it takes for all three
+    images to be written at once.
+    """
+    return _allele_score_over(tmp_path, [
+        (1, "A", "AT"),
+        (5, "ACGT", "A"),
+        *_complex_cell_rows(COMPLEX_GRID_TABLE_MAX_CELLS + 1),
+    ])
+
+
+def test_info_page_draws_a_complex_grid_with_more_cells_than_the_threshold(
+    tmp_path: pathlib.Path,
+) -> None:
+    # One cell over the threshold: the heatmap is what a grid this
+    # populated is for, and the table is what it is not (gain#989).
+    resource = _dense_complex_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    stats = AlleleStatistics.deserialize(
+        resource.get_file_content(ALLELE_STATISTICS_FILE))
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    # The fixture's granularity is the point: a table of the intended
+    # size that lands in fewer cells would test the wrong threshold.
+    grid = stats.global_counts().complex_grid
+    assert grid is not None
+    assert len(grid) == COMPLEX_GRID_TABLE_MAX_CELLS + 1
+    assert section.count(ALLELE_COMPLEX_GRID_IMAGE_FILE) == 1
+    assert "<th>% of complex</th>" not in section
+    assert resource.file_exists(ALLELE_COMPLEX_GRID_IMAGE_FILE)
+
+
+def test_info_page_tables_a_sparse_complex_grid_instead_of_drawing_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Three occupied cells of the 64x64 square: the heatmap would be
+    # three lit pixels in a field of white, while the table states in
+    # three rows what the picture is hiding (gain#989).
+    #
+    # The whole table body is asserted, not just its headings: the rows
+    # are what carries the answer, and a heading assertion alone stays
+    # green while the template swaps the two length columns or drops the
+    # percentage from every row.
+    resource = _sparse_complex_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    complex_section = section.partition("<h3>Complex alleles</h3>")[2]
+    # Whole rows, headings included: a substring of the headings would
+    # still match with a fifth column appended to every one of them.
+    assert (
+        "<thead><tr>"
+        "<th>reference length</th><th>alternative length</th>"
+        "<th>alleles</th><th>% of complex</th>"
+        "</tr></thead>"
+    ) in complex_section
+    assert (
+        "<tr><td>2</td><td>2</td><td>3</td><td>50.00%</td></tr>"
+        "<tr><td>2</td><td>3</td><td>2</td><td>33.33%</td></tr>"
+        "<tr><td>3</td><td>3</td><td>1</td><td>16.67%</td></tr>"
+    ) in complex_section
+    assert ALLELE_COMPLEX_GRID_IMAGE_FILE not in section
+
+
+def test_the_build_writes_no_complex_image_when_the_table_is_rendered(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Below the threshold no page references that image, so it is not
+    # written at all -- the same rule the length histograms follow, that
+    # a group the resource publishes nothing for writes no image.
+    resource = _indel_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert not resource.file_exists(ALLELE_COMPLEX_GRID_IMAGE_FILE)
+
+
+def test_info_page_calls_an_all_empty_complex_grid_no_complex_alleles(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A scan never writes a zero-count cell, so this takes a hand-edited
+    # file -- but the page must read emptiness off the OCCUPIED cells,
+    # the way the threshold and the rows already do, rather than off the
+    # keys.  Reading the keys renders a table of headings and no rows.
+    resource = _sparse_complex_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    stored = json.loads(resource.get_file_content(ALLELE_STATISTICS_FILE))
+    for entry in (*stored["chromosomes"].values(), stored["global"]):
+        entry["complex_grid"] = {"3": {"3": 0}}
+    with resource.proto.open_raw_file(
+            resource, ALLELE_STATISTICS_FILE, mode="wt") as outfile:
+        outfile.write(json.dumps(stored))
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    assert "<h3>Complex alleles</h3><p>no complex alleles</p>" in section
+    assert "<th>% of complex</th>" not in section
 
 
 def test_info_page_over_a_pre_indel_file_says_the_groups_not_computed(

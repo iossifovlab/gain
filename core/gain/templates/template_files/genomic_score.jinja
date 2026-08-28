@@ -293,11 +293,41 @@ not applicable
 {% endif %}
 <h3>Complex alleles</h3>
 {% if allele_display is not none and allele_display.complex_grid is not none %}
-{% if allele_display.complex_grid %}
+{# Emptiness is asked of the OCCUPIED cells, the same way the threshold
+   and the rows are: a grid whose every cell holds zero carries no
+   complex allele, whatever its keys say. #}
+{% set complex_rows = allele_display.complex_rows() %}
+{% if not complex_rows %}
+<p>no complex alleles</p>
+{% elif allele_display.complex_grid_renders_as_table %}
+{# Few enough lit cells that the heatmap would be a field of white:
+   the table says the same thing in the rows it actually has.  No
+   `data-sort` on any heading, so it does not opt into gain#984's
+   column sorting -- it is at most COMPLEX_GRID_TABLE_MAX_CELLS rows
+   and already ordered by the column that matters. #}
+<div class="scrollable-table-container">
+<table>
+    <thead>
+        <tr>
+            <th>reference length</th>
+            <th>alternative length</th>
+            <th>alleles</th>
+            <th>% of complex</th>
+        </tr>
+    </thead>
+    {%- for ref_length, alt_length, count, percentage in complex_rows -%}
+        <tr>
+            <td>{{ ref_length }}</td>
+            <td>{{ alt_length }}</td>
+            <td>{{ count }}</td>
+            <td>{{ percentage }}</td>
+        </tr>
+    {%- endfor %}
+</table>
+</div>
+{% else %}
 <img src="{{ impl.get_allele_complex_grid_image_filename() }}"
      alt="complex allele length grid" class="statistics-figure">
-{% else %}
-<p>no complex alleles</p>
 {% endif %}
 {% else %}
 <p>not computed</p>
