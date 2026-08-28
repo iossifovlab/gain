@@ -1647,16 +1647,22 @@ class FsspecReadWriteProtocol(
     def _get_filepath_change_token(self, filepath: str) -> str | None:
         """The store's own change token for a path, or None if it has none.
 
-        One implementation covers every fsspec scheme: the token is read
-        out of ``info()``, and a filesystem that does not report one --
-        the local filesystem does not -- simply yields None and keeps the
-        modification-time behaviour it has always had. The value is
-        stored verbatim, quotes and multipart suffix included, because
-        nothing may depend on its shape.
+        One implementation covers every fsspec scheme: the token is the
+        ``ETag`` out of ``info()``, and a filesystem that reports none --
+        the local filesystem reports none -- yields None. It is returned
+        verbatim, quotes and multipart suffix included, because nothing
+        may depend on its shape.
+
+        ``info()`` is answered cache-first, so a token is only as fresh
+        as the listing behind it.
         """
         info = self.filesystem.info(filepath)
         etag = info.get("ETag")
-        if etag is None:
+        if not etag:
+            # Empty as well as absent: s3fs fills a missing ETag on the
+            # head_object path with "" rather than None, and an empty
+            # token would compare equal to itself for ever, which is the
+            # one way this could stop noticing a change altogether.
             return None
         return str(etag)
 
@@ -2328,10 +2334,11 @@ class FsspecReadWriteProtocol(
 
         This is the lock-free decision half of :meth:`update_resource_file`:
         it performs the same checks and the same state-refresh side effect
-        (rebuild + save the ``.state`` on a missing state or a timestamp/size
-        drift, and delete a file no longer in the remote manifest), but it
-        never copies/downloads. The verdict's ``size`` is the manifest byte
-        size for files that will download (0 otherwise). See gain#78.
+        (rebuild + save the ``.state`` on a missing state or one that no
+        longer describes the stored file, and delete a file no longer in
+        the remote manifest), but it never copies/downloads. The
+        verdict's ``size`` is the manifest byte size for files that will
+        download (0 otherwise). See gain#78.
         """
         assert dest_resource.resource_id == remote_resource.resource_id
 

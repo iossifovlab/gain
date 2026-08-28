@@ -83,6 +83,7 @@ of one decision will drift.
 | [0019](0019-quota-limits-live-in-configuration-counters-live-in-rows.md) | Quota limits live in configuration, counters live in rows | accepted |
 | [0020](0020-segments-are-value-aware-coverage-is-not.md) | Extended score statistics: segments are value-aware, coverage is not | accepted |
 | [0021](0021-protocol-fault-tests-inject-at-the-filesystem-and-tier-by-observability.md) | Protocol fault tests inject at the filesystem, and tier by observability | accepted |
+| [0022](0022-a-file-state-is-judged-by-the-stores-change-token.md) | A resource file state is judged by the store's change token | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;

@@ -155,8 +155,8 @@ def test_a_freshly_published_s3_repository_does_not_look_stale(
     """A just-published repository must not read as already drifted.
 
     ``classify_resource_file`` compares each ``.state`` against the object
-    it describes and, on any difference in size or modification time,
-    re-hashes the file and rewrites the state.  So a population whose
+    it describes and, whenever it no longer matches, re-hashes the file
+    and rewrites the state.  So a population whose
     states do not agree with what the protocol reads back leaves every
     resource looking stale: the first use of a fixture repository pays for
     a re-hash of every file and writes into a repository the test only
