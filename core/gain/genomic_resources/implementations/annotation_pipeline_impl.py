@@ -6,6 +6,7 @@ from urllib.parse import quote
 from gain import logging
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
+from gain.annotation.pipeline_doc import render_pipeline_doc
 from gain.genomic_resources.genomic_scores import GenomicScore
 from gain.genomic_resources.repository import (
     GenomicResource,
@@ -16,7 +17,6 @@ from gain.genomic_resources.resource_implementation import (
     InfoImplementationMixin,
 )
 from gain.task_graph.graph import TaskDesc
-from gain.templates import get_template
 
 logger = logging.getLogger(__name__)
 
@@ -124,10 +124,9 @@ class AnnotationPipelineImplementation(
     def _get_template_data(self) -> dict[str, Any]:
         if self.pipeline is None:
             raise ValueError
-        doc_template = get_template("annotate_doc_pipeline_template.jinja")
         return {
-            "content": doc_template.render(
-                pipeline=self.pipeline,
+            "content": render_pipeline_doc(
+                self.pipeline,
                 res_url=self._make_resource_url,
                 hist_url=self._make_histogram_url,
             ),

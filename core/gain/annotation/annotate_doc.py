@@ -6,17 +6,13 @@ import sys
 from pathlib import Path
 
 from gain import logging
-from gain.annotation.annotation_genomic_context_cli import (
-    get_context_pipeline,
-)
+from gain.annotation.annotate_utils import get_pipeline_from_context
+from gain.annotation.pipeline_doc import render_pipeline_doc
 from gain.genomic_resources.genomic_context import (
     context_providers_add_argparser_arguments,
     context_providers_init,
     get_genomic_context,
 )
-from gain.genomic_resources.genomic_scores import GenomicScore
-from gain.genomic_resources.repository import GenomicResource
-from gain.templates import get_template
 from gain.utils.verbosity_configuration import VerbosityConfiguration
 
 logger = logging.getLogger("annotate_doc")
@@ -48,23 +44,18 @@ def cli(raw_args: list[str] | None = None) -> None:
     context_providers_init(**vars(args))
 
     context = get_genomic_context()
-    pipeline = get_context_pipeline(context)
+    # The sibling annotate tools' idiom. An unconfigured pipeline cannot be
+    # reached from here today -- an argument that names neither a file nor a
+    # GRR resource is refused earlier, by ``context_providers_init`` -- but
+    # the document renderer takes a pipeline, not an optional one, and this
+    # is where the other tools already turn that case into a clear error.
+    pipeline = get_pipeline_from_context(context)
 
     pipeline_path = None
     if os.path.exists(args.pipeline):
         pipeline_path = args.pipeline
 
-    def make_resource_url(resource: GenomicResource) -> str:
-        return resource.get_public_url()
-
-    def make_histogram_url(score: GenomicScore, score_id: str) -> str | None:
-        return score.get_histogram_image_public_url(score_id)
-
-    template = get_template("annotate_doc_pipeline_template.jinja")
-    html_doc = template.render(pipeline=pipeline,
-                               pipeline_path=pipeline_path,
-                               res_url=make_resource_url,
-                               hist_url=make_histogram_url)
+    html_doc = render_pipeline_doc(pipeline, pipeline_path=pipeline_path)
     if args.output:
         Path(args.output).write_text(html_doc)
     else:

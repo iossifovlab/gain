@@ -17,12 +17,8 @@ from gain.annotation.annotation_config import (
     AnnotatorInfo,
 )
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
-from gain.genomic_resources.genomic_scores import GenomicScore
-from gain.genomic_resources.repository import (
-    GenomicResource,
-    GenomicResourceRepo,
-)
-from gain.templates import get_template
+from gain.annotation.pipeline_doc import render_pipeline_doc
+from gain.genomic_resources.repository import GenomicResourceRepo
 from rest_framework import views
 from rest_framework.request import MultiValueDict
 from rest_framework.views import Request, Response
@@ -413,22 +409,19 @@ class PipelineDoc(AsyncAnnotationBaseView):
 
     @staticmethod
     def _render_doc(pipeline: ThreadSafePipeline) -> str:
-        """Render the annotate_doc HTML off the loop (touches GRR metadata)."""
-        def make_resource_url(resource: GenomicResource) -> str:
-            return resource.get_public_url()
+        """Render the annotate_doc HTML off the loop (touches GRR metadata).
 
-        def make_histogram_url(
-            score: GenomicScore, score_id: str,
-        ) -> str | None:
-            return score.get_histogram_image_public_url(score_id)
+        The render itself, and the addresses the document carries, belong to
+        ``gain`` -- the CLI and the ``annotation_pipeline`` resource pages go
+        through the same function (#952). This endpoint wants the default
+        public-mirror policy, and names no pipeline file, so it passes
+        nothing but the pipeline.
 
-        template = get_template("annotate_doc_pipeline_template.jinja")
-        return template.render(
-            pipeline=pipeline,
-            pipeline_path=None,
-            res_url=make_resource_url,
-            hist_url=make_histogram_url,
-        )
+        Kept as a named seam rather than inlined at the call site: it is what
+        the tests render through, and it is where a download-specific
+        deviation from the shared default would go if one is ever needed.
+        """
+        return render_pipeline_doc(pipeline)
 
 
 def _count_annotators(content: str) -> int | None:
