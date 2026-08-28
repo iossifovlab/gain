@@ -1644,6 +1644,28 @@ class FsspecReadWriteProtocol(
                 return True
         return False
 
+    def _get_filepath_change_token(self, filepath: str) -> str | None:
+        """The store's own change token for a path, or None if it has none.
+
+        One implementation covers every fsspec scheme: the token is the
+        ``ETag`` out of ``info()``, and a filesystem that reports none --
+        the local filesystem reports none -- yields None. It is returned
+        verbatim, quotes and multipart suffix included, because nothing
+        may depend on its shape.
+
+        ``info()`` is answered cache-first, so a token is only as fresh
+        as the listing behind it.
+        """
+        info = self.filesystem.info(filepath)
+        etag = info.get("ETag")
+        if not etag:
+            # Empty as well as absent: s3fs fills a missing ETag on the
+            # head_object path with "" rather than None, and an empty
+            # token would compare equal to itself for ever, which is the
+            # one way this could stop noticing a change altogether.
+            return None
+        return str(etag)
+
     def _get_filepath_timestamp(self, filepath: str) -> float:
         try:
             modification = self.filesystem.modified(filepath)
@@ -2024,6 +2046,11 @@ class FsspecReadWriteProtocol(
         url = self.get_resource_file_url(resource, filename)
         return self._get_filepath_timestamp(url)
 
+    def get_resource_file_change_token(
+            self, resource: GenomicResource, filename: str) -> str | None:
+        url = self.get_resource_file_url(resource, filename)
+        return self._get_filepath_change_token(url)
+
     def _get_filepath_size(
             self, filepath: str) -> int:
         fileinfo = self.filesystem.info(filepath)
@@ -2065,6 +2092,11 @@ class FsspecReadWriteProtocol(
                 content["size"],
                 content["timestamp"],
                 content["md5"],
+                # Written by every state since gain#881, and by none
+                # before it: a state file already on disk carries no
+                # token and must keep loading, falling back to the
+                # modification time until it is next rebuilt.
+                content.get("change_token"),
             )
 
     def delete_resource_file(
@@ -2302,10 +2334,11 @@ class FsspecReadWriteProtocol(
 
         This is the lock-free decision half of :meth:`update_resource_file`:
         it performs the same checks and the same state-refresh side effect
-        (rebuild + save the ``.state`` on a missing state or a timestamp/size
-        drift, and delete a file no longer in the remote manifest), but it
-        never copies/downloads. The verdict's ``size`` is the manifest byte
-        size for files that will download (0 otherwise). See gain#78.
+        (rebuild + save the ``.state`` on a missing state or one that no
+        longer describes the stored file, and delete a file no longer in
+        the remote manifest), but it never copies/downloads. The
+        verdict's ``size`` is the manifest byte size for files that will
+        download (0 otherwise). See gain#78.
         """
         assert dest_resource.resource_id == remote_resource.resource_id
 
@@ -2318,19 +2351,11 @@ class FsspecReadWriteProtocol(
             return FileCacheVerdict(needs_download=True, size=size)
 
         local_state = self.load_resource_file_state(dest_resource, filename)
-        if local_state is None:
+        if local_state is None or not self._state_describes_stored_file(
+                dest_resource, local_state):
             local_state = self.build_resource_file_state(
                 dest_resource, filename)
             self.save_resource_file_state(dest_resource, local_state)
-        else:
-            timestamp = self.get_resource_file_timestamp(
-                dest_resource, filename)
-            size = self.get_resource_file_size(dest_resource, filename)
-            if timestamp != local_state.timestamp or \
-                    size != local_state.size:
-                local_state = self.build_resource_file_state(
-                    dest_resource, filename)
-                self.save_resource_file_state(dest_resource, local_state)
 
         if filename not in remote_manifest:
             self.delete_resource_file(dest_resource, filename)

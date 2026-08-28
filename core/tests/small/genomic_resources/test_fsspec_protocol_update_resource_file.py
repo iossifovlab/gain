@@ -830,6 +830,11 @@ def test_classify_resource_file_refreshes_state_on_drift(
     state = proto.load_resource_file_state(dst_res, "genes.gtf")
     assert state is not None
     state.timestamp = 0
+    # Both halves of the state have to be staled for it to read as out of
+    # date. Where the store offers a change token the token is what
+    # decides, and it would still match the stored object -- correctly,
+    # since the file itself has not been touched here (gain#881).
+    state.change_token = "stale-token"  # noqa: S105
     proto.save_resource_file_state(dst_res, state)
 
     # When

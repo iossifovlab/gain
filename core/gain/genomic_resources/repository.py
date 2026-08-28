@@ -626,12 +626,18 @@ class ResourceFileState:
         size: File size in bytes
         timestamp: Last modification time as Unix timestamp
         md5: MD5 checksum of file content
+        change_token: Opaque token the store supplies for the stored
+            object, or None where the store has none. It changes whenever
+            the object changes, and nothing else about it is defined --
+            it is never parsed, and never treated as a checksum, even
+            when a particular store happens to derive it from one.
     """
 
     filename: str
     size: int
     timestamp: float
     md5: str
+    change_token: str | None = None
 
 
 class Manifest:
@@ -1936,9 +1942,11 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         In the DEFAULT mode a DVC-managed file is never hashed. Three
         sources answer for a file, in this order:
 
-        1. a recorded ``ResourceFileState`` whose size and timestamp still
-           match the file. It says "GAIn hashed these bytes", and it
-           outranks a sidecar that contradicts it;
+        1. a recorded ``ResourceFileState`` that still describes the file
+           -- by the store's change token where there is one, and by the
+           size and modification time otherwise (ADR 0022). It says "GAIn
+           hashed these bytes", and it outranks a sidecar that
+           contradicts it;
         2. otherwise, the file's ``.dvc`` sidecar (its ``prebuild_entries``
            entry): it supplies BOTH the md5 sum and the size, and NO state
            is written for it. ``dvc add`` computed that md5 sum from the
@@ -1999,18 +2007,14 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
 
         pre_state = self.load_resource_file_state(resource, entry.name)
         if pre_state is not None:
-            timestamp = self.get_resource_file_timestamp(
-                resource, entry.name)
-            size = self.get_resource_file_size(resource, entry.name)
-            if abs(timestamp - pre_state.timestamp) <= 1e-2 \
-                    and size == pre_state.size:
+            if self._state_describes_stored_file(
+                    resource, pre_state, timestamp_tolerance=1e-2):
                 entry.md5 = pre_state.md5
                 entry.size = pre_state.size
                 return None
             logger.debug(
-                "timestamp (%s) or size (%s) mismatch for %s in %s; "
+                "%s in %s no longer matches its recorded state; "
                 "recomputing md5...",
-                pre_state.timestamp - timestamp, pre_state.size - size,
                 entry.name, resource.resource_id)
 
         if dvc_entry is not None:
@@ -2255,6 +2259,25 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             self, resource: GenomicResource, filename: str) -> int:
         """Return the size of a resource file."""
 
+    @abc.abstractmethod
+    def get_resource_file_change_token(
+            self, resource: GenomicResource, filename: str) -> str | None:
+        """Return the store's change token for a resource file, if any.
+
+        A change token is whatever the store itself offers as "this is
+        the version of the object you are looking at": it changes on
+        every write and holds still for as long as the object is not
+        written. Stores that offer none answer None, and for them the
+        modification time remains the only change hint there is.
+
+        The value is opaque. It is never parsed, never compared against
+        an md5 sum and never assumed to be one, even where a particular
+        store happens to derive it from one.
+
+        See ADR 0022 for why a state is judged by this rather than by the
+        modification time.
+        """
+
     def build_resource_file_state(
             self, resource: GenomicResource,
             filename: str,
@@ -2290,7 +2313,62 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             size = self.get_resource_file_size(resource, filename)
 
         return ResourceFileState(
-            filename=filename, size=size, timestamp=timestamp, md5=md5)
+            filename=filename, size=size, timestamp=timestamp, md5=md5,
+            change_token=self.get_resource_file_change_token(
+                resource, filename))
+
+    def _state_describes_stored_file(
+            self, resource: GenomicResource,
+            state: ResourceFileState,
+            *,
+            timestamp_tolerance: float = 0.0) -> bool:
+        """Whether a recorded state still describes the file in the store.
+
+        Where the store offers a change token and the state recorded one,
+        that decides on its own: the token reads the same whichever call
+        reports it, and moves on every write the store has observed. The
+        size is not consulted alongside it -- an object whose token has
+        not moved has not been written.
+
+        Otherwise -- a store with no token, or a state written before
+        there were any -- the question falls back to the modification
+        time and the size. ``timestamp_tolerance`` is what the calling
+        site allows there, and the two sites differ: the cache decision
+        compares for equality, the manifest scan forgives a hundredth of
+        a second. Only the token rule is shared between them.
+
+        See ADR 0022, which records why the two tolerances were left
+        alone and what the token does not fix.
+        """
+        if state.change_token is not None:
+            # Asked of the state first: a store with no tokens answers
+            # None for every file, so consulting it before the state
+            # would spend a stat per entry that cannot change the answer.
+            token = self.get_resource_file_change_token(
+                resource, state.filename)
+            if token is not None:
+                describes = token == state.change_token
+                if not describes:
+                    logger.debug(
+                        "change token of %s in %s moved from %s to %s",
+                        state.filename, resource.resource_id,
+                        state.change_token, token)
+                return describes
+
+        timestamp = self.get_resource_file_timestamp(
+            resource, state.filename)
+        size = self.get_resource_file_size(resource, state.filename)
+        describes = abs(timestamp - state.timestamp) <= timestamp_tolerance \
+            and size == state.size
+        if not describes:
+            # The two deltas are how this class of defect gets diagnosed
+            # -- gain#881 was found by reading them -- so they are named
+            # here rather than left to a caller that only sees a bool.
+            logger.debug(
+                "timestamp (%s) or size (%s) mismatch for %s in %s",
+                state.timestamp - timestamp, state.size - size,
+                state.filename, resource.resource_id)
+        return describes
 
     @abc.abstractmethod
     def save_resource_file_state(

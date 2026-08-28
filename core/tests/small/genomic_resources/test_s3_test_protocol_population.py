@@ -155,8 +155,8 @@ def test_a_freshly_published_s3_repository_does_not_look_stale(
     """A just-published repository must not read as already drifted.
 
     ``classify_resource_file`` compares each ``.state`` against the object
-    it describes and, on any difference in size or modification time,
-    re-hashes the file and rewrites the state.  So a population whose
+    it describes and, whenever it no longer matches, re-hashes the file
+    and rewrites the state.  So a population whose
     states do not agree with what the protocol reads back leaves every
     resource looking stale: the first use of a fixture repository pays for
     a re-hash of every file and writes into a repository the test only
@@ -349,3 +349,49 @@ def test_a_resource_file_named_like_a_state_document_is_published(
     tree = s3_tree(proto)
     assert tree["one/checkpoint.state"] == b"not a state document"
     assert "one/.grr/checkpoint.state.state" in tree
+
+
+def test_classify_does_not_re_hash_a_listed_repository(
+    s3_enabled: None,
+    source_proto: FsspecReadWriteProtocol,
+    s3_calls: list[tuple[str, str]],
+) -> None:
+    """A listing must not make an unchanged repository look drifted.
+
+    ``modified()`` is answered from whichever call last filled the s3fs
+    listing cache, and MinIO reports ``LastModified`` to the millisecond
+    on ``list_objects_v2`` where ``head_object`` reports whole seconds.
+    So merely enumerating the bucket changes the answer for every object,
+    and a state recorded against the HEAD value then reads as drifted --
+    which costs a full re-read of the file to re-hash it, and a rewrite of
+    a state that was already correct (gain#881).
+
+    Nothing about the repository has changed between the publish and the
+    sweep, so the sweep must read no content and write nothing at all.
+    The manifests are loaded before the call record is cleared: reading
+    one is a legitimate ``GetObject`` that is not what this is about.
+    """
+    # Given a freshly published s3 repository, with its manifests in hand
+    proto = s3_test_protocol()
+    copy_proto_genomic_resources(proto, source_proto)
+    resources = list(proto.get_all_resources())
+    manifests = {res.resource_id: res.get_manifest() for res in resources}
+
+    # ...that something has since listed, so the millisecond values from
+    # list_objects_v2 are what modified() now serves
+    proto.filesystem.invalidate_cache()
+    proto.filesystem.find(proto.url.rstrip("/"), withdirs=False)
+
+    # When every file is classified against the state published beside it
+    s3_calls.clear()
+    for resource in resources:
+        for entry in manifests[resource.resource_id]:
+            proto.classify_resource_file(resource, resource, entry.name)
+
+    # Then no file was re-read to be re-hashed, and no state was rewritten
+    re_read = [
+        key for key in keys_of(s3_calls, "GetObject")
+        if not key.endswith(STATE_SUFFIX)
+    ]
+    assert re_read == []
+    assert keys_of(s3_calls, "PutObject") == []
