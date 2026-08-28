@@ -19,16 +19,34 @@ the right value and the wrong type, and no assertion about the value
 would notice.
 """
 
+from dataclasses import replace
+
 import pytest
 
 from tests.small.genomic_resources.gene_models.columnar_formats import (
     BAD_NAME,
+    DEFAULT,
+    FORMATS,
     GOOD_NAME,
     READ_PATH_IDS,
     READ_PATHS,
     REFSEQ,
     ColumnarFormat,
 )
+
+#: The UCSC-derived layouts as headerless files, each paired below with
+#: its own headered twin. gain's own output format is not here: it is
+#: read by column name and has no second read path to differ from.
+#:
+#: Six entries for five layouts -- genePred is accepted at two widths,
+#: and only the wider one carries an alternate-name column at all, so
+#: the two disagree about where the gene label comes from.
+TWO_PATH_FORMATS = [fmt for fmt in FORMATS if fmt is not DEFAULT]
+TWO_PATH_IDS = [fmt.name for fmt in TWO_PATH_FORMATS]
+
+# A parametrization over nothing passes, and selecting by exclusion goes
+# quiet rather than red if the table is renamed out from under it.
+assert len(TWO_PATH_FORMATS) == 6, TWO_PATH_IDS
 
 
 @pytest.mark.parametrize("fmt", READ_PATHS, ids=READ_PATH_IDS)
@@ -64,6 +82,72 @@ def test_a_bare_digit_chromosome_is_text(fmt: ColumnarFormat) -> None:
     chroms = {transcript.chrom for transcript in models.values()}
 
     assert chroms == {"17"}
+
+
+@pytest.mark.parametrize("fmt", READ_PATHS, ids=READ_PATH_IDS)
+def test_a_bare_digit_gene_label_is_text(fmt: ColumnarFormat) -> None:
+    """A gene labelled `17` is the text "17", not the number 17.
+
+    The same defect as the chromosome above, on the axis gain#929 did
+    not reach. Three layouts take their gene label from a column that is
+    not the transcript name -- refSeq and genePredExt from the alternate
+    name, refFlat from its leading gene-name column -- and none of those
+    was pinned on the headerless path. The other three are safe only
+    incidentally: their gene label *is* the transcript name, which the
+    identifying pin already covered.
+
+    An integer gene label is not merely oddly typed. It is the key of
+    the gene index, so the gene it names is unreachable through a lookup
+    by name, exactly as an integer chromosome was unreachable by
+    location (gain#963).
+
+    Comparing against the text rather than asserting `isinstance` pins
+    the value too, and so is evidence that the table names the right
+    column: `17 == "17"` is false, and a gene read from some other
+    column would not equal either.
+    """
+    models = fmt.parse(fmt.file_with_column(fmt.gene_column, "17"))
+    assert models is not None
+
+    genes = {transcript.gene for transcript in models.values()}
+
+    if fmt.gene_column == fmt.name_column:
+        # The fixture renames the second row so the two records can be
+        # told apart, and for these layouts that same cell is the gene
+        # label -- so the second record's gene is its new name.
+        assert genes == {"17", BAD_NAME}
+    else:
+        assert genes == {"17"}
+
+
+@pytest.mark.parametrize("spelling", ["0", "17", "007"])
+@pytest.mark.parametrize("fmt", TWO_PATH_FORMATS, ids=TWO_PATH_IDS)
+def test_the_same_rows_give_the_same_gene_label_either_way(
+    fmt: ColumnarFormat, spelling: str,
+) -> None:
+    """A header decides how the file is recognised, not what it says.
+
+    The property the test above cannot express. Pinning the gene column
+    settles its *type*, but the label a record ends up with also turned
+    on that type: a gene column of `0` was falsy once inferred, so the
+    layout with a fallback took the transcript name on the headerless
+    path and kept `"0"` on the headered one -- two different genes from
+    one set of rows, both of them strings, so no assertion about the
+    type would have noticed.
+
+    `007` is here for the other half of it: inference does not merely
+    retype that cell, it loses two characters of what the file said.
+    """
+    headered = replace(fmt, header=True)
+
+    plain_models = fmt.parse(fmt.file_with_column(fmt.gene_column, spelling))
+    headered_models = headered.parse(
+        headered.file_with_column(headered.gene_column, spelling))
+
+    assert plain_models is not None
+    assert headered_models is not None
+    assert [(tm.tr_name, tm.gene) for tm in plain_models.values()] == \
+        [(tm.tr_name, tm.gene) for tm in headered_models.values()]
 
 
 #: Spellings pandas reads as a missing value when left to itself. A

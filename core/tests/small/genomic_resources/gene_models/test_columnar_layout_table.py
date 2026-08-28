@@ -108,9 +108,23 @@ def test_layout_takes_each_attribute_from_its_own_column(
     assert as_text == expected, fmt.name
 
 
+#: What an alternate-name column can say instead of a gene. A cell
+#: holding only spaces names a gene no more than an empty one does, and
+#: the fallback has to read them alike -- deciding it on the cell's
+#: truthiness instead made a whitespace-only cell the gene label, where
+#: every other per-record rule in this path decides blankness on the
+#: cell's stripped text (gain#963).
+#:
+#: A tab cannot be one of these: the fixture joins its fields with tabs,
+#: so a cell spelled that way would widen the row into a different
+#: layout rather than a blank cell in this one.
+BLANK_SPELLINGS = ["", " ", "  "]
+
+
+@pytest.mark.parametrize("blank", BLANK_SPELLINGS, ids=repr)
 @pytest.mark.parametrize("fmt", GENEPRED_EXT_PATHS, ids=GENEPRED_EXT_IDS)
 def test_genepred_falls_back_to_transcript_name_when_alternate_is_blank(
-    fmt: ColumnarFormat,
+    fmt: ColumnarFormat, blank: str,
 ) -> None:
     """A blank alternate name falls back the way an absent one does.
 
@@ -124,8 +138,11 @@ def test_genepred_falls_back_to_transcript_name_when_alternate_is_blank(
     table -- and a table that tested presence instead would leave every
     other test green while quietly labelling these records with the
     empty string.
+
+    "Blank" is every spelling of it, not just the empty one: a cell of
+    spaces is what the file said, and what it said is not a gene.
     """
-    result = fmt.parse(fmt.file_with_column("name2", ""))
+    result = fmt.parse(fmt.file_with_column("name2", blank))
 
     assert result is not None, fmt.name
     assert len(result) == 2, fmt.name

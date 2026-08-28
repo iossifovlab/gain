@@ -70,6 +70,16 @@ class ColumnarFormat:
     first_exon_start: int
     name_column: str = "name"
     chrom_column: str = "chrom"
+    #: Where this layout's gene label comes from. Where a layout has a
+    #: fallback -- genePred, which reads the alternate name and then the
+    #: transcript name -- this is the column it prefers, since that is
+    #: the one whose cell decides what the label becomes.
+    #:
+    #: Three layouts take it from a column that is not `name_column`,
+    #: and those are exactly the three the headerless read left
+    #: unpinned: what a gene label became depended on which branch of
+    #: `parse_raw` recognised the file (gain#963).
+    gene_column: str = "name"
     exon_columns: tuple[str, ...] = ("exonStarts", "exonEnds")
     #: The transcript and coding bounds, in this layout's spelling. The
     #: default format calls the transcript start `tsBeg`; the five
@@ -161,6 +171,7 @@ REFSEQ_OPTIONAL = (
 REFSEQ = ColumnarFormat(
     "refseq", parse_ref_seq_gene_models_format,
     REFSEQ_COLUMNS, REFSEQ_FIELDS, first_exon_start=101,
+    gene_column="name2",
     optional_columns=REFSEQ_OPTIONAL,
 )
 
@@ -175,6 +186,7 @@ DEFAULT = ColumnarFormat(
     first_exon_start=100,
     name_column="trID",
     chrom_column="chr",
+    gene_column="gene",
     exon_columns=("exonStarts", "exonEnds", "exonFrames"),
     bound_columns=("tsBeg", "txEnd", "cdsStart", "cdsEnd"),
     header=True,
@@ -191,6 +203,7 @@ FORMATS = [
         "refflat", parse_ref_flat_gene_models_format,
         ("#geneName", *GENEPRED_COLUMNS),
         ("TP53", *GENEPRED_FIELDS), first_exon_start=101,
+        gene_column="#geneName",
     ),
     ColumnarFormat(
         "knowngene", parse_known_gene_models_format,
@@ -211,6 +224,7 @@ FORMATS = [
          "cdsEndStat", "exonFrames"),
         (*GENEPRED_FIELDS, "0", "TP53", "cmpl", "cmpl", "0,0"),
         first_exon_start=101,
+        gene_column="name2",
         # `name2` is optional here in the same way it is for refSeq: the
         # parser falls back to `name` when it is blank, so the record
         # still parses and the blank still reaches the attributes.
