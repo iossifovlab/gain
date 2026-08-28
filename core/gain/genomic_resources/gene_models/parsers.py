@@ -193,17 +193,26 @@ def read_gene_models_tsv(infile: IO, **kwargs: Any) -> pd.DataFrame:
         pd.read_csv(infile, sep="\t", na_filter=False, **kwargs))
 
 
-#: The columns a columnar record is identified by, and the only ones the
-#: headerless read pins to text. Pinning the whole frame would do it too,
-#: but an all-object frame makes pandas' own ``to_dict`` much slower --
+#: The columns a columnar record is identified by. These, plus whatever
+#: the caller names in ``text_columns``, are what the headerless read
+#: pins to text. Pinning the whole frame would do it too, but an
+#: all-object frame makes pandas' own ``to_dict`` much slower --
 #: measured at +13% over a 196k-record refSeq file, against +2% for these
 #: two -- and every other column is converted by `record_cells` anyway.
+#:
+#: Adding a layout's gene column to the pin is free on that same file:
+#: its alternate names are symbols, so they are text whichever way the
+#: column is read, and the two arms produce the same frame. Where the
+#: pin does change the frame -- a gene column of bare digits, the case
+#: it exists for -- reading it as text rather than as the ``int64``
+#: pandas would infer costs +6.5% (pandas 3.0.2, gain#963).
 _IDENTIFYING_COLUMNS = ("name", "chrom")
 
 
 def parse_raw(
     infile: IO, expected_columns: list[str],
     nrows: int | None = None, comment: str | None = None,
+    text_columns: tuple[str, ...] = (),
 ) -> pd.DataFrame | None:
     """Parse raw gene models data based on expected columns.
 
@@ -221,6 +230,16 @@ def parse_raw(
     was handed over as the int 17, and a transcript index keyed by that
     is unreachable by a query for "17". The two read the same values
     either way; the pin decides only how much of the frame is object.
+
+    ``text_columns`` is how a caller names the rest of what it keys by.
+    A gene label is the second such column, and for the same reason: it
+    keys the gene index, so a gene labelled by a bare digit was
+    unreachable by a lookup for its own name, and *which* label a record
+    got depended on which branch below recognised the file (gain#963).
+    Only the caller knows which column that is -- it differs per layout,
+    and for one of them it is the alternate name with the transcript
+    name behind it. gain's own output format, which does not come
+    through here, pins its gene column the same way and always has.
 
     The GTF reader shares this and names none of these columns, so it
     keeps the inference its own arithmetic depends on. It does not
@@ -243,7 +262,8 @@ def parse_raw(
             names=expected_columns,
             comment=comment,
             dtype={
-                column: str for column in _IDENTIFYING_COLUMNS
+                column: str
+                for column in (*_IDENTIFYING_COLUMNS, *text_columns)
                 if column in expected_columns
             },
         )
@@ -384,7 +404,9 @@ def parse_columnar_format(
     matched: tuple[str, ...] = ()
     for columns in layout.accepted_columns:
         infile.seek(0)
-        df = parse_raw(infile, list(columns), nrows=nrows)
+        df = parse_raw(
+            infile, list(columns), nrows=nrows,
+            text_columns=layout.gene_columns)
         if df is not None:
             matched = columns
             break
@@ -415,7 +437,7 @@ def parse_columnar_format(
     for record, rec in enumerate(records, start=1):
         for column in gene_candidates:
             gene = rec[column]
-            if gene:
+            if cell_text(gene).strip():
                 break
         else:
             gene = rec[gene_fallback]
