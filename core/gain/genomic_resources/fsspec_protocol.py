@@ -1644,6 +1644,22 @@ class FsspecReadWriteProtocol(
                 return True
         return False
 
+    def _get_filepath_change_token(self, filepath: str) -> str | None:
+        """The store's own change token for a path, or None if it has none.
+
+        One implementation covers every fsspec scheme: the token is read
+        out of ``info()``, and a filesystem that does not report one --
+        the local filesystem does not -- simply yields None and keeps the
+        modification-time behaviour it has always had. The value is
+        stored verbatim, quotes and multipart suffix included, because
+        nothing may depend on its shape.
+        """
+        info = self.filesystem.info(filepath)
+        etag = info.get("ETag")
+        if etag is None:
+            return None
+        return str(etag)
+
     def _get_filepath_timestamp(self, filepath: str) -> float:
         try:
             modification = self.filesystem.modified(filepath)
@@ -2024,6 +2040,11 @@ class FsspecReadWriteProtocol(
         url = self.get_resource_file_url(resource, filename)
         return self._get_filepath_timestamp(url)
 
+    def get_resource_file_change_token(
+            self, resource: GenomicResource, filename: str) -> str | None:
+        url = self.get_resource_file_url(resource, filename)
+        return self._get_filepath_change_token(url)
+
     def _get_filepath_size(
             self, filepath: str) -> int:
         fileinfo = self.filesystem.info(filepath)
@@ -2065,6 +2086,11 @@ class FsspecReadWriteProtocol(
                 content["size"],
                 content["timestamp"],
                 content["md5"],
+                # Written by every state since gain#881, and by none
+                # before it: a state file already on disk carries no
+                # token and must keep loading, falling back to the
+                # modification time until it is next rebuilt.
+                content.get("change_token"),
             )
 
     def delete_resource_file(
@@ -2318,19 +2344,11 @@ class FsspecReadWriteProtocol(
             return FileCacheVerdict(needs_download=True, size=size)
 
         local_state = self.load_resource_file_state(dest_resource, filename)
-        if local_state is None:
+        if local_state is None or not self._state_describes_stored_file(
+                dest_resource, local_state):
             local_state = self.build_resource_file_state(
                 dest_resource, filename)
             self.save_resource_file_state(dest_resource, local_state)
-        else:
-            timestamp = self.get_resource_file_timestamp(
-                dest_resource, filename)
-            size = self.get_resource_file_size(dest_resource, filename)
-            if timestamp != local_state.timestamp or \
-                    size != local_state.size:
-                local_state = self.build_resource_file_state(
-                    dest_resource, filename)
-                self.save_resource_file_state(dest_resource, local_state)
 
         if filename not in remote_manifest:
             self.delete_resource_file(dest_resource, filename)

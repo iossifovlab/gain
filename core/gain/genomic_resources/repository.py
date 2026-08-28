@@ -626,12 +626,18 @@ class ResourceFileState:
         size: File size in bytes
         timestamp: Last modification time as Unix timestamp
         md5: MD5 checksum of file content
+        change_token: Opaque token the store supplies for the stored
+            object, or None where the store has none. It changes whenever
+            the object changes, and nothing else about it is defined --
+            it is never parsed, and never treated as a checksum, even
+            when a particular store happens to derive it from one.
     """
 
     filename: str
     size: int
     timestamp: float
     md5: str
+    change_token: str | None = None
 
 
 class Manifest:
@@ -2255,6 +2261,29 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             self, resource: GenomicResource, filename: str) -> int:
         """Return the size of a resource file."""
 
+    @abc.abstractmethod
+    def get_resource_file_change_token(
+            self, resource: GenomicResource, filename: str) -> str | None:
+        """Return the store's change token for a resource file, if any.
+
+        A change token is whatever the store itself offers as "this is
+        the version of the object you are looking at" -- it changes on
+        every write and is stable for as long as the object is not
+        written. Stores that offer none answer None, and the recorded
+        modification time remains the only change hint for them.
+
+        This is deliberately not the modification time. On s3 the
+        modification time has two different answers for the same object
+        depending on which call last filled the s3fs listing cache --
+        MinIO reports it to the millisecond on ``list_objects_v2`` and to
+        the whole second on ``head_object`` -- so an unchanged file reads
+        as drifted whenever the access pattern changes. Rounding that
+        away is not an option: same-size rewrites land in the same second
+        routinely, so a whole-second comparison would stop noticing real
+        changes and publish a stale md5 sum. The token has no such split
+        and no such blind spot (gain#881).
+        """
+
     def build_resource_file_state(
             self, resource: GenomicResource,
             filename: str,
@@ -2290,7 +2319,46 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             size = self.get_resource_file_size(resource, filename)
 
         return ResourceFileState(
-            filename=filename, size=size, timestamp=timestamp, md5=md5)
+            filename=filename, size=size, timestamp=timestamp, md5=md5,
+            change_token=self.get_resource_file_change_token(
+                resource, filename))
+
+    def _state_describes_stored_file(
+            self, resource: GenomicResource,
+            state: ResourceFileState,
+            *,
+            timestamp_tolerance: float = 0.0) -> bool:
+        """Whether a recorded state still describes the file in the store.
+
+        Where the store offers a change token and the state recorded one,
+        that answers it on its own: the token changes on every write and
+        is the same value whichever call reports it, so it neither misses
+        a change nor invents one. The size is not consulted alongside it
+        -- an object whose token is unchanged has not been written, and
+        its size cannot have moved.
+
+        Otherwise -- a store with no token, or a state written before any
+        were recorded -- the question falls back to the modification time
+        and the size, exactly as it did before there were tokens.
+        ``timestamp_tolerance`` is what each caller has always allowed
+        there, and the two callers do not agree: the cache decision
+        compares for equality, while the manifest scan forgives a
+        hundredth of a second. Reconciling those is not this method's
+        business -- widening the cache decision to the scan's tolerance
+        makes it stop noticing a rewrite that lands within the same
+        hundredth of a second, which is a change in behaviour nobody
+        asked for -- so each keeps its own and only the token rule above
+        is shared.
+        """
+        token = self.get_resource_file_change_token(resource, state.filename)
+        if token is not None and state.change_token is not None:
+            return token == state.change_token
+
+        timestamp = self.get_resource_file_timestamp(
+            resource, state.filename)
+        size = self.get_resource_file_size(resource, state.filename)
+        return abs(timestamp - state.timestamp) <= timestamp_tolerance \
+            and size == state.size
 
     @abc.abstractmethod
     def save_resource_file_state(
