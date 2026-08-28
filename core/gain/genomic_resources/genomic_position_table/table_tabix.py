@@ -159,8 +159,34 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         return resolve_tabix_index_filename_for_read(
             self.genomic_resource, self.definition.filename)
 
+    def _decline_index_check(
+        self, index_filename: str, reason: str,
+    ) -> None:
+        """Say out loud that the check did not happen.
+
+        Declined rather than passed: an index this table has not checked is
+        not an index it has agreed with, and a resource that goes unchecked
+        must say so.  One message for every way the check can fail to run, so
+        that a reader cannot tell them apart by tone and conclude that one of
+        them was somehow less unchecked than the other.
+        """
+        logger.warning(
+            "the columns of index %s of resource <%s> could not be read "
+            "(%s), so the table's configured columns are NOT validated "
+            "against them",
+            index_filename, self.genomic_resource.get_full_id(), reason)
+
     def _validate_index_columns(self) -> None:
         """Refuse the table when its index was built over other columns.
+
+        The check is **best-effort**: a check that cannot be *performed* --
+        the index cannot be read, or its bytes carry no column configuration
+        to decode -- declines out loud and opens the table unvalidated, and
+        only a check that ran and *disagreed* refuses.  Both failures say the
+        same thing, which is nothing about the resource and everything about
+        the check, so both reach the same outcome; refusing on one and warning
+        on the other was an accident of where the read sat rather than a
+        policy (gain#628).
 
         The index is what a region query is *filtered* by; the resolved column
         keys are what the records it returns are *read* through.  Where the two
@@ -190,19 +216,40 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         what vouches for it.
         """
         index_filename = self._opened_index_filename()
-        with self.genomic_resource.open_raw_file(
-                index_filename, mode="rb", compression="gzip") as infile:
-            header = infile.read(INDEX_HEADER_SIZE)
+        try:
+            with self.genomic_resource.open_raw_file(
+                    index_filename, mode="rb", compression="gzip") as infile:
+                header = infile.read(INDEX_HEADER_SIZE)
+        except Exception as error:  # noqa: BLE001
+            # The one step here that can fail for reasons that have nothing to
+            # do with the resource: a reset, a throttle or a 5xx against an
+            # http or s3 GRR, or a truncated read.  Refusing on it would
+            # refuse a resource whose index htslib has *just* loaded in full,
+            # one open above -- the bytes were readable a moment ago, and will
+            # be again.
+            #
+            # Broad on purpose, and only around the fetch.  ``OSError`` alone
+            # does not span what the transports raise: measured against this
+            # repo's own protocols, a 404, a 403 and every 5xx arrive from
+            # ``fsspec`` as ``FileNotFoundError`` and ``s3fs`` translates even
+            # an unrecognised code to ``IOError``, but a connection reset PART
+            # WAY THROUGH the read arrives as ``aiohttp.ClientPayloadError``,
+            # which descends from ``Exception`` -- the ``ConnectionResetError``
+            # is only its ``__context__``.  Narrowing to ``OSError`` would
+            # therefore still refuse a resource for a mid-read reset, the very
+            # failure this policy exists to stop being fatal.  The table layer
+            # has no business importing aiohttp or botocore to name those
+            # types, so it declines on anything the fetch raises instead
+            # (gain#628).
+            #
+            # The decode and the comparison stay OUTSIDE this, so a defect in
+            # either still raises rather than being logged away as a decline.
+            self._decline_index_check(index_filename, str(error))
+            return
         columns = parse_index_columns(header)
         if columns is None:
-            # Declined rather than passed: an index this decoder cannot read
-            # is not an index it has checked, and a resource that goes
-            # unchecked must say so.
-            logger.warning(
-                "the columns of index %s of resource <%s> could not be read, "
-                "so the table's configured columns are NOT validated against "
-                "them",
-                index_filename, self.genomic_resource.get_full_id())
+            self._decline_index_check(
+                index_filename, "no column configuration to decode")
             return
 
         mismatches = [

@@ -430,6 +430,69 @@ def test_an_index_this_decoder_cannot_read_is_declined_out_loud(
     ), caplog.text
 
 
+class FetchError(Exception):
+    """A fetch failure that is deliberately NOT an ``OSError``.
+
+    Stands in for ``aiohttp.ClientPayloadError``, whose constructor signature
+    is not this module's business.  That type is not hypothetical: measured
+    against the protocols this repo actually reads through, a 404, a 403 and
+    every 5xx arrive from ``fsspec`` as ``FileNotFoundError`` and ``s3fs``
+    translates even an unrecognised code to ``IOError`` -- all ``OSError`` --
+    but a connection reset PART WAY THROUGH a read arrives as
+    ``ClientPayloadError``, which descends from ``Exception``, with the
+    ``ConnectionResetError`` only its ``__context__``.  A check that declined
+    on ``OSError`` alone would therefore still refuse a resource for a
+    mid-read reset, which is the first failure gain#628 names.
+    """
+
+
+@pytest.mark.parametrize("error", [
+    OSError("connection reset by peer"),
+    FetchError("response payload is not completed"),
+], ids=["oserror", "not-an-oserror"])
+def test_an_index_that_cannot_be_fetched_is_declined_out_loud_too(
+    error: Exception,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The same outcome as an index this decoder cannot DECODE, and for the
+    # same reason: neither is evidence about the resource, only about the
+    # check.  A transient fetch failure -- a reset or a throttle against an
+    # http or s3 GRR -- must not refuse a resource that was fine a moment ago,
+    # when htslib has just loaded the very same index successfully.
+    #
+    # The configuration here DISAGREES with the index, so the table can only
+    # open if the comparison never ran: a decline that still compared would
+    # refuse this resource.
+    resource = build_resource(
+        tmp_path,
+        a_config("""    pos_end:
+              column_index: 3"""),
+        seq_col=0, start_col=1, end_col=2)
+    open_raw_file = resource.open_raw_file
+
+    def fail_fetching_the_index(
+        filename: str, *args: Any, **kwargs: Any,
+    ) -> Any:
+        if filename.endswith(".tbi"):
+            raise error
+        return open_raw_file(filename, *args, **kwargs)
+
+    monkeypatch.setattr(resource, "open_raw_file", fail_fetching_the_index)
+    table = build_genomic_position_table(resource, resource.config["table"])
+
+    with caplog.at_level(logging.WARNING), table.open() as opened:
+        assert opened.get_chromosomes() == ["1"]
+
+    assert any(
+        "data.txt.gz.tbi" in record.message
+        and RESOURCE_ID in record.message
+        and str(error) in record.message
+        for record in caplog.records
+    ), caplog.text
+
+
 def test_the_refused_table_leaves_no_open_handle(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
