@@ -211,6 +211,23 @@ def read_gene_models_tsv(infile: IO, **kwargs: Any) -> pd.DataFrame:
 #: the larger half (196k records, pandas 3.0.2, gain#963). The scope is
 #: named here because the two figures above do not name theirs, and the
 #: numbers are not comparable without it.
+#:
+#: A layout's attribute columns are pinned too (gain#973) -- eight
+#: columns new to the pin across the five layouts, `name2` having been
+#: pinned already as a gene label -- and unlike the gene columns they
+#: are not free: about +7% of a whole parse of that same 196k-record
+#: file, arms alternated and the best of several reps taken, individual
+#: pairings ranging +6% to +10%. Nearly all of it lands in the
+#: ``to_dict`` rather than in the read, materialising as Python objects
+#: the columns the pin keeps out of pandas' inference.
+#:
+#: The three bare-digit ones carry that cost alone: an arm pinning only
+#: the attribute columns that already read as text is indistinguishable
+#: from not pinning at all. Pinning the whole frame instead costs about
+#: +11% measured the same way -- more than naming columns does, which is
+#: what keeps this parameter worth having. The cost is paid rather than
+#: narrowed to those three because a hand-written list of which columns
+#: are digits today goes stale the next time a layout gains a column.
 _IDENTIFYING_COLUMNS = ("name", "chrom")
 
 
@@ -236,7 +253,8 @@ def parse_raw(
     is unreachable by a query for "17". The two read the same values
     either way; the pin decides only how much of the frame is object.
 
-    ``text_columns`` is how a caller names the rest of what it keys by.
+    ``text_columns`` is how a caller names the rest of what has to
+    reach the model as the file spelled it.
     A gene label is the second such column, and for the same reason: it
     keys the gene index, so a gene labelled by a bare digit was
     unreachable by a lookup for its own name, and *which* label a record
@@ -245,6 +263,21 @@ def parse_raw(
     and for one of them it is the alternate name with the transcript
     name behind it. gain's own output format, which does not come
     through here, pins its gene column the same way and always has.
+
+    A layout's attribute columns are the third, and the first named for
+    something other than a key: they are copied into the model whole and
+    written back out, so leaving them inferred made a record's attribute
+    a property of which branch read the file. It is the one axis of this
+    where two published resources actually disagreed -- refSeq's
+    ``#bin``, ``score`` and ``exonCount`` arrive as ints from the
+    headerless file and as text from the headered one (gain#973).
+
+    Pinning them rewrites no published resource: both refSeq files
+    serialize to the same bytes either way, over their full length. It
+    is not output-neutral in general though, and must not be -- a
+    ``score`` of ``007`` inferred as 7 serializes as ``7``, and gain's
+    own format, having only text to write an attribute as, leaves
+    nothing downstream able to say what the file first recorded.
 
     The GTF reader shares this and names none of these columns, so it
     keeps the inference its own arithmetic depends on. It does not
@@ -309,11 +342,10 @@ class ColumnarLayout:
     #: not. A one-column rule is therefore just that column, read
     #: unconditionally, which is what four of the five layouts want.
     #:
-    #: This list is also what `parse_columnar_format` hands `parse_raw`
-    #: to pin to text, so adding a column here does more than reorder
-    #: the fallback: it changes the dtype that column is read at, and
-    #: for a column that is also an attribute it changes what
-    #: serializes back out (gain#963).
+    #: This list is also part of what `parse_columnar_format` hands
+    #: `parse_raw` to pin to text, so adding a column here does more
+    #: than reorder the fallback: it changes the dtype that column is
+    #: read at (gain#963).
     gene_columns: tuple[str, ...]
 
     #: The columns copied into `TranscriptModel.attributes`, in this
@@ -323,6 +355,10 @@ class ColumnarLayout:
     #: how genePred's two widths share one row, the narrow one carrying
     #: none of these five. `parse_columnar_format` narrows it to the
     #: width that actually matched, once, before reading any record.
+    #:
+    #: These are pinned to text on the headerless read as well
+    #: (gain#973), so naming a column here decides its dtype and not
+    #: only its presence.
     attribute_columns: tuple[str, ...] = ()
 
 
@@ -417,7 +453,7 @@ def parse_columnar_format(
         infile.seek(0)
         df = parse_raw(
             infile, list(columns), nrows=nrows,
-            text_columns=layout.gene_columns)
+            text_columns=(*layout.gene_columns, *layout.attribute_columns))
         if df is not None:
             matched = columns
             break

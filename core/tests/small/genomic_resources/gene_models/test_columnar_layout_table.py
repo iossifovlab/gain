@@ -88,18 +88,17 @@ def test_layout_takes_each_attribute_from_its_own_column(
 ) -> None:
     """Each attribute holds the cell its own column carried.
 
-    Compared as text, because what type a cell arrives as is a property
-    of the read path rather than of the layout: the headerless branch
-    pins the identifying columns and the layout's gene columns, and
-    nothing else, so a column of bare digits like `score` arrives as an
-    int there and as a string on the headered branch (gain#929,
-    gain#931). Pinning the type here would pin that trade-off in the
-    wrong suite; what this is about is that the value came from the
+    Compared against the file's own text exactly, not through `str()`:
+    since gain#973 both read paths pin a layout's attribute columns,
+    there is nothing left to normalise -- and normalising would equate a
+    cell read as `007` with one read as the number 7, which is the loss
+    that pin exists to prevent. `test_columnar_cell_types` is what
+    guards that; what this suite says is that the value came from the
     right column.
 
-    genePredExt's `name2` is on both lists -- it is that layout's gene
-    label and one of its attributes -- so since gain#963 it is text on
-    either path while `score` beside it is not.
+    The `str()` was there because what type a cell arrived as used to be
+    a property of the read path rather than of the layout, which is not
+    something this suite is about.
     """
     model = _sole_model(fmt)
 
@@ -107,10 +106,8 @@ def test_layout_takes_each_attribute_from_its_own_column(
         column: fmt.fields[fmt.columns.index(column)]
         for column in fmt.optional_columns
     }
-    as_text = {
-        column: str(value) for column, value in model.attributes.items()
-    }
-    assert as_text == expected, fmt.name
+
+    assert model.attributes == expected, fmt.name
 
 
 @pytest.mark.parametrize("fmt", COLUMNAR_FORMATS, ids=COLUMNAR_IDS)

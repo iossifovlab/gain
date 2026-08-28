@@ -26,6 +26,8 @@ import pytest
 from tests.small.genomic_resources.gene_models.columnar_formats import (
     BAD_NAME,
     GOOD_NAME,
+    OPTIONAL_CELL_CASE_IDS,
+    OPTIONAL_CELLS,
     READ_PATH_IDS,
     READ_PATHS,
     REFSEQ,
@@ -134,6 +136,32 @@ def test_the_same_rows_give_the_same_gene_label_either_way(
     assert headered_models is not None
     assert [(tm.tr_name, tm.gene) for tm in plain_models.values()] == \
         [(tm.tr_name, tm.gene) for tm in headered_models.values()]
+
+
+@pytest.mark.parametrize(
+    ("fmt", "column"), OPTIONAL_CELLS, ids=OPTIONAL_CELL_CASE_IDS)
+def test_a_bare_digit_attribute_keeps_what_the_cell_said(
+    fmt: ColumnarFormat, column: str,
+) -> None:
+    """An attribute spelled `007` is the text "007", not the number 7.
+
+    `007` for the reason the gene-label test above uses it: inference
+    does not merely retype the cell, it drops two of the characters the
+    file carried -- and an attribute's value is written back out, where
+    nothing downstream can say afterwards what was lost.
+
+    Every read path is driven, and every attribute column including the
+    symbol-valued ones that were never going to differ. Both are
+    controls: the property is that a cell survives the read, not that
+    one branch was taught a trick or that today's failing columns were
+    special-cased.
+    """
+    models = fmt.parse(fmt.file_with_column(column, "007"))
+    assert models is not None
+
+    values = {tm.attributes[column] for tm in models.values()}
+
+    assert values == {"007"}
 
 
 #: Spellings pandas reads as a missing value when left to itself. A
