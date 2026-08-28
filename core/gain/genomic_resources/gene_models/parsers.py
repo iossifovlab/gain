@@ -205,7 +205,12 @@ def read_gene_models_tsv(infile: IO, **kwargs: Any) -> pd.DataFrame:
 #: column is read, and the two arms produce the same frame. Where the
 #: pin does change the frame -- a gene column of bare digits, the case
 #: it exists for -- reading it as text rather than as the ``int64``
-#: pandas would infer costs +6.5% (pandas 3.0.2, gain#963).
+#: pandas would infer costs +7.5% of this read plus the ``to_dict``
+#: that follows it. Against a whole `parse_columnar_format` it is under
+#: 3% and does not clear that run's own spread, the record loop being
+#: the larger half (196k records, pandas 3.0.2, gain#963). The scope is
+#: named here because the two figures above do not name theirs, and the
+#: numbers are not comparable without it.
 _IDENTIFYING_COLUMNS = ("name", "chrom")
 
 
@@ -299,10 +304,16 @@ class ColumnarLayout:
     accepted_columns: tuple[tuple[str, ...], ...]
 
     #: Where the gene label comes from, best candidate first. The first
-    #: column carrying a non-empty cell wins; when none does, the last
-    #: column named here supplies its cell anyway, empty or absent or
+    #: column carrying a non-blank cell wins; when none does, the last
+    #: column named here supplies its cell anyway, blank or absent or
     #: not. A one-column rule is therefore just that column, read
     #: unconditionally, which is what four of the five layouts want.
+    #:
+    #: This list is also what `parse_columnar_format` hands `parse_raw`
+    #: to pin to text, so adding a column here does more than reorder
+    #: the fallback: it changes the dtype that column is read at, and
+    #: for a column that is also an attribute it changes what
+    #: serializes back out (gain#963).
     gene_columns: tuple[str, ...]
 
     #: The columns copied into `TranscriptModel.attributes`, in this

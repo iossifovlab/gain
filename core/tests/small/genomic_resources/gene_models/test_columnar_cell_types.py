@@ -105,19 +105,19 @@ def test_a_bare_digit_gene_label_is_text(fmt: ColumnarFormat) -> None:
     the value too, and so is evidence that the table names the right
     column: `17 == "17"` is false, and a gene read from some other
     column would not equal either.
+
+    Three of these layouts label a record by its transcript name, which
+    the identifying pin already covered, so they were never going to
+    fail here. They are parametrized anyway: what pins them is a pin
+    made for a different reason, and this is what would notice if it
+    were narrowed.
     """
     models = fmt.parse(fmt.file_with_column(fmt.gene_column, "17"))
     assert models is not None
 
     genes = {transcript.gene for transcript in models.values()}
 
-    if fmt.gene_column == fmt.name_column:
-        # The fixture renames the second row so the two records can be
-        # told apart, and for these layouts that same cell is the gene
-        # label -- so the second record's gene is its new name.
-        assert genes == {"17", BAD_NAME}
-    else:
-        assert genes == {"17"}
+    assert genes == {"17"}
 
 
 @pytest.mark.parametrize("spelling", ["0", "17", "007"])
