@@ -274,7 +274,6 @@ class AlleleCounts(NamedTuple):
             transitions,
             transversions,
             ts_tv,
-            percentages_over(self.class_counts, self.allele_count),
             None if matrix is None
             else percentages_over(matrix, sum(matrix.values())),
             None if self.insertion_lengths is None
@@ -712,8 +711,11 @@ class AlleleStatistics(Statistic):
     def by_chromosome(self) -> dict[str, AlleleCounts]:
         """The per-chromosome counts, in natural chromosome order.
 
-        Ordered here rather than at the template because this dict IS
-        what the info page's Alleles table iterates.  What it replaces
+        Ordered here rather than downstream because this order REACHES
+        the info page: :func:`build_allele_section_display` turns these
+        entries into the Alleles table's rows as they come, and does
+        not re-sort them the way its coverage and fragment siblings
+        sort theirs.  What it replaces
         is not arrival order but the plain string sort
         :func:`regions_in_genomic_order` applies before the fold --
         exactly the order iossifovlab/gain#983 calls wrong.
@@ -837,12 +839,6 @@ class AlleleDisplay(NamedTuple):
     #: ``None`` when there are no transversions -- the template renders
     #: "not applicable" rather than dividing -- and with no matrix.
     ts_tv: float | None
-    #: Each class name's share of ``allele_count``, formatted by
-    #: :func:`percentages_over`; ``None`` when there are no alleles to
-    #: take a share of, which drops the column.  Present whenever this
-    #: payload is, matrix or not: the class counts are stored fields,
-    #: not one of the optional groups.
-    class_percentages: dict[str, str] | None
     #: Each cell's share of the substitution class, formatted by
     #: :func:`percentages_over`.  The denominator is read off the matrix
     #: rather than taken from ``class_counts``: the two are equal by
@@ -928,6 +924,97 @@ class AlleleDisplay(NamedTuple):
              count, percentages[ref_length, alt_length])
             for (ref_length, alt_length), count in cells
         ]
+
+
+class AlleleChromosomeRow(NamedTuple):
+    """One chromosome's allele counts, as the info page renders them.
+
+    The chromosome is a FIELD rather than a mapping key, so a row is
+    self-contained exactly as the coverage and fragment rows are: the
+    template reads a row, never a pair it has to keep together.
+    """
+
+    chrom: str
+    covered_positions: int
+    allele_count: int
+
+
+class AlleleSectionDisplay(NamedTuple):
+    """The Alleles section's render payload: the table and its totals.
+
+    Built in the implementation layer, as :class:`CoverageDisplay` and
+    :class:`FragmentDisplay` are, so the template renders fields off an
+    inert record rather than calling methods on the statistic itself.
+    """
+
+    rows: list[AlleleChromosomeRow]
+    class_counts: dict[str, int]
+    class_percentages: dict[str, str] | None
+    """Each class name's share of ``allele_count``, or ``None``.
+
+    Computed HERE rather than on :class:`AlleleDisplay` because the two
+    numbers a share needs -- the class counts and the allele total --
+    are stored fields that every file carries, while that payload
+    collapses when every OPTIONAL group is unknown.  Computing them
+    there dropped this column for a file written before the matrix
+    (gain#777) whose shares were perfectly resolvable.
+
+    ``None`` when there are no alleles to take a share of, which drops
+    the column; :func:`percentages_over` owns that rule.
+    """
+    detail: AlleleDisplay | None
+    """The optional groups: matrix, indel lengths, complex grid.
+
+    ``None`` when the file carries none of them; each group inside it
+    stays independently optional, as :class:`AlleleDisplay` explains.
+    """
+
+    @property
+    def covered_positions(self) -> int:
+        """The table's total, summed off the rows it shows.
+
+        Derived rather than stored, as :attr:`CoverageDisplay.
+        global_covered` and :attr:`FragmentDisplay.global_fragments`
+        are: the counts have one source, so a total cannot drift from
+        the rows under it.
+        """
+        return sum(row.covered_positions for row in self.rows)
+
+    @property
+    def allele_count(self) -> int:
+        """The allele total, summed off the rows, as above."""
+        return sum(row.allele_count for row in self.rows)
+
+
+def build_allele_section_display(
+    statistics: AlleleStatistics,
+) -> AlleleSectionDisplay:
+    """Turn the stored allele counts into the section's payload.
+
+    The rows are built over :meth:`AlleleStatistics.by_chromosome`
+    rather than replacing it: that accessor already orders the
+    chromosomes naturally (gain#983) and ``serialize`` reads it too, so
+    the ordering has one owner.
+
+    One walk of the regions serves both the rows and the roll-up, as
+    :meth:`AlleleStatistics.serialize` does it: ``_total`` is
+    order-blind, so folding the ordered entries it already has costs
+    nothing over :meth:`AlleleStatistics.global_counts`, which would
+    rebuild every entry a second time.
+    """
+    chromosomes = statistics.by_chromosome()
+    global_counts = _total(chromosomes.values())
+    return AlleleSectionDisplay(
+        [
+            AlleleChromosomeRow(
+                chrom, counts.covered_positions, counts.allele_count)
+            for chrom, counts in chromosomes.items()
+        ],
+        dict(global_counts.class_counts),
+        percentages_over(
+            global_counts.class_counts, global_counts.allele_count),
+        global_counts.display(),
+    )
 
 
 def region_alleles_for(
