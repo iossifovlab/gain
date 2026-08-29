@@ -388,6 +388,45 @@ def test_resource_pages_are_freshly_generated(
         f"mini-GRR has committed rather than freshly generated output")
 
 
+def test_statistics_are_recomputed_by_this_build(built_grr: BuiltGRR) -> None:
+    """``repo-stats`` ran with ``-f``, so these are gain's own numbers.
+
+    This exists because mutation testing found the hole it fills.  Drop the
+    ``-f`` and mini-GRR's committed ``statistics/stats_hash`` files make
+    ``repo-stats`` a no-op: the statistics stay the ones the repository was
+    published with, ``repo-info`` renders perfectly good pages from them,
+    and *every other assertion in this file still passes*.  The suite would
+    have quietly stopped testing that gain computes these statistics and
+    started testing that somebody once committed some JSON -- green, and
+    meaning nothing, which is the failure this whole suite exists to end.
+
+    Checked on ``stats_hash`` rather than on every file under
+    ``statistics/``.  ``stats_hash`` is the file whose presence makes an
+    unforced run a no-op, so it is exactly the one a forced run must
+    rewrite -- and a forced run legitimately leaves some histogram images
+    alone when their contents did not change, which an "every file is
+    fresh" assertion would report as failure.
+    """
+    checked = 0
+    stale = []
+    for resource_id in _RESOURCE_IDS:
+        stats_hash = (
+            built_grr.path / resource_id / "statistics" / "stats_hash")
+        if not stats_hash.is_file():
+            continue
+        checked += 1
+        if stats_hash.stat().st_mtime < built_grr.build_started:
+            stale.append(resource_id)
+
+    assert checked, (
+        "no resource in the fixture repository has a statistics/stats_hash, "
+        "so this check is vacuous")
+    assert not stale, (
+        f"the statistics of {stale} predate this build, so repo-stats did "
+        f"not recompute them -- it was run without -f, and mini-GRR's "
+        f"committed stats_hash files made it a no-op")
+
+
 # --------------------------------------------------------------------------
 # Every registered implementation is exercised
 # --------------------------------------------------------------------------
