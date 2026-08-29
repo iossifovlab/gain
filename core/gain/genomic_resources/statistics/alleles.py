@@ -59,6 +59,7 @@ from gain.genomic_resources.statistics.base_statistic import (
 from gain.genomic_resources.statistics.length_histogram import (
     LENGTH_HISTOGRAM_BIN_COUNT,
     accumulate_bins,
+    has_counts_to_plot,
     length_histogram_bin_index,
     plot_length_histogram,
 )
@@ -877,9 +878,9 @@ def plot_complex_grid(
     diagonal from a 3bp MNV, and a binned axis would have hidden that.
 
     Counts span orders of magnitude on real scores, so the COLOUR is
-    log-scaled -- the equivalent of the symlog the length histograms use
-    on their count axis -- with empty cells left as the background
-    rather than coloured as a genuine zero.
+    log-scaled -- the same choice the length histograms make on their
+    count axis -- with empty cells left as the background rather than
+    coloured as a genuine zero.
     """
     # pylint: disable=import-outside-toplevel
     import matplotlib
@@ -939,16 +940,14 @@ def save_allele_statistics(
     publishes nothing for writes no image -- the info page's section is
     what says whether that is "not computed" or "genuinely none".
 
-    It skips an EMPTY group where the coverage twin skips only an
-    unknown one, and the difference is deliberate.  Coverage's unknown
-    means "this kind has no such group", but every group here applies to
-    every allele score, so matching it would put an all-zero deletion
-    histogram on each of the many scores that carry only substitutions.
-    The cost of that is paid by every resource; the cost of skipping --
-    a previous build's image left behind when a group empties out -- is
-    paid only when the underlying data changes, which rewrites the
-    statistics anyway.  Nothing links the leftover: the page reads the
-    stored counts, not the directory.
+    An EMPTY group is skipped just as an unknown one is, in both twins.
+    Every group here applies to every allele score, so plotting the
+    empty ones would put an all-zero deletion histogram on each of the
+    many scores that carry only substitutions -- and a logarithmic count
+    axis cannot draw one at all.  What skipping costs is a previous
+    build's image left behind when a group empties out, and nothing
+    links the leftover: the page reads the stored counts, not the
+    directory.
     """
     if statistics is None:
         return
@@ -962,7 +961,7 @@ def save_allele_statistics(
         ("deletion", ALLELE_DELETION_LENGTHS_IMAGE_FILE,
          counts.deletion_lengths),
     ):
-        if not lengths or not any(lengths):
+        if not has_counts_to_plot(lengths):
             continue
         with resource.open_raw_file(image, mode="wb") as imagefile:
             plot_length_histogram(imagefile, lengths, item)

@@ -15,7 +15,7 @@ belong with that grid rather than here.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import IO
+from typing import IO, TypeGuard
 
 import numpy as np
 
@@ -24,6 +24,16 @@ import numpy as np
 # histograms binned on different edges cannot be merged -- so this
 # constant must not change once resources carry statistics built from it.
 LENGTH_HISTOGRAM_BIN_COUNT = 32
+
+# Where the length axis stops on the chart.  Real data dies long before
+# the ladder's open-ended top bin -- on a real allele score insertions
+# die at ~1K and deletions at ~512, and segment lengths have the same
+# shape -- so a full-ladder axis draws three quarters of nothing.  Bins
+# at or above this length are summed into one overflow bar, whose height
+# is itself the signal that something runs past the cap.  Display only:
+# the stored histogram keeps all 32 bins, so the exact tail remains
+# readable in the statistics file.
+LENGTH_HISTOGRAM_DISPLAY_CAP = 2 ** 13
 
 
 def length_histogram_bin_index(length: int) -> int:
@@ -57,10 +67,25 @@ def _bin_edge_label(edge: int) -> str:
     return str(edge)
 
 
+def has_counts_to_plot(
+    histogram: list[int] | None,
+) -> TypeGuard[list[int]]:
+    """Whether a length histogram has a positive count to draw.
+
+    Unknown and known-and-empty are one answer here: the counts axis is
+    logarithmic and can render neither, and a chart of nothing under a
+    "Segment lengths" heading states nothing either.  One predicate, so
+    the callers -- coverage's two groups and the indel ones -- cannot
+    drift apart again, as they had.
+    """
+    return histogram is not None and any(histogram)
+
+
 def plot_length_histogram(
     outfile: IO,
     histogram: list[int],
     item: str,
+    display_cap: int = LENGTH_HISTOGRAM_DISPLAY_CAP,
 ) -> None:
     """Render a length histogram on the fixed log2 bins as PNG.
 
@@ -72,6 +97,14 @@ def plot_length_histogram(
     time, which is what lets one renderer serve them all.  Required,
     with no default: a fragment histogram silently labelled "segment" is
     the one mistake this parameter exists to prevent.
+
+    ``display_cap`` is the length the drawn axis stops at: every bin at
+    or above it becomes one overflow bar.  A parameter rather than a
+    constant so a resource kind whose lengths genuinely run longer can
+    raise its own axis without anything touching the stored format,
+    which the fold never reads back.  It is snapped down to its own bin
+    on the ladder, so a cap between two edges caps at the lower one --
+    pass a power of two to get the axis the number reads as.
     """
     # pylint: disable=import-outside-toplevel
     import matplotlib
@@ -82,13 +115,26 @@ def plot_length_histogram(
         HISTOGRAM_LABELS_FONT_SIZE,
     )
 
+    # The bins from the cap up are drawn as one bar; the counts move,
+    # never vanish, so the bars still total the histogram.
+    top = length_histogram_bin_index(display_cap)
+    bars = [*histogram[:top], sum(histogram[top:])]
+
     figure, axes = plt.subplots(figsize=(15, 10))
-    axes.bar(
-        range(len(histogram)), histogram, width=0.9, align="edge")
-    # Ticks at every fourth bin's lower edge; the last bin is
-    # open-ended, so its lower edge is labeled as a floor.
-    last = len(histogram) - 1
-    ticks = [*range(0, last, 4), last]
+    axes.bar(range(len(bars)), bars, width=0.9, align="edge")
+    # Ticks at each bar's lower edge, the last one -- open-ended,
+    # whether by the ladder or by the cap -- labeled as a floor.  Up to
+    # sixteen bars every bar is labeled, which reads cleanly across the
+    # chart and needs no collision rule; a caller that raises the cap
+    # past that falls back to every fourth.
+    last = len(bars) - 1
+    ticks = (
+        list(range(len(bars))) if len(bars) <= 16
+        # The last tick is pinned to the open-ended bar, so an
+        # every-fourth tick landing right beside it is dropped rather
+        # than drawn into its label.
+        else [*(t for t in range(0, last, 4) if last - t > 1), last]
+    )
     labels = [_bin_edge_label(2 ** tick) for tick in ticks[:-1]]
     labels.append(f"≥{_bin_edge_label(2 ** last)}")
     axes.set_xticks(ticks)
@@ -97,9 +143,14 @@ def plot_length_histogram(
     axes.set_xlabel(
         f"{item} length (bp)", fontsize=HISTOGRAM_LABELS_FONT_SIZE)
     axes.set_ylabel(f"{item}s", fontsize=HISTOGRAM_LABELS_FONT_SIZE)
-    # Counts span orders of magnitude on genome-scale scores; symlog
-    # keeps the small bars visible while zero stays on the axis.
-    axes.set_yscale("symlog")
+    # Counts span orders of magnitude on genome-scale scores, so the
+    # axis is logarithmic.  Plain log, not symlog: nothing on a counts
+    # axis lies between zero and one, and symlog spends a whole decade
+    # of chart height there.  An empty bin is simply absent, which is
+    # what it already looked like.  No ylim is pinned -- autoscale
+    # leaves room below one, so a count-1 bin still draws a bar, while
+    # bottom=1 would flatten it to nothing.
+    axes.set_yscale("log")
     figure.tight_layout()
     figure.savefig(outfile, format="png")
     plt.close(figure)
