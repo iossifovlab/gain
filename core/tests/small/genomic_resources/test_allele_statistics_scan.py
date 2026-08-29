@@ -494,15 +494,29 @@ def _alleles_section(page: str) -> str:
 
 
 def _row(*cells: str) -> re.Pattern[str]:
-    """A row of ``cells``, tolerating attributes on the opening ``<td>``.
+    """A WHOLE row of ``cells``, tolerating attributes on each ``<td>``.
 
     The per-chromosome table's cells carry a ``data-sort-value`` since
     gain#984.  Matching a bare ``<td>`` does fail when one arrives, but
     it fails as "this row is not on the page" rather than as "this
     pattern no longer describes the markup".
+
+    Anchored on the row's own tags, so ``cells`` is every cell the row
+    has and not merely its first few: gain#988 added a column to a
+    neighbouring table, and an unanchored pattern would have gone on
+    passing had it landed in this one.
     """
-    return re.compile("".join(
-        rf"<td[^>]*>{re.escape(cell)}</td>" for cell in cells))
+    return re.compile("<tr>" + "".join(
+        rf"<td[^>]*>{re.escape(cell)}</td>" for cell in cells) + "</tr>")
+
+
+def _without_shares(section: str) -> str:
+    """The section with gain#988's muted percentages taken back out.
+
+    So an assertion about the COUNTS a table renders can go on saying
+    just that, and only the tests about the shares carry them.
+    """
+    return re.sub(r'<div class="text-muted">[^<]*</div>', "", section)
 
 
 def test_info_page_renders_a_row_per_chromosome(
@@ -514,6 +528,9 @@ def test_info_page_renders_a_row_per_chromosome(
     section = _alleles_section(
         GenomicScoreImplementation(resource).get_info())
 
+    # Whole rows: gain#988 adds a share to the classes table and the
+    # matrix only, and a stray fourth column here would leave an
+    # unanchored assertion on these rows passing.
     assert _row("chr1", "7", "9").search(section)
     assert _row("chr2", "1", "1").search(section)
 
@@ -534,19 +551,83 @@ def test_info_page_renders_the_global_class_summary(
     assert "<td>other</td><td>1</td>" in section
 
 
-def test_info_page_renders_the_substitution_matrix(
+def test_info_page_renders_each_class_as_a_share_of_the_alleles(
     tmp_path: pathlib.Path,
 ) -> None:
+    # Ten alleles over the two chromosomes: six substitutions and one
+    # each of the other four classes.
     resource = _mixed_allele_score(tmp_path)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     section = _alleles_section(
         GenomicScoreImplementation(resource).get_info())
 
+    assert "<th>% of alleles</th>" in section
+    assert "<td>substitution</td><td>6</td><td>60.00%</td>" in section
+    assert "<td>other</td><td>1</td><td>10.00%</td>" in section
+
+
+def test_info_page_tells_a_rare_class_from_an_empty_one(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The shape the column exists for, and the one a bare "%.2f%%"
+    # collapses: one complex allele in 20,001 against an ``other`` that
+    # is genuinely empty.  The counts are doctored rather than scanned
+    # because reaching the display resolution needs tens of thousands
+    # of rows.
+    #
+    # The floor's leading "<" is asserted ESCAPED: rendered raw it
+    # would open a bogus tag and the browser would swallow the cell.
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    stored = json.loads(resource.get_file_content(ALLELE_STATISTICS_FILE))
+    entry = stored["chromosomes"]["chr1"]
+    entry["allele_count"] = 20001
+    entry["class_counts"] = {
+        "substitution": 20000, "insertion": 0, "deletion": 0,
+        "complex": 1, "other": 0,
+    }
+    stored["chromosomes"] = {"chr1": entry}
+    with resource.proto.open_raw_file(
+            resource, ALLELE_STATISTICS_FILE, mode="wt") as outfile:
+        outfile.write(json.dumps(stored))
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    assert "<td>complex</td><td>1</td><td>&lt;0.01%</td>" in section
+    assert "<td>other</td><td>0</td><td>0.00%</td>" in section
+
+
+def test_info_page_renders_the_substitution_matrix(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = _without_shares(_alleles_section(
+        GenomicScoreImplementation(resource).get_info()))
+
     # Rows in A, C, G, T order; the A row holds A>C 1 and A>G 3 (the
     # soft-masked a>g merged in), the T row its identity diagonal.
     assert "<th>A</th><td>0</td><td>1</td><td>3</td><td>0</td>" in section
     assert "<th>T</th><td>0</td><td>0</td><td>0</td><td>1</td>" in section
+
+
+def test_matrix_cells_carry_a_muted_share_on_a_second_line(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Three of the six substitutions are A>G.  The share sits in its own
+    # muted element rather than beside the count: on a real score the
+    # counts are nine digits wide and a parenthetical is unreadable.
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    assert '<td>3<div class="text-muted">50.00%</div></td>' in section
+    assert '<td>0<div class="text-muted">0.00%</div></td>' in section
 
 
 def test_info_page_renders_the_ts_tv_ratio(
@@ -583,6 +664,35 @@ def test_info_page_without_transversions_says_not_applicable(
         GenomicScoreImplementation(resource).get_info())
 
     assert "not applicable" in section
+
+
+def test_info_page_over_a_pre_display_file_keeps_counts_without_shares(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A statistics file as gain#777 wrote it: counts and class totals,
+    # and none of the groups the display payload is built from.  Such a
+    # file could resolve a share -- both numbers it needs are always
+    # present -- but gain#988 computes the shares on that payload, so it
+    # drops the column.  What this pins is the part that is not a
+    # judgement call: every count it does carry still renders.
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    stored = json.loads(resource.get_file_content(ALLELE_STATISTICS_FILE))
+    for entry in (*stored["chromosomes"].values(), stored["global"]):
+        for group in (
+            "substitution_matrix", "insertion_length_histogram",
+            "deletion_length_histogram", "complex_grid",
+        ):
+            entry.pop(group, None)
+    with resource.proto.open_raw_file(
+            resource, ALLELE_STATISTICS_FILE, mode="wt") as outfile:
+        outfile.write(json.dumps(stored))
+
+    section = _alleles_section(
+        GenomicScoreImplementation(resource).get_info())
+
+    assert "<td>substitution</td><td>6</td></tr>" in section
+    assert "% of alleles" not in section
 
 
 def test_info_page_over_a_matrixless_file_says_matrix_not_computed(
