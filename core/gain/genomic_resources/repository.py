@@ -892,6 +892,20 @@ class SearchIndexUnavailableError(ValueError):
         )
 
 
+def _description_in(meta: dict[str, Any]) -> str:
+    """The description an already-narrowed ``meta`` carries, or ``""``.
+
+    Split out so that :meth:`GenomicResource.get_summary` can fall back to
+    the description off the block it has already narrowed, instead of
+    re-entering ``get_description`` and reporting a malformed block twice
+    for one read.
+    """
+    description = meta.get("description")
+    if description:
+        return str(description)
+    return ""
+
+
 def _canonical_config(value: Any) -> Any:
     """Return ``value`` with the order it was written in taken out.
 
@@ -1011,27 +1025,73 @@ class GenomicResource:
                 f"use of unconfigured genomic resource: {self.resource_id}")
         return self.config
 
+    def get_meta(self) -> dict[str, Any]:
+        """Return the resource's ``meta`` block, narrowed to a mapping.
+
+        ``meta`` is free-form YAML, so what is there is whatever the
+        curator wrote -- ``meta: |`` followed by prose parses to a string,
+        and only the resource types that run the base schema are refused
+        for it.  It is narrowed rather than trusted, so that every reader
+        of the block sees a mapping whatever the resource says: a
+        non-mapping reads as absent metadata and is reported.
+
+        The narrowing is SHALLOW -- it promises a mapping at the top level
+        and says nothing about what any field inside holds, which is just
+        as free-form.  A reader of a field narrows that field itself, the
+        way :meth:`get_labels` narrows ``meta.labels`` on top of this and
+        ``get_description`` settles for ``str()`` on whatever it finds.
+
+        This is the single seam through which the ``meta`` *block* is
+        read -- by ``get_description``, ``get_summary``, ``get_labels``
+        and the FTS index-row collector alike -- because narrowing it in
+        one reader and not the others is what gain#1004 was: ``get_labels``
+        coped while the two beside it raised a bare ``AttributeError``,
+        which aborted the repository-wide index build outright.
+
+        It does not follow that every *derived* value agrees: the index
+        row collects ``description`` and ``summary`` out of this mapping
+        directly, so it does not get the description fall-back that
+        :meth:`get_summary` applies, and a resource carrying a description
+        and no summary reads differently on the index page than on its own
+        (gain#1008).  That divergence predates this seam and is left as it
+        is -- routing it through the accessors would change what published
+        repositories index.
+
+        Reading never validates (ADR 0008) and never raises: this is on
+        the path of every repository-wide walk -- a label search, the
+        index build, ``grr_manage list`` -- and one malformed resource
+        must cost that walk only itself (gain#464, gain#503).
+        """
+        meta = self.get_config().get("meta")
+        if meta is None:
+            # Absent, or an explicit YAML null.  Both say "no metadata"
+            # and neither is a mistake, so neither is reported.
+            #
+            # `is None`, NOT falsiness: `meta: ""` and `meta: []` are the
+            # same curator mistake as `meta: |` prose, and reading those
+            # as absent *silently* would leave the curator with nothing
+            # to act on -- the rule `get_labels` already holds to for the
+            # level below.
+            return {}
+        if not isinstance(meta, dict):
+            self._warn_not_a_mapping("meta", meta)
+            return {}
+        return meta
+
     def get_description(self) -> str:
         """Return resource description."""
-        config = self.get_config()
-        if config is None:
-            raise ValueError(f"resource {self.resource_id} not configured")
-        if config.get("meta"):
-            meta = config["meta"]
-            if meta.get("description"):
-                return str(meta["description"])
-        return ""
+        return _description_in(self.get_meta())
 
     def get_summary(self) -> str | None:
         """Return resource summary."""
-        config = self.get_config()
-        if config is None:
-            raise ValueError(f"resource {self.resource_id} not configured")
-        if config.get("meta"):
-            meta = config["meta"]
-            if meta.get("summary"):
-                return str(meta["summary"])
-        return self.get_description()
+        # Falls back to the description off the *same* narrowed block
+        # rather than re-entering `get_description`, so this accessor
+        # reports a malformed block once rather than twice.
+        meta = self.get_meta()
+        summary = meta.get("summary")
+        if summary:
+            return str(summary)
+        return _description_in(meta)
 
     def get_repo_url(self) -> str:
         """Return repository's URL."""
@@ -1060,27 +1120,12 @@ class GenomicResource:
         types that run the base schema are refused for it.  Both levels
         are narrowed rather than trusted: a non-mapping reads as no labels
         and is reported, so that every caller sees a mapping whatever the
-        resource says (gain#654).
-
-        Reading never validates (ADR 0008) and never raises: this is on
-        the path of every repository-wide walk -- a label search, the
-        index build, ``grr_manage list`` -- and one malformed resource
-        must cost that walk only itself, the way a resource the index
-        cannot take does (gain#464, gain#503, ADR 0010).
+        resource says (gain#654).  The outer level is narrowed by
+        :meth:`get_meta`, which every ``meta`` reader shares (gain#1004);
+        this is the inner half of the two-tier narrowing described there,
+        and it holds to the same never-validates, never-raises contract.
         """
-        config = self.get_config()
-        if config is None:
-            raise ValueError(f"resource {self.resource_id} not configured")
-        meta = config.get("meta")
-        if meta is None:
-            return {}
-        if not isinstance(meta, dict):
-            # `meta` is as free-form as what it holds, so a non-mapping
-            # here reaches this read exactly the way a non-mapping
-            # `labels` does -- and used to crash it the same way.
-            self._warn_not_a_mapping("meta", meta)
-            return {}
-        labels = meta.get("labels")
+        labels = self.get_meta().get("labels")
         if labels is None:
             # Absent, or declared as an explicit YAML null.  Both say
             # "no labels" and neither is a mistake, so neither is
@@ -1096,10 +1141,16 @@ class GenomicResource:
         return labels
 
     def _warn_not_a_mapping(self, what: str, value: Any) -> None:
-        """Report a ``meta`` level that is not the mapping it must be."""
+        """Report a ``meta`` level that is not the mapping it must be.
+
+        Worded for the level it is given rather than for ``labels``: it
+        is shared by every reader of the block since gain#1004, and a
+        scalar ``meta`` costs the resource its description and summary as
+        well as its labels.
+        """
         logger.warning(
-            "resource <%s>: %s is a %s, not a mapping; reading it as no "
-            "labels -- fix the resource's 'genomic_resource.yaml'",
+            "resource <%s>: %s is a %s, not a mapping; reading it as "
+            "absent -- fix the resource's 'genomic_resource.yaml'",
             escape_unsafe_characters(self.resource_id),
             what, type(value).__name__)
 

@@ -13,30 +13,10 @@ import pathlib
 
 import pytest
 from gain.genomic_resources.cli import _create_contents_db
-from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing import build_filesystem_test_protocol
 from gain.genomic_resources.testing.builders import a_grr, a_position_score
 
-
-def _warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
-    """The message of every warning-or-worse record captured."""
-    return [
-        record.getMessage() for record in caplog.records
-        if record.levelno >= logging.WARNING
-    ]
-
-
-def _a_resource_whose_meta_is(
-    tmp_path: pathlib.Path, meta: object,
-) -> GenomicResource:
-    """A resource under a real id whose whole ``meta:`` block is ``meta``."""
-    return (
-        a_grr()
-        .with_resource(
-            "scores/broken", a_position_score().with_raw_meta(meta))
-        .build_repo(tmp_path)
-        .get_resource("scores/broken")
-    )
+from .conftest import a_resource_whose_meta_is, captured_warnings
 
 
 @pytest.mark.parametrize(("labels", "type_name"), [
@@ -73,7 +53,7 @@ def test_labels_declared_as_a_non_mapping_read_as_no_labels(
     with caplog.at_level(logging.WARNING):
         assert resource.get_labels() == {}
 
-    warnings = _warnings(caplog)
+    warnings = captured_warnings(caplog)
     assert len(warnings) == 1
     assert "scores/broken" in warnings[0]
     assert type_name in warnings[0]
@@ -93,12 +73,12 @@ def test_a_meta_that_is_not_a_mapping_reads_as_no_labels(
     # `meta:` is as free-form as `meta.labels:`, and a non-mapping there
     # reached this read the same way -- and crashed it with the same bare
     # AttributeError the issue is about, one level up.
-    resource = _a_resource_whose_meta_is(tmp_path, meta)
+    resource = a_resource_whose_meta_is(tmp_path, meta)
 
     with caplog.at_level(logging.WARNING):
         assert resource.get_labels() == {}
 
-    warnings = _warnings(caplog)
+    warnings = captured_warnings(caplog)
     assert len(warnings) == 1
     assert "scores/broken" in warnings[0]
     assert type_name in warnings[0]
@@ -121,7 +101,7 @@ def test_a_well_formed_labels_mapping_is_read_unchanged(
         assert resource.get_labels() == {
             "domain": "gene", "perturbed": False, "year": 2019}
 
-    assert _warnings(caplog) == []
+    assert captured_warnings(caplog) == []
 
 
 def test_an_explicit_yaml_null_labels_reads_as_no_labels_silently(
@@ -140,7 +120,7 @@ def test_an_explicit_yaml_null_labels_reads_as_no_labels_silently(
     with caplog.at_level(logging.WARNING):
         assert resource.get_labels() == {}
 
-    assert _warnings(caplog) == []
+    assert captured_warnings(caplog) == []
 
 
 def test_a_resource_with_no_meta_block_at_all_reads_as_no_labels(
@@ -152,7 +132,7 @@ def test_a_resource_with_no_meta_block_at_all_reads_as_no_labels(
     with caplog.at_level(logging.WARNING):
         assert resource.get_labels() == {}
 
-    assert _warnings(caplog) == []
+    assert captured_warnings(caplog) == []
 
 
 def test_a_meta_block_without_labels_reads_as_no_labels(
@@ -168,7 +148,7 @@ def test_a_meta_block_without_labels_reads_as_no_labels(
     with caplog.at_level(logging.WARNING):
         assert resource.get_labels() == {}
 
-    assert _warnings(caplog) == []
+    assert captured_warnings(caplog) == []
 
 
 def test_the_index_build_still_refuses_a_non_mapping_labels(
@@ -230,6 +210,6 @@ def test_get_labels_never_raises_on_a_malformed_meta_either(
 ) -> None:
     # The guarantee the name claims has to hold for the level above the
     # one the issue is named for, or it is not the guarantee it says.
-    resource = _a_resource_whose_meta_is(tmp_path, meta)
+    resource = a_resource_whose_meta_is(tmp_path, meta)
 
     assert isinstance(resource.get_labels(), dict)

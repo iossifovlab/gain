@@ -332,3 +332,32 @@ def settled_repo(
     # receipts stay valid in the copy.
     shutil.copytree(_settled_grr_template, repo_path)
     return repo_path
+
+
+def captured_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """The message of every warning-or-worse record captured."""
+    return [
+        record.getMessage() for record in caplog.records
+        if record.levelno >= logging.WARNING
+    ]
+
+
+def a_resource_whose_meta_is(
+    tmp_path: pathlib.Path, meta: Any,
+) -> GenomicResource:
+    """A resource under a real id whose whole ``meta:`` block is ``meta``.
+
+    Built through a GRR rather than as a lone resource: ``build_resource``
+    gives the resource an EMPTY id, against which ``id in message`` holds
+    for every message ever written and pins nothing.
+
+    Shared by the two files that cover the shape of the block -- the
+    ``meta.labels`` level (gain#654) and the ``meta`` level (gain#1004).
+    """
+    return (
+        a_grr()
+        .with_resource(
+            "scores/broken", a_position_score().with_raw_meta(meta))
+        .build_repo(tmp_path)
+        .get_resource("scores/broken")
+    )
