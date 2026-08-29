@@ -122,8 +122,17 @@ def test_resource_info(
         "the generated page does not name the resource it describes"
     assert "<td>phastCons100way</td>" in result, \
         "the generated page does not name the score the resource declares"
-    assert 'alt="HISTOGRAM FOR phastCons100way"' in result, \
+    # The thumbnail's class, not `alt="HISTOGRAM FOR ..."`.  That alt text
+    # is also rendered by the modal image in `genomic_score.jinja`, which
+    # sits outside the `null_histogram` guard and is emitted for every score
+    # definition whether a histogram exists or not -- so asserting on it
+    # would have passed for a score that renders "No histogram" and has no
+    # image on disk at all.  Only the thumbnail is gated on the histogram
+    # actually existing, and the file it points at is checked directly.
+    assert 'class="histogram-thumbnail"' in result, \
         "the generated page does not render the declared score's histogram"
+    assert (path / "one/statistics/histogram_phastCons100way.png").exists(), \
+        "the histogram image the page points at was never written"
 
 
 def test_repo_info(

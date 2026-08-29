@@ -7,14 +7,13 @@ worker would multiply the suite's cost by the worker count.  See
 """
 from __future__ import annotations
 
-import errno
-import os
 import pathlib
 import shutil
 import time
 from dataclasses import dataclass
 
 import pytest
+from filelock import FileLock
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 
@@ -44,12 +43,13 @@ _NOT_A_GRR = (
     f"{_SUBMODULE_PATH}"
 )
 
-# How long a worker that did not win the build waits for the winner.  The
-# build is ~15s on a developer machine; the margin is for a loaded CI agent,
-# and it is a backstop rather than an expected wait -- a build that fails
-# publishes a marker and every waiter fails immediately.
-_BUILD_TIMEOUT_SECONDS = 900.0
-_BUILD_POLL_SECONDS = 0.25
+# How long a worker waits for whichever worker is building.  The build is
+# ~10s; this is a backstop.  It has to stay comfortably under
+# `faulthandler_timeout` in pytest.ini (600s), because that timer is armed
+# around each item's whole protocol including fixture setup -- a longer
+# value here would be unreachable, and the run would die with a thread dump
+# instead of the message below.
+_BUILD_TIMEOUT_SECONDS = 300.0
 
 
 @dataclass(frozen=True)
@@ -98,22 +98,6 @@ def _build_into(repo_dir: pathlib.Path) -> None:
     cli_manage(["repo-info", "-R", str(repo_dir), "-j", "1"])
 
 
-def _wait_for(done_marker: pathlib.Path, failed_marker: pathlib.Path) -> None:
-    """Block until the worker that won the build publishes its outcome."""
-    deadline = time.monotonic() + _BUILD_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        if done_marker.exists():
-            return
-        if failed_marker.exists():
-            raise AssertionError(
-                "the worker building the fixture GRR failed; see its "
-                f"error above.  Marker: {failed_marker}")
-        time.sleep(_BUILD_POLL_SECONDS)
-    raise AssertionError(
-        f"timed out after {_BUILD_TIMEOUT_SECONDS}s waiting for another "
-        f"worker to build the fixture GRR at {done_marker.parent}")
-
-
 @pytest.fixture(scope="session")
 def built_grr(
     tmp_path_factory: pytest.TempPathFactory,
@@ -122,13 +106,20 @@ def built_grr(
     """The fixture GRR, built exactly once per session.
 
     A plain ``scope="session"`` fixture is once per *worker*, so under
-    ``pytest -n 5`` it would run five builds of a ~15s artifact.  Instead the
-    workers race for a lock in the run's shared temp root: the winner builds
-    and publishes a marker, the losers wait and reuse its output.
+    ``pytest -n 5`` it would run five builds of a ~10s artifact.  Instead the
+    workers serialise on a lock in the run's shared temp root: the first in
+    builds, the rest find the marker and reuse its output.
 
-    The lock is an ``O_CREAT | O_EXCL`` file rather than a ``filelock``
-    dependency -- gain#991 requires that this suite add no new test
-    dependency, and ``filelock`` reaches the environment only transitively.
+    ``filelock`` is a direct runtime dependency of ``gain-core``
+    (``core/pyproject.toml``), so this adds none -- and it is held by the OS,
+    which matters more than the convenience.  A worker killed mid-build
+    (OOM, SIGKILL, segfault) releases it on death and leaves no marker, so
+    the next worker in rebuilds; a hand-rolled ``O_CREAT | O_EXCL`` lock
+    would be left behind by that same death and wedge every other worker
+    until the run timed out.
+
+    The marker is written while the lock is held and read the same way, so
+    no reader can catch it between creation and its contents.
 
     Without xdist there is no race and no shared root to put a lock in:
     ``getbasetemp().parent`` is then ``/tmp/pytest-of-<user>``, which is
@@ -147,28 +138,23 @@ def built_grr(
     shared_root = tmp_path_factory.getbasetemp().parent
     repo_dir = shared_root / "info_pages_grr"
     done_marker = shared_root / "info_pages_grr.done"
-    failed_marker = shared_root / "info_pages_grr.failed"
-    lock_path = shared_root / "info_pages_grr.lock"
 
-    started = time.time()
-    try:
-        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except OSError as exc:
-        if exc.errno != errno.EEXIST:
-            raise
-        _wait_for(done_marker, failed_marker)
-        return BuiltGRR(
-            path=repo_dir,
-            build_started=float(done_marker.read_text()),
-        )
-
-    os.close(fd)
-    try:
+    with FileLock(
+        str(shared_root / "info_pages_grr.lock"),
+        timeout=_BUILD_TIMEOUT_SECONDS,
+    ):
+        if done_marker.is_file():
+            return BuiltGRR(
+                path=repo_dir,
+                build_started=float(done_marker.read_text()),
+            )
+        # No marker, but a directory: a previous worker died part-way
+        # through its build.  Its output is half-written, so start over
+        # rather than validate whatever it managed to produce.
+        if repo_dir.exists():
+            shutil.rmtree(repo_dir)
+        started = time.time()
         _build_into(repo_dir)
-    except BaseException:
-        # Publish the failure before propagating, so the waiting workers
-        # report this build's error instead of each timing out in turn.
-        failed_marker.touch()
-        raise
-    done_marker.write_text(str(started))
+        done_marker.write_text(str(started))
+
     return BuiltGRR(path=repo_dir, build_started=started)

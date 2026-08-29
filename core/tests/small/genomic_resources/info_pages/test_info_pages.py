@@ -289,17 +289,34 @@ def _implementations_by_class() -> dict[str, tuple[str, ...]]:
     """Map each registered implementation to the type spellings naming it.
 
     Keyed by implementation rather than by entry-point name, and with no
-    exemption list anywhere.  Two of the fourteen registered spellings are
-    duplicates of another -- ``cnv_collection`` is the deprecated spelling
-    of ``fragment_score`` (ADR 0011) and ``gene_set`` the legacy spelling of
-    ``gene_set_collection`` -- and grouping by the implementation they load
-    drops them without anyone having to maintain a list saying so.  A list
-    is what rots: nobody removes entries from one, which is how the
-    assertions this suite replaces came to describe a page that no longer
-    existed.
+    exemption list anywhere.  Fourteen registered spellings collapse to
+    **eleven** implementations, by three separate collapses:
 
-    The consequence that matters: registering a *new* implementation with no
-    fixture resource fails, in the pull request that registers it.
+    - ``cnv_collection`` is the deprecated spelling of ``fragment_score``
+      (ADR 0011, accepted until 2027.1.0)
+    - ``gene_set`` is the legacy spelling of ``gene_set_collection``
+    - ``position_score`` and ``allele_score`` are *not* aliases at all --
+      they are genuinely different resource types that happen to share
+      ``GenomicScoreImplementation``
+
+    Grouping this way drops the two deprecated spellings without anyone
+    maintaining a list that says to skip them, which is the point: a list is
+    what rots, and nobody ever removes an entry from one.
+
+    Be clear about what that costs, because the third collapse is not an
+    alias.  The guarantee here is "every registered *implementation* has a
+    fixture", which is weaker than "every registered *type* has one": a
+    fixture set containing position scores but no allele scores would
+    satisfy this test.  Both are present in mini-GRR today, and the
+    Coverage/Alleles check exercises both, but neither fact is pinned by
+    this function.  Restoring the stronger guarantee means authoring a
+    fixture for every spelling including the deprecated ones -- declined
+    deliberately, because a resource declaring ``cnv_collection`` warns on
+    every open and the noise outweighs it.
+
+    The consequence that does hold, and is the one this exists for:
+    registering a *new* implementation with no fixture resource fails, in
+    the pull request that registers it.
     """
     by_class: dict[str, list[str]] = {}
     for entry_point in entry_points(group=_IMPLEMENTATIONS_GROUP):
@@ -368,8 +385,19 @@ def test_the_guard_names_the_command_that_fixes_a_missing_submodule(
     uninitialised.mkdir()
     monkeypatch.setattr(info_pages, "MINI_GRR_SOURCE", uninitialised)
 
-    with pytest.raises(AssertionError, match="git submodule update --init"):
+    # Matched on a phrase unique to *this* branch.  Matching on
+    # "git submodule update --init" passes against the other branch too --
+    # its message carries the same command with `--force` appended -- so
+    # this test stayed green with the branch it names disabled.  Found by
+    # mutating the guard, which is the only way that shows up.
+    with pytest.raises(AssertionError, match="is not checked out") as raised:
         info_pages.check_source_available()
+
+    assert (
+        "git submodule update --init core/tests/fixtures/mini-GRR"
+        in str(raised.value)), (
+        "the message must carry the exact command that fixes this, since "
+        "an empty fixture directory explains nothing on its own")
 
 
 def test_the_guard_rejects_a_directory_that_is_not_a_repository(
@@ -457,6 +485,29 @@ def test_resource_pages_are_freshly_generated(
         f"{stale} predate this build, so repo-info did not regenerate them; "
         f"the assertions in this suite would be describing the pages "
         f"mini-GRR has committed rather than freshly generated output")
+
+
+def test_repository_pages_are_freshly_generated(built_grr: BuiltGRR) -> None:
+    """The same guarantee for the pages that belong to no resource.
+
+    ``index.html`` and ``about.html`` are committed in mini-GRR too, and
+    ``shutil.copytree`` brings them over with their original mtimes, so
+    without this the four repository-page invariants could be validating
+    checked-in HTML.  Today they would notice -- the committed
+    ``index.html`` carries the very unmatched ``</div>`` this branch fixes,
+    so the well-formedness check would fail.  That is an accident of the
+    current pin: re-pin the submodule at a SHA whose pages were generated
+    by fixed gain and the accident is gone, silently.
+    """
+    stale = [
+        str(path.relative_to(built_grr.path))
+        for path in _repository_pages(built_grr)
+        if path.stat().st_mtime < built_grr.build_started
+    ]
+    assert not stale, (
+        f"{stale} predate this build, so repo-info did not regenerate them "
+        f"and the repository-page invariants are describing the HTML "
+        f"mini-GRR has committed")
 
 
 def test_statistics_are_recomputed_by_this_build(built_grr: BuiltGRR) -> None:

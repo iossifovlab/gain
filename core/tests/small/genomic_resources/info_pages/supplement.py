@@ -10,11 +10,17 @@ GAIn's CI would make it a worse teaching example (gain#991).
 
 Every resource here is realized from the builders in
 :mod:`gain.genomic_resources.testing`, so the shapes stay honest as those
-builders move.  Nothing in this module may import ``scanpy``: the ``core``
-CI image installs only ``--group dev``, and scanpy arrives solely with the
-integration image's ``--group scanpy-drift`` (ADR 0014).  The local
-development venv does have it, so a green local run does not prove this --
-the import fence in ``test_info_pages`` does.
+builders move.
+
+Nothing in this module may import ``scanpy``.  The ``core`` CI image
+installs only ``--group dev``; scanpy arrives solely with the integration
+image's ``--group scanpy-drift`` (ADR 0014), so an import of it here would
+pass locally -- the development venv has scanpy -- and fail every ``core``
+job.  Neither ``an_ann_data`` nor ``ann_data_resource_impl`` imports it
+today; they use ``anndata`` and ``pandas``, which are core dependencies.
+What enforces this is the ``core`` CI image itself, where the import would
+simply fail: there is no assertion in this suite that checks it, and a
+green local run is not evidence either way.
 """
 from __future__ import annotations
 
