@@ -100,31 +100,43 @@
 <table>
     <thead>
         <tr>
-            <th>Chromosome</th>
-            <th>Covered positions</th>
+            <th data-sort="text">Chromosome</th>
+            <th data-sort="number">Covered positions</th>
             {%- if has_fractions %}
-            <th>Covered %</th>
+            <th data-sort="number">Covered %</th>
             {%- endif %}
             {%- if has_segments %}
-            <th>Segments</th>
+            <th data-sort="number">Segments</th>
             {%- endif %}
         </tr>
     </thead>
+    <tbody>
     {%- for row in coverage.rows -%}
         <tr>
-            <td>{{ row.chrom }}</td>
-            <td>{{ row.covered }}</td>
-            {%- if has_fractions %}
-            <td>{% if row.fraction != None -%}
-                {{ "%.2f%%"|format(row.fraction * 100) }}
-            {%- endif %}</td>
+            <td data-sort-value="{{ natural_chromosome_key(row.chrom) }}">{{ row.chrom }}</td>
+            <td data-sort-value="{{ row.covered }}">{{ row.covered }}</td>
+            {#- The cell shows a percentage and sorts on the fraction.
+               A row with no denominator renders empty and carries no
+               attribute at all rather than an empty one.  The sorter
+               treats both as "no value", so this is about the markup
+               saying what it means: a cell with nothing to sort on
+               carries no key, instead of a key that happens to be
+               blank. -#}
+            {%- if has_fractions -%}
+            {%- if row.fraction != None %}
+            <td data-sort-value="{{ row.fraction }}">{{ "%.2f%%"|format(row.fraction * 100) }}</td>
+            {%- else %}
+            <td></td>
+            {%- endif %}
             {%- endif %}
             {%- if has_segments %}
-            <td>{{ row.segments }}</td>
+            <td data-sort-value="{{ row.segments }}">{{ row.segments }}</td>
             {%- endif %}
         </tr>
     {%- endfor %}
-    <tr class="coverage-global">
+    </tbody>
+    <tfoot>
+    <tr>
         <td>all chromosomes</td>
         <td>{{ coverage.global_covered }}</td>
         {%- if has_fractions %}
@@ -136,6 +148,7 @@
         <td>{{ coverage.global_segments }}</td>
         {%- endif %}
     </tr>
+    </tfoot>
 </table>
 </div>
 {%- if has_segments %}
@@ -156,23 +169,27 @@
 <table>
     <thead>
         <tr>
-            <th>Chromosome</th>
-            <th>Covered positions</th>
-            <th>Alleles</th>
+            <th data-sort="text">Chromosome</th>
+            <th data-sort="number">Covered positions</th>
+            <th data-sort="number">Alleles</th>
         </tr>
     </thead>
+    <tbody>
     {%- for chrom, counts in alleles.by_chromosome().items() -%}
         <tr>
-            <td>{{ chrom }}</td>
-            <td>{{ counts.covered_positions }}</td>
-            <td>{{ counts.allele_count }}</td>
+            <td data-sort-value="{{ natural_chromosome_key(chrom) }}">{{ chrom }}</td>
+            <td data-sort-value="{{ counts.covered_positions }}">{{ counts.covered_positions }}</td>
+            <td data-sort-value="{{ counts.allele_count }}">{{ counts.allele_count }}</td>
         </tr>
     {%- endfor %}
+    </tbody>
+    <tfoot>
     <tr>
         <td>all chromosomes</td>
         <td>{{ global_alleles.covered_positions }}</td>
         <td>{{ global_alleles.allele_count }}</td>
     </tr>
+    </tfoot>
 </table>
 </div>
 <h3>Allele classes</h3>

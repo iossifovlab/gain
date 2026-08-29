@@ -1,0 +1,205 @@
+{# Client-side column sorting for the info pages' static tables.
+
+   Opt-in is two attributes and nothing else: `data-sort` on a <th>
+   ("text" or "number") says the column sorts and how to compare it,
+   `data-sort-value` on a <td> carries the key.  A table carrying
+   neither is untouched, so the script does nothing at all on the
+   resource pages that have no sortable table.
+
+   Not built on `grr_scripts.jinja`'s sorter.  It is jQuery-shaped, and
+   that include pulls jQuery from a third origin -- but the reason it
+   cannot be shared is deeper than the dependency: it sorts a DATA MODEL
+   (an id list against a JS-side row map, feeding a virtualized render
+   and a tree view), where this sorts DOM rows in place on keys the
+   server already computed.  There is no common part to lift out.
+
+   That sorter is also deliberately three-state, because the GRR index's
+   unsorted order is the repository's own meaningful listing order.
+   Here the unsorted order is the statistics file's insertion order, so
+   this one is two-state.  Same three glyphs, different cycle, on
+   purpose.
+
+   Self-contained apart from the stylesheet link below: its own CSS and
+   its own script, so `resource_template.jinja` includes one line and
+   deleting that line removes the feature completely.  The link is the
+   exception worth knowing about -- a browser fetches it on every
+   resource page, including the ten kinds that render no sortable table.
+   Subsetting it to three glyphs is what keeps that cheap; the font file
+   itself is only fetched where an indicator actually renders. #}
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=arrow_downward,arrow_upward,unfold_more&display=block">
+<style>
+  /* The class is added by the script, so the pointer and the indicator
+     only appear on a header the script actually wired up. */
+  th.sortable {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+
+  th.sortable .sort-indicator {
+    font-size: 1.1em;
+    vertical-align: middle;
+    opacity: 0.35;
+  }
+
+  /* Shown on every sortable header at all times, dimmed until it is the
+     one doing the sorting.  A page this static gives no other hint that
+     a header is clickable, and a permanently visible marker also means
+     the sorted column is identifiable at a glance rather than by
+     reading which way an arrow points.
+
+     Selected off aria-sort rather than a second class: equal
+     specificity to the rule above, so source order decides, and the
+     sorted column has exactly one piece of state. */
+  th[aria-sort] .sort-indicator {
+    opacity: 1;
+  }
+</style>
+<script>
+(function () {
+    "use strict";
+
+    var IDLE = "unfold_more";
+    var ASCENDING = "arrow_upward";
+    var DESCENDING = "arrow_downward";
+
+    function keyOf(row, index, kind) {
+        var cell = row.cells[index];
+        var raw = cell ? cell.getAttribute("data-sort-value") : null;
+        // Absent and empty both mean "no value".  A number column would
+        // get the empty case for free from parseFloat, but on a text
+        // column "" is a perfectly good key that sorts first ascending
+        // -- and "no value" meaning two different things depending on
+        // the column is not a distinction anyone wants to debug.
+        if (raw === null || raw === "") {
+            return null;
+        }
+        if (kind !== "number") {
+            return raw;
+        }
+        var parsed = parseFloat(raw);
+        return isNaN(parsed) ? null : parsed;
+    }
+
+    function compare(a, b, direction) {
+        // "No value" is not a value: a row without one sits at the
+        // bottom whichever way the column points, rather than sorting
+        // as 0 or as the empty string and landing among real data.
+        if (a === null || b === null) {
+            if (a === b) {
+                return 0;
+            }
+            return a === null ? 1 : -1;
+        }
+        if (a < b) {
+            return -direction;
+        }
+        if (a > b) {
+            return direction;
+        }
+        return 0;
+    }
+
+    function mark(header, glyph) {
+        var indicator = header.querySelector(".sort-indicator");
+        if (indicator) {
+            indicator.textContent = glyph;
+        }
+    }
+
+    function sortBy(table, header) {
+        // aria-sort is the ONLY record of which column is sorted and
+        // which way.  It is the screen-reader state, the CSS hook that
+        // brings the indicator to full strength, and what this reads to
+        // decide the next direction -- one attribute, so those three
+        // cannot drift apart.  Two states, never three: the order the
+        // page arrived in is the statistics file's insertion order, so
+        // an "unsorted" state would only be a way back to noise.
+        var direction = (
+            header.getAttribute("aria-sort") === "ascending" ? -1 : 1);
+        var index = header.cellIndex;
+        var kind = header.dataset.sort;
+        var body = table.tBodies[0];
+        // Keys read once per row, rather than twice per comparison: a
+        // few hundred contigs is a few thousand comparisons.
+        var entries = Array.prototype.map.call(body.rows, function (row) {
+            return {row: row, key: keyOf(row, index, kind)};
+        });
+
+        // Array.prototype.sort is stable as of ES2019, so tied rows keep
+        // the order they are in NOW -- the rendered natural chromosome
+        // order on the first sort, and whatever the previous sort left
+        // behind on any sort after that.
+        entries.sort(function (left, right) {
+            return compare(left.key, right.key, direction);
+        });
+        entries.forEach(function (entry) {
+            body.appendChild(entry.row);
+        });
+
+        var previous = table.tHead.querySelector("th[aria-sort]");
+        if (previous) {
+            previous.removeAttribute("aria-sort");
+            mark(previous, IDLE);
+        }
+        header.setAttribute(
+            "aria-sort", direction === 1 ? "ascending" : "descending");
+        mark(header, direction === 1 ? ASCENDING : DESCENDING);
+    }
+
+    function enable(table) {
+        // Only the rows in <tbody> ever move, so the "all chromosomes"
+        // total in <tfoot> cannot be displaced by any comparator.  The
+        // caller already matched "thead th[data-sort]", so a <thead>
+        // with a row in it is the one thing we do not have to check.
+        if (!table.tBodies[0]) {
+            return;
+        }
+        Array.prototype.forEach.call(
+            table.tHead.rows[0].cells,
+            function (header) {
+                if (!header.dataset.sort) {
+                    return;
+                }
+                var indicator = document.createElement("span");
+                indicator.className = (
+                    "material-symbols-outlined sort-indicator");
+                indicator.textContent = IDLE;
+                // Hidden from assistive tech: it is a picture of the
+                // state aria-sort states properly, and unhidden the
+                // header reads as "Chromosomeunfold_more".
+                indicator.setAttribute("aria-hidden", "true");
+                header.appendChild(indicator);
+                header.classList.add("sortable");
+                // No role="button": that would REPLACE the <th>'s
+                // implicit columnheader role and stop the whole table
+                // being announced as having column headers.  tabindex
+                // plus the keydown handler below is what makes it
+                // operable; aria-sort is what reports the state.
+                header.setAttribute("tabindex", "0");
+                header.addEventListener("click", function () {
+                    sortBy(table, header);
+                });
+                header.addEventListener("keydown", function (event) {
+                    if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        sortBy(table, header);
+                    }
+                });
+            });
+    }
+
+    // The indicator is injected rather than rendered by the templates:
+    // it advertises a click that only works if this script ran, and it
+    // keeps the opt-in contract to the two data attributes.
+    document.addEventListener("DOMContentLoaded", function () {
+        document.querySelectorAll("table").forEach(function (table) {
+            if (table.querySelector("thead th[data-sort]")) {
+                enable(table);
+            }
+        });
+    });
+}());
+</script>

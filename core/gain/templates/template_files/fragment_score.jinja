@@ -12,16 +12,20 @@
             <th>Fragments</th>
         </tr>
     </thead>
+    <tbody>
     {%- for row in fragments.rows -%}
         <tr>
             <td>{{ row.chrom }}</td>
             <td>{{ row.fragments }}</td>
         </tr>
     {%- endfor %}
-    <tr class="coverage-global">
+    </tbody>
+    <tfoot>
+    <tr>
         <td>all chromosomes</td>
         <td>{{ fragments.global_fragments }}</td>
     </tr>
+    </tfoot>
 </table>
 </div>
 <h3>Fragment lengths</h3>
