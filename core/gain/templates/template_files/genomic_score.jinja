@@ -153,9 +153,16 @@
 </div>
 {%- if has_segments %}
 <h3>Segment lengths</h3>
+{# Known-and-empty states itself, as the indel groups do: with
+   no positive count there is nothing to draw and no image is written,
+   so linking one would dangle. #}
+{% if coverage.segment_lengths and coverage.segment_lengths | sum %}
 <img src="{{ impl.get_coverage_segment_lengths_image_filename() }}"
     alt="global segment-length histogram"
     title="Segment lengths across all chromosomes, fixed log2 bins">
+{% else %}
+<p>no segments</p>
+{% endif %}
 {%- endif %}
 {% else %}
 <p>not computed</p>

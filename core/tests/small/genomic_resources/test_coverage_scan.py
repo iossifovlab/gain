@@ -11,10 +11,17 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.coverage import (
+    COVERAGE_FRAGMENT_LENGTHS_IMAGE_FILE,
+    COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
+    COVERAGE_STATISTICS_FILE,
     CoverageStatistics,
     RegionCoverage,
     accumulate_coverage,
     merge_region_coverage,
+    save_and_plot_coverage,
+)
+from gain.genomic_resources.statistics.length_histogram import (
+    LENGTH_HISTOGRAM_BIN_COUNT,
 )
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
@@ -564,3 +571,86 @@ def test_bigwig_scan_coverage(
 
     assert coverage.covered == 20
     assert coverage.segment_count == 3
+
+
+@pytest.mark.filterwarnings("error::UserWarning")
+def test_an_all_zero_segment_histogram_writes_no_image(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A group that is known and empty, not unknown: the region was
+    # scanned and turned up no segments at all.  An empty chart under a
+    # "Segment lengths" heading states nothing, and the counts axis is
+    # logarithmic, which no all-zero dataset can be drawn on.  The
+    # statistics file is still written -- only the image is skipped.
+    resource = _multivalued_tabix(tmp_path)
+    statistics = CoverageStatistics.deserialize(json.dumps({
+        "format_version": 1,
+        "chromosomes": {"chr1": {
+            "covered_positions": 0,
+            "segment_count": 0,
+            "segment_length_histogram": [0] * LENGTH_HISTOGRAM_BIN_COUNT,
+        }},
+    }))
+
+    save_and_plot_coverage(resource, statistics)
+
+    assert not resource.file_exists(COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE)
+    assert resource.file_exists(COVERAGE_STATISTICS_FILE)
+
+
+def _all_zero_segment_statistics() -> CoverageStatistics:
+    """A scanned chromosome that turned up no segments at all."""
+    return CoverageStatistics.deserialize(json.dumps({
+        "format_version": 1,
+        "chromosomes": {"chr1": {
+            "covered_positions": 0,
+            "segment_count": 0,
+            "segment_length_histogram": [0] * LENGTH_HISTOGRAM_BIN_COUNT,
+        }},
+    }))
+
+
+def test_info_page_says_a_resource_genuinely_has_no_segments(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Known-and-empty is not unknown, and it is not data either: the
+    # page states it rather than linking an image that, with nothing
+    # positive to draw, is no longer written.
+    resource = _multivalued_tabix(tmp_path)
+    save_and_plot_coverage(resource, _all_zero_segment_statistics())
+
+    page = GenomicScoreImplementation(resource).get_info()
+
+    assert "no segments" in page
+    assert COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE not in page
+
+
+def test_info_page_says_a_resource_genuinely_has_no_fragments(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The fragment section gates its image on the same counts as the
+    # segment one; the two groups are independent but not asymmetric.
+    resource = (
+        a_fragment_score()
+        .with_score("frequency", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  frequency
+            chr1   10         100      0.1
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    save_and_plot_coverage(resource, CoverageStatistics.deserialize(json.dumps({
+        "format_version": 1,
+        "chromosomes": {"chr1": {
+            "covered_positions": 0,
+            "fragment_count": 0,
+            "fragment_length_histogram": [0] * LENGTH_HISTOGRAM_BIN_COUNT,
+        }},
+    })))
+
+    page = build_score_implementation_from_resource(resource).get_info()
+
+    assert "no fragments" in page
+    assert COVERAGE_FRAGMENT_LENGTHS_IMAGE_FILE not in page

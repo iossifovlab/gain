@@ -29,9 +29,13 @@
 </table>
 </div>
 <h3>Fragment lengths</h3>
+{% if fragments.fragment_lengths and fragments.fragment_lengths | sum %}
 <img src="{{ impl.get_coverage_fragment_lengths_image_filename() }}"
     alt="global fragment-length histogram"
     title="Fragment lengths across all chromosomes, fixed log2 bins">
+{% else %}
+<p>no fragments</p>
+{% endif %}
 {% else %}
 <p>not computed</p>
 {% endif %}

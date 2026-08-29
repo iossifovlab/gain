@@ -39,6 +39,7 @@ from gain.genomic_resources.statistics.length_histogram import (
     LENGTH_BIN_EDGES,
     LENGTH_HISTOGRAM_BIN_COUNT,
     accumulate_bins,
+    has_counts_to_plot,
     length_histogram_bin_index,
     plot_length_histogram,
 )
@@ -713,6 +714,14 @@ class CoverageDisplay(NamedTuple):
 
     rows: list[CoverageRow]
     global_fraction: float | None
+    segment_lengths: list[int] | None
+    """The global segment-length histogram, or ``None`` if unknown.
+
+    The section's image is drawn from these counts, so the page decides
+    whether to show it from the same counts the plotter refuses to draw
+    -- a proxy such as the segment total could disagree with what was
+    actually written.
+    """
 
     @property
     def global_covered(self) -> int:
@@ -759,6 +768,11 @@ class FragmentDisplay(NamedTuple):
     """
 
     rows: list[FragmentRow]
+    fragment_lengths: list[int] | None
+    """The global fragment-length histogram, or ``None`` if unknown.
+
+    Gates the section's image exactly as the segment one does.
+    """
 
     @property
     def global_fragments(self) -> int:
@@ -871,7 +885,8 @@ def build_coverage_display(
     global_fraction: float | None = None
     if lengths and len(lengths) == len(covered):
         global_fraction = statistics.covered_global() / sum(lengths.values())
-    return CoverageDisplay(rows, global_fraction)
+    return CoverageDisplay(
+        rows, global_fraction, statistics.segment_lengths_global())
 
 
 def build_fragment_display(
@@ -881,10 +896,12 @@ def build_fragment_display(
     if statistics.fragments_global() is None:
         return None
     counts = statistics.fragments_by_chromosome()
-    return FragmentDisplay([
-        FragmentRow(chrom, counts[chrom])
-        for chrom in sorted(counts, key=natural_chromosome_key)
-    ])
+    return FragmentDisplay(
+        [
+            FragmentRow(chrom, counts[chrom])
+            for chrom in sorted(counts, key=natural_chromosome_key)
+        ],
+        statistics.fragment_lengths_global())
 
 
 def accumulate_coverage(
@@ -975,10 +992,11 @@ def save_and_plot_coverage(
     resource: GenomicResource,
     statistics: CoverageStatistics | None,
 ) -> None:
-    """Write the coverage statistics and their histogram image.
+    """Write the coverage statistics and their histogram images.
 
-    Does nothing for a kind that has no coverage, and skips the image
-    for one whose segment data is unknown.
+    Does nothing for a kind that has no coverage, and skips a group's
+    image when there is nothing to draw -- whether the group is unknown
+    or known and empty.  The same rule as ``save_and_plot_alleles``.
     """
     if statistics is None:
         return
@@ -993,7 +1011,7 @@ def save_and_plot_coverage(
     ):
         # A group the resource publishes nothing for writes no image;
         # the info page's section is what says so.
-        if lengths is None:
+        if not has_counts_to_plot(lengths):
             continue
         with resource.open_raw_file(image, mode="wb") as outfile:
             plot_length_histogram(outfile, lengths, item)
