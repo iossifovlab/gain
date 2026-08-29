@@ -242,6 +242,52 @@ def test_ts_tv_is_not_applicable_without_transversions() -> None:
     assert display.ts_tv is None
 
 
+def test_class_percentages_are_shares_of_the_allele_count() -> None:
+    region = _region()
+    region.add_allele(10, "A", "G")
+    region.add_allele(11, "A", "C")
+    region.add_allele(12, "A", "AT")
+    region.add_allele(13, "AT", "A")
+
+    display = _display_of(region)
+
+    assert display is not None
+    assert display.class_percentages == {
+        "substitution": "50.00%",
+        "insertion": "25.00%",
+        "deletion": "25.00%",
+        "complex": "0.00%",
+        "other": "0.00%",
+    }
+
+
+def test_a_class_below_the_display_resolution_is_not_a_zero() -> None:
+    # The shape this column exists for, on a real score: ``complex`` is
+    # a handful of alleles in tens of thousands -- 0.005%, which two
+    # decimals round to 0.00 -- while ``other`` is genuinely empty.  A
+    # class that exists and one that does not must not read the same.
+    display = _display_of(RegionAlleles.frozen(
+        "chr1", 20001, 20001,
+        {"substitution": 20000, "complex": 1, "other": 0},
+        complex_grid={(64, 1): 1}))
+
+    assert display is not None
+    assert display.class_percentages is not None
+    assert display.class_percentages["complex"] == "<0.01%"
+    assert display.class_percentages["other"] == "0.00%"
+
+
+def test_no_alleles_is_no_percentage_rather_than_zero_percent() -> None:
+    # No denominator resolves, so the share of every class is unknown
+    # rather than zero -- the coverage display's answer when it cannot
+    # resolve a chromosome length.
+    display = _display_of(RegionAlleles.frozen(
+        "chr1", 0, 0, {}, complex_grid={}))
+
+    assert display is not None
+    assert display.class_percentages is None
+
+
 def test_a_matrixless_file_yields_no_display() -> None:
     # "Matrix unknown" collapses to None, as the fragment display
     # collapses a file that predates its field; a genuinely empty
@@ -280,6 +326,80 @@ def test_a_pre_indel_file_displays_its_matrix_and_nothing_else() -> None:
     assert display.complex_grid is None
 
 
+def test_matrix_cells_carry_their_share_of_the_substitutions() -> None:
+    region = _region()
+    region.add_allele(10, "A", "G")
+    region.add_allele(11, "A", "G")
+    region.add_allele(12, "C", "T")
+    region.add_allele(13, "T", "T")
+
+    display = _display_of(region)
+
+    assert display is not None
+    ref, cells = display.matrix_rows()[0]
+    assert ref == "A"
+    assert [(cell.alleles, cell.percentage) for cell in cells] == [
+        (0, "0.00%"), (0, "0.00%"), (2, "50.00%"), (0, "0.00%")]
+
+
+def test_the_shares_cover_all_sixteen_cells_and_the_diagonal() -> None:
+    # What "the cells total 100%" means exactly: the denominator is the
+    # sixteen cells and nothing else.  ADR 0020 classifies A>A as a
+    # substitution, so the identity row below is a cell like any other
+    # and part of what the shares divide by -- A>G is half of the two
+    # substitutions, not all of the one that is off the diagonal.
+    #
+    # Stated as the denominator rather than as a sum of the rendered
+    # strings, which round independently: six substitutions read
+    # 16.67 + 50.00 + 16.67 + 16.67 = 100.01%, and apportioning them to
+    # force 100.00% would make individual cells wrong.
+    region = _region()
+    region.add_allele(10, "A", "G")
+    region.add_allele(11, "T", "T")
+
+    display = _display_of(region)
+
+    assert display is not None
+    cells = [cell for _, row in display.matrix_rows() for cell in row]
+    assert len(cells) == 16
+    assert all(cell.percentage is not None for cell in cells)
+    ref, row = display.matrix_rows()[0]
+    assert ref == "A"
+    assert row[2].percentage == "50.00%"
+
+
+def test_a_matrix_of_zeros_gets_no_shares_rather_than_zero_percent() -> None:
+    # A score whose only row is an insertion: the matrix is KNOWN and
+    # empty, so there is no substitution total to take a share of.  The
+    # cells must carry no second line at all -- a grid of "0.00%" would
+    # claim a denominator that does not exist.
+    region = _region()
+    region.add_allele(10, "A", "AT")
+
+    display = _display_of(region)
+
+    assert display is not None
+    assert display.substitution_percentages is None
+    cells = [cell for _, row in display.matrix_rows() for cell in row]
+    assert [cell.percentage for cell in cells] == [None] * 16
+
+
+def test_matrix_shares_are_over_the_substitutions_not_every_allele() -> None:
+    # Two substitutions among three alleles: a cell holding one of them
+    # is half the substitutions, never a third of the alleles.
+    region = _region()
+    region.add_allele(10, "A", "G")
+    region.add_allele(11, "C", "T")
+    region.add_allele(12, "A", "AT")
+
+    display = _display_of(region)
+
+    assert display is not None
+    ref, cells = display.matrix_rows()[0]
+    assert ref == "A"
+    assert cells[2].percentage == "50.00%"
+
+
 def test_display_rows_follow_nucleotide_order() -> None:
     region = _region()
     region.add_allele(10, "T", "A")
@@ -288,7 +408,8 @@ def test_display_rows_follow_nucleotide_order() -> None:
 
     assert display is not None
     assert [ref for ref, _ in display.matrix_rows()] == ["A", "C", "G", "T"]
-    assert display.matrix_rows()[3][1] == [1, 0, 0, 0]
+    _, cells = display.matrix_rows()[3]
+    assert [cell.alleles for cell in cells] == [1, 0, 0, 0]
 
 
 def test_the_statistic_refuses_a_bare_value() -> None:

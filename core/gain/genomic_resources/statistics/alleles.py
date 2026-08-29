@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Generator, Iterable, Iterator
+from collections.abc import Generator, Iterable, Iterator, Mapping
 from typing import IO, Any, NamedTuple
 
 import numpy as np
@@ -114,6 +114,45 @@ COMPLEX_LENGTH_CLAMP = 64
 _MERGE_FAILURE = "allele statistics"
 
 
+def percentages_over[K](
+    counts: Mapping[K, int], total: int,
+) -> dict[K, str] | None:
+    """Each count as a percentage of ``total``, ``None`` without one.
+
+    The one place the ALLELES section writes a share of a count, so the
+    classes column, the substitution matrix's cells and gain#989's
+    complex table all say the same thing the same way.  The Coverage
+    table above it still formats its own fractions inline and has no
+    floor; unifying the two is not this slice's business.
+
+    The result is text for an HTML page and can carry markup-significant
+    characters -- the floor below begins with ``<`` -- so a template
+    rendering it must escape, which the ``.jinja`` HTML templates do and
+    the Markdown ones deliberately do not.
+
+    Two answers a bare ``"%.2f%%"`` gets wrong:
+
+    * A nonzero count too small to survive two decimals renders
+      ``<0.01%``, never ``0.00%``.  On a real score ``complex`` is 881
+      alleles out of 727,413,443 while ``other`` is genuinely empty --
+      and telling those two apart is the whole reason a percentage is
+      shown at all.
+    * A zero total has no percentage, and the answer is ``None`` for
+      the WHOLE map rather than per cell: the denominator is a property
+      of the table, so the page drops the column instead of printing a
+      row of nothing, as the coverage display falls back to raw counts
+      when no denominator resolves.
+    """
+    if total <= 0:
+        return None
+    percentages: dict[K, str] = {}
+    for key, count in counts.items():
+        rendered = f"{100.0 * count / total:.2f}%"
+        percentages[key] = \
+            "<0.01%" if count and rendered == "0.00%" else rendered
+    return percentages
+
+
 class AlleleCounts(NamedTuple):
     """One chromosome's -- or a whole resource's -- allele counts.
 
@@ -175,6 +214,9 @@ class AlleleCounts(NamedTuple):
             transitions,
             transversions,
             ts_tv,
+            percentages_over(self.class_counts, self.allele_count),
+            None if matrix is None
+            else percentages_over(matrix, sum(matrix.values())),
             None if self.insertion_lengths is None
             else list(self.insertion_lengths),
             None if self.deletion_lengths is None
@@ -695,6 +737,20 @@ _TRANSITION_CELLS: frozenset[tuple[str, str]] = frozenset(
     (("A", "G"), ("G", "A"), ("C", "T"), ("T", "C")))
 
 
+class MatrixCell(NamedTuple):
+    """One substitution-matrix cell as the page renders it.
+
+    ``alleles`` is the stored count -- spelled as the column it sits
+    under rather than ``count``, which a :class:`tuple` already means
+    something else by.  The percentage is its share of the substitution
+    class, ``None`` when no denominator resolves, which the page
+    renders as no second line rather than as ``0.00%``.
+    """
+
+    alleles: int
+    percentage: str | None
+
+
 class AlleleDisplay(NamedTuple):
     """The Alleles section's render payload, one field per stored group.
 
@@ -721,6 +777,20 @@ class AlleleDisplay(NamedTuple):
     #: ``None`` when there are no transversions -- the template renders
     #: "not applicable" rather than dividing -- and with no matrix.
     ts_tv: float | None
+    #: Each class name's share of ``allele_count``, formatted by
+    #: :func:`percentages_over`; ``None`` when there are no alleles to
+    #: take a share of, which drops the column.  Present whenever this
+    #: payload is, matrix or not: the class counts are stored fields,
+    #: not one of the optional groups.
+    class_percentages: dict[str, str] | None
+    #: Each cell's share of the substitution class, formatted by
+    #: :func:`percentages_over`.  The denominator is read off the matrix
+    #: rather than taken from ``class_counts``: the two are equal by
+    #: :class:`AlleleCounts`'s invariant, and dividing the cells by
+    #: their own total is what makes the sixteen of them come to
+    #: exactly 100%.  ``None`` with no matrix, and with no
+    #: substitutions to take a share of.
+    substitution_percentages: dict[tuple[str, str], str] | None
     #: The three gain#779 groups, ``None`` when the file predates them.
     #: An empty grid is KNOWN and empty, which is not the same thing.
     insertion_lengths: list[int] | None = None
@@ -732,17 +802,25 @@ class AlleleDisplay(NamedTuple):
         """The matrix's axis labels, in stored order."""
         return NUCLEOTIDES
 
-    def matrix_rows(self) -> list[tuple[str, list[int]]]:
+    def matrix_rows(self) -> list[tuple[str, list[MatrixCell]]]:
         """The matrix as table rows: reference base, then a cell per alt.
 
         Empty without a matrix; the page gates on the matrix itself
-        rather than reading this to find out.
+        rather than reading this to find out.  This only pairs each
+        stored count with the share :meth:`AlleleCounts.display` already
+        computed for it -- nothing is derived here.
         """
         matrix = self.substitution_matrix
         if matrix is None:
             return []
+        percentages = self.substitution_percentages
         return [
-            (ref, [matrix[ref, alt] for alt in NUCLEOTIDES])
+            (ref, [
+                MatrixCell(
+                    matrix[ref, alt],
+                    None if percentages is None else percentages[ref, alt])
+                for alt in NUCLEOTIDES
+            ])
             for ref in NUCLEOTIDES
         ]
 
