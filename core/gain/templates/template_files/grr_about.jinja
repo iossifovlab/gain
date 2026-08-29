@@ -2,9 +2,13 @@
     <head>
      <meta charset="utf-8">
      <link rel="preconnect" href="https://fonts.googleapis.com">
+     {# Roboto only: this page is styled text and renders no icon.  It
+        used to carry the Material Symbols family on this same URL,
+        which cost a ~3.8 MB woff2 to draw nothing at all.  Pinned by
+        tests/small/templates/test_grr_page_icon_font.py. #}
      <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;800&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" />
+      href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;800&display=swap" />
     <style>
 
       body {

@@ -17,10 +17,11 @@ cheap; the request itself is the accepted cost of putting the include at
 the page base rather than in the statistics templates.
 
 The sorter's header indicator uses Material Symbols to match
-``grr_index.jinja`` -- which pulls the whole variable icon font for the
-same three glyphs.  Subsetting with ``icon_names`` is what keeps this
+``grr_index.jinja``.  Subsetting with ``icon_names`` is what keeps this
 copy cheap, and asserting on the *set of origins* rather than on the URL
-keeps the next person from reaching for a CDN.
+keeps the next person from reaching for a CDN.  The browse page is
+subsetted too, to a larger set -- it draws a copy button and a tick that
+no resource page has; see ``test_grr_page_icon_font.py``.
 
 The markup contract these scripts read is asserted from the rendered
 statistics tables, in
@@ -144,10 +145,10 @@ def test_the_icon_font_is_subsetted_to_the_glyphs_the_sorter_draws(
 ) -> None:
     """Three glyphs, not the whole variable icon font.
 
-    ``grr_index.jinja`` loads the unsubsetted family; retrofitting the
-    subset onto it is a separate, cheap follow-up.  Pinning the exact
-    ``icon_names`` list here is what makes a fourth glyph a deliberate
-    edit rather than a silent download.
+    Pinning the exact ``icon_names`` list here is what makes a fourth
+    glyph a deliberate edit rather than a silent download.  Three is the
+    whole set for a resource page: the sorter is the only thing here
+    drawing an icon, and it only ever shows an indicator state.
     """
     stylesheets = [
         url for url in read_page(gene_score_page).urls

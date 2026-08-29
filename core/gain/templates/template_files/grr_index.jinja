@@ -2,8 +2,21 @@
     <head>
      <meta charset="utf-8">
      <link rel="preconnect" href="https://fonts.googleapis.com">
+     {# The stylesheets come from fonts.googleapis.com, but the font
+        files they point at are served from fonts.gstatic.com.  Fonts are
+        fetched in CORS mode, so this preconnect needs `crossorigin` to
+        warm the connection that is actually used. #}
+     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;800&display=swap" />
-     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block" />
+     {# Subsetted: the unsubsetted family is a ~3.8 MB woff2 against
+        ~5.9 kB here.  Most of these glyphs are drawn from
+        grr_scripts.jinja rather than this file, and Material Symbols
+        renders by ligature -- so a name missing from icon_names renders
+        as itself, in words, on the page.  Do not trim this list by
+        reading the template alone; the scan in
+        tests/small/templates/test_grr_page_icon_font.py is the
+        authority on which glyphs the page can draw. #}
+     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=arrow_downward,arrow_upward,check,content_copy,description,folder,unfold_more&display=block" />
     <style>
 
       body {
