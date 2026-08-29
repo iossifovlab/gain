@@ -459,7 +459,11 @@ Each resource contributes one row. Five fields are always present:
    * - ``description``
      - The ``meta.description`` of the resource.
    * - ``summary``
-     - The ``meta.summary`` of the resource.
+     - The ``meta.summary`` of the resource, or its ``meta.description`` when
+       that summary is absent or empty. This is the value the resource reports
+       as its summary and the one the repository index page displays, so
+       ``summary : <term>`` finds a description-only resource by a term from
+       its description.
 
 Resource implementations may add their own fields — score resources, for example, contribute ``score_ids`` and ``score_descriptions``.
 

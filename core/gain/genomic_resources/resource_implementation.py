@@ -22,6 +22,8 @@ from .repository import (
     INDEX_COLUMN_PATTERN,
     INDEX_COLUMN_RE,
     GenomicResource,
+    _description_in,
+    _summary_in,
 )
 
 logger = logging.getLogger(__name__)
@@ -347,12 +349,20 @@ class GenomicResourceImplementation(ABC):
             res.resource_id,
             (*sorted(GR_INDEX_NON_LABEL_COLUMNS), *labels.keys()),
         )
+        # Derived from the block narrowed above, through the same helpers
+        # the resource's own accessors use: the row must carry what
+        # `get_description`/`get_summary` report, or a resource with a
+        # description and no summary indexes an empty `summary` column
+        # while displaying that description as its summary -- invisible to
+        # a `summary : <term>` search (gain#1008).  Off the block rather
+        # than through the accessors, which would re-narrow it and report a
+        # malformed one once more per read.
         row: tuple[str, ...] = (
             res.get_full_id(),
             res.resource_id,
             res.get_type(),
-            meta.get("description", "") or "",
-            meta.get("summary", "") or "",
+            _description_in(meta),
+            _summary_in(meta),
             *[str(v) for v in labels.values()],
         )
         return header, row

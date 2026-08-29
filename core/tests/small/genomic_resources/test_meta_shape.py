@@ -22,26 +22,18 @@ import textwrap
 import pytest
 from gain.genomic_resources.cli import _create_contents_db, cli_manage
 from gain.genomic_resources.genomic_scores import build_score_from_resource
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    GenomicResource,
-)
-from gain.genomic_resources.repository_factory import (
-    build_resource_implementation,
-)
+from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     setup_directories,
 )
 from gain.genomic_resources.testing.builders import a_position_score
 
-from .conftest import a_resource_whose_meta_is, captured_warnings
-
-
-def _index_row(resource: GenomicResource) -> dict[str, str]:
-    """The resource's FTS index row, keyed by the column it lands in."""
-    header, row = build_resource_implementation(resource).collect_index_info()
-    return dict(zip(header, row, strict=True))
+from .conftest import (
+    a_resource_whose_meta_is,
+    captured_warnings,
+    index_row,
+)
 
 
 def _assert_reported_once(
@@ -123,7 +115,7 @@ def test_a_scalar_meta_resource_is_indexed_with_empty_metadata(
     # checks one member goes blind if the walk stops reaching the others.
     assert _create_contents_db(proto) == set()
 
-    row = _index_row(proto.get_resource("broken"))
+    row = index_row(proto.get_resource("broken"))
     assert row["description"] == ""
     assert row["summary"] == ""
     assert row["id"] == "broken"
@@ -136,7 +128,7 @@ def test_a_scalar_meta_costs_the_walk_only_itself(
     root = _a_repo_with_a_scalar_meta(tmp_path)
     proto = build_filesystem_test_protocol(root, repair=False)
 
-    row = _index_row(proto.get_resource("sound"))
+    row = index_row(proto.get_resource("sound"))
 
     assert row["description"] == "a well-formed description"
     assert row["summary"] == "a well-formed summary"

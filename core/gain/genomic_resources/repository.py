@@ -895,15 +895,36 @@ class SearchIndexUnavailableError(ValueError):
 def _description_in(meta: dict[str, Any]) -> str:
     """The description an already-narrowed ``meta`` carries, or ``""``.
 
-    Split out so that :meth:`GenomicResource.get_summary` can fall back to
-    the description off the block it has already narrowed, instead of
-    re-entering ``get_description`` and reporting a malformed block twice
-    for one read.
+    Split out so that :func:`_summary_in` can fall back to the description
+    off the block it has already narrowed, instead of re-entering
+    ``get_description`` and reporting a malformed block twice for one read.
     """
     description = meta.get("description")
     if description:
         return str(description)
     return ""
+
+
+def _summary_in(meta: dict[str, Any]) -> str:
+    """The summary an already-narrowed ``meta`` carries, or its description.
+
+    The single definition of what a resource's summary *is*, shared by
+    :meth:`GenomicResource.get_summary` and the FTS index-row collector.
+    They used to spell it separately -- the collector read ``meta.summary``
+    raw -- so a resource carrying a description and no summary displayed
+    that description as its summary on its own page and on the repository
+    index, while indexing an empty ``summary`` column and staying invisible
+    to a ``summary : <term>`` search (gain#1008).  Sharing the derivation is
+    what keeps the two from drifting apart again.
+
+    Takes the narrowed block rather than the resource, so a caller holding
+    one can derive both fields without re-narrowing -- which would report a
+    malformed block once more per read.
+    """
+    summary = meta.get("summary")
+    if summary:
+        return str(summary)
+    return _description_in(meta)
 
 
 def _canonical_config(value: Any) -> Any:
@@ -1048,14 +1069,17 @@ class GenomicResource:
         coped while the two beside it raised a bare ``AttributeError``,
         which aborted the repository-wide index build outright.
 
-        It does not follow that every *derived* value agrees: the index
-        row collects ``description`` and ``summary`` out of this mapping
-        directly, so it does not get the description fall-back that
-        :meth:`get_summary` applies, and a resource carrying a description
-        and no summary reads differently on the index page than on its own
-        (gain#1008).  That divergence predates this seam and is left as it
-        is -- routing it through the accessors would change what published
-        repositories index.
+        Narrowing the block is not on its own enough to make every
+        *derived* value agree.  The index row used to collect
+        ``description`` and ``summary`` out of this mapping with its own
+        ``.get`` calls, so it missed the description fall-back
+        :meth:`get_summary` applies and a resource carrying a description
+        and no summary indexed an empty ``summary`` column (gain#1008).
+        Both now derive through :func:`_description_in` and
+        :func:`_summary_in`, which are the single spelling of what each
+        field *is*: a reader holding this block derives from those rather
+        than reaching into it, so a second spelling cannot drift from the
+        accessors again.
 
         Reading never validates (ADR 0008) and never raises: this is on
         the path of every repository-wide walk -- a label search, the
@@ -1084,14 +1108,7 @@ class GenomicResource:
 
     def get_summary(self) -> str | None:
         """Return resource summary."""
-        # Falls back to the description off the *same* narrowed block
-        # rather than re-entering `get_description`, so this accessor
-        # reports a malformed block once rather than twice.
-        meta = self.get_meta()
-        summary = meta.get("summary")
-        if summary:
-            return str(summary)
-        return _description_in(meta)
+        return _summary_in(self.get_meta())
 
     def get_repo_url(self) -> str:
         """Return repository's URL."""
