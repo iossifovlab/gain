@@ -493,6 +493,18 @@ def _alleles_section(page: str) -> str:
     return re.sub(r">\s+<", "><", section)
 
 
+def _row(*cells: str) -> re.Pattern[str]:
+    """A row of ``cells``, tolerating attributes on the opening ``<td>``.
+
+    The per-chromosome table's cells carry a ``data-sort-value`` since
+    gain#984.  Matching a bare ``<td>`` does fail when one arrives, but
+    it fails as "this row is not on the page" rather than as "this
+    pattern no longer describes the markup".
+    """
+    return re.compile("".join(
+        rf"<td[^>]*>{re.escape(cell)}</td>" for cell in cells))
+
+
 def test_info_page_renders_a_row_per_chromosome(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -502,8 +514,8 @@ def test_info_page_renders_a_row_per_chromosome(
     section = _alleles_section(
         GenomicScoreImplementation(resource).get_info())
 
-    assert "<td>chr1</td><td>7</td><td>9</td>" in section
-    assert "<td>chr2</td><td>1</td><td>1</td>" in section
+    assert _row("chr1", "7", "9").search(section)
+    assert _row("chr2", "1", "1").search(section)
 
 
 def test_info_page_renders_the_global_class_summary(
@@ -592,7 +604,7 @@ def test_info_page_over_a_matrixless_file_says_matrix_not_computed(
     section = _alleles_section(
         GenomicScoreImplementation(resource).get_info())
 
-    assert "<td>chr1</td><td>7</td><td>9</td>" in section
+    assert _row("chr1", "7", "9").search(section)
     assert "<td>substitution</td><td>6</td>" in section
     assert "not computed" in section
     assert "<th>A</th>" not in section

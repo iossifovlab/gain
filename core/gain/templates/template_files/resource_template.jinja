@@ -98,6 +98,13 @@
             });
         });
     </script>
+    {# Sits with the modal script above rather than in the statistics
+       templates, so that every table on a resource page can opt in with
+       two attributes -- gene_models.jinja and reference_genome.jinja
+       carry per-chromosome tables of their own and are the next likely
+       consumers.  The script does nothing on a page that opts in
+       nowhere; its stylesheet link is fetched regardless. #}
+    {% include "sortable_table.jinja" %}
   </head>
   <body>
     <nav id="page-header">

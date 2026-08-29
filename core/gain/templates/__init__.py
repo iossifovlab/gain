@@ -22,15 +22,16 @@ template here is named ``*.jinja``, HTML and Markdown alike.
 Templates supplied by an out-of-tree provider load through this same
 environment and are autoescaped along with the rest.
 
-The environment carries one global, ``markdown``: the Markdown wrapper
-from ``gain.templates.markdown_support``.  It is registered here rather
-than passed by each caller as a render kwarg so that a template calling
-``markdown(...)`` gets the rescuing wrapper whether or not whoever
-renders it thought about the name -- gain#742 was a render site that did
-not (gain#751).  A render kwarg still shadows a global, so a caller that
-passes its own ``markdown=`` wins; no caller in this repo does.
+The environment carries two globals.  The first is ``markdown``: the
+Markdown wrapper from ``gain.templates.markdown_support``.  It is
+registered here rather than passed by each caller as a render kwarg so
+that a template calling ``markdown(...)`` gets the rescuing wrapper
+whether or not whoever renders it thought about the name -- gain#742 was
+a render site that did not (gain#751).  A render kwarg still shadows a
+global, so a caller that passes its own ``markdown=`` wins; no caller in
+this repo does.
 
-The global serves templates.  The several ``gain`` modules that render a
+That global serves templates.  The several ``gain`` modules that render a
 resource's ``meta`` description or an ``about.md`` in *Python* -- before
 the result enters a dict some template dumps generically -- still import
 ``render_markdown`` and call it themselves; a template global cannot
@@ -49,6 +50,23 @@ The import sits inside ``get_jinja_env`` rather than at module scope so
 that importing ``gain.templates`` does not drag in markdown2 for callers
 that only ever fetch a template: it costs about 10ms, and the annotation
 workers pay module import per spawned process.
+
+The second global, ``natural_chromosome_key``, orders a contig name by
+its digit runs so a per-chromosome table reads chr1, chr2, chr10 rather
+than chr1, chr10, chr2.  The info page's Coverage and Alleles tables
+emit it as the Chromosome column's ``data-sort-value``, which is what
+lets the client-side sorter reorder those rows without shipping any
+ordering logic of its own (gain#983, gain#984).  It is a global rather
+than a field on the row objects because the two tables that use it do
+not share a row type -- Coverage renders a ``CoverageRow`` NamedTuple
+while Alleles renders a plain dict -- and because the reference genome
+and gene models pages carry per-chromosome tables that will want the
+same key.
+
+Unlike ``render_markdown`` it is imported at module scope: the module it
+comes from imports only ``re``, so there is no start-up cost to defer,
+and ``gain.utils`` is where it deliberately lives so that the template
+layer can reach it without importing ``genomic_resources``.
 """
 from __future__ import annotations
 
@@ -64,6 +82,8 @@ from jinja2 import (
     Template,
     TemplateNotFound,
 )
+
+from gain.utils.chromosome_order import natural_chromosome_key
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -131,8 +151,9 @@ def get_jinja_env() -> Environment:
             autoescape=_autoescape,
         )
         env.globals["markdown"] = render_markdown
+        env.globals["natural_chromosome_key"] = natural_chromosome_key
         # Published last, so no caller can reach a half-configured
-        # environment: assigning first and installing the global after
+        # environment: assigning first and installing the globals after
         # leaves a window where the singleton renders UndefinedError.
         _state.env = env
     return _state.env

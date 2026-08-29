@@ -15,7 +15,12 @@ from gain.genomic_resources.testing.builders import (
     an_allele_score,
 )
 
-_ROW = re.compile(r"<tr[^>]*>\s*<td>([^<]*)</td>")
+# The Chromosome cell carries a data-sort-value since gain#984, so the
+# opening tag must be matched permissively.  Requiring a bare <td> does
+# fail when that attribute arrives, but it fails as "the column is
+# empty" rather than as "this pattern no longer matches the markup",
+# which is a long way from the edit that caused it.
+_ROW = re.compile(r"<tr[^>]*>\s*<td[^>]*>([^<]*)</td>")
 
 # Every fixture below carries these three contigs.  They reach the
 # stored statistics sorted as plain strings -- chr1, chr10, chr2 -- so a
