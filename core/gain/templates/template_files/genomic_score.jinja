@@ -142,6 +142,7 @@
 <h3>Segment lengths</h3>
 <img src="{{ impl.get_coverage_segment_lengths_image_filename() }}"
     alt="global segment-length histogram"
+    class="statistics-figure"
     title="Segment lengths across all chromosomes, fixed log2 bins">
 {%- endif %}
 {% else %}
@@ -237,7 +238,7 @@ not applicable
 <p>insertion lengths not computed</p>
 {% elif allele_display.insertion_lengths | sum %}
 <img src="{{ impl.get_allele_insertion_lengths_image_filename() }}"
-     alt="insertion length histogram" style="width:50%">
+     alt="insertion length histogram" class="statistics-figure">
 {% else %}
 <p>no insertions</p>
 {% endif %}
@@ -245,7 +246,7 @@ not applicable
 <p>deletion lengths not computed</p>
 {% elif allele_display.deletion_lengths | sum %}
 <img src="{{ impl.get_allele_deletion_lengths_image_filename() }}"
-     alt="deletion length histogram" style="width:50%">
+     alt="deletion length histogram" class="statistics-figure">
 {% else %}
 <p>no deletions</p>
 {% endif %}
@@ -254,7 +255,7 @@ not applicable
 {% if allele_display is not none and allele_display.complex_grid is not none %}
 {% if allele_display.complex_grid %}
 <img src="{{ impl.get_allele_complex_grid_image_filename() }}"
-     alt="complex allele length grid" style="width:50%">
+     alt="complex allele length grid" class="statistics-figure">
 {% else %}
 <p>no complex alleles</p>
 {% endif %}
