@@ -317,7 +317,11 @@ class GenomicResourceImplementation(ABC):
         ``GR_INDEX_NON_LABEL_COLUMNS``.
         """
         res = self.resource
-        meta = res.get_config().get("meta", {}) or {}
+        # Through the resource's own narrowing accessor, not the raw
+        # config: `or {}` guards a None and an empty mapping but not a
+        # scalar, and a `meta: |` block of prose then raised from the
+        # `.get` below (gain#1004).
+        meta = res.get_meta()
         labels: dict = res.get_labels() or {}
         header: tuple[str, ...] = (
             *GR_INDEX_RESOURCE_FIELDS,
