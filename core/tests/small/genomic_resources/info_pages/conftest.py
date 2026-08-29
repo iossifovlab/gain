@@ -21,14 +21,21 @@ from tests.small.genomic_resources.info_pages.supplement import (
     add_supplement_resources,
 )
 
-#: The mini-GRR submodule, as checked out under ``core/tests/fixtures``.
-#: ``parents[3]`` is ``core/tests`` -- this file is at
-#: ``core/tests/small/genomic_resources/info_pages/conftest.py``.
+#: The mini-GRR submodule, checked out at the repository root rather than
+#: inside ``core`` -- a Playwright suite driving the same pages' JavaScript
+#: will live in its own project, and each ``<project>/Dockerfile`` copies
+#: only its own directory, so a fixture owned by ``core`` could not be
+#: shared without that image reaching into ``core``'s test tree.
+#:
+#: ``parents[5]`` is the repository root: this file is at
+#: ``core/tests/small/genomic_resources/info_pages/conftest.py``, and the
+#: same arithmetic holds inside the CI image, where ``core`` sits at
+#: ``/workspace/core`` and the fixture at ``/workspace/test_fixtures``.
 MINI_GRR_SOURCE = (
-    pathlib.Path(__file__).parents[3] / "fixtures" / "mini-GRR"
+    pathlib.Path(__file__).parents[5] / "test_fixtures" / "mini-GRR"
 )
 
-_SUBMODULE_PATH = "core/tests/fixtures/mini-GRR"
+_SUBMODULE_PATH = "test_fixtures/mini-GRR"
 
 _NOT_CHECKED_OUT = (
     f"the mini-GRR fixture submodule is not checked out at "

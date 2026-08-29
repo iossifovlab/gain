@@ -414,7 +414,7 @@ def test_the_guard_names_the_command_that_fixes_a_missing_submodule(
         info_pages.check_source_available()
 
     assert (
-        "git submodule update --init core/tests/fixtures/mini-GRR"
+        "git submodule update --init test_fixtures/mini-GRR"
         in str(raised.value)), (
         "the message must carry the exact command that fixes this, since "
         "an empty fixture directory explains nothing on its own")
