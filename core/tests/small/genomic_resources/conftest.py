@@ -24,6 +24,9 @@ from gain.genomic_resources.repository import (
     GR_SQLITE_META_FILE_NAME,
     GenomicResource,
 )
+from gain.genomic_resources.repository_factory import (
+    build_resource_implementation,
+)
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     build_http_test_protocol,
@@ -361,3 +364,14 @@ def a_resource_whose_meta_is(
         .build_repo(tmp_path)
         .get_resource("scores/broken")
     )
+
+
+def index_row(resource: GenomicResource) -> dict[str, str]:
+    """The resource's FTS index row, keyed by the column it lands in.
+
+    Shared by the files that cover what a row carries -- the shape of the
+    ``meta`` block it is collected from (gain#1004) and the values the
+    meta-derived columns end up with (gain#1008).
+    """
+    header, row = build_resource_implementation(resource).collect_index_info()
+    return dict(zip(header, row, strict=True))
