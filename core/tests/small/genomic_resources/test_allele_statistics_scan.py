@@ -667,15 +667,16 @@ def test_info_page_without_transversions_says_not_applicable(
     assert "not applicable" in section
 
 
-def test_info_page_over_a_pre_display_file_keeps_counts_without_shares(
+def test_info_page_over_a_pre_display_file_still_renders_the_shares(
     tmp_path: pathlib.Path,
 ) -> None:
     # A statistics file as gain#777 wrote it: counts and class totals,
-    # and none of the groups the display payload is built from.  Such a
-    # file could resolve a share -- both numbers it needs are always
-    # present -- but gain#988 computes the shares on that payload, so it
-    # drops the column.  What this pins is the part that is not a
-    # judgement call: every count it does carry still renders.
+    # and none of the OPTIONAL groups.  Its shares are resolvable --
+    # the class counts and the allele total are stored fields every
+    # file carries -- so the column renders.  gain#988 computed the
+    # shares on the payload that collapses without those groups, which
+    # dropped the column here; iossifovlab/gain#1002 moved them onto
+    # the section display, which does not collapse.
     resource = _mixed_allele_score(tmp_path)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
     stored = json.loads(resource.get_file_content(ALLELE_STATISTICS_FILE))
@@ -692,8 +693,9 @@ def test_info_page_over_a_pre_display_file_keeps_counts_without_shares(
     section = _alleles_section(
         GenomicScoreImplementation(resource).get_info())
 
-    assert "<td>substitution</td><td>6</td></tr>" in section
-    assert "% of alleles" not in section
+    assert "<th>% of alleles</th>" in section
+    assert "<td>substitution</td><td>6</td><td>60.00%</td>" in section
+    assert "<td>other</td><td>1</td><td>10.00%</td>" in section
 
 
 def test_info_page_over_a_matrixless_file_says_matrix_not_computed(

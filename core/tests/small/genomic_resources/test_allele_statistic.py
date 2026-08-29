@@ -6,8 +6,10 @@ from gain.genomic_resources.statistics.alleles import (
     COMPLEX_GRID_TABLE_MAX_CELLS,
     COMPLEX_LENGTH_CLAMP,
     AlleleDisplay,
+    AlleleSectionDisplay,
     AlleleStatistics,
     RegionAlleles,
+    build_allele_section_display,
 )
 from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
@@ -259,10 +261,9 @@ def test_class_percentages_are_shares_of_the_allele_count() -> None:
     region.add_allele(12, "A", "AT")
     region.add_allele(13, "AT", "A")
 
-    display = _display_of(region)
+    section = _section_of(region)
 
-    assert display is not None
-    assert display.class_percentages == {
+    assert section.class_percentages == {
         "substitution": "50.00%",
         "insertion": "25.00%",
         "deletion": "25.00%",
@@ -276,26 +277,78 @@ def test_a_class_below_the_display_resolution_is_not_a_zero() -> None:
     # a handful of alleles in tens of thousands -- 0.005%, which two
     # decimals round to 0.00 -- while ``other`` is genuinely empty.  A
     # class that exists and one that does not must not read the same.
-    display = _display_of(RegionAlleles.frozen(
+    section = _section_of(RegionAlleles.frozen(
         "chr1", 20001, 20001,
-        {"substitution": 20000, "complex": 1, "other": 0},
-        complex_grid={(64, 1): 1}))
+        {"substitution": 20000, "complex": 1, "other": 0}))
 
-    assert display is not None
-    assert display.class_percentages is not None
-    assert display.class_percentages["complex"] == "<0.01%"
-    assert display.class_percentages["other"] == "0.00%"
+    assert section.class_percentages is not None
+    assert section.class_percentages["complex"] == "<0.01%"
+    assert section.class_percentages["other"] == "0.00%"
 
 
 def test_no_alleles_is_no_percentage_rather_than_zero_percent() -> None:
     # No denominator resolves, so the share of every class is unknown
     # rather than zero -- the coverage display's answer when it cannot
     # resolve a chromosome length.
-    display = _display_of(RegionAlleles.frozen(
-        "chr1", 0, 0, {}, complex_grid={}))
+    section = _section_of(RegionAlleles.frozen("chr1", 0, 0, {}))
 
-    assert display is not None
-    assert display.class_percentages is None
+    assert section.class_percentages is None
+
+
+def test_the_shares_resolve_without_any_optional_group() -> None:
+    # The point of iossifovlab/gain#1002.  A file written before the
+    # substitution matrix carries NO optional group, so the detail
+    # payload collapses -- but the class counts and the allele total
+    # are stored fields every file has, so the shares still resolve.
+    # Both halves are asserted together: the shares are only
+    # interesting here BECAUSE the detail is gone.
+    section = _section_of(
+        RegionAlleles.frozen("chr1", 4, 4, {"substitution": 4}))
+
+    assert section.detail is None
+    assert section.class_percentages == {
+        "substitution": "100.00%",
+        "insertion": "0.00%",
+        "deletion": "0.00%",
+        "complex": "0.00%",
+        "other": "0.00%",
+    }
+
+
+def _section_of(*regions: RegionAlleles) -> AlleleSectionDisplay:
+    statistics = AlleleStatistics()
+    for region in regions:
+        statistics.fold_region(region)
+    return build_allele_section_display(statistics)
+
+
+def test_each_section_row_carries_its_own_chromosome_in_natural_order(
+) -> None:
+    # The row knows which chromosome it is, rather than the template
+    # reading it off a mapping key; ``chr10`` sorts after ``chr2``, the
+    # digit-run ordering gain#983 established.
+    section = _section_of(
+        RegionAlleles.frozen("chr10", 3, 30, {"substitution": 3}),
+        RegionAlleles.frozen("chr2", 2, 20, {"substitution": 2}),
+        RegionAlleles.frozen("chr1", 1, 10, {"substitution": 1}),
+    )
+
+    assert [
+        (row.chrom, row.covered_positions, row.allele_count)
+        for row in section.rows
+    ] == [("chr1", 10, 1), ("chr2", 20, 2), ("chr10", 30, 3)]
+
+
+def test_the_section_totals_are_the_roll_up_over_every_chromosome() -> None:
+    section = _section_of(
+        RegionAlleles.frozen("chr1", 1, 10, {"substitution": 1}),
+        RegionAlleles.frozen("chr2", 2, 20, {"insertion": 2}),
+    )
+
+    assert section.covered_positions == 30
+    assert section.allele_count == 3
+    assert section.class_counts["substitution"] == 1
+    assert section.class_counts["insertion"] == 2
 
 
 def test_a_matrixless_file_yields_no_display() -> None:

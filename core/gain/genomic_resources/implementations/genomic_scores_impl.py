@@ -64,9 +64,11 @@ from gain.genomic_resources.statistics.alleles import (
     ALLELE_DELETION_LENGTHS_IMAGE_FILE,
     ALLELE_INSERTION_LENGTHS_IMAGE_FILE,
     ALLELE_STATISTICS_FILE,
+    AlleleSectionDisplay,
     AlleleStatistics,
     RegionAlleles,
     allele_arrays_folded_into,
+    build_allele_section_display,
     merge_region_alleles,
     records_folded_into,
     region_alleles_for,
@@ -282,6 +284,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         except FileNotFoundError:
             return None
         return AlleleStatistics.deserialize(content)
+
+    def get_allele_display(self) -> AlleleSectionDisplay | None:
+        """The Alleles section's payload, or ``None`` if not built."""
+        statistics = self.get_allele_statistics()
+        if statistics is None:
+            return None
+        return build_allele_section_display(statistics)
 
     def get_coverage_display(self) -> CoverageDisplay | None:
         """The Coverage section's payload: raw counts plus fractions.
