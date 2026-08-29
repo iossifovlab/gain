@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import functools
 import pathlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from importlib.metadata import entry_points
@@ -330,13 +331,19 @@ def _implementations_by_class() -> dict[str, tuple[str, ...]]:
             for name, spellings in sorted(by_class.items())}
 
 
-def _resource_types(built: BuiltGRR) -> dict[str, str]:
-    """The declared ``type:`` of every resource in the built repository."""
+@functools.cache
+def _resource_types(root: pathlib.Path) -> dict[str, str]:
+    """The declared ``type:`` of every resource in the built repository.
+
+    Cached: the registry check is parametrised per implementation, and this
+    reads every resource's config, so without it the same ~30 YAML files are
+    parsed once for each of the eleven test items.
+    """
     types = {}
-    for config in built.path.rglob(GR_CONF_FILE_NAME):
+    for config in root.rglob(GR_CONF_FILE_NAME):
         if ".grr" in config.parts:
             continue
-        resource_id = str(config.parent.relative_to(built.path))
+        resource_id = str(config.parent.relative_to(root))
         loaded = yaml.safe_load(config.read_text()) or {}
         types[resource_id] = loaded.get("type", "basic")
     return types
@@ -348,6 +355,19 @@ def _repository_pages(built: BuiltGRR) -> list[pathlib.Path]:
         path for path in (built.path / "index.html", built.path / "about.html")
         if path.exists()
     ]
+
+
+def _images_of(page: Page) -> list[str]:
+    return page.images
+
+
+def _links_of(page: Page) -> list[str]:
+    return page.links
+
+
+def _repository_page_objects(built: BuiltGRR) -> list[Page]:
+    """:func:`_repository_pages`, parsed."""
+    return [_parse(path, built.path) for path in _repository_pages(built)]
 
 
 def _pages_of(built: BuiltGRR, resource_id: str) -> list[Page]:
@@ -561,7 +581,7 @@ def test_statistics_are_recomputed_by_this_build(built_grr: BuiltGRR) -> None:
 def test_every_registered_implementation_has_a_fixture_resource(
     built_grr: BuiltGRR, implementation: str, type_spellings: tuple[str, ...],
 ) -> None:
-    present = set(_resource_types(built_grr).values())
+    present = set(_resource_types(built_grr.path).values())
     assert present & set(type_spellings), (
         f"{implementation} is registered in the {_IMPLEMENTATIONS_GROUP!r} "
         f"entry points as {list(type_spellings)}, but no resource in the "
@@ -588,9 +608,7 @@ def test_resource_pages_have_no_unrendered_jinja(
 def test_repository_pages_have_no_unrendered_jinja(
     built_grr: BuiltGRR,
 ) -> None:
-    _assert_no_unrendered_jinja(
-        [_parse(path, built_grr.path)
-         for path in _repository_pages(built_grr)])
+    _assert_no_unrendered_jinja(_repository_page_objects(built_grr))
 
 
 def _assert_no_unrendered_jinja(pages: list[Page]) -> None:
@@ -618,9 +636,7 @@ def test_resource_pages_are_well_formed(
 
 
 def test_repository_pages_are_well_formed(built_grr: BuiltGRR) -> None:
-    _assert_well_formed(
-        [_parse(path, built_grr.path)
-         for path in _repository_pages(built_grr)])
+    _assert_well_formed(_repository_page_objects(built_grr))
 
 
 def _assert_well_formed(pages: list[Page]) -> None:
@@ -635,29 +651,29 @@ def _assert_well_formed(pages: list[Page]) -> None:
 def test_resource_page_images_resolve(
     built_grr: BuiltGRR, resource_id: str,
 ) -> None:
-    _assert_targets_resolve(_pages_of(built_grr, resource_id), "images")
+    _assert_targets_resolve(_pages_of(built_grr, resource_id), _images_of)
 
 
 def test_repository_page_images_resolve(built_grr: BuiltGRR) -> None:
     _assert_targets_resolve(
-        [_parse(path, built_grr.path)
-         for path in _repository_pages(built_grr)], "images")
+        _repository_page_objects(built_grr), _images_of)
 
 
 @pytest.mark.parametrize("resource_id", _RESOURCE_IDS)
 def test_resource_page_links_resolve(
     built_grr: BuiltGRR, resource_id: str,
 ) -> None:
-    _assert_targets_resolve(_pages_of(built_grr, resource_id), "links")
+    _assert_targets_resolve(_pages_of(built_grr, resource_id), _links_of)
 
 
 def test_repository_page_links_resolve(built_grr: BuiltGRR) -> None:
     _assert_targets_resolve(
-        [_parse(path, built_grr.path)
-         for path in _repository_pages(built_grr)], "links")
+        _repository_page_objects(built_grr), _links_of)
 
 
-def _assert_targets_resolve(pages: list[Page], attribute: str) -> None:
+def _assert_targets_resolve(
+    pages: list[Page], select: Callable[[Page], list[str]],
+) -> None:
     """Every internal ``<img src>`` / ``<a href>`` points at a real file.
 
     Only the parsed attributes are considered.  The pages build their file
@@ -667,7 +683,7 @@ def _assert_targets_resolve(pages: list[Page], attribute: str) -> None:
     """
     broken = []
     for page in pages:
-        for target in getattr(page, attribute):
+        for target in select(page):
             resolved = _resolve(page, target)
             if resolved is not None and not resolved.exists():
                 broken.append((page.name, target))
