@@ -78,11 +78,12 @@ class GeneModels(
             resource.get_config(), resource,
         )
 
+        # Through the accessor that narrows both `meta` levels, the way
+        # every other label reader does (gain#654, gain#1004): the schema
+        # above refuses a non-mapping at either level today, and this
+        # stays correct if it ever stops (gain#1009).
         self.reference_genome_id: str | None = \
-            self.config["meta"]["labels"].get("reference_genome") \
-            if (self.config.get("meta") is not None
-                and self.config["meta"].get("labels") is not None) \
-            else None
+            resource.get_labels().get("reference_genome")
 
         self.gene_models: dict[str, list[TranscriptModel]] = defaultdict(list)
         self._tx_index: dict[str, IntervalTree] = defaultdict(IntervalTree)
