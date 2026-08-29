@@ -371,6 +371,21 @@ pipeline {
                 stage('Prepare workspace') {
                     steps {
                         sh 'rm -rf reports dist conda && mkdir -p reports dist conda'
+                        // The multibranch scan's implicit checkout does not
+                        // recurse submodules, and gain acquired its first one
+                        // with gain#991: test_fixtures/mini-GRR, the
+                        // repository the onboarding docs hand to new users,
+                        // which the info-page suite builds and validates.
+                        // Without this the suite fails collection with
+                        // instructions to run exactly this command.
+                        //
+                        // The .gitmodules URL is HTTPS on purpose — build
+                        // agents carry no GitHub key, so an SSH URL fails
+                        // here with `publickey`. Idempotent, and it must run
+                        // before any `docker build ... .`, since the
+                        // submodule reaches the CI images through the build
+                        // context rather than through a clone of its own.
+                        sh 'git submodule update --init test_fixtures/mini-GRR'
                     }
                 }
 

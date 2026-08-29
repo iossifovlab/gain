@@ -37,6 +37,19 @@ exclude = [
     "migrations",
     "*.ipynb",
     "typings",
+    # The mini-GRR fixture submodule (gain#991).  Its content is authored
+    # upstream in iossifovlab/mini-GRR and pinned here, so gain cannot fix
+    # what ruff reports in it -- and should not: it is a genomic resource
+    # repository we validate, not source we maintain.
+    #
+    # Matched by name at any depth rather than at its one path.  A pinned
+    # path is wrong twice over: git leaves the old working directory behind
+    # when a submodule moves, so a build agent that checked this out before
+    # gain#991 relocated it still has a full copy at the previous path and
+    # `COPY core/` carries that copy into the CI image -- which is exactly
+    # how this exclusion first went missing. What must never be linted is
+    # mini-GRR's content, wherever a checkout happens to leave it.
+    "**/mini-GRR",
 ]
 
 line-length = 80

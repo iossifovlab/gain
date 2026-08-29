@@ -50,6 +50,15 @@ COPY spliceai_annotator/pyproject.toml ./spliceai_annotator/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --package gain-core --group dev --frozen --no-install-project
 
+# The mini-GRR fixture submodule (gain#991), which
+# `tests/small/genomic_resources/info_pages` builds and validates. It lives
+# at the repository root rather than under `core/` so a future GRR
+# Playwright project can copy the same path; that means `core/` alone is no
+# longer the whole test context, and this line is what the suite's guard
+# reports as missing when it is absent. Copied before `core/` because the
+# pinned fixture changes far less often than the source does.
+COPY test_fixtures/ ./test_fixtures/
+
 COPY core/ ./core/
 
 RUN --mount=type=cache,target=/root/.cache/uv \

@@ -70,6 +70,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY core/ ./core/
 COPY web_api/ ./web_api/
 COPY scripts/ ./scripts/
+# The mini-GRR fixture submodule (gain#991). This image's core probe runs
+# `tests/small`, which includes the info-page suite, so the fixture has to
+# be here too -- it lives at the repository root, not under `core/`.
+COPY test_fixtures/ ./test_fixtures/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --package ${PACKAGE} --group dev --frozen \

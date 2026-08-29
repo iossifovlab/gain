@@ -126,6 +126,18 @@ source .venv/bin/activate
 The lockfile (`uv.lock`) is committed. Use `uv lock
 --upgrade` to refresh.
 
+`gain` has one git submodule: `test_fixtures/mini-GRR`, the
+repository the getting-started guide hands to new users, which the
+info-page test suite builds and validates. Clone with
+`git clone --recurse-submodules`, or in an existing checkout:
+
+```bash
+git submodule update --init test_fixtures/mini-GRR
+```
+
+Without it `tests/small/genomic_resources/info_pages` fails collection
+with that same command in the message.
+
 ### Run tests
 
 Quick cycles (examples):

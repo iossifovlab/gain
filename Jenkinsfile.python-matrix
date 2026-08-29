@@ -187,6 +187,13 @@ pipeline {
         stage('Prepare workspace') {
             steps {
                 sh 'rm -rf reports && mkdir -p reports'
+                // Same reason as the main Jenkinsfile: this job's cpsScm
+                // checkout does not recurse submodules, so without this
+                // test_fixtures/mini-GRR is an empty directory, the
+                // `docker build … .` below copies that empty directory into
+                // the image, and every `core` cell dies at collection with
+                // the info-page suite's guard message (gain#991).
+                sh 'git submodule update --init test_fixtures/mini-GRR'
             }
         }
 
