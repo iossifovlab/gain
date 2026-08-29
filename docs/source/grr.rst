@@ -1457,7 +1457,7 @@ and renders a basic bar chart (with optional log-scaled ``y-axis``) to the provi
 .. code-block:: python
 
   from typing import IO
-  from dae.genomic_resources.histogram import CategoricalHistogram
+  from gain.genomic_resources.histogram import CategoricalHistogram
   import matplotlib.pyplot as plt
 
   def my_own_plot(outfile: IO, histogram: CategoricalHistogram, xlabel: str, *_args, **_kw) -> None:
