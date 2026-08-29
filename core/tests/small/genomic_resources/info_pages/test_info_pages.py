@@ -39,6 +39,7 @@ import yaml
 from gain.genomic_resources import get_resource_implementation_builder
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 
+from tests.small.genomic_resources.info_pages import conftest as info_pages
 from tests.small.genomic_resources.info_pages.conftest import (
     MINI_GRR_SOURCE,
     BuiltGRR,
@@ -354,6 +355,36 @@ _IMPLEMENTATIONS = _implementations_by_class()
 # --------------------------------------------------------------------------
 
 
+def test_the_guard_names_the_command_that_fixes_a_missing_submodule(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path,
+) -> None:
+    """An uninitialised submodule is an empty directory, not an absent one.
+
+    That is the case a developer and a fresh CI agent both actually hit, and
+    the message has to carry the command rather than leave them to work out
+    what an empty fixture directory means.
+    """
+    uninitialised = tmp_path / "mini-GRR"
+    uninitialised.mkdir()
+    monkeypatch.setattr(info_pages, "MINI_GRR_SOURCE", uninitialised)
+
+    with pytest.raises(AssertionError, match="git submodule update --init"):
+        info_pages.check_source_available()
+
+
+def test_the_guard_rejects_a_directory_that_is_not_a_repository(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path,
+) -> None:
+    """A partial checkout is not the same failure as a missing one."""
+    partial = tmp_path / "mini-GRR"
+    partial.mkdir()
+    (partial / "README.md").write_text("a checkout that got interrupted")
+    monkeypatch.setattr(info_pages, "MINI_GRR_SOURCE", partial)
+
+    with pytest.raises(AssertionError, match="not a genomic resource"):
+        info_pages.check_source_available()
+
+
 def test_the_fixture_repository_generates_a_page_for_every_resource(
     built_grr: BuiltGRR,
 ) -> None:
@@ -364,6 +395,46 @@ def test_the_fixture_repository_generates_a_page_for_every_resource(
     assert not missing, (
         f"repo-info generated no page for {len(missing)} resource(s): "
         f"{missing}")
+
+
+def test_every_generated_page_is_reached_by_this_suite(
+    built_grr: BuiltGRR,
+) -> None:
+    """Nothing the build writes escapes the invariants above.
+
+    The per-page checks are parametrised over resource ids and a fixed list
+    of repository pages, which is a *description* of what a GRR build emits
+    -- four shapes today: the repository index, ``about.html``, and each
+    resource's own page and statistics page.  Should the build start
+    emitting a fifth, every invariant in this file would keep passing while
+    quietly never looking at it.
+
+    So the description is checked against the output rather than trusted.
+    This is the assertion that keeps the suite honest as the pages grow, and
+    it is the one to read first when it fails: the fix is to route the new
+    page into the parametrised checks, not to widen this list.
+    """
+    on_disk = {
+        str(path.relative_to(built_grr.path))
+        for path in built_grr.path.rglob("*.html")
+        if ".grr" not in path.parts
+    }
+    reached = {
+        page.name
+        for resource_id in _RESOURCE_IDS
+        for page in _pages_of(built_grr, resource_id)
+    } | {
+        str(path.relative_to(built_grr.path))
+        for path in _repository_pages(built_grr)
+    }
+
+    assert on_disk, "the build generated no pages at all"
+    assert not on_disk - reached, (
+        f"the build generated {len(on_disk - reached)} page(s) that no "
+        f"invariant in this suite looks at: {sorted(on_disk - reached)}")
+    assert not reached - on_disk, (
+        f"this suite claims to check pages the build did not generate: "
+        f"{sorted(reached - on_disk)}")
 
 
 @pytest.mark.parametrize("resource_id", _RESOURCE_IDS)
