@@ -105,12 +105,25 @@ def test_resource_info(
 
     result = (path / "one/index.html").read_text()
 
-    assert result.find("<h1>one</h1>")
-    assert result.find("<h3>Score file:</h3>")
-    assert result.find("<h3>Score definitions:</h3>")
-    assert result.find("<p>Score ID: phastCons100way</p>")
-    assert result.find("<h3>Histograms:</h3>")
-    print(result)
+    # `in`, never `str.find()`.  What stood here was five
+    # `assert result.find("<h3>Score file:</h3>")` calls: `find` returns an
+    # index, and -1 when the string is absent, so every one of them passed
+    # whenever its markup was *missing* and would have failed only at index
+    # 0.  The page had been redesigned out from under them -- none of the
+    # markup they named existed in any template -- and the suite stayed
+    # green for months (gain#991).
+    #
+    # These three are checked against generated output, not recalled from
+    # it, and they say what this test is actually about: the page
+    # `resource-info` writes describes *this* resource, its declared score,
+    # and that score's histogram.  Page structure at large is the business
+    # of tests/small/genomic_resources/info_pages/.
+    assert "<td>one</td>" in result, \
+        "the generated page does not name the resource it describes"
+    assert "<td>phastCons100way</td>" in result, \
+        "the generated page does not name the score the resource declares"
+    assert 'alt="HISTOGRAM FOR phastCons100way"' in result, \
+        "the generated page does not render the declared score's histogram"
 
 
 def test_repo_info(

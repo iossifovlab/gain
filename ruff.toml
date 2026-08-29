@@ -37,6 +37,11 @@ exclude = [
     "migrations",
     "*.ipynb",
     "typings",
+    # The mini-GRR fixture submodule (gain#991).  Its content is authored
+    # upstream in iossifovlab/mini-GRR and pinned here, so gain cannot fix
+    # what ruff reports in it -- and should not: it is a genomic resource
+    # repository we validate, not source we maintain.
+    "core/tests/fixtures/mini-GRR",
 ]
 
 line-length = 80
