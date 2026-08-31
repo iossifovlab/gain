@@ -326,7 +326,7 @@ def test_a_score_with_no_type_still_normalizes_its_na_values() -> None:
     ``na_values: "-1"``, a real value of 1 read back as ``None``.
 
     A config's silence about the type means float, which is what the value
-    parser has always assumed; ``_finish_scoredefs`` now says so, so an
+    parser has always assumed; ``finish_scoredefs`` now says so, so an
     untyped score is normalized exactly like a typed one.
 
     Hand-rolled yaml because the builders cannot express this shape:

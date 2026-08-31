@@ -1,22 +1,31 @@
-"""What a genomic score DEFINITION is, and how it reads a value.
+"""What a genomic score DEFINITION is, how it reads a value, how it is built.
 
 The bottom of the score layer: a score's definition, the vocabulary it parses
-with (value types, NA sentinels, column addressing), and the read that turns a
-record's cell into a value.  Nothing here knows about a ``GenomicScore``, a
-resource or a fetch -- which is what lets ``vcf_scores`` sit above this module
-and ``genomic_scores`` above both, with no cycle between them.
+with (value types, NA sentinels, column addressing), the read that turns a
+record's cell into a value, and the lifecycle that builds a resource's
+definitions out of its ``scores:`` block.  Nothing here knows about a
+``GenomicScore`` -- which is what lets ``vcf_scores`` sit above this module and
+``genomic_scores`` above both, with no cycle between them.
 
 Split out of ``genomic_scores`` so that the VCF-specific score code could be
 gathered into one module: ``vcf_scores`` constructs ``GenomicScoreDef`` at
 runtime, and ``genomic_scores`` imports what ``vcf_scores`` builds, so the two
 could not both live in one file without importing each other.
+
+The lifecycle joined it in gain#1044, from private methods on ``GenomicScore``.
+Only one of them was polymorphic, and only through the class attribute
+``DEFAULT_AGGREGATORS``, so each is a function parametrized by what it used to
+read off ``self``.  The one piece that stayed behind is the dispatch over the
+table's TYPE (``GenomicScore._build_scoredefs``): it calls into ``vcf_scores``
+and ``bigwig_scores``, both of which import this module, so hosting it here
+would close a cycle.
 """
 from __future__ import annotations
 
 import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -25,7 +34,22 @@ from gain.genomic_resources.genomic_position_table.record import (
     PAYLOAD,
     Record,
 )
-from gain.genomic_resources.score_resource import ScoreDef
+from gain.genomic_resources.histogram import build_histogram_config
+from gain.genomic_resources.resource_implementation import (
+    get_base_resource_schema,
+)
+from gain.genomic_resources.score_resource import ScoreDef, ScoreResource
+
+if TYPE_CHECKING:
+    # Annotation-only: the two things ``validate_scoredefs`` is handed are
+    # never constructed or called into here, and ``from __future__ import
+    # annotations`` leaves the annotations as strings.  Both modules are
+    # loaded anyway by the time this one is -- the guard buys no layering,
+    # only an honest statement that nothing at runtime needs them.
+    from gain.genomic_resources.genomic_position_table.table import (
+        GenomicPositionTable,
+    )
+    from gain.genomic_resources.repository import GenomicResource
 
 logger = logging.getLogger(__name__)
 
@@ -142,10 +166,7 @@ def _parse_column_address(
     validator explicitly permits ``0 <= column_index`` -- so any resource
     whose score sits in the first column could not be opened at all.
 
-    This lives at module level, not on a class, because ``FragmentScore``
-    overrides ``_parse_scoredef_config`` with its own near-copy; parsed in one
-    place, the two cannot drift, and the bug above cannot be fixed in one of
-    them only.  (Pinned by test_column_index_zero_is_a_real_address.)
+    (Pinned by test_column_index_zero_is_a_real_address.)
     """
     col_name = score_conf.get("column_name")
     if col_name is None:
@@ -173,7 +194,7 @@ class GenomicScoreDef(ScoreDef):
     # How a caller that reads SEVERAL values for one annotatable reduces them
     # to one -- a region of positions, the alleles at a position, the
     # fragments overlapping a span.  A valid aggregator type, or ``None`` until
-    # ``GenomicScore._build_scoredefs`` fills the resource type's default.
+    # :func:`finish_scoredefs` fills the resource type's default.
     #
     # There were two of these, ``pos_aggregator`` and ``allele_aggregator``,
     # and every def carried both because the definition cannot know which
@@ -252,8 +273,8 @@ class GenomicScoreDef(ScoreDef):
         # depends on how the score is aggregated -- ``mean`` over a region of
         # positions, ``max`` over the alleles at one -- which is a property of
         # the resource TYPE, and a definition does not know its own.  Filling
-        # it here is what forced two fields; ``GenomicScore._build_scoredefs``
-        # fills the one field from its class's table instead.
+        # it here is what forced two fields; :func:`finish_scoredefs`
+        # fills the one field from the caller's mapping instead.
         if self.value_type is None:
             return
         self.na_values = normalize_na_values(
@@ -488,6 +509,253 @@ class GenomicScoreDef(ScoreDef):
             [None if is_na else (cell if isinstance(cell, str) else str(cell))
              for is_na, cell in zip(na_mask, raw, strict=True)],
             dtype=object)
+
+
+def parse_scoredef_config(
+    config: dict[str, Any],
+) -> dict[str, GenomicScoreDef]:
+    """Parse ScoreDef configuration."""
+    scores = {}
+
+    for score_conf in config["scores"]:
+        # ``None`` means the config did not state a type, which is NOT
+        # the same as "float" here: for a VCF score, silence means "take
+        # the type the file's header declares" (see
+        # ``parse_vcf_scoredefs``, which prefers the config's type and
+        # falls back to the header's).  Defaulting at this point would
+        # override an INFO field's declared ``int`` with ``float``.
+        # ``finish_scoredefs`` resolves it once the merge has happened.
+        #
+        # The value PARSER defaults to float regardless, as it always
+        # has -- an unstated type has always been read as a float.
+        value_parser = SCORE_TYPE_PARSERS[score_conf.get("type", "float")]
+
+        col_name, col_index = _parse_column_address(score_conf)
+
+        hist_conf = build_histogram_config(score_conf)
+
+        score_def = GenomicScoreDef(
+            score_id=score_conf["id"],
+            desc=score_conf.get("desc", ""),
+            value_type=score_conf.get("type"),
+            # Left as the config stated it, ``None`` when unstated;
+            # ``finish_scoredefs`` fills the resource type's default.
+            aggregator=score_conf.get("aggregator"),
+            small_values_desc=score_conf.get("small_values_desc"),
+            large_values_desc=score_conf.get("large_values_desc"),
+            col_name=col_name,
+            col_index=col_index,
+            hist_conf=hist_conf,
+            value_parser=value_parser,
+            na_values=score_conf.get("na_values"),
+        )
+
+        scores[score_conf["id"]] = score_def
+    return scores
+
+
+def build_genomic_score_schema() -> dict[str, Any]:
+    """Declare the config every genomic score kind accepts.
+
+    The kinds' ``get_schema`` overrides deep-copy this and splice in
+    their ``aggregator``, so it must build a fresh dict per call.
+    """
+    scores_schema = {
+        "type": "list", "schema": {
+            "type": "dict",
+            "schema": {
+                "id": {"type": "string"},
+                "index": {"type": "integer"},
+                "name": {"type": "string", "excludes": "index"},
+                "column_index": {
+                    "type": "integer",
+                    "excludes": ["index", "name", "column_name"],
+                },
+                "column_name": {
+                    "type": "string",
+                    "excludes": ["name", "index", "column_index"],
+                },
+                "type": {"type": "string"},
+                "desc": {"type": "string"},
+                "na_values": {"type": ["string", "list"]},
+                "large_values_desc": {"type": "string"},
+                "small_values_desc": {"type": "string"},
+                "histogram": ScoreResource.histogram_schema(),
+            },
+        },
+    }
+    return {
+        **get_base_resource_schema(),
+        "table": {"type": "dict", "schema": {
+            "filename": {"type": "string"},
+            "index_filename": {"type": "string"},
+            "zero_based": {"type": "boolean"},
+            "desc": {"type": "string"},
+            "format": {"type": "string"},
+            "header_mode": {"type": "string"},
+            "header": {"type": ["string", "list"]},
+            "chrom": {"type": "dict", "schema": {
+                "index": {"type": "integer"},
+                "name": {"type": "string", "excludes": "index"},
+                "column_index": {
+                    "type": "integer",
+                    "excludes": ["index", "name", "column_name"],
+                },
+                "column_name": {
+                    "type": "string",
+                    "excludes": ["name", "index", "column_index"],
+                },
+            }},
+            "pos_begin": {"type": "dict", "schema": {
+                "index": {"type": "integer"},
+                "name": {"type": "string", "excludes": "index"},
+                "column_index": {
+                    "type": "integer",
+                    "excludes": ["index", "name", "column_name"],
+                },
+                "column_name": {
+                    "type": "string",
+                    "excludes": ["name", "index", "column_index"],
+                },
+            }},
+            "pos_end": {"type": "dict", "schema": {
+                "index": {"type": "integer"},
+                "name": {"type": "string", "excludes": "index"},
+                "column_index": {
+                    "type": "integer",
+                    "excludes": ["index", "name", "column_name"],
+                },
+                "column_name": {
+                    "type": "string",
+                    "excludes": ["name", "index", "column_index"],
+                },
+            }},
+            "chrom_mapping": {"type": "dict", "schema": {
+                "filename": {
+                    "type": "string",
+                    "excludes": ["add_prefix", "del_prefix"],
+                },
+                "add_prefix": {"type": "string"},
+                "del_prefix": {"type": "string", "excludes": "add_prefix"},
+            }},
+            # bigWig fetch tuning.  ``fetch_size`` is a budget in
+            # RECORDS per range query -- the bigWig backend adapts its
+            # base-pair window toward it (see ``table_bigwig``).
+            "fetch_size": {"type": "integer", "min": 1},
+            # Accepted and ignored: they configure no capability.  They
+            # stay in the schema because refusing the resource would take
+            # it offline merely to report a dead key, and there is nothing
+            # to rename them to.  ``build_genomic_position_table`` warns.
+            "buffer_fetch_size": {"type": "integer", "min": 1},
+            "use_buffered_threshold": {"type": "integer", "min": 0},
+        }},
+        "scores": scores_schema,
+        "default_annotation": {
+            "type": ["dict", "list"], "allow_unknown": True,
+        },
+    }
+
+
+def validate_scoredefs(
+    config: dict[str, Any],
+    table: GenomicPositionTable,
+    resource: GenomicResource,
+) -> None:
+    """Check each configured score against the table's header.
+
+    Also rewrites the legacy ``name:``/``index:`` spellings into
+    ``column_name:``/``column_index:`` IN the config it is given -- which is
+    why it takes the config rather than reading one, and why the caller must
+    hand it the same dict the score keeps.
+    """
+    assert "scores" in config
+    if table.header_mode == "none":
+        assert all("name" not in score
+                   for score in config["scores"]), \
+            ("Cannot configure score columns by"
+             " name when header_mode is 'none'!")
+    elif table.header is None:
+        # Table has no header (e.g. BigWig); column-name references are
+        # invalid, but index-based scores are fine — open() validates them.
+        return
+    else:
+        for score in config["scores"]:
+
+            if "name" in score:
+                score["column_name"] = score["name"]
+                logger.debug(
+                    "%s: Using 'name' to configure score columns is"
+                    " outdated, use 'column_name' instead.",
+                    resource.get_full_id(),
+                )
+            elif "index" in score:
+                score["column_index"] = score["index"]
+                logger.debug(
+                    "%s: Using 'index' to configure score columns is"
+                    " outdated, use 'column_index' instead.",
+                    resource.get_full_id(),
+                )
+
+            if "column_name" in score:
+                assert score["column_name"] in table.header, (
+                    score, table.header)
+            elif "column_index" in score:
+                assert 0 <= score["column_index"] < len(table.header)
+            else:
+                raise AssertionError("Either an index or name must"
+                                     " be configured for scores!")
+
+
+def finish_scoredefs(
+    score_defs: dict[str, GenomicScoreDef],
+    default_aggregators: dict[str, str | None],
+) -> dict[str, GenomicScoreDef]:
+    """Fill in what a definition cannot decide for itself.
+
+    **The value type.**  ``type:`` is optional, and an unstated one is
+    recorded as ``float`` -- what the value parser defaults to anyway.
+    Recording it matters rather than leaving it ``None``:
+    ``GenomicScoreDef.__post_init__`` returns early on a ``None`` type,
+    which would skip ``na_values`` normalization and leave the raw config
+    string in place.  That turns the NA check into a SUBSTRING test, so a
+    score configured ``na_values: "-1"`` would read a real value of 1 as
+    a null -- the exact defect ``normalize_na_values`` prevents.
+
+    It is resolved HERE rather than at parse time because for a VCF
+    score an unstated type means "the type the file's header declares",
+    and defaulting before the merge would override a declared ``int``
+    with ``float``.  Filling it afterwards leaves that inheritance
+    intact and still leaves no definition without a type.
+
+    **The aggregator.**
+
+    The default depends on how the score is reduced, which is fixed by
+    the resource type -- ``mean`` over a region of positions, ``max``
+    over the alleles at one, ``join(,)`` rather than ``list`` for a
+    fragment score's strings -- so it cannot be decided from a definition
+    alone.  ``default_aggregators`` is that decision, made by the caller:
+    each score class passes its own ``DEFAULT_AGGREGATORS``.  Resolving it
+    here rather than in ``GenomicScoreDef.__post_init__`` is what lets one
+    field replace the ``pos_aggregator``/``allele_aggregator`` pair.
+
+    Applied at the convergence point of all three construction routes --
+    the ``scores:`` block, a VCF header, a bigWig -- because a default
+    applied in only one of them is the same bug in a new place: a
+    VCF-derived def would arrive with ``aggregator=None``, and the
+    fragment score annotator drops an attribute whose aggregator is None
+    *silently*.
+    """
+    for score_def in score_defs.values():
+        if score_def.value_type is None:
+            score_def.value_type = "float"
+            # __post_init__ skipped this when the type was unknown.
+            # normalize_na_values is idempotent, so re-running it on an
+            # already-normalized set is a no-op for every other score.
+            score_def.na_values = normalize_na_values(
+                score_def.na_values, score_def.value_type)
+        if score_def.aggregator is None:
+            score_def.aggregator = default_aggregators[score_def.value_type]
+    return score_defs
 
 
 def extract_column_value(

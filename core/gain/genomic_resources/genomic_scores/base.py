@@ -7,17 +7,13 @@ themselves live in :mod:`.position`, :mod:`.allele` and :mod:`.fragment`,
 and the factories that dispatch between them in :mod:`.builders`.
 
 Decomposing this class -- so that a kind's author reads the handful of hooks
-their kind overrides rather than the whole base -- is gain#1027, sequenced
-deliberately after the package split that created this module (gain#902).
+their kind overrides rather than the whole base -- is gain#1027.  Its first
+extraction (gain#1044) moved the scoredef lifecycle to
+:mod:`~gain.genomic_resources.score_def` and took this module under the
+1500-line cap, so the file-scoped ``too-many-lines`` pragma gain#1007 added
+here when it restored that cap is gone; the remaining seams are #1027's
+other children.
 """
-# The monolith this was split out of carried this same pragma.  gain#902
-# dropped it because 1554 lines fit under the cap as it stood -- but that
-# cap was 1600 only because gain#1002 had raised it for
-# ``genomic_scores_impl``, and gain#1007 has since split that module and
-# put the cap back to 1500.  So the exemption this file always had is
-# stated here, scoped to it, rather than bought for the whole repository.
-# It goes when gain#1027 shrinks the class.
-# pylint: disable=too-many-lines
 
 from __future__ import annotations
 
@@ -57,24 +53,19 @@ from gain.genomic_resources.genomic_position_table.record import (
     REF,
     Record,
 )
-from gain.genomic_resources.histogram import (
-    build_histogram_config,
-)
 from gain.genomic_resources.repository import (
     GenomicResource,
 )
-from gain.genomic_resources.resource_implementation import (
-    get_base_resource_schema,
-)
 from gain.genomic_resources.score_def import (
     BULK_PARSEABLE_VALUE_TYPES,
-    SCORE_TYPE_PARSERS,
     GenomicScoreDef,
     ScoreValue,
     ValueExtractor,
-    _parse_column_address,
+    build_genomic_score_schema,
     extract_column_value,
-    normalize_na_values,
+    finish_scoredefs,
+    parse_scoredef_config,
+    validate_scoredefs,
 )
 from gain.genomic_resources.score_filter import (
     ScoreFilter,
@@ -265,9 +256,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     # over the alleles at one -- and a ``GenomicScoreDef`` cannot know which
     # kind it belongs to.
     #
-    # Applied by :meth:`_apply_default_aggregator` to every score whose config
-    # does not state an ``aggregator:``, which today is every deployed score:
-    # 0 of 16502 resource configs set one.
+    # Handed to ``score_def.finish_scoredefs``, which applies it to every
+    # score whose config does not state an ``aggregator:`` -- today every
+    # deployed score: 0 of 16502 resource configs set one.
     DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {}
 
     def __init__(self, resource: GenomicResource):
@@ -287,253 +278,42 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
-        scores_schema = {
-            "type": "list", "schema": {
-                "type": "dict",
-                "schema": {
-                    "id": {"type": "string"},
-                    "index": {"type": "integer"},
-                    "name": {"type": "string", "excludes": "index"},
-                    "column_index": {
-                        "type": "integer",
-                        "excludes": ["index", "name", "column_name"],
-                    },
-                    "column_name": {
-                        "type": "string",
-                        "excludes": ["name", "index", "column_index"],
-                    },
-                    "type": {"type": "string"},
-                    "desc": {"type": "string"},
-                    "na_values": {"type": ["string", "list"]},
-                    "large_values_desc": {"type": "string"},
-                    "small_values_desc": {"type": "string"},
-                    "histogram": ScoreResource.histogram_schema(),
-                },
-            },
-        }
-        return {
-            **get_base_resource_schema(),
-            "table": {"type": "dict", "schema": {
-                "filename": {"type": "string"},
-                "index_filename": {"type": "string"},
-                "zero_based": {"type": "boolean"},
-                "desc": {"type": "string"},
-                "format": {"type": "string"},
-                "header_mode": {"type": "string"},
-                "header": {"type": ["string", "list"]},
-                "chrom": {"type": "dict", "schema": {
-                    "index": {"type": "integer"},
-                    "name": {"type": "string", "excludes": "index"},
-                    "column_index": {
-                        "type": "integer",
-                        "excludes": ["index", "name", "column_name"],
-                    },
-                    "column_name": {
-                        "type": "string",
-                        "excludes": ["name", "index", "column_index"],
-                    },
-                }},
-                "pos_begin": {"type": "dict", "schema": {
-                    "index": {"type": "integer"},
-                    "name": {"type": "string", "excludes": "index"},
-                    "column_index": {
-                        "type": "integer",
-                        "excludes": ["index", "name", "column_name"],
-                    },
-                    "column_name": {
-                        "type": "string",
-                        "excludes": ["name", "index", "column_index"],
-                    },
-                }},
-                "pos_end": {"type": "dict", "schema": {
-                    "index": {"type": "integer"},
-                    "name": {"type": "string", "excludes": "index"},
-                    "column_index": {
-                        "type": "integer",
-                        "excludes": ["index", "name", "column_name"],
-                    },
-                    "column_name": {
-                        "type": "string",
-                        "excludes": ["name", "index", "column_index"],
-                    },
-                }},
-                "chrom_mapping": {"type": "dict", "schema": {
-                    "filename": {
-                        "type": "string",
-                        "excludes": ["add_prefix", "del_prefix"],
-                    },
-                    "add_prefix": {"type": "string"},
-                    "del_prefix": {"type": "string", "excludes": "add_prefix"},
-                }},
-                # bigWig fetch tuning.  ``fetch_size`` is a budget in
-                # RECORDS per range query -- the bigWig backend adapts its
-                # base-pair window toward it (see ``table_bigwig``).
-                "fetch_size": {"type": "integer", "min": 1},
-                # Accepted and ignored: they configure no capability.  They
-                # stay in the schema because refusing the resource would take
-                # it offline merely to report a dead key, and there is nothing
-                # to rename them to.  ``build_genomic_position_table`` warns.
-                "buffer_fetch_size": {"type": "integer", "min": 1},
-                "use_buffered_threshold": {"type": "integer", "min": 0},
-            }},
-            "scores": scores_schema,
-            "default_annotation": {
-                "type": ["dict", "list"], "allow_unknown": True,
-            },
-        }
-
-    @staticmethod
-    def _parse_scoredef_config(
-        config: dict[str, Any],
-    ) -> dict[str, GenomicScoreDef]:
-        """Parse ScoreDef configuration."""
-        scores = {}
-
-        for score_conf in config["scores"]:
-            # ``None`` means the config did not state a type, which is NOT
-            # the same as "float" here: for a VCF score, silence means "take
-            # the type the file's header declares" (see
-            # ``parse_vcf_scoredefs``, which prefers the config's type and
-            # falls back to the header's).  Defaulting at this point would
-            # override an INFO field's declared ``int`` with ``float``.
-            # ``_finish_scoredefs`` resolves it once the merge has happened.
-            #
-            # The value PARSER defaults to float regardless, as it always
-            # has -- an unstated type has always been read as a float.
-            value_parser = SCORE_TYPE_PARSERS[score_conf.get("type", "float")]
-
-            col_name, col_index = _parse_column_address(score_conf)
-
-            hist_conf = build_histogram_config(score_conf)
-
-            score_def = GenomicScoreDef(
-                score_id=score_conf["id"],
-                desc=score_conf.get("desc", ""),
-                value_type=score_conf.get("type"),
-                # Left as the config stated it, ``None`` when unstated;
-                # ``_build_scoredefs`` fills the resource type's default.
-                aggregator=score_conf.get("aggregator"),
-                small_values_desc=score_conf.get("small_values_desc"),
-                large_values_desc=score_conf.get("large_values_desc"),
-                col_name=col_name,
-                col_index=col_index,
-                hist_conf=hist_conf,
-                value_parser=value_parser,
-                na_values=score_conf.get("na_values"),
-            )
-
-            scores[score_conf["id"]] = score_def
-        return scores
-
-    def _validate_scoredefs(self) -> None:
-        assert "scores" in self.config
-        if self.table.header_mode == "none":
-            assert all("name" not in score
-                       for score in self.config["scores"]), \
-                ("Cannot configure score columns by"
-                 " name when header_mode is 'none'!")
-        elif self.table.header is None:
-            # Table has no header (e.g. BigWig); column-name references are
-            # invalid, but index-based scores are fine — open() validates them.
-            return
-        else:
-            for score in self.config["scores"]:
-
-                if "name" in score:
-                    score["column_name"] = score["name"]
-                    logger.debug(
-                        "%s: Using 'name' to configure score columns is"
-                        " outdated, use 'column_name' instead.",
-                        self.resource.get_full_id(),
-                    )
-                elif "index" in score:
-                    score["column_index"] = score["index"]
-                    logger.debug(
-                        "%s: Using 'index' to configure score columns is"
-                        " outdated, use 'column_index' instead.",
-                        self.resource.get_full_id(),
-                    )
-
-                if "column_name" in score:
-                    assert score["column_name"] in self.table.header, (
-                        score, self.table.header)
-                elif "column_index" in score:
-                    assert 0 <= score["column_index"] < len(self.table.header)
-                else:
-                    raise AssertionError("Either an index or name must"
-                                         " be configured for scores!")
-
-    def _finish_scoredefs(
-        self, score_defs: dict[str, GenomicScoreDef],
-    ) -> dict[str, GenomicScoreDef]:
-        """Fill in what a definition cannot decide for itself.
-
-        **The value type.**  ``type:`` is optional, and an unstated one is
-        recorded as ``float`` -- what the value parser defaults to anyway.
-        Recording it matters rather than leaving it ``None``:
-        ``GenomicScoreDef.__post_init__`` returns early on a ``None`` type,
-        which would skip ``na_values`` normalization and leave the raw config
-        string in place.  That turns the NA check into a SUBSTRING test, so a
-        score configured ``na_values: "-1"`` would read a real value of 1 as
-        a null -- the exact defect ``normalize_na_values`` prevents.
-
-        It is resolved HERE rather than at parse time because for a VCF
-        score an unstated type means "the type the file's header declares",
-        and defaulting before the merge would override a declared ``int``
-        with ``float``.  Filling it afterwards leaves that inheritance
-        intact and still leaves no definition without a type.
-
-        **The aggregator.**
-
-        The default depends on how the score is reduced, which is fixed by
-        the resource type -- ``mean`` over a region of positions, ``max``
-        over the alleles at one, ``join(,)`` rather than ``list`` for a
-        fragment score's strings -- so it belongs to the score CLASS, not to
-        the definition.  Resolving it here rather than in
-        ``GenomicScoreDef.__post_init__`` is what lets one field replace the
-        ``pos_aggregator``/``allele_aggregator`` pair.
-
-        Applied at the convergence point of all three construction routes --
-        the ``scores:`` block, a VCF header, a bigWig -- because a default
-        applied in only one of them is the same bug in a new place: a
-        VCF-derived def would arrive with ``aggregator=None``, and the
-        fragment score annotator drops an attribute whose aggregator is None
-        *silently*.
-        """
-        for score_def in score_defs.values():
-            if score_def.value_type is None:
-                score_def.value_type = "float"
-                # __post_init__ skipped this when the type was unknown.
-                # normalize_na_values is idempotent, so re-running it on an
-                # already-normalized set is a no-op for every other score.
-                score_def.na_values = normalize_na_values(
-                    score_def.na_values, score_def.value_type)
-            if score_def.aggregator is None:
-                score_def.aggregator = \
-                    self.DEFAULT_AGGREGATORS[score_def.value_type]
-        return score_defs
+        """The config this kind accepts; each kind extends it."""
+        return build_genomic_score_schema()
 
     def _build_scoredefs(self) -> dict[str, GenomicScoreDef]:
+        """Route this resource's definitions through their construction path.
+
+        The one piece of the scoredef lifecycle that did NOT move to
+        :mod:`~gain.genomic_resources.score_def` in gain#1044: it dispatches
+        on the table's type into ``parse_vcf_scoredefs`` and
+        ``build_bigwig_scoredefs``, and both of those modules import
+        ``score_def``, so hosting this there would close an import cycle.
+        Everything it calls is a function now, and the class's only
+        contribution is ``DEFAULT_AGGREGATORS``, passed explicitly -- once,
+        at the single exit the three routes converge on, which is where
+        ``finish_scoredefs`` documents that it has to be applied.
+        """
         config_scoredefs = None
         if "scores" in self.config:
-            config_scoredefs = self._parse_scoredef_config(self.config)
+            config_scoredefs = parse_scoredef_config(self.config)
 
+        scoredefs: dict[str, GenomicScoreDef]
         if isinstance(self.table, VCFGenomicPositionTable):
             merge = bool(self.config.get("merge_vcf_scores", False))
 
-            return self._finish_scoredefs(parse_vcf_scoredefs(
+            scoredefs = parse_vcf_scoredefs(
                 cast(dict[str, Any], self.table.header),
                 config_scoredefs,
-                merge=merge))
-
-        if config_scoredefs is None:
+                merge=merge)
+        elif config_scoredefs is None:
             raise ValueError("No scores configured and not using a VCF")
+        elif isinstance(self.table, BigWigTable):
+            scoredefs = build_bigwig_scoredefs(self.config, config_scoredefs)
+        else:
+            scoredefs = config_scoredefs
 
-        if isinstance(self.table, BigWigTable):
-            return self._finish_scoredefs(
-                build_bigwig_scoredefs(self.config, config_scoredefs))
-
-        return self._finish_scoredefs(config_scoredefs)
+        return finish_scoredefs(scoredefs, self.DEFAULT_AGGREGATORS)
 
     def get_config(self) -> dict[str, Any]:
         return self.config
@@ -766,7 +546,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         # are ignored for bigWig (see ``genomic_position_table.utils``), so
         # they must not decide how the scores are checked either.
         if "scores" in self.config and not is_bigwig:
-            self._validate_scoredefs()
+            validate_scoredefs(self.config, self.table, self.resource)
         self._resolve_score_indices(is_vcf=is_vcf, is_bigwig=is_bigwig)
 
         return self
@@ -1450,8 +1230,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         those entries into a single value per request.
 
         Each request is either a score id -- aggregated with the resource's
-        own default, which :meth:`_finish_scoredefs` resolved from the score
-        class's ``DEFAULT_AGGREGATORS`` -- or a ``(score_id, aggregator)``
+        own default, which ``score_def.finish_scoredefs`` resolved from
+        this class's ``DEFAULT_AGGREGATORS`` -- or a ``(score_id, aggregator)``
         pair naming one explicitly.  The aggregator string is whatever the
         config accepts, parametrized forms (``join(,)``) included.
 
