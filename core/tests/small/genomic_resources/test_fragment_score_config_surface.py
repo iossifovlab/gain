@@ -21,8 +21,10 @@ import importlib
 import importlib.util
 import logging
 import pathlib
+import pkgutil
 import textwrap
 import tomllib
+from types import ModuleType
 
 import pytest
 import pytest_mock
@@ -30,7 +32,6 @@ from gain.annotation.annotatable import Region
 from gain.annotation.annotation_config import AnnotationConfigParser
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources import (
-    genomic_scores,
     get_resource_implementation_builder,
     resource_types,
 )
@@ -38,6 +39,7 @@ from gain.genomic_resources.cli import _create_contents_db, cli_manage
 from gain.genomic_resources.genomic_scores import (
     FragmentScore,
     build_score_from_resource,
+    fragment,
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     FragmentScoreImplementation,
@@ -243,14 +245,18 @@ def test_repository_sweep_warns_once_per_legacy_resource(
     # is memoised -- at which point the memo below could be deleted
     # entirely and every assertion here would still pass.
     recognitions: collections.Counter[str] = collections.Counter()
-    announce = genomic_scores.warn_deprecated_spelling
+    # Patched on the submodule that CALLS it, not on the package facade:
+    # since gain#902 the facade only re-exports names, so rebinding an
+    # attribute there would leave `fragment`'s own global untouched and this
+    # counter silently at zero.
+    announce = fragment.warn_deprecated_spelling
 
     def counting_announce(*args: object, **kwargs: object) -> None:
         recognitions[str(kwargs["found_in"])] += 1
         announce(*args, **kwargs)  # type: ignore[arg-type]
 
     mocker.patch.object(
-        genomic_scores, "warn_deprecated_spelling", counting_announce)
+        fragment, "warn_deprecated_spelling", counting_announce)
 
     with caplog.at_level(logging.WARNING):
         for resource in grr.get_all_resources():
@@ -690,6 +696,23 @@ def test_legacy_cnv_filter_parameter_warns_once_naming_its_replacement(
     assert REMOVAL_RELEASE in message
 
 
+def _module_and_submodules(module_name: str) -> list[ModuleType]:
+    """The named module, plus every module inside it if it is a package.
+
+    A package's ``__init__`` holds only what it re-exports, so asking it
+    alone stops guarding anything the moment the module becomes a package:
+    the gain#902 split turned ``genomic_scores`` into one, and a ``CNV``
+    re-added in ``fragment`` -- where it would be re-added -- is not visible
+    from the facade.  Walked rather than listed so a module added later is
+    covered without anyone remembering to come here.
+    """
+    module = importlib.import_module(module_name)
+    return [module, *(
+        importlib.import_module(f"{module_name}.{found.name}")
+        for found in pkgutil.iter_modules(getattr(module, "__path__", []))
+    )]
+
+
 # The retired names are spelled out rather than derived, so that
 # re-introducing any one of them -- as an alias, a shim or an accidental
 # re-export -- fails here.
@@ -716,8 +739,14 @@ def test_legacy_cnv_filter_parameter_warns_once_naming_its_replacement(
 ])
 def test_old_python_names_are_gone(module_name: str, symbol: str) -> None:
     """No aliases, shims or re-exports survive the rename (gain#470)."""
-    module = importlib.import_module(module_name)
-    assert not hasattr(module, symbol)
+    offenders = [
+        module.__name__
+        for module in _module_and_submodules(module_name)
+        if hasattr(module, symbol)
+    ]
+    assert offenders == [], (
+        f"the retired name {symbol!r} is back in: {offenders}"
+    )
 
 
 def test_old_annotator_module_is_gone() -> None:
