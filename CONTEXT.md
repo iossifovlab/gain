@@ -270,6 +270,12 @@ reason a read of one is not a read of the other
   **substitution**, **insertion**, **deletion**, **complex** and **other** sum
   to the row count. **Segments** and **covered positions** describe *where* a
   score holds data; allele classes describe *what* its rows are.
+- A **coverage fraction** measures **covered positions** against a **contig
+  universe** — every contig of the **resource**'s labelled reference genome, or
+  failing that every contig its table declares. The universe is *not* the
+  contigs the score touched, so the contigs of it with no **covered positions**
+  are real and are reported together as the **untouched contigs**. A universe
+  that cannot bound what it must yields no fraction at all: raw counts.
 - An **ann_data resource** is a **resource** whose content is one **data matrix**
   and the two **axis tables** describing its axes; every row of `var` carries a
   **feature type**, and one resource may hold several.

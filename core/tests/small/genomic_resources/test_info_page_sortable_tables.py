@@ -494,3 +494,50 @@ def test_an_opted_out_table_carries_neither_sort_attribute(
         for cell in row:
             assert "data-sort" not in cell.attrs, cell
             assert "data-sort-value" not in cell.attrs, cell
+
+
+def test_the_untouched_contig_rollup_sits_in_the_tfoot(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The roll-up is a summary, so it lives where the total lives.
+
+    No fixture above emits one -- every one of their genomes is a
+    subset of what its score covers -- so this builds its own: a chr1
+    score against a genome that also has chr2.
+
+    In ``<tbody>`` the row would be reordered with the data, and it
+    carries no ``data-sort-value`` on any cell, so ``compare`` would
+    sink it to the bottom on every sort: a summary line floating among
+    the contigs.  Asserting the body's cells all still have keys is
+    what would catch it there, since a roll-up in the body reads as
+    just another row to every other assertion in this file.
+    """
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores/rollup",
+            a_position_score()
+            .with_score("score", "float")
+            .with_data(
+                """
+                chrom  pos_begin  pos_end  score
+                chr1   1          9        0.1
+                """)
+            .with_tabix()
+            .with_labels(reference_genome="genomes/g1041r"))
+        .with_resource(
+            "genomes/g1041r",
+            a_reference_genome()
+            .with_chromosome("chr1", "A" * 100)
+            .with_chromosome("chr2", "C" * 300))
+        .build_repo(tmp_path)
+    )
+
+    table = table_after(
+        built_page(repo, "scores/rollup"), "<h2>Coverage</h2>")
+
+    assert [row[0].text for row in table.body] == ["chr1"]
+    sort_keys([cell for row in table.body for cell in row])
+    assert [row[0].text for row in table.foot] == [
+        "1 contig with no values (300 bp)", "all chromosomes"]
+    assert table.loose == []

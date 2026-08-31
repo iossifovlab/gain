@@ -142,15 +142,26 @@ alt-minus-ref, not an absolute value.
   touching only chr1 reported a global percent as if the rest of the genome
   did not exist — a number that answered "what part of what I already cover
   do I cover", which is not a question anyone has. The denominator is now the
-  sum of **all** the genome's contig lengths; on the bigWig rung, the
-  header's whole contig list, which that backend serves cleanly off an open
-  table (`get_chromosomes()`, already in reference space), so both rungs
-  answer the same question.
+  sum of **all** the genome's contig lengths; on the bigWig rung, the whole
+  contig list that backend serves cleanly off an open table
+  (`get_chromosomes()`, already in reference space).
+
+  **The two rungs answer the same question about different universes**, and
+  that is worth stating rather than discovering. A bigWig header is the
+  *file's* universe, not a reference: a chr21-only bigWig reads as nearly
+  fully covered unlabelled, and as a percent or two once labelled hg38. Only
+  the genome rung answers this bullet's title question; the table rung
+  answers "what part of what this file declares". Under a `chrom_mapping`
+  **file** it is narrower still — `get_chromosomes()` is then the mapping's
+  contigs — so that rung's denominator is the resource's *declared* universe.
+  The label is what upgrades the number, which is why the resource-authoring
+  documentation now says so plainly.
 
   Three consequences are decisions rather than fallout:
 
   - **The untouched remainder is one roll-up row** — "N contigs with no
-    values (X bp, 0%)" — not a row each and not silence. A reference carries
+    values (X bp)", carrying a 0.00% in the percent column — not a row each
+    and not silence. A reference carries
     hundreds of contigs a score never touches, and per-contig zero rows would
     bury the contigs that do have values. Membership is **zero covered
     positions**, not absence from the stored statistic: a bigWig scan visits
@@ -161,9 +172,12 @@ alt-minus-ref, not an absolute value.
     covered contig the resolved reference does not list is proof the label is
     wrong, and an implausible length (a zero-length `.fai` record, a contig
     shorter than the positions the score holds on it) is proof for that
-    contig. Either degrades to raw counts as before — and the roll-up is
-    withheld with the global fraction, because "these contigs have no values"
-    is a claim about the reference being the right one.
+    contig. Either degrades to raw counts as before — that contig's row, and
+    with it the global fraction; sibling rows keep their percentages — and
+    the roll-up is withheld with the global fraction, because "these contigs
+    have no values" is a claim about the reference being the right one. An
+    implausible length on an *untouched* contig degrades nothing visible: it
+    simply leaves the universe, contributing neither denominator nor roll-up.
   - **Still render-time only.** No stored statistic changes and no resource
     rebuilds: this bullet's own rule is what makes the correction free.
 - **Lazy rollout; `calc_statistics_hash` untouched.** The new statistics do

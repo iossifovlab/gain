@@ -880,7 +880,18 @@ class CoverageDisplay(NamedTuple):
 
     @property
     def has_fractions(self) -> bool:
-        return any(row.fraction is not None for row in self.rows)
+        """Whether the section renders a ``Covered %`` column at all.
+
+        The summary rows carry percentages too, so this cannot be read
+        off ``rows`` alone: a score with no values ANYWHERE has every
+        contig rolled up and no rows left, and a resolved global
+        fraction of 0.0 would be computed and then dropped for want of
+        a column to print it in.
+        """
+        return (
+            self.global_fraction is not None
+            or any(row.fraction is not None for row in self.rows)
+        )
 
     @property
     def global_segments(self) -> int | None:
@@ -945,10 +956,17 @@ def resolve_chrom_lengths(
 
     What comes back is the **whole universe** the fraction is measured
     against, not only the contigs the score touched (gain#1041): every
-    contig of the resolved genome, or every contig the bigWig header
+    contig of the resolved genome, or every contig the table rung
     lists.  ``chroms`` -- the covered contigs -- is still passed in so
     that a covered contig the resolved source does NOT list is visible
     to the caller by its absence, which is what degrades the fraction.
+
+    The two rungs are not interchangeable, and the fraction means
+    something weaker on the lower one: a bigWig header is the FILE's
+    universe, so a chr21-only bigWig reads as nearly fully covered
+    unlabelled and as a percent or two of hg38 once labelled.  Only the
+    genome rung answers "what part of the reference genome has values";
+    the table rung answers "what part of what this file declares".
 
     The genome rung is resolved by the CALLER: it needs a repository,
     which only exists during a page build, and the cache it goes
@@ -976,12 +994,20 @@ def _table_exact_lengths(
     score if it is closed, and closes it again only in that case --
     an already-open score stays open for its owner.
 
-    The universe is the header's WHOLE contig list, which this backend
+    The universe is the table's WHOLE contig list, which this backend
     serves cleanly -- ``get_chromosomes()`` off an open table, already
-    in reference space -- so the bigWig rung answers the same question
-    the genome rung does (gain#1041, ADR 0020).  The covered contigs are
-    appended so that one the header does not list still reaches the
-    unknown-contig warning below instead of vanishing silently.
+    in reference space -- rather than only the contigs the score
+    touched (gain#1041, ADR 0020).  The covered contigs are appended so
+    that one the table does not list still reaches the unknown-contig
+    warning below instead of vanishing silently.
+
+    "The table's" and not "the header's": under a ``chrom_mapping``
+    FILE, ``get_chromosomes()`` is the mapping's contigs, so a mapping
+    naming a subset of the header shrinks the universe to that subset.
+    That is the mapping doing its job -- a contig the resource declines
+    to map is not part of what the resource claims to cover -- but it
+    does mean this rung's denominator is the resource's declared
+    universe, not the file's.
     """
     opened_here = not score.is_open()
     if opened_here:
@@ -1073,14 +1099,22 @@ def _plausible_lengths(
     the global fraction, since the caller's all-covered-contigs-resolve
     test then fails; dropping an untouched one merely shrinks the
     universe, which is right: it contributes no reference either.
+
+    Which of the two decides the LOG LEVEL, because this runs on every
+    page render: a covered contig whose length is wrong changes what
+    the page shows and is a warning, as it always was, while an
+    untouched one changes nothing visible and would otherwise warn once
+    per zero-length ``.fai`` record per render.
     """
     kept = {}
     for chrom, length in lengths.items():
-        if length <= 0 or covered.get(chrom, 0) > length:
-            logger.warning(
+        covered_here = covered.get(chrom, 0)
+        if length <= 0 or covered_here > length:
+            log = logger.warning if chrom in covered else logger.debug
+            log(
                 "implausible length %s for contig %s of %s "
                 "(covered positions: %s); rendering raw counts for it",
-                length, chrom, resource_id, covered.get(chrom, 0))
+                length, chrom, resource_id, covered_here)
             continue
         kept[chrom] = length
     return kept
