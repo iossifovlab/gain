@@ -1,7 +1,6 @@
 # pylint: disable=C0114,C0116,W0212,W0621
 import json
 import pathlib
-import re
 
 import pytest
 from gain.genomic_resources.histogram import NumberHistogramConfig
@@ -21,6 +20,11 @@ from gain.genomic_resources.statistics.length_histogram import (
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
     a_position_score,
+)
+
+from tests.small.genomic_resources.info_page_html import (
+    section_after,
+    table_after,
 )
 
 _HIST_DICT: dict = {
@@ -189,20 +193,6 @@ def test_a_position_score_publishes_no_fragment_statistics(
     assert stats.fragments_global() is None
 
 
-def _fragments_section(page: str) -> str:
-    """The Fragments section's own markup, heading to next heading."""
-    heading = "<h2>Fragments</h2>"
-    assert heading in page, "no Fragments section on this page"
-    rest = page.split(heading, 1)[1]
-    return rest.split("<h2>", 1)[0]
-
-
-def _squashed(markup: str) -> str:
-    """Markup with whitespace between tags removed, so a row's cells can
-    be asserted as one adjacent pair rather than as loose fragments."""
-    return re.sub(r">\s+<", "><", markup)
-
-
 def _info_page(resource: GenomicResource) -> str:
     return build_score_implementation_from_resource(resource).get_info()
 
@@ -215,14 +205,21 @@ def test_the_info_page_renders_a_fragments_section(
     resource = _fragments(tmp_path)
     scan.do_noregion_histograms(resource)
 
-    section = _fragments_section(_info_page(resource))
+    page = _info_page(resource)
+    table = table_after(page, "<h2>Fragments</h2>")
 
-    # Bound to their chromosomes: counts of {chr1: 1, chr2: 4} must not
-    # pass a test for "the page contains a 4 and a 1 somewhere".
-    assert "<td>chr1</td><td>4</td>" in _squashed(section)
-    assert "<td>chr2</td><td>1</td>" in _squashed(section)
-    assert "<td>all chromosomes</td><td>5</td>" in _squashed(section)
-    assert section.count(
+    # Whole rows, so the counts stay bound to their chromosomes: a test
+    # for "the page contains a 4 and a 1 somewhere" would pass on markup
+    # that had swapped them.
+    assert [[cell.text for cell in row] for row in table.rows] == [
+        ["chr1", "4"], ["chr2", "1"]]
+    assert [[cell.text for cell in row] for row in table.foot] == [
+        ["all chromosomes", "5"]]
+    # Counted over the WHOLE Fragments section, subsection included, which
+    # is what makes this "one global image and no per-chromosome ones":
+    # a per-chromosome image would render beside the table above, inside
+    # this section but outside the Fragment lengths subheading.
+    assert section_after(page, "<h2>Fragments</h2>").count(
         "statistics/coverage_fragment_lengths.png") == 1
     assert resource.file_exists("statistics/coverage_fragment_lengths.png")
 
@@ -259,10 +256,13 @@ def test_a_fragment_resource_with_no_statistics_file_says_not_computed(
     resource.proto.delete_resource_file(
         resource, "statistics/coverage.json")
 
-    section = _fragments_section(_info_page(resource))
+    page = _info_page(resource)
 
-    assert "not computed" in section
-    assert "coverage_fragment_lengths.png" not in section
+    assert "not computed" in section_after(page, "<h2>Fragments</h2>")
+    # Asserted against the whole page rather than the section: with no
+    # statistics the Fragment lengths subsection is not rendered at all,
+    # so a section-scoped assertion would hold without meaning anything.
+    assert "coverage_fragment_lengths.png" not in page
 
 
 def test_a_coverage_file_written_before_fragments_says_not_computed(
@@ -286,4 +286,5 @@ def test_a_coverage_file_written_before_fragments_says_not_computed(
     stats = _stored(resource)
     assert stats.covered_by_chromosome() == {"chr1": 111, "chr2": 4}
     assert stats.fragments_global() is None
-    assert "not computed" in _fragments_section(_info_page(resource))
+    assert "not computed" in section_after(
+        _info_page(resource), "<h2>Fragments</h2>")
