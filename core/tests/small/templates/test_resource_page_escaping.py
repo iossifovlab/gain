@@ -29,6 +29,7 @@ from gain.gene_scores.implementations.gene_scores_impl import (
 )
 from gain.gene_sets.implementations.gene_sets_impl import GeneSetCollectionImpl
 from gain.genomic_resources.implementations.genomic_scores_impl import (
+    scan,
     GenomicScoreImplementation,
 )
 from gain.genomic_resources.repository import GenomicResource
@@ -191,7 +192,7 @@ def test_genomic_score_id_cannot_add_an_event_handler(
     """
     score_id = f'x"{PAYLOAD}'
     resource = _build_position_score(tmp_path, score_id)
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
 
     page = GenomicScoreImplementation(resource).get_info()
 
@@ -216,6 +217,6 @@ def test_a_control_character_score_id_is_refused_before_rendering(
     resource = _build_position_score(tmp_path, f"x\t{PAYLOAD}")
 
     with pytest.raises(ValueError) as excinfo:
-        GenomicScoreImplementation._do_noregion_histograms(resource)
+        scan.do_noregion_histograms(resource)
 
     assert "control or line-separator character" in str(excinfo.value)

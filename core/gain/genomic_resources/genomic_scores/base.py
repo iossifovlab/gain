@@ -952,7 +952,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         What a *consumer* additionally needs stays with the consumer: the
         statistics scan also requires a bounded region and a resource kind it
         is exercised against, and it keeps asking that itself (see
-        ``GenomicScoreImplementation._bulk_scan_eligible``).  What it does
+        ``genomic_scores_impl.scan.bulk_scan_eligible``).  What it does
         NOT require is a particular record shape: the accumulator reads the
         kind's own ``RECORD_WEIGHT_IS_SPAN`` and the scan's door reads the
         kind's own ``validate_record_arrays``, so a position, allele and

@@ -6,6 +6,7 @@ import weakref
 
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
+    scan,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing import (
@@ -45,7 +46,7 @@ def _built_impl(
     repo: GenomicResourceRepo, resource_id: str,
 ) -> GenomicScoreImplementation:
     resource = repo.get_resource(resource_id)
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
     return GenomicScoreImplementation(repo.get_resource(resource_id))
 
 

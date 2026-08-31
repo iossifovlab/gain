@@ -5,8 +5,8 @@ from collections.abc import Callable
 
 import pytest
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    GenomicScoreImplementation,
     build_score_implementation_from_resource,
+    scan,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing.builders import (
@@ -37,7 +37,7 @@ def _chromosome_column(page: str, heading: str) -> list[str]:
 
 def _built_page(resource: GenomicResource) -> str:
     """The resource's info page, statistics built."""
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
     return build_score_implementation_from_resource(resource).get_info()
 
 

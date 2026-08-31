@@ -12,7 +12,7 @@ from gain.genomic_resources.histogram import (
     NumberHistogramConfig,
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    GenomicScoreImplementation,
+    scan,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_errors import MalformedResourceError
@@ -75,9 +75,9 @@ def test_bulk_histogram_matches_per_record_tabix_multiscore(
     resource = _multiscore_tabix(tmp_path)
     confs: dict = {"s1": _hist_conf(), "s2": _hist_conf()}
 
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", 1, 20)
-    bulk = GenomicScoreImplementation._do_histogram_bulk(
+    bulk = scan.do_histogram_bulk(
         resource, confs, "chr1", 1, 20)
 
     _assert_hists_equal(bulk, ref)
@@ -103,9 +103,9 @@ def test_bulk_histogram_matches_per_record_zero_based(
         .build_resource(tmp_path)
     )
     confs: dict = {"s": _hist_conf()}
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", 1, 7)
-    bulk = GenomicScoreImplementation._do_histogram_bulk(
+    bulk = scan.do_histogram_bulk(
         resource, confs, "chr1", 1, 7)
     _assert_hists_equal(bulk, ref)
 
@@ -130,9 +130,9 @@ def test_bulk_histogram_matches_per_record_configured_na(
         .build_resource(tmp_path)
     )
     confs: dict = {"s": _hist_conf()}
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", 1, 6)
-    bulk = GenomicScoreImplementation._do_histogram_bulk(
+    bulk = scan.do_histogram_bulk(
         resource, confs, "chr1", 1, 6)
     _assert_hists_equal(bulk, ref)
     assert bulk["s"].bars.sum() == ref["s"].bars.sum()
@@ -144,9 +144,9 @@ def test_bulk_histogram_matches_per_record_subregion_clip(
     resource = _multiscore_tabix(tmp_path)
     confs: dict = {"s1": _hist_conf(), "s2": _hist_conf()}
     # A sub-region that clips the first and last spanning records.
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", 3, 15)
-    bulk = GenomicScoreImplementation._do_histogram_bulk(
+    bulk = scan.do_histogram_bulk(
         resource, confs, "chr1", 3, 15)
     _assert_hists_equal(bulk, ref)
 
@@ -169,9 +169,9 @@ def test_bulk_histogram_matches_per_record_bigwig(
     confs: dict = {"bw": NumberHistogramConfig.from_dict({
         "type": "number", "view_range": {"min": 0, "max": 4},
         "number_of_bins": 4, "x_log_scale": False, "y_log_scale": False})}
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", 1, 6)
-    bulk = GenomicScoreImplementation._do_histogram_bulk(
+    bulk = scan.do_histogram_bulk(
         resource, confs, "chr1", 1, 6)
     _assert_hists_equal(bulk, ref)
 
@@ -196,14 +196,14 @@ def test_bulk_histogram_overlap_guard_across_batch_boundary(
     )
     confs: dict = {"s": _hist_conf()}
     monkeypatch.setattr(
-        GenomicScoreImplementation, "_SCAN_BATCH_SIZE", 1)
+        scan, "_SCAN_BATCH_SIZE", 1)
 
     # The per-record path rejects this fixture; the bulk path must too.
     with pytest.raises(ValueError, match="multiple values"):
-        GenomicScoreImplementation._do_histogram(
+        scan.do_histogram(
             resource, confs, "chr1", 1, 7)
     with pytest.raises(ValueError, match="multiple values"):
-        GenomicScoreImplementation._do_histogram_bulk(
+        scan.do_histogram_bulk(
             resource, confs, "chr1", 1, 7)
 
 
@@ -211,10 +211,10 @@ def test_dispatch_uses_bulk_for_float_tabix(tmp_path: pathlib.Path) -> None:
     resource = _multiscore_tabix(tmp_path)
     confs: dict = {"s1": _hist_conf(), "s2": _hist_conf()}
 
-    assert GenomicScoreImplementation._can_bulk_histogram(resource, confs)
-    via_task = GenomicScoreImplementation._do_histogram_task(
+    assert scan.can_bulk_histogram(resource, confs)
+    via_task = scan.do_histogram_task(
         resource, confs, "chr1", 1, 20).histograms
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", 1, 20)
     _assert_hists_equal(via_task, ref)
 
@@ -228,9 +228,9 @@ def test_dispatch_falls_back_for_whole_table_scan(
     # used to be spelled ``chrom=None``.
     resource = _multiscore_tabix(tmp_path)
     confs: dict = {"s1": _hist_conf(), "s2": _hist_conf()}
-    via_task = GenomicScoreImplementation._do_histogram_task(
+    via_task = scan.do_histogram_task(
         resource, confs, "chr1", None, None).histograms
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", None, None)
     _assert_hists_equal(via_task, ref)
 
@@ -272,7 +272,7 @@ def _int_position_tabix(tmp_path: pathlib.Path) -> GenomicResource:
 def test_int_score_is_bulk_eligible(tmp_path: pathlib.Path) -> None:
     resource = _int_position_tabix(tmp_path)
     confs: dict = {"s": _int_hist_conf()}
-    assert GenomicScoreImplementation._can_bulk_histogram(resource, confs)
+    assert scan.can_bulk_histogram(resource, confs)
 
 
 def test_bulk_histogram_matches_per_record_int_score(
@@ -281,9 +281,9 @@ def test_bulk_histogram_matches_per_record_int_score(
     resource = _int_position_tabix(tmp_path)
     confs: dict = {"s": _int_hist_conf()}
 
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", 1, 20)
-    bulk = GenomicScoreImplementation._do_histogram_bulk(
+    bulk = scan.do_histogram_bulk(
         resource, confs, "chr1", 1, 20)
 
     _assert_hists_equal(bulk, ref)
@@ -299,9 +299,9 @@ def test_bulk_histogram_matches_per_record_int_score_via_the_task(
     resource = _int_position_tabix(tmp_path)
     confs: dict = {"s": _int_hist_conf()}
 
-    via_task = GenomicScoreImplementation._do_histogram_task(
+    via_task = scan.do_histogram_task(
         resource, confs, "chr1", 1, 20).histograms
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", 1, 20)
 
     _assert_hists_equal(via_task, ref)
@@ -350,7 +350,7 @@ def test_str_score_with_a_categorical_histogram_is_bulk_eligible(
 ) -> None:
     resource = _str_position_tabix(tmp_path)
     confs: dict = {"s": CategoricalHistogramConfig.default_config()}
-    assert GenomicScoreImplementation._can_bulk_histogram(resource, confs)
+    assert scan.can_bulk_histogram(resource, confs)
 
 
 def test_bulk_categorical_matches_per_record_str_score(
@@ -359,9 +359,9 @@ def test_bulk_categorical_matches_per_record_str_score(
     resource = _str_position_tabix(tmp_path)
     confs: dict = {"s": CategoricalHistogramConfig.default_config()}
 
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", 1, 20)
-    bulk = GenomicScoreImplementation._do_histogram_bulk(
+    bulk = scan.do_histogram_bulk(
         resource, confs, "chr1", 1, 20)
 
     _assert_categorical_equal(bulk, ref)
@@ -383,9 +383,9 @@ def test_bulk_categorical_matches_per_record_str_score_selected(
     resource = _str_position_tabix(tmp_path)
     confs: dict = {"s": CategoricalHistogramConfig.default_config()}
 
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", 2, 13)
-    bulk = GenomicScoreImplementation._do_histogram_bulk(
+    bulk = scan.do_histogram_bulk(
         resource, confs, "chr1", 2, 13)
 
     _assert_categorical_equal(bulk, ref)
@@ -398,9 +398,9 @@ def test_bulk_categorical_matches_per_record_via_the_task(
     resource = _str_position_tabix(tmp_path)
     confs: dict = {"s": CategoricalHistogramConfig.default_config()}
 
-    via_task = GenomicScoreImplementation._do_histogram_task(
+    via_task = scan.do_histogram_task(
         resource, confs, "chr1", 1, 20).histograms
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", 1, 20)
 
     _assert_categorical_equal(via_task, ref)
@@ -419,10 +419,10 @@ def test_an_int_score_with_a_categorical_histogram_keeps_the_per_record_path(
     resource = _int_position_tabix(tmp_path)
     confs: dict = {"s": CategoricalHistogramConfig.default_config()}
 
-    assert not GenomicScoreImplementation._can_bulk_histogram(resource, confs)
+    assert not scan.can_bulk_histogram(resource, confs)
 
     # ...and the per-record path it stays on does build the histogram.
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", 1, 20)
     assert ref["s"].raw_values == {3: 3, 7: 1, 1000: 4, 123: 2}
 
@@ -442,9 +442,9 @@ def test_a_str_score_with_a_number_histogram_keeps_the_per_record_path(
     resource = _str_position_tabix(tmp_path)
     confs: dict = {"s": _hist_conf()}
 
-    assert not GenomicScoreImplementation._can_bulk_histogram(resource, confs)
+    assert not scan.can_bulk_histogram(resource, confs)
 
-    ref = GenomicScoreImplementation._do_histogram_task(
+    ref = scan.do_histogram_task(
         resource, confs, "chr1", 1, 20).histograms
     assert isinstance(ref["s"], NullHistogram)
 
@@ -476,9 +476,9 @@ def test_bulk_categorical_nullifies_exactly_as_per_record_does(
     resource = _many_valued_str_tabix(tmp_path, distinct)
     confs: dict = {"s": CategoricalHistogramConfig.default_config()}
 
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", 1, distinct)
-    bulk = GenomicScoreImplementation._do_histogram_bulk(
+    bulk = scan.do_histogram_bulk(
         resource, confs, "chr1", 1, distinct)
 
     assert isinstance(ref["s"], NullHistogram)
@@ -502,11 +502,11 @@ def test_a_nullified_score_is_skipped_by_every_later_batch(
     resource = _many_valued_str_tabix(tmp_path, distinct)
     confs: dict = {"s": CategoricalHistogramConfig.default_config()}
     monkeypatch.setattr(
-        GenomicScoreImplementation, "_SCAN_BATCH_SIZE", 10)
+        scan, "_SCAN_BATCH_SIZE", 10)
 
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", 1, distinct)
-    bulk = GenomicScoreImplementation._do_histogram_bulk(
+    bulk = scan.do_histogram_bulk(
         resource, confs, "chr1", 1, distinct)
 
     assert isinstance(bulk["s"], NullHistogram)
@@ -538,9 +538,9 @@ def test_a_nullified_score_does_not_cost_the_others_theirs(
         "f": _hist_conf(),
     }
 
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", 1, limit + 30)
-    bulk = GenomicScoreImplementation._do_histogram_bulk(
+    bulk = scan.do_histogram_bulk(
         resource, confs, "chr1", 1, limit + 30)
 
     assert isinstance(bulk["s"], NullHistogram)
@@ -569,9 +569,9 @@ def test_bulk_matches_per_record_float_underscore_token(
     confs: dict = {"s": NumberHistogramConfig.from_dict({
         "type": "number", "view_range": {"min": 0, "max": 2000},
         "number_of_bins": 10, "x_log_scale": False, "y_log_scale": False})}
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "chr1", 1, 4)
-    bulk = GenomicScoreImplementation._do_histogram_bulk(
+    bulk = scan.do_histogram_bulk(
         resource, confs, "chr1", 1, 4)
     _assert_hists_equal(bulk, ref)
     assert bulk["s"].max_value == 1000.0
@@ -596,11 +596,11 @@ def test_a_score_without_column_arrays_is_not_bulk_eligible(
         .build_resource(tmp_path)
     )
     confs: dict = {"score": _hist_conf()}
-    assert not GenomicScoreImplementation._can_bulk_histogram(resource, confs)
+    assert not scan.can_bulk_histogram(resource, confs)
 
-    via_task = GenomicScoreImplementation._do_histogram_task(
+    via_task = scan.do_histogram_task(
         resource, confs, "1", 1, 20).histograms
-    ref = GenomicScoreImplementation._do_histogram(
+    ref = scan.do_histogram(
         resource, confs, "1", 1, 20)
     _assert_hists_equal(via_task, ref)
 
@@ -631,11 +631,11 @@ def test_bulk_histogram_overlap_guard_within_one_batch(
     confs: dict = {"s": _hist_conf()}
     # Default batch size: both rows land in the same batch.
     with pytest.raises(ValueError, match="multiple values for positions"):
-        GenomicScoreImplementation._do_histogram_bulk(
+        scan.do_histogram_bulk(
             resource, confs, "chr1", 1, 10)
     # ...and the per-record path rejects it the same way.
     with pytest.raises(ValueError, match="multiple values for positions"):
-        GenomicScoreImplementation._do_histogram(
+        scan.do_histogram(
             resource, confs, "chr1", 1, 10)
 
 
@@ -659,10 +659,10 @@ def test_bulk_histogram_overlap_guard_rejects_adjacency_within_one_batch(
     )
     confs: dict = {"s": _hist_conf()}
     with pytest.raises(ValueError, match="multiple values for positions"):
-        GenomicScoreImplementation._do_histogram_bulk(
+        scan.do_histogram_bulk(
             resource, confs, "chr1", 1, 10)
     with pytest.raises(ValueError, match="multiple values for positions"):
-        GenomicScoreImplementation._do_histogram(
+        scan.do_histogram(
             resource, confs, "chr1", 1, 10)
 
 
@@ -697,7 +697,7 @@ def test_the_bulk_guard_names_the_offender_within_one_batch(
     confs: dict = {"s": _hist_conf()}
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        GenomicScoreImplementation._do_histogram_bulk(
+        scan.do_histogram_bulk(
             resource, confs, "chr1", 1, 10)
 
     message = str(excinfo.value)
@@ -722,10 +722,10 @@ def test_the_bulk_guard_names_the_offender_across_a_batch_boundary(
     """)
     confs: dict = {"s": _hist_conf()}
     monkeypatch.setattr(
-        GenomicScoreImplementation, "_SCAN_BATCH_SIZE", 1)
+        scan, "_SCAN_BATCH_SIZE", 1)
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        GenomicScoreImplementation._do_histogram_bulk(
+        scan.do_histogram_bulk(
             resource, confs, "chr1", 1, 10)
 
     message = str(excinfo.value)
@@ -736,8 +736,8 @@ def test_the_bulk_guard_names_the_offender_across_a_batch_boundary(
 
 
 @pytest.mark.parametrize("task,args", [
-    ("_do_min_max_task", ["s"]),
-    ("_do_histogram_task", {"s": None}),
+    ("do_min_max_task", ["s"]),
+    ("do_histogram_task", {"s": None}),
 ])
 def test_a_statistics_task_reports_the_malformed_resource_and_re_raises(
     tmp_path: pathlib.Path,
@@ -758,7 +758,7 @@ def test_a_statistics_task_reports_the_malformed_resource_and_re_raises(
 
     with caplog.at_level(logging.ERROR, logger="grr_manage"), \
             pytest.raises(MalformedResourceError):
-        getattr(GenomicScoreImplementation, task)(
+        getattr(scan, task)(
             resource, payload, "chr1", 1, 10)
 
     assert any(
