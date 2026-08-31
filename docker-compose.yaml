@@ -1,6 +1,32 @@
+# Every service here is a LOCAL TEST FIXTURE, not a deployed service, so
+# each one carries `org.seqpipe.ephemeral: "true"`.
+#
+# The seqpipe fleet commits a read-only node-state baseline
+# (seqpipe/infra, state/nodes/*.yml) that captures the containers running
+# on each host, so that `git diff` on it means "real drift". These
+# fixtures run on the shared build agents -- the toolbox CLAUDE.md tells
+# you to bring them up with `cd gain && docker compose up -d` -- so they
+# appeared and disappeared in that baseline depending on who last ran
+# tests on which agent. On 2026-08-27 piglet gained gain-apache-1 /
+# gain-minio-1 / gain-mail-1 in the same re-baseline that pooh lost them.
+#
+# infra's node-state template drops any container labelled
+# org.seqpipe.ephemeral=true. It filters on a LABEL rather than on a name
+# prefix or on `restart: no`, because a label only ever excludes what
+# someone deliberately marked: an unlabelled ad-hoc container is still
+# captured, and a deployed service can never vanish from the baseline by
+# accident. See seqpipe/infra#225 and iossifovlab/gain#956.
+#
+# Declared once as an anchor so the key has one place to change if infra
+# ever renames it. Labels are metadata only -- no image, port, network or
+# healthcheck changes here, so test behaviour is untouched.
+x-ephemeral-fixture: &ephemeral-fixture
+  org.seqpipe.ephemeral: "true"
+
 services:
 
   minio:
+    labels: *ephemeral-fixture
     # tb-eqh: pinned to a known-good release. Late-2023 MinIO removed
     # curl from the image (switched to ubi-micro), and `:latest` would
     # silently break the curl-based healthcheck on any agent that
@@ -35,6 +61,7 @@ services:
       retries: 5
 
   minio-client:
+    labels: *ephemeral-fixture
     image: minio/mc:latest
     entrypoint: >
       /bin/sh -c "
@@ -48,6 +75,7 @@ services:
 
 
   apache:
+    labels: *ephemeral-fixture
     image: httpd:latest
     # Network-only by default — host-side port publishing lives in
     # docker-compose.override.yaml. See note on `minio` above.
@@ -57,6 +85,7 @@ services:
       - ./core/tests/.test_grr:/usr/local/apache2/htdocs/
 
   mail:
+    labels: *ephemeral-fixture
     image: axllent/mailpit:latest
     hostname: mail
     expose:
