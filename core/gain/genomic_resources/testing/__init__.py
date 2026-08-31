@@ -35,6 +35,7 @@ from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,
 )
 from gain.genomic_resources.testing.faulty_filesystem import FaultyFileSystem
+from gain.utils.fs_utils import endswith_ci
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +273,7 @@ def setup_genome_bgz(out_path: pathlib.Path, content: str) -> ReferenceGenome:
     Writes a BGZF-compressed FASTA at ``out_path`` (expected to end in
     ``.fa.gz``/``.fa.bgz``) together with its ``.fai`` and ``.gzi`` indexes.
     """
-    if not out_path.name.endswith((".fa.gz", ".fa.bgz")):
+    if not endswith_ci(out_path.name, (".fa.gz", ".fa.bgz")):
         raise ValueError(
             "bgzipped genome output file is expected to have a "
             "'.fa.gz' or '.fa.bgz' suffix")

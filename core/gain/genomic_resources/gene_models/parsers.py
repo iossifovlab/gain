@@ -12,6 +12,7 @@ from gain import logging
 from gain.genomic_resources.repository import (
     GenomicResource,
 )
+from gain.utils.fs_utils import endswith_ci
 from gain.utils.log_safety import escape_unsafe_characters
 
 from .default_attributes import parse_default_attributes
@@ -1036,9 +1037,7 @@ def load_gene_mapping(resource: GenomicResource) -> dict[str, str]:
         "gene_mapping", None)
     if gene_mapping_filename is None:
         return {}
-    compression = False
-    if gene_mapping_filename.endswith(".gz"):
-        compression = True
+    compression = endswith_ci(gene_mapping_filename, ".gz")
     with resource.open_raw_file(
             gene_mapping_filename, "rt",
             compression=compression) as infile:
@@ -1309,10 +1308,7 @@ def load_transcript_models(
     gene_mapping = load_gene_mapping(resource)
 
     logger.debug("loading gene models %s (%s)", filename, fileformat)
-    compression = False
-
-    if filename.endswith(".gz"):
-        compression = True
+    compression = endswith_ci(filename, ".gz")
     with resource.open_raw_file(
             filename, mode="rt", compression=compression) as infile:
 
