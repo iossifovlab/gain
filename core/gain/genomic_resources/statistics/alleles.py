@@ -450,7 +450,7 @@ class RegionAlleles:
     no merge can double-count it.  A row's optional ``pos_end`` takes no
     part -- an allele's value stands for its ref/alt pair, not for the
     bases such a column may reach over -- so ownership is the shared
-    :func:`~gain.genomic_resources.genomic_scores.clip_span` asked about
+    :func:`~gain.genomic_resources.genomic_scores.records.clip_span` asked about
     the point, and gain#636's edge is answered there rather than again
     here.
 
@@ -1029,7 +1029,7 @@ def region_alleles_for(
 
     Until 2026.8.5 that was load-bearing: ``allele_score`` and the
     deprecated ``np_score`` both built an
-    :class:`~gain.genomic_resources.genomic_scores.AlleleScore` while
+    :class:`~gain.genomic_resources.genomic_scores.allele.AlleleScore` while
     ``equivalent_resource_types`` aliased neither to the other, so a gate
     written on type strings skipped ``np_score`` silently (gain#777).
     ``np_score`` is gone (gain#920) and only one spelling reaches here now,
@@ -1093,7 +1093,7 @@ def allele_arrays_folded_into(
     yields is the batch's ``[:3]`` slice -- a plain ``RecordArrays`` --
     because the scan's array door (``validate_record_arrays``, ADR 0008)
     unpacks three names and raises on the five an
-    :class:`~gain.genomic_resources.genomic_scores.AlleleRecordArrays`
+    :class:`~gain.genomic_resources.genomic_scores.records.AlleleRecordArrays`
     carries.
 
     Folding on the way IN is what lets the nucleotides reach this

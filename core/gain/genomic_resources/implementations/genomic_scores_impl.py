@@ -1025,7 +1025,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         """Select a batch's owned records and weigh them, per ``score``'s kind.
 
         Returns ``(keep, weights)``:
-        :func:`~gain.genomic_resources.genomic_scores.owned_records_mask`,
+        :func:`~gain.genomic_resources.genomic_scores.records.owned_records_mask`,
         and the owned records' weights measured at their FULL span --
         never clipped to the region.  Selecting instead of clipping is
         what makes a statistic independent of ``--region-size``

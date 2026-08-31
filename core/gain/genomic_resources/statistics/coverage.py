@@ -923,7 +923,7 @@ def accumulate_coverage(
     verdict.  A kind whose rows cannot (see
     :attr:`RegionCoverage.rows_are_disjoint`) is spared the clip
     entirely and rides
-    :func:`~gain.genomic_resources.genomic_scores.owned_records_mask`,
+    :func:`~gain.genomic_resources.genomic_scores.records.owned_records_mask`,
     the record partition every other statistic reads: disjoint spans
     cannot double-count, so the union is exact at full span, and the
     segment runs the same feed builds are measured at their true length

@@ -21,7 +21,6 @@ from typing import (
 
 import numpy as np
 
-from gain import logging
 from gain.genomic_resources.genomic_position_table.record import (
     ALT,
     POS_BEGIN,
@@ -61,8 +60,6 @@ from .records import (
     RecordArrays,
     _key_column_array,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class AlleleScore(GenomicScore):

@@ -7,9 +7,15 @@ and the four functions that decide which part of a record a region gets.
 Two of those functions partition different things and are deliberately
 neighbours -- :func:`clip_span` partitions POSITIONS, :func:`owns_record`
 partitions RECORDS -- so that the two halves of the algebra have one home
-and a statistic picks the one it means. Nothing here imports a score class,
-which is why the scan and the statistics layer can import it without
-dragging :class:`~.base.GenomicScore` in behind it.
+and a statistic picks the one it means.
+
+Nothing here imports a score class. That is a property of this module, not
+yet a saving for its callers: the scan and the statistics layer still reach
+these names through the package facade, which imports every submodule, so
+:class:`~.base.GenomicScore` is loaded either way. What it buys is that
+those callers CAN be pointed at ``genomic_scores.records`` directly, one at
+a time, without anything else moving -- migrating them was out of scope for
+the gain#902 split that created this module.
 """
 
 from __future__ import annotations

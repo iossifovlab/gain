@@ -2,9 +2,14 @@
 
 gain#902 split the 3128-line ``genomic_scores`` module into a package of six
 modules.  The split is invisible on purpose: the package's ``__init__``
-re-exports the whole pre-split public surface, so every
-``from gain.genomic_resources.genomic_scores import <name>`` that worked
-before the split works after it, unchanged.
+re-exports every name the pre-split module DEFINED, so each
+``from gain.genomic_resources.genomic_scores import <name>`` that named one
+of them works after the split, unchanged.
+
+Names the old module merely imported -- ``np``, ``Record``,
+``GenomicScoreDef`` and some seventy others -- were reachable through it as
+incidental re-exports and deliberately are not carried over; see the
+package docstring.  No caller in gain, gpf or ``grr_bench`` used one.
 
 **This is a permanent contract, not a deprecation shim.**  Deep imports from
 the submodules (``.base``, ``.records``, ...) are allowed, but nothing is

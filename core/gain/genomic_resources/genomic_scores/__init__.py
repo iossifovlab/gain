@@ -10,8 +10,8 @@ the code already had:
 - :mod:`.position`, :mod:`.allele`, :mod:`.fragment` -- one module per kind
 - :mod:`.builders` -- the eight factories, and the dispatch between kinds
 
-**This module is a permanent facade, not a deprecation shim.**  It re-exports
-the entire pre-split public surface, so every
+**This module is a permanent facade, not a deprecation shim.**  It
+re-exports every name the pre-split module DEFINED, so each
 ``from gain.genomic_resources.genomic_scores import <name>`` written before
 the split keeps working, verbatim and indefinitely.  Deep imports from the
 submodules are allowed and equivalent, but no caller is expected to migrate
@@ -19,6 +19,13 @@ to them: gpf imports through here, and so do out-of-tree callers this
 repository cannot see or fix (``grr_bench``, demo repositories).  The
 promise is pinned by ``test_genomic_scores_facade.py``, which spells the
 surface out rather than deriving it from ``__all__``.
+
+What it deliberately does not carry is the ~70 names the pre-split module
+merely IMPORTED and so leaked as incidental re-exports -- ``np``, ``copy``,
+``Record``, ``GenomicScoreDef``, ``ScoreValue`` and the like.  Reaching
+through this module for one of those worked by accident, never by
+intention, and an AST scan of gain, gpf and ``grr_bench`` (2026-08-31)
+found no caller that did.  Import them from the module that defines them.
 
 What did NOT move here is the resource *implementation* --
 ``genomic_scores_impl`` -- whose own split is gain#1007, nor the

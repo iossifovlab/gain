@@ -16,7 +16,6 @@ from typing import (
 
 import numpy as np
 
-from gain import logging
 from gain.genomic_resources.genomic_position_table.record import (
     Record,
 )
@@ -45,8 +44,6 @@ from .records import (
     RecordArrays,
     clip_span,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class PositionScore(GenomicScore):

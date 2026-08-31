@@ -8,7 +8,6 @@ falls back to the default GRR when handed no repository.
 
 from __future__ import annotations
 
-from gain import logging
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
@@ -26,8 +25,6 @@ from .allele import AlleleScore
 from .base import GenomicScore
 from .fragment import FragmentScore
 from .position import PositionScore
-
-logger = logging.getLogger(__name__)
 
 
 def build_position_score_from_resource(

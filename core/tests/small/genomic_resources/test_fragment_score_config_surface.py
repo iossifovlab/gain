@@ -21,8 +21,10 @@ import importlib
 import importlib.util
 import logging
 import pathlib
+import pkgutil
 import textwrap
 import tomllib
+from types import ModuleType
 
 import pytest
 import pytest_mock
@@ -694,6 +696,23 @@ def test_legacy_cnv_filter_parameter_warns_once_naming_its_replacement(
     assert REMOVAL_RELEASE in message
 
 
+def _module_and_submodules(module_name: str) -> list[ModuleType]:
+    """The named module, plus every module inside it if it is a package.
+
+    A package's ``__init__`` holds only what it re-exports, so asking it
+    alone stops guarding anything the moment the module becomes a package:
+    the gain#902 split turned ``genomic_scores`` into one, and a ``CNV``
+    re-added in ``fragment`` -- where it would be re-added -- is not visible
+    from the facade.  Walked rather than listed so a module added later is
+    covered without anyone remembering to come here.
+    """
+    module = importlib.import_module(module_name)
+    return [module, *(
+        importlib.import_module(f"{module_name}.{found.name}")
+        for found in pkgutil.iter_modules(getattr(module, "__path__", []))
+    )]
+
+
 # The retired names are spelled out rather than derived, so that
 # re-introducing any one of them -- as an alias, a shim or an accidental
 # re-export -- fails here.
@@ -720,8 +739,14 @@ def test_legacy_cnv_filter_parameter_warns_once_naming_its_replacement(
 ])
 def test_old_python_names_are_gone(module_name: str, symbol: str) -> None:
     """No aliases, shims or re-exports survive the rename (gain#470)."""
-    module = importlib.import_module(module_name)
-    assert not hasattr(module, symbol)
+    offenders = [
+        module.__name__
+        for module in _module_and_submodules(module_name)
+        if hasattr(module, symbol)
+    ]
+    assert offenders == [], (
+        f"the retired name {symbol!r} is back in: {offenders}"
+    )
 
 
 def test_old_annotator_module_is_gone() -> None:
