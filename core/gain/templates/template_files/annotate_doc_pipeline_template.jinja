@@ -167,7 +167,7 @@
           <td>{{pipeline.preamble.description}}</td>
         </tr>
       {% endif %}
-      {% if res_url(pipeline.preamble.input_reference_genome_res) %}
+      {% if pipeline.preamble.input_reference_genome_res is not none %}
         <tr>
           <th>Input reference genome</th>
           <td>

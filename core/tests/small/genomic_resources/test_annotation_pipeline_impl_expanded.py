@@ -614,3 +614,107 @@ def test_multiple_calls_to_get_info(
     # Should return consistent results
     assert info1 == info2
     assert impl.pipeline is not None
+
+
+@pytest.fixture
+def preamble_grr_fixture(tmp_path: pathlib.Path) -> GenomicResourceRepo:
+    """A repo holding pipelines that carry a preamble.
+
+    ``grr_fixture``'s pipelines are bare annotator lists, so the whole
+    preamble block of the page template is skipped for them and nothing
+    there exercises the reference-genome row.
+    """
+    root_path = tmp_path / "preamble_grr"
+    setup_directories(root_path, {
+        "one": {
+            "genomic_resource.yaml": """
+                type: position_score
+                table:
+                    filename: data.txt
+                scores:
+                - id: score
+                  type: float
+                  desc: A score description
+                  name: s1
+            """,
+            "data.txt": "chrom\tpos_begin\tscore\n1\t100\t0.5\n",
+        },
+        "acgt": {
+            "genomic_resource.yaml": """
+                type: reference_genome
+                filename: genome.fa
+            """,
+            "genome.fa": "blabla",
+        },
+        "with_genome": {
+            "genomic_resource.yaml": """
+                type: annotation_pipeline
+                filename: annotation.yaml
+            """,
+            "annotation.yaml": """
+                preamble:
+                    summary: a summary
+                    description: a description
+                    input_reference_genome: acgt
+                annotators:
+                - position_score: one
+            """,
+        },
+        "without_genome": {
+            "genomic_resource.yaml": """
+                type: annotation_pipeline
+                filename: annotation.yaml
+            """,
+            "annotation.yaml": """
+                preamble:
+                    summary: a summary
+                    description: a description
+                annotators:
+                - position_score: one
+            """,
+        },
+    })
+    return build_filesystem_test_repository(root_path)
+
+
+def test_get_info_renders_the_reference_genome_row(
+    preamble_grr_fixture: GenomicResourceRepo,
+) -> None:
+    """The positive counterpart to the genome-less case below.
+
+    Without this, the absence assertion in its sibling could pass simply
+    because the row label had been renamed.
+    """
+    impl = AnnotationPipelineImplementation(
+        preamble_grr_fixture.get_resource("with_genome"),
+    )
+
+    info = impl.get_info(repo=preamble_grr_fixture)
+
+    assert "<th>Input reference genome</th>" in info
+    assert "../acgt/index.html" in info
+
+
+def test_get_info_without_a_reference_genome_omits_the_row(
+    preamble_grr_fixture: GenomicResourceRepo,
+) -> None:
+    """``grr_manage repo-info`` renders every pipeline resource this way.
+
+    ``input_reference_genome`` is optional, so ``input_reference_genome_res``
+    is legally ``None``.  The row used to be guarded on the result of the
+    address callable, which dereferences its argument unconditionally, so
+    one genome-less pipeline resource failed the whole repo-wide run:
+    ``AttributeError: 'NoneType' object has no attribute 'get_url'``, then
+    ``failed resources in GRR <...>`` and a non-zero exit (#1021).
+    """
+    impl = AnnotationPipelineImplementation(
+        preamble_grr_fixture.get_resource("without_genome"),
+    )
+
+    info = impl.get_info(repo=preamble_grr_fixture)
+
+    assert "<th>Input reference genome</th>" not in info
+    # the rest of the page is whole, not truncated at the missing row
+    assert "a summary" in info
+    assert "a description" in info
+    assert "position_score" in info
