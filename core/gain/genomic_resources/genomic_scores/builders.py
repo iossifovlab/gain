@@ -26,8 +26,8 @@ from .base import (
     AlleleScore,
     FragmentScore,
     GenomicScore,
-    PositionScore,
 )
+from .position import PositionScore
 
 logger = logging.getLogger(__name__)
 

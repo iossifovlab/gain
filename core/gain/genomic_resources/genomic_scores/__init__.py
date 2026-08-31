@@ -30,7 +30,6 @@ from .base import (
     AlleleScore,
     FragmentScore,
     GenomicScore,
-    PositionScore,
 )
 from .builders import (
     build_allele_score_from_resource,
@@ -42,6 +41,7 @@ from .builders import (
     build_score_from_resource,
     build_score_from_resource_id,
 )
+from .position import PositionScore
 from .records import (
     AlleleRecordArrays,
     RecordArrays,
