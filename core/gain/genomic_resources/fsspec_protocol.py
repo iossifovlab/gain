@@ -1356,11 +1356,33 @@ class FsspecReadOnlyProtocol(
     def _copy_resource_file_to_local(
             self, resource: GenomicResource,
             filename: str, dest_dir: str) -> str:
-        """Copy a (small) resource file into dest_dir; return the local path."""
+        """Copy a (small) resource file into dest_dir; return the local path.
+
+        Reads through ``_read_fetch_file`` rather than ``open_raw_file``:
+        on an authed GRR a failure mid-read carries the credential-bearing
+        fetch url in its own message (gain#1017). ``_open_fsspec_file``
+        states why the open-level redaction cannot reach it.
+
+        Redacting at the read is safe here in a way it was not on the
+        download path (gain#620): rebuilding an error that cannot be
+        reconstructed from a single message string yields an ``OSError``,
+        and no retry or control-flow decision on this path keys off the
+        type -- unlike ``copy_resource_file``, whose retry loop does.
+
+        One type test is reachable, ``report_resource_failure``'s
+        ``RESOURCE_ERRORS`` check, and the rebuild helps there rather than
+        hurting: an ``aiohttp`` error is not an ``OSError``, so it takes
+        the "unexpected internal error" branch that logs the whole
+        credential-bearing chain with ``exc_info``, while the rebuilt
+        ``OSError`` takes the redacted-message branch.
+        """
         dest = os.path.join(dest_dir, os.path.basename(filename))
-        with self.open_raw_file(
-                resource, filename, "rb", uncompress=False) as src:
-            data = src.read()
+        filepath = self.get_resource_file_url(resource, filename)
+        # No compression: the old ``uncompress=False`` named nothing --
+        # ``open_raw_file`` reads ``compression``, never ``uncompress`` --
+        # so the file was always read as stored, and still is.
+        data = self._read_fetch_file(filepath, "rb", None)
+        assert isinstance(data, bytes)
         pathlib.Path(dest).write_bytes(data)
         return dest
 
