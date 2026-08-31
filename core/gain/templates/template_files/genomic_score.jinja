@@ -77,12 +77,7 @@
             </td>
         </tr>
     {%- endfor %}
-    {#- An annulled histogram has no image on disk, so it gets no modal --
-        the thumbnail that opens one is not rendered for it either. #}
     {%- for score_id in scores.score_definitions.keys() -%}
-        {%- set modal_hist = impl.score.get_score_histogram(
-            score_id, truncated=True) -%}
-        {%- if modal_hist.type != 'null_histogram' %}
         <div id="modal-{{score_id | replace(" ", "_")}}" class="modal">
             <div class="modal-content">
                 <span title="{{score_id | replace(" ", "_")}}" class="close">&times;</span>
@@ -92,7 +87,6 @@
                     style="max-width: min(100%, 800px);">
             </div>
         </div>
-        {%- endif -%}
     {%- endfor %}
 </table>
 </div>

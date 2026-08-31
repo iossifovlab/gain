@@ -136,15 +136,32 @@ _COPY_BACKOFF_BASE = 5  # seconds; delays are 5s, 15s, 45s
 GRR_INTERNAL_DIR = ".grr"
 
 
-class ChecksumMismatchError(OSError):
-    """A completed download whose md5 disagrees with the manifest.
+class RetryableCopyError(OSError):
+    """A copy failure the download loop retries from scratch.
 
-    Almost always a truncated or corrupted transfer, so it is treated as a
-    retryable error by copy_resource_file rather than a hard failure.
+    Retryability is a property of the class, not of a list kept beside it:
+    ``copy_resource_file`` catches this base, so a new transient failure
+    shape becomes retryable by subclassing it and nothing else (gain#934).
+
+    What the retry buys is a fresh remote handle and a fresh temp file, so
+    only faults a second full attempt could plausibly clear belong here --
+    a stalled link, a short read, corrupt bytes. A fault that would repeat
+    identically is a plain ``OSError`` and surfaces on the first attempt.
+
+    The classification is the *download* path's, and it reaches
+    everything that path does -- the move included, so a corrupting
+    publish inside a download is retried like any other transient fault.
     """
 
 
-class TruncatedDownloadError(OSError):
+class ChecksumMismatchError(RetryableCopyError):
+    """A completed download whose md5 disagrees with the manifest.
+
+    Almost always a truncated or corrupted transfer.
+    """
+
+
+class TruncatedDownloadError(RetryableCopyError):
     """A download that ended short of the manifest's recorded byte size.
 
     A silent short read in the fsspec range-reassembly layer (gain#292, H1)
@@ -152,13 +169,11 @@ class TruncatedDownloadError(OSError):
     streamed; the copy loop stops on that empty read and writes a truncated
     file. Caught explicitly by byte count -- before the md5 check -- so the
     failure is reported as the truncation it is, with both the received and
-    the expected size, rather than as an opaque checksum mismatch. Treated as
-    retryable, like ChecksumMismatchError, so a transient short read is
-    retried from scratch rather than aborting the file.
+    the expected size, rather than as an opaque checksum mismatch.
     """
 
 
-class CorruptedPublishError(OSError):
+class CorruptedPublishError(RetryableCopyError):
     """A published object that differs in size from the verified download.
 
     The download's byte-count and md5 checks both run before the move, so
@@ -181,9 +196,10 @@ class CorruptedPublishError(OSError):
     the published object against the bytes it staged rather than against
     a manifest. The reasoning above is about the download, but the guard
     is the same one -- it lives on the move, so everything that moves
-    gets it. Membership in ``_RETRYABLE_COPY_ERRORS`` is the download
-    path's classification only; no publish of a repository artifact
-    retries.
+    gets it. The retryability inherited from
+    :class:`RetryableCopyError` does not reach that second path, though:
+    its callers publish once and propagate, so a corrupting publish of a
+    repository artifact fails rather than retrying.
     """
 
 
@@ -196,18 +212,16 @@ except ImportError:
     _aiohttp_errors = ()
 
 # Transient errors that warrant retrying a file download from scratch. A
-# stalled aiohttp read surfaces as fsspec's FSTimeoutError; ConnectionError
-# covers resets/refused connects; TruncatedDownloadError covers a silent short
-# read that ends the stream early (gain#292); ChecksumMismatchError covers a
-# full-length transfer whose bytes are corrupt; CorruptedPublishError covers a
-# move that published something other than the bytes just verified (gain#880).
+# stalled aiohttp read surfaces as fsspec's FSTimeoutError, and ConnectionError
+# covers resets/refused connects; the tuple exists for those -- failure types
+# gain does not own and so cannot give a base class. Every gain-owned shape
+# enters through RetryableCopyError instead, which is why this list does not
+# grow when one is added.
 _RETRYABLE_COPY_ERRORS: tuple[type[BaseException], ...] = (
     fsspec.exceptions.FSTimeoutError,
     asyncio.TimeoutError,
     ConnectionError,
-    TruncatedDownloadError,
-    ChecksumMismatchError,
-    CorruptedPublishError,
+    RetryableCopyError,
     *_aiohttp_errors,
 )
 
@@ -289,23 +303,6 @@ def _rebuild_error_without_userinfo(
         return OSError(redacted)
 
 
-def _error_without_userinfo(exc: BaseException) -> BaseException:
-    """Return a userinfo-free rebuild of ``exc``, or ``exc`` if it has none.
-
-    Returning ``exc`` itself is what every failure carrying no credential
-    wants -- the common unauthenticated case -- because a rebuild always
-    costs the traceback, and costs the exception its type too whenever it
-    cannot be reconstructed from a message alone. Callers can therefore
-    raise the result unconditionally, and identity is what tells them
-    whether anything was redacted.
-    """
-    message = str(exc)
-    redacted = _strip_url_userinfo(message)
-    if redacted == message:
-        return exc
-    return _rebuild_error_without_userinfo(exc, redacted)
-
-
 def _run_redacting_userinfo[T](fn: Callable[[], T]) -> T:
     """Run ``fn``, re-raising any failure with its url userinfo stripped.
 
@@ -320,11 +317,11 @@ def _run_redacting_userinfo[T](fn: Callable[[], T]) -> T:
     try:
         return fn()
     except Exception as exc:
-        reraise = _error_without_userinfo(exc)
-        if reraise is exc:
-            # Nothing was redacted. Propagate in place, so the original
-            # traceback and any chain it already carries survive.
+        message = str(exc)
+        redacted = _strip_url_userinfo(message)
+        if redacted == message:
             raise
+        reraise = _rebuild_error_without_userinfo(exc, redacted)
     raise reraise
 
 
@@ -2198,24 +2195,12 @@ class FsspecReadWriteProtocol(
                 logger.warning(
                     "transient failure downloading (%s: %s): %s; "
                     "retrying in %ss (attempt %s/%s)",
-                    dest_resource.resource_id, filename,
-                    _strip_url_userinfo(str(error)),
+                    dest_resource.resource_id, filename, error,
                     delay, attempt + 1, _COPY_MAX_ATTEMPTS)
                 time.sleep(delay)
 
         assert last_error is not None
-        # Redaction happens HERE, on the way out -- never before the
-        # ``except`` above. That clause classifies by exception type, and a
-        # rebuilt error is a different type: ``ClientResponseError`` cannot
-        # be reconstructed from a message alone, so it rebuilds to
-        # ``OSError`` -- and a bare ``OSError`` matches nothing in
-        # ``_RETRYABLE_COPY_ERRORS``. (The tuple does hold several OSError
-        # SUBCLASSES: ``ConnectionError`` and the three the download raises
-        # itself. Being one of those is what retries; being their base class
-        # is not.) Redacting any earlier would quietly cut the retry budget
-        # to a single attempt for exactly the authed downloads this
-        # protects. See gain#620.
-        raise _error_without_userinfo(last_error)
+        raise last_error
 
     def _download_resource_file(
             self,
@@ -2286,14 +2271,7 @@ class FsspecReadWriteProtocol(
             md5 = md5_hash.hexdigest()
 
             if not self.filesystem.exists(tmp_filepath):
-                # Redacted like the cleanup's own log line: a bare
-                # ``OSError`` is not in ``_RETRYABLE_COPY_ERRORS``, so this
-                # escapes the retry loop's redacting epilogue entirely, and
-                # ``tmp_filepath`` derives from the credential-bearing fetch
-                # url on a write protocol over an authed store (gain#620).
-                raise OSError(
-                    "destination file not created "
-                    f"{_strip_url_userinfo(tmp_filepath)}")
+                raise OSError(f"destination file not created {tmp_filepath}")
 
             if bytes_written != expected_size:
                 raise TruncatedDownloadError(
@@ -2357,19 +2335,10 @@ class FsspecReadWriteProtocol(
             self.filesystem.rm(tmp_filepath)
         except FileNotFoundError:
             pass
-        except Exception as error:  # noqa: BLE001  pylint: disable=broad-except
-            # Deliberately no ``exc_info``. This runs from the download's
-            # ``finally``, so the failure that got us here is still
-            # propagating, and ``exc_info`` renders the whole ACTIVE chain --
-            # which on an authed GRR is an aiohttp error carrying the
-            # credential-bearing fetch url. That put the secret in the log by
-            # a second route, one the retry loop's own redaction never sees
-            # (gain#620). The cleanup error's own message is what this line
-            # is about; it and the path are redacted for the same reason.
+        except Exception:  # noqa: BLE001  pylint: disable=broad-except
             logger.warning(
-                "unable to remove the unpublished temp file %s: %s",
-                _strip_url_userinfo(tmp_filepath),
-                _strip_url_userinfo(str(error)))
+                "unable to remove the unpublished temp file %s",
+                tmp_filepath, exc_info=True)
 
     def classify_resource_file(
             self, remote_resource: GenomicResource,

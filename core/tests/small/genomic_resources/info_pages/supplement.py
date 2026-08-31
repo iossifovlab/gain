@@ -12,13 +12,6 @@ Every resource here is realized from the builders in
 :mod:`gain.genomic_resources.testing`, so the shapes stay honest as those
 builders move.
 
-A second group, :data:`NULL_HISTOGRAM_RESOURCE_IDS`, covers a rendering
-*state* rather than a resource type: a score whose histogram is annulled.
-Those resources duplicate types mini-GRR already carries, so they are not
-about coverage of an implementation -- no mini-GRR resource declares a null
-histogram, and without one the pages' null-histogram branches are never
-rendered at all (gain#1005).
-
 Nothing in this module may import ``scanpy``.  The ``core`` CI image
 installs only ``--group dev``; scanpy arrives solely with the integration
 image's ``--group scanpy-drift`` (ADR 0014), so an import of it here would
@@ -51,28 +44,6 @@ SUPPLEMENT_RESOURCE_IDS = {
     "data_frame": "supplement_data_frame",
     "ann_data": "supplement_ann_data",
 }
-
-#: Resource ids for the supplements carrying an annulled histogram, keyed by
-#: the template whose null-histogram branch each one reaches.  Keyed by
-#: template rather than by resource type because the type is incidental here:
-#: what distinguishes these fixtures is which page renders them, and both
-#: types below are ones mini-GRR already covers with ordinary histograms.
-#:
-#: ``annotate_doc_pipeline_template.jinja`` renders a histogram image too and
-#: is deliberately absent: it addresses the GRR's *public mirror*, so whether
-#: an image exists is a question for the address policy rather than for a
-#: local statistics read (gain#1025).
-NULL_HISTOGRAM_RESOURCE_IDS = {
-    "genomic_score.jinja": "supplement_null_histogram_position_score",
-    "gene_score.jinja": "supplement_null_histogram_gene_score",
-}
-
-#: Every id this module realizes.  The suite unions this into its
-#: parametrization, so a fixture added above without a matching entry here
-#: would be built and then never looked at.
-ALL_SUPPLEMENT_RESOURCE_IDS = frozenset(
-    SUPPLEMENT_RESOURCE_IDS.values(),
-) | frozenset(NULL_HISTOGRAM_RESOURCE_IDS.values())
 
 # Three chains over three contigs, lifted from the shape the liftover
 # annotator tests already use (``tests/small/conftest.py``).  Small enough to
@@ -109,118 +80,6 @@ def add_supplement_resources(repo_dir: pathlib.Path) -> None:
         repo_dir / SUPPLEMENT_RESOURCE_IDS["data_frame"])
     an_ann_data().realize_into(
         repo_dir / SUPPLEMENT_RESOURCE_IDS["ann_data"])
-    _add_null_histogram_position_score(
-        repo_dir / NULL_HISTOGRAM_RESOURCE_IDS["genomic_score.jinja"])
-    _add_null_histogram_gene_score(
-        repo_dir / NULL_HISTOGRAM_RESOURCE_IDS["gene_score.jinja"])
-
-
-#: Two scores over five positions.  The second column is annulled, the third
-#: is histogrammed normally -- so the page under test carries both branches
-#: and a fix that simply stopped emitting every histogram image would fail
-#: the plotted score rather than pass.
-_NULL_HISTOGRAM_SCORE_DATA = """
-chrA 1 0.0 0.1
-chrA 2 0.1 0.2
-chrA 3 0.2 0.3
-chrA 4 0.3 0.4
-chrA 5 0.4 0.5
-"""
-
-
-def _add_null_histogram_position_score(resource_dir: pathlib.Path) -> None:
-    """A ``position_score`` whose first score has an annulled histogram.
-
-    ``histogram: {type: "null"}`` suppresses both the statistics JSON and the
-    PNG (gain#305 settled the JSON half), so the page has no image to point
-    at for ``annulled`` -- while ``plotted`` still has one.
-    """
-    setup_directories(resource_dir, {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: position_score
-            table:
-                filename: scores.tsv
-                zero_based: false
-                chrom:
-                    index: 0
-                pos_begin:
-                    index: 1
-                pos_end:
-                    index: 1
-            scores:
-                - id: annulled
-                  type: float
-                  index: 2
-                  desc: A score whose histogram is deliberately annulled
-                  histogram:
-                    type: "null"
-                    reason: "not meaningful for this score"
-                - id: plotted
-                  type: float
-                  index: 3
-                  desc: An ordinary score, histogrammed as usual
-                  histogram:
-                    type: number
-                    number_of_bins: 4
-                    view_range:
-                        min: 0.0
-                        max: 1.0
-            meta:
-                summary: |
-                    A position score carrying one annulled histogram and one
-                    ordinary one, so both page branches render.
-        """),
-        "scores.tsv": convert_to_tab_separated(_NULL_HISTOGRAM_SCORE_DATA),
-    })
-
-
-#: Four genes, one annulled score and one histogrammed one -- the gene-score
-#: mirror of :data:`_NULL_HISTOGRAM_SCORE_DATA`.
-_NULL_HISTOGRAM_GENE_SCORE_DATA = """\
-gene,annulled,plotted
-geneA,1,1
-geneB,2,2
-geneC,3,3
-geneD,4,4
-"""
-
-
-def _add_null_histogram_gene_score(resource_dir: pathlib.Path) -> None:
-    """A ``gene_score`` whose first score has an annulled histogram.
-
-    The gene family renders through ``gene_score.jinja`` rather than
-    ``genomic_score.jinja``; the two templates guard their histogram images
-    differently, so covering only the genomic one leaves this page's branch
-    unexercised (gain#1005).
-    """
-    setup_directories(resource_dir, {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: gene_score
-            filename: genescores.csv.gz
-            scores:
-                - id: annulled
-                  desc: A gene score whose histogram is deliberately annulled
-                  histogram:
-                    type: "null"
-                    reason: "not meaningful for this score"
-                - id: plotted
-                  desc: An ordinary gene score, histogrammed as usual
-                  histogram:
-                    type: number
-                    number_of_bins: 3
-                    view_range:
-                        min: 1
-                        max: 4
-                    x_log_scale: false
-                    y_log_scale: false
-            meta:
-                summary: |
-                    A gene score carrying one annulled histogram and one
-                    ordinary one, so both page branches render.
-        """),
-    })
-    setup_gzip(
-        resource_dir / "genescores.csv.gz", _NULL_HISTOGRAM_GENE_SCORE_DATA)
 
 
 def _add_basic(resource_dir: pathlib.Path) -> None:
