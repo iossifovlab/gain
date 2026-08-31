@@ -303,6 +303,23 @@ def _rebuild_error_without_userinfo(
         return OSError(redacted)
 
 
+def _error_without_userinfo(exc: BaseException) -> BaseException:
+    """Return a userinfo-free rebuild of ``exc``, or ``exc`` if it has none.
+
+    Returning ``exc`` itself is what every failure carrying no credential
+    wants -- the common unauthenticated case -- because a rebuild always
+    costs the traceback, and costs the exception its type too whenever it
+    cannot be reconstructed from a message alone. Callers can therefore
+    raise the result unconditionally, and identity is what tells them
+    whether anything was redacted.
+    """
+    message = str(exc)
+    redacted = _strip_url_userinfo(message)
+    if redacted == message:
+        return exc
+    return _rebuild_error_without_userinfo(exc, redacted)
+
+
 def _run_redacting_userinfo[T](fn: Callable[[], T]) -> T:
     """Run ``fn``, re-raising any failure with its url userinfo stripped.
 
@@ -317,11 +334,11 @@ def _run_redacting_userinfo[T](fn: Callable[[], T]) -> T:
     try:
         return fn()
     except Exception as exc:
-        message = str(exc)
-        redacted = _strip_url_userinfo(message)
-        if redacted == message:
+        reraise = _error_without_userinfo(exc)
+        if reraise is exc:
+            # Nothing was redacted. Propagate in place, so the original
+            # traceback and any chain it already carries survive.
             raise
-        reraise = _rebuild_error_without_userinfo(exc, redacted)
     raise reraise
 
 
@@ -2249,12 +2266,23 @@ class FsspecReadWriteProtocol(
                 logger.warning(
                     "transient failure downloading (%s: %s): %s; "
                     "retrying in %ss (attempt %s/%s)",
-                    dest_resource.resource_id, filename, error,
+                    dest_resource.resource_id, filename,
+                    _strip_url_userinfo(str(error)),
                     delay, attempt + 1, _COPY_MAX_ATTEMPTS)
                 time.sleep(delay)
 
         assert last_error is not None
-        raise last_error
+        # Redaction happens HERE, on the way out -- never before the
+        # ``except`` above. That clause classifies by exception type, and a
+        # rebuilt error is a different type: ``ClientResponseError`` cannot
+        # be reconstructed from a message alone, so it rebuilds to
+        # ``OSError`` -- and a bare ``OSError`` matches nothing in
+        # ``_RETRYABLE_COPY_ERRORS``. (Retryability comes from subclassing
+        # ``RetryableCopyError`` or being one of the foreign types the tuple
+        # names; being ``OSError``, their base, is not it.) Redacting any
+        # earlier would quietly cut the retry budget to a single attempt for
+        # exactly the authed downloads this protects. See gain#620.
+        raise _error_without_userinfo(last_error)
 
     def _download_resource_file(
             self,
@@ -2325,7 +2353,14 @@ class FsspecReadWriteProtocol(
             md5 = md5_hash.hexdigest()
 
             if not self.filesystem.exists(tmp_filepath):
-                raise OSError(f"destination file not created {tmp_filepath}")
+                # Redacted like the cleanup's own log line: a bare
+                # ``OSError`` is not retryable, so this escapes the retry
+                # loop's redacting epilogue entirely, and ``tmp_filepath``
+                # derives from the credential-bearing fetch url on a write
+                # protocol over an authed store (gain#620).
+                raise OSError(
+                    "destination file not created "
+                    f"{_strip_url_userinfo(tmp_filepath)}")
 
             if bytes_written != expected_size:
                 raise TruncatedDownloadError(
@@ -2407,10 +2442,19 @@ class FsspecReadWriteProtocol(
             self.filesystem.rm(tmp_filepath)
         except FileNotFoundError:
             pass
-        except Exception:  # noqa: BLE001  pylint: disable=broad-except
+        except Exception as error:  # noqa: BLE001  pylint: disable=broad-except
+            # Deliberately no ``exc_info``. This runs from the download's
+            # ``finally``, so the failure that got us here is still
+            # propagating, and ``exc_info`` renders the whole ACTIVE chain --
+            # which on an authed GRR is an aiohttp error carrying the
+            # credential-bearing fetch url. That put the secret in the log by
+            # a second route, one the retry loop's own redaction never sees
+            # (gain#620). The cleanup error's own message is what this line
+            # is about; it and the path are redacted for the same reason.
             logger.warning(
-                "unable to remove the unpublished temp file %s",
-                tmp_filepath, exc_info=True)
+                "unable to remove the unpublished temp file %s: %s",
+                _strip_url_userinfo(tmp_filepath),
+                _strip_url_userinfo(str(error)))
 
     def classify_resource_file(
             self, remote_resource: GenomicResource,

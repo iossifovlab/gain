@@ -3,12 +3,19 @@ import logging
 import pathlib
 import textwrap
 import traceback
+import typing
+import unittest.mock
 
+import aiohttp
 import pytest
 import pytest_mock
+import yarl
 from gain.genomic_resources import cli as grr_cli
 from gain.genomic_resources.cli import cli_browse
-from gain.genomic_resources.fsspec_protocol import build_fsspec_protocol
+from gain.genomic_resources.fsspec_protocol import (
+    FsspecReadWriteProtocol,
+    build_fsspec_protocol,
+)
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.repository_factory import (
     _REPO_DEFINITION_ADAPTER,
@@ -17,7 +24,12 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
     redact_definition,
 )
+from gain.genomic_resources.testing import build_faulty_test_protocol
+from gain.genomic_resources.testing.faulty_filesystem import FaultyFileSystem
+from multidict import CIMultiDict, CIMultiDictProxy
 from pydantic import ValidationError
+
+from .conftest import BASIC_RESOURCE_ID, BASIC_RESOURCE_LAYOUT
 
 _SECRET = "s3cr3t-do-not-log"  # noqa: S105
 
@@ -740,3 +752,208 @@ def test_cache_worklist_failure_aggregation_redacts_url_credential(
     assert all(_SECRET not in failure for failure in failures)
     # host preserved so the failure summary stays useful.
     assert any("grr.example.com" in failure for failure in failures)
+
+
+# ---------------------------------------------------------------------------
+# Finding A-3 — the download retry loop in ``copy_resource_file`` renders the
+# error it caught, both into its retry WARNING and into the exception it
+# finally re-raises. An ``aiohttp`` error carries the credential-bearing fetch
+# url in its own message, so an authed url-userinfo GRR writes the password to
+# the log once per retry and again wherever the propagated error is rendered.
+#
+# The module's existing redaction does not reach here: ``open_raw_file``
+# redacts the OPEN only -- by its own documented contract -- and the download
+# streams through reads on the handle that open returned. See gain#620.
+#
+# Redaction must not change RETRYABILITY: a rebuilt error is classified
+# differently from the one aiohttp raised, so redacting before the retry
+# decision would silently turn a transient failure into a hard one. That is
+# what ``_EXPECTED_BACKOFFS`` pins.
+# ---------------------------------------------------------------------------
+
+#: The one file ``BASIC_RESOURCE_LAYOUT`` puts in the resource.
+_DOWNLOAD_FILE_NAME = "data.txt"
+
+#: The source file as the source protocol serves it, and the temp file the
+#: download stages into. Both are globs: the resource directory carries a
+#: version suffix, and the ``.part`` name has a uuid the protocol mints
+#: itself, so neither can be named exactly.
+_DOWNLOAD_SOURCE_FILE = f"*/{_DOWNLOAD_FILE_NAME}"
+_PARTIAL_DOWNLOAD = "*.part"
+
+#: The authority the fetch url carries. The non-default port is deliberate:
+#: what must survive redaction is the whole authority, not just the host.
+_AUTHED_HOST_PORT = "grr.example.com:8443"
+
+#: The credential-bearing url an authed GRR fetches through, and which
+#: aiohttp embeds in the errors it raises.
+_AUTHED_FETCH_URL = (
+    f"https://alice:{_SECRET}@{_AUTHED_HOST_PORT}"
+    f"/repo/{_DOWNLOAD_FILE_NAME}")
+
+#: One backoff between each pair of the four attempts the protocol makes.
+#: Deliberately a literal and NOT derived from ``_COPY_MAX_ATTEMPTS``: derived,
+#: it would move with the constant, so a redaction that reclassified the error
+#: out of the retryable set would lower the expectation to 0 and still pass.
+_EXPECTED_BACKOFFS = 3
+
+
+def _an_aiohttp_error_carrying(url: str) -> aiohttp.ClientResponseError:
+    """Return the error aiohttp raises for a 500 on ``url``.
+
+    Deliberately a real ``ClientResponseError`` built from a real
+    ``RequestInfo`` rather than one carrying a hand-written message: what
+    leaks is aiohttp's OWN rendering of the request url, so a planted
+    message string would prove nothing about the leak.
+    """
+    request_info = aiohttp.RequestInfo(
+        yarl.URL(url), "GET", CIMultiDictProxy(CIMultiDict()), yarl.URL(url))
+    return aiohttp.ClientResponseError(
+        request_info, (), status=500, message="internal server error")
+
+
+class _AFailingDownload(typing.NamedTuple):
+    """Everything a test needs to drive one failing download."""
+
+    dest_proto: FsspecReadWriteProtocol
+    src_res: GenomicResource
+    dest_res: GenomicResource
+    dest_fs: FaultyFileSystem
+    sleep: unittest.mock.MagicMock
+
+
+def _a_failing_download(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+    error: BaseException,
+) -> _AFailingDownload:
+    """Arrange a download whose every source read fails with ``error``.
+
+    The backoff is patched here rather than in each test, because a test
+    that forgot to would not fail -- it would sleep through the protocol's
+    real 5s, 15s and 45s schedule.
+    """
+    src_proto, src_fs = build_faulty_test_protocol(
+        tmp_path / "src", BASIC_RESOURCE_LAYOUT)
+    src_res = src_proto.get_resource(BASIC_RESOURCE_ID)
+    dest_proto, dest_fs = build_faulty_test_protocol(tmp_path / "dst")
+    dest_res = GenomicResource(
+        src_res.resource_id, src_res.version, dest_proto)
+    src_fs.fail_read(_DOWNLOAD_SOURCE_FILE, error)
+    sleep = mocker.patch("gain.genomic_resources.fsspec_protocol.time.sleep")
+    return _AFailingDownload(dest_proto, src_res, dest_res, dest_fs, sleep)
+
+
+def _the_error_a_failed_copy_raises(
+    download: _AFailingDownload,
+) -> BaseException:
+    """Run the copy to exhaustion and hand back the error it raised.
+
+    Deliberately not ``pytest.raises(SomeType)``: what type survives
+    redaction is itself under test below, so the harness that drives the
+    copy must not pin it.
+    """
+    try:
+        download.dest_proto.copy_resource_file(
+            download.src_res, download.dest_res, _DOWNLOAD_FILE_NAME)
+    except Exception as error:  # noqa: BLE001 - the type is what we assert on
+        return error
+    pytest.fail("the download was expected to fail")
+
+
+def test_download_retry_warning_does_not_leak_url_credential(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    download = _a_failing_download(
+        tmp_path, mocker, _an_aiohttp_error_carrying(_AUTHED_FETCH_URL))
+
+    with caplog.at_level(logging.WARNING):
+        _the_error_a_failed_copy_raises(download)
+
+    assert _SECRET not in caplog.text
+    assert "alice" not in caplog.text
+    # host AND port preserved, so the retry line stays diagnosable.
+    assert _AUTHED_HOST_PORT in caplog.text
+
+
+def test_download_terminal_failure_does_not_leak_url_credential(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    download = _a_failing_download(
+        tmp_path, mocker, _an_aiohttp_error_carrying(_AUTHED_FETCH_URL))
+
+    error = _the_error_a_failed_copy_raises(download)
+
+    assert _SECRET not in str(error)
+    assert "alice" not in str(error)
+    # host, port, path and status preserved so the failure stays
+    # diagnosable -- only the userinfo is dropped.
+    assert _AUTHED_HOST_PORT in str(error)
+    assert f"/repo/{_DOWNLOAD_FILE_NAME}" in str(error)
+    assert "500" in str(error)
+
+
+def test_download_terminal_failure_chain_does_not_leak_url_credential(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    download = _a_failing_download(
+        tmp_path, mocker, _an_aiohttp_error_carrying(_AUTHED_FETCH_URL))
+
+    error = _the_error_a_failed_copy_raises(download)
+
+    # The redacted rebuild is raised outside the ``except`` block, so the
+    # error aiohttp raised is not linked to it and cannot leak through a
+    # chain walk or a rendered traceback.
+    assert _SECRET not in "".join(traceback.format_exception(error))
+    for linked in _walk_exception_chain(error):
+        assert _SECRET not in str(linked)
+
+
+def test_download_redaction_keeps_the_error_retryable(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    download = _a_failing_download(
+        tmp_path, mocker, _an_aiohttp_error_carrying(_AUTHED_FETCH_URL))
+
+    _the_error_a_failed_copy_raises(download)
+
+    # Every attempt was made: redaction on the way out did not reclassify
+    # the error out of the retryable set.
+    assert download.sleep.call_count == _EXPECTED_BACKOFFS
+
+
+def test_download_failure_without_userinfo_propagates_unchanged(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    plain_error = _an_aiohttp_error_carrying(
+        f"https://{_AUTHED_HOST_PORT}/repo/{_DOWNLOAD_FILE_NAME}")
+    download = _a_failing_download(tmp_path, mocker, plain_error)
+
+    error = _the_error_a_failed_copy_raises(download)
+
+    # Nothing to redact, so the ORIGINAL object propagates -- identity, and
+    # with it the exception type and the traceback a rebuild would cost.
+    assert error is plain_error
+
+
+def test_download_cleanup_failure_does_not_leak_url_credential(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The temp-file cleanup runs from the download's ``finally``, so it runs
+    # WHILE the credential-bearing read error is propagating. Logging the
+    # cleanup failure with ``exc_info`` renders the whole active chain, which
+    # is the read error -- so the secret reaches the log by a second route,
+    # one the retry loop's own redaction never sees.
+    download = _a_failing_download(
+        tmp_path, mocker, _an_aiohttp_error_carrying(_AUTHED_FETCH_URL))
+    download.dest_fs.fail_rm(
+        _PARTIAL_DOWNLOAD, OSError("the store refused the removal"))
+
+    with caplog.at_level(logging.WARNING):
+        _the_error_a_failed_copy_raises(download)
+
+    assert _SECRET not in caplog.text
+    assert "alice" not in caplog.text
+    # the cleanup failure is still reported, just without the secret.
+    assert "refused the removal" in caplog.text

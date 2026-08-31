@@ -45,7 +45,11 @@
 
                 {% set hist = score.get_score_histogram(score_id, truncated=True) %}
                 <td>
-                {% if hist %}
+                {# Tested against the histogram's type, not its truthiness:
+                   a NullHistogram defines neither __bool__ nor __len__, so
+                   `if hist` is true for one and the image below would point
+                   at a PNG that is never written (gain#1005). #}
+                {% if hist.type != 'null_histogram' %}
                     <div class="histogram">
                         <img src="{{score.get_histogram_image_filename(score_id)}}"
                             class="histogram-thumbnail"
@@ -53,6 +57,8 @@
                             title=" {{ score_id | replace(" ", "_") }}"
                             data-modal-trigger="modal-{{ score_id | replace(" ", "_") }}">
                     </div>
+                {% else %}
+                    <p>No histogram: {{ hist.reason }}</p>
                 {% endif %}
                 </td>
 
@@ -66,7 +72,12 @@
             </tr>
         {% endfor %}
 
+        {#- An annulled histogram has no image on disk, so it gets no modal --
+            the thumbnail that opens one is not rendered for it either. #}
         {%- for score_id in score.score_definitions.keys() -%}
+            {%- set modal_hist = score.get_score_histogram(
+                score_id, truncated=True) -%}
+            {%- if modal_hist.type != 'null_histogram' %}
             <div id="modal-{{ score_id | replace(" ", "_") }}" class="modal">
                 <div class="modal-content">
                     <span class="close">&times;</span>
@@ -76,6 +87,7 @@
                         style="max-width: min(100%, 800px);">
                 </div>
             </div>
+            {%- endif -%}
         {%- endfor %}
     </table>
     </div>
