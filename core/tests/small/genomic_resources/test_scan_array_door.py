@@ -28,7 +28,7 @@ from gain.genomic_resources.genomic_scores import (
 )
 from gain.genomic_resources.histogram import NumberHistogramConfig
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    GenomicScoreImplementation,
+    scan,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_errors import MalformedResourceError
@@ -249,7 +249,7 @@ def test_the_bulk_histogram_scan_applies_the_allele_rule(
         AlleleScore, "fetch_region_value_arrays", _backwards_arrays)
 
     with pytest.raises(MalformedResourceError, match="move backwards"):
-        GenomicScoreImplementation._do_histogram_bulk(
+        scan.do_histogram_bulk(
             resource, {"s": _hist_conf()}, "chr1", 1, 20)
 
 
@@ -274,7 +274,7 @@ def test_the_bulk_min_max_scan_applies_the_allele_rule(
         AlleleScore, "fetch_region_value_arrays", _backwards_arrays)
 
     with pytest.raises(MalformedResourceError, match="move backwards"):
-        GenomicScoreImplementation._do_min_max_bulk(
+        scan.do_min_max_bulk(
             resource, ["s"], "chr1", 1, 20)
 
 
@@ -364,10 +364,10 @@ def test_a_malformed_resource_is_refused_the_same_way_down_both_paths(
     confs: dict = {"s": _hist_conf()}
 
     with pytest.raises(MalformedResourceError) as per_record:
-        GenomicScoreImplementation._do_histogram(
+        scan.do_histogram(
             resource, confs, "chr1", 1, 9)
     with pytest.raises(MalformedResourceError) as bulk:
-        GenomicScoreImplementation._do_histogram_bulk(
+        scan.do_histogram_bulk(
             resource, confs, "chr1", 1, 9)
 
     assert str(bulk.value) == str(per_record.value)

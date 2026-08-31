@@ -8,6 +8,7 @@ from gain.genomic_resources.histogram import NumberHistogramConfig
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
     build_score_implementation_from_resource,
+    scan,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.coverage import (
@@ -87,7 +88,7 @@ def test_per_record_scan_accumulates_coverage(
     confs: dict = {"score": _hist_conf()}
     coverage = RegionCoverage("chr1", 1, 100)
 
-    GenomicScoreImplementation._do_histogram(
+    scan.do_histogram(
         resource, confs, "chr1", 1, 100, coverage=coverage)
 
     assert coverage.covered == COVERED
@@ -102,9 +103,9 @@ def test_bulk_scan_coverage_matches_per_record(
     per_record = RegionCoverage("chr1", 1, 100)
     bulk = RegionCoverage("chr1", 1, 100)
 
-    GenomicScoreImplementation._do_histogram(
+    scan.do_histogram(
         resource, confs, "chr1", 1, 100, coverage=per_record)
-    GenomicScoreImplementation._do_histogram_bulk(
+    scan.do_histogram_bulk(
         resource, confs, "chr1", 1, 100, coverage=bulk)
 
     assert bulk.covered == per_record.covered == COVERED
@@ -125,10 +126,10 @@ def test_bulk_coverage_is_batch_size_invariant(
     resource = _multivalued_tabix(tmp_path)
     confs: dict = {"score": _hist_conf()}
     monkeypatch.setattr(
-        GenomicScoreImplementation, "_SCAN_BATCH_SIZE", batch_size)
+        scan, "_SCAN_BATCH_SIZE", batch_size)
     coverage = RegionCoverage("chr1", 1, 100)
 
-    GenomicScoreImplementation._do_histogram_bulk(
+    scan.do_histogram_bulk(
         resource, confs, "chr1", 1, 100, coverage=coverage)
 
     assert coverage.covered == COVERED
@@ -142,7 +143,7 @@ def test_region_task_carries_coverage_beside_the_histograms(
     resource = _multivalued_tabix(tmp_path)
     confs: dict = {"score": _hist_conf()}
 
-    result = GenomicScoreImplementation._do_histogram_task(
+    result = scan.do_histogram_task(
         resource, confs, "chr1", 1, 100)
 
     assert set(result.histograms) == {"score"}
@@ -167,7 +168,7 @@ def test_region_task_collects_no_coverage_for_allele_scores(
     )
     confs: dict = {"s": _hist_conf()}
 
-    result = GenomicScoreImplementation._do_histogram_task(
+    result = scan.do_histogram_task(
         resource, confs, "chr1", 1, 100)
 
     assert result.coverage is None
@@ -178,7 +179,7 @@ def test_noregion_build_writes_the_coverage_file(
 ) -> None:
     resource = _multivalued_tabix(tmp_path)
 
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
 
     content = resource.get_file_content("statistics/coverage.json")
     stats = CoverageStatistics.deserialize(content)
@@ -194,7 +195,7 @@ def test_build_writes_the_segment_length_image(
 ) -> None:
     resource = _multivalued_tabix(tmp_path)
 
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
 
     assert resource.file_exists(
         "statistics/coverage_segment_lengths.png")
@@ -204,7 +205,7 @@ def test_info_page_shows_segment_statistics(
     tmp_path: pathlib.Path,
 ) -> None:
     resource = _multivalued_tabix(tmp_path)
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
 
     page = GenomicScoreImplementation(resource).get_info()
 
@@ -219,7 +220,7 @@ def test_info_page_with_an_old_coverage_file_omits_segments(
     # A coverage.json written before segment histograms existed: the
     # coverage table still renders, the segment column and image do not.
     resource = _multivalued_tabix(tmp_path)
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
     with resource.proto.open_raw_file(
             resource, "statistics/coverage.json", mode="wt") as outfile:
         outfile.write(json.dumps({
@@ -252,7 +253,7 @@ def test_noregion_build_keys_coverage_by_chromosome(
         .build_resource(tmp_path)
     )
 
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
 
     stats = CoverageStatistics.deserialize(
         resource.get_file_content("statistics/coverage.json"))
@@ -272,7 +273,7 @@ def test_coverage_is_chunk_invariant(
     confs: dict = {"score": _hist_conf()}
 
     results = [
-        GenomicScoreImplementation._do_histogram_task(
+        scan.do_histogram_task(
             resource, confs, "chr1", start,
             min(start + region_size - 1, 60))
         for start in range(1, 61, region_size)
@@ -331,15 +332,15 @@ def test_fragment_statistics_are_chunk_invariant(
     )
 
     results = [
-        GenomicScoreImplementation._do_histogram_task(
+        scan.do_histogram_task(
             resource, confs, "chr1", start,
             min(start + region_size - 1, _FRAGMENT_CONTIG_END))
         for start in starts
     ]
-    whole = GenomicScoreImplementation._do_histogram_task(
+    whole = scan.do_histogram_task(
         resource, confs, "chr1", 1, _FRAGMENT_CONTIG_END)
 
-    merged = GenomicScoreImplementation._merge_histograms(
+    merged = scan.merge_histograms(
         resource, *(result.histograms for result in results))
     assert merged["s"].bars.tolist() == whole.histograms["s"].bars.tolist()
     assert merged["s"].bars.sum() == len(_FRAGMENT_ROWS)
@@ -368,7 +369,7 @@ def test_statistics_hash_is_untouched_by_the_coverage_build(
     before = build_score_implementation_from_resource(
         resource).calc_statistics_hash()
 
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
 
     after = build_score_implementation_from_resource(
         resource).calc_statistics_hash()
@@ -379,7 +380,7 @@ def test_info_page_renders_the_coverage_section(
     tmp_path: pathlib.Path,
 ) -> None:
     resource = _multivalued_tabix(tmp_path)
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
 
     page = GenomicScoreImplementation(resource).get_info()
 
@@ -394,7 +395,7 @@ def test_info_page_without_the_statistics_file_says_not_computed(
     # A resource built before this statistic existed: histograms are
     # there, statistics/coverage.json is not.
     resource = _multivalued_tabix(tmp_path)
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
     resource.proto.delete_resource_file(
         resource, "statistics/coverage.json")
 
@@ -425,9 +426,9 @@ def test_fragment_rows_overlapping_and_nested_count_once(
     per_record = RegionCoverage("chr1", 1, 200)
     bulk = RegionCoverage("chr1", 1, 200)
 
-    GenomicScoreImplementation._do_histogram(
+    scan.do_histogram(
         resource, confs, "chr1", 1, 200, coverage=per_record)
-    GenomicScoreImplementation._do_histogram_bulk(
+    scan.do_histogram_bulk(
         resource, confs, "chr1", 1, 200, coverage=bulk)
 
     assert per_record.covered == 122
@@ -454,7 +455,7 @@ def test_fragment_build_publishes_no_segment_statistics(
         .build_resource(tmp_path)
     )
 
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
 
     stats = CoverageStatistics.deserialize(
         resource.get_file_content("statistics/coverage.json"))
@@ -518,9 +519,9 @@ def test_null_histogram_column_never_breaks_a_segment(
     # unpacking, not a hand-built dict; the unbounded and bounded calls
     # cover the task's per-record and bulk dispatch arms.
     resource = _null_histogram_column_tabix(tmp_path)
-    _, confs = GenomicScoreImplementation._unpack_score_defs(resource)
+    _, confs = scan.unpack_score_defs(resource)
 
-    result = GenomicScoreImplementation._do_histogram_task(
+    result = scan.do_histogram_task(
         resource, confs, "chr1", start, end)
 
     assert result.coverage is not None
@@ -532,13 +533,13 @@ def test_null_histogram_column_scan_path_parity(
     tmp_path: pathlib.Path,
 ) -> None:
     resource = _null_histogram_column_tabix(tmp_path)
-    _, confs = GenomicScoreImplementation._unpack_score_defs(resource)
+    _, confs = scan.unpack_score_defs(resource)
     per_record = RegionCoverage("chr1", 1, 100)
     bulk = RegionCoverage("chr1", 1, 100)
 
-    GenomicScoreImplementation._do_histogram(
+    scan.do_histogram(
         resource, confs, "chr1", 1, 100, coverage=per_record)
-    GenomicScoreImplementation._do_histogram_bulk(
+    scan.do_histogram_bulk(
         resource, confs, "chr1", 1, 100, coverage=bulk)
 
     assert bulk.covered == per_record.covered == NULL_COL_COVERED
@@ -566,7 +567,7 @@ def test_bigwig_scan_coverage(
     confs: dict = {"score": _hist_conf()}
     coverage = RegionCoverage("chr1", 1, 100)
 
-    GenomicScoreImplementation._do_histogram_bulk(
+    scan.do_histogram_bulk(
         resource, confs, "chr1", 1, 100, coverage=coverage)
 
     assert coverage.covered == 20

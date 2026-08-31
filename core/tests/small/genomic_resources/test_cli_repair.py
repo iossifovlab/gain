@@ -13,7 +13,7 @@ from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
-    RegionScanResult,
+    scan,
 )
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
@@ -374,17 +374,17 @@ def test_a_message_less_failure_still_names_its_cause(
 # ---------------------------------------------------------------------------
 
 def _histogram_that_raises(resource_id: str) -> Any:
-    real = GenomicScoreImplementation._do_histogram
+    real = scan.do_histogram
 
     def patched(
         resource: Any, *args: Any, **kwargs: Any,
     ) -> Any:
         if resource.resource_id == resource_id:
             raise ValueError("histogram task boom")
-        return RegionScanResult(
+        return scan.RegionScanResult(
             real(resource, *args, **kwargs), None, None)
 
-    return staticmethod(patched)
+    return patched
 
 
 def test_repo_repair_reports_a_statistics_task_that_fails_while_running(
@@ -400,12 +400,11 @@ def test_repo_repair_reports_a_statistics_task_that_fails_while_running(
     # bar the one the task explodes on, so nothing else can carry the
     # non-zero status.
     path, _proto = proto_fixture
-    # The histogram task enters through ``_do_histogram_task`` (which routes
-    # eligible resources to the bulk scan); that is the seam a failing task
-    # must be injected at.
+    # The histogram task enters through ``scan.do_histogram_task``
+    # (which routes eligible resources to the bulk scan); that is the
+    # seam a failing task must be injected at.
     monkeypatch.setattr(
-        GenomicScoreImplementation, "_do_histogram_task",
-        _histogram_that_raises("one"))
+        scan, "do_histogram_task", _histogram_that_raises("one"))
 
     with caplog.at_level(logging.INFO, logger="grr_manage"), \
             pytest.raises(SystemExit) as excinfo:
@@ -437,8 +436,7 @@ def test_a_failing_statistics_task_leaves_the_info_page_alone(
     good_page = "<html>the good page</html>"
     (path / "one" / "index.html").write_text(good_page)
     monkeypatch.setattr(
-        GenomicScoreImplementation, "_do_histogram_task",
-        _histogram_that_raises("one"))
+        scan, "do_histogram_task", _histogram_that_raises("one"))
 
     with pytest.raises(SystemExit):
         cli_manage(["repo-repair", "-R", str(path), "-j", "1"])

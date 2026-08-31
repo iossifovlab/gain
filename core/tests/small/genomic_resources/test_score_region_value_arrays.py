@@ -168,7 +168,7 @@ def test_eligible_scan_uses_the_array_producer_not_the_record_path(
     ~8x (bigWig) this PR exists for.  This test is the only thing that notices.
     """
     from gain.genomic_resources.implementations.genomic_scores_impl import (
-        GenomicScoreImplementation,
+        scan,
     )
 
     resource = _multiscore_tabix(tmp_path)
@@ -182,7 +182,7 @@ def test_eligible_scan_uses_the_array_producer_not_the_record_path(
 
     PositionScore.fetch_region_value_arrays = counting_fetch  # type: ignore[method-assign,assignment]
     try:
-        GenomicScoreImplementation._do_min_max_bulk(
+        scan.do_min_max_bulk(
             resource, ["s1"], "chr1", 1, 20)
     finally:
         PositionScore.fetch_region_value_arrays = original  # type: ignore[method-assign]

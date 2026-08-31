@@ -11,6 +11,7 @@ from gain.genomic_resources.histogram import NumberHistogramConfig
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
     build_score_implementation_from_resource,
+    scan,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.alleles import (
@@ -54,7 +55,7 @@ def _maybe_tabix(builder: Any, *, tabix: bool) -> Any:
     """Put a fixture on the bulk scan path, or leave it on the per-record one.
 
     A tabix-indexed table serves column arrays and is bulk-eligible; a plain
-    text one is not, and ``_bulk_scan_eligible`` asks exactly that.  The
+    text one is not, and ``bulk_scan_eligible`` asks exactly that.  The
     contrast used to be drawn with a ``np_score`` resource, excluded from
     the bulk gate by type until gain#920 removed the type.
     """
@@ -194,7 +195,7 @@ def _mixed_per_record_score(tmp_path: pathlib.Path) -> GenomicResource:
     Until 2026.8.5 the contrast was drawn with a ``np_score`` resource,
     which the bulk scan excluded by resource type (gain#920 removed the
     type).  The backend is the better discriminator anyway: array support
-    is what ``_bulk_scan_eligible`` actually asks, where the type was only
+    is what ``bulk_scan_eligible`` actually asks, where the type was only
     ever a proxy for it.
     """
     return (
@@ -215,8 +216,8 @@ def test_the_two_fixtures_take_different_scan_paths(
     per_record = _mixed_per_record_score(tmp_path / "per_record")
     confs: dict = {"score": _hist_conf()}
 
-    assert GenomicScoreImplementation._can_bulk_histogram(allele, confs)
-    assert not GenomicScoreImplementation._can_bulk_histogram(
+    assert scan.can_bulk_histogram(allele, confs)
+    assert not scan.can_bulk_histogram(
         per_record, confs)
 
 
@@ -361,15 +362,14 @@ def test_a_backend_refusing_the_nucleotides_takes_the_per_record_path(
     resource = _keyless_score(tmp_path, tabix=True)
     confs: dict = {"score": _hist_conf()}
     score = build_score_implementation_from_resource(resource).score
-    assert GenomicScoreImplementation._can_bulk_histogram(resource, confs)
+    assert scan.can_bulk_histogram(resource, confs)
     assert not serves_allele_arrays(score, ["score"])
 
     def refuse(*_args: Any, **_kwargs: Any) -> dict:
         raise AssertionError("the bulk path must not serve this region")
 
-    monkeypatch.setattr(
-        GenomicScoreImplementation, "_do_histogram_bulk", refuse)
-    result = GenomicScoreImplementation._do_histogram_task(
+    monkeypatch.setattr(scan, "do_histogram_bulk", refuse)
+    result = scan.do_histogram_task(
         resource, confs, "chr1", 1, 100)
 
     assert result.alleles is not None
@@ -384,9 +384,9 @@ def test_the_reroute_leaves_the_histograms_unchanged(
     # The two paths must still agree on what they build.
     resource = _keyless_score(tmp_path, tabix=True)
 
-    per_record = GenomicScoreImplementation._do_histogram(
+    per_record = scan.do_histogram(
         resource, {"score": _hist_conf()}, "chr1", 1, 100)
-    bulk = GenomicScoreImplementation._do_histogram_bulk(
+    bulk = scan.do_histogram_bulk(
         resource, {"score": _hist_conf()}, "chr1", 1, 100)
 
     assert per_record["score"].to_dict() == bulk["score"].to_dict()

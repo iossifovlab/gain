@@ -27,7 +27,7 @@ from gain.genomic_resources.histogram import (
     NumberHistogramConfig,
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    GenomicScoreImplementation,
+    scan,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_errors import MalformedResourceError
@@ -191,19 +191,19 @@ def test_a_region_split_between_two_touching_records_still_refuses_them(
     resource = _position_score_resource(tmp_path, "touching", TOUCHING_RECORDS)
 
     # The first region holds only the first record: nothing to compare it to.
-    assert GenomicScoreImplementation._do_min_max(
+    assert scan.do_min_max(
         resource, ["s"], "chr1", 1, 4)["s"].max == pytest.approx(0.1)
 
     # The second is where they meet -- the straddling record arrives with it.
     with pytest.raises(MalformedResourceError) as excinfo:
-        GenomicScoreImplementation._do_min_max(resource, ["s"], "chr1", 5, 9)
+        scan.do_min_max(resource, ["s"], "chr1", 5, 9)
 
     assert "at most one record per position" in str(excinfo.value)
 
 
 @pytest.mark.parametrize("statistics_pass,payload", [
-    ("_do_min_max", ["s"]),
-    ("_do_histogram", {"s": _hist_conf()}),
+    ("do_min_max", ["s"]),
+    ("do_histogram", {"s": _hist_conf()}),
 ])
 def test_both_per_record_passes_refuse_a_malformed_position_score(
     tmp_path: pathlib.Path,
@@ -215,7 +215,7 @@ def test_both_per_record_passes_refuse_a_malformed_position_score(
     resource = _position_score_resource(tmp_path, "touching", TOUCHING_RECORDS)
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        getattr(GenomicScoreImplementation, statistics_pass)(
+        getattr(scan, statistics_pass)(
             resource, payload, "chr1", 1, 10)
 
     assert "at most one record per position" in str(excinfo.value)
@@ -367,11 +367,11 @@ def test_the_scan_validates_a_fragment_score_with_the_kinds_own_rule(
     # Driven through the scan's own composition rather than by calling
     # ``validate_records`` by hand: what this claims is that the SCAN
     # validates a non-position kind, and calling the validator directly would
-    # hold even if ``_scan_region`` had stopped composing it.
+    # hold even if ``scan_region`` had stopped composing it.
     score = _fragment_score_reading_backwards(tmp_path, monkeypatch)
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        list(GenomicScoreImplementation._scan_region(
+        list(scan.scan_region(
             score, "chr1", 1, 30, ["s"]))
 
     message = str(excinfo.value)
@@ -393,12 +393,12 @@ def test_the_scan_still_validates_an_allele_score(
     # Driven through the scan's own composition rather than by calling
     # ``validate_records`` by hand: what this claims is that the SCAN
     # validates a non-position kind, and calling the validator directly would
-    # hold even if ``_scan_region`` had stopped composing it.  The rule
+    # hold even if ``scan_region`` had stopped composing it.  The rule
     # itself is driven directly, in test_genomic_scores_fetch_region.py.
     score = _allele_score_reading_backwards(tmp_path, monkeypatch)
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        list(GenomicScoreImplementation._scan_region(
+        list(scan.scan_region(
             score, "chr1", 1, 30, ["s"]))
 
     message = str(excinfo.value)
@@ -443,7 +443,7 @@ def test_the_region_size_zero_path_refuses_a_malformed_position_score(
     resource = _position_score_resource(tmp_path, "touching", TOUCHING_RECORDS)
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        GenomicScoreImplementation._do_noregion_histograms(resource)
+        scan.do_noregion_histograms(resource)
 
     assert "at most one record per position" in str(excinfo.value)
 
@@ -522,19 +522,19 @@ def test_both_scan_paths_refuse_an_index_column_mismatch_alike(
     resource = _end_column_mismatch_resource(tmp_path)
 
     scans = [
-        lambda: GenomicScoreImplementation._do_histogram(
+        lambda: scan.do_histogram(
             resource, {"s": _hist_conf()}, "chr1", 100, 200),
-        lambda: GenomicScoreImplementation._do_histogram_bulk(
+        lambda: scan.do_histogram_bulk(
             resource, {"s": _hist_conf()}, "chr1", 100, 200),
-        lambda: GenomicScoreImplementation._do_min_max(
+        lambda: scan.do_min_max(
             resource, ["s"], "chr1", 100, 200),
-        lambda: GenomicScoreImplementation._do_min_max_bulk(
+        lambda: scan.do_min_max_bulk(
             resource, ["s"], "chr1", 100, 200),
     ]
 
-    for scan in scans:
+    for run_scan in scans:
         with pytest.raises(MalformedResourceError) as excinfo:
-            scan()
+            run_scan()
         assert "pos_end is indexed on column 2" in str(excinfo.value)
         assert "resolves it to column 3" in str(excinfo.value)
 
@@ -552,7 +552,7 @@ def test_the_scan_measures_a_well_formed_region_exactly_as_a_reader_reads_it(
         chr1   21         30       0.3
     """)
 
-    assert list(GenomicScoreImplementation._scan_region(
+    assert list(scan.scan_region(
         score, "chr1", 5, 25, ["s"])) == \
         list(score.fetch_region_segments("chr1", 5, 25, ["s"]))
 
@@ -741,6 +741,6 @@ def test_a_statistics_pass_reads_the_region_once(
 
     monkeypatch.setattr(PositionScore, "fetch_records", counted)
 
-    assert GenomicScoreImplementation._do_min_max(
+    assert scan.do_min_max(
         resource, ["s"], "chr1", 1, 20)["s"].max == 0.2
     assert len(reads) == 1

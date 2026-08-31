@@ -20,7 +20,7 @@ time, as the coverage statistic's fractions are.
 Laid out like its coverage twin: the per-region accumulator, the
 resource-wide statistic, the fold that merges a scan's regions into one,
 and the write.  The scan wiring that feeds it is in
-``implementations/genomic_scores_impl.py``.
+``implementations/genomic_scores_impl/scan.py``.
 """
 from __future__ import annotations
 

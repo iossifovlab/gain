@@ -10,6 +10,14 @@ Decomposing this class -- so that a kind's author reads the handful of hooks
 their kind overrides rather than the whole base -- is gain#1027, sequenced
 deliberately after the package split that created this module (gain#902).
 """
+# The monolith this was split out of carried this same pragma.  gain#902
+# dropped it because 1554 lines fit under the cap as it stood -- but that
+# cap was 1600 only because gain#1002 had raised it for
+# ``genomic_scores_impl``, and gain#1007 has since split that module and
+# put the cap back to 1500.  So the exemption this file always had is
+# stated here, scoped to it, rather than bought for the whole repository.
+# It goes when gain#1027 shrinks the class.
+# pylint: disable=too-many-lines
 
 from __future__ import annotations
 
@@ -952,7 +960,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         What a *consumer* additionally needs stays with the consumer: the
         statistics scan also requires a bounded region and a resource kind it
         is exercised against, and it keeps asking that itself (see
-        ``GenomicScoreImplementation._bulk_scan_eligible``).  What it does
+        ``genomic_scores_impl.scan.bulk_scan_eligible``).  What it does
         NOT require is a particular record shape: the accumulator reads the
         kind's own ``RECORD_WEIGHT_IS_SPAN`` and the scan's door reads the
         kind's own ``validate_record_arrays``, so a position, allele and
@@ -1321,7 +1329,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         A plain read: it checks nothing.  The statistics scan reads the same
         records through the same transform with :meth:`validate_records`
         composed in front, and that extra link -- visible at the consumer,
-        in ``genomic_scores_impl.py`` -- is the whole of the difference
+        in ``genomic_scores_impl/scan.py`` -- is the whole of the
+        difference
         between the two (ADR 0008).
 
         One body per kind, in :meth:`region_values_from_records`, rather than

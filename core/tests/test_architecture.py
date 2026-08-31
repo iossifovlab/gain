@@ -225,6 +225,40 @@ def test_the_grr_does_not_import_the_annotation_layer(
     )
 
 
+def test_the_statistics_scan_does_not_import_the_implementation_classes(
+) -> None:
+    """``genomic_scores_impl.scan`` sits below ``impl`` and stays there.
+
+    The split in gain#1007 is only acyclic because the machinery stopped
+    needing an implementation object: every one of its uses of
+    ``build_score_implementation_from_resource`` was reaching for the
+    ``.score`` that both classes build with ``build_score_from_resource``,
+    so ``scan`` asks for that directly.  ``impl`` imports ``scan`` to
+    schedule its task bodies; an import the other way would close the
+    package into a cycle and put the task bodies back above the classes
+    they were lifted out of.
+
+    Read from the AST rather than off the module object, because the
+    import that would reintroduce the cycle is most likely a
+    function-local one -- the shape ``cached_repository`` and
+    ``repository_factory`` already use to reach this package -- and a
+    module-attribute check cannot see it.
+    """
+    pkg = "gain.genomic_resources.implementations.genomic_scores_impl"
+    scan_py = (pathlib.Path(GAIN_SRC) / "genomic_resources"
+               / "implementations" / "genomic_scores_impl" / "scan.py")
+    offenders = sorted(
+        imported for imported in _imported_modules(scan_py)
+        if imported in (f"{pkg}.impl", pkg)
+    )
+    assert offenders == [], (
+        f"genomic_scores_impl.scan imports {offenders}, which closes the "
+        f"package into a cycle. The machinery needs a GenomicScore, not an "
+        f"implementation -- use build_score_from_resource, as the rest of "
+        f"scan does"
+    )
+
+
 #: Names that reach markdown2's un-rescued output.  The second is the
 #: wrapper module's own re-export: it renders *through* the library, so it
 #: binds the raw function under the bare name ``markdown``, and importing

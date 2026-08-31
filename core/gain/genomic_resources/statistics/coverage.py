@@ -10,7 +10,7 @@ the resource-wide statistic, the fold that merges a scan's regions into
 one, the write, and the render payload the info page reads.  Its allele
 twin is laid out the same way in
 :mod:`gain.genomic_resources.statistics.alleles`; the scan wiring that
-feeds either is in ``implementations/genomic_scores_impl.py``.
+feeds either is in ``implementations/genomic_scores_impl/scan.py``.
 """
 from __future__ import annotations
 
@@ -104,7 +104,7 @@ class RegionCoverage:
         # additive across regions.  Rows that can overlap (fragments)
         # publish no segment summary, and must be handed spans clipped
         # to the region -- see
-        # ``GenomicScoreImplementation._accumulate_coverage``.
+        # ``accumulate_coverage`` below.
         #
         # Disjoint, NOT "non-touching": adjacent rows are legal, and the
         # stitch in ``_merge_runs`` depends on them being so.

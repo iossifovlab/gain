@@ -672,7 +672,7 @@ def test_position_score_fetch_region_all() -> None:
     score = build_position_score_from_resource(res)
     score.open()
     # A contig is required, so "every record" is a loop over the contigs --
-    # the same idiom ``_do_noregion_histograms`` uses for --region-size 0.
+    # the same idiom ``scan.do_noregion_histograms`` uses for --region-size 0.
     result = [
         rec
         for chrom in score.get_all_chromosomes()

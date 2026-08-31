@@ -33,8 +33,8 @@ reopening them around the reads.
 
 **Why collectability is pinned at all.** The repair path builds a table
 **per region task** --
-``GenomicScoreImplementation._do_min_max`` and ``._do_histogram`` each call
-``build_score_implementation_from_resource``, so a whole-genome
+``scan.do_min_max`` and ``scan.do_histogram`` each build a score
+with ``build_score_from_resource``, so a whole-genome
 ``grr_manage resource-repair`` opens and drops thousands of tables in one
 process.  Nothing in that path caps how many may be alive at once, because
 nothing needs to: each one is closed and dropped before the next is built.  So

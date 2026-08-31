@@ -27,8 +27,8 @@ from html.parser import HTMLParser
 
 import pytest
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    GenomicScoreImplementation,
     build_score_implementation_from_resource,
+    scan,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.alleles import (
@@ -249,7 +249,7 @@ def _dense_complex_allele_score(tmp_path: pathlib.Path) -> GenomicResource:
 
 
 def _built_page(resource: GenomicResource) -> str:
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
     return build_score_implementation_from_resource(resource).get_info()
 
 

@@ -4,7 +4,7 @@ import pathlib
 import pytest
 from gain.genomic_resources.histogram import NumberHistogramConfig
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    GenomicScoreImplementation,
+    scan,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing.builders import a_fragment_score
@@ -45,11 +45,11 @@ def _histogram_total(
 ) -> float:
     confs: dict = {"s": _hist_conf()}
     results = [
-        GenomicScoreImplementation._do_histogram_task(
+        scan.do_histogram_task(
             resource, confs, "chr1", start, end)
         for start, end in regions
     ]
-    merged = GenomicScoreImplementation._merge_histograms(
+    merged = scan.merge_histograms(
         resource, *(result.histograms for result in results))
     return merged["s"].bars.sum()
 

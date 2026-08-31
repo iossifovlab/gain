@@ -19,6 +19,7 @@ from gain.genomic_resources.histogram import (
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     FragmentScoreImplementation,
+    scan,
 )
 from gain.genomic_resources.repository import (
     GenomicResource,
@@ -212,7 +213,7 @@ def test_fragment_score_implementation(
     assert "Filename" in info
 
 
-def test_fragment_score_implementation_histogram(
+def test_fragment_score_histogram_scan(
     fragments_resource: GenomicResource,
 ) -> None:
     hist_conf = build_histogram_config({
@@ -226,7 +227,7 @@ def test_fragment_score_implementation_histogram(
 
     hist_confs = {"freq": hist_conf}
 
-    histograms = FragmentScoreImplementation._do_histogram(
+    histograms = scan.do_histogram(
         fragments_resource, hist_confs, "2", 0, 300,
     )
 
@@ -241,7 +242,7 @@ def test_fragment_score_implementation_histogram(
         == [0, 0.15, 0.3]
 
 
-def test_fragment_score_implementation_do_min_max(
+def test_fragment_score_min_max_scan(
     fragments_resource: GenomicResource,
 ) -> None:
     hist_conf = build_histogram_config({
@@ -253,7 +254,7 @@ def test_fragment_score_implementation_do_min_max(
     })
     assert isinstance(hist_conf, HistogramConfig)
 
-    statistics = FragmentScoreImplementation._do_min_max(
+    statistics = scan.do_min_max(
         fragments_resource, ["freq"], "2", 0, 300,
     )
 

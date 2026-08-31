@@ -6,8 +6,8 @@ import re
 import pytest
 from gain.genomic_resources.histogram import NumberHistogramConfig
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    GenomicScoreImplementation,
     build_score_implementation_from_resource,
+    scan,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
@@ -87,7 +87,7 @@ def test_every_row_counts_as_one_fragment_per_chromosome_and_global(
     # ``cnv_collection`` is the deprecated one, hence the marker.
     resource = _fragments(tmp_path, resource_type)
 
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
 
     stats = _stored(resource)
     assert stats.fragments_by_chromosome() == {"chr1": 4, "chr2": 1}
@@ -103,7 +103,7 @@ def test_fragment_lengths_bin_the_rows_own_span_and_merge_exactly(
     # histogram is their bin-wise merge and nothing is re-scanned.
     resource = _fragments(tmp_path)
 
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
 
     stats = _stored(resource)
     assert stats.fragment_lengths_by_chromosome() == {
@@ -127,9 +127,9 @@ def test_bulk_and_per_record_scans_produce_the_same_fragment_statistics(
     bulk = RegionCoverage(
         "chr1", 1, 200, rows_are_disjoint=False, track_fragments=True)
 
-    GenomicScoreImplementation._do_histogram(
+    scan.do_histogram(
         resource, confs, "chr1", 1, 200, coverage=per_record)
-    GenomicScoreImplementation._do_histogram_bulk(
+    scan.do_histogram_bulk(
         resource, confs, "chr1", 1, 200, coverage=bulk)
 
     assert bulk.fragment_summary() == per_record.fragment_summary()
@@ -158,7 +158,7 @@ def test_a_position_score_publishes_no_fragment_statistics(
         .build_resource(tmp_path)
     )
 
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
 
     stats = _stored(resource)
     assert stats.fragments_by_chromosome() == {}
@@ -189,7 +189,7 @@ def test_the_info_page_renders_a_fragments_section(
     # Per-chromosome counts, a global row and ONE global length image --
     # no per-chromosome images.
     resource = _fragments(tmp_path)
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
 
     section = _fragments_section(_info_page(resource))
 
@@ -219,7 +219,7 @@ def test_the_fragments_section_is_absent_on_a_position_score(
         .with_tabix()
         .build_resource(tmp_path)
     )
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
 
     assert "Fragments" not in _info_page(resource)
 
@@ -231,7 +231,7 @@ def test_a_fragment_resource_with_no_statistics_file_says_not_computed(
     # histograms and no coverage file at all.  The section is still
     # there; it just has nothing to show.
     resource = _fragments(tmp_path)
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
     resource.proto.delete_resource_file(
         resource, "statistics/coverage.json")
 
@@ -249,7 +249,7 @@ def test_a_coverage_file_written_before_fragments_says_not_computed(
     # carries no fragment keys.  Deleting the whole file (above) does
     # not exercise this -- the keys are read independently of it.
     resource = _fragments(tmp_path)
-    GenomicScoreImplementation._do_noregion_histograms(resource)
+    scan.do_noregion_histograms(resource)
     stored = json.loads(
         resource.get_file_content("statistics/coverage.json"))
     for entry in [*stored["chromosomes"].values(), stored["global"]]:
