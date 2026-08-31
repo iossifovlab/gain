@@ -40,3 +40,7 @@ cache
 work
 temp
 .vagrant
+
+# Generated GRR pages; the info_pages_e2e image builds its own.
+info_pages_e2e/fixtures/
+info_pages_e2e/test-results/

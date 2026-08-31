@@ -67,6 +67,20 @@ Test markers in `core/pytest.ini`: `grr_rw`,
 
 All tests run with `PYTHONHASHSEED=0`.
 
+The GRR info pages' client-side JavaScript is not
+covered by pytest — gain-core's CI image has no JS
+runtime. It is driven in a browser by `info_pages_e2e`,
+which needs its fixture pages generated first:
+
+```bash
+uv run python info_pages_e2e/generate_fixtures.py \
+    info_pages_e2e/fixtures/grr
+cd info_pages_e2e && npm ci && npx playwright test
+```
+
+No server and no network: the pages are opened over
+`file://`. See `info_pages_e2e/README.md`.
+
 ### Linting and Type Checking
 
 Run these from `core/`, as CI does — the `core` image's
