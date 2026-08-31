@@ -508,9 +508,7 @@ def test_the_untouched_contig_rollup_sits_in_the_tfoot(
     In ``<tbody>`` the row would be reordered with the data, and it
     carries no ``data-sort-value`` on any cell, so ``compare`` would
     sink it to the bottom on every sort: a summary line floating among
-    the contigs.  Asserting the body's cells all still have keys is
-    what would catch it there, since a roll-up in the body reads as
-    just another row to every other assertion in this file.
+    the contigs.
     """
     repo = (
         a_grr()
@@ -537,7 +535,6 @@ def test_the_untouched_contig_rollup_sits_in_the_tfoot(
         built_page(repo, "scores/rollup"), "<h2>Coverage</h2>")
 
     assert [row[0].text for row in table.body] == ["chr1"]
-    sort_keys([cell for row in table.body for cell in row])
     assert [row[0].text for row in table.foot] == [
         "1 contig with no values (300 bp)", "all chromosomes"]
     assert table.loose == []

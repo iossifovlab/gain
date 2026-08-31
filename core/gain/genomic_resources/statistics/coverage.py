@@ -961,12 +961,11 @@ def resolve_chrom_lengths(
     that a covered contig the resolved source does NOT list is visible
     to the caller by its absence, which is what degrades the fraction.
 
-    The two rungs are not interchangeable, and the fraction means
-    something weaker on the lower one: a bigWig header is the FILE's
-    universe, so a chr21-only bigWig reads as nearly fully covered
-    unlabelled and as a percent or two of hg38 once labelled.  Only the
-    genome rung answers "what part of the reference genome has values";
-    the table rung answers "what part of what this file declares".
+    The two rungs are not interchangeable: only the genome rung answers
+    "what part of the reference genome has values", while the table rung
+    answers "what part of what this file declares".  ``docs/adr/0020``
+    carries the worked example and is the record to amend if this
+    changes; the user-facing half is in ``docs/source/grr.rst``.
 
     The genome rung is resolved by the CALLER: it needs a repository,
     which only exists during a page build, and the cache it goes
@@ -1023,6 +1022,14 @@ def _table_exact_lengths(
                 # The backend raises ValueError both for a contig it does
                 # not list and for a closed table; the open() above rules
                 # the latter out, so this is the unknown-contig case.
+                #
+                # A WARNING unconditionally, unlike the implausible-length
+                # drop in ``_plausible_lengths``, which follows
+                # coveredness.  Every contig of the universe above came
+                # from ``get_chromosomes()`` and must resolve a length, so
+                # reaching here means either a covered contig the table
+                # does not list or a chrom_mapping naming a contig the
+                # file lacks -- both worth saying out loud.
                 logger.warning(
                     "contig %s has no exact table length in %s; "
                     "rendering raw counts for it",
@@ -1060,12 +1067,13 @@ def build_coverage_display(
         statistics.covered_global() / sum(lengths.values())
         if resolved else None
     )
-    untouched = (
-        {
-            chrom: length for chrom, length in lengths.items()
-            if not covered.get(chrom)
-        }
-        if resolved else {}
+    untouched = {
+        chrom: length for chrom, length in lengths.items()
+        if resolved and not covered.get(chrom)
+    }
+    uncovered = (
+        UncoveredContigs(len(untouched), sum(untouched.values()))
+        if untouched else None
     )
     segments = statistics.segments_by_chromosome()
     rows = [
@@ -1075,13 +1083,15 @@ def build_coverage_display(
             covered[chrom] / lengths[chrom] if chrom in lengths else None,
             segments.get(chrom),
         )
-        for chrom in sorted(covered, key=natural_chromosome_key)
-        if chrom not in untouched
+        # Filtered BEFORE the sort, not in the comprehension after it: the
+        # key is a regex substitution, and a whole reference genome's worth
+        # of untouched contigs would each pay for one only to be dropped.
+        for chrom in sorted(
+            (chrom for chrom in covered if chrom not in untouched),
+            key=natural_chromosome_key)
     ]
     return CoverageDisplay(
-        rows, global_fraction,
-        UncoveredContigs(len(untouched), sum(untouched.values()))
-        if untouched else None,
+        rows, global_fraction, uncovered,
         statistics.segment_lengths_global())
 
 
@@ -1106,15 +1116,21 @@ def _plausible_lengths(
     untouched one changes nothing visible and would otherwise warn once
     per zero-length ``.fai`` record per render.
     """
-    kept = {}
+    kept: dict[str, int] = {}
     for chrom, length in lengths.items():
-        covered_here = covered.get(chrom, 0)
+        is_covered = chrom in covered
+        covered_here = covered[chrom] if is_covered else 0
         if length <= 0 or covered_here > length:
-            log = logger.warning if chrom in covered else logger.debug
-            log(
-                "implausible length %s for contig %s of %s "
-                "(covered positions: %s); rendering raw counts for it",
-                length, chrom, resource_id, covered_here)
+            if is_covered:
+                logger.warning(
+                    "implausible length %s for contig %s of %s "
+                    "(covered positions: %s); rendering raw counts for it",
+                    length, chrom, resource_id, covered_here)
+            else:
+                logger.debug(
+                    "implausible length %s for untouched contig %s of %s; "
+                    "leaving it out of the coverage denominator",
+                    length, chrom, resource_id)
             continue
         kept[chrom] = length
     return kept
