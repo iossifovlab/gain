@@ -18,9 +18,14 @@ from typing import Any
 import pytest
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing import build_inmemory_test_protocol
 
-from .conftest import ONE_RESOURCE_FILES, record_filesystem_calls
+from .conftest import (
+    ONE_RESOURCE_FILES,
+    a_source_resource,
+    assert_published_one,
+    calls_for,
+    record_filesystem_calls,
+)
 
 #: Asking whether a directory is there. The probe this change removes.
 PROBE_OPERATIONS = ("exists",)
@@ -66,8 +71,8 @@ def _count(
 ) -> int:
     """How many of ``operations`` were asked about ``directory``."""
     return sum(
-        1 for operation, path in calls
-        if path == directory and operation in operations)
+        1 for operation in calls_for(calls, directory)
+        if operation in operations)
 
 
 @pytest.mark.grr_rw
@@ -85,8 +90,7 @@ def test_a_download_never_asks_whether_a_directory_is_there(
     unconditional call took its place.
     """
     # Given a source resource and a destination that does not have it yet.
-    src_proto = build_inmemory_test_protocol(content_fixture)
-    src_resource = src_proto.get_resource("one")
+    src_resource = a_source_resource(content_fixture)
 
     dest_proto = download_dest
     assert dest_proto.get_all_resources_dict() == {}
@@ -97,9 +101,7 @@ def test_a_download_never_asks_whether_a_directory_is_there(
         dest_resource = dest_proto.copy_resource(src_resource)
 
     # Then
-    published = sorted(
-        entry.name for entry in dest_proto.get_manifest(dest_resource))
-    assert published == ONE_RESOURCE_FILES, "fixture changed; update this pin"
+    published = assert_published_one(dest_proto, dest_resource)
 
     resource_directory, internal_directory = _guarded_directories(
         dest_proto, dest_resource, published[0])
@@ -149,8 +151,7 @@ def test_a_download_creates_a_resource_directory_that_is_not_there(
     is the one the ``mkdir`` spelling breaks.
     """
     # Given a source resource and a destination with nothing in it.
-    src_proto = build_inmemory_test_protocol(content_fixture)
-    src_resource = src_proto.get_resource("one")
+    src_resource = a_source_resource(content_fixture)
 
     dest_proto = download_dest
     assert dest_proto.get_all_resources_dict() == {}
@@ -162,11 +163,7 @@ def test_a_download_creates_a_resource_directory_that_is_not_there(
 
     # Then the resource arrived whole, contents and all -- which it could
     # not have without its directory.
-    published = sorted(
-        entry.name for entry in dest_proto.get_manifest(dest_resource))
-    assert published == ONE_RESOURCE_FILES, "fixture changed; update this pin"
-
-    for name in published:
+    for name in assert_published_one(dest_proto, dest_resource):
         with src_resource.open_raw_file(name, "rb", uncompress=False) as src, \
                 dest_resource.open_raw_file(
                     name, "rb", uncompress=False) as dest:
