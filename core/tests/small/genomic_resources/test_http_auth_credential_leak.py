@@ -14,6 +14,7 @@ from gain.genomic_resources import cli as grr_cli
 from gain.genomic_resources.cli import cli_browse
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
+    FsspecRepositoryProtocol,
     build_fsspec_protocol,
 )
 from gain.genomic_resources.repository import GenomicResource
@@ -957,3 +958,109 @@ def test_download_cleanup_failure_does_not_leak_url_credential(
     assert "alice" not in caplog.text
     # the cleanup failure is still reported, just without the secret.
     assert "refused the removal" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# gain#1017 — the fasta index copy reads inside the handle ``open_raw_file``
+# returns. That open is redacted; the read on the returned handle is not, so
+# a failure mid-read surfaces the credential-bearing fetch url verbatim.
+# ---------------------------------------------------------------------------
+
+#: The bgzipped genome ``open_fasta_file`` is asked for. Its ``.fai``/``.gzi``
+#: indexes are what get copied local, and so what leaks on a failing read.
+_FASTA_FILE_NAME = "genome.fa.gz"
+
+
+def _a_remote_fasta_whose_index_read_fails(
+    proto_id: str, url: str, mocker: pytest_mock.MockerFixture,
+) -> tuple[FsspecRepositoryProtocol, GenomicResource, BaseException]:
+    """Arrange an https protocol whose every index read fails.
+
+    Returns the protocol, the resource, and the very error the read raises,
+    so a test can assert on identity and not merely on the message. The
+    failure is planted on the READ and not on the open, because the open is
+    already redacted and would prove nothing.
+
+    The existence probe is forced to succeed so the ``.gzi`` precondition
+    passes and the index copy -- not the guard above it -- is what surfaces.
+    ``pysam`` is never reached: the copy raises first.
+    """
+    proto = build_fsspec_protocol(proto_id, url)
+    resource = GenomicResource("sub/res", (1, 0), proto, {})
+    index_url = proto.get_resource_file_url(
+        resource, f"{_FASTA_FILE_NAME}.fai")
+    planted = FileNotFoundError(index_url)
+    mocker.patch.object(proto.filesystem, "exists", return_value=True)
+    handle = mocker.MagicMock()
+    handle.__enter__.return_value.read.side_effect = planted
+    mocker.patch.object(proto.filesystem, "open", return_value=handle)
+    return proto, resource, planted
+
+
+def test_fasta_index_read_failure_does_not_leak_url_credential(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    proto, resource, planted = _a_remote_fasta_whose_index_read_fails(
+        "i1017-fasta", f"https://alice:{_SECRET}@127.0.0.1:1/path", mocker)
+
+    with pytest.raises(OSError) as excinfo:
+        proto.open_fasta_file(resource, _FASTA_FILE_NAME)
+
+    exc = excinfo.value
+    tb = "".join(traceback.format_exception(exc))
+    assert _SECRET not in str(exc)
+    assert "alice" not in str(exc)
+    assert _SECRET not in tb
+    for linked in _walk_exception_chain(exc):
+        assert _SECRET not in str(linked)
+    # host, port and filename preserved so the error stays diagnosable.
+    assert "127.0.0.1:1" in str(exc)
+    assert f"{_FASTA_FILE_NAME}.fai" in str(exc)
+    # a redacted rebuild, not the error the read raised.
+    assert exc is not planted
+
+
+def test_fasta_index_read_failure_without_userinfo_is_unchanged(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # Nothing to redact must mean nothing touched: the read's own error
+    # propagates as-is, keeping its traceback and the full url a diagnosis
+    # needs. Asserted on identity, because a rebuild carrying an identical
+    # message would satisfy any assertion on the message alone.
+    proto, resource, planted = _a_remote_fasta_whose_index_read_fails(
+        "i1017-fasta-plain", "https://127.0.0.1:1/path", mocker)
+
+    with pytest.raises(OSError) as excinfo:
+        proto.open_fasta_file(resource, _FASTA_FILE_NAME)
+
+    assert excinfo.value is planted
+
+
+def test_fasta_index_copy_lands_the_bytes_it_read(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    # The success path is what the redaction must not disturb: the copy
+    # still writes the file it read, byte for byte, at the path it returns.
+    proto = build_fsspec_protocol(
+        "i1017-fasta-ok", f"https://alice:{_SECRET}@127.0.0.1:1/path")
+    resource = GenomicResource("sub/res", (1, 0), proto, {})
+    payload = b"\x1f\x8b\x08index-bytes"
+    handle = mocker.MagicMock()
+    handle.__enter__.return_value.read.return_value = payload
+    opened = mocker.patch.object(
+        proto.filesystem, "open", return_value=handle)
+
+    dest = proto._copy_resource_file_to_local(
+        resource, f"{_FASTA_FILE_NAME}.fai", str(tmp_path))
+
+    assert pathlib.Path(dest).read_bytes() == payload
+    assert pathlib.Path(dest).name == f"{_FASTA_FILE_NAME}.fai"
+    # The credential must still travel on the fetch url so aiohttp can
+    # authenticate -- only the surfaced error is redacted. Asserted on the
+    # call args, because resolving to the credential-free display url
+    # instead would break every authed read with this suite still green.
+    assert _SECRET in opened.call_args.args[0]
+    assert opened.call_args.args[0].endswith(f"{_FASTA_FILE_NAME}.fai")
+    # read as stored: the old `uncompress=False` named nothing, and
+    # `_read_fetch_file` must not be handed a compression either.
+    assert opened.call_args.kwargs["compression"] is None
