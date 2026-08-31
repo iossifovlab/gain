@@ -63,7 +63,7 @@ cd core && pytest -v -n 10 tests/
 ```
 
 Test markers in `core/pytest.ini`: `grr_rw`,
-`grr_ro`, `grr_full`, `grr_http`, `grr_tabix`.
+`grr_local`, `grr_full`, `grr_http`, `grr_tabix`.
 
 All tests run with `PYTHONHASHSEED=0`.
 
