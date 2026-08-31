@@ -206,8 +206,12 @@ def test_from_resource_id_falls_back_to_the_default_repository(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
     """With no ``grr`` argument the default GRR is built and used."""
+    # Patched where the factories LOOK the name up -- the module that
+    # imported it -- not on the package facade, which since gain#902 only
+    # re-exports and would leave `builders`' own global bound to the real
+    # function.
     default_repo = mocker.patch(
-        "gain.genomic_resources.genomic_scores"
+        "gain.genomic_resources.genomic_scores.builders"
         ".build_genomic_resource_repository",
         return_value=grr,
     )

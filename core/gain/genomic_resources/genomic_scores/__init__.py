@@ -31,6 +31,8 @@ from .base import (
     FragmentScore,
     GenomicScore,
     PositionScore,
+)
+from .builders import (
     build_allele_score_from_resource,
     build_allele_score_from_resource_id,
     build_fragment_score_from_resource,
