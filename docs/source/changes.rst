@@ -2,39 +2,237 @@ Release Notes
 =============
 
 * 2026.8.5
-    * **Behavior change:** the deprecated ``np_score`` resource ``type:``
-      is removed. Write ``type: allele_score`` instead. **This is not a
-      plain rename:** ``np_score`` read in substitutions mode, while
-      ``allele_score`` reads in alleles mode by default, so a resource
-      that relied on the old default must also declare
-      ``allele_score_mode: substitutions`` to keep reading as it did.
-      A resource still declaring ``np_score`` is refused with a message
-      naming both, from whichever seam opens it -- an annotation
-      pipeline, the score factories, ``AlleleScore`` itself, and the
-      implementation builder that ``grr_manage`` sweeps with. The
-      spelling had warned since 2024-11 and its removal was announced
-      for this release (#781, #918, #920).
-    * **Behavior change:** the deprecated ``np_score`` and
-      ``np_score_annotator`` *annotator* names are removed. Write
-      ``allele_score`` and ``allele_score_annotator`` instead -- each
-      retired name maps to the replacement of the same shape, so a
-      migration is a one-word edit. A pipeline still naming one is
-      refused with a message naming its replacement and this release,
-      rather than the bare ``unsupported annotator type`` the removal
-      would otherwise give; the annotation editor's endpoints say the
-      same. Unlike the resource ``type:`` above this is a plain rename:
-      the annotator name never selected the read mode. The names had
-      warned since 2024-11 and their removal was announced for this
-      release (#781, #918, #919).
-    * **Fixed:** the annotation editor's ``annotator_config`` endpoint
-      answered an ``annotator_type`` it does not serve with a 500 rather
-      than the 400 its sibling endpoints return, so a misspelt or retired
-      annotator name produced no usable error. It also served the
-      allele-score template under its suffixed name only, so the spelling
-      that template itself emits -- and that the refusal above tells a
-      reader to write -- was answered with a 500 (#919).
-    * The ``np_score`` test-data builders (``NPScoreBuilder``,
-      ``a_np_score``) are retired with the type they built (#920).
+    * The deprecated ``np_score`` spellings are removed -- the resource
+      ``type:`` and the ``np_score`` / ``np_score_annotator`` annotator
+      names. Write ``allele_score`` / ``allele_score_annotator``
+      instead. The resource ``type:`` is not a plain rename:
+      ``np_score`` read in substitutions mode, so a resource that relied
+      on that default must also declare ``allele_score_mode:
+      substitutions``. The ``np_score`` test-data builders are retired
+      with the type (:issue:`918`, :issue:`919`, :issue:`920`).
+    * The statistics scan assigns each record to exactly one region --
+      the one its ``pos_begin`` falls in -- so no statistic varies with
+      ``--region-size`` (:issue:`816`).
+    * ``fetch_region_segments`` is the unclipped region read on the
+      scores; ``fetch_region_segment_scores`` keeps its clipped meaning
+      but is deprecated (:issue:`826`, :issue:`827`).
+    * The GTF parser reads ``CDS`` records into the coding interval,
+      repairing transcripts GENCODE flags incomplete; picked up when a
+      resource is rebuilt (:issue:`909`).
+    * The gene-models parsers read tables as text and refuse malformed
+      records by name instead of producing ``nan`` transcripts
+      (:issue:`907`, :issue:`929`, :issue:`931`, :issue:`963`,
+      :issue:`973`).
+    * Filename suffixes are matched case-insensitively wherever
+      behaviour hangs on one (:issue:`348`, :issue:`975`).
+    * The single-allele annotation response links each resource on its
+      child repository's declared ``public_url`` (:issue:`838`).
+    * Anonymous-quota rows store what a user has consumed, so a raised
+      limit applies immediately (:issue:`750`).
+    * The score filter language gains ``>=``, ``<=``, ``!=``, ``not``
+      and grouping, and filtering becomes a capability of the score
+      itself -- ``compile_filter`` plus ``score_filter=`` on the fetch
+      methods (:issue:`805`, :issue:`806`, :issue:`820`).
+    * ``AlleleScore`` gains a bulk ref/alt column-array read
+      (:issue:`780`).
+    * The resource info pages document coverage, allele and fragment
+      statistics: covered positions, segment and fragment counts,
+      length histograms, allele classes, the substitution matrix with
+      ts/tv, and indel/complex grids -- in sortable tables, in natural
+      chromosome order (:issue:`772`, :issue:`777`, :issue:`779`,
+      :issue:`794`, :issue:`988`, :issue:`997`).
+    * Repository publishes go through a write-temp-verify-move seam,
+      a file's recorded state carries the store's change token (the
+      S3 ETag), and downloads reuse the streamed md5 -- a steady-state
+      sweep of an unchanged s3 repository takes 5x fewer round trips
+      (:issue:`865`, :issue:`880`, :issue:`881`, :issue:`933`,
+      :issue:`936`, :issue:`948`).
+    * Gene-models format inference reports a per-format rejection
+      ledger and breaks the headerless ``refseq``/``ccds`` tie, and
+      the GTF parser accepts FlyBase-flavour files (:issue:`853`,
+      :issue:`856`, :issue:`869`).
+    * The test-data builders gain ``a_gene_models`` (:issue:`315`).
+    * ``/api/pipelines/validate`` memoises its verdicts, and the
+      annotation worker count is configurable through
+      ``GPFWA_ANNOTATION_MAX_WORKERS`` (:issue:`833`, :issue:`837`).
+    * Secrets stay out of logs: the backend's daphne access log is
+      discarded and the GRR download path redacts url credentials
+      (:issue:`620`, :issue:`795`).
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-08-12T13%3A59%3A14
+      Z..2026-08-31T11%3A05%3A07Z>`__.
+
+* 2026.8.4
+    * An annotation config's ``value_transform`` is compiled by a
+      restricted evaluator instead of a bare ``eval()``; an expression
+      outside the allowlist is refused when the pipeline is built
+      (:issue:`764`, :issue:`767`).
+    * The web API's authentication endpoints are rate-limited, per
+      client IP and per submitted address (:issue:`694`).
+    * ``grr_manage``'s ``resource-*`` commands write only inside the
+      selected resources; the new ``repo-index`` command publishes the
+      repository globals from the manifests on disk (:issue:`760`).
+    * The repository index is published gzipped only; readers still fall
+      back to an uncompressed copy (:issue:`758`).
+    * ``fetch_region_values`` is renamed
+      ``fetch_region_segment_scores``; the old name is a deprecated
+      forwarder (:issue:`729`, :issue:`734`).
+    * ``PositionScore`` gains a logical ``get_`` read plane, reading
+      the score as a function from position to values (:issue:`727`).
+    * ``SearchResources`` reports the group children a search had to
+      skip in an ``incomplete`` list (:issue:`686`).
+    * Live single-use codes and url credentials are kept out of the
+      logs, and anonymous config text cannot forge log records
+      (:issue:`629`, :issue:`655`, :issue:`701`, :issue:`754`).
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-08-07T12%3A26%3A09
+      Z..2026-08-12T13%3A59%3A14Z>`__.
+
+* 2026.8.3
+    * A 10x ``ann_data`` resource is read whole by default; filtering a
+      multiome down to its genes is opt-in configuration. Deployed 10x
+      resources take a one-time ``grr_manage -f`` reprocess
+      (:issue:`716`).
+    * Oversized categorical histograms get truncated sidecars the
+      info pages read; ``grr_manage repo-fix-histograms`` migrates a
+      repository built before them (:issue:`718`, :issue:`719`,
+      :issue:`724`).
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-08-06T12%3A05%3A32
+      Z..2026-08-07T12%3A26%3A09Z>`__.
+
+* 2026.8.2
+    * GAIn reads both 10x ``ann_data`` formats itself -- the
+      matrix-market triple and the CellRanger ``.h5`` -- and scanpy
+      is retired as a dependency. The statistics build no longer
+      opens the count matrix, so repairing a large 10x resource
+      completes in seconds (:issue:`708`, :issue:`712`).
+    * ``GPFWA_NUM_PROXIES`` accepts only an ASCII decimal string, and
+      the frontend container's access log writes real log lines
+      (:issue:`695`).
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-08-05T12%3A44%3A07
+      Z..2026-08-06T12%3A05%3A32Z>`__.
+
+* 2026.8.1
+    * The anonymous pipeline-validation endpoint runs on a bounded pool
+      and sheds requests with ``503`` + ``Retry-After`` instead of
+      queueing without limit (:issue:`659`, :issue:`676`).
+    * The web API derives the client IP in one place, under the new
+      ``GPFWA_NUM_PROXIES`` setting (:issue:`667`).
+    * A search over a group repository skips a child that cannot
+      answer it instead of dying on it (:issue:`680`).
+    * Each score kind states its record-ordering rule on both
+      statistics scan paths (:issue:`591`, :issue:`592`).
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-08-04T11%3A46%3A09
+      Z..2026-08-05T12%3A44%3A07Z>`__.
+
+* 2026.8.0
+    * Record-ordering validation moved off the score read path and into
+      the statistics scan; a violation refuses the resource with
+      ``MalformedResourceError`` naming the locus and the rule
+      (:issue:`587`, :issue:`588`, :issue:`589`, :issue:`590`).
+    * A tabix table whose index and configuration name different columns
+      is refused at open (:issue:`553`).
+    * An unknown score id is refused up front, whatever the region
+      holds.
+    * A caching repository carries the id of the repository it wraps,
+      and ``repository_id`` can select a top-level repository
+      (:issue:`447`).
+    * ``build_fsspec_protocol`` refuses a writable request over http,
+      and a string-valued ``read_only`` resolves to a boolean
+      (:issue:`528`).
+    * ``draw_score_histograms`` isolates a per-resource failure and
+      skips scoreless resources (:issue:`337`, :issue:`537`).
+    * New ``ann_data`` resource type: an AnnData single-cell matrix
+      served from the GRR, with statistics and an info page
+      (:issue:`608`).
+    * The resource query language moved into the GRR itself:
+      ``search_resources`` takes it, ``grr_manage list`` /
+      ``grr_browse`` gain ``-q/--query`` (plus ``-s`` and ``-t``),
+      and ``/api/resources/search`` accepts it as ``query=``
+      (:issue:`441`, :issue:`442`, :issue:`443`).
+    * The GRR index page gains a hierarchical browse view
+      (:issue:`560`).
+    * The ``cnv_collection`` configuration vocabulary is deprecated
+      in favor of ``fragment_score``, warning once per offender until
+      2027.1.0 (:issue:`538`).
+    * A ``table:`` block's ``index_filename`` is honoured everywhere,
+      including the VCF backend and cache prefetch (:issue:`595`,
+      :issue:`596`).
+    * ``prepare_tabular`` publishes its output and index atomically
+      (:issue:`618`).
+    * Hardening against untrusted GRR content and anonymous requests:
+      control characters in names are refused, browse pages
+      autoescape, the query parser bounds its input, and
+      ``grr_manage`` refuses a ``dvc add <dir>`` output up front
+      (:issue:`284`, :issue:`542`, :issue:`558`, :issue:`635`,
+      :issue:`642`).
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-07-30T12%3A39%3A05
+      Z..2026-08-04T11%3A46%3A09Z>`__.
+
+* 2026.7.7
+    * ``build_fragment_score_from_resource`` returns a fresh score per
+      call instead of a process-wide shared instance.
+    * The per-kind score reads are renamed after their kind
+      (``fetch_position_scores``, ``fetch_allele_scores``,
+      ``fetch_fragment_scores``), ``fetch_fragment_scores`` returns
+      score-value dicts instead of ``Fragment`` objects, and
+      ``fetch_region`` is removed in favor of ``fetch_region_values``.
+      No aliases.
+    * ``load_pipeline_from_grr`` is removed; use
+      ``load_pipeline_from_file_or_resource`` (:issue:`508`).
+    * The bulk statistics scan covers allele, fragment, int- and
+      str-valued scores, bit-identical to the per-record path and
+      several times faster (:issue:`406`, :issue:`421`).
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-07-29T12%3A26%3A13
+      Z..2026-07-30T12%3A39%3A05Z>`__.
+
+* 2026.7.6
+    * A GRR cache must live on a local filesystem; off one, the per-file
+      download lock silently degraded to a no-op (:issue:`473`).
+    * A repository ``id`` must be a single safe path segment, and ids
+      must be unique across the definition tree (:issue:`445`,
+      :issue:`460`, :issue:`461`).
+    * The ``CnvCollection`` Python surface is renamed
+      ``FragmentScore``, and the ``fragment_score`` configuration
+      vocabulary is accepted alongside ``cnv_collection``
+      (:issue:`470`, :issue:`471`).
+    * The resource test-data builders gain ``with_meta`` /
+      ``with_labels`` (:issue:`319`).
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-07-28T12%3A55%3A33
+      Z..2026-07-29T12%3A26%3A13Z>`__.
+
+* 2026.7.5
+    * The per-line score objects are gone from the ``GenomicScore`` API
+      -- values are read straight off records (``fetch_records``,
+      ``get_score_from_record``); ``chrom`` is required in the region
+      reads, and a whole-table read is ``get_all_records()``.
+    * A resource score declares a single ``aggregator:`` key; the per-
+      kind aggregator keys are removed.
+    * BigWig fetch buffering is removed (``direct_fetch_size`` becomes
+      ``fetch_size``), and a bigWig score config is validated against
+      what the format can honour.
+    * ``GenomicScore.aggregate_region`` folds a region into one value
+      per requested score, and the typed score factories return
+      concrete types (:issue:`438`).
+    * The per-record score read path is 17-34% faster, per backend.
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-07-24T12%3A55%3A06
+      Z..2026-07-28T12%3A55%3A33Z>`__.
 
 * 2026.7.4
     * **Fixed:** a ``data_frame`` resource with ``format: excel`` — the
