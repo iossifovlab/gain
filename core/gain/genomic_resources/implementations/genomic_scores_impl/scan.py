@@ -154,6 +154,60 @@ _FRAGMENT_STATISTICS_RESOURCE_TYPES = frozenset(
     equivalent_resource_types("fragment_score"))
 
 
+def _score_for(
+    resource: GenomicResource,
+    score: GenomicScore | None,
+) -> GenomicScore:
+    """The score this call reads: the caller's, or one built for it.
+
+    The one place the ``score`` parameter threaded through this module is
+    honoured, so that "a caller may hand its own score down" is stated
+    once instead of at each of the six sites that would otherwise write
+    the same conditional.
+
+    **Why the parameter exists.** ``GenomicScore.__init__`` is ~98% the
+    cerberus normalize-and-validate pass over the resource's config, and
+    that pass scales with the score count -- milliseconds for a wide
+    resource.  A scan task used to pay it three or four times per region
+    (gain#1038): once for the allele probe, once in each gate it asks,
+    and once more in the scan that serves the region.  The config does
+    not change between those calls, so they all built the same thing.
+
+    **Why not memoize the factory instead.** ``build_score_from_resource``
+    documents the opposite contract -- every call yields a fresh instance
+    the caller owns -- and it is called from the annotation pipeline and
+    the web tier, not just here.  Sharing is therefore made explicit at
+    the call site, and bounded by it.
+
+    **Why the sharing stops at the task frame.** Not because the score
+    could not survive the trip: ``do_noregion_histograms`` calls the two
+    task functions in-process, with no task graph between them, and a
+    score would reach them intact.  It stops because a ``do_*_task``
+    signature is a SCHEDULING CONTRACT -- ``impl`` hands those arguments
+    to ``TaskGraph.make_task``, and under a distributed executor they are
+    serialized.  A parameter that cannot appear in that list does not
+    belong in that signature, whoever the caller happens to be.
+
+    **The pair must match.** ``resource`` is ignored when a ``score`` is
+    given, so the two must describe the same resource; handing a score
+    built from another one would scan that other resource silently.  Not
+    asserted, because identity is too strong a test -- a caller may
+    legitimately hold an equivalent resource re-fetched from the
+    repository -- and every call site is in this module.
+
+    **Who closes it.** A score handed to one of the scans is OPENED by
+    that scan and CLOSED on return, which is what the freshly built one
+    always got: a scan is the last thing a task does with its score, and
+    leaving a pysam handle open for the caller to remember would be the
+    surprise.  It holds for a score handed in already open too -- the
+    scan does not adopt the caller's lifetime, it ends it.  The gates
+    open nothing and so close nothing.
+    """
+    if score is not None:
+        return score
+    return build_score_from_resource(resource)
+
+
 def _allele_batches(
     score: GenomicScore,
     chrom: str,
@@ -290,6 +344,8 @@ def do_min_max(
     chrom: str,
     start: int | None,
     end: int | None,
+    *,
+    score: GenomicScore | None = None,
 ) -> dict[str, MinMaxValue]:
     """Reduce a region to a min and a max per score, record by record.
 
@@ -300,14 +356,17 @@ def do_min_max(
     region OWNS -- min/max would survive double-counting, but a
     region measuring differently by which path served it is what the
     parity tests refuse.
+
+    A ``score`` handed in is opened here and closed on return; see
+    :func:`_score_for`.
     """
     result = {
         scr_id: MinMaxValue(scr_id)
         for scr_id in score_ids
     }
-    with build_score_from_resource(resource).open() as score:
+    with _score_for(resource, score).open() as opened:
         for left, _right, rec in scan_region(
-                score, chrom, start, end, score_ids):
+                opened, chrom, start, end, score_ids):
             # The same record partition every statistic reads: a
             # region reduces the records it OWNS.  min/max is
             # idempotent under duplication, so the merged result
@@ -389,6 +448,7 @@ def do_histogram(
     *,
     coverage: RegionCoverage | None = None,
     alleles: RegionAlleles | None = None,
+    score: GenomicScore | None = None,
 ) -> dict[str, Histogram]:
     """Histogram a region record by record, per score.
 
@@ -404,6 +464,9 @@ def do_histogram(
 
     A histogram that refuses a value is nullified on its own and the
     resource's other scores carry on.
+
+    A ``score`` handed in is opened here and closed on return; see
+    :func:`_score_for`.
     """
     result: dict[str, Histogram] = {}
 
@@ -415,10 +478,10 @@ def do_histogram(
         result[score_id] = build_empty_histogram(hist_conf)
 
     score_ids = list(result.keys())
-    with build_score_from_resource(resource).open() as score:
+    with _score_for(resource, score).open() as opened:
         # One statement of the rule, read by this path and by the bulk
         # one: only a position score weighs a record by its span.
-        weight_is_span = score.RECORD_WEIGHT_IS_SPAN
+        weight_is_span = opened.RECORD_WEIGHT_IS_SPAN
         # Coverage unions POSITIONS, and a union is only additive
         # across parallel regions when the spans are clipped to
         # disjoint extents -- so a kind whose rows can overlap keeps
@@ -430,7 +493,7 @@ def do_histogram(
         track_fragments = coverage is not None \
             and coverage.tracks_fragments
         for left, right, rec in scan_region(
-                score, chrom, start, end, score_ids,
+                opened, chrom, start, end, score_ids,
                 alleles=alleles):
             owned = owns_record(left, start, end)
             if coverage is not None:
@@ -493,6 +556,7 @@ def do_histogram_bulk(
     *,
     coverage: RegionCoverage | None = None,
     alleles: RegionAlleles | None = None,
+    score: GenomicScore | None = None,
 ) -> dict[str, Histogram]:
     """Vectorized equivalent of :func:`do_histogram`.
 
@@ -521,6 +585,12 @@ def do_histogram_bulk(
             arrays: RecordArrays,
             result: dict[str, Histogram],
             region: tuple[str, int | None, int | None],
+            # Shadows this function's own ``score`` parameter, and must:
+            # the name is part of the accumulator type ``accumulate`` is
+            # assigned from, which ``_accumulate_arrays`` spells
+            # ``score``.  Harmless -- nothing in here reads the outer
+            # one; the ``bulk_region_scan`` call that does is below, at
+            # this function's own scope.
             score: GenomicScore,
         ) -> None:
             _accumulate_arrays(
@@ -538,7 +608,8 @@ def do_histogram_bulk(
             _allele_batches, alleles=alleles,
             batch_size=_SCAN_BATCH_SIZE)
     return bulk_region_scan(
-        resource, result, chrom, start, end, accumulate, batches=batches)
+        resource, result, chrom, start, end, accumulate,
+        batches=batches, score=score)
 
 
 def bulk_region_scan(
@@ -555,6 +626,7 @@ def bulk_region_scan(
     batches: Callable[
         [GenomicScore, str, int, int, list[str]],
         Iterable[RecordArrays]] | None = None,
+    score: GenomicScore | None = None,
 ) -> dict[str, _AccT]:
     """Drive a bulk region scan, folding each batch into ``result``.
 
@@ -581,12 +653,15 @@ def bulk_region_scan(
     The validator is per REGION, and a region lies within one contig, so
     the ordering carry never spans a contig boundary -- the same reason
     the per-record validators reset on a change of chromosome.
+
+    A ``score`` handed in is opened here and closed on return; see
+    :func:`_score_for`.
     """
-    with build_score_from_resource(resource).open() as score:
+    with _score_for(resource, score).open() as opened:
         if batches is None:
             batches = _validated_batches
-        for arrays in batches(score, chrom, start, end, list(result)):
-            accumulate(arrays, result, (chrom, start, end), score)
+        for arrays in batches(opened, chrom, start, end, list(result)):
+            accumulate(arrays, result, (chrom, start, end), opened)
     return result
 
 
@@ -701,6 +776,8 @@ def _select_and_weigh(
 def can_bulk_histogram(
     resource: GenomicResource,
     all_hist_confs: dict[str, HistogramConfig],
+    *,
+    score: GenomicScore | None = None,
 ) -> bool:
     """Whether the vectorized scan may serve this histogram build.
 
@@ -731,7 +808,8 @@ def can_bulk_histogram(
         CategoricalHistogramConfig: ("str",),
     }
     bulk_score_ids = []
-    score_defs = build_score_from_resource(resource).score_definitions
+    score = _score_for(resource, score)
+    score_defs = score.score_definitions
     for score_id, hist_conf in all_hist_confs.items():
         if isinstance(hist_conf, NullHistogramConfig):
             continue
@@ -742,12 +820,14 @@ def can_bulk_histogram(
             return False
         bulk_score_ids.append(score_id)
     return bulk_scan_eligible(
-        resource, bulk_score_ids)
+        resource, bulk_score_ids, score=score)
 
 
 def can_bulk_min_max(
     resource: GenomicResource,
     score_ids: list[str],
+    *,
+    score: GenomicScore | None = None,
 ) -> bool:
     """Whether the vectorized scan may serve this min/max pass.
 
@@ -766,19 +846,22 @@ def can_bulk_min_max(
     yields an empty min/max and nullifies that one histogram -- so the
     condition is stated for this consumer too, not assumed from the other.
     """
-    score_defs = build_score_from_resource(resource).score_definitions
+    score = _score_for(resource, score)
+    score_defs = score.score_definitions
     for score_id in score_ids:
         score_def = score_defs.get(score_id)
         if score_def is None \
                 or score_def.value_type not in ("float", "int"):
             return False
     return bulk_scan_eligible(
-        resource, score_ids)
+        resource, score_ids, score=score)
 
 
 def bulk_scan_eligible(
     resource: GenomicResource,
     score_ids: list[str],
+    *,
+    score: GenomicScore | None = None,
 ) -> bool:
     """Whether a vectorized region scan may serve these scores.
 
@@ -803,12 +886,13 @@ def bulk_scan_eligible(
 
     Answered WITHOUT opening the score: the table and the score definitions
     are both built in ``GenomicScore.__init__``, so nothing here needs a
-    file handle.
+    file handle.  That is also why ``score`` may be handed in already
+    closed -- a caller that has finished reading through it can still ask
+    this (see :func:`_score_for` for why it would want to).
     """
     if resource.get_type() not in _BULK_SCAN_RESOURCE_TYPES:
         return False
-    score = build_score_from_resource(resource)
-    return score.supports_region_value_arrays(score_ids)
+    return _score_for(resource, score).supports_region_value_arrays(score_ids)
 
 
 def do_min_max_task(
@@ -829,15 +913,22 @@ def do_min_max_task(
     re-raised: this is the only frame that knows both which resource the
     scan was reading and that the reading is what failed, and the task
     graph's own report names no resource.
+
+    ONE score, built here and threaded to the gate and to whichever scan
+    serves the region -- see :func:`_score_for`.  Built inside the
+    ``try``, because a construction that refuses the resource is exactly
+    the failure this frame exists to attribute.  (Its histogram sibling
+    builds outside, for a reason its own docstring gives.)
     """
     try:
+        score = build_score_from_resource(resource)
         if chrom is not None and start is not None and end is not None \
                 and can_bulk_min_max(
-                    resource, score_ids):
+                    resource, score_ids, score=score):
             return do_min_max_bulk(
-                resource, score_ids, chrom, start, end)
+                resource, score_ids, chrom, start, end, score=score)
         return do_min_max(
-            resource, score_ids, chrom, start, end)
+            resource, score_ids, chrom, start, end, score=score)
     except MalformedResourceError as err:
         report_resource_failure(
             err, "could not scan the values of", resource.resource_id)
@@ -871,6 +962,17 @@ def do_histogram_task(
     so a backend that will not serve them sends the region back to
     the per-record read rather than to a statistic with no class
     data.
+
+    ONE score serves the whole invocation -- the allele probe below, the
+    bulk gate, and whichever scan takes the region -- where each of those
+    used to build its own (gain#1038); see :func:`_score_for`.  An allele
+    score's probe OPENS it and hands it on closed; the scan reopens it,
+    as it would have opened a fresh one.
+
+    Built BEFORE the ``try``, unlike :func:`do_min_max_task`'s, because
+    the allele probe needs it and the probe precedes the ``try``.  So a
+    construction that refuses this resource is not attributed here -- as
+    was already the case before the score was shared.
     """
     coverage = None
     resource_type = resource.get_type()
@@ -899,14 +1001,14 @@ def do_histogram_task(
         if chrom is not None and start is not None and end is not None \
                 and nucleotides \
                 and can_bulk_histogram(
-                    resource, all_hist_confs):
+                    resource, all_hist_confs, score=score):
             histograms = do_histogram_bulk(
                 resource, all_hist_confs, chrom, start, end,
-                coverage=coverage, alleles=alleles)
+                coverage=coverage, alleles=alleles, score=score)
         else:
             histograms = do_histogram(
                 resource, all_hist_confs, chrom, start, end,
-                coverage=coverage, alleles=alleles)
+                coverage=coverage, alleles=alleles, score=score)
         return RegionScanResult(histograms, coverage, alleles)
     except MalformedResourceError as err:
         report_resource_failure(
@@ -921,6 +1023,8 @@ def do_min_max_bulk(
     chrom: str,
     start: int,
     end: int,
+    *,
+    score: GenomicScore | None = None,
 ) -> dict[str, MinMaxValue]:
     """Vectorized equivalent of :func:`do_min_max`.
 
@@ -935,7 +1039,7 @@ def do_min_max_bulk(
         score_id: MinMaxValue(score_id) for score_id in score_ids}
     return bulk_region_scan(
         resource, result, chrom, start, end,
-        _accumulate_min_max)
+        _accumulate_min_max, score=score)
 
 
 def _accumulate_min_max(
