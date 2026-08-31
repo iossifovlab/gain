@@ -190,6 +190,45 @@ is exactly what #350 avoided.  Named here so the ambiguity is a decision on
 record rather than something a caller has to rediscover; the same note is on
 ``GenomicPositionTable.close``.
 
+**Changed extension point: ``close()`` is no longer abstract, and a backend's
+``close()`` must now CALL UP into the base one.**
+``TabixGenomicPositionTable``, ``BigWigTable`` and
+``VCFGenomicPositionTable`` are in ``__all__`` below, so this changes public
+names of ``gain`` and is recorded for the same reason as everything above.
+#354 gave the release policy of #350 a shared implementation:
+``GenomicPositionTable.close()`` became CONCRETE and gives up the base class's
+own file-derived state -- ``chrom_order``, ``chrom_map``, ``rev_chrom_map``
+and the ``get_file_chromosomes`` memo.  The abstract set is now exactly
+``open``, ``get_all_records``, ``get_records_in_region``,
+``find_chromosome_length`` and ``_load_file_chromosomes``.
+
+**For an out-of-tree backend this breaks in the OPPOSITE shape to the two
+renames above: nothing fails at instantiation any more.**  A backend that
+already defines ``close()`` keeps working and simply acquires an obligation --
+end it with ``super().close()``, or the table holds its contig order and its
+chromosome map for as long as its holder lives, which no exception reports and
+which ``open()`` would have rebuilt anyway.  A backend that defines NO
+``close()`` is the sharper case: it used to be impossible to construct
+(``TypeError: Can't instantiate abstract class ... close``) and now constructs
+fine, inheriting a ``close()`` that releases the chromosome state and never
+touches the backend's own file handle -- so ``GenomicScore.close()`` reports
+success over a live pysam/pyBigWig descriptor, which is the fd leak the whole
+#345/#350 line of work exists to prevent.
+
+Recorded rather than fixed, and deliberately NOT reverted to an abstract
+``close()`` over a separate ``_release_file_state()`` hook (gain#359).  That
+would refuse, at the first INSTANTIATION, exactly the out-of-tree backends
+that define no ``close()`` -- a backend that already defines one keeps
+constructing fine -- to buy coverage the in-tree tests already give, at the
+price of changing a documented extension point a second time.  What is
+enforced instead is that the tree's own backends cannot slip past those tests
+-- ``test_every_backend_in_the_tree_is_in_the_backend_list`` sweeps
+``GenomicPositionTable.__subclasses__()`` and fails a concrete backend that no
+fixture builds, and ``test_a_closed_table_releases_what_open_established``
+then catches both failure modes above on any backend it is handed.  There is
+no such sweep for a backend outside this repo, which is what this entry is
+for: call up.
+
 **New optional capability: ``get_region_value_arrays`` and the
 ``supports_value_arrays`` flag that declares it** (gain#398).  ``BigWigTable``,
 ``TabixGenomicPositionTable`` and ``VCFGenomicPositionTable`` are in ``__all__``

@@ -139,12 +139,44 @@ def _build_bigwig(tmp_path: pathlib.Path) -> Backend:
 # format, paired with the score line class ``GenomicScore.open`` must route it
 # to.  Every backend in the tree is here: a fifth one must be added, or nothing
 # checks that its claim is true.
+#
+# That "every backend in the tree" is no longer a promise this comment makes on
+# its own -- test_every_backend_in_the_tree_is_in_the_backend_list, over in
+# test_table_lifetime.py, sweeps the real ``GenomicPositionTable`` subclasses
+# and fails a concrete backend that is missing from this list.  It lives there
+# because the release-policy tests are what a missing entry silently robs of a
+# subject (gain#359), but what it holds to reality is this list.
 _BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
     pytest.param(_build_inmemory, extract_column_value, id="inmemory"),
     pytest.param(_build_tabix, extract_column_value, id="tabix"),
     pytest.param(_build_vcf, extract_vcf_value, id="vcf"),
     pytest.param(_build_bigwig, extract_bigwig_value, id="bigwig"),
 ]
+
+
+def build_every_backend(
+    tmp_path: pathlib.Path,
+) -> dict[str, GenomicScore]:
+    """One UNOPENED score per ``_BACKENDS`` entry, keyed by its param id.
+
+    A repo per backend: two of them build a resource under the same name, so
+    each gets a directory of its own.
+
+    Shared with test_table_lifetime.py, whose exhaustiveness sweep wants the
+    same four scores for the opposite reason -- it reads ``type(score.table)``
+    off each to learn which backend the entry really builds, where the checks
+    in this file read the table's class-level claims.  Both are "hand-written
+    list against reality", and neither may open a score first: the claims are
+    ClassVars, readable before ``GenomicScore.open`` gets to route on them.
+    """
+    built = {}
+    for param in _BACKENDS:
+        build_backend, _extractor = param.values
+        backend_dir = tmp_path / str(param.id)
+        backend_dir.mkdir()
+        score, _region = build_backend(backend_dir)
+        built[str(param.id)] = score
+    return built
 
 
 # Whether a record this backend yields can be HASHED -- put in a set, or used
@@ -196,15 +228,11 @@ def test_every_record_backend_declares_whether_its_records_hash(
     against the extractors rather than the tables would miss both.  Ask the
     table, and there is nothing to add to but _HASHABILITY.
     """
-    record_backends = set()
-    for param in _BACKENDS:
-        build_backend, _extractor = param.values
-        # A repo per backend: two of them build a resource under the same name.
-        backend_dir = tmp_path / str(param.id)
-        backend_dir.mkdir()
-        score, _region = build_backend(backend_dir)
-        if score.table.yields_records:
-            record_backends.add(str(param.id))
+    record_backends = {
+        backend_id
+        for backend_id, score in build_every_backend(tmp_path).items()
+        if score.table.yields_records
+    }
 
     declared = {str(param.id) for param in _HASHABILITY}
 
