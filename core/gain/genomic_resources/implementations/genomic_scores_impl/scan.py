@@ -139,7 +139,8 @@ _COVERAGE_SCAN_RESOURCE_TYPES = frozenset(
 # statistics are published; and they cannot double-count a position, so
 # the scan hands their coverage full unclipped spans.  Fragment rows
 # overlap, so they get neither (their counts are their own statistic --
-# gain#794).
+# gain#794), and segments for them are not wanted rather than pending:
+# ADR 0020 as amended by gain#926 closes that question.
 _NON_OVERLAPPING_ROW_RESOURCE_TYPES = frozenset(
     equivalent_resource_types("position_score"))
 
@@ -436,8 +437,12 @@ def do_histogram(
                 if clip_coverage:
                     span = clip_span(left, right, start, end)
                     if span is not None:
-                        coverage.add_interval(
-                            span[0], span[1], normalize_values(rec))
+                        # No values: the same kind that has to be
+                        # clipped is the one publishing no segments
+                        # (ADR 0020, amended by gain#926), so
+                        # normalizing this row's tuple would be a
+                        # per-row cost with nothing to spend it on.
+                        coverage.add_span(span[0], span[1])
                 elif owned:
                     coverage.add_interval(
                         left, right, normalize_values(rec))

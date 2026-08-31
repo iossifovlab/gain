@@ -100,6 +100,9 @@ with a null histogram. Value-aware and per-resource: a touching row that
 differs in any scanned score column starts a new segment, and a run of NA
 rows is a segment. Not a table row as stored — an unmerged row is a
 *fragment*, deliberately the opposite view.
+Defined for **position scores only**: a kind whose rows can overlap has no
+segments, by decision rather than by deferral (ADR 0020, amended by
+gain#926), and builds no runs at all.
 _Avoid_: interval, region (reserved for query regions), run, block, same-value
 region
 
@@ -123,8 +126,11 @@ deliberate opposite of a **segment**. Overlapping, nested and duplicate rows
 are each their own fragment, and a fragment's length is its own span,
 `pos_end - pos_begin + 1`. Only a fragment score publishes fragment
 statistics — a count and a length histogram, on the same fixed log2 bins as
-segment lengths. Nothing publishes fragment *segments*: that would need an
-exact run algebra fragments do not have (ADR 0020, amended by gain#848).
+segment lengths. Nothing publishes fragment *segments*, and nothing will:
+they would need an exact run algebra fragments do not have, and no consumer
+question survives that fragment coverage and the fragment count/length
+histogram cannot already answer between them (ADR 0020, amended by gain#848
+and closed by gain#926).
 _Avoid_: row (ambiguous — every kind has table rows), interval, CNV, call,
 event
 
@@ -252,6 +258,8 @@ reason a read of one is not a read of the other
   only where no different-valued rows overlap. An **allele score** has
   **covered positions** but no **segments**: its rows are points, so there is
   nothing to merge and nothing to union — the count is of distinct positions.
+  A **fragment score** has **covered positions** and **fragments** but no
+  **segments** either: its rows overlap, and merging them is not wanted.
 - The **regions** a contig is scanned in own the rows whose `pos_begin` falls
   inside them, and measure those rows whole. So the regions partition the
   contig's **fragments**, and every statistic that sums over rows is
