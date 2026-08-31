@@ -271,8 +271,19 @@ def zulipAlert(String status, String emoji) {
 }
 
 pipeline {
-    // builder = general build agents; deploy targets don't carry it
-    agent { label 'builder' }
+    // builder = general build agents; deploy targets don't carry it.
+    //
+    // dory is excluded from THIS job only (#1071): its dual-socket
+    // 2x10-core Xeon has the weakest single-core performance in the
+    // pool — a permanent hardware trait, not an expiring exception —
+    // and this pipeline is the latency-critical path (gpf CI consumes
+    // the wheel it publishes). dory's storage-side slowness
+    // (seqpipe/infra#206: writethrough dm-cache, unbounded BuildKit
+    // cache) was fixed and is NOT the reason; the residual gap is
+    // per-core throughput. The other gain jobs (nightly, python-matrix,
+    // release, core-integration, web_e2e) deliberately stay on plain
+    // `builder` — nobody waits on them, and dory should keep working.
+    agent { label 'builder && !dory' }
 
     environment {
         // The one token every shared Docker image tag and compose
