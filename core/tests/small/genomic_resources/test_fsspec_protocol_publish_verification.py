@@ -229,14 +229,21 @@ def test_a_healthy_download_stats_the_published_object_once(
         content_fixture: dict[str, Any],
         fsspec_proto: FsspecReadWriteProtocol,
         mocker: MockerFixture) -> None:
-    # Verifying the publish costs no extra stat of its own: the size it
-    # checks is the one the state was going to be built from anyway, so it
-    # is measured once and passed on rather than measured again. On a
-    # remote store that would be a second round trip -- the same reasoning
-    # that stopped the digest being recomputed there (#865). See #880.
+    # Verifying the publish costs no extra stat of its own: the stat it
+    # checks the size against is the one the state was going to be built
+    # from anyway, so it is taken once and passed on rather than taken
+    # again. On a remote store that would be a second round trip -- the
+    # same reasoning that stopped the digest being recomputed there
+    # (#865). See #880.
     #
-    # This pins the size accessor specifically; it is not a budget for
-    # every metadata call the state build makes.
+    # Pinned on the stat rather than on the size accessor since #936,
+    # which made that one stat carry the change token beside the size and
+    # had the download read both off it. The claim is unchanged; what
+    # the single call yields is not.
+    #
+    # This pins that stat specifically; the budget for every metadata
+    # call a download makes is in
+    # ``test_fsspec_protocol_download_single_stat``.
 
     # Given a source and a destination, publishing normally
     src_proto = build_inmemory_test_protocol(content_fixture)
@@ -246,7 +253,7 @@ def test_a_healthy_download_stats_the_published_object_once(
     dst_res = proto.get_resource("sub/two")
     entry = src_res.get_manifest()["genes.gtf"]
 
-    stat = mocker.spy(proto, "get_resource_file_size")
+    stat = mocker.spy(proto, "_stat_filepath")
 
     # When
     state = proto.copy_resource_file(src_res, dst_res, "genes.gtf")

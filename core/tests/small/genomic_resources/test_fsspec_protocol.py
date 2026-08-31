@@ -19,6 +19,7 @@ from gain.genomic_resources.repository import (
     GR_CONTENTS_FILE_NAME,
     GR_MANIFEST_FILE_NAME,
     ReadWriteRepositoryProtocol,
+    ResourceFileState,
     collect_dvc_entries,
 )
 from gain.genomic_resources.testing import (
@@ -113,6 +114,84 @@ def test_build_resource_file_state_uses_the_md5_it_is_given(
         res, "data.txt", md5="not-the-stored-digest")
 
     assert state.md5 == "not-the-stored-digest"
+
+
+@pytest.mark.grr_rw
+def test_build_resource_file_state_uses_the_change_token_it_is_given(
+        fsspec_proto: FsspecReadWriteProtocol) -> None:
+    """A supplied change token is recorded as-is, not read off the store.
+
+    The download path has the token in hand already -- it comes out of the
+    same ``info()`` dict as the published size -- and re-reading it is a
+    second stat of a key that was just stat'ed. See gain#936.
+    """
+    proto = fsspec_proto
+    res = proto.get_resource("one")
+
+    state = proto.build_resource_file_state(
+        res, "data.txt", change_token="not-the-stored-token")
+
+    assert state.change_token == "not-the-stored-token"  # noqa: S105
+
+
+class _RefusingFilesystem:
+    """A stand-in filesystem that fails the test if it is used at all.
+
+    The claim under test is *no round trip*, and the honest way to state
+    it is to take the store away: any call at all raises here, naming the
+    operation, rather than being counted and compared to zero.
+    """
+
+    def __getattr__(self, name: str) -> object:
+        raise AssertionError(
+            f"the store was consulted: filesystem.{name}")
+
+
+@pytest.mark.grr_rw
+def test_a_fully_supplied_state_never_touches_the_store(
+        fsspec_proto: FsspecReadWriteProtocol,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Supplying every field leaves nothing to read, including the guard.
+
+    The existence check at the top only protects the reads below it, so
+    a caller that has already read everything -- the download path, which
+    holds the size and token from the stat that verified its move, and
+    the md5 from the bytes it hashed -- must not pay a stat for it. The
+    supplied ``None`` token is the point of the sentinel: it means *this
+    store has no token*, not *go and find out*. See gain#936.
+    """
+    proto = fsspec_proto
+    res = proto.get_resource("one")
+    monkeypatch.setattr(proto, "filesystem", _RefusingFilesystem())
+
+    state = proto.build_resource_file_state(
+        res, "data.txt",
+        md5="d9636a8dca9e5626851471d1c0ea92b1",
+        timestamp=1234.5,
+        size=7,
+        change_token=None)
+
+    assert state == ResourceFileState(
+        filename="data.txt", size=7, timestamp=1234.5,
+        md5="d9636a8dca9e5626851471d1c0ea92b1", change_token=None)
+
+
+@pytest.mark.grr_rw
+def test_build_resource_file_state_still_refuses_a_missing_file(
+        fsspec_proto: FsspecReadWriteProtocol) -> None:
+    """The guard is skipped only for a caller that reads nothing.
+
+    A caller that supplies no keywords is asking for every field to be
+    read off the stored file, so it keeps the check and the ``ValueError``
+    -- which is what distinguishes "you asked about a file that is not
+    there" from the ``FileNotFoundError`` the reads below would raise.
+    See gain#936, which made the check conditional.
+    """
+    proto = fsspec_proto
+    res = proto.get_resource("one")
+
+    with pytest.raises(ValueError, match="not existing resource file"):
+        proto.build_resource_file_state(res, "no-such-file.txt")
 
 
 @pytest.mark.grr_rw

@@ -614,6 +614,29 @@ class ManifestEntry:
     md5: str | None
 
 
+class Unread(enum.Enum):
+    """A keyword that was not supplied, where ``None`` is a real value.
+
+    An enum rather than a bare ``object()`` so that the sentinel has a
+    type a signature can name and a type checker can narrow: comparing
+    a parameter against the member leaves ``str | None`` in the other
+    branch, which is what the field actually is. Public because it
+    appears in the signature of a public method, and a subclass that
+    overrides it has to be able to name it.
+    """
+
+    UNREAD = enum.auto()
+    """Not supplied.
+
+    :meth:`ReadWriteRepositoryProtocol.build_resource_file_state` reads a
+    field off the stored file when the caller does not supply it, and for
+    three of the four fields ``None`` says so unambiguously. A change
+    token is the exception: ``None`` is the answer a store offering no
+    tokens gives, so a caller that has *asked* and been told "no token"
+    must be able to say that, and it must not read as "go and ask".
+    """
+
+
 @dataclass(order=True)
 class ResourceFileState:
     """Tracks the state of a resource file in internal repository storage.
@@ -2355,21 +2378,45 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             *,
             md5: str | None = None,
             timestamp: float | None = None,
-            size: int | None = None) -> ResourceFileState:
+            size: int | None = None,
+            change_token: str | Unread | None = Unread.UNREAD,
+    ) -> ResourceFileState:
         """Build resource file state.
 
-        Each of ``md5``, ``timestamp`` and ``size`` is read off the stored
-        file when it is not supplied. Supplying a digest that is already in
-        hand -- the download path verifies one against the manifest before
-        publishing the file -- saves reading the whole file back out of the
-        store, which for a remote store is a second transfer of it.
+        Each of ``md5``, ``timestamp``, ``size`` and ``change_token`` is
+        read off the stored file when it is not supplied. Supplying a
+        digest that is already in hand -- the download path verifies one
+        against the manifest before publishing the file -- saves reading
+        the whole file back out of the store, which for a remote store is
+        a second transfer of it. Supplying the other three saves a stat
+        each, and the download path has all of them from the stat it
+        makes to verify its own move (gain#936).
+
+        ``change_token`` defaults to :attr:`Unread.UNREAD` rather than to
+        ``None`` because ``None`` is a value a token legitimately takes:
+        it is what a store offering no tokens reports, and it is the
+        value a caller holding one such answer needs to be able to pass.
 
         The parameters are keyword-only and named explicitly so that a
         misspelled one is a TypeError here rather than a silently ignored
         value -- which for ``md5`` costs a full re-read of the file, and
-        for the other two a stat. See gain#865.
+        for the others a stat. See gain#865.
+
+        The existence check is skipped when every field is supplied. It
+        is worth being plain about what that check is: not a safeguard,
+        but a *message*. Every read below it would raise
+        ``FileNotFoundError`` of its own accord on a file that is not
+        there; all the check adds is that the caller hears
+        ``ValueError`` naming the resource instead. So a call that reads
+        nothing has nothing to say it about, and the check would be the
+        only thing that touched the store. Callers that leave any field
+        to be read keep it, and keep the ``ValueError`` with it.
         """
-        if not self.file_exists(resource, filename):
+        reads_the_stored_file = (
+            md5 is None or timestamp is None or size is None
+            or change_token is Unread.UNREAD)
+
+        if reads_the_stored_file and not self.file_exists(resource, filename):
             raise ValueError(
                 f"can't build resource state for not existing resource file "
                 f"{resource.resource_id} > {filename}")
@@ -2383,10 +2430,13 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         if size is None:
             size = self.get_resource_file_size(resource, filename)
 
+        if change_token is Unread.UNREAD:
+            change_token = self.get_resource_file_change_token(
+                resource, filename)
+
         return ResourceFileState(
             filename=filename, size=size, timestamp=timestamp, md5=md5,
-            change_token=self.get_resource_file_change_token(
-                resource, filename))
+            change_token=change_token)
 
     def _state_describes_stored_file(
             self, resource: GenomicResource,

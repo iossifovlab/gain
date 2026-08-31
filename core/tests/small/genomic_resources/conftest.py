@@ -195,6 +195,32 @@ def run_in_threads() -> RunInThreads:
 #: into needing an FTS index the other did not build.
 SMALL_REPO_RESOURCE_IDS = ("one", "two", "three")
 
+#: The files ``content_fixture``'s ``one`` resource publishes, in manifest
+#: order. Pinned rather than derived because the tests that use it assert a
+#: per-file cost, and a resource that quietly lost its files would make those
+#: assertions vacuous rather than failing. Shared by the two modules covering
+#: what a download must not re-read -- the md5 (#865) and the stat (#936) --
+#: for the reason above: three copies of one list is how the first of them
+#: would silently stop describing the fixture.
+ONE_RESOURCE_FILES = ["data.txt", "data.txt.gz", "genomic_resource.yaml"]
+
+
+@pytest.fixture
+def download_dest(
+    grr_scheme: str, tmp_path: pathlib.Path,
+) -> FsspecReadWriteProtocol:
+    """An empty read-write destination on the scheme under test.
+
+    Empty because the tests that ask for it measure a *first* download; a
+    destination that already held the resource would take the cache
+    branch and copy nothing.
+    """
+    if grr_scheme == "s3":
+        return s3_test_protocol()
+    dest_root = tmp_path / "dest"
+    dest_root.mkdir()
+    return build_filesystem_test_protocol(dest_root)
+
 
 def setup_small_repo(root_path: pathlib.Path) -> None:
     """Lay out a small repository: manifests, contents and FTS index."""

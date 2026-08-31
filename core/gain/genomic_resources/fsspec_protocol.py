@@ -18,7 +18,7 @@ import time
 import uuid
 from collections.abc import Callable, Generator, Iterable
 from contextlib import AbstractContextManager, contextmanager, suppress
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from threading import Event, Lock, get_ident
 from typing import (
     IO,
@@ -1357,6 +1357,45 @@ class FsspecReadOnlyProtocol(
         return pyBigWig.open(file_url)  # pylint: disable=I1101
 
 
+@dataclass(frozen=True)
+class _StoredFileStat:
+    """What one ``info()`` of a stored file is worth to this protocol.
+
+    Both fields come out of the same dict, so asking for them separately
+    is two round trips against one key -- on a remote store, two HEADs.
+    Bundled so the callers that want both can say so in one call
+    (gain#936).
+
+    The modification time is deliberately NOT here, because no key of
+    that dict carries it portably. The local filesystem spells it
+    ``mtime`` and s3 ``LastModified``; the memory filesystem has neither
+    and offers only ``created``, which is a ``datetime`` rather than the
+    float the recorded state holds. Nor is ``created`` a stand-in for
+    it: on the local filesystem that is ``st_ctime``, which a chmod
+    moves and a write does not have to agree with -- measured 0.05s
+    apart from ``modified()`` on a file that had only been chmod'ed.
+
+    Reading it from the dict would therefore mean encoding which key
+    each backend happens to use, and being wrong about one of them does
+    not fail loudly: the recorded time would simply stop matching what
+    :meth:`FsspecRepositoryProtocol.get_resource_file_timestamp` reports,
+    so every cache verdict would read the file as changed and download
+    it again. It stays that method's own call, which is the one thing
+    that reports the value faithfully on every backend.
+
+    :meth:`FsspecRepositoryProtocol._get_filepath_timestamp` does fall
+    back to the dict's ``created``, which reads as a contradiction of
+    the above and is not one: that branch is reached only where
+    ``modified()`` raises ``NotImplementedError``, i.e. where there is
+    no faithful answer to prefer to it. Where ``modified()`` answers --
+    every backend this protocol is used against -- it wins, and this
+    class is why.
+    """
+
+    size: int
+    change_token: str | None
+
+
 class FsspecReadWriteProtocol(
         FsspecReadOnlyProtocol, ReadWriteRepositoryProtocol):
     """Provides fsspec genomic resources repository protocol."""
@@ -1658,8 +1697,12 @@ class FsspecReadWriteProtocol(
                 return True
         return False
 
-    def _get_filepath_change_token(self, filepath: str) -> str | None:
-        """The store's own change token for a path, or None if it has none.
+    def _stat_filepath(self, filepath: str) -> _StoredFileStat:
+        """Stat a path once, and read everything that dict is worth.
+
+        The single place the ``info()`` dict is interpreted, so the size
+        a caller gets and the token beside it describe the same answer
+        from the store rather than two answers taken a round trip apart.
 
         One implementation covers every fsspec scheme: the token is the
         ``ETag`` out of ``info()``, and a filesystem that reports none --
@@ -1672,13 +1715,17 @@ class FsspecReadWriteProtocol(
         """
         info = self.filesystem.info(filepath)
         etag = info.get("ETag")
-        if not etag:
-            # Empty as well as absent: s3fs fills a missing ETag on the
-            # head_object path with "" rather than None, and an empty
-            # token would compare equal to itself for ever, which is the
-            # one way this could stop noticing a change altogether.
-            return None
-        return str(etag)
+        # Empty as well as absent: s3fs fills a missing ETag on the
+        # head_object path with "" rather than None, and an empty token
+        # would compare equal to itself for ever, which is the one way
+        # this could stop noticing a change altogether.
+        return _StoredFileStat(
+            size=int(info["size"]),
+            change_token=str(etag) if etag else None)
+
+    def _get_filepath_change_token(self, filepath: str) -> str | None:
+        """The store's own change token for a path, or None if it has none."""
+        return self._stat_filepath(filepath).change_token
 
     def _get_filepath_timestamp(self, filepath: str) -> float:
         try:
@@ -1881,10 +1928,10 @@ class FsspecReadWriteProtocol(
         return self._publish_file(
             os.path.join(self.url, filename), mode)
 
-    def _verify_published_size(
-        self, published_size: Callable[[], int],
+    def _verify_published_stat(
+        self, filepath: str,
         *, wrote: int, what: str, verb: str,
-    ) -> int:
+    ) -> _StoredFileStat:
         """Check what a move actually landed, and report it if it differs.
 
         The guard gain#880 put on the download's move, shared with the
@@ -1896,25 +1943,33 @@ class FsspecReadWriteProtocol(
         What the two callers keep of their own is only what they can say
         truthfully: the download has *verified* its bytes against a
         manifest md5 before the move, and a publish has merely *written*
-        them, so the ``verb`` and the ``what`` prefix are theirs. So is
-        ``published_size``: the download reads it through
-        :meth:`get_resource_file_size`, whose single call it pins, and a
-        publish through the plain path stat.
+        them, so the ``verb`` and the ``what`` prefix are theirs.
 
-        Returns the published size, which the download path records in
-        the file's state.
+        Returns the whole stat rather than the size it checked, because
+        the download path records the change token beside the size and
+        both come out of the one ``info()`` this makes anyway (gain#936).
+        A publish ignores the return value entirely, as it always has,
+        and pays no more for the stat than when this returned an int --
+        the one ``info()`` behind it is the same call either way.
+
+        Takes the path rather than a callable that produces the stat.
+        It used to take the callable because the two callers reached the
+        object differently -- a publish through the plain path stat, the
+        download through :meth:`get_resource_file_size`. Since gain#936
+        both go through :meth:`_stat_filepath`, so the thunk carried no
+        variation left and only hid that the two calls are the same one.
         """
         try:
-            published = published_size()
+            published = self._stat_filepath(filepath)
         except FileNotFoundError as err:
             raise CorruptedPublishError(
                 f"{what}; {verb} {wrote} bytes, "
                 f"published nothing") from err
 
-        if published != wrote:
+        if published.size != wrote:
             raise CorruptedPublishError(
                 f"{what}; {verb} {wrote} bytes, "
-                f"published {published}")
+                f"published {published.size}")
 
         return published
 
@@ -2046,8 +2101,8 @@ class FsspecReadWriteProtocol(
             self.filesystem.mv(tmp_filepath, filepath)
             moved = True
 
-            self._verify_published_size(
-                lambda: self._get_filepath_size(filepath),
+            self._verify_published_stat(
+                filepath,
                 wrote=written,
                 what=f"artifact publish is corrupt {filepath}",
                 verb="wrote")
@@ -2067,8 +2122,7 @@ class FsspecReadWriteProtocol(
 
     def _get_filepath_size(
             self, filepath: str) -> int:
-        fileinfo = self.filesystem.info(filepath)
-        return int(fileinfo["size"])
+        return self._stat_filepath(filepath).size
 
     def get_resource_file_size(
             self, resource: GenomicResource, filename: str) -> int:
@@ -2293,8 +2347,8 @@ class FsspecReadWriteProtocol(
 
             # The stat is the one the state needs anyway, so checking the
             # move costs nothing -- see :class:`CorruptedPublishError`.
-            published_size = self._verify_published_size(
-                lambda: self.get_resource_file_size(dest_resource, filename),
+            published = self._verify_published_stat(
+                dest_filepath,
                 wrote=bytes_written,
                 what=(
                     f"file publish is corrupt "
@@ -2304,11 +2358,29 @@ class FsspecReadWriteProtocol(
             if not moved:
                 self._discard_unpublished_file(tmp_filepath)
 
+        # Every field of the state is supplied, so the build reads
+        # nothing back: the md5 is the one hashed off the bytes as they
+        # were written, the size and the change token are the two halves
+        # of the stat that verified the move, and only the modification
+        # time is a call of its own -- the one field an ``info()`` dict
+        # cannot be trusted for (see :class:`_StoredFileStat`). That
+        # leaves the state two metadata round trips per published file
+        # where it took four, which a full GRR sync pays once per file
+        # (gain#936).
+        #
+        # Two is this state build's budget, not the download's: the
+        # directory guards above and the move itself still stat, and
+        # measured against s3 the whole per-file download is nine
+        # requests rather than two. See gain#1042 for the largest of
+        # what is left.
         state = self.build_resource_file_state(
             dest_resource,
             filename,
             md5=md5,
-            size=published_size)
+            size=published.size,
+            change_token=published.change_token,
+            timestamp=self.get_resource_file_timestamp(
+                dest_resource, filename))
 
         self.save_resource_file_state(dest_resource, state)
 
