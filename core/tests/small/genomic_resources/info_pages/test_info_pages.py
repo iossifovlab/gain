@@ -47,7 +47,8 @@ from tests.small.genomic_resources.info_pages.conftest import (
     check_source_available,
 )
 from tests.small.genomic_resources.info_pages.supplement import (
-    SUPPLEMENT_RESOURCE_IDS,
+    ALL_SUPPLEMENT_RESOURCE_IDS,
+    NULL_HISTOGRAM_RESOURCE_IDS,
 )
 
 _IMPLEMENTATIONS_GROUP = "gain.genomic_resources.implementations"
@@ -283,7 +284,7 @@ def _fixture_resource_ids() -> list[str]:
         for config in MINI_GRR_SOURCE.rglob(GR_CONF_FILE_NAME)
         if ".grr" not in config.parts
     }
-    return sorted(ids | set(SUPPLEMENT_RESOURCE_IDS.values()))
+    return sorted(ids | set(ALL_SUPPLEMENT_RESOURCE_IDS))
 
 
 def _implementations_by_class() -> dict[str, tuple[str, ...]]:
@@ -700,6 +701,57 @@ def _resolve(page: Page, target: str) -> pathlib.Path | None:
         # A bare "#anchor" addresses this page and needs no file.
         return None
     return (page.path.parent / unquote(parsed.path)).resolve()
+
+
+# --------------------------------------------------------------------------
+# An annulled histogram is reported, not imaged
+# --------------------------------------------------------------------------
+
+#: The two score families render through different templates
+#: (``genomic_score.jinja`` and ``gene_score.jinja``) which guard their
+#: histogram images separately, so both are asserted.
+_NULL_HISTOGRAM_SCORE_PAGES = [
+    NULL_HISTOGRAM_RESOURCE_IDS["genomic_score.jinja"],
+    NULL_HISTOGRAM_RESOURCE_IDS["gene_score.jinja"],
+]
+
+
+@pytest.mark.parametrize("resource_id", _NULL_HISTOGRAM_SCORE_PAGES)
+def test_an_annulled_score_reports_a_reason_instead_of_an_image(
+    built_grr: BuiltGRR, resource_id: str,
+) -> None:
+    """A score with an annulled histogram says so, and points at no image.
+
+    The reason rendered is the *loaded* histogram's, not the one configured
+    in YAML: a null histogram config writes no statistics JSON at all
+    (gain#305), so the page reports the fallback reason that
+    ``load_histogram`` supplies.  Asserting only the prefix keeps this test
+    about the branch taken rather than about which reason reached it.
+    """
+    page = _parse(built_grr.path / resource_id / "index.html", built_grr.path)
+
+    assert not [src for src in page.images if "histogram_annulled" in src], (
+        f"{page.name} still points at an image for the annulled score")
+    assert "No histogram:" in page.text, (
+        f"{page.name} drops the annulled score's histogram cell silently "
+        f"instead of reporting why there is none")
+
+
+@pytest.mark.parametrize("resource_id", _NULL_HISTOGRAM_SCORE_PAGES)
+def test_an_ordinary_score_beside_an_annulled_one_keeps_its_image(
+    built_grr: BuiltGRR, resource_id: str,
+) -> None:
+    """The guard is selective, not a blanket drop of every histogram image.
+
+    Each of these resources carries a second, ordinary score.  Without this,
+    a "fix" that stopped emitting histogram images altogether would satisfy
+    every other assertion in this module.
+    """
+    page = _parse(built_grr.path / resource_id / "index.html", built_grr.path)
+
+    assert [src for src in page.images if "histogram_plotted" in src], (
+        f"{page.name} lost the image of its ordinary score along with the "
+        f"annulled one")
 
 
 # --------------------------------------------------------------------------
