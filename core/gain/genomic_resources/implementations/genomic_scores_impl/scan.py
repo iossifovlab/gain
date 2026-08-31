@@ -517,6 +517,10 @@ def bulk_region_scan(
 ) -> dict[str, _AccT]:
     """Drive a bulk region scan, folding each batch into ``result``.
 
+    Public though only this module calls it: ADR 0001 names it as
+    the shared driver behind both bulk passes, so it is part of what
+    ``scan`` states about itself rather than a helper.
+
     The shared skeleton of :func:`do_histogram_bulk` and
     :func:`do_min_max_bulk`: open the score and stream the region's
     column-array batches through ``accumulate`` (which mutates
@@ -1004,8 +1008,10 @@ def merge_and_save_histograms(
 
     The scan's last task.  Histograms, coverage and alleles each
     merge across the regions and are written into the resource --
-    the one place the statistics files are produced, so a resource
-    cannot end up with some of them refreshed and others stale.
+    the one place any of the three is produced, so no SECOND
+    code path can refresh one of them and leave the others stale.
+    Within this one the three writes are sequential and there is
+    no rollback, so a raise partway does leave a mixture.
     """
     merged_histograms = merge_histograms(
         resource, *(result.histograms for result in results))

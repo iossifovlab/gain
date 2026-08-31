@@ -27,9 +27,8 @@ from html.parser import HTMLParser
 
 import pytest
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    scan,
-    GenomicScoreImplementation,
     build_score_implementation_from_resource,
+    scan,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.alleles import (

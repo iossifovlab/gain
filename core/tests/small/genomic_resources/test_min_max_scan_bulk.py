@@ -224,7 +224,7 @@ def test_a_str_score_never_takes_the_bulk_min_max_path(
     A str score is scheduled for a min/max scan only through a
     misconfiguration -- a number histogram over a str score, with no view
     range -- but the column read serves it, so nothing in
-    :meth:`_bulk_scan_eligible` alone keeps it off this path.  The condition
+    :func:`bulk_scan_eligible` alone keeps it off this path.  The condition
     belongs to this consumer, which is where it is stated.
     """
     resource = _str_tabix(tmp_path)

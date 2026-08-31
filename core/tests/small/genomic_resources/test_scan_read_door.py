@@ -367,7 +367,7 @@ def test_the_scan_validates_a_fragment_score_with_the_kinds_own_rule(
     # Driven through the scan's own composition rather than by calling
     # ``validate_records`` by hand: what this claims is that the SCAN
     # validates a non-position kind, and calling the validator directly would
-    # hold even if ``_scan_region`` had stopped composing it.
+    # hold even if ``scan_region`` had stopped composing it.
     score = _fragment_score_reading_backwards(tmp_path, monkeypatch)
 
     with pytest.raises(MalformedResourceError) as excinfo:
@@ -393,7 +393,7 @@ def test_the_scan_still_validates_an_allele_score(
     # Driven through the scan's own composition rather than by calling
     # ``validate_records`` by hand: what this claims is that the SCAN
     # validates a non-position kind, and calling the validator directly would
-    # hold even if ``_scan_region`` had stopped composing it.  The rule
+    # hold even if ``scan_region`` had stopped composing it.  The rule
     # itself is driven directly, in test_genomic_scores_fetch_region.py.
     score = _allele_score_reading_backwards(tmp_path, monkeypatch)
 

@@ -29,8 +29,8 @@ from gain.gene_scores.implementations.gene_scores_impl import (
 )
 from gain.gene_sets.implementations.gene_sets_impl import GeneSetCollectionImpl
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    scan,
     GenomicScoreImplementation,
+    scan,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing import (

@@ -384,7 +384,7 @@ def _histogram_that_raises(resource_id: str) -> Any:
         return scan.RegionScanResult(
             real(resource, *args, **kwargs), None, None)
 
-    return staticmethod(patched)
+    return patched
 
 
 def test_repo_repair_reports_a_statistics_task_that_fails_while_running(

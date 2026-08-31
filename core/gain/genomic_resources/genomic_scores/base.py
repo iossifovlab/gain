@@ -1329,7 +1329,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         A plain read: it checks nothing.  The statistics scan reads the same
         records through the same transform with :meth:`validate_records`
         composed in front, and that extra link -- visible at the consumer,
-        in ``genomic_scores_impl.py`` -- is the whole of the difference
+        in ``genomic_scores_impl/scan.py`` -- is the whole of the
+        difference
         between the two (ADR 0008).
 
         One body per kind, in :meth:`region_values_from_records`, rather than

@@ -55,7 +55,7 @@ def _maybe_tabix(builder: Any, *, tabix: bool) -> Any:
     """Put a fixture on the bulk scan path, or leave it on the per-record one.
 
     A tabix-indexed table serves column arrays and is bulk-eligible; a plain
-    text one is not, and ``_bulk_scan_eligible`` asks exactly that.  The
+    text one is not, and ``bulk_scan_eligible`` asks exactly that.  The
     contrast used to be drawn with a ``np_score`` resource, excluded from
     the bulk gate by type until gain#920 removed the type.
     """
@@ -195,7 +195,7 @@ def _mixed_per_record_score(tmp_path: pathlib.Path) -> GenomicResource:
     Until 2026.8.5 the contrast was drawn with a ``np_score`` resource,
     which the bulk scan excluded by resource type (gain#920 removed the
     type).  The backend is the better discriminator anyway: array support
-    is what ``_bulk_scan_eligible`` actually asks, where the type was only
+    is what ``bulk_scan_eligible`` actually asks, where the type was only
     ever a proxy for it.
     """
     return (

@@ -58,7 +58,7 @@ The path is built from three pieces:
   adds the parse and hands back one array per score id — `float64` as
   originally decided, and since gain#406 the shape the score's value type
   parses to.
-- `GenomicScoreImplementation._bulk_region_scan` — the shared driver behind both
+- `genomic_scores_impl.scan.bulk_region_scan` — the shared driver behind both
   the histogram and the min/max passes.
 
 Two predicates guard it, and the split between them is deliberate:
@@ -66,7 +66,7 @@ Two predicates guard it, and the split between them is deliberate:
 - `GenomicScore.supports_region_value_arrays(scores)` answers what the **score
   facade** can do — the backend serves the array read *and* every named score is a
   float this facade can parse. It is answerable on an unopened score.
-- `GenomicScoreImplementation._bulk_scan_eligible(...)` adds what is the
+- `genomic_scores_impl.scan.bulk_scan_eligible(...)` adds what is the
   **consumer's** condition and no one else's: that the resource is a kind this
   scan is exercised against. That requirement belongs to the statistics scan,
   not to the read facade, and is asked separately. *Originally it asked for a
@@ -189,7 +189,7 @@ declares nothing gets the conservative answer.
 
 ### The condition is now a list of exercised kinds
 
-`_bulk_scan_eligible` admits `position_score`, `allele_score`, and a fragment
+`bulk_scan_eligible` admits `position_score`, `allele_score`, and a fragment
 score in **both** its permanent spellings — `fragment_score` and
 `cnv_collection` ([0003-fragment-score-vocabulary.md](0003-fragment-score-vocabulary.md)).
 The set is built through
@@ -248,7 +248,7 @@ had it simply been relaxed, too loose (a str score's column cannot go into a
 `NumberHistogram`, and a *number* column cannot go into a categorical one).
 
 So gain#406 replaces the single type test with a **pairing**, checked in
-`_can_bulk_histogram`:
+`can_bulk_histogram`:
 
 | histogram | value types | array the read yields |
 | --- | --- | --- |
@@ -264,7 +264,7 @@ parse for. `bool` is still out: nothing asks for a column of them.
 
 Both mismatches are configurations the per-record path already handles — by
 **failing one value at a time**. `NumberHistogram.add_value("aaa")` raises
-`TypeError`, `_do_histogram` catches it, that score is nullified and the rest
+`TypeError`, `do_histogram` catches it, that score is nullified and the rest
 of the resource keeps its statistics. A batch is different in kind: a column of
 `str` handed to `NumberHistogram.add_batch` is not a value it can refuse, it is
 a coercion failure inside the accumulation. Routing either mismatch to the bulk
@@ -311,7 +311,7 @@ path writes (`min: 3`, not `min: 3.0`).
 
 Bit-identical output, pinned by the same bulk-vs-per-record comparisons the
 float path has. On a synthetic 200k/400k-row tabix position score
-(`_do_histogram` vs `_do_histogram_bulk`, whole region):
+(`do_histogram` vs `do_histogram_bulk`, whole region):
 
 | score + histogram | speedup |
 | --- | --- |

@@ -156,11 +156,6 @@ indent-string='    '
 max-line-length=79
 
 # Maximum number of lines in a module.
-# Raised from 1500 for iossifovlab/gain#1002: genomic_scores_impl.py sat
-# at 1499 and a nine-line render accessor put it over.  The cap is a
-# smell detector, not the fix -- that module mixes the info page's
-# render accessors with the whole statistics-scan machinery and wants
-# splitting; see the follow-up issue.
 max-module-lines=1500
 
 # Allow the body of a class to be on the same line as the declaration if body

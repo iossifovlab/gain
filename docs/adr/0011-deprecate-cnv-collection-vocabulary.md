@@ -125,9 +125,9 @@ supersedes: an assumption about how often a code path runs, not measured.
 
 `GenomicScoreImplementation` builds a fresh `FragmentScore` every time it is
 constructed, and the statistics scan constructs one *inside every task*:
-`_can_bulk_min_max`, `_do_min_max`, `_do_min_max_bulk`, `_do_histogram_task`
-and `_do_noregion_histograms` each call
-`build_score_implementation_from_resource`. `grr_manage repo-repair` defaults
+`scan.can_bulk_min_max`, `scan.do_min_max`, `scan.do_min_max_bulk`,
+`scan.do_histogram_task` and `scan.do_noregion_histograms` each call
+`build_score_from_resource`. `grr_manage repo-repair` defaults
 to `region_size=3_000_000`, so an hg38-scale resource yields roughly a
 thousand regions and two task kinds — thousands of identical lines naming one
 resource, which is precisely the noise `0003` refused and which hides every
