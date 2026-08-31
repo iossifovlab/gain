@@ -140,21 +140,32 @@ def percentages_over[K](
     The one place the ALLELES section writes a share of a count, so the
     classes column, the substitution matrix's cells and gain#989's
     complex table all say the same thing the same way.  The Coverage
-    table above it still formats its own fractions inline and has no
-    floor; unifying the two is not this slice's business.
+    table above it still formats its own fractions inline and has
+    neither floor nor ceiling -- so a chromosome covered all but
+    entirely reads ``100.00%`` there while the Alleles tables below say
+    ``>99.99%`` of the same shape.  Unifying the two is still not this
+    slice's business; gain#1057 holds that.
 
     The result is text for an HTML page and can carry markup-significant
-    characters -- the floor below begins with ``<`` -- so a template
-    rendering it must escape, which the ``.jinja`` HTML templates do and
-    the Markdown ones deliberately do not.
+    characters -- the floor and ceiling below begin with ``<`` and ``>``
+    -- so a template rendering it must escape, which the ``.jinja`` HTML
+    templates do and the Markdown ones deliberately do not.
 
-    Two answers a bare ``"%.2f%%"`` gets wrong:
+    Three answers a bare ``"%.2f%%"`` gets wrong:
 
     * A nonzero count too small to survive two decimals renders
       ``<0.01%``, never ``0.00%``.  On a real score ``complex`` is 881
       alleles out of 727,413,443 while ``other`` is genuinely empty --
       and telling those two apart is the whole reason a percentage is
       shown at all.
+    * A count that falls SHORT of the total but rounds up to it renders
+      ``>99.99%``, never ``100.00%`` -- the floor reflected (gain#990).
+      On that same score the substitutions are all but 881 of the
+      alleles, and a column reading ``substitution 100.00%`` beside
+      ``complex <0.01%`` says the resource is entirely one class in the
+      act of showing that it is not.  A count that IS the total still
+      renders ``100.00%``: only a share that is not the whole is
+      written as short of it.
     * A zero total has no percentage, and the answer is ``None`` for
       the WHOLE map rather than per cell: the denominator is a property
       of the table, so the page drops the column instead of printing a
@@ -166,8 +177,11 @@ def percentages_over[K](
     percentages: dict[K, str] = {}
     for key, count in counts.items():
         rendered = f"{100.0 * count / total:.2f}%"
-        percentages[key] = \
-            "<0.01%" if count and rendered == "0.00%" else rendered
+        if count and rendered == "0.00%":
+            rendered = "<0.01%"
+        elif count < total and rendered == "100.00%":
+            rendered = ">99.99%"
+        percentages[key] = rendered
     return percentages
 
 
@@ -843,9 +857,11 @@ class AlleleDisplay(NamedTuple):
     #: :func:`percentages_over`.  The denominator is read off the matrix
     #: rather than taken from ``class_counts``: the two are equal by
     #: :class:`AlleleCounts`'s invariant, and dividing the cells by
-    #: their own total is what makes the sixteen of them come to
-    #: exactly 100%.  ``None`` with no matrix, and with no
-    #: substitutions to take a share of.
+    #: their own total is what makes the sixteen SHARES come to exactly
+    #: 100%.  The sixteen rendered strings do not: two decimals round
+    #: independently, and the floor and ceiling round further still.
+    #: ``None`` with no matrix, and with no substitutions to take a
+    #: share of.
     substitution_percentages: dict[tuple[str, str], str] | None
     #: The three gain#779 groups, ``None`` when the file predates them.
     #: An empty grid is KNOWN and empty, which is not the same thing.
@@ -900,11 +916,13 @@ class AlleleDisplay(NamedTuple):
         rather than reading this to find out.
 
         The shares come from :func:`percentages_over`, the one rule the
-        Alleles section writes a share by, so a rare cell reads ``<0.01%``
-        here exactly as it does in the classes column.  Its denominator
-        is the grid's own total, which the TOTAL clamp makes exactly the
-        complex class count: every complex row lands in one cell, so
-        these rows sum to 100%.
+        Alleles section writes a share by, so a rare cell reads
+        ``<0.01%`` and a cell that is all but the whole class reads
+        ``>99.99%``, here exactly as they do in the classes column.  Its
+        denominator is the grid's own total, which the TOTAL clamp makes
+        exactly the complex class count: every complex row lands in one
+        cell, so these SHARES sum to 100% -- the rendered strings, as in
+        the matrix, round off it.
 
         That denominator is zero only when no cell is occupied, and then
         there are no rows to carry a share anyway -- so the helper's "no

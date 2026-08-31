@@ -577,8 +577,13 @@ def test_info_page_tells_a_rare_class_from_an_empty_one(
     # because reaching the display resolution needs tens of thousands
     # of rows.
     #
-    # The floor's leading "<" is asserted ESCAPED: rendered raw it
-    # would open a bogus tag and the browser would swallow the cell.
+    # The same fixture straddles both display boundaries: 20000 of the
+    # 20001 rounds UP to 100.00%, so the substitution row carries the
+    # ceiling while the complex row carries the floor.
+    #
+    # Both are asserted ESCAPED, the leading "<" and ">" alike: rendered
+    # raw the floor would open a bogus tag and the browser would swallow
+    # the cell.
     resource = _mixed_allele_score(tmp_path)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
     stored = json.loads(resource.get_file_content(ALLELE_STATISTICS_FILE))
@@ -596,6 +601,7 @@ def test_info_page_tells_a_rare_class_from_an_empty_one(
     section = _alleles_section(
         GenomicScoreImplementation(resource).get_info())
 
+    assert "<td>substitution</td><td>20000</td><td>&gt;99.99%</td>" in section
     assert "<td>complex</td><td>1</td><td>&lt;0.01%</td>" in section
     assert "<td>other</td><td>0</td><td>0.00%</td>" in section
 
