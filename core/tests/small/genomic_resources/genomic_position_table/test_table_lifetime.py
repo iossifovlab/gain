@@ -64,11 +64,23 @@ special until it is measured to be.  bigWig is merely where it hurt first,
 because its instances retained a contig dict (and, until the buffered fetch
 strategy was removed, an interval buffer), and it is the backend whole-genome
 repair scans.
+
+**"All four backends" is itself pinned**, by
+test_every_backend_in_the_tree_is_in_the_backend_list.  Every test here
+parametrises over a hand-maintained list, so a backend absent from it is a
+backend none of them ever instantiates -- and since #354 made ``close()``
+concrete, a backend that never wrote one is no longer refused at construction
+either, so nothing at all would report it (gain#359).  The sweep closes that:
+it asks ``GenomicPositionTable.__subclasses__()`` what backends really exist
+and fails the ones no fixture builds.
 """
 from __future__ import annotations
 
 import gc
+import importlib
+import inspect
 import pathlib
+import pkgutil
 import textwrap
 import weakref
 from collections.abc import Sized
@@ -105,7 +117,11 @@ from gain.genomic_resources.testing.builders import (
     a_position_score,
 )
 
-from .test_backend_record_contract import _BACKENDS, Backend
+from .test_backend_record_contract import (
+    _BACKENDS,
+    Backend,
+    build_every_backend,
+)
 
 
 def _build_mapped_tabular(
@@ -262,19 +278,14 @@ def test_no_table_method_is_memoised_at_class_level() -> None:
     here.
     """
     # __subclasses__ only sees classes whose module has been imported, so the
-    # backends are imported by name rather than left to whatever an earlier
-    # import happened to pull in.  Without this the ban silently becomes
-    # vacuous for exactly the case it exists to catch: a new backend in a
-    # module no test in this file touches.
-    from gain.genomic_resources.genomic_position_table import (  # noqa: F401
-        table_bigwig,
-        table_inmemory,
-        table_tabix,
-        table_vcf,
-    )
-    from gain.genomic_resources.genomic_position_table.table import (
-        GenomicPositionTable,
-    )
+    # backend package is walked rather than left to whatever an earlier import
+    # happened to pull in.  Without this the ban silently becomes vacuous for
+    # exactly the case it exists to catch: a new backend in a module no test
+    # in this file touches.  It used to import the four by name, which cannot
+    # reach that new module either -- the walk can, and
+    # test_the_backend_sweep_walks_the_backend_package guards it, so the ban
+    # inherits a vacuity guard it never had (gain#359).
+    _walk_the_backend_package()
 
     offenders = []
     for klass in [GenomicPositionTable, *_all_subclasses(GenomicPositionTable)]:
@@ -295,6 +306,176 @@ def test_no_table_method_is_memoised_at_class_level() -> None:
 def _all_subclasses(klass: type) -> list[type]:
     subs = list(klass.__subclasses__())
     return subs + [s for sub in subs for s in _all_subclasses(sub)]
+
+
+_BACKEND_PACKAGE = "gain.genomic_resources.genomic_position_table"
+
+
+def _walk_the_backend_package() -> set[str]:
+    """Import every module of the backend package; return their names.
+
+    Walked rather than named one by one, because a hand-written module list
+    is the one thing that cannot reach a backend added in a NEW module, and a
+    backend added in a new module is exactly what the sweep below exists to
+    catch.  The memoisation ban above walks for the same reason.
+    """
+    package = importlib.import_module(_BACKEND_PACKAGE)
+    walked = set()
+    for _finder, name, _ispkg in pkgutil.walk_packages(
+            package.__path__, prefix=f"{package.__name__}."):
+        importlib.import_module(name)
+        walked.add(name)
+    return walked
+
+
+def _backend_package_modules_on_disk() -> set[str]:
+    """The same module names, read off the filesystem instead of imported.
+
+    An INDEPENDENT answer to what the package contains, which is what makes it
+    usable as the walk's floor.  Derived rather than hand-listed for the
+    reason the walk itself is: a list of four names cannot notice a fifth
+    module, and noticing a fifth module is the whole job.
+
+    It also sees one thing ``pkgutil`` cannot.  ``pkgutil``'s file finder
+    skips a directory with no ``__init__.py``, so a backend under a NAMESPACE
+    subpackage is invisible to the walk -- but it is on disk, so the two
+    answers disagree and the guard fires.
+    """
+    package = importlib.import_module(_BACKEND_PACKAGE)
+    root = pathlib.Path(package.__path__[0])
+    return {
+        ".".join((
+            _BACKEND_PACKAGE, *path.relative_to(root).with_suffix("").parts,
+        ))
+        for path in root.rglob("*.py")
+        if path.name != "__init__.py" and "__pycache__" not in path.parts
+    }
+
+
+def _qualified(klass: type) -> str:
+    return f"{klass.__module__}.{klass.__name__}"
+
+
+def _concrete_backends_in_the_tree() -> set[type]:
+    """Every concrete ``GenomicPositionTable`` subclass this package ships.
+
+    Two kinds of subclass are filtered out, both deliberately:
+
+    * classes defined outside the backend package -- a test double is not a
+      backend.  test_genomic_position_table.py's ``_OnlyFindsLengths`` is one,
+      and whether it is imported at the moment this runs depends on collection
+      order, so counting it would make the sweep pass or fail by test
+      selection.  The filter is the PACKAGE and not the wider ``gain.``
+      namespace so that it reaches exactly as far as the walk does: a
+      ``gain.`` filter would admit a class from a module the walk never
+      imports, and whether it was seen would again come down to what else the
+      session happened to load.
+    * ABSTRACT intermediates.  Introducing a shared abstract base between
+      ``GenomicPositionTable`` and the concrete backends is a refactor, not a
+      fifth backend, and must not have to be given a fixture.
+    """
+    _walk_the_backend_package()
+
+    return {
+        klass
+        for klass in _all_subclasses(GenomicPositionTable)
+        if klass.__module__.startswith(f"{_BACKEND_PACKAGE}.")
+        and not inspect.isabstract(klass)
+    }
+
+
+def test_the_backend_sweep_walks_the_backend_package() -> None:
+    """The sweep's vacuity guard, and it guards the WALK.
+
+    The walk is what discovers a backend nothing else imports, and it is the
+    only thing that does, so both the sweep below and the memoisation ban
+    above are worth exactly what it is worth.  Nothing downstream of it can
+    report it broken: a dead walk leaves the four backends discoverable
+    anyway, since the package ``__init__`` imports three of them and
+    ``utils`` the fourth.  So a guard phrased as "the sweep still finds the
+    four backends" passes with the walk entirely dead -- measured, and the
+    reason this is phrased over module names instead (gain#359).
+
+    The floor is read off the filesystem rather than written down, for the
+    same reason the walk is a walk: four names cannot notice a fifth module.
+    Both sides come from ``__path__``, so the count is asserted too -- a
+    package that enumerated as empty would otherwise satisfy the comparison.
+    """
+    on_disk = _backend_package_modules_on_disk()
+    assert on_disk, (
+        f"no modules found on disk under {_BACKEND_PACKAGE}, so the floor "
+        f"this guard compares against is empty and would accept any walk at "
+        f"all. The package layout moved, or __path__ no longer points at it."
+    )
+
+    unreached = sorted(on_disk - _walk_the_backend_package())
+    assert not unreached, (
+        f"the sweep's package walk did not reach {unreached}, though those "
+        f"modules are on disk in the package -- so the only thing that "
+        f"discovers a backend nothing imports is blind to them, and both "
+        f"test_every_backend_in_the_tree_is_in_the_backend_list and "
+        f"test_no_table_method_is_memoised_at_class_level would pass without "
+        f"ever seeing one. The usual cause is a subpackage with no "
+        f"__init__.py, which pkgutil's file finder skips."
+    )
+
+
+def test_every_backend_in_the_tree_is_in_the_backend_list(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A backend nobody added a fixture for is a backend nothing tests.
+
+    ``_BACKENDS`` is hand-maintained, and every release-policy test in this
+    file parametrises over it (through ``_LIFETIME_BACKENDS``).  So a fifth
+    backend that is simply not in the list is never instantiated by
+    test_a_closed_table_releases_what_open_established,
+    test_a_closed_and_dropped_table_is_collected or
+    test_a_reopened_table_answers_exactly_as_before_it_was_closed -- and all
+    three stay green while it leaks (gain#359).
+
+    That hole is the one #354 opened by making ``close()`` concrete, and the
+    ``genomic_position_table`` package ledger states what it costs an
+    out-of-tree backend.  In here what matters is the division of labour:
+    test_a_closed_table_releases_what_open_established catches a backend with
+    no ``close()`` of its own AND one written without ``super().close()``, on
+    any backend it is handed -- and handing it one is the only thing it cannot
+    do for itself.  This is what hands it one.
+
+    Asked of ``_BACKENDS`` and not ``_LIFETIME_BACKENDS``: the mapped fixtures
+    build the same classes over a chromosome map and make no exhaustiveness
+    claim of their own.
+    """
+    listed = {
+        type(score.table): backend_id
+        for backend_id, score in build_every_backend(tmp_path).items()
+    }
+    in_tree = _concrete_backends_in_the_tree()
+    listed_classes = set(listed)
+
+    # Qualified: two backends in different modules may share a class name, and
+    # the module is also where the reader has to go next.
+    unlisted = sorted(_qualified(klass) for klass in in_tree - listed_classes)
+    assert not unlisted, (
+        f"{unlisted} are position-table backends in the tree with no entry in "
+        f"_BACKENDS, so no release-policy test ever instantiates one. Add a "
+        f"builder returning an unopened score over a resource of that "
+        f"backend's format, and a pytest.param for it in _BACKENDS "
+        f"(test_backend_record_contract.py) -- the lifetime tests in this "
+        f"file pick it up from there."
+    )
+
+    stale = sorted(
+        f"{listed[klass]} ({_qualified(klass)})"
+        for klass in listed_classes - in_tree
+    )
+    assert not stale, (
+        f"_BACKENDS entries {stale} build tables that are not concrete "
+        f"GenomicPositionTable subclasses shipped by gain -- the class was "
+        f"moved out of the gain package, or the builder no longer returns a "
+        f"score over that backend at all. Fix the builder or drop the entry. "
+        f"(A backend made ABSTRACT does not reach here: building its fixture "
+        f"above raises TypeError first.)"
+    )
 
 
 # The fields a CLOSED table is still allowed to hold, each with the reason it
