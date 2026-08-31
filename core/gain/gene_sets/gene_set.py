@@ -151,9 +151,6 @@ class GeneSetCollection(
 
     def __init__(self, resource: GenomicResource) -> None:
         config = resource.get_config()
-        if config is None:
-            raise ValueError(
-                f"genomic resource {resource.resource_id} not configured")
         self.resource = resource
 
         self.config = GeneSetResourceSchema.model_validate(config)
