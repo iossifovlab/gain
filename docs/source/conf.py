@@ -18,6 +18,7 @@ extensions = [
     "sphinx.ext.doctest",
     "sphinx.ext.todo",
     "sphinx.ext.coverage",
+    "sphinx.ext.extlinks",
     "sphinx.ext.imgmath",
     "sphinx.ext.viewcode",
     "sphinx.ext.autosectionlabel",
@@ -26,6 +27,10 @@ extensions = [
     "sphinx_autorun",
     "sphinxcontrib.video"
 ]
+
+extlinks = {
+    "issue": ("https://github.com/iossifovlab/gain/issues/%s", "#%s"),
+}
 
 templates_path = ['_templates']
 exclude_patterns = [
