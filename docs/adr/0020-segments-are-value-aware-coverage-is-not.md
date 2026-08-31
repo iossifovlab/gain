@@ -9,7 +9,9 @@
   [gain#848](https://github.com/iossifovlab/gain/issues/848)
   (the scanned-tuple amendment),
   [gain#926](https://github.com/iossifovlab/gain/issues/926)
-  (the fragment-segments amendment)
+  (the fragment-segments amendment),
+  [gain#1041](https://github.com/iossifovlab/gain/issues/1041)
+  (the coverage-denominator amendment)
 
 ## Context
 
@@ -132,6 +134,38 @@ alt-minus-ref, not an absolute value.
   from a resolvable genome (bigWig header as fallback). The stored statistics
   stay genome-independent, and rendering can improve without rebuilding any
   resource.
+
+  *Amended by [gain#1041](https://github.com/iossifovlab/gain/issues/1041):
+  the fraction's **denominator is the whole resolved reference**, not the
+  contigs the score happens to touch.* As first implemented, the denominator
+  was restricted to the chromosomes present in the stored counts, so a score
+  touching only chr1 reported a global percent as if the rest of the genome
+  did not exist — a number that answered "what part of what I already cover
+  do I cover", which is not a question anyone has. The denominator is now the
+  sum of **all** the genome's contig lengths; on the bigWig rung, the
+  header's whole contig list, which that backend serves cleanly off an open
+  table (`get_chromosomes()`, already in reference space), so both rungs
+  answer the same question.
+
+  Three consequences are decisions rather than fallout:
+
+  - **The untouched remainder is one roll-up row** — "N contigs with no
+    values (X bp, 0%)" — not a row each and not silence. A reference carries
+    hundreds of contigs a score never touches, and per-contig zero rows would
+    bury the contigs that do have values. Membership is **zero covered
+    positions**, not absence from the stored statistic: a bigWig scan visits
+    every header contig and stores a `0` for the empty ones while a tabix
+    scan visits only the contigs its index lists, so rolling up by absence
+    would render the same data two ways.
+  - **The degradation guards are unchanged and now also gate the roll-up.** A
+    covered contig the resolved reference does not list is proof the label is
+    wrong, and an implausible length (a zero-length `.fai` record, a contig
+    shorter than the positions the score holds on it) is proof for that
+    contig. Either degrades to raw counts as before — and the roll-up is
+    withheld with the global fraction, because "these contigs have no values"
+    is a claim about the reference being the right one.
+  - **Still render-time only.** No stored statistic changes and no resource
+    rebuilds: this bullet's own rule is what makes the correction free.
 - **Lazy rollout; `calc_statistics_hash` untouched.** The new statistics do
   not enter the statistics hash, so no existing resource is invalidated.
   Statistics appear as resources are rebuilt; the page renders "not computed"

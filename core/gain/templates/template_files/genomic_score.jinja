@@ -142,6 +142,24 @@
     {%- endfor %}
     </tbody>
     <tfoot>
+    {#- The untouched part of the reference, rolled up into one row: a
+       genome carries hundreds of contigs a score never touches, and a
+       zero row each would bury the ones that do have values.  It sits
+       in <tfoot> with the total, and for the same reason -- the sorter
+       reorders tbody > tr only, so no comparator can float a summary
+       into the middle of the data. -#}
+    {%- if coverage.uncovered != None %}
+    <tr>
+        <td>{{ coverage.uncovered.contigs }} contig{{ "" if coverage.uncovered.contigs == 1 else "s" }} with no values ({{ coverage.uncovered.length }} bp)</td>
+        <td>0</td>
+        {%- if has_fractions %}
+        <td>0.00%</td>
+        {%- endif %}
+        {%- if has_segments %}
+        <td>0</td>
+        {%- endif %}
+    </tr>
+    {%- endif %}
     <tr>
         <td>all chromosomes</td>
         <td>{{ coverage.global_covered }}</td>

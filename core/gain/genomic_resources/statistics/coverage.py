@@ -821,17 +821,50 @@ class CoverageRow(NamedTuple):
     segments: int | None
 
 
+class UncoveredContigs(NamedTuple):
+    """The contigs of the reference that carry no values at all.
+
+    One roll-up rather than a row each: a reference genome routinely
+    carries hundreds of contigs a score never touches (alts, decoys, an
+    unplaced scaffold), and per-contig zero rows would bury the contigs
+    that do have values.  The count and the base pairs are what the
+    global fraction is measured against but has nothing to show for.
+
+    Membership is **zero covered positions**, not absence from the
+    stored statistic.  The two differ by backend and by nothing else --
+    a bigWig scan visits every header contig and stores a 0 for the
+    empty ones, a tabix scan visits only contigs the index lists -- so
+    rolling up by absence would render the same data two ways.
+    """
+
+    contigs: int
+    length: int
+
+
 class CoverageDisplay(NamedTuple):
     """The Coverage section's render payload, fractions resolved.
 
     Raw counts come from the stored statistic; fractions are computed at
-    render time and never stored.  ``global_fraction`` is ``None`` unless
-    every chromosome resolved a length -- a global percent over a partial
-    denominator would be misleading.
+    render time and never stored.  ``global_fraction`` answers *what
+    part of the reference genome has values*: its denominator is the
+    WHOLE resolved reference, including contigs the score never touched
+    (gain#1041).  It is ``None`` unless every covered chromosome
+    resolved a length -- a covered contig the reference does not list is
+    proof the reference is the wrong one, and a global percent over a
+    partial denominator would be misleading.
     """
 
     rows: list[CoverageRow]
     global_fraction: float | None
+    uncovered: UncoveredContigs | None
+    """The untouched part of the reference, or ``None`` when unknowable.
+
+    ``None`` -- rather than a zero roll-up -- whenever
+    ``global_fraction`` is: "these contigs have no values" is a claim
+    about the resolved reference being the right one, and it is not made
+    under a denominator already known to be wrong.
+    """
+
     segment_lengths: list[int] | None
     """The global segment-length histogram, or ``None`` if unknown.
 
@@ -908,20 +941,21 @@ def resolve_chrom_lengths(
     The ladder: the ``reference_genome`` the caller resolved from the
     resource's label, falling back to the bigWig header's chromosome
     sizes for a bigWig-backed score, or raw counts (an empty mapping)
-    when nothing resolves.  A chromosome absent from the resolved source
-    is simply absent from the result.
+    when nothing resolves.
+
+    What comes back is the **whole universe** the fraction is measured
+    against, not only the contigs the score touched (gain#1041): every
+    contig of the resolved genome, or every contig the bigWig header
+    lists.  ``chroms`` -- the covered contigs -- is still passed in so
+    that a covered contig the resolved source does NOT list is visible
+    to the caller by its absence, which is what degrades the fraction.
 
     The genome rung is resolved by the CALLER: it needs a repository,
     which only exists during a page build, and the cache it goes
     through is shared with the scan's own contig splitting.
     """
     if ref_genome is not None:
-        all_lengths = ref_genome.get_all_chrom_lengths()
-        return {
-            chrom: all_lengths[chrom]
-            for chrom in chroms
-            if chrom in all_lengths
-        }
+        return dict(ref_genome.get_all_chrom_lengths())
     if score.table.chrom_lengths_are_exact:
         return _table_exact_lengths(resource, score, chroms)
     logger.info(
@@ -941,13 +975,22 @@ def _table_exact_lengths(
     capability holds (the bigWig header; mapping-aware).  Opens the
     score if it is closed, and closes it again only in that case --
     an already-open score stays open for its owner.
+
+    The universe is the header's WHOLE contig list, which this backend
+    serves cleanly -- ``get_chromosomes()`` off an open table, already
+    in reference space -- so the bigWig rung answers the same question
+    the genome rung does (gain#1041, ADR 0020).  The covered contigs are
+    appended so that one the header does not list still reaches the
+    unknown-contig warning below instead of vanishing silently.
     """
     opened_here = not score.is_open()
     if opened_here:
         score.open()
     try:
+        universe = dict.fromkeys(
+            [*score.table.get_chromosomes(), *chroms])
         lengths: dict[str, int] = {}
-        for chrom in chroms:
+        for chrom in universe:
             try:
                 length = score.table.find_chromosome_length(chrom)
             except ValueError:
@@ -978,18 +1021,26 @@ def build_coverage_display(
     stays raw counts (see :class:`CoverageStatistics`).  A denominator
     that cannot bound what it must degrades that row to a raw count
     rather than rendering a zero-division or a >100%.
+
+    ``lengths`` is the whole reference the score is measured against,
+    not merely the contigs it touched, so the global fraction answers
+    *what part of the reference genome has values* and the untouched
+    remainder is reported as one roll-up (gain#1041).
     """
     covered = statistics.covered_by_chromosome()
-    lengths = dict(lengths)
-    for chrom, length in list(lengths.items()):
-        if length <= 0 or covered[chrom] > length:
-            # Proof the resolved source is wrong for this contig -- a
-            # zero-length .fai record, a mislabeled genome.
-            logger.warning(
-                "implausible length %s for contig %s of %s "
-                "(covered positions: %s); rendering raw counts for it",
-                length, chrom, resource_id, covered[chrom])
-            del lengths[chrom]
+    lengths = _plausible_lengths(resource_id, covered, lengths)
+    resolved = bool(lengths) and covered.keys() <= lengths.keys()
+    global_fraction = (
+        statistics.covered_global() / sum(lengths.values())
+        if resolved else None
+    )
+    untouched = (
+        {
+            chrom: length for chrom, length in lengths.items()
+            if not covered.get(chrom)
+        }
+        if resolved else {}
+    )
     segments = statistics.segments_by_chromosome()
     rows = [
         CoverageRow(
@@ -999,12 +1050,40 @@ def build_coverage_display(
             segments.get(chrom),
         )
         for chrom in sorted(covered, key=natural_chromosome_key)
+        if chrom not in untouched
     ]
-    global_fraction: float | None = None
-    if lengths and len(lengths) == len(covered):
-        global_fraction = statistics.covered_global() / sum(lengths.values())
     return CoverageDisplay(
-        rows, global_fraction, statistics.segment_lengths_global())
+        rows, global_fraction,
+        UncoveredContigs(len(untouched), sum(untouched.values()))
+        if untouched else None,
+        statistics.segment_lengths_global())
+
+
+def _plausible_lengths(
+    resource_id: str,
+    covered: dict[str, int],
+    lengths: dict[str, int],
+) -> dict[str, int]:
+    """``lengths`` without the entries proven wrong for their contig.
+
+    A length that cannot bound what it must -- a zero-length ``.fai``
+    record, a contig the genome claims is shorter than the positions
+    the score holds on it -- is dropped rather than rendered as a
+    zero-division or a >100%.  Dropping a COVERED contig also degrades
+    the global fraction, since the caller's all-covered-contigs-resolve
+    test then fails; dropping an untouched one merely shrinks the
+    universe, which is right: it contributes no reference either.
+    """
+    kept = {}
+    for chrom, length in lengths.items():
+        if length <= 0 or covered.get(chrom, 0) > length:
+            logger.warning(
+                "implausible length %s for contig %s of %s "
+                "(covered positions: %s); rendering raw counts for it",
+                length, chrom, resource_id, covered.get(chrom, 0))
+            continue
+        kept[chrom] = length
+    return kept
 
 
 def build_fragment_display(
