@@ -27,9 +27,8 @@ four-of-eight builders gain never calls are imported only by gpf, by
 fail this repository's build, which is exactly why their imports are written
 down here.
 """
-import importlib
-
 import pytest
+from gain.genomic_resources import genomic_scores as facade
 
 # The public surface as it stood at the last commit before the split
 # (gain#902, verified by an AST scan of every importer in gain and gpf).
@@ -78,8 +77,6 @@ def test_every_pre_split_public_name_imports_from_the_package(
     name: str,
 ) -> None:
     """``from gain.genomic_resources.genomic_scores import <name>`` works."""
-    facade = importlib.import_module("gain.genomic_resources.genomic_scores")
-
     assert hasattr(facade, name), (
         f"{name} was importable from gain.genomic_resources.genomic_scores "
         f"before the gain#902 package split and must stay importable from "
@@ -95,8 +92,6 @@ def test_all_covers_every_pre_split_public_name(name: str) -> None:
     name re-exported but left out of ``__all__`` still imports by attribute
     while vanishing from ``import *`` and from the documented surface.
     """
-    facade = importlib.import_module("gain.genomic_resources.genomic_scores")
-
     assert name in facade.__all__, (
         f"{name} is re-exported but missing from __all__"
     )
@@ -110,8 +105,6 @@ def test_all_is_self_consistent() -> None:
     ``__all__`` would sail past them and only break at a caller's
     ``import *``.
     """
-    facade = importlib.import_module("gain.genomic_resources.genomic_scores")
-
     missing = [name for name in facade.__all__ if not hasattr(facade, name)]
 
     assert missing == [], (
