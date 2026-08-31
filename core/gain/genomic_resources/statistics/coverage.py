@@ -252,12 +252,13 @@ class RegionCoverage:
         Unknown means the region does not track segments: rows that
         overlap, for which segments are not wanted (ADR 0020, amended
         by gain#926), or a region deserialized from a statistics file
-        that predates segment-length histograms.  The count and
-        histogram accessors themselves are only meaningful through this
-        gate -- an overlapping kind opens no run at all, so they read
-        as an empty segmentation rather than as an approximate one.
+        that predates segment-length histograms.  This is the ASKING
+        form of the gate the count and histogram accessors refuse
+        through -- ``None`` here, an exception there, because a caller
+        that asks may not know and one that reaches straight for a
+        number has asserted it does.
         """
-        if not self._rows_are_disjoint:
+        if not self._publishes_segments:
             return None
         return self.segment_count, self.segment_length_histogram()
 
@@ -266,8 +267,10 @@ class RegionCoverage:
 
         Finalizes the still-open bookkeeping: the first and the open run
         are folded in on top of the interior counts, so the histogram
-        totals exactly ``segment_count``.
+        totals exactly ``segment_count``.  Refuses a region that
+        publishes none -- see :meth:`_refuse_without_segments`.
         """
+        self._refuse_without_segments()
         if self._frozen_segments is not None:
             return list(self._frozen_segments[1])
         histogram = list(self._interior_bins)
@@ -305,9 +308,65 @@ class RegionCoverage:
 
     @property
     def segment_count(self) -> int:
+        """How many segments the region holds.
+
+        Refuses a region that publishes none -- see
+        :meth:`_refuse_without_segments`.
+        """
+        self._refuse_without_segments()
         if self._frozen_segments is not None:
             return self._frozen_segments[0]
         return self._closed_segments + (1 if self._run is not None else 0)
+
+    @property
+    def _publishes_segments(self) -> bool:
+        """Whether this region has segment numbers to answer with.
+
+        The one predicate behind both the summary's ``None`` and the
+        accessors' refusal, so the two gates cannot drift apart.  It
+        reads ``_rows_are_disjoint``, which carries this second meaning
+        alongside its clipping one -- a scanned region publishes
+        segments exactly when its rows have an exact run algebra, and
+        :meth:`frozen` reuses the flag to mark a deserialized region
+        whose file carried no segment data.  Deliberately reads the
+        FIELD rather than the public :attr:`rows_are_disjoint`, which
+        is the clipping view: the two are siblings over one flag, not
+        one built on the other, and if the flag is ever split this gate
+        must follow the publishing meaning, not the clipping one.
+        """
+        return self._rows_are_disjoint
+
+    def _refuse_without_segments(self) -> None:
+        """Guard both segment accessors on a region that has none.
+
+        Both kinds of region that land here hold the same wrong
+        answer, zero segments of zero length: a SCANNED region of
+        overlapping rows opens no run at all (gain#926), and a
+        DESERIALIZED region whose file carried no segment data never
+        had one.  Their numbers agree, and agree on a lie -- zero
+        reads as scanned-and-empty rather than as not-wanted or
+        never-scanned, and only :meth:`segment_summary`'s ``None``
+        tells those apart.
+
+        Before gain#926 the scanned case was worse: the run
+        bookkeeping ran but ``_record_closed`` binned no interior run,
+        so a count answered here outran its own histogram and broke
+        the contract :meth:`segment_length_histogram` states.  That
+        inconsistency is what gain#1043 was filed for; gating off the
+        bookkeeping replaced it with a uniform zero, which is quieter
+        and no more true.  Either way the numbers must not escape, and
+        fragments have no exact run algebra that could make them mean
+        anything.
+
+        Ask through :meth:`segment_summary` instead, which answers
+        ``None`` -- a caller that asks may not know, one that reaches
+        straight for a number has asserted it does.
+        """
+        if not self._publishes_segments:
+            raise ValueError(
+                f"region {self.chrom} publishes no segment statistics: "
+                "its rows overlap, or it was read from a statistics "
+                "file carrying none; ask segment_summary()")
 
     def _first(self) -> tuple[int, int, tuple] | None:
         """The leftmost run -- frozen if closed, the open run otherwise."""

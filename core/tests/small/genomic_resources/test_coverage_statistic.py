@@ -109,12 +109,10 @@ def test_an_overlapping_kind_opens_no_run_at_all(feed: str) -> None:
     assert region._first_run is None
     assert region._closed_segments == 0
     assert region._interior_bins == [0] * LENGTH_HISTOGRAM_BIN_COUNT
-    # Read through the public accessors, they are an EMPTY segmentation
-    # rather than an approximate one -- and the gate still says unknown.
+    # That emptiness is readable only from the inside: the gate says
+    # unknown, and since gain#1043 the count and histogram refuse
+    # rather than reporting the zeros above as a scanned result.
     assert region.segment_summary() is None
-    assert region.segment_count == 0
-    assert region.segment_length_histogram() \
-        == [0] * LENGTH_HISTOGRAM_BIN_COUNT
 
 
 class _ExplodingColumn:
@@ -142,6 +140,49 @@ def test_an_overlapping_kind_never_reads_the_value_columns() -> None:
         [_ExplodingColumn()])  # type: ignore[list-item]
 
     assert region.covered == 42
+
+
+def test_a_fragment_region_refuses_the_segment_count() -> None:
+    # Zero segments of zero length is the answer that must not come
+    # back: the region was never segmented, and gain#926 settled that
+    # it never will be.  Reported as a number it reads as a scanned,
+    # empty result; only segment_summary()'s None says "not wanted".
+    cov = RegionCoverage("chr1", 1, 100, rows_are_disjoint=False)
+    cov.add_interval(10, 12, (0.5,))
+    cov.add_interval(20, 25, (0.5,))
+    cov.add_interval(30, 33, (0.5,))
+
+    with pytest.raises(ValueError, match="publishes no segment statistics"):
+        _ = cov.segment_count
+
+
+def test_a_fragment_region_refuses_the_segment_length_histogram() -> None:
+    # The other half of the same gate.  Before gain#926 stopped the
+    # fragment path building runs, these two disagreed outright --
+    # three runs counted, two of them binned -- which is what gain#1043
+    # was filed for; the uniform zero that replaced it is quieter and
+    # no more true.
+    cov = RegionCoverage("chr1", 1, 100, rows_are_disjoint=False)
+    cov.add_interval(10, 12, (0.5,))
+    cov.add_interval(20, 25, (0.5,))
+    cov.add_interval(30, 33, (0.5,))
+
+    with pytest.raises(ValueError, match="publishes no segment statistics"):
+        cov.segment_length_histogram()
+
+
+def test_a_region_read_without_segments_refuses_both_accessors() -> None:
+    # The other way a region ends up with no segments: read from a
+    # statistics file that predates them.  Same zero, same lie -- and
+    # here the rows may well BE disjoint, the file simply carried no
+    # segment data.
+    region = RegionCoverage.frozen("chr1", 7, None)
+
+    assert region.segment_summary() is None
+    with pytest.raises(ValueError, match="publishes no segment statistics"):
+        _ = region.segment_count
+    with pytest.raises(ValueError, match="publishes no segment statistics"):
+        region.segment_length_histogram()
 
 
 def test_deserializing_a_histogram_of_foreign_length_drops_it(
