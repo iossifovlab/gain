@@ -93,6 +93,10 @@ preview = true
 ]
 "conftest.py" = ["D", "S101", "S106", "S107", "ARG001", "ARG002"]
 "setup.py" = ["INP001"]
+# The fixture generator for the info_pages_e2e Playwright project: a
+# standalone script in a Node project, run by hand and by that project's
+# Dockerfile. It is deliberately not a package -- nothing imports it.
+"info_pages_e2e/*.py" = ["INP001"]
 
 [lint.mccabe]
 max-complexity = 20

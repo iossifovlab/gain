@@ -30,6 +30,10 @@ Web stack and deployment:
   in production.
 - **`web_e2e/`** — Playwright end-to-end tests
   exercising the full web_api + web_ui stack.
+- **`info_pages_e2e/`** — Playwright tests for the GRR
+  info pages' client-side JavaScript, driven over
+  `file://` against pages generated from gain's own
+  builders. No server, no network.
 - **`web_infra/`** — Docker compose files for deploying
   the production web stack.
 

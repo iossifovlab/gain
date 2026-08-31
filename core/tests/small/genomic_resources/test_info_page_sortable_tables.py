@@ -5,7 +5,11 @@ The sorter (``sortable_table.jinja``) is opt-in through two attributes
 and nothing else: ``data-sort`` on a ``<th>`` says the column sorts and
 how to compare it, ``data-sort-value`` on a ``<td>`` carries the key.
 CI has no JS runtime, so what is testable here is the contract the
-templates emit -- the sorter's own click behaviour is iossifovlab/gain#987.
+templates emit.  The sorter's own click behaviour is driven in a real
+browser by the ``info_pages_e2e`` Playwright project, against a page it
+generates from the same Coverage fixture this file imports --
+:mod:`gain.genomic_resources.testing.info_page_fixtures`, which is where
+that fixture lives so both projects can reach it.
 
 That makes these tests the only thing standing between a template edit
 and a silently dead sorter, so they assert the contract from the
@@ -47,47 +51,15 @@ from gain.genomic_resources.testing.builders import (
     a_reference_genome,
     an_allele_score,
 )
+from gain.genomic_resources.testing.info_page_fixtures import (
+    COVERED_POSITIONS,
+    a_coverage_repo,
+)
 
 from tests.small.genomic_resources.info_page_html import (
     sort_keys,
     table_after,
 )
-
-#: chr1 and chr2 resolve a length; chr10 deliberately does not, so the
-#: Coverage table carries one row whose fraction is None.
-GENOME_LENGTHS = {"chr1": 100, "chr2": 50}
-
-#: The Coverage fixture's covered-position counts, in row order.  9, 10
-#: and 2 are chosen so that comparing them as text ("10" < "2" < "9")
-#: differs from comparing them as numbers -- a column that lost its
-#: data-sort="number" would still sort, just wrongly, and only a fixture
-#: with this shape notices.
-COVERED_POSITIONS = [9, 10, 2]
-
-
-def a_coverage_repo(where: pathlib.Path) -> GenomicResourceRepo:
-    """A three-contig score whose genome knows only two of the contigs."""
-    genome = a_reference_genome()
-    for chrom, length in GENOME_LENGTHS.items():
-        genome = genome.with_chromosome(chrom, "A" * length)
-    return (
-        a_grr()
-        .with_resource(
-            "scores/coverage",
-            a_position_score()
-            .with_score("score", "float")
-            .with_data(
-                """
-                chrom  pos_begin  pos_end  score
-                chr1   1          9        0.1
-                chr2   1          10       0.2
-                chr10  1          2        0.3
-                """)
-            .with_tabix()
-            .with_labels(reference_genome="genomes/g984"))
-        .with_resource("genomes/g984", genome)
-        .build_repo(where)
-    )
 
 
 def an_allele_repo(where: pathlib.Path) -> GenomicResourceRepo:
@@ -146,6 +118,11 @@ SORTABLE_TABLES = [
     ("scores/alleles", "<h2>Alleles</h2>"),
 ]
 
+#: The contigs every fixture here carries, in natural order.  Local
+#: rather than imported with the Coverage fixture: the allele and
+#: fragment repositories below declare these contigs themselves.
+CONTIGS = ["chr1", "chr2", "chr10"]
+
 #: Which repository each of those resources comes out of.
 REPO_BUILDERS: dict[str, Callable[[pathlib.Path], GenomicResourceRepo]] = {
     "scores/coverage": a_coverage_repo,
@@ -163,9 +140,6 @@ SORT_KINDS = {
     "Segments": "number",
     "Alleles": "number",
 }
-
-#: The contigs every fixture above carries, in natural order.
-CONTIGS = ["chr1", "chr2", "chr10"]
 
 
 def built_page(repo: GenomicResourceRepo, resource_id: str) -> str:

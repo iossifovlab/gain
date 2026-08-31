@@ -17,8 +17,12 @@ reading the *rendered template source*:
   Python side fails here and flags the JS that copies it.
 
 None of these execute the JavaScript: CI runs gain-core in
-python:3.12-slim (core/Dockerfile), which has no JS runtime. Behavioral
-coverage of the page belongs in web_e2e. See iossifovlab/gain#129.
+python:3.12-slim (core/Dockerfile), which has no JS runtime.  Behavioural
+coverage lives in ``info_pages_e2e`` -- its own Playwright project, which
+generates a GRR and drives the pages a browser actually loads.  That
+suite covers the *resource* pages' sortable tables today; this page's
+search, tree view and column rescaler are not driven there yet, so for
+now the reading-the-source tests above are all that stands behind them.
 """
 from __future__ import annotations
 

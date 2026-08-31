@@ -22,10 +22,14 @@ from tests.small.genomic_resources.info_pages.supplement import (
 )
 
 #: The mini-GRR submodule, checked out at the repository root rather than
-#: inside ``core`` -- a Playwright suite driving the same pages' JavaScript
-#: will live in its own project, and each ``<project>/Dockerfile`` copies
-#: only its own directory, so a fixture owned by ``core`` could not be
-#: shared without that image reaching into ``core``'s test tree.
+#: inside ``core``.  The root was chosen so that a Playwright suite driving
+#: the same pages' JavaScript could share it, each ``<project>/Dockerfile``
+#: copying only its own directory.  That suite arrived as
+#: ``info_pages_e2e`` (gain#987) and shares
+#: :mod:`gain.genomic_resources.testing.info_page_fixtures` instead -- the
+#: sortable-table assertions need a contig its genome cannot measure, and
+#: mini-GRR teaches rather than carrying traps.  So nothing outside this
+#: suite reads the path today.
 #:
 #: ``parents[5]`` is the repository root: this file is at
 #: ``core/tests/small/genomic_resources/info_pages/conftest.py``, and the

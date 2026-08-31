@@ -52,11 +52,17 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # The mini-GRR fixture submodule (gain#991), which
 # `tests/small/genomic_resources/info_pages` builds and validates. It lives
-# at the repository root rather than under `core/` so a future GRR
-# Playwright project can copy the same path; that means `core/` alone is no
-# longer the whole test context, and this line is what the suite's guard
-# reports as missing when it is absent. Copied before `core/` because the
-# pinned fixture changes far less often than the source does.
+# at the repository root rather than under `core/`; that means `core/` alone
+# is no longer the whole test context, and this line is what the suite's
+# guard reports as missing when it is absent. Copied before `core/` because
+# the pinned fixture changes far less often than the source does.
+#
+# The root location was chosen so a GRR Playwright project could copy the
+# same path. That project arrived as `info_pages_e2e` (gain#987) and does
+# not use it: its assertions need a contig whose genome cannot measure it,
+# which mini-GRR should not carry, so it generates its own fixture from
+# `gain.genomic_resources.testing.info_page_fixtures`. The root location is
+# now simply where the submodule is pinned.
 COPY test_fixtures/ ./test_fixtures/
 
 COPY core/ ./core/
