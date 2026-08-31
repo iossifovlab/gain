@@ -8,6 +8,10 @@ from gain.genomic_resources.testing import (
 )
 from pytest_mock import MockerFixture
 
+# The same pin ``test_fsspec_protocol_download_single_stat.py`` asserts, which
+# makes the sibling claim about the stat rather than the md5.
+from .conftest import ONE_RESOURCE_FILES
+
 
 def test_copy_resource_reuses_the_verified_download_md5(
     content_fixture: dict[str, Any],
@@ -29,8 +33,7 @@ def test_copy_resource_reuses_the_verified_download_md5(
     src_resource = src_proto.get_resource("one")
     expected_files = sorted(
         entry.name for entry in src_resource.get_manifest())
-    assert expected_files == [
-        "data.txt", "data.txt.gz", "genomic_resource.yaml"], \
+    assert expected_files == ONE_RESOURCE_FILES, \
         "fixture changed; update this pin"
 
     dest_root = tmp_path / "dest"

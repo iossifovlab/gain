@@ -21,6 +21,7 @@ from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing.faulty_filesystem import (
     corrupt_same_length,
 )
+from pytest_mock import MockerFixture
 
 
 def _record_state_for(
@@ -246,3 +247,38 @@ def test_a_state_written_before_there_were_tokens_still_loads(
     assert reloaded.change_token is None, (
         "the state was rebuilt, so the modification time did not judge "
         "the untouched file current")
+
+
+@pytest.mark.grr_local
+@pytest.mark.parametrize(("etag", "expected"), [
+    pytest.param("", None, id="empty-string-is-no-token"),
+    pytest.param(None, None, id="absent-is-no-token"),
+    pytest.param(
+        '"d41d8cd98f00b204e9800998ecf8427e-3"',
+        '"d41d8cd98f00b204e9800998ecf8427e-3"',
+        id="multipart-etag-verbatim"),
+])
+def test_what_an_etag_is_worth_as_a_change_token(
+        fsspec_proto: FsspecReadWriteProtocol,
+        mocker: MockerFixture,
+        etag: str | None,
+        expected: str | None) -> None:
+    """An empty ETag means *no token*, and a real one is not touched.
+
+    The empty case is the one that matters and the one no store in the
+    test matrix produces: s3fs fills a missing ETag on the head_object
+    path with ``""`` rather than None, and an empty token compares equal
+    to itself for ever -- a file whose token never moves is a file whose
+    rewrites are never noticed, which is the single way this could stop
+    working. So the dict is supplied here rather than waited for.
+
+    The verbatim case is the other half of the rule: the quotes and the
+    multipart ``-N`` suffix are part of the value, because nothing may
+    depend on a token's shape (ADR 0022).
+    """
+    proto = fsspec_proto
+    res = proto.get_resource("one")
+    info = {"size": 7} if etag is None else {"size": 7, "ETag": etag}
+    mocker.patch.object(proto.filesystem, "info", return_value=info)
+
+    assert proto.get_resource_file_change_token(res, "data.txt") == expected
