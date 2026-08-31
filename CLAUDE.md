@@ -418,16 +418,47 @@ calling `self.append_meta_into(resource_dir)` after a
 `setup_*` helper wrote the config for it (the
 reference-genome path).
 
-**`a_data_frame` is the one factory NOT in
-`builders.py`** — import it from
-`gain.genomic_resources.testing.data_frame_builder`.
-`builders.py` is within five lines of pylint's
-1500-line module ceiling, so it
+**Three factories are NOT in `builders.py`** — import
+each from its own sibling module:
+`a_data_frame` from
+`gain.genomic_resources.testing.data_frame_builder`,
+`an_ann_data` from `…testing.ann_data_builder`, and
+`a_gene_models` from `…testing.gene_models_builder`.
+`builders.py` is 1756 lines against pylint's
+`max-module-lines=1600`, which it carries a
+`too-many-lines` suppression for — so each new builder
 lives in a sibling module that imports the shared
-single-realize seam one way; `builders` does not import
-back, and there is no re-export. It composes into
-`a_grr().with_resource(...)` like any other builder. Its
-knobs are `with_data` / `with_raw_content` (verbatim
+single-realize seam one way rather than growing a module
+that is already over the limit; `builders` does not
+import back, and there is no re-export. They compose
+into `a_grr().with_resource(...)` like any other
+builder.
+
+`a_gene_models` authors transcripts ONCE, in gain's own
+1-based inclusive coordinates, and `with_format` decides
+which of the seven registered interchange formats
+(`default`, `refflat`, `refseq`, `ccds`, `knowngene`,
+`ucscgenepred`, `gtf` — exported as
+`GENE_MODELS_FORMATS`) they are written down in. The
+half-open shift the UCSC-derived formats need is the
+renderer's job, not the test author's, and the emitted
+config always names the format the data was actually
+rendered in — `setup_gene_models` writes a literal
+`format: "None"` when its `fileformat` is left unset, so
+the builder always states one. Knobs:
+`with_transcript(tr_name, exons=…, gene=…, chrom=…,
+strand=…, cds=…)` (`gene` defaults to the transcript
+name, `cds` omitted means non-coding),
+`with_format` and `with_no_genes()` (the empty case,
+realized by `setup_empty_gene_models`; it combines with
+neither of the other two and says so). Two of the seven
+formats — `ccds` and `knowngene` — have a single name
+column, so a gene label distinct from the transcript
+name cannot survive being written in them; that is the
+format, not the builder.
+
+`a_data_frame`'s knobs are
+`with_data` / `with_raw_content` (verbatim
 text or bytes, for `parameters:` shapes and compressed
 tables a whitespace block cannot
 express), `with_format` (`csv`/`tsv`/`excel`, filename
@@ -444,7 +475,7 @@ module pattern rather than grow `builders.py`.
 
 **That list is the whole of the coverage — the gaps are
 large and structural, not an oversight to work around.**
-There is no builder for `gene_models`, `liftover_chain`,
+There is no builder for `liftover_chain`,
 `annotation_pipeline` or `gene_set_collection`, and no
 `with_*` for
 `default_annotation` or explicit
