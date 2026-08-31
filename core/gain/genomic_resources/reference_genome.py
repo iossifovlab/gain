@@ -16,7 +16,7 @@ from gain.genomic_resources.resource_implementation import (
     ResourceConfigValidationMixin,
     get_base_resource_schema,
 )
-from gain.utils.fs_utils import COMPRESSED_EXTENSIONS
+from gain.utils.fs_utils import COMPRESSED_EXTENSIONS, endswith_ci
 from gain.utils.regions import Region
 
 logger = logging.getLogger(__name__)
@@ -27,13 +27,14 @@ def reference_genome_files(config: dict[str, Any]) -> set[str]:
 
     The set always contains the genome FASTA and its ``.fai`` index
     (honoring the optional ``index_file`` config key). For a bgzipped
-    genome (filename ending in ``.gz``/``.bgz``) htslib random access also
-    needs the ``.gzi`` BGZF index, so it is included as well.
+    genome (filename ending in ``.gz``/``.bgz``, in any case) htslib
+    random access also needs the ``.gzi`` BGZF index, so it is included
+    as well.
     """
     file_name = config["filename"]
     index_file_name = config.get("index_file", f"{file_name}.fai")
     files = {file_name, index_file_name}
-    if file_name.endswith(COMPRESSED_EXTENSIONS):
+    if endswith_ci(file_name, COMPRESSED_EXTENSIONS):
         files.add(f"{file_name}.gzi")
     return files
 
@@ -161,7 +162,7 @@ class ReferenceGenome(
 
         config = resource.get_config()
         filename = config["filename"]
-        if filename.endswith((".gz", ".bgz")):
+        if endswith_ci(filename, COMPRESSED_EXTENSIONS):
             self._backend: _SequenceBackend = _PysamFastaSequence()
         else:
             self._backend = _RawSeekSequence(self._index)
