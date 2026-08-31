@@ -10,6 +10,14 @@ Decomposing this class -- so that a kind's author reads the handful of hooks
 their kind overrides rather than the whole base -- is gain#1027, sequenced
 deliberately after the package split that created this module (gain#902).
 """
+# The monolith this was split out of carried this same pragma.  gain#902
+# dropped it because 1554 lines fit under the cap as it stood -- but that
+# cap was 1600 only because gain#1002 had raised it for
+# ``genomic_scores_impl``, and gain#1007 has since split that module and
+# put the cap back to 1500.  So the exemption this file always had is
+# stated here, scoped to it, rather than bought for the whole repository.
+# It goes when gain#1027 shrinks the class.
+# pylint: disable=too-many-lines
 
 from __future__ import annotations
 
