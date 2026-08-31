@@ -87,7 +87,49 @@ def test_annotate_doc(
     assert "acgt" in output_template
     assert "asdf summary" in output_template
     assert "sample description" in output_template
+    assert "<th>Input reference genome</th>" in output_template
     assert f'<a href="file://{tmp_path}/acgt/index.html">' in output_template
+
+
+def test_pipeline_without_a_reference_genome_omits_the_row(
+    tmp_path: pathlib.Path,
+    annotate_doc_root: pathlib.Path,
+) -> None:
+    """``input_reference_genome`` is optional, so its absence must render.
+
+    The row used to be guarded on ``res_url(...input_reference_genome_res)``
+    -- the address callable's own result -- and both address policies
+    dereference their argument unconditionally, so evaluating the guard
+    itself raised (#1021).  This tool renders with the default
+    ``public_resource_url``, so here it was ``AttributeError: 'NoneType'
+    object has no attribute 'get_public_url'``; the ``grr_manage`` path
+    reaches the same template through the repository-relative policy and
+    named ``get_url`` instead.
+    """
+    config_path = annotate_doc_root / "genome_less_pipeline_config.yaml"
+    config_path.write_text(textwrap.dedent("""
+        preamble:
+            summary: asdf summary
+            description: sample description
+        annotators:
+            - position_score: one
+    """))
+    output_file = tmp_path / "output.html"
+
+    cli([
+        str(config_path),
+        "-o", str(output_file),
+        "-g", str(annotate_doc_root / "grr.yaml"),
+    ])
+
+    output_template = pathlib.Path(output_file).read_text()
+
+    assert "<th>Input reference genome</th>" not in output_template
+    # the rest of the page is whole, not truncated at the missing row
+    assert "asdf summary" in output_template
+    assert "sample description" in output_template
+    assert "<strong>aggregator</strong>" in output_template
+    assert f'href="file://{tmp_path}/one/index.html"' in output_template
 
 
 def test_running_without_a_pipeline_says_so(
