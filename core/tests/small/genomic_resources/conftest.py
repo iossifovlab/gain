@@ -9,6 +9,7 @@ import shutil
 import threading
 from collections.abc import Callable, Generator, Iterable, Iterator
 from typing import Any
+from unittest import mock
 
 import pytest
 import pytest_mock
@@ -199,16 +200,13 @@ SMALL_REPO_RESOURCE_IDS = ("one", "two", "three")
 #: The files ``content_fixture``'s ``one`` resource publishes, in manifest
 #: order. Pinned rather than derived because the tests that use it assert a
 #: per-file cost, and a resource that quietly lost its files would make those
-#: assertions vacuous rather than failing. Shared by the two modules covering
-#: what a download must not re-read -- the md5 (#865) and the stat (#936) --
-#: for the reason above: three copies of one list is how the first of them
-#: would silently stop describing the fixture.
+#: assertions vacuous rather than failing. Shared by the three modules
+#: covering what a download must not spend -- on re-reading the md5 (#865),
+#: on re-stating the stat (#936), and on probing directories (#1042) -- for
+#: the reason above: a second copy of one list is how the first of them
+#: would silently stop describing the fixture. Assert it through
+#: :func:`assert_published_one` rather than by hand.
 ONE_RESOURCE_FILES = ["data.txt", "data.txt.gz", "genomic_resource.yaml"]
-
-
-#: Sentinel for "the instance carried no attribute of its own", which
-#: ``None`` cannot stand in for -- see :func:`record_filesystem_calls`.
-_NO_ATTRIBUTE = object()
 
 
 @pytest.fixture
@@ -217,9 +215,13 @@ def download_dest(
 ) -> FsspecReadWriteProtocol:
     """An empty read-write destination on the scheme under test.
 
-    One per read-write scheme: ``s3`` against the MinIO fixture,
-    ``inmemory`` against fsspec's memory filesystem, and anything else --
-    which is to say ``file`` -- under ``tmp_path``.
+    One branch per read-write scheme, and an unknown scheme raises rather
+    than falling through to a local protocol -- the same enumeration
+    discipline ``fsspec_proto`` above keeps, and for a sharper reason
+    here. ``test_grr_scheme_parametrization`` exists to hold the
+    ``grr_rw`` set honest against the markers; a silent fallthrough would
+    hand every test parametrized on a newly added scheme a ``file``
+    protocol and pass, defeating that guard one layer down.
 
     Empty because the tests that ask for it measure a *first* download; a
     destination that already held the resource would take the cache
@@ -229,9 +231,12 @@ def download_dest(
         return s3_test_protocol()
     if grr_scheme == "inmemory":
         return build_inmemory_test_protocol({})
-    dest_root = tmp_path / "dest"
-    dest_root.mkdir()
-    return build_filesystem_test_protocol(dest_root)
+    if grr_scheme == "file":
+        dest_root = tmp_path / "dest"
+        dest_root.mkdir()
+        return build_filesystem_test_protocol(dest_root)
+
+    raise ValueError(f"unexpected read-write scheme: <{grr_scheme}>")
 
 
 @contextlib.contextmanager
@@ -258,25 +263,24 @@ def record_filesystem_calls(
     Shared rather than copied per module for the reason
     :data:`ONE_RESOURCE_FILES` is: the re-entrancy guard below is the
     whole correctness of the count, and a second copy of it is how one
-    of the two would drift into counting a different thing.
+    of its consumers would drift into counting a different thing.
 
-    A context manager, and restoring by hand rather than through
-    ``monkeypatch``, because of what the wrapped object can be. On the
-    ``inmemory`` scheme ``proto.filesystem`` is fsspec's process-global
-    ``MemoryFileSystem`` -- one cached instance for the whole session,
-    shared with every other in-memory protocol. ``monkeypatch.setattr``
-    on an instance records the *class's* bound method as the previous
-    value, so its undo puts that back as a permanent **instance**
-    attribute rather than removing it, and from then on the singleton
-    shadows any class-level patch of the same name. Deleting what was
-    never there leaves the singleton as it was found.
+    ``mock.patch.object``, not ``monkeypatch.setattr``, because of what
+    the wrapped object can be. On the ``inmemory`` scheme
+    ``proto.filesystem`` is fsspec's process-global ``MemoryFileSystem``,
+    shared with every other in-memory protocol for the whole session.
+    Patching an *instance* attribute that is really inherited from the
+    class is the case the two libraries treat differently: monkeypatch's
+    undo puts the class's bound method back as a permanent instance
+    attribute, where ``patch.object`` deletes what was never there and
+    leaves the singleton as it found it.
 
     Note also that on that scheme the recorder cannot attribute a call
     to one protocol: a source and a destination built in the same test
     *are* the same filesystem object, so both protocols' calls land in
     one log and share the one re-entrancy flag. Callers therefore filter
-    by path, and a caller wanting a total rather than a per-path count
-    would need to say which scheme it means.
+    by path -- see :func:`calls_for` -- and a caller wanting a total
+    rather than a per-path count would need to say which scheme it means.
     """
     calls: list[tuple[str, str]] = []
     filesystem = proto.filesystem
@@ -301,22 +305,46 @@ def record_filesystem_calls(
                 inside = False
         return wrapped
 
-    #: What the instance itself carried, so the restore can tell an
-    #: attribute of its own from one it resolved through its class.
-    original: dict[str, Any] = {}
-    for operation in operations:
-        original[operation] = vars(filesystem).get(operation, _NO_ATTRIBUTE)
-        setattr(
-            filesystem, operation,
-            wrap(operation, getattr(filesystem, operation)))
-    try:
+    with contextlib.ExitStack() as patches:
+        for operation in operations:
+            patches.enter_context(mock.patch.object(
+                filesystem, operation,
+                wrap(operation, getattr(filesystem, operation))))
         yield calls
-    finally:
-        for operation, previous in original.items():
-            if previous is _NO_ATTRIBUTE:
-                delattr(filesystem, operation)
-            else:
-                setattr(filesystem, operation, previous)
+
+
+def calls_for(calls: list[tuple[str, str]], path: str) -> list[str]:
+    """The operations asked about ``path``, in the order they were made.
+
+    The one reader of :func:`record_filesystem_calls`'s log format, so
+    that the modules asserting over it -- a per-file budget (#936), a
+    per-directory one (#1042) -- do not each spell out the filtering.
+    """
+    return [operation for operation, called in calls if called == path]
+
+
+def a_source_resource(content_fixture: dict[str, Any]) -> GenomicResource:
+    """The ``one`` resource of ``content_fixture``, to be copied from.
+
+    In memory because the tests that copy it measure what the
+    *destination* spends; a source that cost round trips of its own
+    would be counted by any recorder wrapping a shared filesystem.
+    """
+    return build_inmemory_test_protocol(content_fixture).get_resource("one")
+
+
+def assert_published_one(
+    proto: FsspecReadWriteProtocol, resource: GenomicResource,
+) -> list[str]:
+    """Assert the copy published :data:`ONE_RESOURCE_FILES`, and return it.
+
+    Shared for the reason the constant itself is: this assertion is what
+    stops the per-file budgets from passing vacuously against a resource
+    that quietly lost its files, and it is worth exactly one spelling.
+    """
+    published = sorted(entry.name for entry in proto.get_manifest(resource))
+    assert published == ONE_RESOURCE_FILES, "fixture changed; update this pin"
+    return published
 
 
 def setup_small_repo(root_path: pathlib.Path) -> None:

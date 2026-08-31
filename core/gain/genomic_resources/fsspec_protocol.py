@@ -2172,10 +2172,7 @@ class FsspecReadWriteProtocol(
             self, resource: GenomicResource, state: ResourceFileState) -> None:
         """Save resource file state into internal GRR state."""
         path = self._get_resource_file_state_path(resource, state.filename)
-        # Unconditional, for the reason spelled out in ``_publish_file``:
-        # ``exist_ok`` already tolerates the directory being there, and on
-        # an object store the preceding ``exists`` of a prefix costs two
-        # requests to save the one this costs. See gain#1042.
+        # Unconditional -- see ``_publish_file`` and gain#1042.
         self.filesystem.makedirs(os.path.dirname(path), exist_ok=True)
 
         content = asdict(state)
@@ -2253,18 +2250,16 @@ class FsspecReadWriteProtocol(
 
         dest_filepath = self.get_resource_file_url(dest_resource, filename)
         dest_parent = os.path.dirname(dest_filepath)
-        # Unconditional -- see ``_publish_file`` and gain#1042. This one is
-        # paid per *file* of the resource rather than per resource, so the
-        # guard it replaces was the most expensive of the three.
+        # Unconditional -- see ``_publish_file`` and gain#1042.
         #
-        # ``makedirs``, not ``mkdir``: the two are NOT interchangeable
-        # here. ``AbstractFileSystem.mkdir`` takes no ``exist_ok`` -- the
-        # local and memory backends test ``exists()`` themselves and raise
-        # ``FileExistsError`` before any keyword is consulted, so the
-        # ``exist_ok=True`` this used to pass was silently inert and the
-        # guard in front of it was load-bearing. ``makedirs(exist_ok=True)``
-        # is the only spelling that tolerates the directory being there on
-        # every backend.
+        # ``makedirs``, not the ``mkdir`` this site used to call:
+        # ``AbstractFileSystem.mkdir`` takes no ``exist_ok``, and the local
+        # and memory backends raise ``FileExistsError`` from their own
+        # is-it-there check -- ``exists()`` for the one, a lookup in its
+        # store for the other -- before any keyword is consulted. The
+        # ``exist_ok=True`` passed here was therefore inert, which made the
+        # guard in front of it load-bearing at this site alone. s3 tolerates
+        # either spelling, so it cannot show the difference.
         self.filesystem.makedirs(dest_parent, exist_ok=True)
 
         # Bytes credited to on_bytes during the current attempt, so a

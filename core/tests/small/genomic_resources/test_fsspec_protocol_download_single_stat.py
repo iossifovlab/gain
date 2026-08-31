@@ -15,7 +15,6 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     ResourceFileState,
 )
-from gain.genomic_resources.testing import build_inmemory_test_protocol
 from gain.genomic_resources.testing.faulty_filesystem import (
     corrupt_same_length,
 )
@@ -23,7 +22,12 @@ from gain.genomic_resources.testing.faulty_filesystem import (
 # ``download_dest`` comes from the package conftest, beside the pin below;
 # ``test_fsspec_protocol_download_md5_reuse.py`` makes the sibling claim
 # about the md5 over the same fixture.
-from .conftest import ONE_RESOURCE_FILES, record_filesystem_calls
+from .conftest import (
+    a_source_resource,
+    assert_published_one,
+    calls_for,
+    record_filesystem_calls,
+)
 
 METADATA_OPERATIONS = ("info", "exists", "modified", "ls")
 
@@ -43,8 +47,7 @@ def test_a_downloaded_file_is_asked_about_twice(
     so it stays its own call, and that is the whole budget.
     """
     # Given a source resource and a destination that does not have it yet.
-    src_proto = build_inmemory_test_protocol(content_fixture)
-    src_resource = src_proto.get_resource("one")
+    src_resource = a_source_resource(content_fixture)
 
     dest_proto = download_dest
     assert dest_proto.get_all_resources_dict() == {}
@@ -54,14 +57,9 @@ def test_a_downloaded_file_is_asked_about_twice(
         dest_resource = dest_proto.copy_resource(src_resource)
 
     # Then every published file was asked about exactly twice.
-    manifest = dest_proto.get_manifest(dest_resource)
-    published = sorted(entry.name for entry in manifest)
-    assert published == ONE_RESOURCE_FILES, "fixture changed; update this pin"
-
-    for name in published:
+    for name in assert_published_one(dest_proto, dest_resource):
         url = dest_proto.get_resource_file_url(dest_resource, name)
-        spent = sorted(
-            operation for operation, path in calls if path == url)
+        spent = sorted(calls_for(calls, url))
         assert spent == ["info", "modified"], (name, spent)
 
 
@@ -70,12 +68,8 @@ def _copy_one(
     dest_proto: FsspecReadWriteProtocol,
 ) -> tuple[GenomicResource, list[str]]:
     """Copy the ``one`` resource in, and return it with its file names."""
-    src_proto = build_inmemory_test_protocol(content_fixture)
-    dest_resource = dest_proto.copy_resource(src_proto.get_resource("one"))
-    names = sorted(
-        entry.name for entry in dest_proto.get_manifest(dest_resource))
-    assert names == ONE_RESOURCE_FILES, "fixture changed; update this pin"
-    return dest_resource, names
+    dest_resource = dest_proto.copy_resource(a_source_resource(content_fixture))
+    return dest_resource, assert_published_one(dest_proto, dest_resource)
 
 
 @pytest.mark.grr_full
