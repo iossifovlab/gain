@@ -358,3 +358,162 @@ def test_a_label_naming_a_non_genome_resource_degrades_to_raw_counts(
 
     assert f">{COVERED}<" in page
     assert "Covered %" not in page
+
+
+def _a_repo_with_an_untouched_contig(
+    where: pathlib.Path,
+) -> GenomicResourceRepo:
+    """A chr1-only score against a genome that also has chr2.
+
+    The score touches a strict subset of the genome's contigs, which is
+    the whole point: chr2 is 300bp of reference the score says nothing
+    about, and the global fraction has to count it.
+    """
+    return (
+        a_grr()
+        .with_resource("scores/one", _a_chr1_score("genomes/g1041"))
+        .with_resource(
+            "genomes/g1041",
+            a_reference_genome()
+            .with_chromosome("chr1", "A" * 100)
+            .with_chromosome("chr2", "C" * 300))
+        .build_repo(where)
+    )
+
+
+def test_global_fraction_counts_contigs_the_score_never_touches(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = _a_repo_with_an_untouched_contig(tmp_path)
+    impl = _built_impl(repo, "scores/one")
+
+    page = impl.get_info(repo=repo)
+
+    assert page.count(">9.00%<") == 1  # the chr1 row: 9 of 100
+    assert ">2.25%<" in page  # the global row: 9 of the genome's 400
+
+
+def test_untouched_contigs_render_as_one_rollup_row(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = _a_repo_with_an_untouched_contig(tmp_path)
+    impl = _built_impl(repo, "scores/one")
+
+    page = impl.get_info(repo=repo)
+
+    assert "1 contig with no values (300 bp)" in page
+    assert ">chr2<" not in page  # rolled up, not a row of its own
+
+
+def test_bigwig_header_contigs_without_values_join_the_denominator(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The bigWig rung's universe is the header's whole contig list, not
+    # only the contigs the statistic touched.  This backend's scan also
+    # STORES a zero for chr2 -- so this pins that the roll-up counts a
+    # contig by having no values, not by being absent from the file.
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores/bw",
+            a_bigwig_score()
+            .with_data(
+                """
+                chr1  4   9   0.1
+                chr1  29  33  0.2
+                """)
+            .with_chrom_lens({"chr1": 100, "chr2": 300}))
+        .build_repo(tmp_path)
+    )
+    impl = _built_impl(repo, "scores/bw")
+
+    page = impl.get_info(repo=repo)
+
+    assert page.count(">9.00%<") == 1  # the chr1 row
+    assert ">2.25%<" in page  # the global row: 9 of the header's 400
+    assert "1 contig with no values (300 bp)" in page
+
+
+def test_a_covered_contig_missing_from_the_genome_suppresses_the_rollup(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A mislabeled genome degrades the global -- and the roll-up with it.
+
+    "chr2 has no values" is a claim about the genome being the right
+    one, and a covered contig the genome does not list is proof it is
+    not.  The uncovered contigs are not reported as fact under a
+    denominator already known to be wrong.
+    """
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores/two",
+            a_position_score()
+            .with_score("score", "float")
+            .with_data(
+                """
+                chrom  pos_begin  pos_end  score
+                chr1   5          9        0.1
+                chrX   1          10       0.2
+                """)
+            .with_tabix()
+            .with_labels(reference_genome="genomes/g1041b"))
+        .with_resource(
+            "genomes/g1041b",
+            a_reference_genome()
+            .with_chromosome("chr1", "A" * 50)
+            .with_chromosome("chr2", "C" * 300))
+        .build_repo(tmp_path)
+    )
+    impl = _built_impl(repo, "scores/two")
+
+    page = impl.get_info(repo=repo)
+
+    assert "contig with no values" not in page
+    assert "contigs with no values" not in page
+
+
+def test_an_implausible_untouched_contig_leaves_the_denominator(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A zero-length .fai record on a contig the score never touched: it
+    # cannot bound anything, so it is out of the denominator and out of
+    # the roll-up rather than inflating one and being counted by the
+    # other.
+    a_grr().with_resource(
+        "scores/one", _a_chr1_score("genomes/gz1041"),
+    ).build_repo(tmp_path)
+    setup_directories(tmp_path / "genomes" / "gz1041", {
+        "genomic_resource.yaml": "{type: genome, filename: genome.fa}",
+        "genome.fa": ">chr1\n" + "A" * 100 + "\n",
+        "genome.fa.fai": "chr1\t100\t7\t100\t101\nchr2\t0\t115\t60\t61\n",
+    })
+    repo = build_filesystem_test_repository(tmp_path)
+    impl = _built_impl(repo, "scores/one")
+
+    page = impl.get_info(repo=repo)
+
+    assert page.count(">9.00%<") == 2  # 9 of chr1's 100, row and global
+    assert "with no values" not in page
+
+
+def test_several_untouched_contigs_roll_up_into_one_row(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = (
+        a_grr()
+        .with_resource("scores/one", _a_chr1_score("genomes/g1041c"))
+        .with_resource(
+            "genomes/g1041c",
+            a_reference_genome()
+            .with_chromosome("chr1", "A" * 100)
+            .with_chromosome("chr2", "C" * 300)
+            .with_chromosome("chr3", "G" * 600))
+        .build_repo(tmp_path)
+    )
+    impl = _built_impl(repo, "scores/one")
+
+    page = impl.get_info(repo=repo)
+
+    assert "2 contigs with no values (900 bp)" in page
+    assert ">0.90%<" in page  # the global row: 9 of the genome's 1000

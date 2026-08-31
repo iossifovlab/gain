@@ -721,6 +721,30 @@ are also read by GAIn itself — gene models and scores use ``reference_genome``
 declare the assembly they are built against, and liftover chains use ``source_genome``
 and ``target_genome``.
 
+For a score, the ``reference_genome`` label is what makes its resource info page
+answer **what part of the reference genome has values**. The Coverage section of
+the page reports covered positions as a percentage of the whole assembly — every
+contig of the labelled genome, including the ones the score never touches, which
+are rolled up into a single "N contigs with no values" row. Without a resolvable
+``reference_genome`` label there is nothing to divide by, and a **tabix-backed
+score renders raw covered-position counts and no percentages at all**. A
+bigWig-backed score is the one exception: its header carries exact contig sizes,
+so it renders percentages against the header's contig list even unlabelled. If a
+score's Coverage section shows counts where you expected percentages, add the
+label:
+
+.. code-block:: yaml
+
+    meta:
+      labels:
+        reference_genome: hg38/genomes/GRCh38-hg38
+
+The percentage is computed when the page is rendered, never stored, so adding the
+label needs no data rebuild — re-render the page (``grr_manage resource-info -r
+<resource_id> -f``) and the percentages appear. A label naming a genome that does
+not resolve, or one whose contigs are shorter than the positions the score holds
+on them, degrades back to raw counts rather than rendering a wrong percentage.
+
 While describing ``genomic_resource.yaml`` configuration options,
 we will first cover the resource types whose ``genomic_resource.yaml``
 files are relatively simple (genome, gene models, liftover chains,
