@@ -16,25 +16,23 @@ failure a source-level grep would miss.
 The ``<tbody>``/``<tfoot>`` split is load-bearing rather than tidiness.
 The sorter reorders ``tbody > tr``; the ``all chromosomes`` total sits
 in ``<tfoot>``, so no comparator, and no bug in one, can float the
-total into the middle of the data.  ``Table.loose`` below exists to make
-the old shape -- rows sitting directly under ``<table>`` -- visible to
-an assertion instead of quietly reappearing.
+total into the middle of the data.  ``Table.loose`` in
+``info_page_html`` exists to make the old shape -- rows sitting directly
+under ``<table>`` -- visible to an assertion instead of quietly
+reappearing, and ``test_every_per_chromosome_table_pins_its_total_in_a_tfoot``
+below asserts these tables keep none.
 
 The fixtures here look like the ones in
 ``test_info_page_chromosome_order.py`` and deliberately are not: the
 Coverage score's counts are 9, 10 and 2 so that text and numeric order
 disagree, and its genome resolves only two of the three contigs so one
 row has no fraction.  Sharing them would mean parameterising that file's
-builders for this file's traps.  Consolidating the *section splitters*
-across both is iossifovlab/gain#992.
+builders for this file's traps.
 """
 from __future__ import annotations
 
 import pathlib
-import re
 from collections.abc import Callable
-from html.parser import HTMLParser
-from typing import NamedTuple
 
 import pytest
 from gain.genomic_resources.implementations.genomic_scores_impl import (
@@ -50,117 +48,10 @@ from gain.genomic_resources.testing.builders import (
     an_allele_score,
 )
 
-
-class Cell(NamedTuple):
-    """One rendered cell: its tag, its attributes and its visible text."""
-
-    tag: str
-    attrs: dict[str, str]
-    text: str
-
-    @property
-    def sort_value(self) -> str | None:
-        """The sort key the sorter would read, or ``None`` if absent."""
-        return self.attrs.get("data-sort-value")
-
-
-class Table(NamedTuple):
-    """A parsed table, its rows grouped by the section they sit in."""
-
-    head: list[list[Cell]]
-    body: list[list[Cell]]
-    foot: list[list[Cell]]
-    loose: list[list[Cell]]
-
-    def column(self, name: str) -> list[Cell]:
-        """The body cells under the header named ``name``.
-
-        By header text rather than index, because the Coverage table's
-        column set is conditional on the statistic that was built.
-        """
-        headers = [cell.text for cell in self.head[0]]
-        assert name in headers, f"no {name!r} column in {headers}"
-        index = headers.index(name)
-        return [row[index] for row in self.body]
-
-
-class _TableReader(HTMLParser):
-    """Collects ``<tr>``s into the section that encloses them."""
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.rows: dict[str, list[list[Cell]]] = {
-            "thead": [], "tbody": [], "tfoot": [], "": []}
-        self._section = ""
-        self._row: list[Cell] | None = None
-        self._text: list[str] | None = None
-        self._tag = ""
-        self._attrs: dict[str, str] = {}
-
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]],
-    ) -> None:
-        if tag in ("thead", "tbody", "tfoot"):
-            self._section = tag
-        elif tag == "tr":
-            self._row = []
-        elif tag in ("td", "th"):
-            self._text = []
-            self._tag = tag
-            self._attrs = {k: v if v is not None else "" for k, v in attrs}
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in ("thead", "tbody", "tfoot"):
-            self._section = ""
-        elif tag == "tr" and self._row is not None:
-            self.rows[self._section].append(self._row)
-            self._row = None
-        elif tag in ("td", "th") and self._text is not None:
-            if self._row is not None:
-                self._row.append(
-                    Cell(self._tag, self._attrs, "".join(self._text).strip()))
-            self._text = None
-
-    def handle_data(self, data: str) -> None:
-        if self._text is not None:
-            self._text.append(data)
-
-
-def sort_keys(cells: list[Cell]) -> list[str]:
-    """The cells' sort keys, asserting that every one of them has a key.
-
-    A cell that renders a value but carries no ``data-sort-value`` sorts
-    last whatever the direction, so a whole column silently missing the
-    attribute would not throw -- it would just sit still.
-    """
-    missing = [cell for cell in cells if cell.sort_value is None]
-    assert not missing, f"cells with no sort key: {missing}"
-    return [cell.sort_value for cell in cells if cell.sort_value is not None]
-
-
-def table_after(page: str, heading: str) -> Table:
-    """Parse ``heading``'s own table.
-
-    Bounded at the next heading on purpose.  A section that rendered
-    ``not computed`` instead of a table would otherwise match the next
-    table further down the page, and every assertion about it would
-    pass against the wrong markup.
-    """
-    assert heading in page, f"no {heading} section on the page"
-    after = page.split(heading, 1)[1]
-    # ``[ >]`` because the Files heading that ends the last statistics
-    # section carries a style attribute -- matching only ``<h2>`` lets
-    # every scan run off the end of the page and into that table.
-    section = re.split(r"<h[23][ >]", after, maxsplit=1)[0]
-    assert "<table>" in section, f"the {heading} section rendered no table"
-    fragment = section.split("<table>", 1)[1].split("</table>", 1)[0]
-    reader = _TableReader()
-    reader.feed(f"<table>{fragment}</table>")
-    reader.close()
-    return Table(
-        reader.rows["thead"], reader.rows["tbody"],
-        reader.rows["tfoot"], reader.rows[""])
-
+from tests.small.genomic_resources.info_page_html import (
+    sort_keys,
+    table_after,
+)
 
 #: chr1 and chr2 resolve a length; chr10 deliberately does not, so the
 #: Coverage table carries one row whose fraction is None.

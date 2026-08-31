@@ -1,6 +1,5 @@
 # pylint: disable=C0114,C0116,W0212
 import pathlib
-import re
 from collections.abc import Callable
 
 import pytest
@@ -15,24 +14,12 @@ from gain.genomic_resources.testing.builders import (
     an_allele_score,
 )
 
-# The Chromosome cell carries a data-sort-value since gain#984, so the
-# opening tag must be matched permissively.  Requiring a bare <td> does
-# fail when that attribute arrives, but it fails as "the column is
-# empty" rather than as "this pattern no longer matches the markup",
-# which is a long way from the edit that caused it.
-_ROW = re.compile(r"<tr[^>]*>\s*<td[^>]*>([^<]*)</td>")
+from tests.small.genomic_resources.info_page_html import table_after
 
 # Every fixture below carries these three contigs.  They reach the
 # stored statistics sorted as plain strings -- chr1, chr10, chr2 -- so a
 # page rendering them in this order is rendering the natural key.
 _NATURAL_ORDER = ["chr1", "chr2", "chr10", "all chromosomes"]
-
-
-def _chromosome_column(page: str, heading: str) -> list[str]:
-    """The Chromosome column of the table under ``heading``, in order."""
-    section = page.split(f"<h2>{heading}</h2>", 1)[1]
-    table = section.split("<table>", 1)[1].split("</table>", 1)[0]
-    return _ROW.findall(table)
 
 
 def _built_page(resource: GenomicResource) -> str:
@@ -101,4 +88,11 @@ def test_per_chromosome_rows_render_in_natural_order(
 ) -> None:
     page = _built_page(build_resource(tmp_path))
 
-    assert _chromosome_column(page, heading) == _NATURAL_ORDER
+    table = table_after(page, f"<h2>{heading}</h2>")
+
+    # The tfoot total is read back in deliberately.  It is not a data row,
+    # but the order this test is about is the order a reader sees, and that
+    # ends with "all chromosomes" -- stopping at the data rows would no
+    # longer notice a total floated into the middle of them.
+    assert [
+        row[0].text for row in table.rows + table.foot] == _NATURAL_ORDER
