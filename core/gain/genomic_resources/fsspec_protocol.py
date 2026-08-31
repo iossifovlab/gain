@@ -2133,9 +2133,11 @@ class FsspecReadWriteProtocol(
             self, resource: GenomicResource, state: ResourceFileState) -> None:
         """Save resource file state into internal GRR state."""
         path = self._get_resource_file_state_path(resource, state.filename)
-        if not self.filesystem.exists(os.path.dirname(path)):
-            self.filesystem.makedirs(
-                os.path.dirname(path), exist_ok=True)
+        # Unconditional, for the reason spelled out in ``_publish_file``:
+        # ``exist_ok`` already tolerates the directory being there, and on
+        # an object store the preceding ``exists`` of a prefix costs two
+        # requests to save the one this costs. See gain#1042.
+        self.filesystem.makedirs(os.path.dirname(path), exist_ok=True)
 
         content = asdict(state)
         with self.filesystem.open(path, "wt", encoding="utf8") as outfile:
@@ -2212,9 +2214,19 @@ class FsspecReadWriteProtocol(
 
         dest_filepath = self.get_resource_file_url(dest_resource, filename)
         dest_parent = os.path.dirname(dest_filepath)
-        if not self.filesystem.exists(dest_parent):
-            self.filesystem.mkdir(
-                dest_parent, create_parents=True, exist_ok=True)
+        # Unconditional -- see ``_publish_file`` and gain#1042. This one is
+        # paid per *file* of the resource rather than per resource, so the
+        # guard it replaces was the most expensive of the three.
+        #
+        # ``makedirs``, not ``mkdir``: the two are NOT interchangeable
+        # here. ``AbstractFileSystem.mkdir`` takes no ``exist_ok`` -- the
+        # local and memory backends test ``exists()`` themselves and raise
+        # ``FileExistsError`` before any keyword is consulted, so the
+        # ``exist_ok=True`` this used to pass was silently inert and the
+        # guard in front of it was load-bearing. ``makedirs(exist_ok=True)``
+        # is the only spelling that tolerates the directory being there on
+        # every backend.
+        self.filesystem.makedirs(dest_parent, exist_ok=True)
 
         # Bytes credited to on_bytes during the current attempt, so a
         # retryable failure can roll them back before the next attempt.
@@ -2303,8 +2315,8 @@ class FsspecReadWriteProtocol(
         tmp_filepath = self._get_resource_file_download_path(
             dest_resource, filename)
         tmp_parent = os.path.dirname(tmp_filepath)
-        if not self.filesystem.exists(tmp_parent):
-            self.filesystem.makedirs(tmp_parent, exist_ok=True)
+        # Unconditional -- see ``_publish_file`` and gain#1042.
+        self.filesystem.makedirs(tmp_parent, exist_ok=True)
 
         moved = False
         try:

@@ -7,7 +7,6 @@ existence probe, a modification time, a change token, on top of the size
 stat that verifies the move. On a remote store every one of those is a
 HEAD, and a full GRR sync pays the surplus once per published file.
 """
-from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -24,58 +23,9 @@ from gain.genomic_resources.testing.faulty_filesystem import (
 # ``download_dest`` comes from the package conftest, beside the pin below;
 # ``test_fsspec_protocol_download_md5_reuse.py`` makes the sibling claim
 # about the md5 over the same fixture.
-from .conftest import ONE_RESOURCE_FILES
+from .conftest import ONE_RESOURCE_FILES, record_filesystem_calls
 
 METADATA_OPERATIONS = ("info", "exists", "modified", "ls")
-
-
-def _record_metadata_calls(
-    proto: FsspecReadWriteProtocol,
-    monkeypatch: pytest.MonkeyPatch,
-) -> list[tuple[str, str]]:
-    """Log every metadata call the protocol makes, as (operation, path).
-
-    Only the outermost call is logged -- see the re-entrancy guard.
-
-    Wrapped on the filesystem the protocol was handed, which ADR 0021
-    names as the protocol's real contract boundary -- the same seam the
-    fault tests inject at, here reading rather than writing. Counting
-    anywhere higher would count the protocol's own vocabulary instead of
-    the round trips, which is the thing that costs.
-
-    ``test_s3_test_protocol_population`` records the same shape one layer
-    down, at ``AioBaseClient._make_api_call`` -- actual HTTP requests
-    rather than protocol calls. That is the sharper instrument and the
-    s3-only one; this counts what the protocol asks for, on every
-    scheme, which is what a per-field fetch would regress.
-    """
-    calls: list[tuple[str, str]] = []
-    filesystem = proto.filesystem
-    inside = False
-
-    def wrap(operation: str, inner: Callable[..., Any]) -> Callable[..., Any]:
-        def wrapped(path: str, *args: Any, **kwargs: Any) -> Any:
-            nonlocal inside
-            if inside:
-                # A metadata call one of these makes for itself, not one
-                # the protocol asked for: fsspec's local ``modified`` and
-                # ``exists`` are both ``info`` underneath, and counting
-                # the inner call would make the number a property of the
-                # backend rather than of what the protocol requested.
-                return inner(path, *args, **kwargs)
-            calls.append((operation, str(path)))
-            inside = True
-            try:
-                return inner(path, *args, **kwargs)
-            finally:
-                inside = False
-        return wrapped
-
-    for operation in METADATA_OPERATIONS:
-        monkeypatch.setattr(
-            filesystem, operation,
-            wrap(operation, getattr(filesystem, operation)))
-    return calls
 
 
 @pytest.mark.grr_full
@@ -100,7 +50,8 @@ def test_a_downloaded_file_is_asked_about_twice(
     dest_proto = download_dest
     assert dest_proto.get_all_resources_dict() == {}
 
-    calls = _record_metadata_calls(dest_proto, monkeypatch)
+    calls = record_filesystem_calls(
+        dest_proto, monkeypatch, METADATA_OPERATIONS)
 
     # When
     dest_resource = dest_proto.copy_resource(src_resource)
