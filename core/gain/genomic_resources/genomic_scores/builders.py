@@ -23,10 +23,8 @@ from gain.genomic_resources.resource_types import (
 )
 
 from .allele import AlleleScore
-from .base import (
-    FragmentScore,
-    GenomicScore,
-)
+from .base import GenomicScore
+from .fragment import FragmentScore
 from .position import PositionScore
 
 logger = logging.getLogger(__name__)

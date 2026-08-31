@@ -30,7 +30,6 @@ from gain.annotation.annotatable import Region
 from gain.annotation.annotation_config import AnnotationConfigParser
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources import (
-    genomic_scores,
     get_resource_implementation_builder,
     resource_types,
 )
@@ -38,6 +37,7 @@ from gain.genomic_resources.cli import _create_contents_db, cli_manage
 from gain.genomic_resources.genomic_scores import (
     FragmentScore,
     build_score_from_resource,
+    fragment,
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     FragmentScoreImplementation,
@@ -243,14 +243,18 @@ def test_repository_sweep_warns_once_per_legacy_resource(
     # is memoised -- at which point the memo below could be deleted
     # entirely and every assertion here would still pass.
     recognitions: collections.Counter[str] = collections.Counter()
-    announce = genomic_scores.warn_deprecated_spelling
+    # Patched on the submodule that CALLS it, not on the package facade:
+    # since gain#902 the facade only re-exports names, so rebinding an
+    # attribute there would leave `fragment`'s own global untouched and this
+    # counter silently at zero.
+    announce = fragment.warn_deprecated_spelling
 
     def counting_announce(*args: object, **kwargs: object) -> None:
         recognitions[str(kwargs["found_in"])] += 1
         announce(*args, **kwargs)  # type: ignore[arg-type]
 
     mocker.patch.object(
-        genomic_scores, "warn_deprecated_spelling", counting_announce)
+        fragment, "warn_deprecated_spelling", counting_announce)
 
     with caplog.at_level(logging.WARNING):
         for resource in grr.get_all_resources():

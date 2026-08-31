@@ -28,7 +28,6 @@ and is deliberately sequenced after this split.
 from .allele import AlleleScore
 from .base import (
     DEFAULT_VALUE_ARRAYS_BATCH_SIZE,
-    FragmentScore,
     GenomicScore,
 )
 from .builders import (
@@ -41,6 +40,7 @@ from .builders import (
     build_score_from_resource,
     build_score_from_resource_id,
 )
+from .fragment import FragmentScore
 from .position import PositionScore
 from .records import (
     AlleleRecordArrays,
