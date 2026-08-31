@@ -741,9 +741,21 @@ label:
 
 The percentage is computed when the page is rendered, never stored, so adding the
 label needs no data rebuild — re-render the page (``grr_manage resource-info -r
-<resource_id> -f``) and the percentages appear. A label naming a genome that does
-not resolve, or one whose contigs are shorter than the positions the score holds
-on them, degrades back to raw counts rather than rendering a wrong percentage.
+<resource_id> -f``) and the percentages appear.
+
+A label naming a genome that does not resolve degrades the whole section back to
+raw counts rather than rendering a wrong percentage. So does a single contig the
+genome gets wrong: if the score holds positions past the end of the contig the
+genome declares, or the genome declares it empty, that contig's row and the
+global percentage both fall back to raw counts, while the remaining contigs keep
+theirs. Either way the page shows counts rather than a number you cannot trust.
+
+Two properties of the percentage are worth knowing before reading one. It is
+measured against **every** contig of the labelled assembly, alternate haplotypes
+and decoys included, so a whole-genome score built against the primary assembly
+reads somewhat below 100%. And a bigWig-backed score without a label is measured
+against its own header, which is a statement about the file rather than about the
+genome — a chr21-only bigWig reads as nearly fully covered until you label it.
 
 While describing ``genomic_resource.yaml`` configuration options,
 we will first cover the resource types whose ``genomic_resource.yaml``

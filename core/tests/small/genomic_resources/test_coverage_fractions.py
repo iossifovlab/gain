@@ -402,7 +402,6 @@ def test_untouched_contigs_render_as_one_rollup_row(
     page = impl.get_info(repo=repo)
 
     assert "1 contig with no values (300 bp)" in page
-    assert ">chr2<" not in page  # rolled up, not a row of its own
 
 
 def test_bigwig_header_contigs_without_values_join_the_denominator(
@@ -432,6 +431,10 @@ def test_bigwig_header_contigs_without_values_join_the_denominator(
     assert page.count(">9.00%<") == 1  # the chr1 row
     assert ">2.25%<" in page  # the global row: 9 of the header's 400
     assert "1 contig with no values (300 bp)" in page
+    # chr2 IS in this backend's stored counts, at zero.  Absent from the
+    # body it is reported once; left there it would be counted twice --
+    # a 0.00% row AND a base pair of the roll-up.
+    assert ">chr2<" not in page
 
 
 def test_a_covered_contig_missing_from_the_genome_suppresses_the_rollup(
