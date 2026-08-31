@@ -5,7 +5,9 @@ The sorter (``sortable_table.jinja``) is opt-in through two attributes
 and nothing else: ``data-sort`` on a ``<th>`` says the column sorts and
 how to compare it, ``data-sort-value`` on a ``<td>`` carries the key.
 CI has no JS runtime, so what is testable here is the contract the
-templates emit -- the sorter's own click behaviour is iossifovlab/gain#987.
+templates emit.  The sorter's own click behaviour is driven in a real
+browser by the ``info_pages_e2e`` Playwright project, against a page
+generated from a fixture with the same traps as the ones below.
 
 That makes these tests the only thing standing between a template edit
 and a silently dead sorter, so they assert the contract from the
