@@ -1,10 +1,25 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""Where ``GeneModels`` gets its reference-genome label from (gain#1009).
+"""The reference-genome label: where it is read, and what it may hold.
 
-``meta`` and ``meta.labels`` are free-form YAML, so a curator can write
-either as a scalar, a list or an int.  ``GenomicResource`` narrows both
-levels for every reader -- ``get_meta`` the outer one (gain#1004),
-``get_labels`` the inner one (gain#654) -- and neither raises.
+Two questions, and gain#1009 settled only the first.  gain#1050 is the
+second: the accessor promises a *mapping* and says nothing about what is
+in it -- ``get_meta``'s docstring is explicit that a reader of a field
+narrows that field itself -- so the label's VALUE was read unnarrowed
+into an attribute annotated ``str | None``.  Six of the eight shapes a
+curator can write violated that annotation, and validation caught none
+of them: the base schema types ``meta.labels`` as a mapping, not its
+values.
+
+They failed in two ways, split by the ``or`` chain every reader of the
+attribute chains it with -- the truthy shapes won it and died past it,
+the falsy ones lost it and were replaced in silence.  Which is which,
+and what each one cost, is on the two tests that demonstrate it.
+
+As for the block around it: ``meta`` and ``meta.labels`` are free-form
+YAML too, so a curator can write either as a scalar, a list or an int.
+``GenomicResource`` narrows both levels for every reader -- ``get_meta``
+the outer one (gain#1004), ``get_labels`` the inner one (gain#654) --
+and neither raises.
 
 ``GeneModels`` used to reach past both, indexing its validated config down
 to ``meta.labels`` behind two ``is not None`` guards that a scalar
@@ -16,47 +31,106 @@ narrowing accessor as every other reader, so it stays correct whether or
 not validation keeps covering it.
 
 Validation refuses; reading degrades -- the same split as gain#1004.
+
+Untested here, deliberately: a non-empty ``str`` that is still not a
+usable id -- ``" hg38 "``, or the trailing newline a folded scalar
+leaves.  Nothing narrows those; see the reader's own docstring for why.
 """
+import logging
+import pathlib
+from typing import Any
+
 import pytest
 import pytest_mock
+from gain.annotation.annotation_config import (
+    AnnotationPreamble,
+    AnnotatorInfo,
+)
+from gain.annotation.annotation_pipeline import AnnotationPipeline
+from gain.annotation.utils import find_annotator_reference_genome
 from gain.genomic_resources.gene_models.gene_models import GeneModels
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing import (
-    build_inmemory_test_resource,
-    convert_to_tab_separated,
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_reference_genome,
 )
+from gain.genomic_resources.testing.gene_models_builder import a_gene_models
 
-# refflat, the format the sibling resource tests use
-GMM_CONTENT = """
-#geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
-TP53      tx1  1     +      10      100   12       95     3         10,50,70   15,60,100
-POGZ      tx3  17    +      10      100   12       95     3         10,50,70   15,60,100
-"""  # noqa: E501
+from ..conftest import captured_warnings
+
+A_GENE_MODELS_ID = "gene_models/broken"
+
+A_GENOME_ID = "genomes/from_the_preamble"
 
 
-def a_gene_models_resource(meta_block: str) -> GenomicResource:
-    """A ``gene_models`` resource carrying ``meta_block`` verbatim.
+def a_gene_models_resource_built_from(
+    tmp_path: pathlib.Path, builder: Any,
+) -> GenomicResource:
+    """Realize ``builder`` under a real resource id.
 
-    The block is spliced in as text rather than built from a mapping so
-    that a test can write the shapes a curator can write -- an explicit
-    YAML null, or no block at all -- which a mapping cannot express.
+    Through a GRR rather than ``build_resource``, which gives a lone
+    resource an EMPTY id -- ``id in message`` then holds for every
+    message ever written and pins nothing.
 
-    The models file is declared and written so that the resource is
-    shaped like a real one, but nothing here loads it: constructing
-    ``GeneModels`` validates the config and reads the label, and these
-    tests observe only that label.  Every case would pass just the same
-    over an empty ``genes.txt`` -- so if one ever needs the records, it
-    has to call ``load()`` and say so.
+    Nothing here loads the models file: constructing ``GeneModels``
+    validates the config and reads the label, and these tests observe
+    only that label.  A test that ever wants the records has to call
+    ``load()`` and say so.
     """
-    return build_inmemory_test_resource(content={
-        "genomic_resource.yaml":
-            "type: gene_models\nfilename: genes.txt\nformat: refflat\n"
-            + meta_block,
-        "genes.txt": convert_to_tab_separated(GMM_CONTENT),
-    })
+    return (
+        a_grr()
+        .with_resource(A_GENE_MODELS_ID, builder)
+        .build_repo(tmp_path)
+        .get_resource(A_GENE_MODELS_ID)
+    )
+
+
+def a_gene_models_whose_reference_genome_is(
+    tmp_path: pathlib.Path, value: Any,
+) -> GenomicResource:
+    """A ``gene_models`` resource declaring ``reference_genome: value``.
+
+    Built through the ``a_gene_models`` builder rather than by splicing
+    yaml, so the label value is written down as the YAML type it is --
+    ``MetaMixin`` renders the block through ``yaml.safe_dump``, so an
+    ``int`` stays an int and a list stays a list.
+    """
+    return a_gene_models_resource_built_from(
+        tmp_path, a_gene_models().with_labels(reference_genome=value))
+
+
+@pytest.mark.parametrize("builder", [
+    pytest.param(
+        a_gene_models().with_raw_labels("hg38"), id="labels-as-a-string"),
+    pytest.param(
+        a_gene_models().with_raw_labels(["a", "b"]), id="labels-as-a-list"),
+    pytest.param(
+        a_gene_models().with_raw_labels(2019), id="labels-as-an-int"),
+    pytest.param(
+        a_gene_models().with_raw_meta("some text"), id="meta-as-a-string"),
+    pytest.param(
+        a_gene_models().with_raw_meta(["a", "b"]), id="meta-as-a-list"),
+])
+def test_the_schema_still_refuses_a_non_mapping_meta_level(
+    tmp_path: pathlib.Path,
+    builder: Any,
+) -> None:
+    """Validation stays the guard; the accessor is only the backstop.
+
+    Reading through the narrowing accessor must not quietly make a
+    malformed ``gene_models`` resource loadable -- the base schema types
+    both levels, and a resource that violates it is still refused before
+    any label is read, at the same place and with the same error as
+    before (gain#1009).
+    """
+    resource = a_gene_models_resource_built_from(tmp_path, builder)
+
+    with pytest.raises(ValueError, match="Invalid configuration"):
+        GeneModels(resource)
 
 
 def test_a_narrowed_away_labels_block_leaves_no_reference_genome(
+    tmp_path: pathlib.Path,
     mocker: pytest_mock.MockerFixture,
 ) -> None:
     """The label follows the narrowing accessor, not the raw config.
@@ -71,8 +145,7 @@ def test_a_narrowed_away_labels_block_leaves_no_reference_genome(
     labels and must report no reference genome.  A reader that indexes the
     config itself reads around the narrowing and still finds ``hg38``.
     """
-    resource = a_gene_models_resource(
-        "meta:\n  labels:\n    reference_genome: hg38\n")
+    resource = a_gene_models_whose_reference_genome_is(tmp_path, "hg38")
     mocker.patch.object(GenomicResource, "get_labels", return_value={})
 
     gene_models = GeneModels(resource)
@@ -80,58 +153,140 @@ def test_a_narrowed_away_labels_block_leaves_no_reference_genome(
     assert gene_models.reference_genome_id is None
 
 
-def test_a_declared_reference_genome_label_is_read() -> None:
-    """The one shape that yields a value, read off a well-formed block."""
-    resource = a_gene_models_resource(
-        "meta:\n  labels:\n    reference_genome: hg38\n")
-
-    gene_models = GeneModels(resource)
-
-    assert gene_models.reference_genome_id == "hg38"
-
-
-@pytest.mark.parametrize("meta_block", [
-    pytest.param(
-        "meta:\n  labels:\n    domain: gene\n", id="labels-without-the-key"),
-    pytest.param("meta:\n  labels:\n", id="labels-an-explicit-yaml-null"),
-    pytest.param("meta:\n  description: prose\n", id="meta-without-labels"),
-    pytest.param("", id="no-meta-block-at-all"),
+@pytest.mark.parametrize(("value", "reported_as"), [
+    pytest.param(2019, "int", id="an-int"),
+    pytest.param(0, "int", id="the-int-zero"),
+    pytest.param(False, "bool", id="a-bool"),
+    pytest.param(["a", "b"], "list", id="a-list"),
+    pytest.param({"k": "v"}, "dict", id="a-nested-mapping"),
+    pytest.param("", "empty", id="an-empty-string"),
 ])
-def test_a_resource_declaring_no_reference_genome_has_none(
-    meta_block: str,
+def test_every_unusable_reference_genome_label_reads_as_absent(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    value: Any,
+    reported_as: str,
 ) -> None:
-    """Every spelling of "no reference genome" reads as absent, not empty.
+    """The six values a curator can write that cannot name a resource.
 
-    The four differ in how much of the block exists, and a reader that
-    narrows one level but not the other gets a different one of them
-    wrong -- so they are pinned together rather than by a single case.
+    They divide by how they fail rather than by type: the three truthy
+    ones reach genome resolution and die there with a ``TypeError``
+    naming nothing, and the three falsy ones are swallowed by the ``or``
+    chain every reader of the attribute chains it with.  Both halves are
+    the same defect -- a value that is not a resource id -- so both are
+    narrowed here, at the one place that reads the label.
     """
-    resource = a_gene_models_resource(meta_block)
+    resource = a_gene_models_whose_reference_genome_is(tmp_path, value)
 
-    gene_models = GeneModels(resource)
+    with caplog.at_level(logging.WARNING):
+        gene_models = GeneModels(resource)
 
     assert gene_models.reference_genome_id is None
+    warnings = captured_warnings(caplog)
+    assert len(warnings) == 1
+    assert A_GENE_MODELS_ID in warnings[0]
+    assert reported_as in warnings[0]
 
 
-@pytest.mark.parametrize("meta_block", [
-    pytest.param("meta:\n  labels: hg38\n", id="labels-as-a-string"),
-    pytest.param("meta:\n  labels: [a, b]\n", id="labels-as-a-list"),
-    pytest.param("meta:\n  labels: 2019\n", id="labels-as-an-int"),
-    pytest.param("meta: some text\n", id="meta-as-a-string"),
-    pytest.param("meta: [a, b]\n", id="meta-as-a-list"),
+@pytest.mark.parametrize("builder", [
+    pytest.param(a_gene_models(), id="no-meta-block-at-all"),
+    pytest.param(
+        a_gene_models().with_meta(description="prose"),
+        id="meta-without-labels"),
+    pytest.param(
+        a_gene_models().with_raw_labels(None),
+        id="labels-an-explicit-yaml-null"),
+    pytest.param(
+        a_gene_models().with_labels(domain="gene"),
+        id="labels-without-the-key"),
+    pytest.param(
+        a_gene_models().with_labels(reference_genome=None),
+        id="the-key-an-explicit-yaml-null"),
 ])
-def test_the_schema_still_refuses_a_non_mapping_meta_level(
-    meta_block: str,
+def test_declaring_no_reference_genome_is_silent(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    builder: Any,
 ) -> None:
-    """Validation stays the guard; the accessor is only the backstop.
+    """Not declaring a genome is not a curator mistake, so it is not one.
 
-    Reading through the narrowing accessor must not quietly make a
-    malformed ``gene_models`` resource loadable -- the base schema types
-    both levels, and a resource that violates it is still refused before
-    any label is read, at the same place and with the same error as
-    before (gain#1009).
+    Every spelling of "no reference genome" -- down to the explicit YAML
+    null the production GRRs carry -- has to stay silent, or the warning
+    that means "fix this resource" fires on the resources that are
+    already right.
     """
-    resource = a_gene_models_resource(meta_block)
+    resource = a_gene_models_resource_built_from(tmp_path, builder)
 
-    with pytest.raises(ValueError, match="Invalid configuration"):
-        GeneModels(resource)
+    with caplog.at_level(logging.WARNING):
+        gene_models = GeneModels(resource)
+
+    assert gene_models.reference_genome_id is None
+    assert captured_warnings(caplog) == []
+
+
+def test_a_usable_reference_genome_label_is_read_and_is_silent(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The one shape that yields a value, and yields it quietly."""
+    resource = a_gene_models_whose_reference_genome_is(tmp_path, "hg38")
+
+    with caplog.at_level(logging.WARNING):
+        gene_models = GeneModels(resource)
+
+    assert gene_models.reference_genome_id == "hg38"
+    assert captured_warnings(caplog) == []
+
+
+def test_a_narrowed_label_falls_through_to_the_preamble_genome(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """What the narrowing buys, one seam up from the attribute.
+
+    ``find_annotator_reference_genome`` chains the label with ``or``, so
+    before the narrowing an ``int`` here was truthy, won the chain, and
+    reached ``build_reference_genome_from_resource_id`` -- which ends in
+    a regex and raised ``TypeError: expected string or bytes-like
+    object, got 'int'``, naming neither the resource nor the label.
+
+    Narrowed, the unusable label reads as absent and the chain moves on
+    to the preamble, which is the documented precedence.  That is the
+    decided trade: the hard failure becomes a warning that names the
+    resource, and annotation proceeds against the genome the pipeline
+    declares (gain#1050, on the gain#654 / gain#1004 terms -- validation
+    refuses, reading degrades).
+    """
+    repo = (
+        a_grr()
+        .with_resource(
+            A_GENE_MODELS_ID,
+            a_gene_models().with_labels(reference_genome=2019))
+        .with_resource(A_GENOME_ID, a_reference_genome())
+        .build_repo(tmp_path)
+    )
+    with caplog.at_level(logging.WARNING):
+        gene_models = GeneModels(repo.get_resource(A_GENE_MODELS_ID))
+
+    genome = find_annotator_reference_genome(
+        AnnotatorInfo("effect_annotator", [], {}), gene_models,
+        _a_pipeline_declaring(repo, A_GENOME_ID), repo)
+
+    assert genome.resource_id == A_GENOME_ID
+    # The fall-through is not silent: the resource that lost its own
+    # declaration is still named, which is what the TypeError never did.
+    warnings = captured_warnings(caplog)
+    assert len(warnings) == 1
+    assert A_GENE_MODELS_ID in warnings[0]
+
+
+def _a_pipeline_declaring(
+    repo: Any, genome_id: str,
+) -> AnnotationPipeline:
+    """A pipeline whose preamble names ``genome_id`` and nothing else."""
+    pipeline = AnnotationPipeline(repo)
+    pipeline.preamble = AnnotationPreamble(
+        summary="", description="",
+        input_reference_genome=genome_id,
+        input_reference_genome_res=None, metadata={})
+    return pipeline

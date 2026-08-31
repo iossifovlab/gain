@@ -385,6 +385,13 @@ The ``genome`` field is optional. If it is not provided, the annotator resolves 
   | **2. reference_genome** label in the configured gene_models resource
   | **3. input_reference_genome** from the pipeline preamble
 
+Step 2 is skipped when the label is *present but unusable*. ``meta.labels`` is
+free-form YAML, so a ``reference_genome`` label can be written as a number, a
+list or an empty value; any of those is read as no label at all, reported as a
+warning naming the resource, and resolution falls through to step 3. Fix the
+offending resource rather than relying on the fall-through. A resource that
+simply declares no ``reference_genome`` is not a mistake and is not reported.
+
 
 The ``effect_annotator`` can emit the following attributes:
 
