@@ -17,11 +17,14 @@ export const FIXTURE_GRR = path.join(__dirname, 'fixtures', 'grr');
  */
 export const COVERAGE_RESOURCE = 'scores/coverage';
 
+/** Where a generated resource's info page lands on disk. */
+function infoPagePath(resourceId: string): string {
+  return path.join(FIXTURE_GRR, ...resourceId.split('/'), 'index.html');
+}
+
 /** The `file://` URL of a generated resource's info page. */
 export function infoPageUrl(resourceId: string): string {
-  return pathToFileURL(
-    path.join(FIXTURE_GRR, ...resourceId.split('/'), 'index.html'),
-  ).href;
+  return pathToFileURL(infoPagePath(resourceId)).href;
 }
 
 /**
@@ -32,7 +35,5 @@ export function infoPageUrl(resourceId: string): string {
  * ran against a half-built GRR would report a template failure.
  */
 export function fixturesArePresent(): boolean {
-  return fs.existsSync(
-    path.join(FIXTURE_GRR, ...COVERAGE_RESOURCE.split('/'), 'index.html'),
-  );
+  return fs.existsSync(infoPagePath(COVERAGE_RESOURCE));
 }

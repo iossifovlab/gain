@@ -60,9 +60,11 @@ passing slowly.
 
 ## The fixture, and why it is shaped like that
 
-`generate_fixtures.py` builds a three-contig position score whose
-Coverage table is arranged so that a *wrong* sort is distinguishable
-from *no* sort:
+`generate_fixtures.py` builds a three-contig position score — from
+`gain.genomic_resources.testing.info_page_fixtures`, which ships in the
+wheel, so the builder stage can import it having installed nothing but
+`gain-core`. Its Coverage table is arranged so that a *wrong* sort is
+distinguishable from *no* sort:
 
 - covered-position counts are 9, 10 and 2 — as text those order
   `10 < 2 < 9`, so a column that lost its `data-sort="number"` would
@@ -74,13 +76,14 @@ from *no* sort:
 - the *all chromosomes* total sits in `<tfoot>`, which no comparator may
   reach
 
-It is realized from `gain.genomic_resources.testing.builders` rather
-than from the `test_fixtures/mini-GRR` submodule: mini-GRR is GAIn's
-onboarding example, and traps like these would make it a worse teaching
-repository — the same reasoning that kept four supplement resource types
-out of it in iossifovlab/gain#991.
+It is not realized from the `test_fixtures/mini-GRR` submodule:
+mini-GRR is GAIn's onboarding example, and traps like these would make
+it a worse teaching repository — the same reasoning that kept four
+supplement resource types out of it in iossifovlab/gain#991.
 
-The same shape, for the same reasons, backs the markup-contract tests in
-`core/tests/small/genomic_resources/test_info_page_sortable_tables.py`.
-The two suites are complementary: that one pins what the templates
-emit, this one pins what the browser does with it.
+`core/tests/small/genomic_resources/test_info_page_sortable_tables.py`
+imports the *same* fixture, which is why it lives in the shipped
+`testing` package rather than in either project. The two suites are
+complementary: that one pins what the templates emit, this one pins what
+the browser does with it — and because they share the fixture, retuning
+the traps cannot leave one of them quietly asserting nothing.

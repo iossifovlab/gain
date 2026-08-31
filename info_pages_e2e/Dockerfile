@@ -1,5 +1,17 @@
 # CI image for the GRR info pages' browser suite.
 #
+# Deliberately carries no `# syntax=` directive, unlike its siblings.
+# BuildKit stops looking for parser directives at the first comment, so
+# the `# syntax=docker/dockerfile:1.7` lines in core/, web_api/ and the
+# rest sit below a comment block and select nothing -- those images all
+# build on the builtin frontend. Putting an *effective* pin here would
+# make this the only image on a different frontend, and a different
+# frontend can emit different LLB for the same instruction: the layers
+# this file goes out of its way to share with core/Dockerfile (below)
+# might then not be shared at all. Nothing here needs 1.7 anyway --
+# `RUN --mount=type=cache` and `COPY --from=<image>` both work on the
+# builtin frontend, which is how core/Dockerfile already uses them.
+#
 # Build from the repo root so the workspace manifests and uv.lock are in
 # the build context:
 #     docker build -f info_pages_e2e/Dockerfile -t gain-info-pages-e2e-ci .
@@ -13,8 +25,6 @@
 #
 # Default CMD runs the suite. Override for the type check:
 #     docker run --rm gain-info-pages-e2e-ci npx tsc --noEmit
-
-# syntax=docker/dockerfile:1.7
 
 ARG PYTHON_IMAGE=python:3.12-slim
 # Pinned to the same version as the `@playwright/test` dependency in
@@ -60,16 +70,40 @@ WORKDIR /workspace
 # Workspace manifests first — maximises layer cache hits when only source
 # changes. Every member's manifest, because one lock resolves the whole
 # workspace and `--frozen` checks it against all of them.
-COPY pyproject.toml uv.lock ./
+#
+# This COPY and the sync below are kept BYTE-IDENTICAL to
+# core/Dockerfile's, including the three root files this stage has no use
+# for and the `--group dev` it does not need. That is the point: an
+# identical instruction on an identical parent chain is the same cache
+# key, so on an agent that has just built gain-core-ci this stage gets
+# the whole dependency tree — dask, matplotlib, scipy, pysam, h5py — as a
+# cache hit instead of materialising it a second time. The `core` stage
+# runs concurrently with this one in the Jenkinsfile's parallel block,
+# and BuildKit dedupes identical vertices across concurrent solves too.
+#
+# The dev group is pytest/mypy/pylint and stubs: pure Python, and this
+# stage is discarded — stage 2 copies only /fixtures — so carrying it
+# costs nothing in the shipped image and buys the cache hit.
+#
+# Nothing enforces the byte-identity and drift is silent (a slower build,
+# never a failure). If you change either line, change core/Dockerfile's
+# to match, or knowingly give this up.
+COPY pyproject.toml uv.lock ruff.toml mypy.ini pylintrc ./
 COPY core/pyproject.toml ./core/
 COPY demo_annotator/pyproject.toml ./demo_annotator/
 COPY vep_annotator/pyproject.toml ./vep_annotator/
 COPY spliceai_annotator/pyproject.toml ./spliceai_annotator/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --package gain-core --frozen --no-install-project
+    uv sync --package gain-core --group dev --frozen --no-install-project
 
-COPY core/ ./core/
+# Source only, not all of `core/`: this stage never reads core's tests,
+# and copying them would make every edit under core/tests/ re-run the
+# sync and the page generation below. Same split as web_api/Dockerfile
+# and demo_annotator/Dockerfile, which also only need gain-core
+# installed. (core/Dockerfile copies the lot because it runs the tests.)
+COPY core/README.md ./core/
+COPY core/gain/ ./core/gain/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --package gain-core --frozen

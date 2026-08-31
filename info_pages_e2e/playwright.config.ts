@@ -12,8 +12,23 @@ import { defineConfig, devices } from '@playwright/test';
  *
  * See https://playwright.dev/docs/test-configuration.
  */
+/**
+ * Where JUnit XML and per-test artifacts go, when anywhere.
+ *
+ * Set by the Jenkins stage to the bind-mounted `/reports`, rather than
+ * baked in behind `process.env.CI`: `CI` is set by many shells, editors
+ * and other people's CI, and a config that wrote to an absolute
+ * `/reports` on that signal alone fails with EACCES before running a
+ * single test. Same split as `web_ui`, which takes its report directory
+ * from `JEST_JUNIT_OUTPUT_DIR` for the same reason.
+ */
+const reportDir = process.env.PLAYWRIGHT_REPORT_DIR;
+
 export default defineConfig({
   testDir: './tests',
+  /* A stray `test.only` would silently reduce the suite to one test and
+   * still report success. */
+  forbidOnly: !!process.env.CI,
   globalSetup: require.resolve('./global-setup'),
   fullyParallel: true,
   /* A page load off the local filesystem is milliseconds; a test that has
@@ -25,9 +40,9 @@ export default defineConfig({
    * from `web_e2e`, which retries once on CI because it drives a live
    * backend. */
   retries: 0,
-  outputDir: process.env.CI ? '/reports/test-results' : './test-results',
-  reporter: process.env.CI
-    ? [['junit', { outputFile: '/reports/junit-report.xml' }], ['list']]
+  outputDir: reportDir ? `${reportDir}/test-results` : './test-results',
+  reporter: reportDir
+    ? [['junit', { outputFile: `${reportDir}/junit-report.xml` }], ['list']]
     : [['list']],
   use: {
     trace: 'retain-on-failure',

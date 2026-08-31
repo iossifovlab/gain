@@ -3,10 +3,7 @@
   "version": "0.0.0",
   "description": "Playwright coverage of the GRR info pages' client-side JavaScript",
   "private": true,
-  "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "playwright test"
-  },
+  "scripts": {},
   "devDependencies": {
     "@playwright/test": "1.62.1",
     "@types/node": "^22.13.10",

@@ -26,6 +26,11 @@ function coverageTable(page: Page) {
     .locator('xpath=following::table[1]');
 }
 
+/** One of that table's column headers, by its visible text. */
+function columnHeader(page: Page, name: string) {
+  return coverageTable(page).getByRole('columnheader', { name });
+}
+
 test.beforeEach(async ({ page }) => {
   /* The page links a Google Fonts stylesheet for the sort indicator's
    * three glyphs. Refusing every non-`file:` request keeps the suite
@@ -51,8 +56,7 @@ test('the sorter wires up the sortable headers', async ({ page }) => {
 test('a numeric column sorts by number, not by text', async ({ page }) => {
   const table = coverageTable(page);
 
-  await table.getByRole('columnheader', { name: 'Covered positions' })
-    .click();
+  await columnHeader(page, 'Covered positions').click();
 
   /* Counts 2, 9, 10. Compared as text they would be "10" < "2" < "9",
    * putting chr2 first -- so this pins the comparator the column asked
@@ -64,8 +68,7 @@ test('a numeric column sorts by number, not by text', async ({ page }) => {
 test('a second click reverses the order and the reported direction',
   async ({ page }) => {
     const table = coverageTable(page);
-    const header = table.getByRole(
-      'columnheader', { name: 'Covered positions' });
+    const header = columnHeader(page, 'Covered positions');
 
     await header.click();
     await expect(header).toHaveAttribute('aria-sort', 'ascending');
@@ -84,8 +87,7 @@ test('a second click reverses the order and the reported direction',
 test('the all-chromosomes total stays put in either direction',
   async ({ page }) => {
     const table = coverageTable(page);
-    const header = table.getByRole(
-      'columnheader', { name: 'Covered positions' });
+    const header = columnHeader(page, 'Covered positions');
     /* 21 = 9 + 10 + 2. The largest count in the table is 10, so a total
      * that had been dragged into the body would sort to an end rather
      * than stay where it is -- both assertions below would see it. */
@@ -111,10 +113,15 @@ test('a cell with no sort key sinks to the bottom in either direction',
      * coverage fraction and its cell carries no `data-sort-value`. "No
      * value" is not a value: it must not sort as 0 (which would float it
      * to the top ascending) nor as the empty string. */
-    const header = table.getByRole('columnheader', { name: 'Covered %' });
+    const header = columnHeader(page, 'Covered %');
     const fractions = table.locator('tbody td:nth-child(3)');
 
-    await expect(fractions).toHaveText(['9.00%', '20.00%', '']);
+    /* Sort by another column first. Ascending order on this one happens
+     * to be the order the page is rendered in, so without scrambling
+     * the rows the ascending assertion below would be satisfied by a
+     * click that did nothing at all. */
+    await columnHeader(page, 'Covered positions').click();
+    await expect(fractions).toHaveText(['', '9.00%', '20.00%']);
 
     await header.click();
 

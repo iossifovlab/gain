@@ -11,8 +11,7 @@
 // so test failures fail the build (the post.always hook still publishes
 // the JUnit + coverage reports either way). The web_ui stage follows the
 // same pattern with jest as the gating tool, and info_pages_e2e with
-// Playwright (plus tsc, which gates there because nothing else
-// type-checks the specs).
+// Playwright.
 
 def runProject(Map args) {
     String name           = args.name                          // dir name, e.g. "demo_annotator"
@@ -112,9 +111,9 @@ def publishReports(String name) {
     def testResults = junit(
         allowEmptyResults: true,
         skipMarkingBuildUnstable: true,
-        // junit-report.xml is Playwright's (info_pages_e2e); the other two
-        // are pytest's and jest's. Each project writes exactly one of the
-        // three, and allowEmptyResults covers the other two.
+        // junit-report.xml is Playwright's (info_pages_e2e); the other
+        // two are pytest's and jest's. Each project writes exactly one of
+        // the three, and allowEmptyResults covers the other two.
         testResults: "reports/${name}/pytest.xml," +
                      "reports/${name}/jest.xml," +
                      "reports/${name}/junit-report.xml",
@@ -784,26 +783,32 @@ pipeline {
                                             --name gain-info-pages-e2e-ci-${env.CI_TAG} \\
                                             --label ci-tag=${env.CI_TAG} \\
                                             --network none \\
-                                            -e CI=true \\
+                                            -e CI=1 \\
+                                            -e PLAYWRIGHT_REPORT_DIR=/reports \\
                                             -v \$PWD/reports/info_pages_e2e:/reports \\
                                             ${imageTag} \\
                                             sh -c '
                                                 set +e
-                                                # Playwright transpiles the
-                                                # specs without type-checking
-                                                # them, so tsc is the only
-                                                # thing that reads the types
-                                                # at all -- it gates, unlike
-                                                # the style linters in the
-                                                # other stages.
+                                                # Reports, does not gate --
+                                                # the same treatment mypy
+                                                # gets in the stages above,
+                                                # and for the same reason:
+                                                # it is a type checker, not
+                                                # a test. Playwright
+                                                # transpiles the specs
+                                                # without type-checking
+                                                # them, so this is the only
+                                                # thing that reads their
+                                                # types at all; it just is
+                                                # not the thing that decides
+                                                # whether the build is good.
+                                                # A type error that matters
+                                                # breaks an assertion, and
+                                                # then playwright fails.
                                                 npx tsc --noEmit
-                                                tsc_exit=\$?
                                                 npx playwright test
                                                 playwright_exit=\$?
                                                 chmod -R a+rw /reports
-                                                if [ \$tsc_exit -ne 0 ]; then
-                                                    exit \$tsc_exit
-                                                fi
                                                 exit \$playwright_exit
                                             '
                                     """
@@ -1426,11 +1431,14 @@ pipeline {
                 // charts. Order among the six is cosmetic (sidebar listing
                 // only); it follows the Jenkinsfile stage order.
                 //
-                // Six, not seven: info_pages_e2e is the one sub-project
-                // stage that produces no coverage.xml. It drives generated
-                // HTML in a browser, so the code it exercises is a jinja
-                // template rather than anything a Cobertura parser could
-                // attribute lines to; it publishes JUnit only.
+                // Six reports, eight parallel stages: two produce no
+                // coverage.xml and so are absent from the loop below.
+                // `spliceai_annotator (onnx)` re-runs the same suite
+                // against a second runtime and measures nothing new, and
+                // info_pages_e2e drives generated HTML in a browser, so
+                // the code it exercises is a jinja template rather than
+                // anything a Cobertura parser could attribute lines to.
+                // Both publish JUnit only.
                 //
                 // In post.always (not a stage) so coverage publishes on red
                 // builds too — a failing project's publishReports error()s
@@ -1467,8 +1475,14 @@ pipeline {
                         failOnError: false,
                     )
                 }
+                // The second pattern is Playwright's per-test artifacts
+                // (info_pages_e2e). `trace: 'retain-on-failure'` writes a
+                // trace.zip only for a test that failed, and without it
+                // the one artifact that would explain a red stage is
+                // unreachable from the build page and gone with the next
+                // workspace wipe.
                 archiveArtifacts(
-                    artifacts: 'reports/**/*.xml',
+                    artifacts: 'reports/**/*.xml, reports/*/test-results/**',
                     allowEmptyArchive: true,
                     fingerprint: false,
                 )
@@ -1548,7 +1562,7 @@ pipeline {
                 # <name>:$BUILD_NUMBER here would untag a concurrent
                 # branch's image and reintroduce #478 wholesale: this
                 # loop was the original bug's delivery mechanism.
-                for img in gain-core-ci gain-demo-annotator-ci gain-vep-annotator-ci gain-spliceai-annotator-ci gain-web-api-ci gain-web-ui-ci gain-conda-builder-ci; do
+                for img in gain-core-ci gain-demo-annotator-ci gain-vep-annotator-ci gain-spliceai-annotator-ci gain-web-api-ci gain-web-ui-ci gain-info-pages-e2e-ci gain-conda-builder-ci; do
                     docker rmi "$img:${CI_TAG}" 2>/dev/null || true
                 done
                 # Phase 9: registry-prefixed prod images. The build-local
