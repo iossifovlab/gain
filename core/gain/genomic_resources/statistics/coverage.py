@@ -102,8 +102,9 @@ class RegionCoverage:
         # summary is published; and they cannot double-count a position,
         # so the scan may hand this their FULL spans and the union stays
         # additive across regions.  Rows that can overlap (fragments)
-        # publish no segment summary, and must be handed spans clipped
-        # to the region -- see
+        # publish no segment summary -- not wanted, ADR 0020 as amended
+        # by gain#926, so they build no runs either -- and must be
+        # handed spans clipped to the region -- see
         # ``accumulate_coverage`` below.
         #
         # Disjoint, NOT "non-touching": adjacent rows are legal, and the
@@ -248,11 +249,13 @@ class RegionCoverage:
     def segment_summary(self) -> tuple[int, list[int]] | None:
         """Segment count and length histogram, or ``None`` if unknown.
 
-        Unknown means the region does not track segments: rows without
-        an exact run algebra, or a region deserialized from a
-        statistics file that predates segment-length histograms.  The
-        count and histogram accessors themselves are only meaningful
-        through this gate.
+        Unknown means the region does not track segments: rows that
+        overlap, for which segments are not wanted (ADR 0020, amended
+        by gain#926), or a region deserialized from a statistics file
+        that predates segment-length histograms.  The count and
+        histogram accessors themselves are only meaningful through this
+        gate -- an overlapping kind opens no run at all, so they read
+        as an empty segmentation rather than as an approximate one.
         """
         if not self._rows_are_disjoint:
             return None
@@ -290,10 +293,14 @@ class RegionCoverage:
         The caller still advances ``_closed_segments`` itself -- a
         stitched merge records the combined run here but counts it
         through the other region's tally.
+
+        Reached only for a disjoint kind -- :meth:`add_interval` opens
+        no run for one whose rows overlap -- so every run arriving here
+        belongs to a segmentation that will be published.
         """
         if not self._closed_segments:
             self._first_run = run
-        elif self._rows_are_disjoint:
+        else:
             self._add_to(self._interior_bins, run)
 
     @property
@@ -342,6 +349,9 @@ class RegionCoverage:
     def _merge_runs(self, other: RegionCoverage) -> None:
         """Combine the run bookkeeping of two non-empty regions.
 
+        Both are of a disjoint kind: an overlapping one holds no open
+        run, so :meth:`merge` never reaches here with one.
+
         The one stitch decision: this region's open run and the other's
         first run are one segment exactly when they touch or overlap and
         carry equal values -- the very test :meth:`add_interval` applies
@@ -385,7 +395,7 @@ class RegionCoverage:
             self._closed_segments += other._closed_segments
         else:
             self._record_closed(self._run)
-            if other._closed_segments and self._rows_are_disjoint:
+            if other._closed_segments:
                 # The other region's first run closed there without
                 # being binned -- it could still have stitched.  It did
                 # not, so it is interior of the merged region now.
@@ -394,16 +404,13 @@ class RegionCoverage:
                 1 + other._closed_segments
         self._run = other._run
 
-    def add_interval(
-        self,
-        begin: int,
-        end: int,
-        values: tuple,
-    ) -> None:
-        """Fold one row span into the coverage.
+    def add_span(self, begin: int, end: int) -> None:
+        """Union one row span into the covered count, values ignored.
 
-        Clipped to the region or not, as :attr:`rows_are_disjoint`
-        decides at the scan; this only unions what it is handed.
+        The whole of what a kind publishing no segments needs, and the
+        first half of :meth:`add_interval` for one that does.  Clipped
+        to the region or not, as :attr:`rows_are_disjoint` decides at
+        the scan; this only unions what it is handed.
         """
         if self._covered_through is None or begin > self._covered_through:
             self.covered += end - begin + 1
@@ -411,6 +418,29 @@ class RegionCoverage:
         elif end > self._covered_through:
             self.covered += end - self._covered_through
             self._covered_through = end
+
+    def add_interval(
+        self,
+        begin: int,
+        end: int,
+        values: tuple,
+    ) -> None:
+        """Fold one row span into the coverage and its run bookkeeping.
+
+        The union first, then the runs -- and the runs ONLY for a kind
+        whose rows are disjoint.  A kind whose rows overlap publishes
+        no segments (ADR 0020, amended by gain#926: not merely deferred
+        -- not wanted), so building runs for it would be work whose
+        only product is discarded, on exactly the kind with the largest
+        tables.  Gating here rather than at each feed is what makes the
+        invariant hold however the region is fed: **a region whose rows
+        overlap never opens a run**, which is what leaves the disjoint
+        branches of :meth:`_record_closed` and :meth:`_merge_runs`
+        unreachable.
+        """
+        self.add_span(begin, end)
+        if not self._rows_are_disjoint:
+            return
 
         if self._run is not None:
             run_begin, run_end, run_values = self._run
@@ -438,22 +468,25 @@ class RegionCoverage:
 
         The touching test reads the running maximum end, which is exact
         for a position score (whose validators refuse overlap, so the
-        previous row IS the running maximum).  For overlapping fragment
-        rows the covered count is still exact — :meth:`add_interval`
-        unions whatever run shapes arrive — while run identity may
-        differ from the row-by-row feed and between chunked and
-        unchunked scans where differently-valued fragments interleave;
-        fragment segment statistics are not published (value-aware
-        segments are a position-score statistic), and a consumer that
-        wants them must first give fragments an exact run algebra.
+        previous row IS the running maximum).  A kind whose rows can
+        overlap publishes no segments at all (ADR 0020, amended by
+        gain#926 — not wanted, not merely deferred), so it takes the
+        value-blind collapse below: the per-column equality and the
+        per-run value gather are skipped entirely, and only the union
+        the covered count needs is done.  That union is exact whatever
+        run shapes arrive, which is why it may be taken value-blind.
 
         ``left``/``right`` are the spans as the scan decided to hand
         them over -- clipped to the region for an overlapping kind, the
         rows' own full extents for a disjoint one -- and ``cells`` is
-        one kept column per scanned score, all equally long.
+        one kept column per scanned score, all equally long.  ``cells``
+        is read only for a disjoint kind: nothing else compares values.
         """
         count = left.shape[0]
         if not count:
+            return
+        if not self._rows_are_disjoint:
+            self._add_span_batch(left, right)
             return
         boundary = np.ones(count, dtype=bool)
         if count > 1:
@@ -491,6 +524,32 @@ class RegionCoverage:
         for begin, end, values in zip(
                 run_begins, run_ends, run_values, strict=True):
             self.add_interval(begin, end, values)
+
+    def _add_span_batch(
+        self,
+        left: np.ndarray,
+        right: np.ndarray,
+    ) -> None:
+        """Union a batch of spans, value-blind -- the overlapping kind.
+
+        The same collapse :meth:`add_interval_batch` does, minus the
+        equality: spans join a run while they touch or overlap the
+        positions covered so far, whatever they carry.  It reaches the
+        same covered count because :meth:`add_span` unions whatever run
+        shapes arrive, and it hands the loop the shapes that make the
+        loop shortest -- heavily overlapping fragment rows collapse to
+        one span per contiguous stretch.
+        """
+        count = left.shape[0]
+        boundary = np.ones(count, dtype=bool)
+        if count > 1:
+            boundary[1:] = \
+                left[1:] > np.maximum.accumulate(right)[:-1] + 1
+        starts = np.flatnonzero(boundary)
+        for begin, end in zip(
+                left[starts].tolist(),
+                np.maximum.reduceat(right, starts).tolist(), strict=True):
+            self.add_span(begin, end)
 
 
 class CoverageStatistics(Statistic):

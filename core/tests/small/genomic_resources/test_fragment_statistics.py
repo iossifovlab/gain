@@ -139,6 +139,30 @@ def test_bulk_and_per_record_scans_produce_the_same_fragment_statistics(
     assert bulk.covered == per_record.covered == 111
 
 
+def test_the_per_record_fragment_scan_normalizes_no_values(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A fragment score publishes no segments (ADR 0020, amended by
+    # gain#926), so the per-record feed hands its coverage bare spans:
+    # normalizing each row's value tuple would be a per-row cost with
+    # nothing to spend it on.  Only the work is observable -- the
+    # covered count is the same either way -- so the normalizer is
+    # replaced by one that refuses to run.
+    def _refuse(values: object) -> tuple:
+        raise AssertionError(f"a fragment row was normalized: {values}")
+
+    monkeypatch.setattr(scan, "normalize_values", _refuse)
+    resource = _fragments(tmp_path)
+    coverage = RegionCoverage(
+        "chr1", 1, 200, rows_are_disjoint=False, track_fragments=True)
+
+    scan.do_histogram(resource, {"s": _hist_conf()}, "chr1", 1, 200,
+                      coverage=coverage)
+
+    assert coverage.covered == 111
+
+
 def test_a_position_score_publishes_no_fragment_statistics(
     tmp_path: pathlib.Path,
 ) -> None:

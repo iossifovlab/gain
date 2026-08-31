@@ -7,7 +7,9 @@
   (this record), [gain#773](https://github.com/iossifovlab/gain/issues/773)
   (the allele-classification amendment),
   [gain#848](https://github.com/iossifovlab/gain/issues/848)
-  (the scanned-tuple amendment)
+  (the scanned-tuple amendment),
+  [gain#926](https://github.com/iossifovlab/gain/issues/926)
+  (the fragment-segments amendment)
 
 ## Context
 
@@ -192,6 +194,42 @@ about content — one value per base and a megabase constant run are different
 resources, and value-blind segmentation cannot tell them apart. The price of
 the reversal is recorded honestly below.
 
+**Fragment segments — not wanted** *(amended 2026-08-31, gain#926)*. Giving
+overlapping fragment rows a segmentation of their own, so a fragment score
+could publish a segment count and length histogram beside its coverage. The
+2026-08-24 amendment below left this open — unpublishable *until* fragments
+have an exact run algebra — and the epic's decision record named the remedy as
+"a separate child of this epic". That child is gain#926, and its answer is
+**no**: the question is closed, not deferred. Three reasons, none of which
+turn on the mergeability problem:
+
+- The **value-blind** definition arrives pre-rejected, by the entry above and
+  more strongly for this kind. Both carriers that argument names already exist
+  for a fragment score: it is in the coverage scan, so its covered-position
+  union is published, and gain#794 shipped the fragment count and
+  fragment-length histogram — exactly the unmerged "fragment view". A
+  value-blind fragment segment would restate two statistics fragments already
+  publish.
+- No consumer question survives for a **value-aware** run. For the motivating
+  ATAC-fragment resources the score columns are a cell barcode and a count, so
+  a run of equal values across overlapping fragments is noise rather than
+  signal; naming a question that fragment coverage and fragment
+  counts/lengths cannot already answer between them is the burden, and nothing
+  meets it.
+- The info page's needs are met without it — fragment coverage, the fragment
+  count and length histogram (gain#794), and per-value custom plots via
+  `plot_function`, which a resource can already configure (grr_bench's
+  `atac_fragments/T23_b17_Thymus_PCW17` draws fragments-per-cell that way).
+
+So the exact-run-algebra question is **not open work**. Because nothing will
+consume it, the run bookkeeping is not merely left unpublished: it is not
+executed. `RegionCoverage.add_interval` opens no run for a kind whose rows
+overlap, `add_interval_batch` takes a value-blind union collapse that reads no
+value column, and the per-record scan feed hands it bare spans — the work is
+gated off at the largest tables in the stack rather than computed and
+discarded. Reopening this means reopening the *consumer* question first; a
+mergeable definition on its own is not a reason to build one.
+
 **Per-score-column segmentation.** Each score column with its own
 segmentation — the value-aware definition a statistician might expect.
 Rejected: N columns mean N segment counts and N histograms per chromosome,
@@ -238,13 +276,16 @@ indefinitely — which is accepted and made visible rather than hidden.
   the statistics report it rather than smooth it.
 - **NA runs are segments.** A consumer reading segment counts must not read
   them as "runs of usable values".
-- **Fragment segments are unpublishable until fragments have an exact run
-  algebra** *(amended 2026-08-24, gain#848)*. For overlapping fragment rows,
-  run identity is approximate twice over — bulk-vs-per-record and
-  chunked-vs-unchunked — while covered counts stay exact. Value-aware
-  segments are a position-score statistic; nothing may publish a fragment
-  segment count or length histogram before giving fragments an exact run
-  algebra.
+- **Fragment segments are not wanted** *(amended 2026-08-24, gain#848; the
+  question closed 2026-08-31, gain#926)*. For overlapping fragment rows, run
+  identity is approximate twice over — bulk-vs-per-record and
+  chunked-vs-unchunked — while covered counts stay exact. gain#848 read that
+  as "unpublishable *until* fragments have an exact run algebra"; gain#926
+  settles that there is nothing to publish either way, for the consumer
+  reasons recorded under *Rejected alternatives*. Value-aware segments are a
+  position-score statistic. Nothing publishes a fragment segment count or
+  length histogram, and a kind whose rows overlap now builds **no runs at
+  all** — the algebra is gated off, not computed and discarded.
 - **The rollout is visibly incomplete for a while.** Resource pages show
   "not computed" until each resource is rebuilt; that state is intended, not
   a defect.

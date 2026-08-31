@@ -8,6 +8,7 @@ from gain.genomic_resources.statistics.coverage import (
     RegionCoverage,
 )
 from gain.genomic_resources.statistics.length_histogram import (
+    LENGTH_HISTOGRAM_BIN_COUNT,
     length_histogram_bin_index,
 )
 
@@ -68,8 +69,9 @@ def test_the_global_histogram_is_the_binwise_sum_of_the_chromosomes(
 
 def test_untracked_segments_have_no_summary_and_merge_stays_untracked(
 ) -> None:
-    # A region whose rows have no exact run algebra (overlapping
-    # fragment rows) still counts coverage but publishes no segments.
+    # A region whose rows overlap (fragment rows) still counts coverage
+    # but publishes no segments -- not wanted, ADR 0020 as amended by
+    # gain#926.
     left = RegionCoverage("chr1", 1, 10, rows_are_disjoint=False)
     left.add_interval(4, 10, (0.5,))
     right = RegionCoverage("chr1", 11, 20, rows_are_disjoint=False)
@@ -79,6 +81,67 @@ def test_untracked_segments_have_no_summary_and_merge_stays_untracked(
 
     assert left.covered == 13
     assert left.segment_summary() is None
+
+
+@pytest.mark.parametrize("feed", ["row-by-row", "batch"])
+def test_an_overlapping_kind_opens_no_run_at_all(feed: str) -> None:
+    # Segments are not wanted for an overlapping kind (ADR 0020 as
+    # amended by gain#926), so the run algebra is not merely unpublished
+    # -- it is never executed.  The rows below carry three DIFFERENT
+    # value tuples and touch nowhere on the second one, so the ungated
+    # code would close runs and open new ones; here nothing opens.
+    region = RegionCoverage("chr1", 1, 100, rows_are_disjoint=False)
+    spans = [(10, 40), (20, 30), (60, 70)]
+    values = [(0.1,), (0.2,), (0.3,)]
+
+    if feed == "row-by-row":
+        for (begin, end), value in zip(spans, values, strict=True):
+            region.add_interval(begin, end, value)
+    else:
+        region.add_interval_batch(
+            np.array([begin for begin, _ in spans]),
+            np.array([end for _, end in spans]),
+            [np.array([value for value, in values])])
+
+    # 10-40 unioned with the nested 20-30, plus 60-70.
+    assert region.covered == 31 + 11
+    assert region._run is None
+    assert region._first_run is None
+    assert region._closed_segments == 0
+    assert region._interior_bins == [0] * LENGTH_HISTOGRAM_BIN_COUNT
+    # Read through the public accessors, they are an EMPTY segmentation
+    # rather than an approximate one -- and the gate still says unknown.
+    assert region.segment_summary() is None
+    assert region.segment_count == 0
+    assert region.segment_length_histogram() \
+        == [0] * LENGTH_HISTOGRAM_BIN_COUNT
+
+
+class _ExplodingColumn:
+    """A value column that fails if anything so much as looks at it."""
+
+    def __getitem__(self, index: object) -> object:
+        raise AssertionError("the value columns were read")
+
+    @property
+    def dtype(self) -> object:
+        raise AssertionError("the value columns were read")
+
+
+def test_an_overlapping_kind_never_reads_the_value_columns() -> None:
+    # The batch path reads ``cells`` only for a kind that publishes
+    # segments: for one whose rows overlap the per-column equality and
+    # the per-run value gather are SKIPPED, not computed and discarded
+    # (gain#926).  A column that raises when touched is the only way to
+    # see that -- the covered count is the same union either way, so no
+    # assertion on an output can tell the two apart.
+    region = RegionCoverage("chr1", 1, 100, rows_are_disjoint=False)
+
+    region.add_interval_batch(
+        np.array([10, 20, 60]), np.array([40, 30, 70]),
+        [_ExplodingColumn()])  # type: ignore[list-item]
+
+    assert region.covered == 42
 
 
 def test_deserializing_a_histogram_of_foreign_length_drops_it(
