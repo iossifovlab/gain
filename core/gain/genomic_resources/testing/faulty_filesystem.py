@@ -183,10 +183,10 @@ class FaultyFileSystem(fsspec.AbstractFileSystem):
 
     # -- scripting ------------------------------------------------------
     #
-    # Seven named ways to write one line of the script. They are separate
+    # Eight named ways to write one line of the script. They are separate
     # public names rather than one ``script(operation, ...)`` because the
     # name is what a test reads as its arrangement; they are one line each
-    # because the shape of a script line is not seven different things.
+    # because the shape of a script line is not eight different things.
 
     def _add(
         self, operation: str, pattern: str, *,
@@ -226,13 +226,28 @@ class FaultyFileSystem(fsspec.AbstractFileSystem):
         """Fail removing any path matching ``pattern``."""
         self._add("rm", pattern, error=error, on_call=on_call)
 
+    def fail_read(
+        self, pattern: str, error: BaseException, *,
+        on_call: int | None = None,
+    ) -> None:
+        """Fail reading from any path matching ``pattern``.
+
+        ``stall_read``'s general form: the caller names the error rather
+        than taking the timeout that models a dropped link. What needs it
+        is a read that fails the way a remote store fails -- an
+        ``aiohttp`` error, whose message carries the fetch url -- which no
+        scripted *open* can stand in for, because the protocol redacts the
+        open and not the reads on the handle it returns (gain#620).
+        """
+        self._add("read", pattern, error=error, on_call=on_call)
+
     def stall_read(
         self, pattern: str, *, on_call: int | None = None,
     ) -> None:
         """Stall reads of ``pattern`` the way a dropped remote link does."""
-        self._add(
-            "read", pattern,
-            error=FSTimeoutError("scripted stalled read"), on_call=on_call)
+        self.fail_read(
+            pattern, FSTimeoutError("scripted stalled read"),
+            on_call=on_call)
 
     def short_read(
         self, pattern: str, *, after_bytes: int,
