@@ -32,7 +32,6 @@ METADATA_OPERATIONS = ("info", "exists", "modified", "ls")
 def test_a_downloaded_file_is_asked_about_twice(
     content_fixture: dict[str, Any],
     download_dest: FsspecReadWriteProtocol,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Downloading a file costs one stat and one modification time.
 
@@ -50,11 +49,9 @@ def test_a_downloaded_file_is_asked_about_twice(
     dest_proto = download_dest
     assert dest_proto.get_all_resources_dict() == {}
 
-    calls = record_filesystem_calls(
-        dest_proto, monkeypatch, METADATA_OPERATIONS)
-
     # When
-    dest_resource = dest_proto.copy_resource(src_resource)
+    with record_filesystem_calls(dest_proto, METADATA_OPERATIONS) as calls:
+        dest_resource = dest_proto.copy_resource(src_resource)
 
     # Then every published file was asked about exactly twice.
     manifest = dest_proto.get_manifest(dest_resource)

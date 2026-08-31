@@ -74,7 +74,6 @@ def _count(
 def test_a_download_never_asks_whether_a_directory_is_there(
     content_fixture: dict[str, Any],
     download_dest: FsspecReadWriteProtocol,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The directories a download writes into are made, never probed.
 
@@ -92,11 +91,10 @@ def test_a_download_never_asks_whether_a_directory_is_there(
     dest_proto = download_dest
     assert dest_proto.get_all_resources_dict() == {}
 
-    calls = record_filesystem_calls(
-        dest_proto, monkeypatch, PROBE_OPERATIONS + CREATE_OPERATIONS)
-
     # When
-    dest_resource = dest_proto.copy_resource(src_resource)
+    with record_filesystem_calls(
+            dest_proto, PROBE_OPERATIONS + CREATE_OPERATIONS) as calls:
+        dest_resource = dest_proto.copy_resource(src_resource)
 
     # Then
     published = sorted(
@@ -129,17 +127,26 @@ def test_a_download_creates_a_resource_directory_that_is_not_there(
 ) -> None:
     """Dropping the probe must not drop the directory creation with it.
 
-    This is the half the probe used to be paid for, and it is asserted on
-    every read-write scheme because the backends disagree about what an
-    unconditional create does. ``AbstractFileSystem.mkdir`` raises
-    ``FileExistsError`` on the local and memory backends when the
-    directory is already there -- s3 does not, having no real directories
-    -- so an s3-only test would pass over the one spelling that breaks
-    the other two.
+    Run on every read-write scheme, but the three do not each prove the
+    same thing, and it is worth being exact about which proves what --
+    measured by removing the production calls one at a time:
+
+    * ``file`` is the only scheme where the creation is load-bearing.
+      ``LocalFileSystem`` is built with ``auto_mkdir=False``, so a write
+      into a directory that is not there raises, and this test goes red.
+    * ``inmemory`` and ``s3`` would stay green if the creation vanished
+      -- the memory backend keys a flat dict and only rejects a *file*
+      ancestor, and an s3 PUT needs no prefix object. What they catch is
+      the other way the change can go wrong: creating the directory with
+      ``mkdir`` rather than ``makedirs``, which raises ``FileExistsError``
+      on the memory backend from the second file onwards. s3, having no
+      real directories, cannot fail either way; it is here so that the
+      scheme the production code actually runs against is exercised.
 
     Both states of the directory are covered by copying a resource of
     more than one file: the first file meets a directory that is not
-    there, and every file after it meets one that is.
+    there, and every file after it meets one that is. That second state
+    is the one the ``mkdir`` spelling breaks.
     """
     # Given a source resource and a destination with nothing in it.
     src_proto = build_inmemory_test_protocol(content_fixture)
