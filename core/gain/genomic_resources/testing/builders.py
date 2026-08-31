@@ -68,7 +68,10 @@ from gain.genomic_resources.testing import (
     setup_tabix,
     setup_vcf,
 )
-from gain.genomic_resources.testing.resource_meta import MetaMixin
+from gain.genomic_resources.testing.resource_meta import (
+    MetaMixin,
+    append_config_block,
+)
 from gain.genomic_resources.testing.score_specs import (
     ResourceValidationError,
     ScoreSpec,
@@ -1599,6 +1602,7 @@ class ReferenceGenomeBuilder(MetaMixin):
     chromosomes: tuple[tuple[str, str], ...] = ()
     line_width: int = 60
     bgzip: bool = True
+    index_file: str | None = None
 
     def with_fasta(self, raw: str) -> ReferenceGenomeBuilder:
         """Author the genome as FASTA text (primary mode).
@@ -1645,6 +1649,22 @@ class ReferenceGenomeBuilder(MetaMixin):
         """Realize a plain (uncompressed) ``.fa`` genome instead of bgz."""
         return dataclasses.replace(self, bgzip=False)
 
+    def with_index_file(self, name: str) -> ReferenceGenomeBuilder:
+        """Publish the ``.fai`` index under ``name`` via ``index_file``.
+
+        The default ``<filename>.fai`` is **renamed**, not copied, so the
+        realized resource carries exactly one FASTA index.  That is what
+        makes a test of the ``index_file`` override meaningful: htslib and
+        the protocol layer both fall back to the adjacent default name, so
+        a resource that still has a ``<filename>.fai`` sitting next to the
+        genome is read successfully even when the override is ignored
+        entirely.
+        """
+        if not name.strip():
+            raise ResourceValidationError(
+                "reference genome: index_file name must be non-empty")
+        return dataclasses.replace(self, index_file=name)
+
     def realize_into(self, resource_dir: pathlib.Path) -> None:
         """Write this genome resource into ``resource_dir``.
 
@@ -1652,12 +1672,42 @@ class ReferenceGenomeBuilder(MetaMixin):
         to the existing ``setup_genome``/``setup_genome_bgz`` helpers.
         """
         content = self._effective_fasta()
+        genome_path = resource_dir / self._genome_filename()
         if self.bgzip:
-            setup_genome_bgz(
-                resource_dir / f"{_GENOME_BASENAME}.fa.gz", content)
+            setup_genome_bgz(genome_path, content)
         else:
-            setup_genome(resource_dir / f"{_GENOME_BASENAME}.fa", content)
+            setup_genome(genome_path, content)
+        self._rename_index_into(resource_dir)
         self.append_meta_into(resource_dir)
+
+    def _genome_filename(self) -> str:
+        """Return the FASTA name this builder realizes."""
+        return f"{_GENOME_BASENAME}{'.fa.gz' if self.bgzip else '.fa'}"
+
+    def _rename_index_into(self, resource_dir: pathlib.Path) -> None:
+        """Apply the ``index_file`` override to an already-written resource.
+
+        Runs after the ``setup_*`` helper, which writes (and rewrites) the
+        ``genomic_resource.yaml`` itself -- declaring ``index_file`` before
+        the helper runs would silently lose the key.
+        """
+        if self.index_file is None:
+            return
+        default_index = resource_dir / f"{self._genome_filename()}.fai"
+        target = resource_dir / self.index_file
+        # Everything the resource realized is already on disk, so asking
+        # whether the target is taken covers the FASTA, its .gzi and the
+        # config without enumerating names that would drift from what
+        # realize_into actually writes.
+        if target != default_index and target.exists():
+            raise ResourceValidationError(
+                f"reference genome: index_file {self.index_file!r} would "
+                f"overwrite another file of the realized resource")
+        default_index.rename(target)
+        # safe_dump quotes a name carrying YAML syntax, so an exotic index
+        # name lands as a value instead of corrupting the config.
+        append_config_block(resource_dir, yaml.safe_dump(
+            {"index_file": self.index_file}, default_flow_style=False))
 
     def build_resource(
         self, tmp_path: pathlib.Path,

@@ -16,6 +16,7 @@ from gain.genomic_resources.testing import (
     setup_genome_bgz,
     setup_tabix,
 )
+from gain.genomic_resources.testing.builders import a_reference_genome
 
 from .conftest import RunInThreads
 
@@ -233,6 +234,39 @@ def test_reference_genome_over_cached_protocol(
         assert genome.get_chrom_length("pesho") == 24
         assert genome.get_sequence("pesho", 1, 12) == "NNACCCAAACGG"
         assert genome.get_sequence("gosho", 11, 20) == "TTGGCCAANN"
+
+
+@pytest.fixture
+def custom_index_genome_caching_proto(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> CachingProtocol:
+    # Local cache side only, as for bgz_genome_caching_proto (#473).
+    remote_root = tmp_path_factory.mktemp("custom_index_genome_remote")
+    (
+        a_reference_genome()
+        .with_chromosome("pesho", "NNACCCAAACGGGCCTTCCNNNNA")
+        .with_index_file("custom.fai")
+        .realize_into(remote_root / "custom_index_genome")
+    )
+    remote_proto = build_filesystem_test_protocol(remote_root)
+
+    cache_root = tmp_path_factory.mktemp("custom_index_genome_file_cache")
+    return CachingProtocol(
+        remote_proto, build_filesystem_test_protocol(cache_root))
+
+
+def test_custom_index_genome_caches_the_configured_index(
+        custom_index_genome_caching_proto: CachingProtocol) -> None:
+    """The caching protocol refreshes the configured index, not a derived."""
+    proto = custom_index_genome_caching_proto
+    res = proto.get_resource("custom_index_genome")
+
+    with build_reference_genome_from_resource(res).open() as genome:
+        assert genome.get_sequence("pesho", 1, 12) == "NNACCCAAACGG"
+
+    local_proto = proto.local_protocol
+    assert local_proto.file_exists(res, "custom.fai")
+    assert not local_proto.file_exists(res, "chr.fa.gz.fai")
 
 
 def test_load_manifest(

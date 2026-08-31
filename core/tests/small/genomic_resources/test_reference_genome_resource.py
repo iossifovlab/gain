@@ -17,10 +17,12 @@ from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_file,
     build_reference_genome_from_resource,
     build_reference_genome_from_resource_id,
+    genome_index_file,
     reference_genome_files,
 )
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
+    GenomicResource,
     GenomicResourceRepo,
 )
 from gain.genomic_resources.testing import (
@@ -32,6 +34,7 @@ from gain.genomic_resources.testing import (
     setup_genome,
     setup_genome_bgz,
 )
+from gain.genomic_resources.testing.builders import a_reference_genome
 from gain.utils.regions import Region
 
 
@@ -503,6 +506,17 @@ def test_build_reference_genome_from_resource_id(
         assert ref.get_chrom_length("gosho") == 20
 
 
+def test_genome_index_file_defaults_to_the_fasta_name() -> None:
+    assert genome_index_file({"filename": "chr.fa.gz"}) == "chr.fa.gz.fai"
+
+
+def test_genome_index_file_honors_the_override() -> None:
+    assert genome_index_file({
+        "filename": "chr.fa.gz",
+        "index_file": "custom.fai",
+    }) == "custom.fai"
+
+
 def test_reference_genome_files_plain_fasta() -> None:
     assert reference_genome_files({"filename": "chr.fa"}) == {
         "chr.fa", "chr.fa.fai",
@@ -586,3 +600,82 @@ def test_reference_genome_split_into_regions(
             Region("gosho", 1, 10),
             Region("gosho", 11),
         ]
+
+
+@pytest.fixture
+def custom_index_bgz_genome(tmp_path: pathlib.Path) -> GenomicResource:
+    """A bgzipped genome whose only .fai is the configured ``custom.fai``."""
+    return (
+        a_reference_genome()
+        .with_chromosome("pesho", "NNACCCAAACGGGCCTTCCNNNNA")
+        .with_index_file("custom.fai")
+        .build_resource(tmp_path)
+    )
+
+
+def test_bgz_custom_index_file_is_used_to_open_the_genome(
+        custom_index_bgz_genome: GenomicResource) -> None:
+    # The override must reach the sequence backend, not just the file
+    # listing: with no <filename>.fai on disk, opening can only succeed if
+    # the configured index name is what gets passed down to pysam.
+    reference_genome = build_reference_genome_from_resource(
+        custom_index_bgz_genome)
+
+    with reference_genome.open() as ref:
+        assert ref.get_sequence("pesho", 1, 12) == "NNACCCAAACGG"
+
+
+def test_custom_index_file_is_parsed_without_opening_the_sequence(
+        tmp_path: pathlib.Path) -> None:
+    # The chromosome index is read from the configured .fai on its own,
+    # before (and independently of) any sequence backend being opened.
+    res = (
+        a_reference_genome()
+        .with_chromosome("pesho", "NNACCCAAACGGGCCTTCCNNNNA")
+        .with_chromosome("gosho", "NNAACCGGTTTTGGCCAANN")
+        .with_index_file("custom.fai")
+        .build_resource(tmp_path)
+    )
+
+    reference_genome = build_reference_genome_from_resource(res)
+
+    assert reference_genome.chromosomes == ["pesho", "gosho"]
+    assert reference_genome.get_all_chrom_lengths() == {
+        "pesho": 24, "gosho": 20}
+    assert not reference_genome.is_open()
+
+
+def test_plain_genome_parses_a_custom_index_file(
+        tmp_path: pathlib.Path) -> None:
+    # The raw-seek backend ignores the index name -- it seeks using the
+    # already-parsed index dict -- so what this pins is that a plain
+    # genome still resolves its sequence through the overridden .fai.
+    res = (
+        a_reference_genome()
+        .as_plain()
+        .with_chromosome("pesho", "NNACCCAAACGGGCCTTCCNNNNA")
+        .with_index_file("custom.fai")
+        .build_resource(tmp_path)
+    )
+
+    with build_reference_genome_from_resource(res).open() as ref:
+        assert ref.get_sequence("pesho", 1, 12) == "NNACCCAAACGG"
+
+
+def test_declared_files_match_what_a_custom_index_genome_realizes(
+        custom_index_bgz_genome: GenomicResource,
+        tmp_path: pathlib.Path) -> None:
+    # A real drift guard: the declared file set must name exactly the
+    # files on disk.  The .gzi keeps the genome's name because there is
+    # no config key to override it -- only the .fai has one.
+    # Everything the resource realized except its config and the
+    # repository's own dot-prefixed bookkeeping (.MANIFEST, .CONTENTS).
+    realized = {
+        path.name for path in tmp_path.iterdir()
+        if not path.name.startswith(".")
+    } - {GR_CONF_FILE_NAME}
+
+    impl = ReferenceGenomeImplementation(custom_index_bgz_genome)
+
+    assert impl.files == realized
+    assert realized == {"chr.fa.gz", "custom.fai", "chr.fa.gz.gzi"}

@@ -424,8 +424,8 @@ each from its own sibling module:
 `gain.genomic_resources.testing.data_frame_builder`,
 `an_ann_data` from `…testing.ann_data_builder`, and
 `a_gene_models` from `…testing.gene_models_builder`.
-`builders.py` is 1756 lines against pylint's
-`max-module-lines=1600`, which it carries a
+`builders.py` is ~1800 lines against pylint's
+`max-module-lines=1500`, which it carries a
 `too-many-lines` suppression for — so each new builder
 lives in a sibling module that imports the shared
 single-realize seam one way rather than growing a module
