@@ -9,7 +9,6 @@ from tests.conftest import grr_schemes_for_marks, pytest_generate_tests
 REPRESENTATIVE_MARKS = [
     [],
     ["grr_rw"],
-    ["grr_ro"],
     ["grr_full"],
     ["grr_http"],
     ["grr_tabix"],
@@ -25,6 +24,69 @@ def test_default_schemes_are_an_ordered_sequence() -> None:
 
 def test_grr_full_mark_narrows_to_the_full_rw_schemes() -> None:
     assert grr_schemes_for_marks(["grr_full"]) == ["file"]
+
+
+def _registered_grr_markers(config: pytest.Config) -> list[str]:
+    """Return the ``grr_*`` marker names pytest actually registered.
+
+    ``getini("markers")`` is the registry itself rather than a re-parse of
+    ``pytest.ini``, so this cannot drift from what pytest believes. It also
+    carries plugin-registered markers, none of which use the ``grr_`` prefix.
+    """
+    return [
+        entry.split(":", 1)[0].strip()
+        for entry in config.getini("markers")
+        if entry.startswith("grr_")
+    ]
+
+
+def test_every_registered_grr_marker_narrows_the_schemes(
+    pytestconfig: pytest.Config,
+) -> None:
+    """A registered ``grr_*`` marker must select strictly fewer schemes.
+
+    Registering a marker that ``grr_schemes_for_marks`` does not recognise is
+    silently harmful rather than an error: the unrecognised name survives none
+    of the ``if`` blocks, is dropped by the intersection with
+    ``ALL_GRR_SCHEMES``, and leaves ``marked_schemes`` empty -- so the
+    narrowing is skipped and the test broadens to every *enabled* scheme. A
+    read-only marker then selects the paid ``s3`` read-write arm, which is how
+    ``grr_ro`` sat dead in the registry (gain#946).
+
+    Asserted on behaviour rather than against a table of known names, because
+    ``grr_http`` is not recognised by an ``if`` block at all -- it works only
+    because the stripped name is itself a member of ``ALL_GRR_SCHEMES``. A
+    membership check would flag it as unknown; narrowing is the property that
+    actually matters.
+
+    Both gates are forced on, and that is load-bearing rather than incidental
+    thoroughness: with them off the baseline is just the free schemes, which
+    ``grr_rw`` also selects in full, so a strict-subset check would fail it.
+    Only against the widest baseline does "narrows" mean what it says.
+    """
+    markers = _registered_grr_markers(pytestconfig)
+    assert markers, (
+        "no grr_* marker is registered -- pytest.ini was not loaded, so this "
+        "test would pass without checking anything"
+    )
+
+    baseline = set(grr_schemes_for_marks(
+        [], enable_s3=True, enable_http=True))
+
+    narrows_nothing = []
+    for name in markers:
+        selected = set(grr_schemes_for_marks(
+            [name], enable_s3=True, enable_http=True))
+        if not selected < baseline:
+            narrows_nothing.append(f"{name} -> {sorted(selected)}")
+
+    assert not narrows_nothing, (
+        "registered but selecting no fewer schemes than an unmarked test "
+        f"({sorted(baseline)}): {narrows_nothing}. Either give the mark a "
+        "branch in grr_schemes_for_marks, or do not spell it grr_* if it "
+        "does not select schemes -- every grr_* mark on a test is fed to "
+        "the selector."
+    )
 
 
 @pytest.mark.parametrize(
@@ -50,7 +112,6 @@ def test_grr_full_mark_narrows_to_the_full_rw_schemes() -> None:
         (["grr_full"], True, False, ["file", "s3"]),
         (["grr_tabix"], True, True, ["file", "http", "s3"]),
         (["grr_http"], False, True, ["http"]),
-        (["grr_ro"], False, False, ["file", "inmemory"]),
         (["grr_rw", "grr_tabix"], True, True, ["file", "http", "inmemory",
                                                "s3"]),
     ],
