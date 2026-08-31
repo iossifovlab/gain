@@ -1019,7 +1019,12 @@ class GenomicResource:
         return f"{self.resource_id}{version}"
 
     def get_config(self) -> dict[str, Any]:
-        """Return the resouce configuration."""
+        """Return the resource configuration.
+
+        Raises ``ValueError`` if the resource carries no config. The
+        return type is not optional and this never returns ``None``,
+        so a caller has nothing to re-check (gain#1010).
+        """
         if self.config is None:
             raise ValueError(
                 f"use of unconfigured genomic resource: {self.resource_id}")
@@ -1157,8 +1162,6 @@ class GenomicResource:
     def get_type(self) -> str:
         """Return resource type as defined in 'genomic_resource.yaml'."""
         config = self.get_config()
-        if config is None:
-            raise ValueError(f"resource {self.resource_id} not configured")
         config_type = config.get("type")
         if config_type is None:
             return "basic"

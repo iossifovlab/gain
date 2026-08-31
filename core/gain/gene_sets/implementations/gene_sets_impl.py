@@ -33,10 +33,6 @@ class GeneSetCollectionImpl(
     def __init__(self, resource: GenomicResource) -> None:
         super().__init__(resource)
 
-        config = resource.get_config()
-        if config is None:
-            raise ValueError(
-                f"genomic resource {resource.resource_id} not configured")
         self.gene_set_collection = build_gene_set_collection_from_resource(
             resource,
         )

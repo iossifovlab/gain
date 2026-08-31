@@ -58,9 +58,6 @@ class GeneScore(ScoreResource[GeneScoreDef]):
 
         self.resource = resource
         config = resource.get_config()
-        if config is None:
-            raise ValueError(
-                f"genomic resource {resource.resource_id} not configured")
         self.config = self.validate_and_normalize_schema(config, resource)
         assert "filename" in self.config
         self.filename = self.config["filename"]
