@@ -286,6 +286,31 @@ def test_a_class_below_the_display_resolution_is_not_a_zero() -> None:
     assert section.class_percentages["other"] == "0.00%"
 
 
+def test_a_class_just_short_of_the_whole_is_not_all_of_them() -> None:
+    # The floor's mirror, on the same shape.  20000 of 20001 alleles is
+    # 99.995%, which two decimals round to 100.00 -- the number a class
+    # that IS every allele renders.  Printed beside the ``complex`` this
+    # same table shows at ``<0.01%``, that is one column claiming the
+    # resource is entirely substitutions while showing that it is not.
+    section = _section_of(RegionAlleles.frozen(
+        "chr1", 20001, 20001,
+        {"substitution": 20000, "complex": 1, "other": 0}))
+
+    assert section.class_percentages is not None
+    assert section.class_percentages["substitution"] == ">99.99%"
+
+
+def test_a_class_that_is_every_allele_reads_as_a_flat_hundred() -> None:
+    # The ceiling must not swallow a true whole.  20000 of 20000 IS all
+    # of them and the column says so exactly; only a share that falls
+    # SHORT of the total and rounds up is written ``>99.99%``.
+    section = _section_of(RegionAlleles.frozen(
+        "chr1", 20000, 20000, {"substitution": 20000}))
+
+    assert section.class_percentages is not None
+    assert section.class_percentages["substitution"] == "100.00%"
+
+
 def test_no_alleles_is_no_percentage_rather_than_zero_percent() -> None:
     # No denominator resolves, so the share of every class is unknown
     # rather than zero -- the coverage display's answer when it cannot
@@ -461,6 +486,28 @@ def test_matrix_shares_are_over_the_substitutions_not_every_allele() -> None:
     ref, cells = display.matrix_rows()[0]
     assert ref == "A"
     assert cells[2].percentage == "50.00%"
+
+
+def test_both_ends_of_the_rule_reach_the_matrix_cells() -> None:
+    # The floor and the ceiling are ONE rule shared by every share the
+    # section renders, so the matrix gets both without implementing
+    # either: a cell that is all but one of the substitutions reads
+    # ``>99.99%`` and the one it falls short by reads ``<0.01%``, while
+    # the cells that really are empty still read ``0.00%``.
+    #
+    # The sixteen rendered cells do not add up to exactly 100%.  They
+    # never did -- the test above records six substitutions reading
+    # 100.01% -- and the ceiling makes that systematic rather than new.
+    # Still not something to apportion away.
+    display = _display_of(RegionAlleles.frozen(
+        "chr1", 20001, 20001, {"substitution": 20001},
+        substitution_matrix={("A", "G"): 20000, ("A", "C"): 1}))
+
+    assert display is not None
+    ref, cells = display.matrix_rows()[0]
+    assert ref == "A"
+    assert [(cell.alleles, cell.percentage) for cell in cells] == [
+        (0, "0.00%"), (1, "<0.01%"), (20000, ">99.99%"), (0, "0.00%")]
 
 
 def test_display_rows_follow_nucleotide_order() -> None:
@@ -737,12 +784,6 @@ def test_a_cell_too_rare_to_show_is_not_reported_as_absent() -> None:
     # A real score's complex class is 881 alleles in 727 million, which
     # "%.2f" renders 0.00% -- exactly what it renders for a cell that
     # does not exist.  Only the floor keeps the two apart (gain#988).
-    #
-    # The rest of the grid is split rather than left in one cell, so the
-    # fixture does not also exercise the UNdecided mirror of the floor:
-    # there is no ceiling, so a cell that is nearly-but-not-quite the
-    # whole class renders 100.00% and the column reads as over 100%.
-    # That belongs to gain#988, which owns the rule.
     display = _complex_display({(2, 3): 1, (3, 3): 50_000, (4, 4): 49_999})
 
     assert display.complex_rows()[2] == ("2", "3", 1, "<0.01%")
