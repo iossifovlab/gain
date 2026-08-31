@@ -63,6 +63,42 @@ from gain.genomic_resources.statistics.min_max import MinMaxValue
 
 logger = logging.getLogger(__name__)
 
+#: What this module publishes.  Stated rather than left to be inferred
+#: from which names happen to lack a leading underscore.
+#:
+#: Four kinds of thing, sorted here but worth naming: the task bodies
+#: ``impl``'s task graph schedules (``do_*_task``,
+#: ``do_noregion_histograms``, ``merge_min_max``,
+#: ``merge_and_save_histograms``); the two passes and their vectorized
+#: twins (``scan_region``, ``do_histogram``/``do_min_max`` and the
+#: ``*_bulk`` pair, over the shared ``bulk_region_scan`` driver); the
+#: gates that choose between them (``bulk_scan_eligible``,
+#: ``can_bulk_*``); and the config and merge steps.
+#:
+#: Everything absent is a per-batch inner step (``_accumulate_arrays``,
+#: ``_select_and_weigh``, ...) that no caller outside this module has any
+#: business reaching for.
+__all__ = [
+    "RegionScanResult",
+    "bulk_region_scan",
+    "bulk_scan_eligible",
+    "can_bulk_histogram",
+    "can_bulk_min_max",
+    "do_histogram",
+    "do_histogram_bulk",
+    "do_histogram_task",
+    "do_min_max",
+    "do_min_max_bulk",
+    "do_min_max_task",
+    "do_noregion_histograms",
+    "merge_and_save_histograms",
+    "merge_histograms",
+    "merge_min_max",
+    "scan_region",
+    "unpack_score_defs",
+    "update_hist_confs",
+]
+
 # The per-batch accumulator target of a bulk region scan -- a Histogram for the
 # histogram pass, a MinMaxValue for the min/max pass.  A TypeVar keeps
 # ``bulk_region_scan`` generic without losing either caller's dict type.
@@ -994,6 +1030,15 @@ def merge_histograms(
 def _save_histograms(
     resource: GenomicResource, merged_histograms: dict[str, Histogram],
 ) -> dict[str, Histogram]:
+    # The one reach past a private in this module, and the one
+    # thread still tying ``scan`` to the implementation class
+    # hierarchy -- its two siblings just above are plain module
+    # functions imported from the statistic's own module.
+    # ``_save_and_plot_histograms`` is a staticmethod touching no
+    # ``cls`` and is never overridden, so promoting it to a
+    # module-level function in ``score_implementation`` retires
+    # this suppression; that also edits ``gene_scores_impl``, its
+    # other caller, so it is gain#1036 rather than gain#1007.
     ScoreImplementationBase._save_and_plot_histograms(  # noqa: SLF001
         resource, build_score_from_resource(resource),
         merged_histograms)

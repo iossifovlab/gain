@@ -9,22 +9,23 @@ readers:
   merge-and-save step.  None of it needs an implementation object; it
   reads a resource and returns a result, which is what a task body should
   be.  This is the half carrying the numeric and task history (gain#794,
-  gain#857), which is why it kept the original file's blame.
+  gain#857), which is why it kept the original file's blame.  Its
+  ``__all__`` states the surface, in tiers.
 * :mod:`.impl` -- :class:`~.impl.GenomicScoreImplementation` and
   :class:`~.impl.FragmentScoreImplementation`.  The info page's render
   accessors, the task-graph wiring that schedules :mod:`.scan`'s
-  functions, the resource file set, and the hashes.
+  functions, the resource file set, and the hashes.  The class still
+  answers to two readers -- the templates and the resource protocol --
+  and separating those is gain#1037, deliberately not done here.
 
-The dependency runs one way: ``impl`` imports ``scan``, never the reverse.
+The dependency runs one way: ``impl`` imports ``scan``, never the reverse,
+which ``tests/test_architecture.py`` pins from the AST.
 
-This module is the facade.  Four ``core/pyproject.toml`` entry points name
-this package path -- ``position_score`` and ``allele_score`` to
-:class:`~.impl.GenomicScoreImplementation`, ``fragment_score`` and the
-deprecated ``cnv_collection`` (ADR 0011) to
-:class:`~.impl.FragmentScoreImplementation` -- so the three names below are
-a published surface, not an internal convenience.  A stale entry point
-fails when a repository first opens a resource of that type, not at import,
-so ``test_genomic_scores_impl_facade.py`` pins all four.
+This module is the facade, and the three names below are a published
+surface: four ``core/pyproject.toml`` entry points name this package path
+rather than :mod:`.impl` directly, so the layout stays rearrangeable and a
+later split cannot break them.  ``test_genomic_scores_impl_facade.py``
+pins what they promise.
 """
 from .impl import (
     FragmentScoreImplementation,

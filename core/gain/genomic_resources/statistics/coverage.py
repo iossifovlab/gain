@@ -104,7 +104,7 @@ class RegionCoverage:
         # additive across regions.  Rows that can overlap (fragments)
         # publish no segment summary, and must be handed spans clipped
         # to the region -- see
-        # ``GenomicScoreImplementation._accumulate_coverage``.
+        # ``accumulate_coverage`` below.
         #
         # Disjoint, NOT "non-touching": adjacent rows are legal, and the
         # stitch in ``_merge_runs`` depends on them being so.
