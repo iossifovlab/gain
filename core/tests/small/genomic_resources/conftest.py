@@ -1,12 +1,13 @@
 # pylint: disable=W0621,C0114,C0116,C0415,W0212,W0613
 
+import contextlib
 import gzip
 import logging
 import os
 import pathlib
 import shutil
 import threading
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Callable, Generator, Iterable, Iterator
 from typing import Any
 
 import pytest
@@ -205,11 +206,20 @@ SMALL_REPO_RESOURCE_IDS = ("one", "two", "three")
 ONE_RESOURCE_FILES = ["data.txt", "data.txt.gz", "genomic_resource.yaml"]
 
 
+#: Sentinel for "the instance carried no attribute of its own", which
+#: ``None`` cannot stand in for -- see :func:`record_filesystem_calls`.
+_NO_ATTRIBUTE = object()
+
+
 @pytest.fixture
 def download_dest(
     grr_scheme: str, tmp_path: pathlib.Path,
 ) -> FsspecReadWriteProtocol:
     """An empty read-write destination on the scheme under test.
+
+    One per read-write scheme: ``s3`` against the MinIO fixture,
+    ``inmemory`` against fsspec's memory filesystem, and anything else --
+    which is to say ``file`` -- under ``tmp_path``.
 
     Empty because the tests that ask for it measure a *first* download; a
     destination that already held the resource would take the cache
@@ -224,12 +234,12 @@ def download_dest(
     return build_filesystem_test_protocol(dest_root)
 
 
+@contextlib.contextmanager
 def record_filesystem_calls(
     proto: FsspecReadWriteProtocol,
-    monkeypatch: pytest.MonkeyPatch,
     operations: Iterable[str],
-) -> list[tuple[str, str]]:
-    """Log every call in ``operations`` the protocol makes, as (op, path).
+) -> Iterator[list[tuple[str, str]]]:
+    """Log every call in ``operations`` made inside the block, as (op, path).
 
     Only the outermost call is logged -- see the re-entrancy guard.
 
@@ -249,6 +259,24 @@ def record_filesystem_calls(
     :data:`ONE_RESOURCE_FILES` is: the re-entrancy guard below is the
     whole correctness of the count, and a second copy of it is how one
     of the two would drift into counting a different thing.
+
+    A context manager, and restoring by hand rather than through
+    ``monkeypatch``, because of what the wrapped object can be. On the
+    ``inmemory`` scheme ``proto.filesystem`` is fsspec's process-global
+    ``MemoryFileSystem`` -- one cached instance for the whole session,
+    shared with every other in-memory protocol. ``monkeypatch.setattr``
+    on an instance records the *class's* bound method as the previous
+    value, so its undo puts that back as a permanent **instance**
+    attribute rather than removing it, and from then on the singleton
+    shadows any class-level patch of the same name. Deleting what was
+    never there leaves the singleton as it was found.
+
+    Note also that on that scheme the recorder cannot attribute a call
+    to one protocol: a source and a destination built in the same test
+    *are* the same filesystem object, so both protocols' calls land in
+    one log and share the one re-entrancy flag. Callers therefore filter
+    by path, and a caller wanting a total rather than a per-path count
+    would need to say which scheme it means.
     """
     calls: list[tuple[str, str]] = []
     filesystem = proto.filesystem
@@ -273,11 +301,22 @@ def record_filesystem_calls(
                 inside = False
         return wrapped
 
+    #: What the instance itself carried, so the restore can tell an
+    #: attribute of its own from one it resolved through its class.
+    original: dict[str, Any] = {}
     for operation in operations:
-        monkeypatch.setattr(
+        original[operation] = vars(filesystem).get(operation, _NO_ATTRIBUTE)
+        setattr(
             filesystem, operation,
             wrap(operation, getattr(filesystem, operation)))
-    return calls
+    try:
+        yield calls
+    finally:
+        for operation, previous in original.items():
+            if previous is _NO_ATTRIBUTE:
+                delattr(filesystem, operation)
+            else:
+                setattr(filesystem, operation, previous)
 
 
 def setup_small_repo(root_path: pathlib.Path) -> None:
