@@ -6,7 +6,7 @@ import os
 import pathlib
 import shutil
 import threading
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterable
 from typing import Any
 
 import pytest
@@ -217,9 +217,67 @@ def download_dest(
     """
     if grr_scheme == "s3":
         return s3_test_protocol()
+    if grr_scheme == "inmemory":
+        return build_inmemory_test_protocol({})
     dest_root = tmp_path / "dest"
     dest_root.mkdir()
     return build_filesystem_test_protocol(dest_root)
+
+
+def record_filesystem_calls(
+    proto: FsspecReadWriteProtocol,
+    monkeypatch: pytest.MonkeyPatch,
+    operations: Iterable[str],
+) -> list[tuple[str, str]]:
+    """Log every call in ``operations`` the protocol makes, as (op, path).
+
+    Only the outermost call is logged -- see the re-entrancy guard.
+
+    Wrapped on the filesystem the protocol was handed, which ADR 0021
+    names as the protocol's real contract boundary -- the same seam the
+    fault tests inject at, here reading rather than writing. Counting
+    anywhere higher would count the protocol's own vocabulary instead of
+    the round trips, which is the thing that costs.
+
+    ``test_s3_test_protocol_population`` records the same shape one layer
+    down, at ``AioBaseClient._make_api_call`` -- actual HTTP requests
+    rather than protocol calls. That is the sharper instrument and the
+    s3-only one; this counts what the protocol asks for, on every
+    scheme, which is what a per-field fetch would regress.
+
+    Shared rather than copied per module for the reason
+    :data:`ONE_RESOURCE_FILES` is: the re-entrancy guard below is the
+    whole correctness of the count, and a second copy of it is how one
+    of the two would drift into counting a different thing.
+    """
+    calls: list[tuple[str, str]] = []
+    filesystem = proto.filesystem
+    inside = False
+
+    def wrap(operation: str, inner: Callable[..., Any]) -> Callable[..., Any]:
+        def wrapped(path: str, *args: Any, **kwargs: Any) -> Any:
+            nonlocal inside
+            if inside:
+                # A call one of these makes for itself, not one the
+                # protocol asked for: fsspec's local ``modified`` and
+                # ``exists`` are both ``info`` underneath, and
+                # ``makedirs`` is ``mkdir``, so counting the inner call
+                # would make the number a property of the backend rather
+                # than of what the protocol requested.
+                return inner(path, *args, **kwargs)
+            calls.append((operation, str(path)))
+            inside = True
+            try:
+                return inner(path, *args, **kwargs)
+            finally:
+                inside = False
+        return wrapped
+
+    for operation in operations:
+        monkeypatch.setattr(
+            filesystem, operation,
+            wrap(operation, getattr(filesystem, operation)))
+    return calls
 
 
 def setup_small_repo(root_path: pathlib.Path) -> None:
