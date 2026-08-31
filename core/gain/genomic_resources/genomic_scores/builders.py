@@ -22,8 +22,8 @@ from gain.genomic_resources.resource_types import (
     reject_retired_resource,
 )
 
+from .allele import AlleleScore
 from .base import (
-    AlleleScore,
     FragmentScore,
     GenomicScore,
 )
