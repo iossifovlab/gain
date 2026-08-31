@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Generator
 from types import TracebackType
-from typing import IO, Any
+from typing import IO, Any, cast
 
 from gain import logging
 from gain.genomic_resources import GenomicResource
@@ -22,6 +22,22 @@ from gain.utils.regions import Region
 logger = logging.getLogger(__name__)
 
 
+def genome_index_file(config: dict[str, Any]) -> str:
+    """Return the FASTA ``.fai`` index name for a genome config.
+
+    The optional ``index_file`` key overrides the default
+    ``<filename>.fai``.  The three consumers that read a genome resource
+    from its config -- :func:`reference_genome_files`, the index parsing
+    and the sequence backend -- resolve the name through here, so that a
+    resource is listed, hashed, parsed and opened against one and the
+    same index.
+
+    Resolution is by name only: the file is not checked for existence and
+    is not looked up in the resource manifest.
+    """
+    return cast("str", config.get("index_file", f"{config['filename']}.fai"))
+
+
 def reference_genome_files(config: dict[str, Any]) -> set[str]:
     """Return all files a reference-genome resource consists of.
 
@@ -32,8 +48,7 @@ def reference_genome_files(config: dict[str, Any]) -> set[str]:
     as well.
     """
     file_name = config["filename"]
-    index_file_name = config.get("index_file", f"{file_name}.fai")
-    files = {file_name, index_file_name}
+    files = {file_name, genome_index_file(config)}
     if endswith_ci(file_name, COMPRESSED_EXTENSIONS):
         files.add(f"{file_name}.gzi")
     return files
@@ -116,11 +131,13 @@ class _RawSeekSequence(_SequenceBackend):
 class _PysamFastaSequence(_SequenceBackend):
     """Read bgzipped FASTA via ``pysam.FastaFile`` random access."""
 
-    def __init__(self) -> None:
+    def __init__(self, index_filename: str) -> None:
         self._fasta: Any = None
+        self._index_filename = index_filename
 
     def open(self, resource: GenomicResource, filename: str) -> None:
-        self._fasta = resource.open_fasta_file(filename)
+        self._fasta = resource.open_fasta_file(
+            filename, self._index_filename)
 
     def is_open(self) -> bool:
         return self._fasta is not None
@@ -162,8 +179,12 @@ class ReferenceGenome(
 
         config = resource.get_config()
         filename = config["filename"]
+        # Each backend is handed the index it needs at construction: the
+        # pysam reader the .fai name to open, the raw-seek reader the
+        # parsed index dict it seeks with.
         if endswith_ci(filename, COMPRESSED_EXTENSIONS):
-            self._backend: _SequenceBackend = _PysamFastaSequence()
+            self._backend: _SequenceBackend = _PysamFastaSequence(
+                genome_index_file(config))
         else:
             self._backend = _RawSeekSequence(self._index)
 
@@ -215,11 +236,8 @@ class ReferenceGenome(
         if self._index:
             return
         config = self.resource.get_config()
-        file_name = config["filename"]
-        index_file_name = config.get(
-            "index_file", f"{file_name}.fai")
-
-        index_content = self.resource.get_file_content(index_file_name)
+        index_content = self.resource.get_file_content(
+            genome_index_file(config))
         self._parse_genome_index(index_content)
 
     def _parse_genome_index(self, index_content: str) -> None:
@@ -254,11 +272,13 @@ class ReferenceGenome(
                 self.resource.resource_id)
             return self
 
+        # Parse the index first: it reads the configured .fai by name, so a
+        # missing or misnamed index fails here, naming the configured file,
+        # rather than deeper inside htslib.
         self._load_genome_index()
 
         config = self.resource.get_config()
-        file_name = config["filename"]
-        self._backend.open(self.resource, file_name)
+        self._backend.open(self.resource, config["filename"])
 
         return self
 

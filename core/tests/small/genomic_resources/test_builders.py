@@ -25,7 +25,10 @@ from gain.genomic_resources.genomic_scores import (
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
 )
-from gain.genomic_resources.repository import GenomicResourceProtocolRepo
+from gain.genomic_resources.repository import (
+    GR_CONF_FILE_NAME,
+    GenomicResourceProtocolRepo,
+)
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
@@ -43,6 +46,7 @@ from gain.genomic_resources.testing.builders import (
     build_resource_tempdir,
 )
 from gain.genomic_resources.testing.data_frame_builder import a_data_frame
+from gain.genomic_resources.testing.resource_meta import append_config_block
 
 
 def test_bare_default_is_a_readable_minimal_score(
@@ -353,6 +357,86 @@ def test_reference_genome_default_is_bgzipped(
     assert (tmp_path / "chr.fa.gz.fai").is_file()
     assert (tmp_path / "chr.fa.gz.gzi").is_file()
     assert not (tmp_path / "chr.fa").exists()
+
+
+@pytest.mark.parametrize(
+    ("plain", "default_index"),
+    [(False, "chr.fa.gz.fai"), (True, "chr.fa.fai")])
+def test_reference_genome_with_index_file_renames_the_default_index(
+    tmp_path: pathlib.Path, plain: bool, default_index: str,
+) -> None:
+    # The rename is the point: leaving the default .fai in place would let
+    # a backend that ignores index_file open the genome anyway, and every
+    # test of the override would pass vacuously.
+    builder = a_reference_genome().with_chromosome("1", "ACGTACGTAC")
+    if plain:
+        builder = builder.as_plain()
+
+    res = builder.with_index_file("custom.fai").build_resource(tmp_path)
+
+    assert (tmp_path / "custom.fai").is_file()
+    assert not (tmp_path / default_index).exists()
+    assert res.get_config()["index_file"] == "custom.fai"
+
+
+@pytest.mark.parametrize("config", ["type: genome\n", "type: genome"])
+def test_append_config_block_keeps_the_added_key_on_its_own_line(
+    tmp_path: pathlib.Path, config: str,
+) -> None:
+    # The delegated config is written by a setup_* helper, so the shared
+    # append must not depend on it ending with a newline.
+    (tmp_path / GR_CONF_FILE_NAME).write_text(config)
+
+    append_config_block(tmp_path, "index_file: custom.fai\n")
+
+    assert yaml.safe_load((tmp_path / GR_CONF_FILE_NAME).read_text()) == {
+        "type": "genome", "index_file": "custom.fai",
+    }
+
+
+def test_append_config_block_leaves_the_config_alone_for_an_empty_block(
+    tmp_path: pathlib.Path,
+) -> None:
+    (tmp_path / GR_CONF_FILE_NAME).write_text("type: genome")
+
+    append_config_block(tmp_path, "")
+
+    assert (tmp_path / GR_CONF_FILE_NAME).read_text() == "type: genome"
+
+
+def test_reference_genome_rejects_a_blank_index_file_name() -> None:
+    with pytest.raises(ResourceValidationError, match="index_file"):
+        a_reference_genome().with_index_file("  ")
+
+
+@pytest.mark.parametrize("name", ["chr.fa.gz", "chr.fa.gz.gzi"])
+def test_reference_genome_rejects_an_index_file_that_overwrites_the_genome(
+    tmp_path: pathlib.Path, name: str,
+) -> None:
+    # Renaming the .fai onto the FASTA (or its .gzi) would destroy the
+    # resource silently and leave a fixture that fails deep inside pysam.
+    builder = (
+        a_reference_genome()
+        .with_chromosome("1", "ACGTACGTAC")
+        .with_index_file(name)
+    )
+    with pytest.raises(ResourceValidationError, match="would overwrite"):
+        builder.build_resource(tmp_path)
+
+
+def test_reference_genome_index_file_name_is_yaml_quoted(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A name carrying YAML syntax must land as a value, not corrupt the
+    # config; ": " would otherwise split the line into a nested mapping.
+    res = (
+        a_reference_genome()
+        .with_chromosome("1", "ACGTACGTAC")
+        .with_index_file("od: d#1.fai")
+        .build_resource(tmp_path)
+    )
+    assert res.get_config()["index_file"] == "od: d#1.fai"
+    assert (tmp_path / "od: d#1.fai").is_file()
 
 
 def test_reference_genome_as_plain_realizes_plain_fa(

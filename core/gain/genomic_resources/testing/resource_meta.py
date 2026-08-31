@@ -170,11 +170,21 @@ class MetaMixin:
         rather than rendering it themselves.  A no-op when no meta was
         declared, so the delegated config is left byte-identical.
         """
-        rendered = self.render_meta()
-        if not rendered:
-            return
-        config_path = resource_dir / GR_CONF_FILE_NAME
-        config = config_path.read_text()
-        if not config.endswith("\n"):
-            config += "\n"
-        config_path.write_text(config + rendered)
+        append_config_block(resource_dir, self.render_meta())
+
+
+def append_config_block(resource_dir: pathlib.Path, rendered: str) -> None:
+    """Append a rendered YAML block to an already-written resource config.
+
+    The shared tail for every builder that delegates the whole
+    ``genomic_resource.yaml`` to a ``setup_*`` helper and then has to add
+    a key the helper does not write.  A no-op for an empty block, so the
+    delegated config is left byte-identical.
+    """
+    if not rendered:
+        return
+    config_path = resource_dir / GR_CONF_FILE_NAME
+    config = config_path.read_text()
+    if not config.endswith("\n"):
+        config += "\n"
+    config_path.write_text(config + rendered)
