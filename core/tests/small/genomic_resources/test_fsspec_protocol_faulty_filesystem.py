@@ -9,6 +9,7 @@ from gain.genomic_resources.fsspec_protocol import (
     GRR_INTERNAL_DIR,
     ChecksumMismatchError,
     FsspecReadWriteProtocol,
+    RetryableCopyError,
     TruncatedDownloadError,
 )
 from gain.genomic_resources.repository import (
@@ -185,8 +186,8 @@ def test_copy_resource_file_state_write_failure_keeps_the_published_file(
     assert dest_proto.file_exists(dest_res, _FILE_NAME)
 
 
-def test_copy_resource_file_source_open_failure_surfaces_the_error(
-    tmp_path: pathlib.Path,
+def test_copy_resource_file_source_open_failure_surfaces_it_unretried(
+    tmp_path: pathlib.Path, mocker: MockerFixture,
 ) -> None:
     src_proto, src_fs = build_faulty_test_protocol(
         tmp_path / "src", _source_content())
@@ -194,9 +195,15 @@ def test_copy_resource_file_source_open_failure_surfaces_the_error(
     dest_proto, _ = build_faulty_test_protocol(tmp_path / "dst")
     dest_res = _a_destination_resource(dest_proto, src_res)
     src_fs.fail_open(_SOURCE_FILE, OSError("the remote refused the read"))
+    sleep = mocker.patch("gain.genomic_resources.fsspec_protocol.time.sleep")
 
     with pytest.raises(OSError, match="the remote refused the read"):
         dest_proto.copy_resource_file(src_res, dest_res, _FILE_NAME)
+
+    # RetryableCopyError is what confers retryability, not being an
+    # OSError -- so a fault that would repeat identically is not slept on
+    # and retried, it aborts the file on the first attempt.
+    assert sleep.call_count == 0
 
 
 def test_copy_resource_file_stalled_read_raises_after_retries(
@@ -262,3 +269,33 @@ def test_copy_resource_file_corrupted_bytes_raise_checksum_mismatch(
 
     with pytest.raises(ChecksumMismatchError):
         dest_proto.copy_resource_file(src_res, dest_res, _FILE_NAME)
+
+
+class _NewRetryableFailure(RetryableCopyError):
+    """A retryable failure shape the copy loop has never been told about.
+
+    Stands in for the fourth, fifth, nth transient failure gain will grow:
+    declared here, in a test, so that nothing in the protocol module can
+    have enumerated it. If retryability were still a hand-maintained list,
+    this class would not be on it.
+    """
+
+
+def test_copy_resource_file_retries_an_unenumerated_retryable_subclass(
+    tmp_path: pathlib.Path, mocker: MockerFixture,
+) -> None:
+    src_proto, src_fs = build_faulty_test_protocol(
+        tmp_path / "src", _source_content())
+    src_res = src_proto.get_resource(_RESOURCE_ID)
+    dest_proto, _ = build_faulty_test_protocol(tmp_path / "dst")
+    dest_res = _a_destination_resource(dest_proto, src_res)
+    src_fs.fail_open(
+        _SOURCE_FILE, _NewRetryableFailure("a transient fault"), on_call=1)
+    sleep = mocker.patch("gain.genomic_resources.fsspec_protocol.time.sleep")
+
+    dest_proto.copy_resource_file(src_res, dest_res, _FILE_NAME)
+
+    # The second attempt published the file, so the first failure was
+    # retried rather than surfaced -- and one backoff was slept.
+    assert dest_proto.file_exists(dest_res, _FILE_NAME)
+    assert sleep.call_count == 1

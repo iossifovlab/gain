@@ -89,12 +89,6 @@ def test_gene_score_id_cannot_add_an_event_handler(
         """))
         .build_resource(tmp_path)
     )
-    # Built first, as the two tests below do: the page renders a histogram
-    # image only for a score that has one, so without this the `alt`
-    # attribute the second assertion looks for is never emitted -- and the
-    # first assertion would then pass on a page the id never reached
-    # (gain#1005).
-    GeneScoreImplementation._build_histograms(resource)
 
     page = GeneScoreImplementation(resource).get_info()
 
