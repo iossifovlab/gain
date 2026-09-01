@@ -342,13 +342,14 @@ class AlleleScore(GenomicScore):
         ``(pos, pos)``: an allele's value stands for its ref/alt pair, not for
         the bases an optional ``pos_end`` column may cover.  A caller that
         needs the nucleotides themselves reads ``record[REF]`` /
-        ``record[ALT]`` off :meth:`fetch_records`.
+        ``record[ALT]`` off :meth:`~.base.GenomicScore.fetch_records`.
 
         The point stands wherever it falls relative to the queried window:
         like every segment read, this holds no window opinion, and what a
         point outside the window means is the caller's question (ADR 0008).
         ``pos_begin`` and ``pos_end`` are still taken, because they are what
-        :meth:`GenomicScore.region_values_from_records` means by a region
+        :meth:`GenomicScore.region_values_from_records()
+        <.base.GenomicScore.region_values_from_records>` means by a region
         and this is one kind's answer to it.
 
         Nothing is checked either: every record is read, whatever its
@@ -371,8 +372,9 @@ class AlleleScore(GenomicScore):
         """Yield ``(pos, pos, values)`` per allele record of the region.
 
         .. deprecated::
-            Use :meth:`fetch_region_segments` -- for this kind the very
-            same read.  An allele read collapses each record to a point and
+            Use :meth:`~.base.GenomicScore.fetch_region_segments` -- for this
+            kind the very same read.  An allele read collapses each record to
+            a point and
             holds no window opinion, so unlike the base method there is no
             clip to preserve here; the two names differ only in the
             warning.  Removal is tracked as gain#844.
@@ -482,10 +484,12 @@ class AlleleScore(GenomicScore):
         accepted, which may be none of them: ``[]`` is an empty selection.
         The two are different answers and a caller may well report them
         differently, which is the whole reason this read exists rather than
-        :meth:`GenomicScore.fetch_records` serving the same purpose -- an
+        :meth:`GenomicScore.fetch_records()
+        <.base.GenomicScore.fetch_records>` serving the same purpose -- an
         iterator makes both an empty stream.
 
-        :meth:`FragmentScore.fetch_fragment_scores` deliberately has no
+        :meth:`FragmentScore.fetch_fragment_scores()
+        <.fragment.FragmentScore.fetch_fragment_scores>` deliberately has no
         ``None``, and the difference is in the data rather than in taste: a
         region is spanned by fragments as a matter of course, so "no
         fragment covers it" is a count of zero.  Allele records sit at
@@ -493,7 +497,8 @@ class AlleleScore(GenomicScore):
         allele is the same absent data that :meth:`fetch_allele_scores`
         already answers ``None`` for.
 
-        ``score_filter`` -- from :meth:`GenomicScore.compile_filter` -- is
+        ``score_filter`` -- from :meth:`GenomicScore.compile_filter()
+        <.base.GenomicScore.compile_filter>` -- is
         applied inside the read, so a rejected record costs no value
         extraction and the ownership check covers this path too.
 
@@ -501,13 +506,15 @@ class AlleleScore(GenomicScore):
         as well as the scores, reads several scores off one record, and may
         read scores this method was never told about.  Handing back dicts
         would settle all three for it, and wrongly.  Values come off a
-        record through :meth:`get_score_value_from_record`.
+        record through
+        :meth:`~.base.GenomicScore.get_score_value_from_record`.
 
         A contig the resource does not have is refused, as the other allele
         reads refuse it, and refused from the call: answering ``None`` would
         make a caller's typo indistinguishable from real absent data.  This
         read materialises, so there is no generator body to defer the
-        refusal into -- unlike :meth:`GenomicScore.fetch_records`, which
+        refusal into -- unlike :meth:`GenomicScore.fetch_records()
+        <.base.GenomicScore.fetch_records>`, which
         reports it from the first record read.
 
         Materialising is what the ``list``/``None`` answer costs: a caller
@@ -537,7 +544,8 @@ class AlleleScore(GenomicScore):
     def supports_region_allele_arrays(self, scores: list[str]) -> bool:
         """Whether :meth:`fetch_region_allele_arrays` will serve these scores.
 
-        :meth:`GenomicScore.supports_region_value_arrays` -- the backend and
+        :meth:`GenomicScore.supports_region_value_arrays()
+        <.base.GenomicScore.supports_region_value_arrays>` -- the backend and
         the score value types -- plus the one condition that is this read's
         alone: the table must declare at least one of the two key columns,
         or there is nothing for it to carry that the shared read does not
@@ -546,7 +554,8 @@ class AlleleScore(GenomicScore):
         The columns are configured **independently**, and one of them is
         enough.  A table declaring only ``alternative`` is served, with the
         missing side yielded as the ``None`` the record carries for it; that
-        is what keeps this read and :meth:`GenomicScore.fetch_records` the
+        is what keeps this read and :meth:`GenomicScore.fetch_records()
+        <.base.GenomicScore.fetch_records>` the
         same answer rather than two.  A bigWig-backed score is turned away
         here without being named: it has no such columns to declare.
 
@@ -602,13 +611,14 @@ class AlleleScore(GenomicScore):
     ) -> Generator[AlleleRecordArrays, None, None]:
         """Fetch a region as column arrays, nucleotides included.
 
-        :meth:`GenomicScore.fetch_region_value_arrays` widened by the two
+        :meth:`GenomicScore.fetch_region_value_arrays()
+        <.base.GenomicScore.fetch_region_value_arrays>` widened by the two
         columns an allele row has and a position row does not, for a caller
         scanning a whole region for allele *content* rather than values --
         the allele statistics, above all.  Each batch is that method's
         ``(pos_begin, pos_end, {score_id: values})`` followed by the
         ``reference`` and ``alternative`` arrays, as
-        :class:`AlleleRecordArrays`.
+        :class:`~.records.AlleleRecordArrays`.
 
         **The nucleotides are RAW; the scores beside them are parsed.**  That
         asymmetry is deliberate and is the whole contract.  A score column
@@ -616,9 +626,11 @@ class AlleleScore(GenomicScore):
         as that score's non-value; these two columns go through nothing at
         all.  Whatever the row held is what the array holds -- no
         upper-casing, no stripping, no sentinel handling -- because
-        :func:`build_tabular_parser` reads them equally verbatim, and a
+        :func:`~.genomic_position_table.record.build_tabular_parser` reads
+        them equally verbatim, and a
         consumer reading a region through this method and a region through
-        :meth:`GenomicScore.fetch_records` must be handed the same strings
+        :meth:`GenomicScore.fetch_records()
+        <.base.GenomicScore.fetch_records>` must be handed the same strings
         rather than two dialects of them.  Whoever wants them normalised
         normalises them, once, where the meaning of the normalisation is
         known.
@@ -626,7 +638,7 @@ class AlleleScore(GenomicScore):
         Refused, rather than emulated, for a score this facade cannot serve
         it for -- ask :meth:`supports_region_allele_arrays` first.  The
         guards run when this method is CALLED, not on the first ``next()``,
-        which is why the streaming half lives in :meth:`_allele_array_batches`
+        which is why the streaming half lives in ``_allele_array_batches``
         rather than a ``yield`` here.
         """
         reason = self._allele_arrays_refusal_reason(scores)

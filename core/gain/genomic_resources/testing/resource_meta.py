@@ -8,7 +8,7 @@ and the docs rendering.
 
 Because it is a property of a *resource*, not of any one resource type,
 :class:`MetaMixin` carries it once for all of the builders in
-:mod:`.builders` and :mod:`.data_frame_builder` instead of every
+:mod:`~.testing.builders` and :mod:`.data_frame_builder` instead of every
 ``_render_config`` growing its own copy of the block.  A builder mixes it in
 and then either
 

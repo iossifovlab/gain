@@ -90,7 +90,8 @@ adapters it used to hold and now buffers records (see its own note below).
 below, so this too is a breaking change to a public name of ``gain``, recorded
 here for the same reason.  It had no caller anywhere in the stack (gain or gpf)
 and no replacement is wanted: #250 gave the buffer an invariant that a bare
-``popleft`` cannot keep.  Eviction has to go through :meth:`LineBuffer.prune`,
+``popleft`` cannot keep.  Eviction has to go through
+:meth:`LineBuffer.prune() <.line.LineBuffer.prune>`,
 which drops a record only when its ``pos_end`` has fallen below the query --
 wherever that record sits (gain#287), not merely while it is at the head.  That
 rule is what makes the buffer *complete* from the pruned-to position onwards,
@@ -100,7 +101,8 @@ dropped the leftmost record unconditionally, so it could evict one that still
 overlapped later queries and leave the buffer answering from a hole -- silently,
 and with no fall-through to the file to rescue it.  (It would also leave
 ``_max_end``/``_max_width`` stale, but only ever *high*, which is the harmless
-direction -- see :class:`LineBuffer`.  The completeness break is the real one.)
+direction -- see :class:`~.line.LineBuffer`.  The completeness break is the
+real one.)
 **Changed extension point: a backend now implements
 ``_load_file_chromosomes``, not ``get_file_chromosomes``.**  Neither name is in
 ``__all__`` below, so this breaks no public name of ``gain`` -- it is recorded

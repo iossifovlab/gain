@@ -1,6 +1,7 @@
 """Score declarations shared by the GRR test-data builders.
 
-The lowest layer of the builder DSL in :mod:`.builders`: the representation
+The lowest layer of the builder DSL in :mod:`~.testing.builders`: the
+representation
 of a single declared score column (:class:`ScoreSpec`), the pure functions
 that add to and amend a tuple of them, and the renderer that turns them into
 the ``scores:`` block of a ``genomic_resource.yaml``.

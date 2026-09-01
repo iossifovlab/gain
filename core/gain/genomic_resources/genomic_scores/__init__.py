@@ -5,8 +5,8 @@ the code already had:
 
 - :mod:`.records` -- the batch array types and the region/record algebra over
   them; imports no score class, so the scan and the statistics layer can use
-  it without pulling :class:`.GenomicScore` in behind it
-- :mod:`.base` -- :class:`GenomicScore`, everything the kinds share
+  it without pulling :class:`~.base.GenomicScore` in behind it
+- :mod:`.base` -- :class:`~.base.GenomicScore`, everything the kinds share
 - :mod:`.position`, :mod:`.allele`, :mod:`.fragment` -- one module per kind
 - :mod:`.builders` -- the eight factories, and the dispatch between kinds
 
@@ -35,8 +35,8 @@ found no caller that did.  Import them from the module that defines them.
 
 What did NOT move here is the resource *implementation* --
 ``genomic_scores_impl`` -- whose own split is gain#1007, nor the
-decomposition of the :class:`GenomicScore` class itself, which is gain#1027
-and is deliberately sequenced after this split.
+decomposition of the :class:`~.base.GenomicScore` class itself, which is
+gain#1027 and is deliberately sequenced after this split.
 """
 from .allele import AlleleScore
 from .base import (
