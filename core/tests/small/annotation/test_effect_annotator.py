@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 import pytest_mock
 from gain.annotation.annotatable import VCFAllele
+from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.effect_annotation.effect import AnnotationEffect
 from gain.genomic_resources.genomic_context_base import (
@@ -150,6 +151,82 @@ def test_effect_annotator_implicit_genome_from_context(
             genome_id,
             gene_models,
         }
+
+
+def test_effect_annotator_with_no_genome_anywhere_says_so(
+    mocker: pytest_mock.MockerFixture,
+    grr: GenomicResourceRepo,
+) -> None:
+    """The last resort is a message about the genome, not about the GRR.
+
+    Nothing in the chain supplies an id -- no ``genome:`` parameter, no
+    ``reference_genome`` label on ``t4c8_genes_ALT``, a genome-less
+    preamble -- and the context is empty.  The annotator's own
+    descriptive error is what a curator can act on; before gain#1055 the
+    empty id was resolved instead and the repository's ``resource <>
+    (None) not found`` surfaced in its place.
+    """
+    gene_models = "t4c8_genes_ALT"
+    config = textwrap.dedent(f"""
+        preamble:
+          summary: a preamble that declares no reference genome
+        annotators:
+          - effect_annotator:
+              gene_models: {gene_models}
+        """)
+
+    mocker.patch(
+        "gain.annotation.utils.get_genomic_context",
+    ).return_value = SimpleGenomicContext(
+        context_objects={}, source="test_context")
+
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        load_pipeline_from_yaml(config, grr)
+
+    cause = excinfo.value.__cause__
+    assert isinstance(cause, ValueError)
+    assert "has no reference genome" in str(cause)
+    assert "<>" not in str(cause)
+
+
+def test_effect_annotator_genomeless_preamble_uses_the_context(
+    mocker: pytest_mock.MockerFixture,
+    grr: GenomicResourceRepo,
+) -> None:
+    """The same fall-through, with a preamble that declares no genome.
+
+    ``find_annotator_reference_genome`` ends its ``or`` chain on the
+    preamble's ``input_reference_genome``, which the parser defaults to
+    ``""`` when the key is absent.  An ``is None`` guard read that empty
+    id as a configured one (gain#1055), so a pipeline whose preamble
+    carries only a ``summary`` never reached the context fallback and
+    died resolving resource id ``""``.
+
+    ``t4c8_genes_ALT`` declares no ``reference_genome`` label, so the
+    preamble really is the last operand standing before the context.
+    """
+    genome_id = "t4c8_genome_implicit_B"
+    gene_models = "t4c8_genes_ALT"
+    config = textwrap.dedent(f"""
+        preamble:
+          summary: a preamble that declares no reference genome
+        annotators:
+          - effect_annotator:
+              gene_models: {gene_models}
+        """)
+
+    genome = build_reference_genome_from_resource_id(genome_id, grr)
+    context = SimpleGenomicContext(
+        context_objects={"reference_genome": genome}, source="test_context")
+    mocker.patch(
+        "gain.annotation.utils.get_genomic_context",
+    ).return_value = context
+
+    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+
+    with annotation_pipeline.open() as pipeline:
+        annotator = pipeline.annotators[0]
+        assert annotator.resource_ids == {genome_id, gene_models}
 
 
 @pytest.mark.parametrize(
@@ -319,3 +396,75 @@ def test_effect_annotator_gene_lists_aggregator(
         assert result[
             f"{target_effect}_genes"] == "|".join(expected_target_genes)
         assert result["genes"] == "|".join(expected_genes)
+
+
+def test_effect_annotator_preamble_genome_wins_over_the_context(
+    mocker: pytest_mock.MockerFixture,
+    grr: GenomicResourceRepo,
+) -> None:
+    """Precedence, pinned against a context that could have won.
+
+    The sibling ``..._implicit_genome_from_preamble`` test leaves the
+    context unpatched, so it shows only that the preamble beats nothing.
+    Here the context holds a different genome, so an inverted precedence
+    would show up as the wrong resource rather than as no resource.
+    """
+    preamble_genome = "t4c8_genome_implicit_A"
+    context_genome = "t4c8_genome_implicit_B"
+    gene_models = "t4c8_genes_ALT"
+    config = textwrap.dedent(f"""
+        preamble:
+          input_reference_genome: {preamble_genome}
+        annotators:
+          - effect_annotator:
+              gene_models: {gene_models}
+        """)
+
+    mocker.patch(
+        "gain.annotation.utils.get_genomic_context",
+    ).return_value = SimpleGenomicContext(
+        context_objects={
+            "reference_genome": build_reference_genome_from_resource_id(
+                context_genome, grr),
+        },
+        source="test_context")
+
+    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+
+    with annotation_pipeline.open() as pipeline:
+        annotator = pipeline.annotators[0]
+        assert annotator.resource_ids == {preamble_genome, gene_models}
+
+
+def test_effect_annotator_genome_parameter_wins_over_everything(
+    mocker: pytest_mock.MockerFixture,
+    grr: GenomicResourceRepo,
+) -> None:
+    """The head of the chain, with every later operand also populated."""
+    parameter_genome = "t4c8_genome"
+    preamble_genome = "t4c8_genome_implicit_A"
+    context_genome = "t4c8_genome_implicit_B"
+    gene_models = "t4c8_genes_ALT"
+    config = textwrap.dedent(f"""
+        preamble:
+          input_reference_genome: {preamble_genome}
+        annotators:
+          - effect_annotator:
+              genome: {parameter_genome}
+              gene_models: {gene_models}
+        """)
+
+    mocker.patch(
+        "gain.annotation.utils.get_genomic_context",
+    ).return_value = SimpleGenomicContext(
+        context_objects={
+            "reference_genome": build_reference_genome_from_resource_id(
+                context_genome, grr),
+        },
+        source="test_context")
+
+    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+
+    with annotation_pipeline.open() as pipeline:
+        annotator = pipeline.annotators[0]
+        assert annotator.resource_ids == {parameter_genome, gene_models}
