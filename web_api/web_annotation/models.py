@@ -1174,12 +1174,7 @@ class Quota(models.Model):
             self.refresh_from_db(
                 from_queryset=self._meta.base_manager
                 .using(using).select_for_update())
-            # RUF075 wants the yield wrapped so the save runs on failure too.
-            # It must not: `transaction.atomic` rolls the row back when the
-            # body raises, and saving the half-mutated instance on the way
-            # out would write exactly the state the rollback exists to
-            # discard.
-            yield  # ruff: ignore[fallible-context-manager]
+            yield  # ruff: ignore[fallible-context-manager] -- atomic() rolls the row back on error; saving on the way out would persist what the rollback discards
             self.save(using=using)
 
     def _consume(self, *deductions: tuple[str, int]) -> None:

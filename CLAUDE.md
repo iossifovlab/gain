@@ -123,6 +123,17 @@ suppression when it reformats the statement under it to
 multiple lines; `web_api/web_annotation/asgi.py` is where
 that bit us.
 
+**Two modules sit at exactly pylint's 1500-line cap**, so
+*any* line added to them turns the build UNSTABLE on `C0302`
+— including a comment. `web_api/web_annotation/models.py` is
+one (a five-line comment here took it to 1505 and broke CI).
+Ruff honours prose *after* the directive on the same line
+(`# ruff: ignore[rule] -- why`), which is how a suppression
+in these files keeps its reason at zero added lines. Anything
+that genuinely needs the space wants the module split, or a
+deliberate `# pylint: disable=too-many-lines` — there is
+precedent in `genomic_resources/testing/builders.py`.
+
 The cwd matters, and the two tools disagree about why:
 `mypy gain` reads `gain` as a *path*, so it fails from the
 root (`can't read file 'gain'`), while `pylint gain` reads
