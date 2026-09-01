@@ -84,6 +84,7 @@ of one decision will drift.
 | [0020](0020-segments-are-value-aware-coverage-is-not.md) | Extended score statistics: segments are value-aware, coverage is not | accepted |
 | [0021](0021-protocol-fault-tests-inject-at-the-filesystem-and-tier-by-observability.md) | Protocol fault tests inject at the filesystem, and tier by observability | accepted |
 | [0022](0022-a-file-state-is-judged-by-the-stores-change-token.md) | A resource file state is judged by the store's change token | accepted |
+| [0023](0023-url-credentials-are-redacted-at-the-handle.md) | Url credentials are redacted at the handle, and redaction preserves retryability | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;
