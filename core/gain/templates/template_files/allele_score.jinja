@@ -1,0 +1,162 @@
+{% extends "genomic_score.jinja" %}
+{# An allele score's page IS the genomic-score page plus one section. #}
+{% block alleles %}
+<h2>Alleles</h2>
+{% set alleles = impl.get_allele_display() %}
+{% if alleles is not none %}
+<div class="scrollable-table-container">
+<table>
+    <thead>
+        <tr>
+            <th data-sort="text">Chromosome</th>
+            <th data-sort="number">Covered positions</th>
+            <th data-sort="number">Alleles</th>
+        </tr>
+    </thead>
+    <tbody>
+    {%- for row in alleles.rows -%}
+        <tr>
+            <td data-sort-value="{{ natural_chromosome_key(row.chrom) }}">{{ row.chrom }}</td>
+            <td data-sort-value="{{ row.covered_positions }}">{{ row.covered_positions }}</td>
+            <td data-sort-value="{{ row.allele_count }}">{{ row.allele_count }}</td>
+        </tr>
+    {%- endfor %}
+    </tbody>
+    <tfoot>
+    <tr>
+        <td>all chromosomes</td>
+        <td>{{ alleles.covered_positions }}</td>
+        <td>{{ alleles.allele_count }}</td>
+    </tr>
+    </tfoot>
+</table>
+</div>
+<h3>Allele classes</h3>
+{% set allele_display = alleles.detail %}
+{% set class_percentages = alleles.class_percentages %}
+<div class="scrollable-table-container">
+<table>
+    <thead>
+        <tr>
+            <th>Class</th>
+            <th>Alleles</th>
+            {%- if class_percentages is not none %}
+            <th>% of alleles</th>
+            {%- endif %}
+        </tr>
+    </thead>
+    {%- for name, count in alleles.class_counts.items() -%}
+        <tr>
+            <td>{{ name }}</td>
+            <td>{{ count }}</td>
+            {%- if class_percentages is not none %}
+            <td>{{ class_percentages[name] }}</td>
+            {%- endif %}
+        </tr>
+    {%- endfor %}
+</table>
+</div>
+<h3>Substitution matrix</h3>
+{% if allele_display is not none and allele_display.substitution_matrix is not none %}
+<div class="scrollable-table-container">
+<table>
+    <thead>
+        <tr>
+            <th>ref &rarr; alt</th>
+            {%- for alt in allele_display.nucleotides %}
+            <th>{{ alt }}</th>
+            {%- endfor %}
+        </tr>
+    </thead>
+    {%- for ref, cells in allele_display.matrix_rows() -%}
+        <tr>
+            <th>{{ ref }}</th>
+            {%- for cell in cells -%}
+            <td>{{ cell.alleles }}{% if cell.percentage is not none -%}
+            <div class="text-muted">{{ cell.percentage }}</div>
+            {%- endif %}</td>
+            {%- endfor -%}
+        </tr>
+    {%- endfor %}
+</table>
+</div>
+<p>ts/tv ratio:
+{%- if allele_display.ts_tv is not none %}
+{{ "%.2f"|format(allele_display.ts_tv) }}
+{%- else %}
+not applicable
+{%- endif %}</p>
+{% else %}
+<p>not computed</p>
+{% endif %}
+{# Each group asks for ITSELF.  The two are written together today, but
+   gating the deletion image on the insertion group would silently drop
+   a known histogram the day that stops holding. #}
+<h3>Indel lengths</h3>
+{% if allele_display is none
+   or (allele_display.insertion_lengths is none
+       and allele_display.deletion_lengths is none) %}
+<p>not computed</p>
+{% else %}
+{% if allele_display.insertion_lengths is none %}
+<p>insertion lengths not computed</p>
+{% elif allele_display.insertion_lengths | sum %}
+<img src="{{ impl.get_allele_insertion_lengths_image_filename() }}"
+     alt="insertion length histogram" class="statistics-figure">
+{% else %}
+<p>no insertions</p>
+{% endif %}
+{% if allele_display.deletion_lengths is none %}
+<p>deletion lengths not computed</p>
+{% elif allele_display.deletion_lengths | sum %}
+<img src="{{ impl.get_allele_deletion_lengths_image_filename() }}"
+     alt="deletion length histogram" class="statistics-figure">
+{% else %}
+<p>no deletions</p>
+{% endif %}
+{% endif %}
+<h3>Complex alleles</h3>
+{% if allele_display is not none and allele_display.complex_grid is not none %}
+{# Emptiness is asked of the OCCUPIED cells, the same way the threshold
+   and the rows are: a grid whose every cell holds zero carries no
+   complex allele, whatever its keys say. #}
+{% set complex_rows = allele_display.complex_rows() %}
+{% if not complex_rows %}
+<p>no complex alleles</p>
+{% elif allele_display.complex_grid_renders_as_table %}
+{# Few enough lit cells that the heatmap would be a field of white:
+   the table says the same thing in the rows it actually has.  No
+   `data-sort` on any heading, so it does not opt into gain#984's
+   column sorting -- it is at most COMPLEX_GRID_TABLE_MAX_CELLS rows
+   and already ordered by the column that matters. #}
+<div class="scrollable-table-container">
+<table>
+    <thead>
+        <tr>
+            <th>reference length</th>
+            <th>alternative length</th>
+            <th>alleles</th>
+            <th>% of complex</th>
+        </tr>
+    </thead>
+    {%- for ref_length, alt_length, count, percentage in complex_rows -%}
+        <tr>
+            <td>{{ ref_length }}</td>
+            <td>{{ alt_length }}</td>
+            <td>{{ count }}</td>
+            <td>{{ percentage }}</td>
+        </tr>
+    {%- endfor %}
+</table>
+</div>
+{% else %}
+<img src="{{ impl.get_allele_complex_grid_image_filename() }}"
+     alt="complex allele length grid" class="statistics-figure">
+{% endif %}
+{% else %}
+<p>not computed</p>
+{% endif %}
+{% else %}
+<p>not computed</p>
+{% endif %}
+{% endblock %}

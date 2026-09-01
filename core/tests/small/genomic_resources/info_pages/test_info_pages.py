@@ -292,29 +292,23 @@ def _implementations_by_class() -> dict[str, tuple[str, ...]]:
 
     Keyed by implementation rather than by entry-point name, and with no
     exemption list anywhere.  Fourteen registered spellings collapse to
-    **eleven** implementations, by three separate collapses:
+    **twelve** implementations, by two collapses:
 
     - ``cnv_collection`` is the deprecated spelling of ``fragment_score``
       (ADR 0011, accepted until 2027.1.0)
     - ``gene_set`` is the legacy spelling of ``gene_set_collection``
-    - ``position_score`` and ``allele_score`` are *not* aliases at all --
-      they are genuinely different resource types that happen to share
-      ``GenomicScoreImplementation``
 
     Grouping this way drops the two deprecated spellings without anyone
     maintaining a list that says to skip them, which is the point: a list is
     what rots, and nobody ever removes an entry from one.
 
-    Be clear about what that costs, because the third collapse is not an
-    alias.  The guarantee here is "every registered *implementation* has a
-    fixture", which is weaker than "every registered *type* has one": a
-    fixture set containing position scores but no allele scores would
-    satisfy this test.  Both are present in mini-GRR today, and the
-    Coverage/Alleles check exercises both, but neither fact is pinned by
-    this function.  Restoring the stronger guarantee means authoring a
-    fixture for every spelling including the deprecated ones -- declined
-    deliberately, because a resource declaring ``cnv_collection`` warns on
-    every open and the noise outweighs it.
+    Be clear about what it costs.  The guarantee here is "every registered
+    *implementation* has a fixture", which is weaker than "every registered
+    *type* has one" -- the two deprecated spellings above have no fixture of
+    their own.  Restoring the stronger guarantee means authoring one for
+    every spelling including them, declined deliberately: a resource
+    declaring ``cnv_collection`` warns on every open and the noise
+    outweighs it.
 
     The consequence that does hold, and is the one this exists for:
     registering a *new* implementation with no fixture resource fails, in

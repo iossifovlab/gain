@@ -14,6 +14,7 @@ import pytest
 from gain.genomic_resources import get_resource_implementation_builder
 from gain.genomic_resources.implementations import genomic_scores_impl
 from gain.genomic_resources.implementations.genomic_scores_impl import (
+    AlleleScoreImplementation,
     GenomicScoreImplementation,
     impl,
     scan,
@@ -38,15 +39,16 @@ def _public_names_defined_in(module: types.ModuleType) -> set[str]:
     }
 
 
-def test_the_facade_publishes_exactly_the_three_documented_names() -> None:
+def test_the_facade_publishes_exactly_the_documented_names() -> None:
     """The acceptance criterion of gain#1007, and not a circular one.
 
     Compares ``__all__`` against what the package actually re-exports, so
-    a fourth name added to one and not the other fails here -- rather than
+    a name added to one and not the other fails here -- rather than
     comparing the literal to itself.
     """
     assert _public_names_defined_in(impl) == set(genomic_scores_impl.__all__)
     assert sorted(genomic_scores_impl.__all__) == [
+        "AlleleScoreImplementation",
         "FragmentScoreImplementation",
         "GenomicScoreImplementation",
         "build_score_implementation_from_resource",
@@ -65,9 +67,13 @@ def test_each_exported_name_is_the_one_impl_defines(name: str) -> None:
     assert exported.__module__ == impl.__name__
 
 
-@pytest.mark.parametrize("resource_type", ["position_score", "allele_score"])
+@pytest.mark.parametrize(
+    ("resource_type", "expected"),
+    [("position_score", GenomicScoreImplementation),
+     ("allele_score", AlleleScoreImplementation)],
+)
 def test_the_entry_point_of_each_score_type_still_loads(
-    resource_type: str,
+    resource_type: str, expected: type,
 ) -> None:
     """These two entry points resolve through the facade after the move.
 
@@ -76,14 +82,17 @@ def test_the_entry_point_of_each_score_type_still_loads(
     performs ``EntryPoint.load()`` -- so a module path this rename left
     stale fails there, not at import.
 
+    The class each resolves to is asserted, not merely that both resolve:
+    the two types render different pages, and the page a kind gets is
+    decided here (gain#1105).
+
     Only two of the four rows, because the fragment pair is already
     pinned, and pinned harder: ``test_fragment_score_vocabulary`` and
     ``test_fragment_score_config_surface`` assert the same resolution, and
     the latter also parses ``core/pyproject.toml`` to catch a source
     rename that ``importlib.metadata`` reads past until a reinstall.
     """
-    assert get_resource_implementation_builder(resource_type) \
-        is GenomicScoreImplementation
+    assert get_resource_implementation_builder(resource_type) is expected
 
 
 def test_scan_publishes_the_machinery_it_declares() -> None:

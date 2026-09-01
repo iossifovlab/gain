@@ -8,7 +8,6 @@ import pytest
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.histogram import NumberHistogramConfig
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    GenomicScoreImplementation,
     build_score_implementation_from_resource,
     scan,
 )
@@ -26,6 +25,7 @@ from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
 )
 from gain.genomic_resources.testing.builders import (
+    a_fragment_score,
     a_position_score,
     an_allele_score,
 )
@@ -76,6 +76,16 @@ def _hist_conf() -> NumberHistogramConfig:
         "x_log_scale": False,
         "y_log_scale": False,
     })
+
+
+def _info_page(resource: GenomicResource) -> str:
+    """The page a repository renders for ``resource``.
+
+    Through the dispatch rather than a chosen class: which implementation
+    an allele score gets is what decides whether its page carries an
+    Alleles section at all (gain#1105).
+    """
+    return build_score_implementation_from_resource(resource).get_info()
 
 
 def _mixed_allele_score(tmp_path: pathlib.Path) -> GenomicResource:
@@ -517,7 +527,7 @@ def test_info_page_renders_a_row_per_chromosome(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     table = table_after(
-        GenomicScoreImplementation(resource).get_info(), "<h2>Alleles</h2>")
+        _info_page(resource), "<h2>Alleles</h2>")
 
     # Whole rows: gain#988 adds a share to the classes table and the
     # matrix only, and a stray fourth column here would leave an
@@ -533,7 +543,7 @@ def test_info_page_renders_the_global_class_summary(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     table = table_after(
-        GenomicScoreImplementation(resource).get_info(),
+        _info_page(resource),
         "<h3>Allele classes</h3>")
 
     # The class and its count; the share column beside them is what the
@@ -552,7 +562,7 @@ def test_info_page_renders_each_class_as_a_share_of_the_alleles(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     table = table_after(
-        GenomicScoreImplementation(resource).get_info(),
+        _info_page(resource),
         "<h3>Allele classes</h3>")
 
     assert [cell.text for cell in table.head[0]] == [
@@ -592,7 +602,7 @@ def test_info_page_tells_a_rare_class_from_an_empty_one(
             resource, ALLELE_STATISTICS_FILE, mode="wt") as outfile:
         outfile.write(json.dumps(stored))
 
-    page = GenomicScoreImplementation(resource).get_info()
+    page = _info_page(resource)
 
     rows = _rows_by_first_cell(table_after(page, "<h3>Allele classes</h3>"))
     assert rows["substitution"] == ["substitution", "20000", ">99.99%"]
@@ -614,7 +624,7 @@ def test_info_page_renders_the_substitution_matrix(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     table = table_after(
-        GenomicScoreImplementation(resource).get_info(),
+        _info_page(resource),
         "<h3>Substitution matrix</h3>")
 
     # own_text, not text: every count carries a muted share nested under
@@ -637,7 +647,7 @@ def test_matrix_cells_carry_a_muted_share_on_a_second_line(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     section = section_after(
-        GenomicScoreImplementation(resource).get_info(), "<h2>Alleles</h2>")
+        _info_page(resource), "<h2>Alleles</h2>")
 
     assert '<td>3<div class="text-muted">50.00%</div></td>' in section
     assert '<td>0<div class="text-muted">0.00%</div></td>' in section
@@ -652,7 +662,7 @@ def test_info_page_renders_the_ts_tv_ratio(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     section = section_after(
-        GenomicScoreImplementation(resource).get_info(), "<h2>Alleles</h2>")
+        _info_page(resource), "<h2>Alleles</h2>")
 
     assert "1.50" in section
 
@@ -674,7 +684,7 @@ def test_info_page_without_transversions_says_not_applicable(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     section = section_after(
-        GenomicScoreImplementation(resource).get_info(), "<h2>Alleles</h2>")
+        _info_page(resource), "<h2>Alleles</h2>")
 
     assert "not applicable" in section
 
@@ -703,7 +713,7 @@ def test_info_page_over_a_pre_display_file_still_renders_the_shares(
         outfile.write(json.dumps(stored))
 
     table = table_after(
-        GenomicScoreImplementation(resource).get_info(),
+        _info_page(resource),
         "<h3>Allele classes</h3>")
 
     assert [cell.text for cell in table.head[0]] == [
@@ -729,7 +739,7 @@ def test_info_page_over_a_matrixless_file_says_matrix_not_computed(
             resource, ALLELE_STATISTICS_FILE, mode="wt") as outfile:
         outfile.write(json.dumps(stored))
 
-    page = GenomicScoreImplementation(resource).get_info()
+    page = _info_page(resource)
 
     assert [cell.text for cell in table_after(
         page, "<h2>Alleles</h2>").rows[0]] == ["chr1", "7", "9"]
@@ -751,7 +761,7 @@ def test_info_page_renders_an_all_other_matrix_as_zeros(
     resource = _alt_only_score(tmp_path, tabix=True)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
-    page = GenomicScoreImplementation(resource).get_info()
+    page = _info_page(resource)
 
     rows = _rows_by_first_cell(
         table_after(page, "<h3>Substitution matrix</h3>"), own=True)
@@ -769,7 +779,7 @@ def test_info_page_without_the_statistics_file_says_not_computed(
     resource.proto.delete_resource_file(resource, ALLELE_STATISTICS_FILE)
 
     section = section_after(
-        GenomicScoreImplementation(resource).get_info(), "<h2>Alleles</h2>")
+        _info_page(resource), "<h2>Alleles</h2>")
 
     assert "not computed" in section
 
@@ -784,7 +794,7 @@ def test_one_page_render_reads_the_statistics_file_once(
     # implementation object, as the coverage statistic's is.
     resource = _mixed_allele_score(tmp_path)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
-    impl = GenomicScoreImplementation(resource)
+    impl = build_score_implementation_from_resource(resource)
     reads = []
     original = type(resource).get_file_content
 
@@ -834,8 +844,56 @@ def test_a_position_score_writes_no_allele_statistics(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     assert not resource.file_exists(ALLELE_STATISTICS_FILE)
-    assert GenomicScoreImplementation(resource).get_allele_statistics() \
-        is None
+    implementation = build_score_implementation_from_resource(resource)
+    assert implementation.get_allele_statistics() is None
+
+
+def test_the_alleles_section_is_absent_on_a_position_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Not "Alleles: not computed" forever -- a position score never
+    # reads alleles, so the section does not exist at all, the way the
+    # Fragments section is absent on every kind but a fragment score.
+    resource = (
+        a_position_score()
+        .with_score("score", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  score
+            chr1   5          9        0.1
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    page = _info_page(resource)
+
+    assert "Alleles" not in page
+
+
+def test_the_alleles_section_is_absent_on_a_fragment_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The kind the section reads most misleadingly on: a fragment row
+    # has no ref/alt at all, so "not computed" suggests a rebuild would
+    # fill it in, and none ever would.
+    resource = (
+        a_fragment_score()
+        .with_score("score", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  score
+            chr1   10         100      0.1
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    page = _info_page(resource)
+
+    assert "Alleles" not in page
 
 
 # A second fixture, deliberately separate from ``_MIXED_TABLE``: that one
@@ -1022,7 +1080,7 @@ def test_the_build_writes_one_global_image_per_group(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     section = section_after(
-        GenomicScoreImplementation(resource).get_info(), "<h2>Alleles</h2>")
+        _info_page(resource), "<h2>Alleles</h2>")
 
     for image in (
         ALLELE_INSERTION_LENGTHS_IMAGE_FILE,
@@ -1119,7 +1177,7 @@ def test_info_page_draws_a_complex_grid_with_more_cells_than_the_threshold(
     stats = AlleleStatistics.deserialize(
         resource.get_file_content(ALLELE_STATISTICS_FILE))
     section = section_after(
-        GenomicScoreImplementation(resource).get_info(), "<h2>Alleles</h2>")
+        _info_page(resource), "<h2>Alleles</h2>")
 
     # The fixture's granularity is the point: a table of the intended
     # size that lands in fewer cells would test the wrong threshold.
@@ -1145,7 +1203,7 @@ def test_info_page_tables_a_sparse_complex_grid_instead_of_drawing_it(
     resource = _sparse_complex_score(tmp_path)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
-    page = GenomicScoreImplementation(resource).get_info()
+    page = _info_page(resource)
 
     table = table_after(page, "<h3>Complex alleles</h3>")
     # Whole rows, headings included: an assertion on a row's first few
@@ -1189,7 +1247,7 @@ def test_info_page_calls_an_all_empty_complex_grid_no_complex_alleles(
             resource, ALLELE_STATISTICS_FILE, mode="wt") as outfile:
         outfile.write(json.dumps(stored))
 
-    page = GenomicScoreImplementation(resource).get_info()
+    page = _info_page(resource)
 
     # Bound by reading the subsection itself, rather than by requiring the
     # message to sit immediately after its heading in the markup.
@@ -1218,7 +1276,7 @@ def test_info_page_over_a_pre_indel_file_says_the_groups_not_computed(
             resource, ALLELE_STATISTICS_FILE, mode="wt") as outfile:
         outfile.write(json.dumps(stored))
 
-    page = GenomicScoreImplementation(resource).get_info()
+    page = _info_page(resource)
 
     # Bound to their headings: "the page says 'not computed' somewhere"
     # would pass while the wrong section said it.
@@ -1255,7 +1313,7 @@ def test_info_page_says_a_resource_genuinely_has_no_complex_alleles(
     )
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
-    page = GenomicScoreImplementation(resource).get_info()
+    page = _info_page(resource)
 
     complex_section = section_after(page, "<h3>Complex alleles</h3>")
     assert "<p>no complex alleles</p>" in complex_section

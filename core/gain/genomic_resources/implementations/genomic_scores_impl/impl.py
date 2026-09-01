@@ -27,6 +27,7 @@ from gain.genomic_resources.resource_implementation import (
 )
 from gain.genomic_resources.resource_types import (
     FRAGMENT_SCORE_TYPES,
+    PREFERRED_ALLELE_SCORE_TYPE,
 )
 from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
@@ -523,6 +524,43 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         }, indent=2).encode()
 
 
+class AlleleScoreImplementation(GenomicScoreImplementation):
+    """Assists in the management of an allele score resource.
+
+    Carries no statistics behaviour of its own: whether a statistic reads
+    alleles is decided on the built score class, by
+    :func:`~gain.genomic_resources.statistics.alleles.region_alleles_for`,
+    and both scan paths read it from there.
+
+    It carries its own info page, which is the genomic-score page plus an
+    Alleles section.  The section lives in a template that FILLS a block
+    the shared template leaves empty, as the Fragments section does, so a
+    kind whose rows carry no ref/alt pair renders no section at all --
+    rather than a heading permanently reading "not computed", which is
+    what one shared template rendering every section produced.
+    """
+    # pylint: disable=useless-parent-delegation
+
+    template_name: ClassVar[str] = "allele_score.jinja"
+
+    def create_statistics_build_tasks(
+        self, **kwargs: Any,
+    ) -> list[TaskDesc]:
+        return super().create_statistics_build_tasks(**kwargs)
+
+    def calc_info_hash(self) -> bytes:
+        return super().calc_info_hash()
+
+    def calc_statistics_hash(self) -> bytes:
+        return super().calc_statistics_hash()
+
+    def get_info(self, **kwargs: Any) -> str:
+        return super().get_info(**kwargs)
+
+    def get_statistics_info(self, **kwargs: Any) -> str:
+        return super().get_statistics_info(**kwargs)
+
+
 class FragmentScoreImplementation(GenomicScoreImplementation):
     """Assists in the management of a fragment score resource.
 
@@ -561,8 +599,17 @@ class FragmentScoreImplementation(GenomicScoreImplementation):
 
 def build_score_implementation_from_resource(
     resource: GenomicResource,
-) -> GenomicScoreImplementation | FragmentScoreImplementation:
-    """Builds score implementation based on resource type"""
-    if resource.get_type() in FRAGMENT_SCORE_TYPES:
+) -> GenomicScoreImplementation:
+    """Builds score implementation based on resource type.
+
+    The same dispatch the ``gain.genomic_resources.implementations``
+    entry points make by type name, for a caller holding a resource
+    rather than a type: a kind whose page carries an extra section gets
+    the subclass that renders it.
+    """
+    resource_type = resource.get_type()
+    if resource_type in FRAGMENT_SCORE_TYPES:
         return FragmentScoreImplementation(resource)
+    if resource_type == PREFERRED_ALLELE_SCORE_TYPE:
+        return AlleleScoreImplementation(resource)
     return GenomicScoreImplementation(resource)
