@@ -43,6 +43,7 @@ from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
     plot_length_histogram,
 )
+from gain.genomic_resources.statistics.percentages import percentage_of
 from gain.utils.chromosome_order import natural_chromosome_key
 
 logger = logging.getLogger(__name__)
@@ -807,18 +808,40 @@ class CoverageStatistics(Statistic):
 
 
 class CoverageRow(NamedTuple):
-    """One chromosome's rendered coverage: raw count plus optional fraction.
+    """One chromosome's rendered coverage: raw counts, share derived.
 
-    ``fraction`` is ``None`` when no denominator resolved for this
-    chromosome -- the row renders its raw count only.  ``segments`` is
-    ``None`` when the stored statistic carries no segment data for the
-    resource (an old file, or a kind that publishes none).
+    ``length`` is the denominator resolved for this chromosome, or
+    ``None`` when none was -- the row then renders its raw count only.
+    ``segments`` is ``None`` when the stored statistic carries no
+    segment data for the resource (an old file, or a kind that
+    publishes none).
+
+    The share is held as the two INTEGERS it is a share of rather than
+    as either rendering of it, because the page needs both and they
+    must not disagree: the cell sorts on :attr:`fraction` and displays
+    :attr:`percent`, and the boundaries :attr:`percent` respects --
+    covered none of it, covered all of it -- are decided on the counts
+    (gain#1057).
     """
 
     chrom: str
     covered: int
-    fraction: float | None
+    length: int | None
     segments: int | None
+
+    @property
+    def fraction(self) -> float | None:
+        """The share as a number, for the cell's sort key."""
+        if not self.length:
+            return None
+        return self.covered / self.length
+
+    @property
+    def percent(self) -> str | None:
+        """The share as the page writes it, ``None`` without a length."""
+        if not self.length:
+            return None
+        return percentage_of(self.covered, self.length)
 
 
 class UncoveredContigs(NamedTuple):
@@ -840,27 +863,47 @@ class UncoveredContigs(NamedTuple):
     contigs: int
     length: int
 
+    @property
+    def percent(self) -> str:
+        """The share of these contigs that is covered: none of it.
+
+        Written through the same rule as every other cell in the column
+        rather than as a formatted constant, so the row cannot drift
+        from its neighbours (gain#1057).  Membership is zero covered
+        positions, so this is the rule's exact zero by construction.
+
+        Unguarded, and returning ``str`` rather than ``str | None``,
+        where :attr:`CoverageRow.percent` and
+        :attr:`CoverageDisplay.global_percent` both check their
+        denominator first: those hold an ``int | None``, because a
+        denominator is what may fail to resolve, while a roll-up exists
+        only where one DID -- and :func:`_plausible_lengths` has
+        already dropped every contig that could contribute a zero to
+        :attr:`length`.
+        """
+        return percentage_of(0, self.length)
+
 
 class CoverageDisplay(NamedTuple):
-    """The Coverage section's render payload, fractions resolved.
+    """The Coverage section's render payload, shares resolved.
 
-    Raw counts come from the stored statistic; fractions are computed at
-    render time and never stored.  ``global_fraction`` answers *what
-    part of the reference genome has values*: its denominator is the
-    WHOLE resolved reference, including contigs the score never touched
-    (gain#1041).  It is ``None`` unless every covered chromosome
-    resolved a length -- a covered contig the reference does not list is
-    proof the reference is the wrong one, and a global percent over a
-    partial denominator would be misleading.
+    Raw counts come from the stored statistic; shares are computed at
+    render time and never stored.  ``global_length`` is the denominator
+    the section answers *what part of the reference genome has values*
+    against: the WHOLE resolved reference, including contigs the score
+    never touched (gain#1041).  It is ``None`` unless every covered
+    chromosome resolved a length -- a covered contig the reference does
+    not list is proof the reference is the wrong one, and a global
+    percent over a partial denominator would be misleading.
     """
 
     rows: list[CoverageRow]
-    global_fraction: float | None
+    global_length: int | None
     uncovered: UncoveredContigs | None
     """The untouched part of the reference, or ``None`` when unknowable.
 
     ``None`` -- rather than a zero roll-up -- whenever
-    ``global_fraction`` is: "these contigs have no values" is a claim
+    ``global_length`` is: "these contigs have no values" is a claim
     about the resolved reference being the right one, and it is not made
     under a denominator already known to be wrong.
     """
@@ -877,6 +920,26 @@ class CoverageDisplay(NamedTuple):
     @property
     def global_covered(self) -> int:
         return sum(row.covered for row in self.rows)
+
+    @property
+    def global_fraction(self) -> float | None:
+        """The whole score's share of the reference, as a number."""
+        if not self.global_length:
+            return None
+        return self.global_covered / self.global_length
+
+    @property
+    def global_percent(self) -> str | None:
+        """The whole score's share, as the page writes it.
+
+        The same rule the rows are written through, over the same two
+        integers: a reference all but entirely covered reads
+        ``>99.99%`` here exactly as one of its chromosomes does above
+        (gain#1057).
+        """
+        if not self.global_length:
+            return None
+        return percentage_of(self.global_covered, self.global_length)
 
     @property
     def has_fractions(self) -> bool:
@@ -1050,23 +1113,23 @@ def build_coverage_display(
 ) -> CoverageDisplay:
     """Turn stored counts plus a resolved denominator into the payload.
 
-    Fractions are computed here, at render time; the stored statistic
-    stays raw counts (see :class:`CoverageStatistics`).  A denominator
-    that cannot bound what it must degrades that row to a raw count
-    rather than rendering a zero-division or a >100%.
+    What this resolves is each share's DENOMINATOR; the shares
+    themselves are derived on the payload, from that denominator and
+    the count it bounds (see :class:`CoverageRow`).  Either way nothing
+    is stored: the statistic stays raw counts (see
+    :class:`CoverageStatistics`).  A denominator that cannot bound what
+    it must is withheld, degrading that row to a raw count rather than
+    rendering a zero-division or a >100%.
 
     ``lengths`` is the whole reference the score is measured against,
-    not merely the contigs it touched, so the global fraction answers
+    not merely the contigs it touched, so the global share answers
     *what part of the reference genome has values* and the untouched
     remainder is reported as one roll-up (gain#1041).
     """
     covered = statistics.covered_by_chromosome()
     lengths = _plausible_lengths(resource_id, covered, lengths)
     resolved = bool(lengths) and covered.keys() <= lengths.keys()
-    global_fraction = (
-        statistics.covered_global() / sum(lengths.values())
-        if resolved else None
-    )
+    global_length = sum(lengths.values()) if resolved else None
     untouched = {
         chrom: length for chrom, length in lengths.items()
         if resolved and not covered.get(chrom)
@@ -1080,7 +1143,7 @@ def build_coverage_display(
         CoverageRow(
             chrom,
             covered[chrom],
-            covered[chrom] / lengths[chrom] if chrom in lengths else None,
+            lengths.get(chrom),
             segments.get(chrom),
         )
         # Filtered BEFORE the sort, not in the comprehension after it: the
@@ -1091,7 +1154,7 @@ def build_coverage_display(
             key=natural_chromosome_key)
     ]
     return CoverageDisplay(
-        rows, global_fraction, uncovered,
+        rows, global_length, uncovered,
         statistics.segment_lengths_global())
 
 

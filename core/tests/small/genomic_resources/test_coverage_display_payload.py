@@ -125,3 +125,66 @@ def test_a_one_contig_universe_has_nothing_to_roll_up() -> None:
 
     assert display.global_fraction == 0.09
     assert display.uncovered is None
+
+
+@pytest.mark.parametrize(("covered", "length", "expected"), [
+    # A covered contig must not read as an untouched one: the roll-up
+    # is what "no values here" looks like on this page, so a row
+    # reading 0.00% while holding values says the wrong one of the two
+    # things the section distinguishes.
+    (1, 1_000_000, "<0.01%"),
+    # The floor reflected: all-but-a-little is not the whole contig.
+    (999_999, 1_000_000, ">99.99%"),
+    # ... and the cap is for a share short of the whole, not the whole.
+    (100, 100, "100.00%"),
+])
+def test_a_row_writes_its_share_through_the_shared_rule(
+    covered: int,
+    length: int,
+    expected: str,
+) -> None:
+    """gain#1057, at the seam where the counts meet the denominator.
+
+    One test over the boundary table rather than one per boundary:
+    what the payload adds over ``test_share_percentages.py`` is that
+    the row reaches the rule AT ALL, with its own two integers the
+    right way round.  Which strings the rule answers with is that
+    file's subject.
+    """
+    display = build_coverage_display(
+        "scores/one", _a_statistic({"chr1": covered}), {"chr1": length})
+
+    assert [row.percent for row in display.rows] == [expected]
+
+
+def test_a_row_without_a_denominator_has_no_percentage_to_write() -> None:
+    """Coverage degrades per ROW, unlike the Alleles tables' one total."""
+    display = build_coverage_display(
+        "scores/one", _a_statistic({"chr1": 9, "chrX": 5}),
+        {"chr1": 100, "chr2": 300})
+
+    assert [(row.chrom, row.percent) for row in display.rows] == [
+        ("chr1", "9.00%"), ("chrX", None)]
+
+
+def test_the_global_share_obeys_the_same_boundaries_as_a_row() -> None:
+    """Two contigs all but fully covered, over the summed lengths."""
+    display = build_coverage_display(
+        "scores/one", _a_statistic({"chr1": 499_999, "chr2": 500_000}),
+        {"chr1": 500_000, "chr2": 500_000})
+
+    assert display.global_percent == ">99.99%"
+
+
+def test_the_untouched_contigs_are_covered_exactly_none_of_the_way() -> None:
+    """The roll-up row's percentage is the rule's exact zero, not a literal.
+
+    It was a formatted constant in the template before gain#1057, which
+    is the same answer arrived at by not applying the rule.
+    """
+    display = build_coverage_display(
+        "scores/one", _a_statistic({"chr1": 9}),
+        {"chr1": 100, "chr2": 300})
+
+    assert display.uncovered is not None
+    assert display.uncovered.percent == "0.00%"

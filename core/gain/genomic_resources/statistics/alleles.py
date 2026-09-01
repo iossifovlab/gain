@@ -63,6 +63,7 @@ from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
     plot_length_histogram,
 )
+from gain.genomic_resources.statistics.percentages import percentage_of
 from gain.utils.chromosome_order import natural_chromosome_key
 
 ALLELE_STATISTICS_FILE = "statistics/alleles.json"
@@ -139,50 +140,26 @@ def percentages_over[K](
 
     The one place the ALLELES section writes a share of a count, so the
     classes column, the substitution matrix's cells and gain#989's
-    complex table all say the same thing the same way.  The Coverage
-    table above it still formats its own fractions inline and has
-    neither floor nor ceiling -- so a chromosome covered all but
-    entirely reads ``100.00%`` there while the Alleles tables below say
-    ``>99.99%`` of the same shape.  Unifying the two is still not this
-    slice's business; gain#1057 holds that.
+    complex table all say the same thing the same way.  How each cell
+    is written -- the floor at ``<0.01%``, the ceiling at ``>99.99%``,
+    and the two exact answers neither may swallow -- is
+    :func:`~gain.genomic_resources.statistics.percentages.percentage_of`,
+    shared with the Coverage table on the same page (gain#1057).
 
-    The result is text for an HTML page and can carry markup-significant
-    characters -- the floor and ceiling below begin with ``<`` and ``>``
-    -- so a template rendering it must escape, which the ``.jinja`` HTML
-    templates do and the Markdown ones deliberately do not.
-
-    Three answers a bare ``"%.2f%%"`` gets wrong:
-
-    * A nonzero count too small to survive two decimals renders
-      ``<0.01%``, never ``0.00%``.  On a real score ``complex`` is 881
-      alleles out of 727,413,443 while ``other`` is genuinely empty --
-      and telling those two apart is the whole reason a percentage is
-      shown at all.
-    * A count that falls SHORT of the total but rounds up to it renders
-      ``>99.99%``, never ``100.00%`` -- the floor reflected (gain#990).
-      On that same score the substitutions are all but 881 of the
-      alleles, and a column reading ``substitution 100.00%`` beside
-      ``complex <0.01%`` says the resource is entirely one class in the
-      act of showing that it is not.  A count that IS the total still
-      renders ``100.00%``: only a share that is not the whole is
-      written as short of it.
-    * A zero total has no percentage, and the answer is ``None`` for
-      the WHOLE map rather than per cell: the denominator is a property
-      of the table, so the page drops the column instead of printing a
-      row of nothing, as the coverage display falls back to raw counts
-      when no denominator resolves.
+    What this adds is the MAP contract around a missing denominator: a
+    zero total has no percentage, and the answer is ``None`` for the
+    WHOLE map rather than per cell, because the denominator is a
+    property of the table.  The page then drops the column instead of
+    printing a row of nothing.  Coverage resolves a denominator per row
+    and so degrades one row at a time -- the same rule per cell, a
+    different answer to not having one.
     """
     if total <= 0:
         return None
-    percentages: dict[K, str] = {}
-    for key, count in counts.items():
-        rendered = f"{100.0 * count / total:.2f}%"
-        if count and rendered == "0.00%":
-            rendered = "<0.01%"
-        elif count < total and rendered == "100.00%":
-            rendered = ">99.99%"
-        percentages[key] = rendered
-    return percentages
+    return {
+        key: percentage_of(count, total)
+        for key, count in counts.items()
+    }
 
 
 def _length_label(length: int) -> str:
