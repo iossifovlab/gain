@@ -33,7 +33,10 @@ class NormalizeAlleleAnnotator(AnnotatorBase):
         genome_resource_id = info.parameters.get("genome") or \
             (pipeline.preamble.input_reference_genome
              if pipeline.preamble is not None else None)
-        if genome_resource_id is None:
+        # `input_reference_genome` is optional and parses to "" when
+        # absent, so an empty id means "not configured" -- not "the
+        # resource named the empty string" (gain#1055).
+        if not genome_resource_id:
             genome = get_genomic_context().get_reference_genome()
             if genome is None:
                 raise ValueError(

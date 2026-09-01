@@ -6,6 +6,12 @@ import pytest_mock
 from gain.annotation.annotatable import VCFAllele
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
+from gain.genomic_resources.genomic_context_base import (
+    SimpleGenomicContext,
+)
+from gain.genomic_resources.reference_genome import (
+    build_reference_genome_from_resource_id,
+)
 from gain.genomic_resources.repository import GenomicResourceRepo
 
 from spliceai_annotator.spliceai_annotator import SpliceAIAnnotator
@@ -323,3 +329,48 @@ def test_spliceai_batch_annotate_renamed_attribute(
     assert "delta_score" not in results[0]
     assert results[0]["my_delta"] == \
         "C|TUBB8|0.15|0.27|0.00|0.05|89|-23|-267|193"
+
+
+def test_spliceai_annotator_genomeless_preamble_uses_the_context(
+    mocker: pytest_mock.MockerFixture,
+    spliceai_grr: GenomicResourceRepo,
+) -> None:
+    """The third copy of the gain#1055 chain, in this plugin package.
+
+    ``__init__`` ends its ``or`` chain on the preamble's
+    ``input_reference_genome``, which the parser defaults to ``""`` when
+    the key is absent.  Guarding that with ``is None`` read the empty id
+    as a configured one, so a pipeline whose preamble carries only a
+    ``summary`` never reached the context fallback and died resolving
+    resource id ``""``.
+
+    ``hg19/gene_models_small`` declares no ``reference_genome`` label, so
+    the preamble really is the last operand standing before the context.
+    The pipeline is deliberately left unopened -- constructing the
+    annotator resolves the resources, which is all this observes, while
+    opening it would load the models.
+    """
+    genome_id = "hg19/genome_10"
+    gene_models = "hg19/gene_models_small"
+    config = textwrap.dedent(f"""
+        preamble:
+          summary: a preamble that declares no reference genome
+        annotators:
+          - spliceai_annotator:
+              gene_models: {gene_models}
+              distance: 500
+              attributes:
+              - delta_score
+    """)
+
+    genome = build_reference_genome_from_resource_id(genome_id, spliceai_grr)
+    context = SimpleGenomicContext(
+        context_objects={"reference_genome": genome}, source="test_context")
+    mocker.patch(
+        "spliceai_annotator.spliceai_annotator.get_genomic_context",
+    ).return_value = context
+
+    pipeline = load_pipeline_from_yaml(config, spliceai_grr)
+
+    annotator = pipeline.annotators[0]
+    assert annotator.resource_ids == {genome_id, gene_models}

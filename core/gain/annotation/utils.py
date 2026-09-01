@@ -60,7 +60,10 @@ def find_annotator_reference_genome(
 
     genome: ReferenceGenome | None
 
-    if genome_resource_id is not None:
+    # `input_reference_genome` is optional and parses to "" when absent,
+    # so an empty id means "not configured" -- not "the resource named
+    # the empty string" (gain#1055).
+    if genome_resource_id:
         logger.debug(
             "Reference genome for %s taken from %s",
             info.type, genome_resource_id)
