@@ -151,6 +151,15 @@ class RetryableCopyError(OSError):
     The classification is the *download* path's, and it reaches
     everything that path does -- the move included, so a corrupting
     publish inside a download is retried like any other transient fault.
+
+    One shape reaches here from outside a download: redacting a
+    credential-bearing failure whose own type cannot be reconstructed from a
+    message rebuilds it as this class, so that redaction cannot silently
+    reclassify a transient failure as permanent (gain#1078, ADR 0023). Such
+    an error can therefore surface from a plain read -- ``get_file_content``,
+    a tabix header -- where nothing will retry it. It is still true of it
+    that a second attempt could plausibly have cleared it; only the
+    opportunity is absent.
     """
 
 
@@ -293,13 +302,32 @@ def _rebuild_error_without_userinfo(
     """Rebuild ``exc`` carrying the ``redacted`` message instead of its own.
 
     Return a fresh exception of ``exc``'s type so it can propagate/log
-    without leaking the secret its own message carries; fall back to
-    ``OSError`` for a type that cannot be reconstructed from a single
-    message string.
+    without leaking the secret its own message carries; fall back for a type
+    that cannot be reconstructed from a single message string.
+
+    That fallback loses the exception's identity, and with it any decision a
+    caller makes by type. The one such decision in the tree is the download
+    loop's ``_RETRYABLE_COPY_ERRORS`` classification, so it is preserved
+    explicitly: a transient failure stays transient across redaction.
+
+    Before gain#1078 that was a positional guarantee -- ``copy_resource_file``
+    redacted on the way out, strictly after its own ``except`` had classified
+    (gain#620) -- and redacting "any earlier" was called out in that loop as
+    something that would quietly cut the retry budget to a single attempt for
+    exactly the authed downloads it protects. Redacting the handle itself IS
+    earlier: it runs under the loop, on the read. Making retryability survive
+    the rebuild is what lets it, and turns a rule about *where* redaction may
+    sit into a property of the rebuild.
     """
     try:
         return type(exc)(redacted)
     except Exception:  # ruff: ignore[blind-except]  # pylint: disable=broad-exception-caught
+        if isinstance(exc, _RETRYABLE_COPY_ERRORS):
+            # ``RetryableCopyError`` is how this tree says "transient"
+            # (gain#934): a new transient shape becomes retryable by
+            # subclassing it and nothing else. A redacted rebuild of a
+            # transient failure is such a shape.
+            return RetryableCopyError(redacted)
         return OSError(redacted)
 
 
@@ -340,6 +368,146 @@ def _run_redacting_userinfo[T](fn: Callable[[], T]) -> T:
             # traceback and any chain it already carries survive.
             raise
     raise reraise
+
+
+#: Redacted I/O operations that are NOT on every handle, and so must be
+#: mirrored from the wrapped object rather than declared. ``readall`` and
+#: ``read1`` are absent from fsspec's ``AbstractBufferedFile`` (and so from
+#: ``S3File``); ``LocalFileOpener`` additionally has no ``readinto`` or
+#: ``readinto1``.
+#:
+#: Declaring one of these as a method would make ``hasattr`` answer True for
+#: a handle that does not have it, and consumers feature-detect: pandas
+#: probes for ``read1`` when choosing a read path, takes it, and the
+#: forwarding call then dies with ``AttributeError`` on the inner handle. A
+#: wrapper must not change what the thing it wraps appears able to do.
+_OPTIONAL_REDACTED_OPS = frozenset({
+    "readall", "readinto", "readinto1", "read1",
+})
+
+
+def _redacting_call(bound: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap one bound method of an inner handle in the redaction guard."""
+    def call(*args: Any, **kwargs: Any) -> Any:
+        return _run_redacting_userinfo(lambda: bound(*args, **kwargs))
+    return call
+
+
+class _RedactingFile:
+    """A file handle whose failures carry no url userinfo.
+
+    ``_open_fsspec_file`` redacts the open. Everything the caller then does
+    with the handle -- ``read``, a bounded ``read(n)``, ``readline``,
+    iteration, ``seek`` -- used to run unwrapped, so on an authed GRR a
+    failure mid-stream surfaced the credential-bearing fetch url verbatim
+    (gain#1078). Wrapping the handle is what reaches those: the alternative,
+    routing each caller through ``_read_fetch_file``, reads the whole file
+    and so cannot serve the callers that hold the handle for random access,
+    iterate it lazily, or read it in chunks on purpose.
+
+    Transparent by construction: every attribute this class does not name is
+    delegated, because the handle escapes to ``gzip.open``, ``pandas``,
+    ``json.load`` and the gene-set and gene-model readers, which reach for
+    ``mode``, ``name``, ``closed`` and friends.
+
+    Transparency includes what the handle appears *unable* to do. The
+    operations in ``_OPTIONAL_REDACTED_OPS`` are redacted through
+    ``__getattr__`` rather than declared here, so a handle without them still
+    answers ``hasattr`` False -- see that constant for what goes wrong
+    otherwise.
+
+    See ADR 0023, which records why redaction belongs on the handle rather
+    than at each of the 33 call sites that read one.
+    """
+
+    def __init__(self, inner: IO) -> None:
+        self._inner = inner
+
+    def read(self, *args: Any, **kwargs: Any) -> Any:
+        return _run_redacting_userinfo(
+            lambda: self._inner.read(*args, **kwargs))
+
+    def readline(self, *args: Any, **kwargs: Any) -> Any:
+        return _run_redacting_userinfo(
+            lambda: self._inner.readline(*args, **kwargs))
+
+    def readlines(self, *args: Any, **kwargs: Any) -> Any:
+        return _run_redacting_userinfo(
+            lambda: self._inner.readlines(*args, **kwargs))
+
+    def seek(self, *args: Any, **kwargs: Any) -> Any:
+        # Seeking a remote file is I/O: fsspec's cached readers fetch the
+        # block the new offset lands in.
+        return _run_redacting_userinfo(
+            lambda: self._inner.seek(*args, **kwargs))
+
+    def tell(self, *args: Any, **kwargs: Any) -> Any:
+        return _run_redacting_userinfo(
+            lambda: self._inner.tell(*args, **kwargs))
+
+    def write(self, *args: Any, **kwargs: Any) -> Any:
+        return _run_redacting_userinfo(
+            lambda: self._inner.write(*args, **kwargs))
+
+    def flush(self, *args: Any, **kwargs: Any) -> Any:
+        return _run_redacting_userinfo(
+            lambda: self._inner.flush(*args, **kwargs))
+
+    def writelines(self, *args: Any, **kwargs: Any) -> Any:
+        return _run_redacting_userinfo(
+            lambda: self._inner.writelines(*args, **kwargs))
+
+    def truncate(self, *args: Any, **kwargs: Any) -> Any:
+        return _run_redacting_userinfo(
+            lambda: self._inner.truncate(*args, **kwargs))
+
+    def close(self, *args: Any, **kwargs: Any) -> Any:
+        # A write handle does its store round trip on the way out, so a close
+        # is as able to surface the fetch url as any read. Every write site in
+        # this tree reaches that through ``__exit__`` rather than here, which
+        # is why ``__exit__`` is wrapped too and not merely delegated.
+        return _run_redacting_userinfo(
+            lambda: self._inner.close(*args, **kwargs))
+
+    def __iter__(self) -> _RedactingFile:
+        # Special methods are looked up on the TYPE, never through
+        # ``__getattr__``, so without these two ``for line in handle`` --
+        # how the tabular and gene-set readers consume a resource file --
+        # raises ``TypeError: not iterable`` instead of delegating.
+        return self
+
+    def __next__(self) -> Any:
+        return _run_redacting_userinfo(lambda: next(self._inner))
+
+    def __enter__(self) -> _RedactingFile:
+        # The inner handle's own ``__enter__`` answers itself -- that is what
+        # every file object does -- and the ``with`` body must be handed THIS
+        # object rather than that one, or every read in the body would run
+        # unredacted and the wrapper would buy nothing.
+        _run_redacting_userinfo(self._inner.__enter__)
+        return self
+
+    def __exit__(self, *exc_info: Any) -> Any:
+        # Wrapped, not delegated: this is where a ``with`` block releases the
+        # handle, and it is the path every write site in this tree actually
+        # takes -- ``with ... as outfile:``, never a bare ``close()``. The
+        # return value decides whether the block's own exception is
+        # suppressed, so it must be passed through untouched.
+        return _run_redacting_userinfo(
+            lambda: self._inner.__exit__(*exc_info))
+
+    def __getattr__(self, name: str) -> Any:
+        # ``_inner`` is bound in ``__init__`` and so never reaches here in
+        # normal use. It is named explicitly anyway: without this, an
+        # instance that has not run ``__init__`` -- one built by
+        # ``__new__``, or mid-unpickle -- turns every attribute access into
+        # unbounded recursion instead of an ``AttributeError``.
+        if name == "_inner":
+            raise AttributeError(name)
+        attr = getattr(self._inner, name)
+        if name in _OPTIONAL_REDACTED_OPS and callable(attr):
+            return _redacting_call(attr)
+        return attr
 
 
 def _scan_for_resources(
@@ -1203,12 +1371,14 @@ class FsspecReadOnlyProtocol(
         type: it reconstructs via ``type(exc)(message)``, which
         ``FileNotFoundError`` supports.
 
-        An error that CANNOT be reconstructed from a message alone comes back
-        an ``OSError`` instead -- an ``aiohttp.ClientResponseError`` (an HTTP
-        5xx, which fsspec does not translate) needs ``request_info`` and
-        ``history``. Safe here for the reason
-        ``_copy_resource_file_to_local`` sets out: no retry or control-flow
-        decision on this path keys off the type.
+        An error that CANNOT be reconstructed from a message alone loses its
+        type -- an ``aiohttp.ClientResponseError`` (an HTTP 5xx, which fsspec
+        does not translate) needs ``request_info`` and ``history``. It comes
+        back an ``OSError``, or a ``RetryableCopyError`` where the original
+        was transient, which ``_rebuild_error_without_userinfo`` preserves so
+        that redaction cannot change a retry decision. Safe here for the
+        reason ``_copy_resource_file_to_local`` sets out: no retry or
+        control-flow decision on this path keys off the type.
 
         ``uncompress`` names nothing on this path and never has, so
         ``compression=None`` preserves the as-stored read exactly -- see
@@ -1245,18 +1415,17 @@ class FsspecReadOnlyProtocol(
             compression: str | None) -> IO:
         """Open ``filepath`` on the filesystem, redacting a failing url.
 
-        ``_run_redacting_userinfo``'s guarantee, covering the open only.
-        Errors raised later by reads on the RETURNED handle are out of reach
-        from here — the handle escapes to arbitrary callers, and wrapping it
-        would take a proxy object. A caller that opens and reads in one
-        place should use ``_read_fetch_file``, whose redaction covers the
-        read too.
+        ``_run_redacting_userinfo``'s guarantee, covering the open AND every
+        subsequent operation on the returned handle: it comes back wrapped in
+        a ``_RedactingFile`` (gain#1078). A caller that opens and reads in one
+        place may still use ``_read_fetch_file``, which says so in one call.
         """
-        return _run_redacting_userinfo(lambda: cast(
+        opened = _run_redacting_userinfo(lambda: cast(
             IO,
             self.filesystem.open(
                 filepath, mode=mode,
                 compression=compression)))
+        return cast(IO, _RedactingFile(opened))
 
     def open_repository_metadata(self) -> apsw.Connection:
         sqlite_filepath = os.path.join(
@@ -1401,11 +1570,11 @@ class FsspecReadOnlyProtocol(
         fetch url in its own message (gain#1017). ``_open_fsspec_file``
         states why the open-level redaction cannot reach it.
 
-        Redacting at the read is safe here in a way it was not on the
-        download path (gain#620): rebuilding an error that cannot be
-        reconstructed from a single message string yields an ``OSError``,
-        and no retry or control-flow decision on this path keys off the
-        type -- unlike ``copy_resource_file``, whose retry loop does.
+        Redacting at the read is safe here because no retry or control-flow
+        decision on this path keys off the exception type -- unlike
+        ``copy_resource_file``, whose retry loop does. That loop is no longer
+        a reason to redact late anywhere: since gain#1078 the rebuild
+        preserves retryability (see ``_rebuild_error_without_userinfo``).
 
         One type test is reachable, ``report_resource_failure``'s
         ``RESOURCE_ERRORS`` check, and the rebuild helps there rather than
@@ -2167,9 +2336,16 @@ class FsspecReadWriteProtocol(
             # that reach here used to go through ``_open_fsspec_file``,
             # and a publish to a credential-bearing url must not put the
             # userinfo into a traceback just because the write now stages.
-            handle = _run_redacting_userinfo(
+            #
+            # The handle is wrapped, not merely opened redacted. The sink
+            # yielded below is written to by the caller, and a store finishes
+            # a write on release -- so redacting the open alone would leave
+            # this the one write path in the protocol still able to surface
+            # the fetch url, which is exactly the shape gain#1078 closed
+            # everywhere else. See ADR 0023.
+            handle = cast("IO", _RedactingFile(_run_redacting_userinfo(
                 lambda: self.filesystem.open(
-                    tmp_filepath, mode, **open_kwargs))
+                    tmp_filepath, mode, **open_kwargs))))
             with handle as outfile:
                 yield outfile
 
@@ -2339,16 +2515,25 @@ class FsspecReadWriteProtocol(
                 time.sleep(delay)
 
         assert last_error is not None
-        # Redaction happens HERE, on the way out -- never before the
-        # ``except`` above. That clause classifies by exception type, and a
-        # rebuilt error is a different type: ``ClientResponseError`` cannot
-        # be reconstructed from a message alone, so it rebuilds to
-        # ``OSError`` -- and a bare ``OSError`` matches nothing in
-        # ``_RETRYABLE_COPY_ERRORS``. (Retryability comes from subclassing
-        # ``RetryableCopyError`` or being one of the foreign types the tuple
-        # names; being ``OSError``, their base, is not it.) Redacting any
-        # earlier would quietly cut the retry budget to a single attempt for
-        # exactly the authed downloads this protects. See gain#620.
+        # A last redaction on the way out, for a ``last_error`` that reached
+        # here without passing through the handle -- one raised by the
+        # ``except`` clause's own machinery rather than by a read.
+        #
+        # This used to be the ONLY place the download path could redact, and
+        # the rule was positional: never before the ``except`` above, because
+        # that clause classifies by exception type and a rebuilt error is a
+        # different type. ``ClientResponseError`` cannot be reconstructed
+        # from a message alone, so it rebuilt to a bare ``OSError``, which
+        # matches nothing in ``_RETRYABLE_COPY_ERRORS`` -- redacting earlier
+        # would have cut the retry budget to a single attempt for exactly the
+        # authed downloads this protects (gain#620).
+        #
+        # gain#1078 made the reads under this loop redact too, so "earlier"
+        # now happens on every attempt. The rule it relied on has been made
+        # structural instead: ``_rebuild_error_without_userinfo`` preserves
+        # retryability, rebuilding a transient failure it cannot reconstruct
+        # as ``RetryableCopyError`` rather than ``OSError``. The retry budget
+        # survives redaction wherever redaction happens.
         raise _error_without_userinfo(last_error)
 
     def _download_resource_file(

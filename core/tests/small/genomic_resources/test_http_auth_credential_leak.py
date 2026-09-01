@@ -1,5 +1,8 @@
 # pylint: disable=C0114,C0116,W0212
+import dataclasses
 import gzip
+import hashlib
+import io
 import logging
 import pathlib
 import textwrap
@@ -17,6 +20,9 @@ from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
     FsspecRepositoryProtocol,
     build_fsspec_protocol,
+)
+from gain.genomic_resources.genomic_position_table.table_tabix import (
+    TabixGenomicPositionTable,
 )
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
@@ -1262,3 +1268,416 @@ def test_get_file_content_reads_a_real_gzip_file_as_stored(
         assert isinstance(raw, bytes)
         assert raw == stored
         assert raw[:2] == b"\x1f\x8b"
+
+
+# ---------------------------------------------------------------------------
+# gain#1078 — ``open_raw_file`` redacted the OPEN only. Every I/O on the handle
+# it handed back -- ``read``, a bounded ``read(n)``, ``readline``, iteration,
+# ``seek`` -- ran unwrapped, so a failure mid-stream surfaced the
+# credential-bearing fetch url verbatim. #1017 and #1058 each closed one
+# caller by routing it through ``_read_fetch_file``; that helper reads the
+# whole file, so it can never serve the callers that hold the handle, iterate
+# it lazily, or read it in chunks on purpose. The handle itself is redacted
+# here instead, which closes all of them at the one choke point.
+# ---------------------------------------------------------------------------
+
+
+def _a_remote_handle_whose_io_fails(
+    proto_id: str, url: str, filename: str,
+    mocker: pytest_mock.MockerFixture,
+    *, failing: str,
+) -> tuple[FsspecRepositoryProtocol, GenomicResource, BaseException]:
+    """Arrange an https protocol whose ``failing`` op on the handle raises.
+
+    Returns the protocol, the resource and the very error planted, so a test
+    can assert on identity and not merely on the message.
+
+    The failure is planted on the handle and not on the ``open``, because the
+    open has been redacted since #620 and would prove nothing.
+
+    ``__enter__`` is made to answer the handle itself, which is what a real
+    fsspec file does. A bare ``MagicMock`` answers a *different* child mock,
+    so a proxy that redacted only what it wrapped would still see an
+    unredacted object handed to the ``with`` body and the test would pass for
+    the wrong reason.
+    """
+    proto = build_fsspec_protocol(proto_id, url)
+    resource = GenomicResource("sub/res", (1, 0), proto, {})
+    planted = FileNotFoundError(
+        proto.get_resource_file_url(resource, filename))
+    handle = mocker.MagicMock()
+    handle.__enter__.return_value = handle
+    # ``iter(handle)`` must answer the handle, so that a ``next()`` on it
+    # reaches the planted ``__next__``. A bare ``MagicMock`` iterates empty,
+    # which would end the loop with ``StopIteration`` and let an unredacted
+    # build pass this test for the wrong reason.
+    handle.__iter__.return_value = handle
+    getattr(handle, failing).side_effect = planted
+    mocker.patch.object(proto.filesystem, "open", return_value=handle)
+    return proto, resource, planted
+
+
+def _assert_redacted(
+    exc: BaseException, planted: BaseException, filename: str,
+) -> None:
+    """The whole redaction contract, asserted in one place."""
+    tb = "".join(traceback.format_exception(exc))
+    assert _SECRET not in str(exc)
+    assert "alice" not in str(exc)
+    assert _SECRET not in tb
+    for linked in _walk_exception_chain(exc):
+        assert _SECRET not in str(linked)
+    # host, port and filename preserved so the error stays diagnosable.
+    assert "127.0.0.1:1" in str(exc)
+    assert filename in str(exc)
+    # a redacted rebuild, not the error the read raised.
+    assert exc is not planted
+
+
+@dataclasses.dataclass(frozen=True)
+class _HandleRead:
+    """One way a caller consumes a raw-file handle, and where it fails.
+
+    ``consume`` is the call a caller makes; ``failing_attr`` is the handle
+    attribute that call actually reaches, which is not always the same name
+    -- a bounded ``read(4)`` still fails on ``read``, and iteration fails on
+    ``__next__``.
+    """
+
+    consume: typing.Callable[[typing.Any], typing.Any]
+    failing_attr: str
+
+
+# Every way a caller consumes one of these handles somewhere in the tree:
+# the whole-file slurp, the tabix index header's bounded ``read(n)``, the
+# header and chrom-mapping ``readline()`` loops, the tabular readers'
+# ``for line in handle``, the reference genome's byte-offset ``seek``, and
+# ``readall``, which is what a consumer that buffers the handle
+# (``io.BufferedReader``) resolves a full read to.
+_HANDLE_READS: dict[str, _HandleRead] = {
+    "read": _HandleRead(lambda handle: handle.read(), "read"),
+    "read-bounded": _HandleRead(lambda handle: handle.read(4), "read"),
+    "readall": _HandleRead(lambda handle: handle.readall(), "readall"),
+    "readline": _HandleRead(lambda handle: handle.readline(), "readline"),
+    "readlines": _HandleRead(
+        lambda handle: handle.readlines(), "readlines"),
+    "iterate": _HandleRead(lambda handle: next(iter(handle)), "__next__"),
+    "seek": _HandleRead(lambda handle: handle.seek(0), "seek"),
+    "tell": _HandleRead(lambda handle: handle.tell(), "tell"),
+}
+
+
+@pytest.mark.parametrize("consume", list(_HANDLE_READS))
+def test_raw_file_io_failure_does_not_leak_url_credential(
+    consume: str, mocker: pytest_mock.MockerFixture,
+) -> None:
+    handle_read = _HANDLE_READS[consume]
+    proto, resource, planted = _a_remote_handle_whose_io_fails(
+        f"i1078-io-{consume}", f"https://alice:{_SECRET}@127.0.0.1:1/path",
+        "data.txt", mocker, failing=handle_read.failing_attr)
+
+    with pytest.raises(OSError) as excinfo, \
+            proto.open_raw_file(resource, "data.txt", "rt") as infile:
+        handle_read.consume(infile)
+
+    _assert_redacted(excinfo.value, planted, "data.txt")
+
+
+@pytest.mark.parametrize("read_args", [(), (4,)])
+def test_buffered_read_failure_does_not_leak_url_credential(
+    read_args: tuple[int, ...], mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A consumer that BUFFERS the handle must not get around the wrapper.
+
+    ``io.BufferedReader(handle).read()`` resolves to ``readall`` and
+    ``read(n)`` to ``readinto``. Delegating either -- rather than wrapping
+    it -- runs it on the inner handle, which then drives the inner
+    ``readinto`` itself, so neither the wrapper's ``read`` nor a wrapped
+    ``readinto`` is ever consulted and the failure arrives unredacted.
+    Exercised with a real ``BufferedReader`` over a real raw handle, because
+    that bypass is a property of the io stack and a mock would not reproduce
+    it.
+    """
+    proto = build_fsspec_protocol(
+        f"i1078-buffered-{len(read_args)}",
+        f"https://alice:{_SECRET}@127.0.0.1:1/path")
+    resource = GenomicResource("sub/res", (1, 0), proto, {})
+    planted = FileNotFoundError(
+        proto.get_resource_file_url(resource, "data.txt"))
+
+    class _FailingRaw(io.RawIOBase):
+        def readinto(self, _buffer: typing.Any) -> int:
+            raise planted
+
+        def readable(self) -> bool:
+            return True
+
+    mocker.patch.object(
+        proto.filesystem, "open", return_value=_FailingRaw())
+
+    with pytest.raises(OSError) as excinfo:
+        io.BufferedReader(
+            proto.open_raw_file(resource, "data.txt", "rb"),
+        ).read(*read_args)
+
+    _assert_redacted(excinfo.value, planted, "data.txt")
+
+
+def test_raw_file_release_failure_does_not_leak_url_credential(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Leaving the ``with`` block is an I/O point of its own.
+
+    A store finishes a write when the handle is released, so the failure can
+    arrive there and nowhere else. Every write site in this tree spells that
+    ``with ... as outfile:``, which resolves to ``__exit__`` and never to a
+    bare ``close()`` -- so wrapping ``close`` alone would leave the live path
+    open.
+    """
+    proto, resource, planted = _a_remote_handle_whose_io_fails(
+        "i1078-exit", f"https://alice:{_SECRET}@127.0.0.1:1/path",
+        "data.txt", mocker, failing="__exit__")
+
+    # The contexts unwind in reverse, so the handle is released -- and the
+    # planted failure raised -- inside ``pytest.raises``.
+    with pytest.raises(OSError) as excinfo, \
+            proto.open_raw_file(resource, "data.txt", "rt"):
+        pass
+
+    _assert_redacted(excinfo.value, planted, "data.txt")
+
+
+def test_raw_file_read_failure_without_userinfo_propagates_unchanged(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    proto, resource, planted = _a_remote_handle_whose_io_fails(
+        "i1078-plain", "https://127.0.0.1:1/path", "data.txt",
+        mocker, failing="read")
+
+    with pytest.raises(OSError) as excinfo, \
+            proto.open_raw_file(resource, "data.txt", "rt") as infile:
+        infile.read()
+
+    # Nothing to redact, so the ORIGINAL object propagates -- identity, and
+    # with it the exception type and the traceback a rebuild would cost.
+    # This is the common unauthenticated case: it must stay free.
+    assert excinfo.value is planted
+
+
+def _a_real_resource(
+    tmp_path: pathlib.Path, proto_id: str,
+) -> tuple[FsspecRepositoryProtocol, GenomicResource]:
+    """A resource on a real filesystem, holding one file of each shape."""
+    root = tmp_path / "grr"
+    setup_directories(root, {
+        "sub": {"res(1.0)": {
+            "lines.txt": "alpha\nbeta\ngamma\n",
+            "data.txt.gz": gzip.compress(b"payload"),
+        }},
+    })
+    proto = build_fsspec_protocol(proto_id, f"file://{root}")
+    return proto, GenomicResource("sub/res", (1, 0), proto, {})
+
+
+def test_raw_file_handle_still_reads_a_real_file(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Against a real filesystem, because a mocked handle answers whatever it
+    # is told to and so cannot show that the wrapper preserves the payload,
+    # the text/bytes split, or seek arithmetic.
+    proto, resource = _a_real_resource(tmp_path, "i1078-real-read")
+
+    with proto.open_raw_file(resource, "lines.txt", "rt") as infile:
+        assert infile.read() == "alpha\nbeta\ngamma\n"
+
+    with proto.open_raw_file(resource, "lines.txt", "rb") as infile:
+        assert infile.read(5) == b"alpha"
+        assert infile.tell() == 5
+        infile.seek(0)
+        assert infile.read(5) == b"alpha"
+
+    with proto.open_raw_file(resource, "lines.txt", "rt") as infile:
+        assert infile.readline() == "alpha\n"
+
+
+def test_raw_file_handle_still_iterates_a_real_file(
+    tmp_path: pathlib.Path,
+) -> None:
+    # ``for line in handle`` is how the tabular readers, the chrom-mapping
+    # loader and the gene-set readers consume a file. It resolves
+    # ``__iter__`` on the TYPE, so a proxy that delegates only through
+    # ``__getattr__`` breaks every one of them.
+    proto, resource = _a_real_resource(tmp_path, "i1078-real-iter")
+
+    with proto.open_raw_file(resource, "lines.txt", "rt") as infile:
+        assert list(infile) == ["alpha\n", "beta\n", "gamma\n"]
+
+
+def test_raw_file_handle_still_decompresses_and_closes(
+    tmp_path: pathlib.Path,
+) -> None:
+    proto, resource = _a_real_resource(tmp_path, "i1078-real-gzip")
+
+    with proto.open_raw_file(
+            resource, "data.txt.gz", "rb", compression=True) as infile:
+        assert infile.read() == b"payload"
+
+    handle = proto.open_raw_file(resource, "lines.txt", "rt")
+    with handle:
+        pass
+    # the ``with`` released the underlying handle, not merely the wrapper
+    assert handle.closed
+
+
+def test_raw_file_handle_delegates_unknown_attributes(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The handle escapes to ``gzip.open``, pandas, ``json.load`` and the
+    # gene-set readers, which reach for attributes the wrapper does not name.
+    proto, resource = _a_real_resource(tmp_path, "i1078-real-attrs")
+
+    with proto.open_raw_file(resource, "lines.txt", "rb") as infile:
+        assert infile.readable() is True
+        assert infile.seekable() is True
+        assert infile.closed is False
+        assert infile.mode is not None
+
+
+def test_raw_file_handle_advertises_exactly_what_it_wraps(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The wrapper must not change what the handle appears able to do.
+
+    Consumers feature-detect. pandas probes for ``read1`` when it picks a
+    read path; ``io`` picks among ``readall``/``readinto``/``read1`` the same
+    way. Declaring one of those as a method makes ``hasattr`` answer True for
+    a handle that does not have it, the consumer takes that path, and the
+    forwarding call dies with ``AttributeError`` on the inner handle -- which
+    is how this reached CI as ``'S3File' object has no attribute 'read1'``
+    after the local and in-memory backends, which DO have it, stayed green.
+
+    So the property is equality with the wrapped object, not presence: every
+    optional operation is mirrored, never declared. ``readall`` is the one
+    that discriminates here (no fsspec backend has it); the s3 arms of the
+    data_frame suite cover ``read1``.
+    """
+    proto, resource = _a_real_resource(tmp_path, "i1078-capabilities")
+
+    with proto.open_raw_file(resource, "lines.txt", "rb") as infile:
+        inner = infile._inner
+        for op in (
+            "readall", "readinto", "readinto1", "read1",
+            "truncate", "writelines", "read", "seek",
+        ):
+            assert hasattr(infile, op) == hasattr(inner, op), op
+        # the guard is only meaningful while something is actually absent
+        assert not hasattr(inner, "readall")
+
+
+def test_tabix_index_check_decline_does_not_leak_url_credential(
+    mocker: pytest_mock.MockerFixture, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The one site that puts the fetch url in a LOG rather than an error.
+
+    Every other caller propagates the read failure. ``_validate_index_columns``
+    catches it -- deliberately, so a transient fault does not refuse a
+    resource htslib has just read (gain#628) -- and reports the decline with
+    ``str(error)`` in the message, which is a warning written to wherever the
+    logs are shipped and kept.
+
+    Driven through ``_validate_index_columns`` rather than ``open()``: the
+    latter opens the file with pysam first, and pysam cannot be pointed at an
+    authed remote url from a unit test. This is the seam the credential
+    actually crosses.
+    """
+    _, resource, _ = _a_remote_handle_whose_io_fails(
+        "i1078-tabix", f"https://alice:{_SECRET}@127.0.0.1:1/path",
+        "data.txt.gz.tbi", mocker, failing="read")
+    table = TabixGenomicPositionTable(resource, {
+        "filename": "data.txt.gz",
+        "index_filename": "data.txt.gz.tbi",
+    })
+
+    with caplog.at_level(logging.WARNING):
+        table._validate_index_columns()
+
+    # the check declined -- it neither passed nor refused the resource
+    assert "NOT validated" in caplog.text
+    assert _SECRET not in caplog.text
+    assert "alice" not in caplog.text
+    # host and port survive, so the decline stays diagnosable
+    assert "127.0.0.1:1" in caplog.text
+
+
+def test_raw_file_handle_reads_incrementally(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A bounded read takes its bytes and leaves the rest on the stream.
+
+    The wrapper must not turn a chunked or lazy read into a slurp. Three
+    callers depend on that and none of them could be served by
+    ``_read_fetch_file``: ``compute_md5_sum`` and the download copy loop
+    stream multi-GB files a chunk at a time, and the in-memory position
+    table holds its handle and iterates it lazily.
+    """
+    root = tmp_path / "grr"
+    setup_directories(root, {
+        "sub": {"res(1.0)": {"lines.txt": "alpha\nbeta\ngamma\n"}},
+    })
+    proto = build_fsspec_protocol("i1078-incremental", f"file://{root}")
+    resource = GenomicResource("sub/res", (1, 0), proto, {})
+
+    with proto.open_raw_file(resource, "lines.txt", "rb") as infile:
+        assert infile.read(6) == b"alpha\n"
+        # the remainder is still there: the first read consumed 6 bytes, not
+        # the file
+        assert infile.read(5) == b"beta\n"
+        assert infile.read() == b"gamma\n"
+
+
+def test_md5_sum_reads_a_multi_chunk_file_in_bounded_reads(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The md5 loop must stay bounded, not become a slurp.
+
+    Asserting the digest alone would not show this: a wrapper that read the
+    whole file into memory and served it back in slices produces the very
+    same md5. What distinguishes them is the SHAPE of the reads reaching the
+    store, so that is what is recorded -- every read bounded, and more than
+    one of them. ``compute_md5_sum`` streams multi-GB resource files, so
+    turning its loop into one unbounded read is a memory regression that no
+    correctness assertion can catch.
+    """
+    # Spanning three chunks is the whole requirement, and the content is
+    # irrelevant -- the assertions read the SHAPE of the reads, not the
+    # bytes. A repeated byte builds ~50x faster than joining 400k lines.
+    payload = b"x" * (2 * FsspecReadWriteProtocol.CHUNK_SIZE + 1)
+    assert len(payload) > 2 * FsspecReadWriteProtocol.CHUNK_SIZE
+
+    root = tmp_path / "grr"
+    setup_directories(root, {"sub": {"res(1.0)": {"big.bin": payload}}})
+    proto = build_fsspec_protocol("i1078-md5", f"file://{root}")
+    resource = GenomicResource("sub/res", (1, 0), proto, {})
+
+    sizes: list[int | None] = []
+    real_open = proto.filesystem.open
+
+    def recording_open(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
+        handle = real_open(*args, **kwargs)
+        real_read = handle.read
+
+        def read(*read_args: typing.Any) -> typing.Any:
+            sizes.append(read_args[0] if read_args else None)
+            return real_read(*read_args)
+
+        handle.read = read  # type: ignore[method-assign]
+        return handle
+
+    mocker.patch.object(proto.filesystem, "open", side_effect=recording_open)
+
+    assert proto.compute_md5_sum(resource, "big.bin") == \
+        hashlib.md5(payload).hexdigest()  # ruff: ignore[hashlib-insecure-hash-function]
+
+    # more than one read, and not one of them unbounded
+    assert len(sizes) > 1
+    assert all(size is not None for size in sizes)
