@@ -217,13 +217,14 @@ def test_a_section_that_rendered_no_table_is_refused(
 ) -> None:
     """The helper every other test here leans on must not silently drift.
 
-    A position score's Alleles section renders "not computed".  If
-    ``table_after`` scanned past the end of the section it would return
-    the Files table at the foot of the page, and an assertion about a
-    table that was never rendered would pass against that one instead.
+    An allele score's Indel lengths subsection renders images or a
+    sentence, never a table.  If ``table_after`` scanned past the end of
+    the section it would return the Files table at the foot of the page,
+    and an assertion about a table that was never rendered would pass
+    against that one instead.
     """
     with pytest.raises(AssertionError, match="rendered no table"):
-        table_after(pages["scores/coverage"], "<h2>Alleles</h2>")
+        table_after(pages["scores/alleles"], "<h3>Indel lengths</h3>")
 
 
 @pytest.mark.parametrize(("resource_id", "heading"), SORTABLE_TABLES)

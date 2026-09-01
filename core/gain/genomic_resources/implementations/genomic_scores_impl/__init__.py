@@ -11,7 +11,9 @@ readers:
   be.  This is the half carrying the numeric and task history (gain#794,
   gain#857), which is why it kept the original file's blame.  Its
   ``__all__`` states the surface, in tiers.
-* :mod:`.impl` -- :class:`~.impl.GenomicScoreImplementation` and
+* :mod:`.impl` -- :class:`~.impl.GenomicScoreImplementation` and the
+  two subclasses that add a section to its page,
+  :class:`~.impl.AlleleScoreImplementation` and
   :class:`~.impl.FragmentScoreImplementation`.  The info page's render
   accessors, the task-graph wiring that schedules :mod:`.scan`'s
   functions, the resource file set, and the hashes.  The class still
@@ -21,19 +23,21 @@ readers:
 The dependency runs one way: ``impl`` imports ``scan``, never the reverse,
 which ``tests/test_architecture.py`` pins from the AST.
 
-This module is the facade, and the three names below are a published
+This module is the facade, and the four names below are a published
 surface: four ``core/pyproject.toml`` entry points name this package path
 rather than :mod:`.impl` directly, so the layout stays rearrangeable and a
 later split cannot break them.  ``test_genomic_scores_impl_facade.py``
 pins what they promise.
 """
 from .impl import (
+    AlleleScoreImplementation,
     FragmentScoreImplementation,
     GenomicScoreImplementation,
     build_score_implementation_from_resource,
 )
 
 __all__ = [
+    "AlleleScoreImplementation",
     "FragmentScoreImplementation",
     "GenomicScoreImplementation",
     "build_score_implementation_from_resource",
