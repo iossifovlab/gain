@@ -37,6 +37,8 @@ from gain.genomic_resources.genomic_scores.aggregation import (
 from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
 from gain.genomic_resources.testing.builders import a_grr, a_position_score
 
+from tests.small.genomic_resources.conftest import a_flag_score
+
 _TWO_SCORES = """
     chrom  pos_begin  pos_end  s    t
     1      10         13       0.2  1
@@ -182,19 +184,9 @@ def test_an_unknown_score_names_the_resource_and_what_it_has(
 
 
 def test_a_score_with_no_default_aggregator_says_how_to_name_one(
-    tmp_path: pathlib.Path,
+    flags: PositionScore,
 ) -> None:
-    # `bool` is the one value type whose class default is deliberately
-    # None: there is no reduction to pick on the caller's behalf.
-    repo = a_grr().with_resource("flags", (
-        a_position_score()
-        .with_score("flag", "bool")
-        .with_data("""
-            chrom  pos_begin  pos_end  flag
-            1      10         10       True
-        """)
-    )).build_repo(tmp_path)
-    definitions = PositionScore(repo.get_resource("flags")).score_definitions
+    definitions = flags.score_definitions
 
     with pytest.raises(ValueError) as excinfo:
         resolve_aggregator_requests(
@@ -268,18 +260,7 @@ def test_the_distinct_scores_keep_the_order_they_were_asked_for() -> None:
 
 @pytest.fixture
 def flags(tmp_path: pathlib.Path) -> PositionScore:
-    # `bool` is the one value type whose class default is deliberately
-    # None: there is no reduction to pick on the caller's behalf, so both
-    # surfaces must refuse a `flag` no aggregator names.
-    repo = a_grr().with_resource("flags", (
-        a_position_score()
-        .with_score("flag", "bool")
-        .with_data("""
-            chrom  pos_begin  pos_end  flag
-            1      10         10       True
-        """)
-    )).build_repo(tmp_path)
-    return PositionScore(repo.get_resource("flags"))
+    return a_flag_score(tmp_path)
 
 
 def _refusal(call: Callable[[], object]) -> str:
@@ -347,7 +328,7 @@ _REFUSAL_RULES = [
     "has no default aggregator",
 ]
 
-_STATED_IN = "genomic_resources/genomic_scores/aggregation.py"
+_STATED_IN = "aggregation.py"
 
 
 def test_each_aggregation_refusal_is_written_in_exactly_one_place() -> None:
@@ -364,25 +345,35 @@ def test_each_aggregation_refusal_is_written_in_exactly_one_place() -> None:
     only counted files would pass while ``resolve_aggregator_requests``
     quietly re-inlined the guard that ``score_def_for`` exists to be.
 
-    Two limits worth knowing.  This matches raw source text, so a copy
-    whose f-string happens to wrap mid-phrase evades it -- which is why
-    each anchor is short.  And it scans the ``gain`` package, so a copy
-    that appeared in another distribution of this repo would go unseen.
+    Scoped to the ``genomic_scores`` package, which is what these two
+    sentences are about, and not to ``gain`` at large: a fence over the
+    whole distribution would make every unrelated module's error prose
+    answerable to an aggregation test.  The rule itself is worded
+    differently elsewhere on purpose, for surfaces that name a SET of
+    unknown scores rather than one (``_resolve_score_defs``,
+    ``ScoreResource._guard_score_id``, ``score_filter``); converging those
+    is gain#1112, so what is pinned here is these two wordings.
+
+
+    The other limit: this matches raw source text, so a copy whose
+    f-string happens to wrap mid-phrase evades it -- which is why each
+    anchor is short.
 
     An intentional rewording goes red here, and should: the new wording
     wants re-anchoring, and the point of the trip is to notice whether
     something else has picked the sentence up again.
     """
-    package = pathlib.Path(gain.__file__).parent
+    package = pathlib.Path(gain.__file__).parent / \
+        "genomic_resources" / "genomic_scores"
     sources = sorted(package.rglob("*.py"))
-    # Guard against a scan that silently matches nothing: this package is
-    # hundreds of modules, and a fence over an empty list is not a fence.
-    assert len(sources) > 100, len(sources)
+    # Guard against a scan that silently matches nothing: a fence over an
+    # empty list is not a fence, and this package is the whole score layer.
+    assert len(sources) > 5, len(sources)
 
     for rule in _REFUSAL_RULES:
         sites = sorted(
-            f"{path.relative_to(package)}:{path.read_text().count(rule)}"
+            f"{path.relative_to(package)}:{count}"
             for path in sources
-            if rule in path.read_text()
+            if (count := path.read_text().count(rule))
         )
         assert sites == [f"{_STATED_IN}:1"], (rule, sites)

@@ -40,6 +40,7 @@ from ..aggregators import (
     PositionScoreAggregationQuery,
 )
 from .aggregation import (
+    QUERY_AGGREGATOR_REMEDY,
     build_region_aggregator,
     distinct_score_ids,
     resolve_aggregator_name,
@@ -466,9 +467,9 @@ class PositionScore(GenomicScore):
                 query.score, score_def.value_type,
                 query.none_value_replacement)
             aggregator = resolve_aggregator_name(
-                query.score, query.aggregator, score_def,
+                query.aggregator, score_def,
                 resource_id=self.resource_id,
-                remedy="name one on the query")
+                remedy=QUERY_AGGREGATOR_REMEDY)
             resolved.append((
                 query.score,
                 build_region_aggregator(
@@ -568,8 +569,7 @@ class PositionScore(GenomicScore):
         score_ids = [
             score_def.score_id
             for score_def in self._region_read_defs(
-                chrom,
-                distinct_score_ids(sid for sid, _, _ in resolved))
+                chrom, distinct_score_ids(sid for sid, _, _ in resolved))
         ]
         column_of = {sid: i for i, sid in enumerate(score_ids)}
         targets = [

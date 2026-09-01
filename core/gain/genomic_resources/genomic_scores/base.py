@@ -1340,7 +1340,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         pos_end: int | None = None,
         scores: list[str] | None = None,
     ) -> Iterator[tuple[int, int, list[ScoreValue]]]:
-        """The segment stream :meth:`aggregate_region` folds.
+        """The segment stream this kind's aggregating reads consume.
 
         The records as this kind means them, which for everything but a
         position score is :meth:`fetch_region_segments` unchanged: a kind
@@ -1354,15 +1354,15 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         to carry a flag saying which kind it is serving, and that flag
         would be a second statement of the weight rule.
 
-        Underscored, alone among the per-kind hooks, because it is the only
-        one no caller asks for BY NAME: the others answer a caller
-        (``fetch_region_segments`` IS :meth:`region_values_from_records`;
-        the scan calls :meth:`validate_records` and :meth:`record_weight`
-        by name), while this one is reached only through a read that
-        composes it.  Two do: :meth:`aggregate_region` here, and
-        :meth:`~.position.PositionScore.fetch_region_weighted_values`,
-        which weighs this stream for the annotators rather than restating
-        the kind's clip (gain#1087).  A kind overrides it; nothing outside
-        those reads calls it.
+        Underscored, alone among the per-kind hooks, by a criterion rather
+        than by a list of callers: the others are part of the read API and
+        are asked for by name (``fetch_region_segments`` IS
+        :meth:`region_values_from_records`; the scan calls
+        :meth:`validate_records` and :meth:`record_weight` by name), while
+        this one is never a caller's question -- it is composed, from
+        inside this hierarchy, by whichever reads aggregate.  A kind
+        overrides it; nothing outside the hierarchy calls it.  Stated as
+        the criterion because the census of those reads is not stable: it
+        was one until gain#1087 gave the annotators' read the same stream.
         """
         return self.fetch_region_segments(chrom, pos_begin, pos_end, scores)

@@ -24,6 +24,8 @@ from gain.genomic_resources.testing.builders import (
     a_position_score,
 )
 
+from tests.small.genomic_resources.conftest import a_flag_score
+
 # Two records with a two-position hole between them: positions 10-13 carry
 # 0.2, 14-15 nothing, 16 carries 0.8.
 _GAPPED = """
@@ -147,40 +149,7 @@ def test_a_replacement_of_the_wrong_type_is_refused(
 
 @pytest.fixture
 def flagged(tmp_path: pathlib.Path) -> PositionScore:
-    # `bool` is the one value type whose class default aggregator is
-    # deliberately None, so a query naming `flag` and no aggregator is
-    # refusable on that ground alone -- and can therefore be made invalid
-    # on two grounds at once.
-    repo = a_grr().with_resource("flags", (
-        a_position_score().with_score("flag", "bool").with_data("""
-            chrom  pos_begin  pos_end  flag
-            1      10         10       True
-        """)
-    )).build_repo(tmp_path)
-    return PositionScore(repo.get_resource("flags")).open()
-
-
-def test_an_aggregating_query_names_a_score_the_resource_has(
-    gapped: PositionScore,
-) -> None:
-    with gapped, pytest.raises(ValueError) as excinfo:
-        gapped.get_scores_in_region_agg(
-            "1", 10, 16, [PositionScoreAggregationQuery("nope")])
-
-    assert str(excinfo.value) == (
-        "score 'nope' is not defined by resource 's'; it has ['s']")
-
-
-def test_an_aggregating_query_says_how_to_name_a_missing_default(
-    flagged: PositionScore,
-) -> None:
-    with flagged, pytest.raises(ValueError) as excinfo:
-        flagged.get_scores_in_region_agg(
-            "1", 10, 10, [PositionScoreAggregationQuery("flag")])
-
-    assert str(excinfo.value) == (
-        "score 'flag' of resource 'flags' has no default aggregator for "
-        "value type 'bool'; name one on the query")
+    return a_flag_score(tmp_path).open()
 
 
 def test_a_query_invalid_several_ways_reports_the_first_ground(
@@ -193,6 +162,10 @@ def test_a_query_invalid_several_ways_reports_the_first_ground(
     query can fail two of those at once, and the resolver walks them in
     that order -- so this pins the walk, not merely each guard (gain#1087,
     where the guards became shared and the interleave did not).
+
+    What each guard SAYS is pinned once, against both surfaces at once, in
+    ``test_score_aggregation``: this surface's wording of the two shared
+    refusals is not restated here, so rewording one is one edit.
     """
     # Unknown score AND a replacement no score could take: the score must
     # exist before there is a value type to judge a replacement against.

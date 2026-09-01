@@ -35,6 +35,14 @@ from ..aggregators import (
     Aggregator,
 )
 
+# How each surface tells a caller to name an aggregator the score has no
+# default for.  Both live HERE, with the rule they are appended to, so the
+# whole sentence a caller sees is written in this module -- a surface
+# selects its remedy, it does not word one.  Fragments: lowercase, no
+# leading punctuation, spliced after the rule's "; ".
+PAIR_AGGREGATOR_REMEDY = "name one explicitly as (score_id, aggregator)"
+QUERY_AGGREGATOR_REMEDY = "name one on the query"
+
 
 def resolve_aggregator_requests(
     scores: list[str | tuple[str, str]] | None,
@@ -64,10 +72,11 @@ def resolve_aggregator_requests(
             score_id,
             score_definitions=score_definitions,
             resource_id=resource_id)
-        requests.append((score_id, resolve_aggregator_name(
-            score_id, aggregator, score_def,
+        resolved = resolve_aggregator_name(
+            aggregator, score_def,
             resource_id=resource_id,
-            remedy="name one explicitly as (score_id, aggregator)")))
+            remedy=PAIR_AGGREGATOR_REMEDY)
+        requests.append((score_id, resolved))
     return requests
 
 
@@ -97,7 +106,6 @@ def score_def_for(
 
 
 def resolve_aggregator_name(
-    score_id: str,
     aggregator: str | None,
     score_def: GenomicScoreDef,
     *,
@@ -112,9 +120,15 @@ def resolve_aggregator_name(
     two surfaces take an aggregator in different places -- a
     ``(score_id, aggregator)`` pair for
     :func:`resolve_aggregator_requests`, a field on the query for
-    :meth:`~.position.PositionScore.get_scores_in_region_agg`.  Everything
-    ahead of it is shared, and pinned so by
+    :meth:`~.position.PositionScore.get_scores_in_region_agg`.  Pass one of
+    :data:`PAIR_AGGREGATOR_REMEDY` / :data:`QUERY_AGGREGATOR_REMEDY`, which
+    is why they live here and not at the call sites.  Everything ahead of
+    the remedy is shared, and pinned so by
     ``test_both_surfaces_state_the_missing_default_rule_identically``.
+
+    The score is named by ``score_def`` rather than beside it:
+    ``score_definitions`` is keyed by ``score_id`` at every construction
+    path, so a separate argument would be one the caller could contradict.
     """
     resolved = aggregator or score_def.aggregator
     if resolved is None:
@@ -123,7 +137,7 @@ def resolve_aggregator_name(
         # has no meaningful reduction to pick for the caller.  Name one
         # and it works.
         raise ValueError(
-            f"score {score_id!r} of resource {resource_id!r} "
+            f"score {score_def.score_id!r} of resource {resource_id!r} "
             f"has no default aggregator for value type "
             f"{score_def.value_type!r}; {remedy}")
     return resolved
@@ -132,34 +146,38 @@ def resolve_aggregator_name(
 def distinct_score_ids(score_ids: Iterable[str]) -> list[str]:
     """The DISTINCT ids among ``score_ids``, in the order asked for.
 
-    One fetch serves every request, so the same list must both name what
-    is fetched and index the values that come back.  Every caller derives
-    it HERE rather than each spelling it out: a second spelling that
-    ordered the scores differently would have every aggregator quietly
-    reading its neighbour's column.
+    One fetch serves every aggregation request, so the same list must both
+    name what is fetched and index the values that come back -- which is
+    why the ORDER is part of the answer, and why every aggregating read in
+    this package derives it here.  A second spelling that ordered the
+    scores differently would not fail; it would have every aggregator
+    quietly reading its neighbour's column.
 
     Takes the ids rather than the requests they came off, because a
     request is shaped differently on each surface -- a pair here, a
     :class:`~gain.genomic_resources.aggregators.PositionScoreAggregationQuery`
     resolved to a triple on the position score's plane -- and none of that
     is what the derivation is about.  Each surface projects its own shape
-    to ids and asks here; for the request list that projection is
-    :func:`request_score_ids`, so its two callers cannot come to disagree
-    about it either.
+    at its call site; the request list gets a named projection,
+    :func:`request_score_ids`, because it is the one shape TWO readers
+    project.
+
+    Note this is the aggregating reads' derivation, not a package-wide
+    one: ``score_annotator`` dedupes its attribute sources with its own
+    ``dict.fromkeys`` over a different input, and converging that is
+    gain#1111.
     """
     return list(dict.fromkeys(score_ids))
 
 
 def request_score_ids(requests: list[tuple[str, str]]) -> list[str]:
-    """The DISTINCT scores ``requests`` needs, in the order asked for.
+    """:func:`distinct_score_ids` of a request list's scores.
 
-    :func:`distinct_score_ids` for a request list, and the one place that
-    list is projected to ids.  Two callers need it and need the SAME
-    answer: :meth:`~.base.GenomicScore.aggregate_region` names the scores
-    to fetch with it, and :func:`fold_region_segments` indexes the fetched
-    values with it.  Spelled out at each of them instead, the two would
-    agree only by looking alike -- and a divergence would not fail, it
-    would have every aggregator quietly reading its neighbour's column.
+    Named because TWO readers project this one list and must project it
+    identically: :meth:`~.base.GenomicScore.aggregate_region` names the
+    scores to fetch with it, and :func:`fold_region_segments` indexes the
+    fetched values with it.  The position score's plane projects its own
+    shape inline instead -- one reader, nothing to agree with.
     """
     return distinct_score_ids(score_id for score_id, _ in requests)
 
@@ -219,8 +237,7 @@ def fold_region_segments(
     """
     column_of = {
         score_id: i
-        for i, score_id in enumerate(
-            request_score_ids(requests))
+        for i, score_id in enumerate(request_score_ids(requests))
     }
     targets = [
         (aggregator, column_of[score_id])
