@@ -39,7 +39,13 @@ from ..aggregators import (
     Aggregator,
     PositionScoreAggregationQuery,
 )
-from .aggregation import build_region_aggregator
+from .aggregation import (
+    QUERY_AGGREGATOR_REMEDY,
+    build_region_aggregator,
+    distinct_score_ids,
+    resolve_aggregator_name,
+    score_def_for,
+)
 from .base import GenomicScore
 from .records import (
     RecordArrays,
@@ -149,11 +155,13 @@ class PositionScore(GenomicScore):
         of times.
 
         Written as the ADR 0008 idiom -- compose the region transducer over
-        the unclipped stream.  :meth:`fetch_region_weighted_values` reaches
-        the same weights for the annotators by clipping inline instead;
-        converging the two is gain#1027's remaining work, so this is the
-        only statement of the rule for AGGREGATION, not the only one in the
-        class.
+        the unclipped stream.  Every SEGMENT-shaped read of this kind states
+        the rule here and only here: :meth:`aggregate_region` folds this
+        stream and :meth:`fetch_region_weighted_values` weighs it, so the
+        annotators' read and the aggregating one cannot come to differ about
+        which part of a record the query asked for (gain#1087).  The logical
+        plane's :meth:`_position_runs` clips for itself still, because it is
+        not reducing records but tiling positions -- gain#1027 carries that.
         """
         return clip_to_region(
             super()._aggregation_segments(chrom, pos_begin, pos_end, scores),
@@ -250,18 +258,21 @@ class PositionScore(GenomicScore):
 
         The weight of a position-score record is the number of base pairs
         of the queried region it covers -- how many times its value counts
-        when the region is aggregated.  It is derived here, from the
-        record's span clipped to the window, so that a caller aggregating
-        a region never clips a record nor materialises one copy of a value
-        per base pair.
+        when the region is aggregated.  It is derived here so that a caller
+        aggregating a region never clips a record nor materialises one copy
+        of a value per base pair.
+
+        The stream is :meth:`_aggregation_segments`, not
+        :meth:`fetch_region_segments`: this read and
+        :meth:`~.base.GenomicScore.aggregate_region` must agree about which
+        part of a record the query asked for, and they agree by reading one
+        statement of it rather than by both being right (gain#1087).  What
+        remains here is the other half -- how many times that part counts --
+        which is :meth:`record_weight`, likewise the kind's own.
         """
-        for left, right, values in self.fetch_region_segments(
+        for left, right, values in self._aggregation_segments(
             chrom, pos_begin, pos_end, scores,
         ):
-            span = clip_span(left, right, pos_begin, pos_end)
-            if span is None:
-                continue
-            left, right = span
             yield (values, self.record_weight(left, right))
 
     def fetch_position_scores(
@@ -428,29 +439,37 @@ class PositionScore(GenomicScore):
 
         The third element is the query's ``none_value_replacement``.
 
-        An ``aggregator`` of ``None`` resolves to the score's own default
-        from its definition; a ``none_value_replacement`` that does not
-        match the score's ``value_type`` is refused, following
-        ``validate_aggregator``'s precedent.
+        A query asks the same two questions a request list does -- which
+        score, and what reduces it -- so they are asked where they are
+        answered for every surface, in :mod:`.aggregation`
+        (:func:`~.aggregation.score_def_for`,
+        :func:`~.aggregation.resolve_aggregator_name`).  Only the remedy of
+        the missing-default refusal is this surface's own, because a caller
+        here names an aggregator on the query rather than in a pair.
+
+        What a query asks BESIDES is the third: a ``none_value_replacement``
+        must be of a type the score can mean, following
+        ``validate_aggregator``'s precedent.  It is judged BETWEEN the other
+        two -- after the score is known, since its value type is what
+        judges the replacement, and before an aggregator is looked for, so
+        that a query wrong in both ways is answered about the value it named
+        rather than the one it left out.  That order is a decision and not
+        an accident of composition; it is pinned by
+        ``test_a_query_invalid_several_ways_reports_the_first_ground``.
         """
         resolved = []
         for query in queries:
-            score_def = self.score_definitions.get(query.score)
-            if score_def is None:
-                raise ValueError(
-                    f"score {query.score!r} is not defined by resource "
-                    f"{self.resource_id!r}; it has "
-                    f"{sorted(self.score_definitions)}")
+            score_def = score_def_for(
+                query.score,
+                score_definitions=self.score_definitions,
+                resource_id=self.resource_id)
             self._validate_none_value_replacement(
                 query.score, score_def.value_type,
                 query.none_value_replacement)
-            aggregator = query.aggregator or score_def.aggregator
-            if aggregator is None:
-                raise ValueError(
-                    f"score {query.score!r} of resource "
-                    f"{self.resource_id!r} has no default aggregator for "
-                    f"value type {score_def.value_type!r}; name one on the "
-                    f"query")
+            aggregator = resolve_aggregator_name(
+                query.aggregator, score_def,
+                resource_id=self.resource_id,
+                remedy=QUERY_AGGREGATOR_REMEDY)
             resolved.append((
                 query.score,
                 build_region_aggregator(
@@ -539,13 +558,18 @@ class PositionScore(GenomicScore):
         One fetch serves every query: each DISTINCT score is fetched once,
         and each query folds the column its score landed in -- so one score
         may be requested twice with different aggregators, exactly as
-        ``aggregate_region`` allows.
+        ``aggregate_region`` allows.  Which scores those are, and in what
+        order, is :func:`~.aggregation.distinct_score_ids`, the same
+        derivation the fold uses: the list both names what is fetched and
+        indexes what comes back, so a second spelling of it that ordered
+        the scores differently would have every aggregator quietly reading
+        its neighbour's column.
         """
         resolved = self._resolve_aggregation_queries(queries)
         score_ids = [
             score_def.score_id
             for score_def in self._region_read_defs(
-                chrom, list(dict.fromkeys(sid for sid, _, _ in resolved)))
+                chrom, distinct_score_ids(sid for sid, _, _ in resolved))
         ]
         column_of = {sid: i for i, sid in enumerate(score_ids)}
         targets = [

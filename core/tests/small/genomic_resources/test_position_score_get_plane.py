@@ -24,6 +24,8 @@ from gain.genomic_resources.testing.builders import (
     a_position_score,
 )
 
+from tests.small.genomic_resources.conftest import a_flag_score
+
 # Two records with a two-position hole between them: positions 10-13 carry
 # 0.2, 14-15 nothing, 16 carries 0.8.
 _GAPPED = """
@@ -143,6 +145,47 @@ def test_a_replacement_of_the_wrong_type_is_refused(
         with pytest.raises(ValueError, match="does not match"):
             gapped.get_score_in_region_agg(
                 "1", 10, 16, none_value_replacement=True)
+
+
+@pytest.fixture
+def flagged(tmp_path: pathlib.Path) -> PositionScore:
+    return a_flag_score(tmp_path).open()
+
+
+def test_a_query_invalid_several_ways_reports_the_first_ground(
+    gapped: PositionScore, flagged: PositionScore,
+) -> None:
+    """Which refusal wins is a decision, so it is pinned rather than left.
+
+    The order is: the score must exist, then its replacement must be of a
+    type the score can mean, then an aggregator must be resolvable.  A
+    query can fail two of those at once, and the resolver walks them in
+    that order -- so this pins the walk, not merely each guard (gain#1087,
+    where the guards became shared and the interleave did not).
+
+    What each guard SAYS is pinned once, against both surfaces at once, in
+    ``test_score_aggregation``: this surface's wording of the two shared
+    refusals is not restated here, so rewording one is one edit.
+    """
+    # Unknown score AND a replacement no score could take: the score must
+    # exist before there is a value type to judge a replacement against.
+    with gapped, pytest.raises(ValueError) as unknown:
+        gapped.get_scores_in_region_agg(
+            "1", 10, 16, [
+                PositionScoreAggregationQuery(
+                    "nope", none_value_replacement="zero"),
+            ])
+    assert "is not defined by resource" in str(unknown.value)
+
+    # Bad replacement AND no resolvable aggregator: the replacement is
+    # judged first, so `does not match` -- not `no default aggregator`.
+    with flagged, pytest.raises(ValueError) as mismatch:
+        flagged.get_scores_in_region_agg(
+            "1", 10, 10, [
+                PositionScoreAggregationQuery(
+                    "flag", none_value_replacement="zero"),
+            ])
+    assert "does not match its value type" in str(mismatch.value)
 
 
 def test_a_replacement_substitutes_for_covered_but_na_positions(

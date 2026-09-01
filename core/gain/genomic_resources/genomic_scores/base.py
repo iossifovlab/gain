@@ -82,8 +82,8 @@ from gain.genomic_resources.vcf_scores import (
 
 from .aggregation import (
     build_region_aggregator,
-    distinct_score_ids,
     fold_region_segments,
+    request_score_ids,
     resolve_aggregator_requests,
 )
 from .records import (
@@ -1327,7 +1327,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         ]
         return fold_region_segments(
             self._aggregation_segments(
-                chrom, pos_begin, pos_end, distinct_score_ids(requests)),
+                chrom, pos_begin, pos_end, request_score_ids(requests)),
             aggregators,
             requests,
             weigh=self.record_weight,
@@ -1340,7 +1340,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         pos_end: int | None = None,
         scores: list[str] | None = None,
     ) -> Iterator[tuple[int, int, list[ScoreValue]]]:
-        """The segment stream :meth:`aggregate_region` folds.
+        """The segment stream this kind's aggregating reads consume.
 
         The records as this kind means them, which for everything but a
         position score is :meth:`fetch_region_segments` unchanged: a kind
@@ -1354,12 +1354,15 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         to carry a flag saying which kind it is serving, and that flag
         would be a second statement of the weight rule.
 
-        Underscored, alone among the per-kind hooks, because it is the only
-        one that is not also part of the read API: the others answer a
-        caller (``fetch_region_segments`` IS
+        Underscored, alone among the per-kind hooks, by a criterion rather
+        than by a list of callers: the others are part of the read API and
+        are asked for by name (``fetch_region_segments`` IS
         :meth:`region_values_from_records`; the scan calls
         :meth:`validate_records` and :meth:`record_weight` by name), while
-        this one is reached only from :meth:`aggregate_region` in this
-        class.  A kind overrides it; nothing else calls it.
+        this one is never a caller's question -- it is composed, from
+        inside this hierarchy, by whichever reads aggregate.  A kind
+        overrides it; nothing outside the hierarchy calls it.  Stated as
+        the criterion because the census of those reads is not stable: it
+        was one until gain#1087 gave the annotators' read the same stream.
         """
         return self.fetch_region_segments(chrom, pos_begin, pos_end, scores)

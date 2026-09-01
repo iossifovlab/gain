@@ -19,6 +19,7 @@ from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
     FsspecRepositoryProtocol,
 )
+from gain.genomic_resources.genomic_scores import PositionScore
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
@@ -599,6 +600,32 @@ def a_resource_whose_meta_is(
         .build_repo(tmp_path)
         .get_resource("scores/broken")
     )
+
+
+def a_flag_score(tmp_path: pathlib.Path) -> PositionScore:
+    """A one-record ``bool`` position score, unopened.
+
+    ``bool`` is the one value type whose class default aggregator is
+    deliberately ``None``: there is no reduction to pick on the caller's
+    behalf, so a request naming ``flag`` and no aggregator is refusable on
+    that ground alone -- and can be made invalid on two grounds at once.
+
+    Shared by the files that cover that refusal (gain#1087) -- the request
+    list's surface and the position score's query surface.  One resource
+    and not one per file, because what those tests assert is that the two
+    surfaces word the refusal identically, and a copy of the resource that
+    drifted would have them comparing messages about two different scores
+    and agreeing for the wrong reason.
+    """
+    repo = a_grr().with_resource("flags", (
+        a_position_score()
+        .with_score("flag", "bool")
+        .with_data("""
+            chrom  pos_begin  pos_end  flag
+            1      10         10       True
+        """)
+    )).build_repo(tmp_path)
+    return PositionScore(repo.get_resource("flags"))
 
 
 def index_row(resource: GenomicResource) -> dict[str, str]:
