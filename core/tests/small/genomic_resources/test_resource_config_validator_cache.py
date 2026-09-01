@@ -11,14 +11,21 @@ normalized document is read off the instance right afterwards), so one
 instance shared between threads can hand a caller another caller's config.
 The pipeline-load path is genuinely concurrent.  These tests pin both halves:
 the validator is reused, and it is never reused *across threads*.
+
+The normalized document is memoized as well (gain#1059), which is the last
+section here.  Its hazards are different ones -- a document is per config,
+not per type, and its caller mutates it -- so those tests say so where they
+start rather than being mixed in above.
 """
 from __future__ import annotations
 
 import copy
+import gc
 import logging
 import pathlib
 import threading
-from collections.abc import Generator
+import weakref
+from collections.abc import Callable, Generator
 from typing import Any, cast
 
 import pytest
@@ -42,7 +49,11 @@ from gain.genomic_resources.resource_implementation import (
     CONFIG_VALIDATOR_CACHE,
     ResourceConfigValidationMixin,
 )
-from gain.genomic_resources.testing.builders import a_position_score
+from gain.genomic_resources.testing.builders import (
+    PositionScoreBuilder,
+    a_grr,
+    a_position_score,
+)
 
 from .conftest import RunInThreads
 
@@ -54,28 +65,40 @@ WORKERS = 2
 def _forget_cached_validators() -> Generator[None, None, None]:
     """Leave no validator of this module's behind for the next test.
 
-    Every test here either patches the module-level ``Validator`` or defines
-    its own implementation type, and the cache is process-wide and never
-    invalidated -- so without this, a validator built while ``Validator`` was
-    patched would outlive the patch and answer for a later test, with
+    The cache is process-wide and never invalidated, so without this a
+    validator built by one of the tests that patch the module-level
+    ``Validator`` would outlive the patch and answer for a later test, with
     whatever barrier or spy it closed over still armed.  Verified to poison
     a later validation.
+
+    It clears in teardown only, which leaves the reverse exposure open: a
+    test that patches ``Validator`` and then counts is not told about a
+    validator cached before it started.  That is why the counting tests use
+    ``_a_one_off_implementation()`` rather than a real one -- a type nothing
+    has seen cannot have a validator already.
     """
     yield
     CONFIG_VALIDATOR_CACHE.clear()
 
 
-def _a_one_off_implementation() -> type[ResourceConfigValidationMixin]:
+def _a_one_off_implementation(
+    schema: dict[str, Any] | None = None,
+) -> type[ResourceConfigValidationMixin]:
     """Return an implementation type nothing has cached yet.
 
     A class made here is new every call, so a test using one starts from a
     cold cache whatever ran before it -- which is what makes counting
-    ``Validator`` constructions meaningful.
+    ``Validator`` constructions, and now ``validate()`` calls, meaningful.
+
+    ``schema`` is for the tests that need two types to disagree about one
+    config; it defaults to the single string field the rest of them use.
     """
+    accepted = {"id": {"type": "string"}} if schema is None else schema
+
     class OneOffImplementation(ResourceConfigValidationMixin):
         @staticmethod
         def get_schema() -> dict[str, Any]:
-            return {"id": {"type": "string"}}
+            return accepted
 
     return OneOffImplementation
 
@@ -89,16 +112,14 @@ def _spy_on_validator_construction(
         wraps=resource_implementation.Validator)
 
 
-@pytest.fixture(scope="module")
-def any_resource(
-    tmp_path_factory: pytest.TempPathFactory,
-) -> GenomicResource:
-    """Return a resource to name in a validation error message.
+def _a_score() -> PositionScoreBuilder:
+    """Return the builder every resource in this module is built from.
 
-    ``validate_and_normalize_schema`` reads the resource only to report
-    which one failed, so one real resource serves every test here.
+    Authored once: the data block is what derives the tabix index columns
+    and the ``scores:`` block, so four copies of it are four chances for the
+    tests to stop describing the same resource while all still passing.
+    Builders are frozen, so a caller specialises with a further ``with_*``.
     """
-    tmp_path: pathlib.Path = tmp_path_factory.mktemp("validator_cache")
     return (
         a_position_score()
         .with_score("phastCons", "float")
@@ -108,8 +129,21 @@ def any_resource(
             1      10         0.1
             """,
         )
-        .build_resource(tmp_path)
     )
+
+
+@pytest.fixture(scope="module")
+def any_resource(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> GenomicResource:
+    """Return one real resource for the tests that need any.
+
+    It used to serve only to name a resource in a validation error message.
+    Since gain#1059 it is also the memo KEY, so the tests below share a memo
+    through it -- which the autouse fixture above empties between them.
+    """
+    tmp_path: pathlib.Path = tmp_path_factory.mktemp("validator_cache")
+    return _a_score().build_resource(tmp_path)
 
 
 def test_repeated_validation_of_one_type_builds_one_validator(
@@ -469,3 +503,335 @@ def test_using_a_cached_schema_does_not_change_it(
 
     assert CONFIG_VALIDATOR_CACHE.schema_for(PositionScore) == freshly_built
     assert _build_aggregator_schema() == AGGREGATOR_SCHEMA
+
+
+# The normalized *document* memo (gain#1059).  Everything above is about the
+# schema and the validator, neither of which depends on the config.  The
+# normalize-and-validate pass does, and it was the remaining 85% of a
+# statistics task that reads nothing -- so its result is memoized too, keyed
+# by the config object a resource was constructed from.
+
+
+def _count_validations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Callable[[], int]:
+    """Return a counter of cerberus ``validate()`` calls made by the mixin.
+
+    Counts the normalize-and-validate pass itself rather than ``Validator``
+    constructions, which the validator cache already suppresses -- a memo
+    that skipped the pass and one that did not are indistinguishable by the
+    construction spy the tests above use.
+    """
+    validations = 0
+
+    class Counting(resource_implementation.Validator):  # type: ignore[misc,valid-type]
+        def validate(self, *args: Any, **kwargs: Any) -> bool:
+            nonlocal validations
+            validations += 1
+            return cast("bool", super().validate(*args, **kwargs))
+
+    monkeypatch.setattr(resource_implementation, "Validator", Counting)
+    return lambda: validations
+
+
+def test_revalidating_one_config_object_runs_cerberus_once(
+    monkeypatch: pytest.MonkeyPatch,
+    any_resource: GenomicResource,
+) -> None:
+    implementation = _a_one_off_implementation()
+    validations = _count_validations(monkeypatch)
+    config = {"id": "memoized"}
+
+    first = implementation.validate_and_normalize_schema(config, any_resource)
+    second = implementation.validate_and_normalize_schema(config, any_resource)
+
+    assert first == {"id": "memoized"}
+    assert second == {"id": "memoized"}
+    assert validations() == 1
+
+
+@pytest.fixture
+def a_shared_resource(tmp_path: pathlib.Path) -> GenomicResource:
+    """Return a position score to construct repeatedly, per test.
+
+    Function-scoped, unlike ``any_resource``: these tests turn on which
+    construction of one resource filled the memo, so they start from a
+    resource nothing has normalized yet.
+    """
+    return _a_score().build_resource(tmp_path)
+
+
+def test_a_score_config_mutation_does_not_reach_the_next_score(
+    a_shared_resource: GenomicResource,
+) -> None:
+    """A construction that FILLED the memo may edit what it was given.
+
+    ``GenomicScore.__init__`` writes into the document it is handed
+    (``config["id"] = resource_id``) and then keeps it for the object's
+    lifetime, so a memo that stored the object it handed its first caller
+    would be edited by that caller and would answer with the edit ever after.
+    """
+    first = PositionScore(a_shared_resource)
+
+    first.config["scores"][0]["id"] = "clobbered"
+    second = PositionScore(a_shared_resource)
+
+    assert second.config is not first.config
+    assert second.config["scores"][0]["id"] == "phastCons"
+    assert second.config["id"] == a_shared_resource.resource_id
+
+
+def test_the_construction_that_fills_the_memo_is_detached_too(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The FIRST caller's document is its own as well, and cerberus's is not.
+
+    ``validate()`` copies the config shallowly and rebuilds only the mappings
+    its schema describes, so a field the schema does not reach into --
+    ``meta.labels`` here, ``default_annotation`` in a deployed resource --
+    comes back as the very object in the resource's config.  Handing that
+    straight to the caller that missed the memo, and a detached copy to every
+    caller that hits it, would make "whose dict is this" depend on cache
+    state; worse, the edit below would reach ``resource.config`` while the
+    memo went on answering with the snapshot taken before it.
+    """
+    resource = (
+        _a_score()
+        .with_labels(reference_genome="hg38")
+        .build_resource(tmp_path)
+    )
+
+    # The first construction of this resource: nothing is memoized yet.
+    score = PositionScore(resource)
+    score.config["meta"]["labels"]["reference_genome"] = "clobbered"
+
+    labels = resource.get_config()["meta"]["labels"]
+    assert labels["reference_genome"] == "hg38"
+
+
+def test_a_memo_hit_may_be_edited_without_reaching_the_next_score(
+    a_shared_resource: GenomicResource,
+) -> None:
+    """And so may a construction that was ANSWERED by the memo.
+
+    The sibling test above only reaches the document cerberus built, which
+    is nobody else's whatever the memo does with it -- so on its own it says
+    nothing about how deeply the memo copies on the way *out*.  This one
+    edits a document the memo handed over, and asks a third construction:
+    a shallow copy shares every nested dict, so the edit below would arrive
+    through ``scores`` and stay there for the life of the entry.
+    """
+    PositionScore(a_shared_resource)
+    from_the_memo = PositionScore(a_shared_resource)
+
+    from_the_memo.config["scores"][0]["id"] = "clobbered"
+    later = PositionScore(a_shared_resource)
+
+    assert later.config["scores"][0]["id"] == "phastCons"
+    assert later.config["table"] is not from_the_memo.config["table"]
+
+
+def test_two_resources_with_equal_configs_do_not_evict_each_other(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The resource is in the key so that a repository does not thrash.
+
+    Two resources of one type with byte-identical configs is the ordinary
+    case in a GRR, and a scan alternates between resources.  Keyed by type
+    alone the memo would hold one slot per type and every alternation would
+    miss, which is why the entry hangs off the resource -- and, since the
+    keys are weak, why it also lets go.
+
+    What the key does NOT have to buy is each resource's own
+    ``config["id"]``: ``GenomicScore.__init__`` writes that on its own copy
+    and after normalization, so no keying scheme could get it wrong.  The
+    two resources here are built with equal configs anyway, because that is
+    the case a content-keyed memo would merge and this one must not.
+
+    A one-off implementation rather than ``PositionScore``, so that the
+    validator counted below is built after ``Validator`` is patched -- with
+    a real type the count would sit at zero whether the memo hit or missed.
+    """
+    repo = (
+        a_grr()
+        .with_resource("alpha", _a_score())
+        .with_resource("beta", _a_score())
+        .build_repo(tmp_path)
+    )
+    alpha = repo.get_resource("alpha")
+    beta = repo.get_resource("beta")
+    assert alpha.get_config() == beta.get_config()
+    implementation = _a_one_off_implementation(PositionScore.get_schema())
+    validations = _count_validations(monkeypatch)
+
+    for resource in (alpha, beta, alpha, beta):
+        implementation.validate_and_normalize_schema(
+            resource.get_config(), resource)
+
+    # Two, not four: the second pass over each resource is answered from the
+    # entry the first pass left, which the other resource has not displaced.
+    assert validations() == 2
+    assert PositionScore(alpha).config["id"] == "alpha"
+    assert PositionScore(beta).config["id"] == "beta"
+
+
+def test_a_second_config_for_one_resource_is_normalized_on_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+    any_resource: GenomicResource,
+) -> None:
+    """A resource does not stand for one config, so the memo cannot.
+
+    ``validate_and_normalize_schema`` takes the config as an argument rather
+    than reading it off the resource, and callers do pass something other
+    than ``resource.config`` -- the corpus tests above normalize a dozen
+    configs against one resource.  A memo keyed on the resource alone would
+    answer the second call with the first call's document; the memo hits
+    only on the config *object* it was filled from.
+    """
+    implementation = _a_one_off_implementation()
+    validations = _count_validations(monkeypatch)
+
+    first = implementation.validate_and_normalize_schema(
+        {"id": "first"}, any_resource)
+    second = implementation.validate_and_normalize_schema(
+        {"id": "second"}, any_resource)
+
+    assert first == {"id": "first"}
+    assert second == {"id": "second"}
+    assert validations() == 2
+
+
+def test_an_invalid_config_is_refused_every_time_it_is_offered(
+    monkeypatch: pytest.MonkeyPatch,
+    any_resource: GenomicResource,
+) -> None:
+    """A failed validation leaves nothing behind to hit on.
+
+    The memo is filled after the raise, not before it, so the second offer
+    of a rejected config is validated afresh and rejected afresh -- rather
+    than being answered from a half-filled entry, or worse, accepted.
+    """
+    implementation = _a_one_off_implementation()
+    validations = _count_validations(monkeypatch)
+    config = {"id": 5}
+
+    for _ in range(2):
+        with pytest.raises(ValueError, match="Invalid configuration"):
+            implementation.validate_and_normalize_schema(config, any_resource)
+
+    assert validations() == 2
+
+
+def test_one_config_object_is_normalized_once_per_implementation(
+    monkeypatch: pytest.MonkeyPatch,
+    any_resource: GenomicResource,
+) -> None:
+    """The implementation type is part of the key, not just the config.
+
+    The same document means different things to different schemas -- here
+    one a permissive schema accepts and a stricter one refuses -- so a memo
+    that forgot the type would hand the second type the first's answer and
+    turn a refusal into an acceptance.
+
+    Both types are made here rather than reaching for ``AlleleScore`` and
+    ``PositionScore``: a real type's validator may already be cached from an
+    earlier test, built before ``_count_validations`` patched ``Validator``,
+    and the count would then come up short depending on what ran first.
+    """
+    permissive = _a_one_off_implementation({
+        "id": {"type": "string"}, "mode": {"type": "string"},
+    })
+    strict = _a_one_off_implementation({"id": {"type": "string"}})
+    validations = _count_validations(monkeypatch)
+    config = {"id": "shared", "mode": "alleles"}
+
+    normalized = permissive.validate_and_normalize_schema(
+        config, any_resource)
+    with pytest.raises(ValueError, match="Invalid configuration"):
+        strict.validate_and_normalize_schema(config, any_resource)
+
+    assert normalized == {"id": "shared", "mode": "alleles"}
+    assert validations() == 2
+
+
+def test_clearing_the_cache_forgets_memoized_documents(
+    monkeypatch: pytest.MonkeyPatch,
+    any_resource: GenomicResource,
+) -> None:
+    """``clear()`` forgets documents for the reason it forgets validators.
+
+    A document normalized by a schema built while ``Validator`` was patched
+    would otherwise outlive the patch and be handed to a later test, which
+    is exactly the poisoning the autouse fixture above exists to prevent.
+    """
+    implementation = _a_one_off_implementation()
+    config = {"id": "memoized"}
+    implementation.validate_and_normalize_schema(config, any_resource)
+    validations = _count_validations(monkeypatch)
+
+    CONFIG_VALIDATOR_CACHE.clear()
+    normalized = implementation.validate_and_normalize_schema(
+        config, any_resource)
+
+    assert normalized == {"id": "memoized"}
+    assert validations() == 1
+
+
+def test_a_memoized_document_does_not_keep_its_resource_alive(
+    any_resource: GenomicResource,
+) -> None:
+    """The memo outlives nothing.
+
+    A GRR walk constructs an implementation per resource, so an entry that
+    held its resource strongly would hold every resource of a repository for
+    the life of the process.  The keys are weak, as the type keys beside them
+    already are.
+
+    The resource is built here rather than taken from a repository on
+    purpose: a repository caches the resources it hands out, so one obtained
+    through it is alive whatever the memo does, and the assertion below would
+    pass for the wrong reason.  Only the protocol is borrowed.
+    """
+    implementation = _a_one_off_implementation()
+
+    def normalize_a_throwaway_resource() -> weakref.ref[GenomicResource]:
+        resource = GenomicResource(
+            "throwaway", (0,), any_resource.proto, {"id": "x"})
+        implementation.validate_and_normalize_schema(
+            resource.get_config(), resource)
+        return weakref.ref(resource)
+
+    reference = normalize_a_throwaway_resource()
+    gc.collect()
+
+    assert reference() is None
+
+
+def test_two_threads_hitting_one_memo_each_get_their_own_document(
+    run_in_threads: RunInThreads,
+    any_resource: GenomicResource,
+) -> None:
+    """One memo entry, two callers, two documents.
+
+    This is the hazard that forced the *validator* to be per-thread, asked
+    of the memo -- which answers it differently: the entry is shared between
+    threads and needs no lock, because what leaves it is always a copy.  A
+    memo that returned its own document would hand both threads one object,
+    and whichever wrote ``config["id"]`` last would win.
+    """
+    implementation = _a_one_off_implementation()
+    config = {"id": "shared"}
+    # Warm on this thread, so both workers certainly hit the entry rather
+    # than possibly racing to fill it separately.
+    implementation.validate_and_normalize_schema(config, any_resource)
+
+    def normalize() -> dict:
+        return implementation.validate_and_normalize_schema(
+            config, any_resource)
+
+    results, errors = run_in_threads(normalize, threads_count=WORKERS)
+
+    assert not errors
+    assert results == [{"id": "shared"}, {"id": "shared"}]
+    assert results[0] is not results[1]

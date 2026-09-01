@@ -26,8 +26,9 @@ imply `hash(a) == hash(b)`; without it no hash container is correct. This is the
 stricter of the two failures: unequal objects sharing a hash is a permitted
 collision, but equal objects with different hashes is undefined behaviour.
 
-Both were latent. No `GenomicResource` is a dict key or set member anywhere in
-`gain` or `gpf` — every resource container is keyed by string. The one
+Both were latent. No `GenomicResource` was a dict key or set member anywhere in
+`gain` or `gpf` — every resource container was keyed by string. (One is, since
+gain#1059; see the amendment under Consequences.) The one
 transitive consumer is `AnnotatorInfo`, which compares its `resources`
 element-wise and folds `hash(res)` into its own hash, and which *is* a dict key
 and set member throughout the reannotation pipeline. There the symptom is a
@@ -85,6 +86,30 @@ explicit manifest comparison — `Manifest.__eq__` already exists and is what
 The hash is coarser: every version of a resource id now hashes alike regardless
 of where it came from. Nothing keys a hot container on resources, so this costs
 nothing measurable today.
+
+**Amended in gain#1059: something does now.** `_ConfigValidatorCache._documents`
+in `resource_implementation.py` is a `WeakKeyDictionary` keyed on
+`GenomicResource`, and it sits on the construction path of every score, gene
+score and gene models object — the first and, at the time of writing, only
+resource-keyed container in either repository. Two things above are therefore no
+longer statements about a latent property:
+
+- The dunders are load-bearing. Editing either one now changes which normalized
+  config a resource is handed, not just how `AnnotatorInfo` folds its hash.
+- The coarse hash costs a measured 0.13 µs per lookup, not nothing. A hit pays
+  exactly one `__eq__`, comparing a config with itself, which short-circuits per
+  value on identity. Resources that share a hash bucket without being equal are
+  separated by the stored hash before `__eq__` is reached, and two *distinct*
+  resources with the same id and version cannot occur in one repository, so the
+  deep config compare the coarse hash makes possible is not reachable.
+
+The accepted cost — two group-repository resources with drifted content
+collapsing to one element — now also means they share one memo entry. Their
+configs are equal by construction there, so the entry is correct for both; and
+because the memo hands out copies and re-checks the config it was filled from, a
+collision costs at most a re-normalization. It remains the thing a later reader
+is most likely to want to undo, and this is now the second place to look when
+they do.
 
 Because neither dunder reads the protocol any more, `__eq__` is the *only* thing
 separating two versions of one resource. The identity tests carry explicit

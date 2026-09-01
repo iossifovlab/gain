@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import copy
 import threading
 import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, NamedTuple, cast
 
 import apsw
 from cerberus import Validator
@@ -466,8 +467,22 @@ class _ThreadValidators(threading.local):
             weakref.WeakKeyDictionary()
 
 
+class _Memo(NamedTuple):
+    """One resource's normalized config, and the config it came from.
+
+    ``config`` is held to be compared by *identity* on the next lookup, not
+    read: it is the object ``document`` was normalized from, so a caller
+    handing over the same object again is asking the same question.  Held
+    strongly, which normally costs nothing -- it is the resource's own
+    config, and one dict is retained per (resource, type) regardless.
+    """
+
+    config: dict
+    document: dict
+
+
 class _ConfigValidatorCache:
-    """The resource-config schemas and validators, kept per type.
+    """The resource-config schemas, validators, and normalized documents.
 
     A resource's schema and the cerberus ``Validator`` compiled from it
     depend on the implementation TYPE, never on the config being validated,
@@ -475,6 +490,29 @@ class _ConfigValidatorCache:
     makes cerberus validate the schema definition itself.  Together that was
     about a third of the cost of validating one resource, paid once per
     resource, and a wildcard pipeline build validates hundreds (gain#905).
+
+    **The normalized document is kept too**, which is what remained after
+    gain#905 and turned out to be the larger half (gain#1059).  It depends
+    on the config and not only on the type, so it is keyed per (resource,
+    type) -- and only a run whose tasks share a process collects on that: a
+    resource that crosses a process boundary is unpickled into a new object,
+    which is a new key and so a fresh normalization.
+
+    That makes this the first store here whose size follows the *repository*
+    rather than the handful of implementation types: one document per live
+    resource something has built an implementation for, each weighing about
+    what that resource's config already weighs (2.06 MiB for the 321
+    resources of grr plus grr_sfari).  The keys are weak, so a resource
+    nothing holds takes its entry with it -- but a protocol holds every
+    resource it has enumerated, so a repo-wide walk retains one document per
+    resource for as long as it runs.
+
+    This is not the convention the four ``get_memo_key()`` memos use
+    (``gene_scores``, ``gene_set``, ``gene_models_factory``,
+    ``liftover_chain``), and deliberately: those memoize an object built
+    *from* a resource, under a strong string key that never evicts, whereas
+    what is memoized here is the normalization of a config passed as an
+    argument -- which callers do supply independently of the resource.
 
     **The validator is deliberately not shared between threads.**  Cerberus
     keeps per-call state on the instance -- ``validate()`` assigns
@@ -514,6 +552,12 @@ class _ConfigValidatorCache:
         self._schemas: weakref.WeakKeyDictionary[type, dict] = \
             weakref.WeakKeyDictionary()
         self._validators = _ThreadValidators()
+        # Weak outer, plain inner, as `_REF_GENOME_CACHE` is: an entry's
+        # implementation type is held only for as long as its resource, so
+        # a type defined inside a test still dies with it.
+        self._documents: weakref.WeakKeyDictionary[
+            GenomicResource, dict[type, _Memo],
+        ] = weakref.WeakKeyDictionary()
 
     def schema_for(self, implementation: type) -> dict:
         """Return ``implementation``'s schema, building it at most once.
@@ -536,8 +580,64 @@ class _ConfigValidatorCache:
             self._validators.by_type[implementation] = validator
         return validator
 
+    def document_for(
+        self, implementation: type, resource: GenomicResource, config: dict,
+    ) -> dict | None:
+        """Return ``config`` normalized before, or ``None`` if it was not.
+
+        A hit requires the *same config object*, not an equal one -- the
+        precondition that goes with which is on
+        ``validate_and_normalize_schema``, where a caller will read it.
+        Keying on the resource alone would be wrong: the same resource is
+        routinely normalized against more than one config, and every caller
+        is entitled to the document for the config it actually passed.
+
+        Switching the guard to ``==`` would not make it notice an edited
+        config, which is the tempting thing to think: an entry holds the
+        caller's config object itself, so equality compares that object with
+        itself and says yes however it has been edited since.
+
+        Keys are compared by value, ``GenomicResource`` having its own
+        ``__eq__``, so a ``CacheResource`` and the resource it mirrors are
+        one key -- and they also share the one config object, so the hit is
+        correct rather than merely harmless.  A hit pays exactly one such
+        ``__eq__``, comparing a config with itself, which short-circuits per
+        value on identity: 0.13 us for the largest config in the GRR.
+        """
+        by_type = self._documents.get(resource)
+        if by_type is None:
+            return None
+        memo = by_type.get(implementation)
+        if memo is None or memo.config is not config:
+            return None
+        return copy.deepcopy(memo.document)
+
+    def remember_document(
+        self, implementation: type, resource: GenomicResource,
+        config: dict, document: dict,
+    ) -> None:
+        """Memoize ``document`` as the normalization of ``config``.
+
+        Stored as a copy, so that an entry is a value rather than a view:
+        cerberus rebuilds only the mappings its schema describes, so
+        ``document`` still holds the resource's own objects for fields like
+        ``meta.labels``.  Callers are handed copies too, so nothing can
+        observe the difference -- the copy buys the invariant, at 1.8% of a
+        cold pass over a whole GRR, paid once per entry.
+
+        As with schemas, two threads may both fill an entry and one overwrite
+        the other; the documents are equal.  No lock, on either path.  A
+        lost or duplicated entry is a miss and never a wrong answer, since a
+        hit is rechecked against the config it was filled from -- which is
+        also what makes the unguarded weakref removals this store provokes
+        (its keys die, unlike the immortal types beside it) harmless on the
+        3.14t lane ``Jenkinsfile.python-matrix`` runs.
+        """
+        by_type = self._documents.setdefault(resource, {})
+        by_type[implementation] = _Memo(config, copy.deepcopy(document))
+
     def clear(self) -> None:
-        """Forget every schema, and this thread's validators.
+        """Forget every schema and document, and this thread's validators.
 
         Exists for tests.  The cache is process-wide and never invalidated,
         which is right for a running gain -- the schema of a type does not
@@ -551,6 +651,7 @@ class _ConfigValidatorCache:
         """
         self._schemas.clear()
         self._validators.by_type.clear()
+        self._documents.clear()
 
 
 #: The process-wide resource-config validator cache.  See the class.
@@ -569,7 +670,26 @@ class ResourceConfigValidationMixin:
     @classmethod
     def validate_and_normalize_schema(
             cls, config: dict, resource: GenomicResource) -> dict:
-        """Validate the resource schema and return the normalized version."""
+        """Validate the resource schema and return the normalized version.
+
+        What comes back is the caller's own document all the way down, memo
+        hit or not, and detached from the config it was normalized from -- so
+        an implementation may keep it and write into it, as
+        ``GenomicScore.__init__`` does.
+
+        **Do not edit a resource's config in place.**  Offering the same
+        config object twice is answered from a memo rather than re-normalized
+        (gain#1059), and an edit made between the two calls is not seen: the
+        second caller gets the document as the config was the first time.
+        Nothing in gain or gpf does this -- the implementations that validate
+        all keep the normalized copy rather than the config -- and code that
+        wants a config re-read should hand over a new dict, which is always
+        normalized afresh.
+        """
+        memoized = CONFIG_VALIDATOR_CACHE.document_for(cls, resource, config)
+        if memoized is not None:
+            return memoized
+
         validator = CONFIG_VALIDATOR_CACHE.validator_for(cls)
         if not validator.validate(config):
             logger.error(
@@ -578,4 +698,15 @@ class ResourceConfigValidationMixin:
                 resource.get_type(),
                 validator.errors)
             raise ValueError(f"Invalid configuration: {resource.resource_id}")
-        return cast(dict, validator.document)
+
+        document = cast("dict", validator.document)
+        CONFIG_VALIDATOR_CACHE.remember_document(
+            cls, resource, config, document)
+        # Copied even here, where the document is cerberus's own and freshly
+        # made.  Cerberus copies the config shallowly and rebuilds only the
+        # mappings its schema describes, so a field with no sub-schema --
+        # `meta.labels`, `default_annotation` -- comes back as the very
+        # object in the resource's config.  Handing that to the caller who
+        # missed, and a detached copy to everyone who hits, would make
+        # "whose dict is this" depend on cache state.
+        return copy.deepcopy(document)
