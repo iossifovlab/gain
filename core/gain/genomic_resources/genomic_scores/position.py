@@ -39,6 +39,7 @@ from ..aggregators import (
     Aggregator,
     PositionScoreAggregationQuery,
 )
+from .aggregation import build_region_aggregator
 from .base import GenomicScore
 from .records import (
     RecordArrays,
@@ -420,7 +421,9 @@ class PositionScore(GenomicScore):
                     f"query")
             resolved.append((
                 query.score,
-                self._build_region_aggregator(query.score, aggregator),
+                build_region_aggregator(
+                    query.score, aggregator,
+                    resource_id=self.resource_id),
                 query.none_value_replacement,
             ))
         return resolved

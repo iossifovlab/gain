@@ -1,18 +1,21 @@
 """The :class:`GenomicScore` base class.
 
 Everything the three score kinds share: config parsing and score-def
-construction, the open/close lifecycle over the position table, the record
-and array reads, and the region aggregation built on top of them. The kinds
-themselves live in :mod:`.position`, :mod:`.allele` and :mod:`.fragment`,
-and the factories that dispatch between them in :mod:`.builders`.
+construction, the open/close lifecycle over the position table, and the
+record and array reads. The kinds themselves live in :mod:`.position`,
+:mod:`.allele` and :mod:`.fragment`, and the factories that dispatch
+between them in :mod:`.builders`.
 
 Decomposing this class -- so that a kind's author reads the handful of hooks
 their kind overrides rather than the whole base -- is gain#1027.  Its first
 extraction (gain#1044) moved the scoredef lifecycle to
 :mod:`~gain.genomic_resources.score_def` and took this module under the
 1500-line cap, so the file-scoped ``too-many-lines`` pragma gain#1007 added
-here when it restored that cap is gone; the remaining seams are #1027's
-other children.
+here when it restored that cap is gone; its second (gain#1074) moved the
+region-aggregation machinery to :mod:`.aggregation`, leaving
+:meth:`GenomicScore.aggregate_region` here as the orchestrator that hands
+it the per-kind weight rule.  The remaining seams are #1027's other
+children.
 """
 
 from __future__ import annotations
@@ -20,7 +23,6 @@ from __future__ import annotations
 import warnings
 from abc import abstractmethod
 from collections.abc import Generator, Iterator
-from itertools import starmap
 from types import TracebackType
 from typing import (
     TYPE_CHECKING,
@@ -78,12 +80,14 @@ from gain.genomic_resources.vcf_scores import (
     parse_vcf_scoredefs,
 )
 
-from ..aggregators import (
-    Aggregator,
+from .aggregation import (
+    build_region_aggregator,
+    distinct_score_ids,
+    fold_region_segments,
+    resolve_aggregator_requests,
 )
 from .records import (
     RecordArrays,
-    clip_span,
     clip_to_region,
 )
 
@@ -1256,87 +1260,36 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         aggregator decides what a null means for it) and the point of this
         method is to give the answer they would.
         """
-        requests = self._resolve_aggregator_requests(scores)
-        aggregators = list(starmap(self._build_region_aggregator, requests))
-        # One fetch serves every request: ask for each DISTINCT score once,
-        # then fan each record out to the requests that want it.  Two
-        # requests for one score share the fetch and keep separate
-        # accumulators.
-        score_ids = list(dict.fromkeys(sid for sid, _ in requests))
-        column_of = {sid: i for i, sid in enumerate(score_ids)}
-        targets = [
-            (aggregator, column_of[score_id])
-            for aggregator, (score_id, _) in zip(
-                aggregators, requests, strict=True)
+        requests = resolve_aggregator_requests(
+            scores,
+            score_definitions=self.score_definitions,
+            all_scores=self.get_all_scores(),
+            resource_id=self.resource_id,
+        )
+        # Built BEFORE the fetch, because the fetch is not lazy: the
+        # not-open and unknown-contig guards of fetch_region_segments run
+        # when it is CALLED, not on the first next().  An aggregator built
+        # afterwards would have a misspelled name reported only for the
+        # regions a resource happens to cover, so `mediann` would be a
+        # missing-contig error until someone queried a covered contig.
+        aggregators = [
+            build_region_aggregator(
+                score_id, aggregator, resource_id=self.resource_id)
+            for score_id, aggregator in requests
         ]
-
-        # Only a span-derived weight reads the window: a kind that counts
-        # a record once counts it wherever the point it collapses to
-        # falls, even outside the window (see
+        # The two arguments the fold applies without deriving, read here
+        # side by side off the ONE per-kind rule: only a span-derived
+        # weight reads the window, because a kind that counts a record
+        # once counts it wherever the point it collapses to falls, even
+        # outside the window (see
         # test_an_allele_point_outside_the_window_still_aggregates_once).
-        clip = self.RECORD_WEIGHT_IS_SPAN
-        for left, right, values in self.fetch_region_segments(
-                chrom, pos_begin, pos_end, score_ids):
-            if clip:
-                span = clip_span(left, right, pos_begin, pos_end)
-                if span is None:
-                    continue
-                left, right = span
-            weight = self._record_weight(left, right)
-            for aggregator, column in targets:
-                aggregator.add(values[column], weight)
-
-        return [aggregator.get_final() for aggregator in aggregators]
-
-    def _resolve_aggregator_requests(
-        self, scores: list[str | tuple[str, str]] | None,
-    ) -> list[tuple[str, str]]:
-        """Normalize the request list to ``(score_id, aggregator)`` pairs."""
-        if scores is None:
-            scores = list(self.get_all_scores())
-
-        requests = []
-        for request in scores:
-            score_id, aggregator = (
-                (request, None) if isinstance(request, str) else request)
-            score_def = self.score_definitions.get(score_id)
-            if score_def is None:
-                raise ValueError(
-                    f"score {score_id!r} is not defined by resource "
-                    f"{self.resource_id!r}; it has "
-                    f"{sorted(self.score_definitions)}")
-            resolved = aggregator or score_def.aggregator
-            if resolved is None:
-                # Every score has a value type, so the only way to get here
-                # is a type whose class default is deliberately None --
-                # ``bool``, which has no meaningful reduction to pick for
-                # the caller.  Name one and it works.
-                raise ValueError(
-                    f"score {score_id!r} of resource {self.resource_id!r} "
-                    f"has no default aggregator for value type "
-                    f"{score_def.value_type!r}; name one explicitly as "
-                    f"(score_id, aggregator)")
-            requests.append((score_id, resolved))
-        return requests
-
-    def _build_region_aggregator(
-        self, score_id: str, aggregator: str,
-    ) -> Aggregator:
-        """Build a FRESH aggregator, naming the resource if it cannot.
-
-        Fresh per call, not reused: an aggregator is a mutable accumulator
-        and explicitly not thread-safe (see :class:`Aggregator`).  Reuse is
-        an annotator optimisation resting on being single-threaded; a score
-        may be read from several threads (the web api's thread pool), so
-        this cannot assume the same.
-
-        ``Aggregator.build`` raises a bare ``KeyError('mediann')`` for an
-        unknown name, saying nothing about which score asked for it.
-        """
-        try:
-            return Aggregator.build(aggregator)
-        except (KeyError, ValueError, TypeError) as err:
-            raise ValueError(
-                f"score {score_id!r} of resource {self.resource_id!r} asks "
-                f"for aggregator {aggregator!r}, which is not valid: "
-                f"{err}") from err
+        return fold_region_segments(
+            self.fetch_region_segments(
+                chrom, pos_begin, pos_end, distinct_score_ids(requests)),
+            aggregators,
+            requests,
+            weigh=self._record_weight,
+            clip=self.RECORD_WEIGHT_IS_SPAN,
+            pos_begin=pos_begin,
+            pos_end=pos_end,
+        )
