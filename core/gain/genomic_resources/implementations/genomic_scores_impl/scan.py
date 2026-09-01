@@ -455,7 +455,7 @@ def do_histogram(
     The per-record histogram pass, and the floor
     :func:`do_histogram_bulk` is required to match to the bit.  Reads
     through :func:`scan_region` and weighs each owned record the way
-    the score's kind weighs it (``RECORD_WEIGHT_IS_SPAN``).
+    the score's kind weighs it (``record_weight``).
 
     ``coverage`` and ``alleles`` ride the same read rather than
     costing the region a second one, and are accumulated IN PLACE --
@@ -479,9 +479,6 @@ def do_histogram(
 
     score_ids = list(result.keys())
     with _score_for(resource, score).open() as opened:
-        # One statement of the rule, read by this path and by the bulk
-        # one: only a position score weighs a record by its span.
-        weight_is_span = opened.RECORD_WEIGHT_IS_SPAN
         # Coverage unions POSITIONS, and a union is only additive
         # across parallel regions when the spans are clipped to
         # disjoint extents -- so a kind whose rows can overlap keeps
@@ -515,7 +512,13 @@ def do_histogram(
                 # A fragment is the row as stored, at its own span.
                 assert coverage is not None
                 coverage.add_fragment(right - left + 1)
-            weight = right - left + 1 if weight_is_span else 1
+            # The kind's ONE statement of the weight rule, called per
+            # record here and broadcast over a whole batch by the bulk
+            # path -- the two cannot drift because there is nothing to
+            # drift from.  Measured at the record's FULL span, never
+            # clipped to the region: see `_select_and_weigh`, which says
+            # why selecting beats clipping here (gain#816).
+            weight = opened.record_weight(left, right)
             for scr_index, scr_id in enumerate(score_ids):
 
                 try:
@@ -751,26 +754,15 @@ def _select_and_weigh(
     against the RAW columns -- which is why no rule is stated here.
 
     The weight is read off the score class, which states it once for this
-    path and for the per-record one: ``RECORD_WEIGHT_IS_SPAN`` -- a
-    position-score record counts once per base pair it spans; an allele
-    record and a fragment count 1, however wide they are.
+    path and for the per-record one: ``record_weight`` -- a position-score
+    record counts once per base pair it spans; an allele record and a
+    fragment count 1, however wide they are.  This path never calls it
+    directly; ``record_weights`` broadcasts it over the owned records'
+    position columns, which is the only weight read this scan makes.
     """
     _chrom, start, end = region
     keep = owned_records_mask(pos_begin, start, end)
-    if not score.RECORD_WEIGHT_IS_SPAN:
-        # A count kind needs only HOW MANY records it owns; gathering
-        # their spans to measure one array's length would allocate
-        # two full columns per batch and read neither.
-        return keep, np.ones(
-            int(np.count_nonzero(keep)), dtype=np.int64)
-    if keep.all():
-        # The common case by a wide margin: rows arrive begin-sorted
-        # and only a leading run can fall outside the region, so
-        # every batch after a region's first is wholly owned.
-        return keep, (pos_end - pos_begin + 1).astype(np.int64)
-    left = pos_begin[keep]
-    right = pos_end[keep]
-    return keep, (right - left + 1).astype(np.int64)
+    return keep, score.record_weights(pos_begin[keep], pos_end[keep])
 
 
 def can_bulk_histogram(
@@ -872,7 +864,7 @@ def bulk_scan_eligible(
     * a resource kind the bulk path is exercised against
       (:data:`_BULK_SCAN_RESOURCE_TYPES`): a position, allele or fragment
       score.  Their record semantics are not assumed here -- the score
-      class states them, in ``RECORD_WEIGHT_IS_SPAN`` and in its own
+      class states them, in ``record_weight`` and in its own
       ``validate_record_arrays`` body.  The set names every score kind
       GAIn accepts, so this test cannot fail today; it is kept so that
       a newly registered kind lands on the per-record path by default;

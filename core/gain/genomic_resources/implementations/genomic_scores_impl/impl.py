@@ -527,7 +527,7 @@ class FragmentScoreImplementation(GenomicScoreImplementation):
     """Assists in the management of a fragment score resource.
 
     Carries no statistics behaviour of its own: a fragment's weight-1 rule
-    is declared on ``FragmentScore`` (``RECORD_WEIGHT_IS_SPAN``) and read by
+    is declared on ``FragmentScore`` (``record_weight``) and read by
     both scan paths from there.
 
     It does carry its own info page, which is the genomic-score page plus

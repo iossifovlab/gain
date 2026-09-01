@@ -450,26 +450,64 @@ def test_dispatch_keeps_an_unbounded_region_off_the_bulk_path(
 
 
 @pytest.mark.parametrize(
-    ("score_class", "weight_is_span", "expected_weight"),
+    ("score_class", "expected_weight"),
     [
-        (PositionScore, True, 10),
-        (AlleleScore, False, 1),
-        (FragmentScore, False, 1),
+        (PositionScore, 10),
+        (AlleleScore, 1),
+        (FragmentScore, 1),
     ],
 )
 def test_the_weight_rule_is_stated_once_per_kind(
     score_class: type[GenomicScore],
-    weight_is_span: bool,
     expected_weight: int,
 ) -> None:
-    # ``RECORD_WEIGHT_IS_SPAN`` (read by the bulk scan, which cannot call a
-    # per-record hook) and ``_record_weight`` (read by ``aggregate_region``)
-    # are two readings of ONE rule.  They must not be able to disagree, so
-    # the hook derives from the flag -- and this pins the derivation in
+    # ``record_weight`` is the kind's ONE statement of how many times a
+    # record's value counts, and every reader goes through it: the
+    # per-record scan calls it, ``aggregate_region`` folds with it, and the
+    # bulk scan broadcasts it over a batch's position columns.  Pinned in
     # numbers rather than in code: a ten-base record weighs its span for a
     # position score and 1 for the other two kinds.
-    assert score_class.RECORD_WEIGHT_IS_SPAN is weight_is_span
-    assert score_class._record_weight(10, 19) == expected_weight
+    assert score_class.record_weight(10, 19) == expected_weight
+
+    # The broadcast must agree with the scalar hook record by record.
+    # That agreement is what the elementwise contract BUYS, and the only
+    # thing standing between an implementation that is not elementwise and
+    # a statistics scan that weighs a batch differently from the
+    # per-record path -- silently, since both would still be internally
+    # consistent.  The three widths deliberately DIFFER, so a position
+    # score's expected column varies and a broadcast that collapsed it to
+    # a single value could not pass.
+    begins = np.array([10, 100, 500], dtype=np.int64)
+    ends = np.array([19, 100, 502], dtype=np.int64)
+
+    assert list(score_class.record_weights(begins, ends)) == [
+        score_class.record_weight(int(begin), int(end))
+        for begin, end in zip(begins, ends, strict=True)
+    ]
+
+
+@pytest.mark.parametrize(
+    "score_class", [PositionScore, AlleleScore, FragmentScore])
+def test_a_batch_is_weighed_as_int64_whatever_the_columns_are(
+    score_class: type[GenomicScore],
+) -> None:
+    # The bulk scan accumulates these weights per batch, so their dtype is
+    # the batch's, not the table's: a narrower position column must not
+    # narrow the counts derived from it.  The two broadcast branches are
+    # pinned by different halves of this test, and deliberately so.  A span
+    # kind's answer INHERITS the columns' dtype, so int32 in is int32 out
+    # and only the widening saves it -- drop it and this goes red for
+    # PositionScore alone (verified).  A count kind's answer is a Python
+    # int whose fill is int64 by inference, so what its half pins is the
+    # SHAPE: that a 0-d constant is broadcast to one weight per record
+    # rather than handed to the scan as a scalar.
+    begins = np.array([10, 100, 500], dtype=np.int32)
+    ends = np.array([19, 100, 502], dtype=np.int32)
+
+    weights = score_class.record_weights(begins, ends)
+
+    assert weights.dtype == np.int64
+    assert weights.shape == begins.shape
 
 
 # --- batch boundaries -------------------------------------------------------

@@ -69,7 +69,7 @@ def test_one_score_may_be_requested_twice_with_different_aggregators(
 
 def test_a_position_score_weights_by_base_pair(wide: PositionScore) -> None:
     # 0.32 is the span-weighted mean; 0.5 would be the unweighted one.  The
-    # difference is the whole point of _record_weight.
+    # difference is the whole point of ``record_weight``.
     with wide:
         assert wide.aggregate_region("1", 10, 14, ["s"]) == [
             pytest.approx(0.32)]
@@ -83,7 +83,7 @@ def test_it_agrees_with_fetch_region_weighted_values(
     """The annotator's path and this one must fold the same pairs.
 
     ``fetch_region_weighted_values`` is what ``PositionScoreAnnotator``
-    aggregates; both now derive the weight from ``_record_weight``, and this
+    aggregates; both now derive the weight from ``record_weight``, and this
     is the test that says so in terms of values rather than of code.
     """
     with wide:
@@ -104,10 +104,11 @@ def test_a_record_the_query_clips_to_nothing_is_not_aggregated(
     """A record with no part inside the window never reaches an aggregator.
 
     ``fetch_region_segments`` deliberately yields an out-of-region record
-    through (gain#553, ADR 0008), at its own extent.  ``aggregate_region``
-    carries its OWN ``clip_span`` -- the agreement test above cannot see a
-    symmetric removal from both it and ``fetch_region_weighted_values``, so
-    each copy gets its own pin.  Without it the dead record's value would
+    through (gain#553, ADR 0008), at its own extent.  The clip that removes
+    it again is ``PositionScore._aggregation_segments``, a SEPARATE
+    statement from the one ``fetch_region_weighted_values`` makes -- the
+    agreement test above cannot see a symmetric removal from both, so each
+    copy gets its own pin.  Without it the dead record's value would
     count -- for a negative number of times, even; ``mean`` catches that,
     and ``max`` -- which registers a value however small its weight --
     catches the zero-overlap record too (gain#639).
@@ -203,7 +204,7 @@ def test_an_allele_score_counts_each_line_once(
     """An allele line counts once, whatever the position span.
 
     The rule ``WeightedValues`` states per type, and the reason
-    ``_record_weight`` is a class hook rather than ``right - left + 1`` in
+    ``record_weight`` is a class hook rather than ``right - left + 1`` in
     the base: two alleles at one position must average as two values.
     """
     res = build_inmemory_test_resource({

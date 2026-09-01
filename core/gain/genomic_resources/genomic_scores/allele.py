@@ -153,12 +153,22 @@ class AlleleScore(GenomicScore):
         "bool": None,
     }
 
-    # Several records share a position -- one per ref/alt pair -- and each
-    # weighs 1.  Structurally so: :meth:`fetch_region_segments` yields
-    # ``(pos, pos, values)``, collapsing the record to a point however wide an
-    # optional ``pos_end`` column reaches, so a span weight would not merely be
-    # a different choice, it would disagree with the per-record read.
-    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
+    @classmethod
+    def record_weight(cls, left: int, right: int) -> int:  # noqa: ARG003
+        """An allele line counts once.
+
+        Several records share a position -- one per ref/alt pair -- and
+        each weighs 1.  Structurally so: :meth:`fetch_region_segments`
+        yields ``(pos, pos, values)``, collapsing the record to a point
+        however wide an optional ``pos_end`` column reaches, so a span
+        weight would not merely be a different choice, it would disagree
+        with the per-record read.
+
+        A constant, which is elementwise: the base's
+        :meth:`~.base.GenomicScore.record_weights` fills it out to a
+        batch's shape.
+        """
+        return 1
 
     class Mode(enum.Enum):
         """Allele score mode."""

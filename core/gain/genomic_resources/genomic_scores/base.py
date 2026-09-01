@@ -221,10 +221,19 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
           which only the statistics scan applies.
         - validate_record_arrays(): the same rule over a batch's columns,
           which only the statistics scan's vectorized path applies.
+        - record_weight(): how many times one record's value counts when a
+          region is aggregated.  Every reader goes through it -- the
+          annotators' ``aggregate_region``, the per-record scan, and the
+          bulk scan via ``record_weights`` (gain#1095).
+        - _aggregation_segments(): whether those records are cut down to
+          the queried window before they are weighed.  Unlike the others
+          this HAS a default -- not clipping -- because it is a
+          consequence of the weight rule rather than a rule of its own: a
+          kind that counts a record once counts it wherever it falls.
 
-        The last two have no default.  A kind that inherited one would be
-        validated by a rule nobody chose for it, which is the failure
-        ADR 0008 exists to undo.
+        All but the last have no default.  A kind that inherited one would
+        be validated, or weighed, by a rule nobody chose for it, which is
+        the failure ADR 0008 exists to undo.
 
     See Also:
         - PositionScore: For position-based genomic scores
@@ -232,16 +241,6 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         - GenomicResource: Base resource abstraction
         - GenomicPositionTable: Table format abstraction
     """
-
-    # How much one of this kind's records counts when a region is aggregated:
-    # the "one record, one count" rule that everything except a position score
-    # follows.  This is also where :meth:`_record_weight` -- the per-record
-    # weight the annotators' aggregation applies -- reads the rule from, so
-    # the two cannot disagree.
-    #
-    # It is a MEASURE, not a rule about what the records may be; the latter is
-    # each kind's own ``validate_records`` / ``validate_record_arrays`` body.
-    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
 
     # How a value is read off a record.  Installed by :meth:`open`, from the
     # table's ``yields_records`` claim, and declared here with NO default on
@@ -752,7 +751,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         is exercised against, and it keeps asking that itself (see
         ``genomic_scores_impl.scan.bulk_scan_eligible``).  What it does
         NOT require is a particular record shape: the accumulator reads the
-        kind's own ``RECORD_WEIGHT_IS_SPAN`` and the scan's door reads the
+        kind's own ``record_weight`` and the scan's door reads the
         kind's own ``validate_record_arrays``, so a position, allele and
         fragment score are all served.
 
@@ -1199,7 +1198,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             chrom, pos_begin, pos_end, scores)
 
     @classmethod
-    def _record_weight(cls, left: int, right: int) -> int:
+    @abstractmethod
+    def record_weight(cls, left: int, right: int) -> int:
         """How many times one record's value counts when aggregating.
 
         The rule is a property of the resource TYPE, and ``WeightedValues``
@@ -1208,25 +1208,64 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         fragment counts once however long it is".  One record, one count,
         is the answer for everything except a position score.
 
-        **It is not stated here.**  This reads
-        :attr:`RECORD_WEIGHT_IS_SPAN`, the kind's single statement of the
-        weight rule, and turns it into the per-record number
-        :meth:`aggregate_region` needs.  The statistics scan cannot call
-        this -- the bulk path weighs a whole batch of records at once, with
-        no record to hand it -- so it reads the flag directly.  Two
-        readings, one rule: a kind that overrode this hook without the flag
-        (or the reverse) would weigh its records one way when annotating and
-        another when computing statistics, silently.  Pinned by
+        **The kind's single statement of that rule**, and every reader goes
+        through it: :meth:`aggregate_region` folds with it, the per-record
+        statistics scan calls it, and the bulk scan broadcasts it over a
+        whole batch through :meth:`record_weights`.  One statement, so a
+        kind cannot weigh its records one way when annotating and another
+        when computing statistics.  Pinned by
         test_the_weight_rule_is_stated_once_per_kind.
 
-        This hook exists at all so :meth:`aggregate_region` can live on the
-        base class and still agree with the annotators, which apply exactly
-        this rule.  Deriving a weight from ``pos_begin``/``pos_end``
-        unconditionally would give a fragment its length as a weight and
-        silently disagree with the fragment score annotator for every
-        fragment longer than one base pair.
+        **An implementation must be numpy-elementwise** -- an arithmetic
+        expression over ``left`` and ``right``, or a constant.  It is
+        declared over scalars because that is what its per-record callers
+        hand it, but :meth:`record_weights` answers a whole batch by
+        handing it the position COLUMNS instead, and only an elementwise
+        body gives the same answers that way.
+
+        Most ways of breaking that break loudly -- a body branching on
+        ``left`` raises ``ValueError`` on an array's ambiguous truth, one
+        calling ``int()`` a ``TypeError``.  The contract is written down
+        for the ones that do not: a body REDUCING its arguments
+        (``int(np.mean(right - left + 1))``) hands back a plain number,
+        which is then broadcast as though it were every record's weight,
+        and the two scan paths disagree with nothing raised.  That is what
+        test_the_weight_rule_is_stated_once_per_kind's broadcast-agreement
+        assertion is there to catch.
+
+        Deriving a weight from the span unconditionally is what this hook
+        exists to prevent: it would give a fragment its length as a weight
+        and disagree with the fragment score annotator for every fragment
+        longer than one base pair.
         """
-        return right - left + 1 if cls.RECORD_WEIGHT_IS_SPAN else 1
+        raise NotImplementedError
+
+    @classmethod
+    def record_weights(
+        cls, begins: np.ndarray, ends: np.ndarray,
+    ) -> np.ndarray:
+        """:meth:`record_weight` over a whole batch's position columns.
+
+        The bulk statistics scan has no record to hand the scalar hook, so
+        it weighs a batch here instead.  This does not restate the rule --
+        it broadcasts the ONE statement of it, which is why the scan may
+        not read the weight anywhere else.
+
+        The widening is the elementwise contract being spent: the hook is
+        declared over scalars and its bodies are arithmetic, so the same
+        expression answers a column.  A kind whose weight is a CONSTANT
+        answers with that constant however it was called, so a 0-d result
+        is filled out to the batch's shape rather than treated as an
+        error.
+        """
+        # One marker for one fact -- the scalar-declared hook is being
+        # called on whole columns, which is the contract its docstring
+        # states and this method exists to spend.
+        weights = np.asarray(
+            cls.record_weight(begins, ends))  # type: ignore[arg-type]
+        if weights.ndim == 0:
+            weights = np.full(begins.shape, weights)
+        return weights.astype(np.int64, copy=False)
 
     def aggregate_region(
         self,
@@ -1286,19 +1325,41 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 score_id, aggregator, resource_id=self.resource_id)
             for score_id, aggregator in requests
         ]
-        # The two arguments the fold applies without deriving, read here
-        # side by side off the ONE per-kind rule: only a span-derived
-        # weight reads the window, because a kind that counts a record
-        # once counts it wherever the point it collapses to falls, even
-        # outside the window (see
-        # test_an_allele_point_outside_the_window_still_aggregates_once).
         return fold_region_segments(
-            self.fetch_region_segments(
+            self._aggregation_segments(
                 chrom, pos_begin, pos_end, distinct_score_ids(requests)),
             aggregators,
             requests,
-            weigh=self._record_weight,
-            clip=self.RECORD_WEIGHT_IS_SPAN,
-            pos_begin=pos_begin,
-            pos_end=pos_end,
+            weigh=self.record_weight,
         )
+
+    def _aggregation_segments(
+        self,
+        chrom: str,
+        pos_begin: int | None = None,
+        pos_end: int | None = None,
+        scores: list[str] | None = None,
+    ) -> Iterator[tuple[int, int, list[ScoreValue]]]:
+        """The segment stream :meth:`aggregate_region` folds.
+
+        The records as this kind means them, which for everything but a
+        position score is :meth:`fetch_region_segments` unchanged: a kind
+        that counts a record ONCE counts it wherever the point it collapses
+        to falls, window or not (see
+        test_an_allele_point_outside_the_window_still_aggregates_once).
+
+        Clipping the records to the window first is a position-score fact,
+        so it is stated on :class:`~.position.PositionScore` and nowhere
+        else.  This hook is what lets it be: without it the fold would have
+        to carry a flag saying which kind it is serving, and that flag
+        would be a second statement of the weight rule.
+
+        Underscored, alone among the per-kind hooks, because it is the only
+        one that is not also part of the read API: the others answer a
+        caller (``fetch_region_segments`` IS
+        :meth:`region_values_from_records`; the scan calls
+        :meth:`validate_records` and :meth:`record_weight` by name), while
+        this one is reached only from :meth:`aggregate_region` in this
+        class.  A kind overrides it; nothing else calls it.
+        """
+        return self.fetch_region_segments(chrom, pos_begin, pos_end, scores)
