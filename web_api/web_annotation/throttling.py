@@ -263,7 +263,7 @@ class ClientIpRateThrottle(SessionScopedUserRateThrottle):
         return self.get_session_or_ip_cache_key(request, view)
 
     def get_ip_cache_key(
-        self, request: Any, view: Any,  # noqa: ARG002
+        self, request: Any, view: Any,  # ruff: ignore[unused-method-argument]
     ) -> str | None:
         key: str = self.cache_format % {
             "scope": self.scope,
@@ -302,7 +302,7 @@ class SubmittedEmailRateThrottle(SimpleRateThrottle):
     identifier_field = "email"
 
     def get_cache_key(
-        self, request: Any, view: Any,  # noqa: ARG002
+        self, request: Any, view: Any,  # ruff: ignore[unused-method-argument]
     ) -> str | None:
         if getattr(settings, "E2E_DISABLE_IDENTIFIER_THROTTLE", False):
             return None

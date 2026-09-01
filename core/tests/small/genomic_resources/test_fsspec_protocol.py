@@ -131,7 +131,7 @@ def test_build_resource_file_state_uses_the_change_token_it_is_given(
     state = proto.build_resource_file_state(
         res, "data.txt", change_token="not-the-stored-token")
 
-    assert state.change_token == "not-the-stored-token"  # noqa: S105
+    assert state.change_token == "not-the-stored-token"  # ruff: ignore[hardcoded-password-string]
 
 
 class _RefusingFilesystem:

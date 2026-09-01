@@ -57,8 +57,8 @@ def report_resource_failure(
             str(err) or type(err).__name__)
         logger.debug(
             "%s <%s> failed", action, resource_id,
-            exc_info=True)  # noqa: LOG014
+            exc_info=True)  # ruff: ignore[exc-info-outside-except-handler]
         return
     logger.error(
         "%s <%s>: unexpected internal error", action, resource_id,
-        exc_info=True)  # noqa: LOG014
+        exc_info=True)  # ruff: ignore[exc-info-outside-except-handler]

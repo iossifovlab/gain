@@ -18,7 +18,7 @@ from gain.genomic_resources.testing.builders import a_grr
 
 # A distinctive constant, asserted absent from every rendering of a url --
 # the assertion style of ``test_http_auth_credential_leak``.
-_SECRET = "s3cr3t-do-not-log"  # noqa: S105
+_SECRET = "s3cr3t-do-not-log"  # ruff: ignore[hardcoded-password-string]
 
 
 @pytest.fixture

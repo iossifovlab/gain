@@ -167,7 +167,7 @@ async def test_loop_lag_monitor_detects_on_loop_block() -> None:
     await asyncio.sleep(0.05)  # let the monitor take clean samples first
 
     block = 1.5
-    time.sleep(block)  # noqa: ASYNC251 -- intentional loop park for the test
+    time.sleep(block)  # ruff: ignore[blocking-sleep-in-async-function] -- intentional loop park for the test
     await asyncio.sleep(0.05)  # let the monitor observe the park
 
     stop.set()

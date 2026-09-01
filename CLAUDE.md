@@ -102,6 +102,27 @@ Config: `ruff.toml` (line-length: 80, target: py312),
 the explicit `--config-file` / `--rcfile`. Ruff needs no
 flag: it searches upward and finds `ruff.toml` on its own.
 
+**Suppress ruff with `# ruff: ignore[rule-name]`, not
+`# noqa`.** Ruff 0.16 deprecated both spellings this repo
+used to rely on — `# noqa: ARG002` comments and rule *codes*
+in `ruff.toml` selectors — and reports them as
+`noqa-comments` / `rule-codes-in-selectors`. The whole tree
+was converted in one pass, so a new `# noqa` is now the odd
+one out and CI will flag it. The rule *name* is what goes in
+the brackets (`unused-method-argument`, not `ARG002`); the
+old code is kept in a trailing comment beside each
+`ruff.toml` entry so grepping this file for a code quoted in
+an old commit or issue still lands on the right row.
+
+Two things to know about the new spelling. Ruff parses the
+literal text `# noqa` wherever it appears in a comment, so
+prose *mentioning* a directive emits an "Invalid `# noqa`
+directive" warning — write "the E402 directive", not the
+directive itself. And ruff's own fixer drops a trailing
+suppression when it reformats the statement under it to
+multiple lines; `web_api/web_annotation/asgi.py` is where
+that bit us.
+
 The cwd matters, and the two tools disagree about why:
 `mypy gain` reads `gain` as a *path*, so it fails from the
 root (`can't read file 'gain'`), while `pylint gain` reads
@@ -612,7 +633,7 @@ import the module, not the package:
 - **pydantic 2.8** — data validation
 - **lark 1.2** — parsing (GRR search grammar)
 - **fsspec / s3fs** — filesystem abstraction + S3 access
-- Dev: **ruff 0.14**, **mypy 1.15**, **pytest**,
+- Dev: **ruff 0.16**, **mypy 1.15**, **pytest**,
   **pytest-xdist**, **pytestarch**
 
 

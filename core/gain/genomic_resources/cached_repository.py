@@ -422,8 +422,12 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
                     self._to_cache_resource(remote_resource)
                     for remote_resource in self.child.get_all_resources()
                 ]
+            # RUF070 reads this local as a pointless hop and its fix folds
+            # the `yield from` up into the `with`. That is the one thing the
+            # comment above forbids: the generator would then hold
+            # `_memo_lock` for as long as the consumer takes to drain it.
             all_resources = self._all_resources
-        yield from all_resources
+        yield from all_resources  # ruff: ignore[unnecessary-assign-before-yield]
 
     def search_resources(
         self,
@@ -591,7 +595,7 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
                 # the GRR definition, not a caller passing the wrong type.
                 # (The rule only became visible here because dedenting this
                 # block moved the isinstance check to the function body.)
-                raise ValueError(  # noqa: TRY004
+                raise ValueError(  # ruff: ignore[type-check-without-type-error]
                     f"caching protocol should be RW;"
                     f"{cached_proto_url} is not RW")
             self.cache_protos[proto_id] = CachingProtocol(proto, cache_proto)
@@ -945,7 +949,7 @@ def _build_cache_worklist(
         for future, filename in future_to_name.items():
             try:
                 verdict = future.result()
-            except Exception as error:  # noqa: BLE001 - report, don't abort
+            except Exception as error:  # ruff: ignore[blind-except] - report, don't abort
                 # A classify failure (e.g. a corrupt .state, or a resource
                 # gone from the remote) must not discard the whole run; it is
                 # collected and surfaced in the end-of-run summary like a
@@ -965,7 +969,7 @@ def _build_cache_worklist(
                 # One concise line per failure; a stack trace per failed file
                 # would swamp a large run (see the gain#43 rationale in the
                 # download loop), so logger.error not logger.exception.
-                logger.error(  # noqa: TRY400
+                logger.error(  # ruff: ignore[error-instead-of-exception]
                     "failed to classify (%s): %s", safe_label, redacted)
                 continue
             if verdict.needs_download:
@@ -1057,8 +1061,8 @@ def cache_resources(
             filename,
             on_bytes=reporter.on_bytes,
         )] = (
-            f"{escape_unsafe_characters(resource.resource_id)}: "
-            f"{escape_unsafe_characters(filename)}", size)
+            (f"{escape_unsafe_characters(resource.resource_id)}: "
+            f"{escape_unsafe_characters(filename)}"), size)
 
     failures: list[str] = list(classify_failures)
     try:
@@ -1066,7 +1070,7 @@ def cache_resources(
             label, size = futures[future]
             try:
                 resource_id, filename = future.result()
-            except Exception as error:  # noqa: BLE001 - report, don't abort
+            except Exception as error:  # ruff: ignore[blind-except] - report, don't abort
                 # A single file failing (e.g. a download that stalled past
                 # its retries) must not discard the progress of every other
                 # file in the run. Collect the failure and keep caching; we

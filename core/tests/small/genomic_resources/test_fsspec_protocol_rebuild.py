@@ -27,7 +27,7 @@ happens under the incumbent's own lock.
 """
 import inspect
 import pathlib
-import pickle  # noqa: S403
+import pickle  # ruff: ignore[suspicious-pickle-import]
 import re
 import threading
 from typing import Any
@@ -273,7 +273,7 @@ def test_a_build_racing_the_very_first_one_waits_and_is_not_refused(
         # pylint: disable=broad-exception-caught
         try:
             protocol = build_fsspec_protocol("rebuild", url)
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:  # ruff: ignore[blind-except]
             errors.append(exc)
         else:
             built[name] = protocol

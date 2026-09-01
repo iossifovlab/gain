@@ -310,7 +310,7 @@ class VEPCacheAnnotator(VEPAnnotatorBase):
 
         <a href="{self.BASE_DOC_URL}#vep-annotators" target="_blank">More info</a>
 
-        """)  # noqa
+        """)  # ruff: ignore[line-too-long]
 
     def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         return {
@@ -421,7 +421,7 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
 
         <a href="{self.BASE_DOC_URL}#vep-annotators" target="_blank">More info</a>
 
-        """)  # noqa
+        """)  # ruff: ignore[too-many-blank-lines, line-too-long]
 
         self.resources_dir = (self.work_dir / "annotator_resources").absolute()
         self.resources_dir.mkdir(exist_ok=True)

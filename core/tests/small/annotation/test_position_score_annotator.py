@@ -180,8 +180,8 @@ def test_position_score_annotator_default_annotation_specs() -> None:
 
 
 #  hg19
-#  chrom: 1      # noqa: ERA001
-#  pos:   14970  # noqa: ERA001
+#  chrom: 1      # ruff: ignore[commented-out-code]
+#  pos:   14970  # ruff: ignore[commented-out-code]
 #
 #  T     A     C     C    C    T    T    G    C    G
 #  67    68    69    70   71   72   73   74   75   76

@@ -125,7 +125,7 @@ class SimpleEffectAnnotator(AnnotatorBase):
         }
 
     def get_attribute_defaults(
-        self, spec: AttributeSpec,  # noqa: ARG002
+        self, spec: AttributeSpec,  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
         return {}
 
@@ -139,7 +139,7 @@ Simple effect annotator.
 
 <a href="{self.BASE_DOC_URL}#simple-effect-annotator" target="_blank">More info</a>
 
-""")  # noqa
+""")  # ruff: ignore[line-too-long]
 
         info.resources.append(gene_models.resource)
         super().__init__(pipeline, info)
@@ -153,7 +153,7 @@ Simple effect annotator.
     def _do_annotate(
         self,
         annotatable: Annotatable,
-        context: dict[str, Any],  # noqa: ARG002
+        context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
         assert annotatable is not None
 

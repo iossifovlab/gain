@@ -2,7 +2,7 @@
 import importlib
 import logging
 
-import gain  # noqa: F401 — registers custom levels as a side effect
+import gain  # ruff: ignore[unused-import] — registers custom levels as a side effect
 import gain.utils.log_levels
 import pytest
 from gain.utils.log_levels import TRACE, USER_INFO

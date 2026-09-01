@@ -147,7 +147,7 @@ VCF_DATA = """
 #CHROM POS ID REF ALT QUAL FILTER INFO
 chr1   10  .  A   T,C .    .      vcf_af=0.0,6.25;vcf_ar=5.0,0.0,6.25;vcf_type=snv
 chr1   20  .  G   A   .    .      vcf_af=3.125;vcf_ar=5.0,3.125;vcf_type=indel
-"""  # noqa: E501
+"""  # ruff: ignore[line-too-long]
 
 
 def _golden_grr_builder() -> GRRBuilder:

@@ -26,7 +26,7 @@ REFFLAT_CONTENT = """
 TP53      tx1  1     +      10      100   12       95     3         10,50,70   15,60,100
 BRCA1     tx2  17    -      200     300   210      290    2         200,250    220,300
 POGZ      tx3  1     +      500     600   510      590    1         500        600
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
 
 # Construct GTF content programmatically to avoid long lines
 _GTF_BASE = "1\ttest\t{}\t{}\t{}\t.\t+\t{}\t"
@@ -568,12 +568,12 @@ def test_build_from_file_returns_unloaded_gene_models(
 REFFLAT_ALPHA = """
 #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
 TP53      tx1  1     +      10      100   12       95     1         10         100
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
 
 REFFLAT_BETA = """
 #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
 BRCA1     tx2  17    -      200     300   210      290    1         200        300
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
 
 
 def test_two_caller_built_resources_keep_their_own_gene_models(

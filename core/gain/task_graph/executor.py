@@ -62,7 +62,7 @@ class TaskGraphExecutor:
         # crash a completed run, nor mask an exception raised in the body.
         try:
             self.close()
-        except Exception:  # noqa: BLE001 pylint: disable=broad-except
+        except Exception:
             logger.warning("error while closing task graph executor",
                            exc_info=True)
         return exc_type is None

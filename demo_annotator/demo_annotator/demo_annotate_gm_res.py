@@ -39,9 +39,9 @@ def annotate_genes_cli(raw_args: list[str] | None = None) -> None:
 
     # pylint: disable=consider-using-with
     infile = sys.stdin if args.input == "-" else \
-        Path(args.input).open("r")  # noqa: SIM115
+        Path(args.input).open("r")  # ruff: ignore[open-file-with-context-handler]
     outfile = sys.stdout if args.output == "-" else \
-        Path(args.output).open("w")  # noqa: SIM115
+        Path(args.output).open("w")  # ruff: ignore[open-file-with-context-handler]
 
     if args.gene_models == "-":
         raise ValueError("Gene models cannot be streamed!")

@@ -105,13 +105,13 @@ def test_stringify_none_vcf() -> None:
 
 
 def test_stringify_bool_notvcf() -> None:
-    assert stringify(True, vcf=False) == "yes"  # noqa: FBT003
-    assert stringify(False, vcf=False) == ""  # noqa: FBT003
+    assert stringify(True, vcf=False) == "yes"  # ruff: ignore[boolean-positional-value-in-call]
+    assert stringify(False, vcf=False) == ""  # ruff: ignore[boolean-positional-value-in-call]
 
 
 def test_stringify_bool_vcf() -> None:
-    assert stringify(True, vcf=True) == "yes"  # noqa: FBT003
-    assert stringify(False, vcf=True) == "."  # noqa: FBT003
+    assert stringify(True, vcf=True) == "yes"  # ruff: ignore[boolean-positional-value-in-call]
+    assert stringify(False, vcf=True) == "."  # ruff: ignore[boolean-positional-value-in-call]
 
 
 def test_stringify_float() -> None:

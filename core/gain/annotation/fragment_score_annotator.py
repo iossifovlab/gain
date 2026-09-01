@@ -138,7 +138,7 @@ class FragmentScoreAnnotator(AnnotatorBase):
                     small values: {score_def.small_values_desc},
                     large_values: {score_def.large_values_desc}
                     aggregator: {attr.aggregator}
-                """  # noqa: SLF001
+                """  # ruff: ignore[private-member-access]
 
     def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         attributes: dict[str, AttributeSpec] = {
@@ -183,7 +183,7 @@ class FragmentScoreAnnotator(AnnotatorBase):
 
     def _do_annotate(
         self, annotatable: Annotatable,
-        context: dict[str, Any],  # noqa: ARG002
+        context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
         fragments = self.fragment_score.fetch_fragment_scores(
             annotatable.chrom, annotatable.pos, annotatable.pos_end,

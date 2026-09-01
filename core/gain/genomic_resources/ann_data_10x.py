@@ -107,7 +107,7 @@ def _check_bool(
     if not isinstance(value, bool):
         # A misconfigured resource, not a caller passing the wrong type --
         # and the loader reports every one of those as a ValueError.
-        raise ValueError(  # noqa: TRY004
+        raise ValueError(  # ruff: ignore[type-check-without-type-error]
             f"the {file_format} parameter {name!r} of the ann_data "
             f"{resource_id} must be true or false, not {value!r}")
     return value

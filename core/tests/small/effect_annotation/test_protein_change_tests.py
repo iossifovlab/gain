@@ -65,7 +65,7 @@ def test_synonymous(
     request = AnnotationRequestFactory.create_annotation_request(
         annotator, variant, transcript_model,
     )
-    request.cod2aa = lambda codon: "Asn"  # type: ignore  # noqa: ARG005
+    request.cod2aa = lambda codon: "Asn"  # type: ignore  # ruff: ignore[unused-lambda-argument]
     effect = effect_checker.get_effect(request)
     assert effect is not None
     assert effect.effect == "synonymous"
@@ -110,7 +110,7 @@ def test_multiple_codons_synonymous(
     request = AnnotationRequestFactory.create_annotation_request(
         annotator, variant, transcript_model,
     )
-    request.cod2aa = lambda codon: "Asn"  # type: ignore  # noqa: ARG005
+    request.cod2aa = lambda codon: "Asn"  # type: ignore  # ruff: ignore[unused-lambda-argument]
     effect = effect_checker.get_effect(request)
     assert effect is not None
     assert effect.effect == "synonymous"

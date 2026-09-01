@@ -32,7 +32,7 @@ def fixture_repo(
                 g1        tx1  chr1  +      3       17    3        17     2         3,13       6,17
                 g1        tx2  chr1  +      3       9     3        6      1         3          6
                 g2        tx3  chr1  -      20      39    23       35     1         23         35
-                """)  # noqa
+                """)  # ruff: ignore[missing-trailing-comma, line-too-long, trailing-whitespace]
 
         },
         "genome": {

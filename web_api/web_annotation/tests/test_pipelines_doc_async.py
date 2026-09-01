@@ -321,7 +321,7 @@ async def test_slow_doc_build_heartbeat_proof_is_discriminating(
     """
     PipelineDoc.lru_cache.unload_pipeline("t4c8/t4c8_pipeline")
 
-    async def blocking_cache_aget(self, pipeline_id):  # type: ignore  # noqa: RUF029
+    async def blocking_cache_aget(self, pipeline_id):  # type: ignore  # ruff: ignore[unused-async]
         # WRONG (and intentionally so): block the loop thread on the concurrent
         # future's result() instead of awaiting it off-loop via await_build.
         # Must stay `async def` to replace the async

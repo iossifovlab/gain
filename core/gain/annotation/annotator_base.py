@@ -116,7 +116,7 @@ class AnnotatorBase(Annotator):
         return attr.spec.value_type if attr.spec else None
 
     def get_attribute_defaults(
-        self, spec: AttributeSpec,  # noqa: ARG002
+        self, spec: AttributeSpec,  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
         return {}
 
@@ -177,7 +177,7 @@ class AnnotatorBase(Annotator):
         self,
         annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],
-        batch_work_dir: str | None = None,  # noqa: ARG002
+        batch_work_dir: str | None = None,  # ruff: ignore[unused-method-argument]
     ) -> list[dict[str, Any]]:
         """Annotate a batch of annotatables."""
         return [

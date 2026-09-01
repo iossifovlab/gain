@@ -340,8 +340,8 @@ class AlleleScore(GenomicScore):
         self,
         records: Iterator[Record],
         chrom: str,
-        pos_begin: int | None = None,  # noqa: ARG002
-        pos_end: int | None = None,  # noqa: ARG002
+        pos_begin: int | None = None,  # ruff: ignore[unused-method-argument]
+        pos_end: int | None = None,  # ruff: ignore[unused-method-argument]
         scores: list[str] | None = None,
     ) -> Generator[
             tuple[int, int, list[ScoreValue]], None, None]:

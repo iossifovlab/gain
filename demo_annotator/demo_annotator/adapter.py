@@ -20,7 +20,7 @@ from gain.annotation.annotation_pipeline import (
 )
 from gain.annotation.docker_annotator import DockerAnnotator
 
-# ruff: noqa: S607
+# ruff: file-ignore[start-process-with-partial-path]
 
 
 class DemoAnnotatorAdapter(DockerAnnotator):
@@ -133,8 +133,8 @@ class DemoAnnotatorStreamAdapter(DemoAnnotatorAdapter):
     def _do_batch_annotate(
         self,
         annotatables: Sequence[Annotatable | None],
-        contexts: list[dict[str, Any]],  # noqa: ARG002
-        batch_work_dir: str | None = None,  # noqa: ARG002
+        contexts: list[dict[str, Any]],  # ruff: ignore[unused-method-argument]
+        batch_work_dir: str | None = None,  # ruff: ignore[unused-method-argument]
     ) -> list[dict[str, Any]]:
         results: list[int] = []
         with subprocess.Popen(

@@ -659,7 +659,7 @@ class TranscriptModel:
         """
         frames = self.calc_frames()
         for exon, frame in zip(self.exons, frames, strict=True):
-            exon._frame = frame  # noqa: SLF001
+            exon._frame = frame  # ruff: ignore[private-member-access]
 
     def test_frames(self) -> bool:
         """Verify that exon frames are correctly set.

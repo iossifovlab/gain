@@ -219,7 +219,7 @@ def test_genomic_score_context_manager_with_exception(
     score = build_score_from_resource(res)
     try:
         with score.open():
-            raise RuntimeError("Test exception")  # noqa
+            raise RuntimeError("Test exception")  # ruff: ignore[raise-within-try]
     except RuntimeError:
         pass
 

@@ -43,7 +43,7 @@ Annotator that maps chromsomes from one naming convention to another.
 
 <a href="{self.BASE_DOC_URL}#chromosome-mapping-annotator" target="_blank">More info</a>
 
-""")  # noqa
+""")  # ruff: ignore[line-too-long]
 
         super().__init__(pipeline, info)
 
@@ -61,7 +61,7 @@ Annotator that maps chromsomes from one naming convention to another.
     def _do_annotate(
         self,
         annotatable: Annotatable,
-        context: dict[str, Any],  # noqa: ARG002
+        context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
         new_annotatable = deepcopy(annotatable)
         assert self.chrom_mapping is not None
@@ -69,7 +69,7 @@ Annotator that maps chromsomes from one naming convention to another.
         new_chrom = self.chrom_mapping(new_annotatable.chrom)
         if new_chrom is None:
             return {"renamed_chromosome": None}
-        new_annotatable._chrom = new_chrom  # noqa: SLF001
+        new_annotatable._chrom = new_chrom  # ruff: ignore[private-member-access]
         return {"renamed_chromosome": new_annotatable}
 
 

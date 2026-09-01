@@ -69,8 +69,8 @@ class PipelineProcessor(AbstractContextManager):
 
     def process_region(self, region: Region | None = None) -> None:
         for data in self.source.fetch(region):
-            for _filter in self.filters:
-                data = _filter.filter(data)
+            for filter_ in self.filters:
+                data = filter_.filter(data)
 
     def process(self, regions: Iterable[Region] | None = None) -> None:
         """Process a pipeline in batches for the given regions."""

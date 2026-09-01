@@ -34,11 +34,20 @@ methods.
 from __future__ import annotations
 
 import logging as _logging
-from logging import Filterer, RootLogger, config, handlers, root  # noqa: F401
+from logging import (  # ruff: ignore[unused-import]
+    Filterer,
+    RootLogger,
+    config,
+    handlers,
+    root,
+)
 from typing import TYPE_CHECKING, Any
 
-import gain.utils.log_levels  # noqa: F401
-from gain.utils.log_levels import TRACE, USER_INFO  # noqa: F401
+import gain.utils.log_levels  # ruff: ignore[unused-import]
+from gain.utils.log_levels import (  # ruff: ignore[unused-import]
+    TRACE,
+    USER_INFO,
+)
 
 if TYPE_CHECKING:
     class GainLogger(_logging.Logger):
@@ -63,4 +72,4 @@ if TYPE_CHECKING:
 # ``getLogger`` to the stdlib function at runtime (behaviourally identical);
 # the typed declaration above stays authoritative for type checkers, which is
 # why the incompatible-reassignment note is silenced here.
-from logging import *  # type: ignore[assignment]  # noqa: F403
+from logging import *  # type: ignore[assignment]  # ruff: ignore[undefined-local-with-import-star]

@@ -586,12 +586,12 @@ class NullHistogram(Statistic):
         self.reason = config.reason
 
     def add_value(
-        self, value: Any, count: int = 1,  # noqa: ARG002
+        self, value: Any, count: int = 1,  # ruff: ignore[unused-method-argument]
     ) -> None:
         # pylint: disable=unused-argument
         return
 
-    def merge(self, other: Any) -> None:  # noqa: ARG002
+    def merge(self, other: Any) -> None:  # ruff: ignore[unused-method-argument]
         return
 
     def to_dict(self) -> dict[str, Any]:
@@ -754,7 +754,7 @@ class CategoricalHistogram(Statistic):
                 "merge needs the full histogram values.",
             )
         # pylint: disable=protected-access
-        self._counter += other._counter  # noqa: SLF001
+        self._counter += other._counter  # ruff: ignore[private-member-access]
         if not self.enforce_type and \
                 len(self._counter) > CategoricalHistogram.UNIQUE_VALUES_LIMIT:
             raise HistogramError(
@@ -1049,7 +1049,7 @@ def build_empty_histogram(
         return NullHistogram(NullHistogramConfig(
             "Could not match histogram config type",
         ))
-    except BaseException as err:  # noqa: BLE001
+    except BaseException as err:
         logger.warning(
             "Failed to create empty histogram from config", exc_info=True)
         return NullHistogram(NullHistogramConfig(
@@ -1149,7 +1149,7 @@ def _import_from_string(module_name: str, source_code: str) -> Any:
     spec = importlib.util.spec_from_loader(module_name, loader=None)
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
-    exec(source_code, module.__dict__)  # noqa: S102 pylint: disable=exec-used
+    exec(source_code, module.__dict__)  # ruff: ignore[exec-builtin] pylint: disable=exec-used
     sys.modules[spec.name] = module
     return module
 

@@ -12,7 +12,7 @@ import pytest
 from gain.genomic_resources.fsspec_protocol import build_fsspec_protocol
 
 _TEST_USER = "testuser"
-_TEST_PASSWORD = "testpass"  # noqa: S105
+_TEST_PASSWORD = "testpass"  # ruff: ignore[hardcoded-password-string]
 _TEST_FILE = "hello.txt"
 _TEST_CONTENT = "hello world\n"
 
@@ -46,7 +46,7 @@ class _BasicAuthHTTPHandler(http.server.SimpleHTTPRequestHandler):
             return
         super().do_HEAD()
 
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+    def log_message(self, format: str, *args: Any) -> None:  # ruff: ignore[builtin-argument-shadowing]
         pass  # suppress server output in tests
 
 
@@ -88,7 +88,7 @@ def test_http_basic_auth_success(auth_server: str) -> None:
 def test_http_basic_auth_no_credentials(auth_server: str) -> None:
     """No credentials → server returns 401 → exception raised."""
     proto = build_fsspec_protocol(f"auth-none:{auth_server}", auth_server)
-    with pytest.raises(Exception), proto.filesystem.open(  # noqa: B017
+    with pytest.raises(Exception), proto.filesystem.open(  # ruff: ignore[assert-raises-exception]
             f"{auth_server}/{_TEST_FILE}", "rt") as f:
         f.read()
 
@@ -99,7 +99,7 @@ def test_http_basic_auth_wrong_credentials(auth_server: str) -> None:
         f"auth-wrong:{auth_server}", auth_server,
         user="wronguser", password="wrongpass",
     )
-    with pytest.raises(Exception), proto.filesystem.open(  # noqa: B017
+    with pytest.raises(Exception), proto.filesystem.open(  # ruff: ignore[assert-raises-exception]
             f"{auth_server}/{_TEST_FILE}", "rt") as f:
         f.read()
 
@@ -132,6 +132,6 @@ def test_http_url_userinfo_wrong_password_401(auth_server: str) -> None:
     """A wrong URL-embedded password still reaches the server and 401s."""
     url = _userinfo_url(auth_server, _TEST_USER, "wrongpass")
     proto = build_fsspec_protocol(f"auth-userinfo-bad:{url}", url)
-    with pytest.raises(Exception), proto.filesystem.open(  # noqa: B017
+    with pytest.raises(Exception), proto.filesystem.open(  # ruff: ignore[assert-raises-exception]
             f"{proto._fetch_url}/{_TEST_FILE}", "rt") as f:
         f.read()

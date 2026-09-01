@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 import os
-import pickle  # noqa: S403
+import pickle  # ruff: ignore[suspicious-pickle-import]
 from abc import abstractmethod
 from dataclasses import dataclass
 from enum import Enum
@@ -80,7 +80,7 @@ class NoTaskCache(dict[Any, Any], TaskCache):
     """Don't check any conditions and just run any task."""
 
     def get_record(
-        self, task_desc: TaskDesc,  # noqa: ARG002
+        self, task_desc: TaskDesc,  # ruff: ignore[unused-method-argument]
     ) -> CacheRecord:
         return CacheRecord(CacheRecordType.NEEDS_COMPUTE)
 

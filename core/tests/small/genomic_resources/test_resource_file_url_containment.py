@@ -392,13 +392,13 @@ def _poisoned_contents_entry(
             {
                 "name": GR_CONF_FILE_NAME,
                 "size": len("type: basic\n"),
-                "md5": hashlib.md5(  # noqa: S324
+                "md5": hashlib.md5(  # ruff: ignore[hashlib-insecure-hash-function]
                     b"type: basic\n").hexdigest(),
             },
             {
                 "name": "data.txt",
                 "size": len(payload),
-                "md5": hashlib.md5(  # noqa: S324
+                "md5": hashlib.md5(  # ruff: ignore[hashlib-insecure-hash-function]
                     payload.encode()).hexdigest(),
             },
         ],
@@ -768,7 +768,7 @@ _FORGING_NAME = (
 
 
 def _md5(content: str) -> str:
-    return hashlib.md5(content.encode()).hexdigest()  # noqa: S324
+    return hashlib.md5(content.encode()).hexdigest()  # ruff: ignore[hashlib-insecure-hash-function]
 
 
 _FORGING_ID = (

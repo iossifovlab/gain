@@ -25,7 +25,7 @@ TP53      tx2  1     +      10      100   12       95     2         10,70      1
 POGZ      tx3  17    +      10      100   12       95     3         10,50,70   15,60,100
 BRCA1     tx4  1     -      200     300   210      290    2         200,250    220,300
 NONCOD    tx5  2     +      50      150   150      150    2         50,100     80,150
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
 
 
 def test_gene_models_impl_simple(tmp_path: pathlib.Path) -> None:
@@ -45,7 +45,7 @@ chr19  HAVANA  stop_codon   407096  407098  .  -  0  gene_id||"ENSG00000183186.7
 chr19  HAVANA  UTR          409006  409170  .  -  .  gene_id||"ENSG00000183186.7";transcript_id||"ENST00000332235.7";||gene_type||"protein_coding";||gene_name||"C2CD4C";||transcript_type||"protein_coding";||transcript_name||"C2CD4C-001";||exon_number||1;||exon_id||"ENSE00001322986.5";||level||2;protein_id||"ENSP00000328677.4";transcript_support_level||"2";tag||"basic";tag||"appris_principal_1";tag||"CCDS";ccdsid||"CCDS45890.1";havana_gene||"OTTHUMG00000180534.3";havana_transcript||"OTTHUMT00000451789.3";
 chr19  HAVANA  UTR          405438  407098  .  -  .  gene_id||"ENSG00000183186.7";transcript_id||"ENST00000332235.7";||gene_type||"protein_coding";||gene_name||"C2CD4C";||transcript_type||"protein_coding";||transcript_name||"C2CD4C-001";||exon_number||2;||exon_id||"ENSE00001290344.6";||level||2;protein_id||"ENSP00000328677.4";transcript_support_level||"2";tag||"basic";tag||"appris_principal_1";tag||"CCDS";ccdsid||"CCDS45890.1";havana_gene||"OTTHUMG00000180534.3";havana_transcript||"OTTHUMT00000451789.3";
 chr19  HAVANA  UTR          408362  408401  .  -  .  gene_id||"ENSG00000183186.7";transcript_id||"ENST00000332235.7";||gene_type||"protein_coding";||gene_name||"C2CD4C";||transcript_type||"protein_coding";||transcript_name||"C2CD4C-001";||exon_number||2;||exon_id||"ENSE00001290344.6";||level||2;protein_id||"ENSP00000328677.4";transcript_support_level||"2";tag||"basic";tag||"appris_principal_1";tag||"CCDS";ccdsid||"CCDS45890.1";havana_gene||"OTTHUMG00000180534.3";havana_transcript||"OTTHUMT00000451789.3";
-""")),  # noqa: E501
+""")),  # ruff: ignore[line-too-long]
         })
     res = build_filesystem_test_resource(tmp_path)
     assert res is not None
@@ -360,7 +360,7 @@ def test_gene_models_impl_only_noncoding_transcripts() -> None:
 #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
 LINC1     tx1  1     +      10      100   100      100    2         10,50      40,100
 LINC2     tx2  2     -      200     300   300      300    1         200        300
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
 
     res = build_inmemory_test_resource(
         content={
@@ -388,7 +388,7 @@ def test_gene_models_impl_empty_gene_models() -> None:
     """Test statistics with empty gene models file."""
     empty_content = """
 #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
 
     res = build_inmemory_test_resource(
         content={

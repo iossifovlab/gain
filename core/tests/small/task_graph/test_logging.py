@@ -42,7 +42,7 @@ def test_ensure_log_dir_is_race_safe(tmp_path: Path) -> None:
         barrier.wait()
         try:
             ensure_log_dir(task_log_dir=log_dir)
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:  # ruff: ignore[blind-except]
             errors.append(exc)
 
     threads = [threading.Thread(target=create) for _ in range(workers)]

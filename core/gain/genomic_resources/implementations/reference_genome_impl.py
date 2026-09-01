@@ -289,7 +289,7 @@ class GenomeStatistic(Statistic):
         for pair, count in total_pair_counts.items():
             self.bi_nucleotide_distribution[pair] = count / total_pairs * 100
 
-    def merge(self, other: Statistic) -> None:  # noqa: ARG002
+    def merge(self, other: Statistic) -> None:  # ruff: ignore[unused-method-argument]
         return
 
     def serialize(self) -> str:
@@ -356,10 +356,10 @@ class ReferenceGenomeImplementation(
 
         return info
 
-    def get_info(self, **kwargs: Any) -> str:  # noqa: ARG002
+    def get_info(self, **kwargs: Any) -> str:  # ruff: ignore[unused-method-argument]
         return InfoImplementationMixin.get_info(self)
 
-    def get_statistics_info(self, **kwargs: Any) -> str:  # noqa: ARG002
+    def get_statistics_info(self, **kwargs: Any) -> str:  # ruff: ignore[unused-method-argument]
         return InfoImplementationMixin.get_statistics_info(self)
 
     def calc_info_hash(self) -> bytes:

@@ -115,7 +115,7 @@ def main(
             logger.info(
                 "nothing to draw for <%s>: a %s resource carries no scores",
                 res.resource_id, res.get_type())
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:  # ruff: ignore[blind-except]
             # One resource the tool cannot draw costs the user that
             # resource, not the rest of the repository -- the same
             # bargain every `grr_manage` sweep already makes (gain#364,

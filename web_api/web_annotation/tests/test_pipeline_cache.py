@@ -333,7 +333,7 @@ def test_in_flight_pipeline_not_evicted_under_capacity_pressure(
     def getter() -> None:
         try:
             result.append(lru_cache.get_pipeline("pipelineA"))
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:  # ruff: ignore[blind-except]
             errors.append(exc)
 
     getter_thread = threading.Thread(target=getter)

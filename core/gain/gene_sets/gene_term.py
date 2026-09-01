@@ -314,7 +314,7 @@ def load_gene_terms(path: str) -> GeneTerms | None:
 
     # pylint: disable=consider-using-with
     infiles = [
-        cast(IO, open(f, "rt"))  # noqa: SIM115
+        cast(IO, open(f, "rt"))  # ruff: ignore[open-file-with-context-handler]
         for f in glob.glob(os.path.join(path, "*.txt"))
     ]
     return read_ewa_set_file(infiles) if infiles else None

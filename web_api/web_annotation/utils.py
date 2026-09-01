@@ -140,8 +140,8 @@ def _build_email_template(email_settings: dict[str, str]) -> dict[str, str]:
 
 
 def create_password_fields(
-    label1: Any = gettext_lazy("Password"),  # noqa: B008
-    label2: Any = gettext_lazy("Password confirmation"),  # noqa: B008
+    label1: Any = gettext_lazy("Password"),  # ruff: ignore[function-call-in-default-argument]
+    label2: Any = gettext_lazy("Password confirmation"),  # ruff: ignore[function-call-in-default-argument]
 ) -> tuple[forms.CharField, forms.CharField]:
     """Create two password fields."""
     password1 = forms.CharField(
@@ -216,7 +216,7 @@ class SetPasswordForm(forms.Form):
     def validate_password_for_user(
         self,
         user: User,
-        password_field_name: str = "password2",  # noqa: S107
+        password_field_name: str = "password2",  # ruff: ignore[hardcoded-password-default]
     ) -> None:
         """Validate the password."""
         password = self.cleaned_data.get(password_field_name)
@@ -229,7 +229,7 @@ class SetPasswordForm(forms.Form):
     def set_password_and_save(
         self,
         user: User,
-        password_field_name: str = "password1",  # noqa: S107
+        password_field_name: str = "password1",  # ruff: ignore[hardcoded-password-default]
         *,
         commit: bool = True,
     ) -> User:

@@ -885,7 +885,7 @@ def test_concurrent_resource_access(
                 with resource.open_raw_file("data.txt") as f:
                     content = f.read()
                     results.append(content)
-            except BaseException as exc:  # noqa: BLE001
+            except BaseException as exc:  # ruff: ignore[blind-except]
                 errors.append(exc)
 
         threads = [threading.Thread(target=read_resource) for _ in range(5)]

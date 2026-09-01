@@ -334,7 +334,7 @@ def setup_empty_gene_models(out_path: pathlib.Path) -> GeneModels:
     """Set up empty gene models."""
     content = """
 #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
-    """  # noqa
+    """  # ruff: ignore[line-too-long]
     return setup_gene_models(out_path, content, fileformat="refflat")
 
 
@@ -663,7 +663,7 @@ def build_s3_test_filesystem(
         endpoint_url: str | None = None) -> S3FileSystem:
     """Create an S3 fsspec filesystem connected to the S3 server."""
     if "AWS_SECRET_ACCESS_KEY" not in os.environ:
-        os.environ["AWS_SECRET_ACCESS_KEY"] = "minioadmin"  # noqa: S105
+        os.environ["AWS_SECRET_ACCESS_KEY"] = "minioadmin"  # ruff: ignore[hardcoded-password-string]
     if "AWS_ACCESS_KEY_ID" not in os.environ:
         os.environ["AWS_ACCESS_KEY_ID"] = "minioadmin"
     if endpoint_url is None:
@@ -845,5 +845,4 @@ def proto_builder(
 def resource_builder(
         scheme: str, content: dict) -> Generator[GenomicResource, None, None]:
     with proto_builder(scheme, content) as proto:
-        res = proto.get_resource("")
-        yield res
+        yield proto.get_resource("")

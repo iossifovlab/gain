@@ -542,7 +542,7 @@ def test_the_statistics_of_a_default_build_are_pinned(
         # The MULTIPLICATION SIGN is anndata's, and this is a byte-exact
         # record of what it wrote -- an ASCII "x" here would assert
         # something no resource in any GRR contains.
-        "AnnData object with n_obs × n_vars = 3 × 5\n"  # noqa: RUF001
+        "AnnData object with n_obs × n_vars = 3 × 5\n"  # ruff: ignore[ambiguous-unicode-character-string]
         "    var: 'gene_ids', 'feature_types', 'genome', 'interval'\n"
         "    layers: None (.X)\n"
     )
@@ -710,7 +710,7 @@ class TestANonUniqueVariableIndex:
 
         assert resource.get_file_content(_DESCRIBE_ANN_DATA) == (
             # The MULTIPLICATION SIGN is anndata's, as above.
-            "AnnData object with n_obs × n_vars = 3 × 4\n"  # noqa: RUF001
+            "AnnData object with n_obs × n_vars = 3 × 4\n"  # ruff: ignore[ambiguous-unicode-character-string]
             "    var: 'gene_ids', 'feature_types', 'genome', 'interval'\n"
             "    layers: None (.X)\n"
         )

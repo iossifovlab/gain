@@ -33,7 +33,7 @@ clears ``_FSSPEC_PROTOCOLS``, so each test picks a ``proto_id`` of its own
 over its own ``tmp_path``.
 """
 import pathlib
-import pickle  # noqa: S403
+import pickle  # ruff: ignore[suspicious-pickle-import]
 import pickletools
 import threading
 from typing import Any
@@ -177,7 +177,7 @@ def test_two_threads_that_both_miss_the_memo_build_one_protocol(
         # pylint: disable=broad-exception-caught
         try:
             protocol = build_fsspec_protocol(proto_id, url)
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:  # ruff: ignore[blind-except]
             with guard:
                 errors.append(exc)
         else:
@@ -227,7 +227,7 @@ def test_the_memo_never_holds_a_protocol_that_is_not_configured(
         # pylint: disable=broad-exception-caught
         try:
             build_fsspec_protocol(proto_id, url)
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:  # ruff: ignore[blind-except]
             errors.append(exc)
 
     thread = threading.Thread(target=build, daemon=True)
@@ -334,14 +334,14 @@ def test_a_construction_that_raises_leaves_its_key_buildable(
         # pylint: disable=broad-exception-caught
         try:
             build_fsspec_protocol(proto_id, url)
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:  # ruff: ignore[blind-except]
             failure.append(exc)
 
     def build_and_wait() -> None:
         # pylint: disable=broad-exception-caught
         try:
             waiter["protocol"] = build_fsspec_protocol(proto_id, url)
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:  # ruff: ignore[blind-except]
             waiter["error"] = exc
         waiter_done.set()
 
@@ -483,7 +483,7 @@ def test_a_construction_dropped_mid_flight_wakes_the_threads_waiting_on_it(
         # pylint: disable=broad-exception-caught
         try:
             waiter["protocol"] = build_fsspec_protocol(proto_id, url)
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:  # ruff: ignore[blind-except]
             waiter["error"] = exc
         waiter_done.set()
 

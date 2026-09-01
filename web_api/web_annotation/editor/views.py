@@ -452,7 +452,7 @@ class AnnotatorAttributes(AsyncEditorView):
         # config -- still yields the build's 400, exactly as master did.
         pipeline = await self.aget_pipeline(pipeline_id, request.user)
 
-        data["work_dir"] = "/tmp"  # noqa: S108
+        data["work_dir"] = "/tmp"  # ruff: ignore[hardcoded-temp-file]
 
         if annotator_type not in get_available_annotator_types():
             return Response(
@@ -898,7 +898,7 @@ class AnnotatorAggregators(AsyncEditorView):
         # Long pole: await the GRR pipeline build OFF the event loop. Build
         # failure -> 400, missing -> 404 mapping comes from aget_pipeline.
         pipeline = await self.aget_pipeline(pipeline_id, request.user)
-        data["work_dir"] = "/tmp"  # noqa: S108
+        data["work_dir"] = "/tmp"  # ruff: ignore[hardcoded-temp-file]
 
         if annotator_type not in get_available_annotator_types():
             return Response(

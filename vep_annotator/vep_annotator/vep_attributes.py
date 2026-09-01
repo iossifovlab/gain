@@ -2,8 +2,8 @@
 full_attributes = {
     "Location": (
         "str",
-        "Location of variant in standard "
-        "coordinate format (chr:start or chr:start-end)",
+        ("Location of variant in standard "
+        "coordinate format (chr:start or chr:start-end)"),
     ),
     "Allele": (
         "str",
@@ -19,8 +19,8 @@ full_attributes = {
     ),
     "Feature_type": (
         "str",
-        "Type of feature - Transcript, "
-        "RegulatoryFeature or MotifFeature",
+        ("Type of feature - Transcript, "
+        "RegulatoryFeature or MotifFeature"),
     ),
     "Consequence": (
         "str",
@@ -92,18 +92,18 @@ full_attributes = {
     ),
     "MANE": (
         "str",
-        "MANE (Matched Annotation from NCBI and EMBL-EBI) "
-        "set(s) the transcript belongs to",
+        ("MANE (Matched Annotation from NCBI and EMBL-EBI) "
+        "set(s) the transcript belongs to"),
     ),
     "MANE_SELECT": (
         "str",
-        "MANE Select (Matched Annotation "
-        "from NCBI and EMBL-EBI) Transcript",
+        ("MANE Select (Matched Annotation "
+        "from NCBI and EMBL-EBI) Transcript"),
     ),
     "MANE_PLUS_CLINICAL": (
         "str",
-        "MANE Plus Clinical (Matched Annotation "
-        "from NCBI and EMBL-EBI) Transcript",
+        ("MANE Plus Clinical (Matched Annotation "
+        "from NCBI and EMBL-EBI) Transcript"),
     ),
     "TSL": (
         "str",
@@ -111,8 +111,8 @@ full_attributes = {
     ),
     "APPRIS": (
         "str",
-        "Annotates alternatively spliced transcripts as primary "
-        "or alternate based on a range of computational methods",
+        ("Annotates alternatively spliced transcripts as primary "
+        "or alternate based on a range of computational methods"),
     ),
     "CCDS": (
         "str",
@@ -140,8 +140,8 @@ full_attributes = {
     ),
     "GENE_PHENO": (
         "str",
-        "Indicates if gene is associated with "
-        "a phenotype, disease or trait",
+        ("Indicates if gene is associated with "
+        "a phenotype, disease or trait"),
     ),
     "SIFT": (
         "str",
@@ -161,13 +161,13 @@ full_attributes = {
     ),
     "DOMAINS": (
         "str",
-        "The source and identifer of "
-        "any overlapping protein domains",
+        ("The source and identifer of "
+        "any overlapping protein domains"),
     ),
     "miRNA": (
         "str",
-        "SO terms of overlapped miRNA "
-        "secondary structure feature(s)",
+        ("SO terms of overlapped miRNA "
+        "secondary structure feature(s)"),
     ),
     "HGVSc": (
         "str",
@@ -179,163 +179,163 @@ full_attributes = {
     ),
     "HGVS_OFFSET": (
         "str",
-        "Indicates by how many bases the "
-        "HGVS notations for this variant have been shifted",
+        ("Indicates by how many bases the "
+        "HGVS notations for this variant have been shifted"),
     ),
     "AF": (
         "str",
-        "Frequency of existing variant in "
-        "1000 Genomes combined population",
+        ("Frequency of existing variant in "
+        "1000 Genomes combined population"),
     ),
     "AFR_AF": (
         "str",
-        "Frequency of existing variant in "
-        "1000 Genomes combined African population",
+        ("Frequency of existing variant in "
+        "1000 Genomes combined African population"),
     ),
     "AMR_AF": (
         "str",
-        "Frequency of existing variant in "
-        "1000 Genomes combined American population",
+        ("Frequency of existing variant in "
+        "1000 Genomes combined American population"),
     ),
     "EAS_AF": (
         "str",
-        "Frequency of existing variant in "
-        "1000 Genomes combined East Asian population",
+        ("Frequency of existing variant in "
+        "1000 Genomes combined East Asian population"),
     ),
     "EUR_AF": (
         "str",
-        "Frequency of existing variant in "
-        "1000 Genomes combined European population",
+        ("Frequency of existing variant in "
+        "1000 Genomes combined European population"),
     ),
     "SAS_AF": (
         "str",
-        "Frequency of existing variant in "
-        "1000 Genomes combined South Asian population",
+        ("Frequency of existing variant in "
+        "1000 Genomes combined South Asian population"),
     ),
     "gnomADe_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD exomes combined population",
+        ("Frequency of existing variant in "
+        "gnomAD exomes combined population"),
     ),
     "gnomADe_AFR_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD exomes African/American population",
+        ("Frequency of existing variant in "
+        "gnomAD exomes African/American population"),
     ),
     "gnomADe_AMR_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD exomes American population",
+        ("Frequency of existing variant in "
+        "gnomAD exomes American population"),
     ),
     "gnomADe_ASJ_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD exomes Ashkenazi Jewish population",
+        ("Frequency of existing variant in "
+        "gnomAD exomes Ashkenazi Jewish population"),
     ),
     "gnomADe_EAS_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD exomes East Asian population",
+        ("Frequency of existing variant in "
+        "gnomAD exomes East Asian population"),
     ),
     "gnomADe_FIN_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD exomes Finnish population",
+        ("Frequency of existing variant in "
+        "gnomAD exomes Finnish population"),
     ),
     "gnomADe_MID_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD exomes Mid-eastern population",
+        ("Frequency of existing variant in "
+        "gnomAD exomes Mid-eastern population"),
     ),
     "gnomADe_NFE_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD exomes Non-Finnish European population",
+        ("Frequency of existing variant in "
+        "gnomAD exomes Non-Finnish European population"),
     ),
     "gnomADe_OTH_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD exomes other combined populations",
+        ("Frequency of existing variant in "
+        "gnomAD exomes other combined populations"),
     ),
     "gnomADe_SAS_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD exomes South Asian population",
+        ("Frequency of existing variant in "
+        "gnomAD exomes South Asian population"),
     ),
     "gnomADe_REMAINING_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD exomes remaining combined populations",
+        ("Frequency of existing variant in "
+        "gnomAD exomes remaining combined populations"),
     ),
     "gnomADg_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD genomes combined population",
+        ("Frequency of existing variant in "
+        "gnomAD genomes combined population"),
     ),
     "gnomADg_AFR_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD genomes African/American population",
+        ("Frequency of existing variant in "
+        "gnomAD genomes African/American population"),
     ),
     "gnomADg_AMI_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD genomes Amish population",
+        ("Frequency of existing variant in "
+        "gnomAD genomes Amish population"),
     ),
     "gnomADg_AMR_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD genomes American population",
+        ("Frequency of existing variant in "
+        "gnomAD genomes American population"),
     ),
     "gnomADg_ASJ_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD genomes Ashkenazi Jewish population",
+        ("Frequency of existing variant in "
+        "gnomAD genomes Ashkenazi Jewish population"),
     ),
     "gnomADg_EAS_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD genomes East Asian population",
+        ("Frequency of existing variant in "
+        "gnomAD genomes East Asian population"),
     ),
     "gnomADg_FIN_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD genomes Finnish population",
+        ("Frequency of existing variant in "
+        "gnomAD genomes Finnish population"),
     ),
     "gnomADg_MID_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD genomes Mid-eastern population",
+        ("Frequency of existing variant in "
+        "gnomAD genomes Mid-eastern population"),
     ),
     "gnomADg_NFE_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD genomes Non-Finnish European population",
+        ("Frequency of existing variant in "
+        "gnomAD genomes Non-Finnish European population"),
     ),
     "gnomADg_OTH_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD genomes other combined populations",
+        ("Frequency of existing variant in "
+        "gnomAD genomes other combined populations"),
     ),
     "gnomADg_SAS_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD genomes South Asian population",
+        ("Frequency of existing variant in "
+        "gnomAD genomes South Asian population"),
     ),
     "gnomADg_REMAINING_AF": (
         "str",
-        "Frequency of existing variant in "
-        "gnomAD genomes remaining combined populations",
+        ("Frequency of existing variant in "
+        "gnomAD genomes remaining combined populations"),
     ),
     "MAX_AF": (
         "str",
-        "Maximum observed allele frequency in "
-        "1000 Genomes, ESP and ExAC/gnomAD",
+        ("Maximum observed allele frequency in "
+        "1000 Genomes, ESP and ExAC/gnomAD"),
     ),
     "MAX_AF_POPS": (
         "str",
-        "Populations in which maximum "
-        "allele frequency was observed",
+        ("Populations in which maximum "
+        "allele frequency was observed"),
     ),
     "CLIN_SIG": (
         "str",
@@ -347,9 +347,9 @@ full_attributes = {
     ),
     "PHENO": (
         "str",
-        "Indicates if existing variant(s) is associated with "
+        ("Indicates if existing variant(s) is associated with "
         "a phenotype, disease or trait; "
-        "multiple values correspond to multiple variants",
+        "multiple values correspond to multiple variants"),
     ),
     "PUBMED": (
         "str",
@@ -357,28 +357,28 @@ full_attributes = {
     ),
     "MOTIF_NAME": (
         "str",
-        "The stable identifier of a transcription factor "
-        "binding profile (TFBP) aligned at this position",
+        ("The stable identifier of a transcription factor "
+        "binding profile (TFBP) aligned at this position"),
     ),
     "MOTIF_POS": (
         "str",
-        "The relative position of the "
-        "variation in the aligned TFBP",
+        ("The relative position of the "
+        "variation in the aligned TFBP"),
     ),
     "HIGH_INF_POS": (
         "str",
-        "A flag indicating if the variant falls in a "
-        "high information position of the TFBP",
+        ("A flag indicating if the variant falls in a "
+        "high information position of the TFBP"),
     ),
     "MOTIF_SCORE_CHANGE": (
         "str",
-        "The difference in motif score of the reference "
-        "and variant sequences for the TFBP",
+        ("The difference in motif score of the reference "
+        "and variant sequences for the TFBP"),
     ),
     "TRANSCRIPTION_FACTORS": (
         "str",
-        "List of transcription factors which bind to "
-        "the transcription factor binding profile",
+        ("List of transcription factors which bind to "
+        "the transcription factor binding profile"),
     ),
     "worst_consequence": (
         "str", "Worst consequence reported by VEP",
@@ -392,8 +392,8 @@ full_attributes = {
 effect_attributes = {
     "Location": (
         "str",
-        "Location of variant in standard "
-        "coordinate format (chr:start or chr:start-end)",
+        ("Location of variant in standard "
+        "coordinate format (chr:start or chr:start-end)"),
     ),
     "Allele": (
         "str",
@@ -409,8 +409,8 @@ effect_attributes = {
     ),
     "Feature_type": (
         "str",
-        "Type of feature - Transcript, "
-        "RegulatoryFeature or MotifFeature",
+        ("Type of feature - Transcript, "
+        "RegulatoryFeature or MotifFeature"),
     ),
     "Consequence": (
         "str",

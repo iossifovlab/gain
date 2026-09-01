@@ -46,7 +46,7 @@ def ensembl_gtf_example() -> GeneModels:
 11  ensembl_havana  stop_codon  5423152  5423154  .  +  0  gene_id||"ENSG00000167360";gene_version||"4";transcript_id||"ENST00000300778";transcript_version||"4";exon_number||"1";gene_name||"OR51Q1";gene_source||"ensembl_havana";gene_biotype||"protein_coding";transcript_name||"OR51Q1-001";transcript_source||"ensembl_havana";transcript_biotype||"protein_coding";tag||"CCDS";ccds_id||"CCDS31381";
 11  ensembl_havana  UTR         5422111  5422200  .  +  .  gene_id||"ENSG00000167360";gene_version||"4";transcript_id||"ENST00000300778";transcript_version||"4";gene_name||"OR51Q1";gene_source||"ensembl_havana";gene_biotype||"protein_coding";transcript_name||"OR51Q1-001";transcript_source||"ensembl_havana";transcript_biotype||"protein_coding";tag||"CCDS";ccds_id||"CCDS31381";
 11  ensembl_havana  UTR         5423155  5423206  .  +  .  gene_id||"ENSG00000167360";gene_version||"4";transcript_id||"ENST00000300778";transcript_version||"4";gene_name||"OR51Q1";gene_source||"ensembl_havana";gene_biotype||"protein_coding";transcript_name||"OR51Q1-001";transcript_source||"ensembl_havana";transcript_biotype||"protein_coding";tag||"CCDS";ccds_id||"CCDS31381";tag||"a||b||c";
-""")),  # noqa: E501
+""")),  # ruff: ignore[line-too-long]
         })
     return build_gene_models_from_resource(res)
 
@@ -71,7 +71,7 @@ chr7  HAVANA  CDS          155802903  155803726  .  -  2  gene_id||"ENSG00000164
 chr7  HAVANA  stop_codon   155802900  155802902  .  -  0  gene_id||"ENSG00000164690.8";||transcript_id||"ENST00000297261.7";||gene_type||"protein_coding";||gene_name||"SHH";||transcript_type||"protein_coding";||transcript_name||"SHH-201";||exon_number||3;||exon_id||"ENSE00001149618.3";||level||2;||protein_id||"ENSP00000297261.2";||transcript_support_level||"1";||hgnc_id||"HGNC:10848";||tag||"basic";||tag||"Ensembl_canonical";||tag||"GENCODE_Primary";||tag||"MANE_Select";||tag||"appris_principal_1";||tag||"CCDS";||ccdsid||"CCDS5942.1";||havana_gene||"OTTHUMG00000151349.3";||havana_transcript||"OTTHUMT00000322327.2";
 chr7  HAVANA  UTR          155812123  155812463  .  -  .  gene_id||"ENSG00000164690.8";||transcript_id||"ENST00000297261.7";||gene_type||"protein_coding";||gene_name||"SHH";||transcript_type||"protein_coding";||transcript_name||"SHH-201";||exon_number||1;||exon_id||"ENSE00001086614.3";||level||2;||protein_id||"ENSP00000297261.2";||transcript_support_level||"1";||hgnc_id||"HGNC:10848";||tag||"basic";||tag||"Ensembl_canonical";||tag||"GENCODE_Primary";||tag||"MANE_Select";||tag||"appris_principal_1";||tag||"CCDS";||ccdsid||"CCDS5942.1";||havana_gene||"OTTHUMG00000151349.3";||havana_transcript||"OTTHUMT00000322327.2";
 chr7  HAVANA  UTR          155799980  155802902  .  -  .  gene_id||"ENSG00000164690.8";||transcript_id||"ENST00000297261.7";||gene_type||"protein_coding";||gene_name||"SHH";||transcript_type||"protein_coding";||transcript_name||"SHH-201";||exon_number||3;||exon_id||"ENSE00001149618.3";||level||2;||protein_id||"ENSP00000297261.2";||transcript_support_level||"1";||hgnc_id||"HGNC:10848";||tag||"basic";||tag||"Ensembl_canonical";||tag||"GENCODE_Primary";||tag||"MANE_Select";||tag||"appris_principal_1";||tag||"CCDS";||ccdsid||"CCDS5942.1";||havana_gene||"OTTHUMG00000151349.3";||havana_transcript||"OTTHUMT00000322327.2";
-"""))})  # noqa: E501
+"""))})  # ruff: ignore[line-too-long]
     return build_gene_models_from_resource(res)
 
 
@@ -101,7 +101,7 @@ chr1        HAVANA      CDS         1917147     1917190     .           +       
 chr1        HAVANA      stop_codon  1917191     1917193     .           +           0           gene_id||"ENSG00000169885.10";||transcript_id||"ENST00000307786.8";||gene_type||"protein_coding";||gene_name||"CALML6";||transcript_type||"protein_coding";
 chr1        HAVANA      UTR         1915260     1915280     .           +           .           gene_id||"ENSG00000169885.10";||transcript_id||"ENST00000307786.8";||gene_type||"protein_coding";||gene_name||"CALML6";||transcript_type||"protein_coding";
 chr1        HAVANA      UTR         1917191     1917296     .           +           .           gene_id||"ENSG00000169885.10";||transcript_id||"ENST00000307786.8";||gene_type||"protein_coding";||gene_name||"CALML6";||transcript_type||"protein_coding";
-"""))})  # noqa: E501
+"""))})  # ruff: ignore[line-too-long]
     return build_gene_models_from_resource(res)
 
 
@@ -118,7 +118,7 @@ chr1    HAVANA    exon    120775    120932    .    -    .    gene_id||"ENSG00000
 chr1    HAVANA    exon    112700    112804    .    -    .    gene_id||"ENSG00000238009.7";||transcript_id||"ENST00000466430.5";||gene_type||"lncRNA";||gene_name||"ENSG00000238009";||transcript_type||"lncRNA";||transcript_name||"ENST00000466430";||exon_number||2;||exon_id||"ENSE00001957285.1";||level||2;||transcript_support_level||"5";||tag||"not_best_in_genome_evidence";||tag||"basic";||havana_gene||"OTTHUMG00000001096.2";||havana_transcript||"OTTHUMT00000003225.1";
 chr1    HAVANA    exon    92091    92240    .    -    .    gene_id||"ENSG00000238009.7";||transcript_id||"ENST00000466430.5";||gene_type||"lncRNA";||gene_name||"ENSG00000238009";||transcript_type||"lncRNA";||transcript_name||"ENST00000466430";||exon_number||3;||exon_id||"ENSE00001944529.1";||level||2;||transcript_support_level||"5";||tag||"not_best_in_genome_evidence";||tag||"basic";||havana_gene||"OTTHUMG00000001096.2";||havana_transcript||"OTTHUMT00000003225.1";
 chr1    HAVANA    exon    89295    91629    .    -    .    gene_id||"ENSG00000238009.7";||transcript_id||"ENST00000466430.5";||gene_type||"lncRNA";||gene_name||"ENSG00000238009";||transcript_type||"lncRNA";||transcript_name||"ENST00000466430";||exon_number||4;||exon_id||"ENSE00001846804.1";||level||2;||transcript_support_level||"5";||tag||"not_best_in_genome_evidence";||tag||"basic";||havana_gene||"OTTHUMG00000001096.2";||havana_transcript||"OTTHUMT00000003225.1";
-"""))})  # noqa: E501
+"""))})  # ruff: ignore[line-too-long]
     return build_gene_models_from_resource(res)
 
 
@@ -131,7 +131,7 @@ def gtf_example_no_exons() -> GeneModels:
             "gencode.txt": convert_to_tab_separated(textwrap.dedent("""
 chr1    HAVANA    gene    89295    133566    .    -    .    gene_id||"ENSG00000238009.7";||gene_type||"lncRNA";||gene_name||"ENSG00000238009";||level||2;||tag||"overlapping_locus";||havana_gene||"OTTHUMG00000001096.2";
 chr1    HAVANA    transcript    89295    120932    .    -    .    gene_id||"ENSG00000238009.7";||transcript_id||"ENST00000466430.5";||gene_type||"lncRNA";||gene_name||"ENSG00000238009";||transcript_type||"lncRNA";||transcript_name||"ENST00000466430";||level||2;||transcript_support_level||"5";||tag||"not_best_in_genome_evidence";||tag||"basic";||havana_gene||"OTTHUMG00000001096.2";||havana_transcript||"OTTHUMT00000003225.1";
-"""))})  # noqa: E501
+"""))})  # ruff: ignore[line-too-long]
     return build_gene_models_from_resource(res)
 
 
@@ -162,7 +162,7 @@ chr1    TEST    stop_codon    78    79    .    +    .    gene_id||"GENE";||trans
 chr1    TEST    UTR           1     20    .    +    .    gene_id||"GENE";||transcript_id||"TRANSCRIPT";||gene_name||"GENE";
 chr1    TEST    UTR           74    74    .    +    .    gene_id||"GENE";||transcript_id||"TRANSCRIPT";||gene_name||"GENE";
 chr1    TEST    UTR           78   100    .    +    .    gene_id||"GENE";||transcript_id||"TRANSCRIPT";||gene_name||"GENE";
-"""))})  # noqa: E501
+"""))})  # ruff: ignore[line-too-long]
     return build_gene_models_from_resource(res)
 
 
@@ -588,7 +588,7 @@ def transcript_builder() -> Callable[
         cds: tuple[int, int],
         strand: str,
     ) -> TranscriptModel:
-        exons = [Exon(start, stop) for start, stop in regions]  # noqa: FURB140
+        exons = [Exon(start, stop) for start, stop in regions]  # ruff: ignore[reimplemented-starmap]
         tx = (exons[0].start, exons[-1].stop)
 
         transcript = TranscriptModel(
@@ -1020,7 +1020,7 @@ def refseq_trim17_example() -> GeneModels:
 585	NM_001134855.2	chr1_KZ208906v1_fix	-	0	8060	221	6271	6	0,587,2144,4995,5842,7585,	474,610,2375,5091,6276,8060,	0	TRIM17	cmpl	cmpl	2,0,0,0,0,-1,
 585	NM_016102.4	chr1_KZ208906v1_fix	-	370	8060	370	6271	6	370,587,2144,4995,5842,7737,	474,610,2375,5091,6312,8060,	0	TRIM17	cmpl	cmpl	2,0,0,0,0,-1,
 585	NM_001024940.3	chr1_KZ208906v1_fix	-	370	8060	370	6271	6	370,587,2144,4995,5842,7737,	474,610,2375,5091,6276,8060,	0	TRIM17	cmpl	cmpl	2,0,0,0,0,-1,
-""")),  # noqa: E501
+""")),  # ruff: ignore[line-too-long]
         })
     return build_gene_models_from_resource(res)
 

@@ -1010,7 +1010,7 @@ def test_region_ne_operator() -> None:
     assert reg1 != reg2
 
     reg3 = Region("chr1", 10, 20)
-    assert not reg1 != reg3  # noqa
+    assert not reg1 != reg3  # ruff: ignore[negate-not-equal-op]
 
 
 def test_bed_region_stop_property() -> None:
@@ -1073,10 +1073,10 @@ def test_region_isin_position2() -> None:
 def test_region_equality_with_non_region() -> None:
     """Test __eq__ with non-Region objects."""
     reg = Region("chr1", 10, 20)
-    assert not reg == "chr1:10-20"  # String  # noqa
-    assert not reg == 123  # Integer  # noqa
-    assert not reg == None  # None  # noqa
-    assert not reg == ["chr1", 10, 20]  # List  # noqa
+    assert not reg == "chr1:10-20"  # String  # ruff: ignore[negate-equal-op]
+    assert not reg == 123  # Integer  # ruff: ignore[negate-equal-op]
+    assert not reg == None  # None  # ruff: ignore[none-comparison, negate-equal-op]
+    assert not reg == ["chr1", 10, 20]  # List  # ruff: ignore[negate-equal-op]
 
 
 def test_region_make_region_edge_cases() -> None:

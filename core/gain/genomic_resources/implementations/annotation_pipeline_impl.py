@@ -107,6 +107,6 @@ class AnnotationPipelineImplementation(
         return b"placeholder"
 
     def create_statistics_build_tasks(
-            self, **kwargs: Any,  # noqa: ARG002
+            self, **kwargs: Any,  # ruff: ignore[unused-method-argument]
     ) -> list[TaskDesc]:
         return []

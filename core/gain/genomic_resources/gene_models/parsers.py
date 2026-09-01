@@ -1244,7 +1244,7 @@ def infer_gene_models_format(infile: IO) -> FormatInference:
         try:
             infile.seek(0)
             res = parser(infile, None, sampled_rows)
-        except Exception as ex:  # noqa: BLE001 pylint: disable=broad-except
+        except Exception as ex:
             logger.debug(
                 "file format %s does not match; %s",
                 candidate, ex, exc_info=True)
@@ -1259,8 +1259,8 @@ def infer_gene_models_format(infile: IO) -> FormatInference:
         else:
             rejected.append(
                 (candidate,
-                 "has this format's column layout but yielded no "
-                 "transcript models"))
+                 ("has this format's column layout but yielded no "
+                 "transcript models")))
 
     tie_break = None
     # matched is sorted by construction -- the loop iterates the supported

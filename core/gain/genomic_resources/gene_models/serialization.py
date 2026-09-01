@@ -49,7 +49,7 @@ def gene_models_to_gtf(
 
     record_buffer: list[GTFRecord] = []
 
-    for (chrom, gene_name), transcripts in gene_models._chrom_genes():  # noqa
+    for (chrom, gene_name), transcripts in gene_models._chrom_genes():  # ruff: ignore[private-member-access]
         t = transcripts[0]
         start = min(t.tx[0] for t in transcripts)
         stop = max(t.tx[1] for t in transcripts)
@@ -85,7 +85,7 @@ f"""##description: GTF format dump for gene models "{gene_models.resource.resour
 ##format: gtf
 ##date: {datetime.today().strftime('%Y-%m-%d')}
 {joined_records}
-""")  # noqa
+""")  # ruff: ignore[line-too-long]
 
 
 def get_exon_number_for(

@@ -53,7 +53,7 @@ GMM_CONTENT = """
 #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts  exonEnds
 t4        tx1  chr1  +      5       84    10       71     3         5,25,45     16,37,84
 c8        tx1  chr1  -      100     204   112      169    3         100,145,195 133,183,204
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
 
 
 def t4c8_genome(root_path: pathlib.Path) -> ReferenceGenome:

@@ -121,7 +121,7 @@ VCF_DATA = """
 chr1   10  .  A   T   .    .      VCF_FLOAT=0.5;VCF_INT=11;VCF_AF=0.05;VCF_STR=benign;VCF_STR_MULTI=a,b
 chr1   11  .  A   T   .    .      VCF_FLOAT=0.6;VCF_INT=12;VCF_AF=0.06;VCF_STR=likely_pathogenic
 chr2   20  .  C   G   .    .      VCF_FLOAT=0.7;VCF_INT=13;VCF_AF=0.07;VCF_STR_MULTI=x,y,z
-"""  # noqa: E501
+"""  # ruff: ignore[line-too-long]
 
 ANNOTATION = """
     - position_score:

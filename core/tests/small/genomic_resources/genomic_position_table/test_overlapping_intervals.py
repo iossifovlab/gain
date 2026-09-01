@@ -32,7 +32,7 @@ are one builder apart (``with_tabix()``), which is what keeps "identical rows"
 a fact about the fixture rather than a promise the test has to keep.
 """
 # pylint: disable=W0621,C0116
-# ruff: noqa: S311
+# ruff: file-ignore[suspicious-non-cryptographic-random-usage]
 # S311 (no `random` for cryptography) does not apply: `random` builds fixture
 # rows here, seeded so a failure replays exactly.
 import pathlib

@@ -96,14 +96,14 @@ class FakeFuture:
         self._done_callbacks.append(fn)
         self._invoke_callbacks()
 
-    def result(self, timeout: Any = None) -> Any:  # noqa: ARG002
+    def result(self, timeout: Any = None) -> Any:  # ruff: ignore[unused-method-argument]
         # Match concurrent.futures.Future: a failed future re-raises on
         # result() rather than returning a stale/None value (#154).
         if self._exception is not None:
             raise self._exception
         return self._result
 
-    def exception(self, timeout: Any = None) -> BaseException | None:  # noqa: ARG002
+    def exception(self, timeout: Any = None) -> BaseException | None:  # ruff: ignore[unused-method-argument]
         return self._exception
 
     def set_running_or_notify_cancel(self) -> None:
@@ -146,7 +146,7 @@ class SequentialTaskExecutor(TaskExecutor):
                 callback_failure(e)
         return cast(Future, future)
 
-    def wait_all(self, timeout: float) -> None:  # noqa: ARG002
+    def wait_all(self, timeout: float) -> None:  # ruff: ignore[unused-method-argument]
         return
 
     def shutdown(self) -> None:
@@ -261,7 +261,7 @@ class ThreadedTaskExecutor(TaskExecutor):
                 future.result(timeout=timeout - elapsed)
             except TimeoutError as ex:
                 raise TimeoutError("Task timed out") from ex
-            except BaseException:  # noqa: BLE001, S110
+            except BaseException:  # ruff: ignore[blind-except, try-except-pass]
                 # Task error already surfaces via the callback_failure
                 # path; wait_all only blocks on completion.
                 pass

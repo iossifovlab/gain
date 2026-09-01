@@ -77,11 +77,11 @@ def test_annotate_doc(
 
     output_template = pathlib.Path(output_file).read_text()
 
-    assert f"""src=\"file://{tmp_path}/one/statistics/histogram_score_one.png\"""" in output_template  # noqa: E501
+    assert f"""src=\"file://{tmp_path}/one/statistics/histogram_score_one.png\"""" in output_template  # ruff: ignore[line-too-long]
     assert "<strong>aggregator</strong>" in output_template
     assert f"""href=\"file://{tmp_path}/one/index.html\"""" in output_template
-    assert 'href="https://iossifovlab.com/gaindocs/annotation_infrastructure.html#position-score-annotator"' in output_template  # noqa: E501
-    assert "Annotator to use with genomic scores depending on genomic position" in output_template  # noqa: E501
+    assert 'href="https://iossifovlab.com/gaindocs/annotation_infrastructure.html#position-score-annotator"' in output_template  # ruff: ignore[line-too-long]
+    assert "Annotator to use with genomic scores depending on genomic position" in output_template  # ruff: ignore[line-too-long]
 
     assert "preamble" in output_template
     assert "acgt" in output_template

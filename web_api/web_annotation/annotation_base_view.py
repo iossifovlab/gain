@@ -531,7 +531,7 @@ class AnnotationMixin:
         try:
             pipeline_id = request.data["pipeline_id"]
             if not isinstance(pipeline_id, str):
-                raise TypeError("Pipeline id is not a string!")  # noqa: TRY301
+                raise TypeError("Pipeline id is not a string!")  # ruff: ignore[raise-within-try]
             pipeline = self.get_pipeline(pipeline_id, request.user)
             if pipeline is None:
                 raise KeyError(f"Pipeline {pipeline_id} not found!")

@@ -226,7 +226,7 @@ class DaskExecutor(TaskGraphExecutorBase):
                             batch.futures, batch.tasks, strict=True):
                         try:
                             result = future.result()
-                        except Exception as ex:  # noqa: BLE001
+                        except Exception as ex:  # ruff: ignore[blind-except]
                             # pylint: disable=broad-except
                             result = ex
                         gathered.append((task, result))

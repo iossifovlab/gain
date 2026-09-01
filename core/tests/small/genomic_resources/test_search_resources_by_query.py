@@ -533,7 +533,7 @@ def _publish_index_with_column(
             # this builds the artefact a hostile repository would publish,
             # which is what the code under test has to survive.
             conn.execute(
-                "INSERT INTO contents (full_id, id, type, "  # noqa: S608
+                "INSERT INTO contents (full_id, id, type, "  # ruff: ignore[hardcoded-sql-expression]
                 f'"{column}") VALUES (?, ?, ?, ?)', (*row, ""))
     (root / GR_SQLITE_META_FILE_NAME).write_bytes(
         gzip.compress(db_path.read_bytes(), mtime=0))

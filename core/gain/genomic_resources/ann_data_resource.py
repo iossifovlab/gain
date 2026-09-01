@@ -333,7 +333,7 @@ def load_ann_data_from_resource(
             "the parameters of the ann_data %s produced a %s "
             "instead of an AnnData",
             resource.resource_id, type(result).__name__)
-        raise ValueError(  # noqa: TRY004
+        raise ValueError(  # ruff: ignore[type-check-without-type-error]
             f"parameters of {resource.resource_id} produced a "
             f"{type(result).__name__}, not an AnnData")
 

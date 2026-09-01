@@ -731,7 +731,7 @@ class AlleleStatistics(Statistic):
         """
         return _total(region.counts() for region in self._regions.values())
 
-    def add_value(self, value: Any) -> None:  # noqa: ARG002
+    def add_value(self, value: Any) -> None:  # ruff: ignore[unused-method-argument]
         raise TypeError(
             "AlleleStatistics accumulates regions, not values; "
             "use fold_region")
@@ -739,7 +739,7 @@ class AlleleStatistics(Statistic):
     def merge(self, other: Statistic) -> None:
         if not isinstance(other, AlleleStatistics):
             raise TypeError("unexpected type of statistics to merge with")
-        for region in other._regions.values():  # noqa: SLF001
+        for region in other._regions.values():  # ruff: ignore[private-member-access]
             self.fold_region(region)
 
     def serialize(self) -> str:

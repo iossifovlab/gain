@@ -244,7 +244,7 @@ Annotator to identify the effect of the variant on protein coding.
 
     def _do_annotate(
         self, annotatable: Annotatable,
-        context: dict[str, Any],  # noqa: ARG002
+        context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
         result: dict = {}
 

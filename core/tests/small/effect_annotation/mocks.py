@@ -13,7 +13,7 @@ class TranscriptModelMock:
         cds_start: int, cds_end: int,
         exons: list[Exon],
         coding: list[Exon] | None = None,
-        is_coding: bool = True,  # noqa: FBT001,FBT002
+        is_coding: bool = True,  # ruff: ignore[boolean-type-hint-positional-argument, boolean-default-value-positional-argument]
     ):
         self.strand = strand
         self.cds = [cds_start, cds_end]

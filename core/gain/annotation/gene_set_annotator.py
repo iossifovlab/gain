@@ -136,7 +136,7 @@ class GeneSetAnnotator(AnnotatorBase):
 
     def _do_annotate(
         self,
-        annotatable: Annotatable | None,  # noqa: ARG002
+        annotatable: Annotatable | None,  # ruff: ignore[unused-method-argument]
         context: dict[str, Any],
     ) -> dict[str, Any]:
         genes = context.get(self.input_gene_list)

@@ -47,7 +47,7 @@ class StatsCollection(MutableMapping[tuple[str, ...], Any]):
         result: dict[tuple[str, ...], int] = {}
         for k, v in self._stats.items():
             if k[:len(key)] == key:
-                result[k] = v  # noqa: PERF403
+                result[k] = v  # ruff: ignore[manual-dict-comprehension]
         if result:
             if len(result) == 1 and key in result:
                 return result[key]

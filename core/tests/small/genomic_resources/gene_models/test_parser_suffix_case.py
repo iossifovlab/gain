@@ -31,7 +31,7 @@ GMM_CONTENT = """
 #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
 TP53      tx1  1     +      10      100   12       95     3         10,50,70   15,60,100
 POGZ      tx3  17    +      10      100   12       95     3         10,50,70   15,60,100
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
 
 GENE_MAPPING_CONTENT = """
 from   to

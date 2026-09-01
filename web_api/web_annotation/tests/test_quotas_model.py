@@ -713,7 +713,7 @@ def test_single_allele_query_complete_does_not_consume_extras_when_sufficient(
     assert anonymous_quota.extra_attributes == before_extra_attributes
 
 
-def test_single_allele_query_complete_does_not_consume_extras_when_monthly_covers(  # noqa: E501
+def test_single_allele_query_complete_does_not_consume_extras_when_monthly_covers(  # ruff: ignore[line-too-long]
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     _leave(anonymous_quota, daily_attributes=0)
@@ -725,7 +725,7 @@ def test_single_allele_query_complete_does_not_consume_extras_when_monthly_cover
     assert anonymous_quota.extra_attributes == before_extra
 
 
-def test_single_allele_query_complete_consumes_extras_when_both_periods_exhausted(  # noqa: E501
+def test_single_allele_query_complete_consumes_extras_when_both_periods_exhausted(  # ruff: ignore[line-too-long]
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     _leave(anonymous_quota, daily_attributes=0, monthly_attributes=0)
@@ -737,7 +737,7 @@ def test_single_allele_query_complete_consumes_extras_when_both_periods_exhauste
     assert anonymous_quota.extra_attributes == 40
 
 
-def test_single_allele_query_complete_consumes_extras_for_remainder_beyond_max_period(  # noqa: E501
+def test_single_allele_query_complete_consumes_extras_for_remainder_beyond_max_period(  # ruff: ignore[line-too-long]
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     # daily=4, monthly=4 → max=4, amount=10 → extras cover 6
@@ -766,7 +766,7 @@ def test_single_allele_query_complete_zeros_all_extras_when_extra_exhausted(
     assert anonymous_quota.extra_variants == 0
 
 
-def test_single_allele_query_complete_does_not_zero_extras_when_partial_consumption(  # noqa: E501
+def test_single_allele_query_complete_does_not_zero_extras_when_partial_consumption(  # ruff: ignore[line-too-long]
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     _leave(anonymous_quota, daily_attributes=0, monthly_attributes=0)

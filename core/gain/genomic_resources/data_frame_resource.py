@@ -92,7 +92,7 @@ def load_data_frame_from_resource(
         # ValueError, not TypeError: this is a misconfigured resource rather
         # than a caller passing the wrong type, every other rejection in this
         # function is a ValueError, and callers catch that.
-        raise ValueError(  # noqa: TRY004
+        raise ValueError(  # ruff: ignore[type-check-without-type-error]
             f"parameters of {resource.resource_id} produced a "
             f"{type(result).__name__}, not a data frame")
 

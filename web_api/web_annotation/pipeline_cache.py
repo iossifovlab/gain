@@ -234,7 +234,7 @@ class ThreadSafePipeline(AnnotationPipeline):
     @property
     def _is_open(self) -> bool:  # type: ignore
         """Return whether the pipeline is open."""
-        return self.pipeline._is_open  # noqa: SLF001
+        return self.pipeline._is_open  # ruff: ignore[private-member-access]
 
     def get_info(self) -> list[AnnotatorInfo]:
         return self.pipeline.get_info()

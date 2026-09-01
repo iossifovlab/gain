@@ -9,7 +9,7 @@ def annotate_vcf_file(*args: str) -> subprocess.CompletedProcess:
     reset_lock()
 
     return subprocess.run(
-        ["annotate_vcf", *args],  # noqa: S607
+        ["annotate_vcf", *args],  # ruff: ignore[start-process-with-partial-path]
         check=True,
     )
 
@@ -19,6 +19,6 @@ def annotate_tabular_file(*args: str) -> subprocess.CompletedProcess:
     reset_lock()
 
     return subprocess.run(
-        ["annotate_tabular", *args],  # noqa: S607
+        ["annotate_tabular", *args],  # ruff: ignore[start-process-with-partial-path]
         check=True,
     )

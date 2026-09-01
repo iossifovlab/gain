@@ -33,7 +33,7 @@ INJECTION_KEY = "a); DROP TABLE contents_metadata; --"
 
 # A str subclass is the point here: the marker has to survive being used
 # as a dict key next to plain string keys.
-class RawKey(str):  # noqa: FURB189
+class RawKey(str):  # ruff: ignore[subclass-builtin]
     """A label key to write into the YAML verbatim, unquoted.
 
     YAML mapping keys need not be strings -- `2024:` is an int key, `true:`

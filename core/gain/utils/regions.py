@@ -135,7 +135,7 @@ def get_chromosome_length_tabix(
                 pos = pos * 2
             else:
                 if pos == 0:  # stop infinite loop if any_records is never True
-                    raise ValueError  # noqa: TRY301
+                    raise ValueError  # ruff: ignore[raise-within-try]
                 right = pos
                 pos = pos // 2
 

@@ -15,7 +15,7 @@ TP53      tx1  1     +      10      100   12       95     3         10,50,70   1
 TP53      tx2  1     +      10      100   12       95     2         10,70      15,100
 POGZ      tx3  17    +      10      100   12       95     3         10,50,70   15,60,100
 BRCA1     tx4  1     -      200     300   210      290    2         200,250    220,300
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
 
 # GTF format content
 GTF_CONTENT = """
@@ -26,7 +26,7 @@ GTF_CONTENT = """
 1	test	CDS	12	15	.	+	0	gene_id "TP53"; gene_name "TP53"; transcript_id "tx1";
 1	test	CDS	50	60	.	+	0	gene_id "TP53"; gene_name "TP53"; transcript_id "tx1";
 1	test	CDS	70	95	.	+	2	gene_id "TP53"; gene_name "TP53"; transcript_id "tx1";
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
 
 
 @pytest.fixture
@@ -337,7 +337,7 @@ GTF_WITH_EXONLESS_TRANSCRIPT = """
 chr17	test	transcript	100	200	.	+	.	gene_id "G1"; transcript_id "TR1";
 chr17	test	exon	100	200	.	+	.	gene_id "G1"; transcript_id "TR1";
 chr17	test	transcript	500	800	.	+	.	gene_id "G2"; transcript_id "TR2"; transcript_type "pseudogene";
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
 
 
 @pytest.fixture

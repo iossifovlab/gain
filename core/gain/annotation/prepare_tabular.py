@@ -484,7 +484,12 @@ def _staged_output(
             data_path=os.path.join(staging, name),
             index_path=os.path.join(staging, f"{name}.tbi"),
         )
-        yield staged
+        # RUF075 wants the yield wrapped so the trailing statements run on
+        # failure too.  Here that is the bug, not the fix: NOT publishing is
+        # the whole point of staging, so an exception must skip both
+        # `_publish` calls and leave the previous output pair intact.  The
+        # staging directory is still removed, by the enclosing `with`.
+        yield staged  # ruff: ignore[fallible-context-manager]
         _publish(staged.data_path, output_path)
         _publish(staged.index_path, index_path)
 
