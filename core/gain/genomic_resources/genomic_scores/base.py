@@ -1258,8 +1258,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         is filled out to the batch's shape rather than treated as an
         error.
         """
-        weights = np.asarray(cls.record_weight(
-            cast("int", begins), cast("int", ends)))
+        # One marker for one fact -- the scalar-declared hook is being
+        # called on whole columns, which is the contract its docstring
+        # states and this method exists to spend.
+        weights = np.asarray(
+            cls.record_weight(begins, ends))  # type: ignore[arg-type]
         if weights.ndim == 0:
             weights = np.full(begins.shape, weights)
         return weights.astype(np.int64, copy=False)
@@ -1350,5 +1353,13 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         else.  This hook is what lets it be: without it the fold would have
         to carry a flag saying which kind it is serving, and that flag
         would be a second statement of the weight rule.
+
+        Underscored, alone among the per-kind hooks, because it is the only
+        one that is not also part of the read API: the others answer a
+        caller (``fetch_region_segments`` IS
+        :meth:`region_values_from_records`; the scan calls
+        :meth:`validate_records` and :meth:`record_weight` by name), while
+        this one is reached only from :meth:`aggregate_region` in this
+        class.  A kind overrides it; nothing else calls it.
         """
         return self.fetch_region_segments(chrom, pos_begin, pos_end, scores)
