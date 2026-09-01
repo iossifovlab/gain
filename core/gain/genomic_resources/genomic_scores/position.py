@@ -141,17 +141,19 @@ class PositionScore(GenomicScore):
     ) -> Generator[tuple[int, int, list[ScoreValue]], None, None]:
         """The base's stream, clipped to the queried window first.
 
-        The one statement of clipping-before-weighing, and a position-score
-        fact: a record's weight is how many bases OF THE QUERY it covers, so
-        the part reaching outside must come off before
-        :meth:`record_weight` measures it.  Left unclipped, a record
-        straddling the edge would count for its whole width, and one
-        entirely past the window for a negative number of times.
+        Clipping before weighing is a position-score fact: a record's weight
+        is how many bases OF THE QUERY it covers, so the part reaching
+        outside must come off before :meth:`record_weight` measures it.
+        Left unclipped, a record straddling the edge would count for its
+        whole width, and one entirely past the window for a negative number
+        of times.
 
-        The ADR 0008 idiom -- compose the region transducer over the
-        unclipped stream -- which is also how
-        :meth:`fetch_region_weighted_values` derives the same weights for
-        the annotators.
+        Written as the ADR 0008 idiom -- compose the region transducer over
+        the unclipped stream.  :meth:`fetch_region_weighted_values` reaches
+        the same weights for the annotators by clipping inline instead;
+        converging the two is gain#1027's remaining work, so this is the
+        only statement of the rule for AGGREGATION, not the only one in the
+        class.
         """
         return clip_to_region(
             super()._aggregation_segments(chrom, pos_begin, pos_end, scores),

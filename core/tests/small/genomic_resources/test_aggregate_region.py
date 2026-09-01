@@ -104,10 +104,11 @@ def test_a_record_the_query_clips_to_nothing_is_not_aggregated(
     """A record with no part inside the window never reaches an aggregator.
 
     ``fetch_region_segments`` deliberately yields an out-of-region record
-    through (gain#553, ADR 0008), at its own extent.  ``aggregate_region``
-    carries its OWN ``clip_span`` -- the agreement test above cannot see a
-    symmetric removal from both it and ``fetch_region_weighted_values``, so
-    each copy gets its own pin.  Without it the dead record's value would
+    through (gain#553, ADR 0008), at its own extent.  The clip that removes
+    it again is ``PositionScore._aggregation_segments``, a SEPARATE
+    statement from the one ``fetch_region_weighted_values`` makes -- the
+    agreement test above cannot see a symmetric removal from both, so each
+    copy gets its own pin.  Without it the dead record's value would
     count -- for a negative number of times, even; ``mean`` catches that,
     and ``max`` -- which registers a value however small its weight --
     catches the zero-overlap record too (gain#639).

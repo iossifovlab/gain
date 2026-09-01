@@ -134,6 +134,12 @@ def test_a_score_kind_must_state_its_own_record_rules(
         list(kind.validate_records(iter([])))
     with pytest.raises(NotImplementedError):
         list(kind.validate_record_arrays(iter([]), "chr1"))
+    # The weight rule joined them in gain#1095, and for the same reason: an
+    # inherited "counts once" reads exactly like a kind whose author
+    # considered the question and answered it.  Asked of the CLASS, since
+    # that is how both scan paths reach it.
+    with pytest.raises(NotImplementedError):
+        _KindStatingNothing.record_weight(10, 19)
 
 
 def _allele_score(tmp_path: pathlib.Path, resource_id: str) -> AlleleScore:

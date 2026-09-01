@@ -221,10 +221,19 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
           which only the statistics scan applies.
         - validate_record_arrays(): the same rule over a batch's columns,
           which only the statistics scan's vectorized path applies.
+        - record_weight(): how many times one record's value counts when a
+          region is aggregated.  Every reader goes through it -- the
+          annotators' ``aggregate_region``, the per-record scan, and the
+          bulk scan via ``record_weights`` (gain#1095).
+        - _aggregation_segments(): whether those records are cut down to
+          the queried window before they are weighed.  Unlike the others
+          this HAS a default -- not clipping -- because it is a
+          consequence of the weight rule rather than a rule of its own: a
+          kind that counts a record once counts it wherever it falls.
 
-        The last two have no default.  A kind that inherited one would be
-        validated by a rule nobody chose for it, which is the failure
-        ADR 0008 exists to undo.
+        All but the last have no default.  A kind that inherited one would
+        be validated, or weighed, by a rule nobody chose for it, which is
+        the failure ADR 0008 exists to undo.
 
     See Also:
         - PositionScore: For position-based genomic scores
@@ -1212,9 +1221,17 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         declared over scalars because that is what its per-record callers
         hand it, but :meth:`record_weights` answers a whole batch by
         handing it the position COLUMNS instead, and only an elementwise
-        body gives the same answers that way.  A body that branched on
-        ``left``, or called ``int()``, would weigh a batch differently from
-        a record and the two scan paths would silently disagree.
+        body gives the same answers that way.
+
+        Most ways of breaking that break loudly -- a body branching on
+        ``left`` raises ``ValueError`` on an array's ambiguous truth, one
+        calling ``int()`` a ``TypeError``.  The contract is written down
+        for the ones that do not: a body REDUCING its arguments
+        (``int(np.mean(right - left + 1))``) hands back a plain number,
+        which is then broadcast as though it were every record's weight,
+        and the two scan paths disagree with nothing raised.  That is what
+        test_the_weight_rule_is_stated_once_per_kind's broadcast-agreement
+        assertion is there to catch.
 
         Deriving a weight from the span unconditionally is what this hook
         exists to prevent: it would give a fragment its length as a weight
