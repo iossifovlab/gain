@@ -5,9 +5,14 @@
 serve, and ``test_aggregate_region`` pins what it answers.  What is pinned
 HERE is what each piece promises the orchestrator on its own: which requests
 resolve to which pairs, that every built aggregator is a fresh accumulator,
-and -- the reason the fold takes ``weigh`` and ``clip`` as arguments at all
--- that the fold applies the per-kind weight rule it is HANDED rather than
-deriving one of its own.
+and -- the reason the fold takes ``weigh`` as an argument at all -- that the
+fold applies the per-kind weight rule it is HANDED rather than deriving one
+of its own.
+
+Nothing here knows what a KIND is, which is why nothing here pins clipping:
+whether a record is cut down to the query window before it reaches the fold
+is settled by the kind's ``_aggregation_segments``, and pinned against the
+score classes in ``test_aggregate_region`` and ``test_clip_span``.
 """
 from __future__ import annotations
 
@@ -67,9 +72,6 @@ def _fold(
     requests: list[tuple[str, str]],
     *,
     weigh: Callable[[int, int], int],
-    clip: bool,
-    pos_begin: int | None = None,
-    pos_end: int | None = None,
 ) -> list[ScoreValue]:
     """Drive the fold the way its caller does.
 
@@ -83,8 +85,7 @@ def _fold(
         for score_id, aggregator in requests
     ]
     return fold_region_segments(
-        segments, aggregators, requests,
-        weigh=weigh, clip=clip, pos_begin=pos_begin, pos_end=pos_end)
+        segments, aggregators, requests, weigh=weigh)
 
 
 def test_a_bare_score_id_resolves_to_the_definitions_default(
@@ -106,35 +107,21 @@ def test_one_fetch_serves_two_requests_for_the_same_score() -> None:
         segments,
         [("s", "min"), ("s", "max")],
         weigh=_by_span,
-        clip=False,
     ) == [0.2, 0.8]
 
 
-def test_clipping_drops_a_record_the_window_clips_to_nothing() -> None:
-    # `clip=True` is what a span-weighted kind hands in: the record at
-    # [20, 25] does not touch [10, 15], so nothing is aggregated and `max`
-    # answers for an empty region.
-    assert _fold(
-        [(20, 25, [0.7])],
-        [("s", "max")],
-        weigh=_by_span,
-        clip=True,
-        pos_begin=10,
-        pos_end=15,
-    ) == [None]
-
-
-def test_without_clipping_a_record_outside_the_window_still_counts() -> None:
-    # `clip=False` is what a count-weighted kind hands in: the record
-    # collapses to a point outside [10, 15] and counts once anyway -- the
-    # fold does not decide for itself that the window is relevant.
+def test_the_fold_aggregates_the_segments_it_is_handed() -> None:
+    # The fold does not decide for itself that the query window is
+    # relevant: a record at [20, 25] reaching it is a record its caller
+    # meant to aggregate, whatever window was asked for.  Which kind
+    # clips BEFORE the fold, and why, is pinned where that decision is
+    # now made -- on the score classes, by
+    # test_a_record_the_query_clips_to_nothing_is_not_aggregated and
+    # test_an_allele_point_outside_the_window_still_aggregates_once.
     assert _fold(
         [(20, 25, [0.7])],
         [("s", "count")],
         weigh=_counts_once,
-        clip=False,
-        pos_begin=10,
-        pos_end=15,
     ) == [1]
 
 
@@ -146,9 +133,6 @@ def test_the_handed_weight_is_what_each_value_counts_for() -> None:
         [(10, 13, [0.2]), (14, 14, [0.8])],
         [("s", "mean")],
         weigh=_by_span,
-        clip=True,
-        pos_begin=10,
-        pos_end=14,
     ) == [pytest.approx((0.2 * 4 + 0.8) / 5)]
 
 

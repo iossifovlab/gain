@@ -44,6 +44,7 @@ from .base import GenomicScore
 from .records import (
     RecordArrays,
     clip_span,
+    clip_to_region,
 )
 
 
@@ -101,18 +102,8 @@ class PositionScore(GenomicScore):
             in a genomic region, for a caller that aggregates it
     """
 
-    # A record counts once per base pair of the queried region it covers.
-    # That one value per position is what a position score PROMISES is not
-    # stated here but in ``validate_records`` / ``validate_record_arrays``,
-    # the only places that enforce it.
-    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = True
-
-    # No ``_record_weight`` override: the base derives the per-record weight
-    # from ``RECORD_WEIGHT_IS_SPAN`` above, so the span rule is stated once
-    # and both the aggregation hook and the statistics scan read it there.
-
     # A region of positions reduces by ``mean``: each position's value counts
-    # once per base pair it covers (see RECORD_WEIGHT_IS_SPAN).
+    # once per base pair it covers (see :meth:`record_weight`).
     DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {
         "float": "mean",
         "int": "mean",
@@ -126,6 +117,45 @@ class PositionScore(GenomicScore):
                 "The resource provided to PositionScore should be of "
                 f"'position_score' type, not a '{resource.get_type()}'")
         super().__init__(resource)
+
+    @classmethod
+    def record_weight(cls, left: int, right: int) -> int:
+        """A record counts once per base pair it covers.
+
+        The only kind whose answer is not 1.  That there is exactly one
+        value per position -- what a position score PROMISES -- is not
+        stated here but in ``validate_records`` / ``validate_record_arrays``,
+        the only places that enforce it.  This is a MEASURE.
+
+        Elementwise, as the base requires: handed the position columns of a
+        whole batch, the same expression answers that batch's weights.
+        """
+        return right - left + 1
+
+    def _aggregation_segments(
+        self,
+        chrom: str,
+        pos_begin: int | None = None,
+        pos_end: int | None = None,
+        scores: list[str] | None = None,
+    ) -> Generator[tuple[int, int, list[ScoreValue]], None, None]:
+        """The base's stream, clipped to the queried window first.
+
+        The one statement of clipping-before-weighing, and a position-score
+        fact: a record's weight is how many bases OF THE QUERY it covers, so
+        the part reaching outside must come off before
+        :meth:`record_weight` measures it.  Left unclipped, a record
+        straddling the edge would count for its whole width, and one
+        entirely past the window for a negative number of times.
+
+        The ADR 0008 idiom -- compose the region transducer over the
+        unclipped stream -- which is also how
+        :meth:`fetch_region_weighted_values` derives the same weights for
+        the annotators.
+        """
+        return clip_to_region(
+            super()._aggregation_segments(chrom, pos_begin, pos_end, scores),
+            pos_begin, pos_end)
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
@@ -230,7 +260,7 @@ class PositionScore(GenomicScore):
             if span is None:
                 continue
             left, right = span
-            yield (values, self._record_weight(left, right))
+            yield (values, self.record_weight(left, right))
 
     def fetch_position_scores(
         self, chrom: str, position: int,

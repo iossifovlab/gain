@@ -7,11 +7,14 @@ folding a stream of fetched segments into one value per request.
 
 Nothing here knows what a score KIND is.  The one thing that differs
 between kinds -- how many times a record's value counts -- reaches
-:func:`fold_region_segments` as two arguments, ``weigh`` and ``clip``, both
-derived by the caller from its ``RECORD_WEIGHT_IS_SPAN``.  The fold applies
-what it is handed and does not re-derive or cross-check them: the rule is
-stated once per kind, on the kind (see
-``test_the_weight_rule_is_stated_once_per_kind``).
+:func:`fold_region_segments` as ``weigh``, the kind's own
+:meth:`~.base.GenomicScore.record_weight`.  The fold applies what it is
+handed and does not re-derive or cross-check it: the rule is stated once
+per kind, on the kind (see
+``test_the_weight_rule_is_stated_once_per_kind``).  Whether the segments
+were clipped to the query window before they got here is settled the same
+way, by the kind's :meth:`~.base.GenomicScore._aggregation_segments`, so
+the fold carries no flag saying which kind it serves.
 
 Every BACKEND feeds one path here -- this generic weighted stream over
 fetched records -- and a backend-specific fast path was considered and
@@ -30,9 +33,6 @@ from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
 
 from ..aggregators import (
     Aggregator,
-)
-from .records import (
-    clip_span,
 )
 
 
@@ -123,9 +123,6 @@ def fold_region_segments(
     requests: list[tuple[str, str]],
     *,
     weigh: Callable[[int, int], int],
-    clip: bool,
-    pos_begin: int | None,
-    pos_end: int | None,
 ) -> list[ScoreValue]:
     """Fold one region read into one value per request.
 
@@ -140,12 +137,14 @@ def fold_region_segments(
     region is read at all (see :meth:`~.base.GenomicScore.aggregate_region`,
     which explains why that ordering matters).
 
-    ``weigh`` and ``clip`` are the caller's two readings of its own
-    per-kind weight rule, and are applied as handed: ``clip`` says whether
-    a record is first cut down to the query window, ``weigh`` turns the
-    resulting span into the number of times the record's value counts.
-    Neither is second-guessed here -- a kind that counts a record once
-    counts it wherever the point it collapses to falls, window or not.
+    ``weigh`` is the caller's per-kind weight rule, applied as handed: it
+    turns a segment's span into the number of times that record's value
+    counts.  It is not second-guessed here, and neither is the stream --
+    whether a record was first cut down to the query window is the
+    caller's business, settled before the segments arrive (see
+    :meth:`~.base.GenomicScore._aggregation_segments`).  A kind that counts
+    a record once counts it wherever the point it collapses to falls,
+    window or not.
     """
     column_of = {
         score_id: i
@@ -158,11 +157,6 @@ def fold_region_segments(
     ]
 
     for left, right, values in segments:
-        if clip:
-            span = clip_span(left, right, pos_begin, pos_end)
-            if span is None:
-                continue
-            left, right = span
         weight = weigh(left, right)
         for aggregator, column in targets:
             aggregator.add(values[column], weight)

@@ -58,9 +58,6 @@ class FragmentScore(GenomicScore):
     warning once per resource on the deprecated one.
     """
 
-    # A fragment weighs 1 however long it is.
-    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
-
     # As AlleleScore, except that strings join rather than list -- a fragment
     # score's string attributes are rendered into one cell.  Owned by the
     # score class, so no score-definition subclass is needed to carry them.
@@ -99,6 +96,20 @@ class FragmentScore(GenomicScore):
                 LEGACY_FRAGMENT_SCORE_TYPE, PREFERRED_FRAGMENT_SCORE_TYPE,
                 found_in=f"Resource '{resource.get_full_id()}'")
         super().__init__(resource)
+
+    @classmethod
+    def record_weight(cls, left: int, right: int) -> int:  # noqa: ARG003
+        """A fragment counts once however long it is.
+
+        The kind's whole reason for weighing by record rather than by span:
+        a fragment is a measured thing, not a run of per-base values, so
+        its length says nothing about how many times its value counts.
+
+        A constant, which is elementwise: the base's
+        :meth:`~.base.GenomicScore.record_weights` fills it out to a
+        batch's shape.
+        """
+        return 1
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
