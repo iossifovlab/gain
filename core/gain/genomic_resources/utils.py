@@ -3,7 +3,57 @@
 from collections.abc import Callable
 from typing import Any
 
+from gain import logging
 from gain.genomic_resources.repository import GenomicResource
+from gain.utils.log_safety import escape_unsafe_characters
+
+logger = logging.getLogger(__name__)
+
+
+def read_resource_id_label(
+    resource: GenomicResource, label: str,
+) -> str | None:
+    """The named label's value, when that label names another resource.
+
+    Read through the accessor that narrows both ``meta`` levels, the way
+    every other label reader does (gain#654, gain#1004) -- and then
+    narrowed once more, because that accessor promises a *mapping* and
+    says nothing about what is in it (gain#1050).  A value that cannot
+    be a resource id reads as absent and is reported.  An absent label,
+    and the explicit YAML null the production GRRs carry, are not
+    curator mistakes and stay silent.
+
+    Taken by label name rather than hard-wired to ``reference_genome``,
+    because four labels across three modules name a resource this way:
+    ``reference_genome`` on gene models (gain#1050) and on scores, and
+    ``source_genome``/``target_genome`` on a liftover chain.  All four
+    read a free-form YAML value into a ``str | None``, and unnarrowed
+    all four died the same way -- the int in a regex, the list and the
+    dict wherever the id was first hashed -- with a ``TypeError`` that
+    named neither the resource nor the label (gain#1053).
+
+    Lives here rather than beside any one of its callers, and beside
+    :func:`build_chrom_mapping`, which is the same kind of thing: a read
+    of a resource's own configuration that several resource types share.
+
+    Whitespace is deliberately NOT stripped: only an empty value is
+    narrowed away, so a padded id or the trailing newline a folded
+    scalar leaves still reaches resolution and fails there naming
+    itself.  Stripping would be a normalization policy for ids rather
+    than a narrowing, and that is a separate decision.
+    """
+    value = resource.get_labels().get(label)
+    if value is None:
+        return None
+    if isinstance(value, str) and value:
+        return value
+    reason = "empty" if isinstance(value, str) \
+        else f"a {type(value).__name__}, not a string"
+    logger.warning(
+        "resource <%s>: meta.labels.%s is %s; reading it as absent -- "
+        "fix the resource's 'genomic_resource.yaml'",
+        escape_unsafe_characters(resource.resource_id), label, reason)
+    return None
 
 
 def build_chrom_mapping(

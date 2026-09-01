@@ -1,9 +1,12 @@
 # pylint: disable=C0114,C0116,W0212,W0621
 import gc
+import logging
 import pathlib
 import textwrap
 import weakref
+from typing import Any
 
+import pytest
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
     scan,
@@ -21,8 +24,10 @@ from gain.genomic_resources.testing.builders import (
     a_reference_genome,
 )
 
+from .conftest import UNUSABLE_RESOURCE_ID_LABELS, label_warnings
 
-def _a_chr1_score(genome_id: str | None = None):
+
+def _a_chr1_score(genome_id: Any = None):
     builder = (
         a_position_score()
         .with_score("score", "float")
@@ -367,6 +372,82 @@ def test_a_label_naming_a_non_genome_resource_degrades_to_raw_counts(
 
     assert f">{COVERED}<" in page
     assert "Covered %" not in page
+
+
+@pytest.mark.parametrize(
+    ("value", "reported_as"), UNUSABLE_RESOURCE_ID_LABELS)
+def test_an_unusable_genome_label_degrades_to_raw_counts(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    value: Any,
+    reported_as: str,
+) -> None:
+    """A label that cannot name a resource is a raw-counts page, not a crash.
+
+    The two tests above cover the labels that ARE resource ids and fail
+    at resolution; these are the ones that are not ids at all.  Read
+    unnarrowed they reached the resolution cache as themselves and died
+    there with a ``TypeError`` -- the int in the genome regex, the list
+    and the dict in the cache dict's own key lookup -- which escapes the
+    ``except ValueError`` this method degrades through, failing the page
+    build its comment says must not fail (gain#1053).
+    """
+    repo = (
+        a_grr()
+        .with_resource("scores/one", _a_chr1_score(value))
+        .build_repo(tmp_path)
+    )
+    impl = _built_impl(repo, "scores/one")
+
+    with caplog.at_level(logging.WARNING):
+        page = impl.get_info(repo=repo)
+
+    assert f">{COVERED}<" in page
+    assert "Covered %" not in page
+    # Scoped to the label's own warnings: this fixture's table omits
+    # ``zero_based`` and says so once per open, which is a different
+    # message about a different key and not what this pins.
+    warnings = label_warnings(caplog)
+    assert len(warnings) == 1
+    assert "scores/one" in warnings[0]
+    assert "reference_genome" in warnings[0]
+    assert reported_as in warnings[0]
+
+
+@pytest.mark.parametrize("builder", [
+    pytest.param(_a_chr1_score(), id="no-meta-block-at-all"),
+    pytest.param(
+        _a_chr1_score().with_labels(domain="score"),
+        id="labels-without-the-key"),
+    pytest.param(
+        _a_chr1_score().with_labels(reference_genome=None),
+        id="the-key-an-explicit-yaml-null"),
+])
+def test_a_score_declaring_no_genome_is_silent(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    builder: Any,
+) -> None:
+    """Not labelling a score is a supported state, so it is not reported.
+
+    The raw-counts page above is what an unlabelled score is *for*, and
+    the production GRRs carry the explicit-null spelling -- warning on
+    either would fire on the resources that are already right.  Pinned
+    at this seam as well as at the gene-models and liftover ones
+    because that is where the warning would be seen.
+    """
+    repo = (
+        a_grr()
+        .with_resource("scores/one", builder)
+        .build_repo(tmp_path)
+    )
+    impl = _built_impl(repo, "scores/one")
+
+    with caplog.at_level(logging.WARNING):
+        page = impl.get_info(repo=repo)
+
+    assert f">{COVERED}<" in page
+    assert label_warnings(caplog) == []
 
 
 def _a_repo_with_an_untouched_contig(

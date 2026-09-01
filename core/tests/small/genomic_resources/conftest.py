@@ -496,6 +496,44 @@ def captured_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
     ]
 
 
+#: Every value a curator can write for a label that names a resource
+#: which cannot be one, paired with how the narrowing reports it.
+#: ``None`` is absent rather than unusable and is covered separately.
+#:
+#: Shared by the three readers gain#1053 narrowed -- the score info
+#: page, the score statistics build and the liftover chain -- so a
+#: shape added here is pinned at all of them at once.  gain#1050's
+#: gene-models file keeps its own copy deliberately: that issue's tests
+#: are the evidence that hoisting the helper changed nothing, which is
+#: worth more than sharing a list with them.
+UNUSABLE_RESOURCE_ID_LABELS = [
+    pytest.param(2019, "int", id="an-int"),
+    pytest.param(0, "int", id="the-int-zero"),
+    pytest.param(False, "bool", id="a-bool"),
+    pytest.param(["a", "b"], "list", id="a-list"),
+    pytest.param({"k": "v"}, "dict", id="a-nested-mapping"),
+    pytest.param("", "empty", id="an-empty-string"),
+]
+
+
+def label_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Only the warnings a ``meta.labels`` read emitted.
+
+    :func:`captured_warnings` is the right assertion where the fixture
+    is quiet, and the sharper one: it catches a second warning nobody
+    meant to emit.  It cannot be used where the resource under test
+    warns about something else as well -- a score table that omits
+    ``zero_based`` says so once per open -- and counting those in would
+    pin an unrelated message's arity.  Selected on the label prefix
+    every such warning starts with, so a narrowing that stops reporting
+    still fails the count (gain#1053).
+    """
+    return [
+        message for message in captured_warnings(caplog)
+        if "meta.labels." in message
+    ]
+
+
 def a_resource_whose_meta_is(
     tmp_path: pathlib.Path, meta: Any,
 ) -> GenomicResource:

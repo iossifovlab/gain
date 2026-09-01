@@ -17,6 +17,7 @@ from gain.genomic_resources.resource_implementation import (
     ResourceConfigValidationMixin,
     get_base_resource_schema,
 )
+from gain.genomic_resources.utils import read_resource_id_label
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +53,19 @@ class LiftoverChain(ResourceConfigValidationMixin):
         # Asked of the resource rather than read off the raw config: the
         # chain declares a schema but never runs it, and `get_labels` is
         # where a free-form `meta.labels` gets narrowed (gain#654).
-        labels = resource.get_labels()
-        self.source_genome_id: str | None = labels.get("source_genome")
-        self.target_genome_id: str | None = labels.get("target_genome")
+        #
+        # And read through the label narrowing rather than straight off
+        # the mapping, because that accessor narrows the BLOCK and says
+        # nothing about the values in it: an int or a list here used to
+        # satisfy these annotations and reach `get_resource` as itself,
+        # where it raised `TypeError` naming neither the chain nor the
+        # label.  The annotator that consumes both ids already handles
+        # `None` -- it takes each as a parameter and falls back to the
+        # label -- so an unusable one now behaves as absent (gain#1053).
+        self.source_genome_id: str | None = read_resource_id_label(
+            resource, "source_genome")
+        self.target_genome_id: str | None = read_resource_id_label(
+            resource, "target_genome")
 
     def close(self) -> None:
         pass

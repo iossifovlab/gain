@@ -18,8 +18,10 @@ from gain.genomic_resources.resource_implementation import (
     ResourceConfigValidationMixin,
     get_base_resource_schema,
 )
-from gain.genomic_resources.utils import build_chrom_mapping
-from gain.utils.log_safety import escape_unsafe_characters
+from gain.genomic_resources.utils import (
+    build_chrom_mapping,
+    read_resource_id_label,
+)
 from gain.utils.regions import (
     Region,
     collapse,
@@ -29,46 +31,6 @@ from .parsers import load_transcript_models
 from .transcript_models import TranscriptModel
 
 logger = logging.getLogger(__name__)
-
-
-def _read_resource_id_label(
-    resource: GenomicResource, label: str,
-) -> str | None:
-    """The named label's value, when that label names another resource.
-
-    Read through the accessor that narrows both ``meta`` levels, the way
-    every other label reader does (gain#654, gain#1004) -- and then
-    narrowed once more, because that accessor promises a *mapping* and
-    says nothing about what is in it (gain#1050).  A value that cannot
-    be a resource id reads as absent and is reported.  An absent label,
-    and the explicit YAML null the production GRRs carry, are not
-    curator mistakes and stay silent.
-
-    Taken by label name rather than hard-wired to ``reference_genome``:
-    the same unnarrowed read is made of ``reference_genome`` by the
-    score implementations and of ``source_genome``/``target_genome`` by
-    the liftover chain, and the narrowing they need is this one
-    (gain#1053).  It is private here until it has a second caller --
-    hoisting it then is a pure move.
-
-    Whitespace is deliberately NOT stripped: only an empty value is
-    narrowed away, so a padded id or the trailing newline a folded
-    scalar leaves still reaches resolution and fails there naming
-    itself.  Stripping would be a normalization policy for ids rather
-    than a narrowing, and that is a separate decision.
-    """
-    value = resource.get_labels().get(label)
-    if value is None:
-        return None
-    if isinstance(value, str) and value:
-        return value
-    reason = "empty" if isinstance(value, str) \
-        else f"a {type(value).__name__}, not a string"
-    logger.warning(
-        "resource <%s>: meta.labels.%s is %s; reading it as absent -- "
-        "fix the resource's 'genomic_resource.yaml'",
-        escape_unsafe_characters(resource.resource_id), label, reason)
-    return None
 
 
 class GeneModels(
@@ -120,7 +82,7 @@ class GeneModels(
         )
 
         self.reference_genome_id: str | None = \
-            _read_resource_id_label(resource, "reference_genome")
+            read_resource_id_label(resource, "reference_genome")
 
         self.gene_models: dict[str, list[TranscriptModel]] = defaultdict(list)
         self._tx_index: dict[str, IntervalTree] = defaultdict(IntervalTree)
