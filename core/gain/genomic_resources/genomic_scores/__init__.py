@@ -10,6 +10,12 @@ the code already had:
 - :mod:`.position`, :mod:`.allele`, :mod:`.fragment` -- one module per kind
 - :mod:`.builders` -- the eight factories, and the dispatch between kinds
 
+and gain#1074, decomposing the class itself (gain#1027), added a seventh:
+
+- :mod:`.aggregation` -- the machinery
+  :meth:`~.base.GenomicScore.aggregate_region` orchestrates; knows no score
+  class, and is handed the per-kind weight rule rather than reading it
+
 **This module is a permanent facade, not a deprecation shim.**  It
 re-exports every name the pre-split module DEFINED, so each
 ``from gain.genomic_resources.genomic_scores import <name>`` written before
