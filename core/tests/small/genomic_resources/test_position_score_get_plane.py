@@ -145,6 +145,76 @@ def test_a_replacement_of_the_wrong_type_is_refused(
                 "1", 10, 16, none_value_replacement=True)
 
 
+@pytest.fixture
+def flagged(tmp_path: pathlib.Path) -> PositionScore:
+    # `bool` is the one value type whose class default aggregator is
+    # deliberately None, so a query naming `flag` and no aggregator is
+    # refusable on that ground alone -- and can therefore be made invalid
+    # on two grounds at once.
+    repo = a_grr().with_resource("flags", (
+        a_position_score().with_score("flag", "bool").with_data("""
+            chrom  pos_begin  pos_end  flag
+            1      10         10       True
+        """)
+    )).build_repo(tmp_path)
+    return PositionScore(repo.get_resource("flags")).open()
+
+
+def test_an_aggregating_query_names_a_score_the_resource_has(
+    gapped: PositionScore,
+) -> None:
+    with gapped, pytest.raises(ValueError) as excinfo:
+        gapped.get_scores_in_region_agg(
+            "1", 10, 16, [PositionScoreAggregationQuery("nope")])
+
+    assert str(excinfo.value) == (
+        "score 'nope' is not defined by resource 's'; it has ['s']")
+
+
+def test_an_aggregating_query_says_how_to_name_a_missing_default(
+    flagged: PositionScore,
+) -> None:
+    with flagged, pytest.raises(ValueError) as excinfo:
+        flagged.get_scores_in_region_agg(
+            "1", 10, 10, [PositionScoreAggregationQuery("flag")])
+
+    assert str(excinfo.value) == (
+        "score 'flag' of resource 'flags' has no default aggregator for "
+        "value type 'bool'; name one on the query")
+
+
+def test_a_query_invalid_several_ways_reports_the_first_ground(
+    gapped: PositionScore, flagged: PositionScore,
+) -> None:
+    """Which refusal wins is a decision, so it is pinned rather than left.
+
+    The order is: the score must exist, then its replacement must be of a
+    type the score can mean, then an aggregator must be resolvable.  A
+    query can fail two of those at once, and the resolver walks them in
+    that order -- so this pins the walk, not merely each guard (gain#1087,
+    where the guards became shared and the interleave did not).
+    """
+    # Unknown score AND a replacement no score could take: the score must
+    # exist before there is a value type to judge a replacement against.
+    with gapped, pytest.raises(ValueError) as unknown:
+        gapped.get_scores_in_region_agg(
+            "1", 10, 16, [
+                PositionScoreAggregationQuery(
+                    "nope", none_value_replacement="zero"),
+            ])
+    assert "is not defined by resource" in str(unknown.value)
+
+    # Bad replacement AND no resolvable aggregator: the replacement is
+    # judged first, so `does not match` -- not `no default aggregator`.
+    with flagged, pytest.raises(ValueError) as mismatch:
+        flagged.get_scores_in_region_agg(
+            "1", 10, 10, [
+                PositionScoreAggregationQuery(
+                    "flag", none_value_replacement="zero"),
+            ])
+    assert "does not match its value type" in str(mismatch.value)
+
+
 def test_a_replacement_substitutes_for_covered_but_na_positions(
     tmp_path: pathlib.Path,
 ) -> None:

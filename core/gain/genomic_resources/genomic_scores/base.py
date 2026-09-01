@@ -1327,7 +1327,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         ]
         return fold_region_segments(
             self._aggregation_segments(
-                chrom, pos_begin, pos_end, distinct_score_ids(requests)),
+                chrom, pos_begin, pos_end, distinct_score_ids(
+                    score_id for score_id, _ in requests)),
             aggregators,
             requests,
             weigh=self.record_weight,

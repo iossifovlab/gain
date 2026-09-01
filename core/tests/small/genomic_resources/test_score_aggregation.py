@@ -19,7 +19,9 @@ from __future__ import annotations
 import pathlib
 from collections.abc import Callable
 
+import gain
 import pytest
+from gain.genomic_resources.aggregators import PositionScoreAggregationQuery
 from gain.genomic_resources.genomic_scores import PositionScore
 from gain.genomic_resources.genomic_scores.aggregation import (
     build_region_aggregator,
@@ -243,7 +245,129 @@ def test_a_bad_aggregator_is_refused_before_the_region_is_read(
 def test_the_distinct_scores_keep_the_order_they_were_asked_for() -> None:
     # The fetch and the fold both index by this list, so its ORDER is what
     # pairs a request with its column.  `t` keeps the position its first
-    # mention won, and `s` is not asked for twice.
-    assert distinct_score_ids(
-        [("t", "max"), ("s", "mean"), ("t", "min"), ("s", "count")],
-    ) == ["t", "s"]
+    # mention won, and `s` is not asked for twice -- these are the ids of
+    # a request list naming t with max, s with mean, t with min and s with
+    # count: one score asked for twice with two different aggregators.
+    assert distinct_score_ids(["t", "s", "t", "s"]) == ["t", "s"]
+
+
+# -- The two surfaces that resolve an aggregation request (gain#1087) ------
+#
+# ``resolve_aggregator_requests`` serves ``aggregate_region``'s list of
+# score ids and ``(score_id, aggregator)`` pairs; ``PositionScore``'s
+# logical plane serves ``PositionScoreAggregationQuery`` objects, which
+# carry a ``none_value_replacement`` besides.  They are different request
+# SHAPES asking the same two questions, and what these pin is that the
+# answers are one statement rather than two that happen to coincide.
+
+
+@pytest.fixture
+def flags(tmp_path: pathlib.Path) -> PositionScore:
+    # `bool` is the one value type whose class default is deliberately
+    # None: there is no reduction to pick on the caller's behalf, so both
+    # surfaces must refuse a `flag` no aggregator names.
+    repo = a_grr().with_resource("flags", (
+        a_position_score()
+        .with_score("flag", "bool")
+        .with_data("""
+            chrom  pos_begin  pos_end  flag
+            1      10         10       True
+        """)
+    )).build_repo(tmp_path)
+    return PositionScore(repo.get_resource("flags"))
+
+
+def _refusal(call: Callable[[], object]) -> str:
+    with pytest.raises(ValueError) as excinfo:
+        call()
+    return str(excinfo.value)
+
+
+def test_both_surfaces_refuse_an_unknown_score_in_the_same_words(
+    flags: PositionScore,
+) -> None:
+    # One rule, one wording: there is nothing about "this resource does not
+    # define that score" that depends on which shape asked.
+    from_request_list = _refusal(lambda: resolve_aggregator_requests(
+        ["nope"],
+        score_definitions=flags.score_definitions,
+        all_scores=["flag"],
+        resource_id="flags",
+    ))
+    with flags.open() as score:
+        from_query = _refusal(lambda: score.get_scores_in_region_agg(
+            "1", 10, 10, [PositionScoreAggregationQuery("nope")]))
+
+    assert from_request_list == from_query == (
+        "score 'nope' is not defined by resource 'flags'; it has ['flag']")
+
+
+def test_both_surfaces_state_the_missing_default_rule_identically(
+    flags: PositionScore,
+) -> None:
+    """The RULE is shared; only the remedy names each surface's own API.
+
+    A caller of ``aggregate_region`` writes a ``(score_id, aggregator)``
+    pair and a caller of the plane writes it on the query, so telling each
+    of them to do the other's thing would be wrong.  Everything up to that
+    remedy -- which score, which resource, which value type, and that the
+    ground is a missing default -- is one statement, and this is what says
+    the two cannot drift apart again.
+    """
+    from_request_list = _refusal(lambda: resolve_aggregator_requests(
+        ["flag"],
+        score_definitions=flags.score_definitions,
+        all_scores=["flag"],
+        resource_id="flags",
+    ))
+    with flags.open() as score:
+        from_query = _refusal(lambda: score.get_scores_in_region_agg(
+            "1", 10, 10, [PositionScoreAggregationQuery("flag")]))
+
+    rule, _, request_remedy = from_request_list.partition("; ")
+    query_rule, _, query_remedy = from_query.partition("; ")
+
+    assert rule == query_rule == (
+        "score 'flag' of resource 'flags' has no default aggregator "
+        "for value type 'bool'")
+    assert request_remedy == "name one explicitly as (score_id, aggregator)"
+    assert query_remedy == "name one on the query"
+
+
+# The two refusals above, anchored by the part of each that carries the
+# RULE rather than the surface's own remedy -- long enough to be
+# unmistakable, short enough to survive an f-string's line breaks.
+_REFUSAL_RULES = [
+    "is not defined by resource",
+    "has no default aggregator",
+]
+
+_STATED_IN = "genomic_resources/genomic_scores/aggregation.py"
+
+
+def test_each_aggregation_refusal_is_written_in_exactly_one_place() -> None:
+    """The tests above cannot see two copies that agree; this can.
+
+    Two surfaces emitting the same words is what the pins can observe, and
+    it is satisfied just as well by two copies -- which is how the missing
+    default's remedy came to differ in the first place while the rule half
+    still matched.  So the "stated once" half of gain#1087 is pinned where
+    it lives: in the source, by counting the files that spell each rule.
+
+    An intentional rewording goes red here, and should: the new wording
+    wants re-anchoring, and the point of the trip is to notice whether a
+    second file has picked the sentence up again.
+    """
+    package = pathlib.Path(gain.__file__).parent
+    sources = sorted(package.rglob("*.py"))
+    # Guard against a scan that silently matches nothing: this package is
+    # hundreds of modules, and a fence over an empty list is not a fence.
+    assert len(sources) > 100, len(sources)
+
+    for rule in _REFUSAL_RULES:
+        sites = sorted(
+            str(path.relative_to(package))
+            for path in sources
+            if rule in path.read_text()
+        )
+        assert sites == [_STATED_IN], (rule, sites)

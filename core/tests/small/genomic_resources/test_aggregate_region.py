@@ -98,6 +98,34 @@ def test_it_agrees_with_fetch_region_weighted_values(
             pytest.approx(expected)]
 
 
+def test_the_annotator_read_folds_the_aggregation_stream(
+    wide: PositionScore, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One clipped stream serves both reads, so neither can drift (#1087).
+
+    ``_aggregation_segments`` is where this kind states that a record is cut
+    down to the query window before its weight is measured.  The pins below
+    reach it through ``fetch_region_segments``, so they cannot tell whether
+    ``fetch_region_weighted_values`` reads THAT statement or a second copy
+    of it -- which is what it used to do.  Installing a stream at the seam
+    itself is what tells the two apart: values that no record of the fixture
+    carries, at a span the query does not name.
+    """
+    def segments(
+        chrom: str,
+        pos_begin: int | None = None,
+        pos_end: int | None = None,
+        scores: list[str] | None = None,
+    ) -> Generator[tuple[int, int, list[float]], None, None]:
+        yield (10, 12, [7.0])
+
+    monkeypatch.setattr(wide, "_aggregation_segments", segments)
+
+    with wide:
+        assert list(wide.fetch_region_weighted_values(
+            "1", 10, 14, ["s"])) == [([7.0], 3)]
+
+
 def test_a_record_the_query_clips_to_nothing_is_not_aggregated(
     wide: PositionScore, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -105,13 +133,13 @@ def test_a_record_the_query_clips_to_nothing_is_not_aggregated(
 
     ``fetch_region_segments`` deliberately yields an out-of-region record
     through (gain#553, ADR 0008), at its own extent.  The clip that removes
-    it again is ``PositionScore._aggregation_segments``, a SEPARATE
-    statement from the one ``fetch_region_weighted_values`` makes -- the
-    agreement test above cannot see a symmetric removal from both, so each
-    copy gets its own pin.  Without it the dead record's value would
-    count -- for a negative number of times, even; ``mean`` catches that,
-    and ``max`` -- which registers a value however small its weight --
-    catches the zero-overlap record too (gain#639).
+    it again is ``PositionScore._aggregation_segments``, and since #1087 it
+    is the only statement of that rule -- the annotator's read composes the
+    same seam, pinned above, so a symmetric removal from both copies is no
+    longer a thing that can happen.  Without the clip the dead record's
+    value would count -- for a negative number of times, even; ``mean``
+    catches that, and ``max`` -- which registers a value however small its
+    weight -- catches the zero-overlap record too (gain#639).
     """
     def outside(
         chrom: str,
