@@ -98,7 +98,11 @@ class FragmentScore(GenomicScore):
         super().__init__(resource)
 
     @classmethod
-    def record_weight(cls, left: int, right: int) -> int:  # noqa: ARG003
+    def record_weight(
+        cls,
+        left: int,  # ruff: ignore[unused-class-method-argument]
+        right: int,  # ruff: ignore[unused-class-method-argument]
+    ) -> int:
         """A fragment counts once however long it is.
 
         The kind's whole reason for weighing by record rather than by span:
