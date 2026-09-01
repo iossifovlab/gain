@@ -25,8 +25,8 @@ class HelloWorldAnnotator(AnnotatorBase):
         }
 
     def _do_annotate(
-        self, annotatable: Annotatable,  # noqa: ARG002
-        context: dict[str, Any],  # noqa: ARG002
+        self, annotatable: Annotatable,  # ruff: ignore[unused-method-argument]
+        context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
         return {attr.source: "hello world" for attr in self._attributes}
 

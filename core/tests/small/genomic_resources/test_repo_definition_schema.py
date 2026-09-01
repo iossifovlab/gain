@@ -129,7 +129,7 @@ def test_http_only_user_is_rejected() -> None:
 
 
 def test_http_only_password_is_rejected() -> None:
-    secret = "s3cr3t-schema"  # noqa: S105
+    secret = "s3cr3t-schema"  # ruff: ignore[hardcoded-password-string]
     err = _invalid({"type": "http", "url": "https://x.com",
                     "password": secret})
     assert err.error_count() == 1

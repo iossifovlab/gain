@@ -104,7 +104,7 @@ class GeneScoreAnnotator(AnnotatorBase):
 
         return specs
 
-    def _aggregator_value_type(self, attr: Attribute) -> str | None:  # noqa: ARG002
+    def _aggregator_value_type(self, attr: Attribute) -> str | None:  # ruff: ignore[unused-method-argument]
         return None
 
     def _apply_gene_aggregator(
@@ -148,7 +148,7 @@ class GeneScoreAnnotator(AnnotatorBase):
 
     def _do_annotate(
         self,
-        annotatable: Annotatable,  # noqa: ARG002
+        annotatable: Annotatable,  # ruff: ignore[unused-method-argument]
         context: dict[str, Any],
     ) -> dict[str, Any]:
         genes = context.get(self.input_gene_list)

@@ -220,7 +220,7 @@ class TabixGenomicPositionTable(GenomicPositionTable):
             with self.genomic_resource.open_raw_file(
                     index_filename, mode="rb", compression="gzip") as infile:
                 header = infile.read(INDEX_HEADER_SIZE)
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:  # ruff: ignore[blind-except]
             # The one step here that can fail for reasons that have nothing to
             # do with the resource: a reset, a throttle or a 5xx against an
             # http or s3 GRR, or a truncated read.  Refusing on it would

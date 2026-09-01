@@ -1910,7 +1910,7 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
             "compute md5sum for %s in %s", filename, resource.resource_id)
 
         with self.open_raw_file(resource, filename, "rb") as infile:
-            md5_hash = hashlib.md5()  # noqa S324
+            md5_hash = hashlib.md5()  # ruff: ignore[hashlib-insecure-hash-function] S324
             while chunk := infile.read(self.CHUNK_SIZE):
                 md5_hash.update(chunk)
         return md5_hash.hexdigest()
@@ -2766,7 +2766,7 @@ def _map_relaying_skips[
             # reports the children a group skipped while answering
             # (gain#686), so B901's accidental shape this is not.
             skips: SkipsT = stop.value
-            return skips  # noqa: B901
+            return skips  # ruff: ignore[return-in-generator]
         yield transform(hit)
 
 

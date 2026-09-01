@@ -3,7 +3,7 @@ from __future__ import annotations
 import contextlib
 import multiprocessing as mp
 import os
-import pickle  # noqa: S403
+import pickle  # ruff: ignore[suspicious-pickle-import]
 import time
 from abc import abstractmethod
 from collections.abc import Generator
@@ -83,7 +83,7 @@ class TaskGraphExecutorBase(TaskGraphExecutor):
 
         try:
             result = task_func(*args, **kwargs)
-        except Exception as exp:  # noqa: BLE001
+        except Exception as exp:  # ruff: ignore[blind-except]
             # pylint: disable=broad-except
             result = exp
 
@@ -130,7 +130,7 @@ class TaskGraphExecutorBase(TaskGraphExecutor):
         fork_tasks = params.get("fork_tasks", False)
         if not fork_tasks:
             return TaskGraphExecutorBase._exec_internal(task, params)
-        mp.current_process()._config[  # type: ignore  # noqa: SLF001
+        mp.current_process()._config[  # type: ignore  # ruff: ignore[private-member-access]
             "daemon"] = False
         p = mp.Process(
             target=TaskGraphExecutorBase._exec_forked,

@@ -84,7 +84,7 @@ def tabular_file_preview(
     """Generate a preview of the tabular file."""
     if infile.name and (
             infile.name.endswith(".gz") or infile.name.endswith(".bgz")):
-        raw_content: UploadedFile | gzip.GzipFile = gzip.open(  # noqa: SIM115
+        raw_content: UploadedFile | gzip.GzipFile = gzip.open(  # ruff: ignore[open-file-with-context-handler]
             infile, "rb",
         )
     else:

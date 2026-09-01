@@ -158,8 +158,7 @@ class _PysamFastaSequence(_SequenceBackend):
         while pos <= stop:
             win_end = min(pos + buffer_size - 1, stop)
             # 1-based inclusive [pos, win_end] -> pysam 0-based half-open.
-            sequence = self._fasta.fetch(chrom, pos - 1, win_end).upper()
-            yield from sequence
+            yield from self._fasta.fetch(chrom, pos - 1, win_end).upper()
             pos = win_end + 1
 
 

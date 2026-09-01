@@ -29,7 +29,7 @@ def dvc_sidecar(path: str, content: str) -> str:
         - md5: {hashlib.md5(content.encode("utf8")).hexdigest()}
           size: {len(content.encode("utf8"))}
           path: {path}
-    """)  # noqa: S324
+    """)  # ruff: ignore[hashlib-insecure-hash-function]
 
 
 @pytest.fixture
@@ -74,7 +74,7 @@ def test_resource_files_table_lists_the_dvc_managed_file(
     }
 
     assert "data.txt" in entries
-    assert entries["data.txt"].md5 == hashlib.md5(  # noqa: S324
+    assert entries["data.txt"].md5 == hashlib.md5(  # ruff: ignore[hashlib-insecure-hash-function]
         DATA.encode("utf8")).hexdigest()
 
 

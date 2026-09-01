@@ -59,21 +59,37 @@ target-version = "py312"
 
 [lint]
 select = ["E", "F", "W", "C90", "I", "UP", "ASYNC", "S", "BLE", "FBT", "B", "A", "COM", "C4", "T10", "EXE", "ISC", "LOG", "G", "INP", "PIE", "T20", "PT", "Q", "RSE", "RET", "SLF", "SIM", "ARG", "PTH", "FIX", "ERA", "PD", "TRY", "PERF", "FURB", "RUF"]
+# Selectors are rule NAMES rather than codes: ruff 0.16 deprecated codes in
+# selectors (`rule-codes-in-selectors`) and its own fix rewrote these.  The
+# old code is kept in a trailing comment on each line so that grepping this
+# file for "ASYNC109" -- or for a code quoted in an old commit or issue --
+# still lands on the right row.  Category prefixes (PTH, SLF, D) have no
+# name spelling and stay as they are.
 ignore = [
-    "D105", "D107", "D417", "UP015", "FURB152",
-    "TRY003",
-    "T201", "S101", "PTH",  # for separate tasks, fix issues and then enable these rules
-    "PT006",  # for separate task - currently we use 'csv', but maybe change to 'tuple' or 'list'?
-    "PERF203", # Python 3.11 introduces zero cost exception handling
-    "S603",
-    "S404",
-    "B019",
-    "FURB192",
-    "S301",
+    "undocumented-magic-method",           # D105
+    "undocumented-public-init",            # D107
+    "undocumented-param",                  # D417
+    "redundant-open-modes",                # UP015
+    "math-constant",                       # FURB152
+    "raise-vanilla-args",                  # TRY003
+    # for separate tasks, fix issues and then enable these rules
+    "print",                               # T201
+    "assert",                              # S101
+    "PTH",
+    # for separate task - currently we use 'csv', but maybe change to
+    # 'tuple' or 'list'?
+    "pytest-parametrize-names-wrong-type", # PT006
+    # Python 3.11 introduces zero cost exception handling
+    "try-except-in-loop",                  # PERF203
+    "subprocess-without-shell-equals-true", # S603
+    "suspicious-subprocess-import",        # S404
+    "cached-instance-method",              # B019
+    "sorted-min-max",                      # FURB192
+    "suspicious-pickle-usage",             # S301
     # ASYNC109: our async `timeout` params are forwarded to the library that
     # owns the timeout (aiohttp.ClientTimeout, asyncio.wait_for, the Channels
     # test communicator) — asyncio.timeout() is not the right tool for them.
-    "ASYNC109",
+    "async-function-with-timeout",         # ASYNC109
 ]
 fixable = ["ALL"]
 preview = true
@@ -85,18 +101,58 @@ preview = true
 # `assert a and b` trips PT018; bool positionals (FBT001/002) are
 # fine in test helpers.
 "test*.py" = [
-    "S101", "S106", "S107",
+    "assert",                              # S101
+    "hardcoded-password-func-arg",         # S106
+    "hardcoded-password-default",          # S107
     "SLF",
-    "FBT001", "FBT002",
-    "ARG001", "ARG002",
-    "PT011", "PT018",
+    "boolean-type-hint-positional-argument",    # FBT001
+    "boolean-default-value-positional-argument", # FBT002
+    "unused-function-argument",            # ARG001
+    "unused-method-argument",              # ARG002
+    "pytest-raises-too-broad",             # PT011
+    "pytest-composite-assertion",          # PT018
+    # RUF069, new in ruff 0.16's preview set.  These assertions compare an
+    # annotator's output against the exact float written into the test's own
+    # fixture -- 2.0, 330.0, 3.0.  Every such value is exactly representable
+    # and travels through the pipeline unarithmetically, so `==` is the
+    # assertion we want: a tolerance would let a real regression through.
+    # The rule stays on for production code, where a computed float really
+    # can drift.
+    "float-equality-comparison",           # RUF069
 ]
-"conftest.py" = ["D", "S101", "S106", "S107", "ARG001", "ARG002"]
-"setup.py" = ["INP001"]
+"conftest.py" = [
+    "D",
+    "assert",                              # S101
+    "hardcoded-password-func-arg",         # S106
+    "hardcoded-password-default",          # S107
+    "unused-function-argument",            # ARG001
+    "unused-method-argument",              # ARG002
+]
+"setup.py" = ["implicit-namespace-package"]  # INP001
+# RUF067 (`non-empty-init-module`), new in ruff 0.16's preview set, wants
+# every `__init__.py` to hold nothing but docstrings and re-exports.  These
+# four hold deliberate code and moving it is an API change, not a lint fix:
+#
+#   core/gain/__init__.py            the hatch-vcs `__version__` fallback and
+#                                    the log-level side-effect import
+#   spliceai_annotator/.../__init__  the `build_spliceai_annotator` factory
+#                                    that the plugin entry point names
+#   genomic_resources/__init__.py    re-exports plus module-level constants
+#   genomic_resources/testing/__init__.py
+#                                    816 lines of test-data builders that the
+#                                    whole suite imports from this path
+#
+# Scoped to the four rather than ignored globally, so a NEW `__init__.py`
+# that starts accumulating logic is still reported.  Revisiting them is
+# tracked separately -- see the PR that introduced this block.
+"core/gain/__init__.py" = ["non-empty-init-module"]                    # RUF067
+"core/gain/genomic_resources/__init__.py" = ["non-empty-init-module"]  # RUF067
+"core/gain/genomic_resources/testing/__init__.py" = ["non-empty-init-module"]  # RUF067
+"spliceai_annotator/spliceai_annotator/__init__.py" = ["non-empty-init-module"]  # RUF067
 # The fixture generator for the info_pages_e2e Playwright project: a
 # standalone script in a Node project, run by hand and by that project's
 # Dockerfile. It is deliberately not a package -- nothing imports it.
-"info_pages_e2e/*.py" = ["INP001"]
+"info_pages_e2e/*.py" = ["implicit-namespace-package"]
 
 [lint.mccabe]
 max-complexity = 20

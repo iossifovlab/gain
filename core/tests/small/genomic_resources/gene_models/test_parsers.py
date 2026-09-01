@@ -222,7 +222,7 @@ def test_infer_refflat_format() -> None:
     data = StringIO(convert_to_tab_separated("""
         #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
         TP53 NM_000546 17 - 7571719 7590868 7572826 7590856 11 7571719,7572926,7573927,7576525,7576853,7577018,7577155,7577498,7578176,7578371,7579311 7573008,7573009,7574033,7576657,7576926,7577095,7577243,7577608,7578289,7578554,7590868
-    """))  # noqa
+    """))  # ruff: ignore[line-too-long]
     result = infer_gene_model_parser(data)
     assert result == "refflat"
 
@@ -351,7 +351,7 @@ def test_parse_default_basic() -> None:
     data = StringIO(convert_to_tab_separated("""
         chr trID gene strand tsBeg txEnd cdsStart cdsEnd exonStarts exonEnds exonFrames atts
         1 tx1 GENE1 + 100 200 110 190 100,150 130,200 0,1 attr1:val1
-    """))  # noqa
+    """))  # ruff: ignore[line-too-long]
 
     result = parse_default_gene_models_format(data)
     assert result is not None
@@ -371,7 +371,7 @@ def test_parse_default_with_gene_mapping() -> None:
     data = StringIO(convert_to_tab_separated("""
         chr trID gene strand tsBeg txEnd cdsStart cdsEnd exonStarts exonEnds exonFrames atts
         1 tx1 GENE1 + 100 200 110 190 100,150 130,200 0,1 attr1:val1
-    """))  # noqa
+    """))  # ruff: ignore[line-too-long]
 
     gene_mapping = {"GENE1": "MAPPED_GENE"}
     result = parse_default_gene_models_format(data, gene_mapping)
@@ -386,7 +386,7 @@ def test_parse_default_with_nrows() -> None:
         1 tx1 GENE1 + 100 200 110 190 100,150 130,200 0,1 attr1:val1
         1 tx2 GENE2 + 300 400 310 390 300,350 330,400 0,1 attr2:val2
         1 tx3 GENE3 + 500 600 510 590 500,550 530,600 0,1 attr3:val3
-    """))  # noqa
+    """))  # ruff: ignore[line-too-long]
 
     result = parse_default_gene_models_format(data, nrows=2)
     assert result is not None
@@ -401,7 +401,7 @@ def test_parse_default_with_attributes() -> None:
     data = StringIO(convert_to_tab_separated("""
         chr trID gene strand tsBeg txEnd cdsStart cdsEnd exonStarts exonEnds exonFrames atts
         1 tx1 GENE1 + 100 200 110 190 100,150 130,200 0,1 key1:val1;key2:val2
-    """))  # noqa
+    """))  # ruff: ignore[line-too-long]
 
     result = parse_default_gene_models_format(data)
     assert result is not None
@@ -414,7 +414,7 @@ def test_parse_refflat_basic() -> None:
     data = StringIO(convert_to_tab_separated("""
         #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
         GENE1 NM_001 1 + 99 200 109 190 2 99,149 130,200
-    """))  # noqa
+    """))  # ruff: ignore[line-too-long]
 
     result = parse_ref_flat_gene_models_format(data)
     assert result is not None
@@ -437,7 +437,7 @@ def test_parse_refflat_with_gene_mapping() -> None:
     data = StringIO(convert_to_tab_separated("""
         #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
         GENE1 NM_001 1 + 99 200 109 190 2 99,149 130,200
-    """))  # noqa
+    """))  # ruff: ignore[line-too-long]
 
     gene_mapping = {"GENE1": "MAPPED"}
     result = parse_ref_flat_gene_models_format(data, gene_mapping)
@@ -451,7 +451,7 @@ def test_parse_refflat_multiple_transcripts_same_name() -> None:
         #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
         GENE1 NM_001 1 + 99 200 109 190 2 99,149 130,200
         GENE1 NM_001 1 + 99 250 109 240 2 99,199 130,250
-    """))  # noqa
+    """))  # ruff: ignore[line-too-long]
 
     result = parse_ref_flat_gene_models_format(data)
     assert result is not None
@@ -465,7 +465,7 @@ def test_parse_refseq_basic() -> None:
     data = StringIO(convert_to_tab_separated("""
         #bin name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds score name2 cdsStartStat cdsEndStat exonFrames
         585 NM_001 chr1 + 99 200 109 190 2 99,149 130,200 0 GENE1 cmpl cmpl 0,1
-    """))  # noqa
+    """))  # ruff: ignore[line-too-long]
 
     result = parse_ref_seq_gene_models_format(data)
     assert result is not None
@@ -485,7 +485,7 @@ def test_parse_ccds_basic() -> None:
     data = StringIO(convert_to_tab_separated("""
         #bin name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds score name2 cdsStartStat cdsEndStat exonFrames
         585 CCDS1 chr1 + 99 200 109 190 2 99,149 130,200 0 GENE1 cmpl cmpl 0,1
-    """))  # noqa
+    """))  # ruff: ignore[line-too-long]
 
     result = parse_ccds_gene_models_format(data)
     assert result is not None
@@ -502,7 +502,7 @@ def test_parse_knowngene_basic() -> None:
     data = StringIO(convert_to_tab_separated("""
         name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds proteinID alignID
         uc001aaa.1 chr1 + 99 200 109 190 2 99,149 130,200 P12345 Q5T123
-    """))  # noqa
+    """))  # ruff: ignore[line-too-long]
 
     result = parse_known_gene_models_format(data)
     assert result is not None
@@ -519,7 +519,7 @@ def test_parse_ucscgenepred_basic_format() -> None:
     data = StringIO(convert_to_tab_separated("""
         name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
         ENST001 chr1 + 99 200 109 190 2 99,149 130,200
-    """))  # noqa
+    """))  # ruff: ignore[line-too-long]
 
     result = parse_ucscgenepred_models_format(data)
     assert result is not None
@@ -536,7 +536,7 @@ def test_parse_ucscgenepred_extended_format() -> None:
     data = StringIO(convert_to_tab_separated("""
         name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds score name2 cdsStartStat cdsEndStat exonFrames
         ENST001 chr1 + 99 200 109 190 2 99,149 130,200 0 GENE1 cmpl cmpl 0,1
-    """))  # noqa
+    """))  # ruff: ignore[line-too-long]
 
     result = parse_ucscgenepred_models_format(data)
     assert result is not None

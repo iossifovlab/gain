@@ -284,7 +284,7 @@ class Annotator(abc.ABC):
     def batch_annotate(
         self, annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],
-        batch_work_dir: str | None = None,  # noqa: ARG002
+        batch_work_dir: str | None = None,  # ruff: ignore[unused-method-argument]
     ) -> Iterable[dict[str, Any]]:
         return itertools.starmap(
             self.annotate, zip(annotatables, contexts, strict=True),
@@ -652,7 +652,7 @@ class InputAnnotableAnnotatorDecorator(AnnotatorDecorator):
                 or att_info.spec.attribute_type != "annotatable":
             raise ValueError(f"The attribute '{self.input_annotatable_name}' "
                              "is expected to be of type annotatable.")
-        self.child._info.documentation += (  # noqa: SLF001
+        self.child._info.documentation += (  # ruff: ignore[private-member-access]
             f"\n* **input_annotatable**: `{self.input_annotatable_name}`"
         )
 
@@ -662,7 +662,7 @@ class InputAnnotableAnnotatorDecorator(AnnotatorDecorator):
                 self.input_annotatable_name)
 
     def annotate(
-        self, annotatable: Annotatable | None,  # noqa: ARG002
+        self, annotatable: Annotatable | None,  # ruff: ignore[unused-method-argument]
         context: dict[str, Any],
     ) -> dict[str, Any]:
 
@@ -690,7 +690,7 @@ class ValueTransformAnnotatorDecorator(AnnotatorDecorator):
                 value_transformers[attr.name] = compile_value_transform(
                     transform_str)
                 # pylint: disable=protected-access
-                attr._documentation = (  # noqa: SLF001
+                attr._documentation = (  # ruff: ignore[private-member-access]
                     f"{attr.documentation}\n\n"
                     f"**value_transform:** {transform_str}"
                 )

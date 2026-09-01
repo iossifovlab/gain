@@ -477,7 +477,7 @@ def _annotate_csv(
 def _concat(
     partfile_paths: list[str],
     output_path: str,
-    keep_parts: bool,  # noqa: FBT001
+    keep_parts: bool,  # ruff: ignore[boolean-type-hint-positional-argument]
 ) -> None:
     """Concatenate multiple CSV files into a single CSV file *in order*."""
     # Get any header from the partfiles, they should all be equal
@@ -505,9 +505,9 @@ def _concat(
 def _read_header(filepath: str, separator: str = "\t") -> list[str]:
     """Extract header from columns file."""
     if is_compressed_filename(filepath):
-        file = gzip.open(filepath, "rt")  # noqa: SIM115
+        file = gzip.open(filepath, "rt")  # ruff: ignore[open-file-with-context-handler]
     else:
-        file = open(filepath, "r")  # noqa: SIM115
+        file = open(filepath, "r")  # ruff: ignore[open-file-with-context-handler]
     with file:
         header = file.readline()
     columns = next(csv.reader([header], delimiter=separator))

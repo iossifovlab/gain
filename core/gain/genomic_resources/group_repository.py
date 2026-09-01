@@ -254,7 +254,7 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
                 search_term, skipped, unreadable=unreadable)
         # Deliberately PEP 380 (gain#686): a `for` loop discards this, and
         # the one caller that presents totals drains by hand to catch it.
-        return skipped  # noqa: B901
+        return skipped  # ruff: ignore[return-in-generator]
 
     def _nothing_could_answer(
         self, search_term: str | None,

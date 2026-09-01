@@ -275,7 +275,7 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
 
     def find_chromosome_length(
         self, chrom: str,
-        step: int = 0,  # noqa: ARG002
+        step: int = 0,  # ruff: ignore[unused-method-argument]
     ) -> int | ContigExtent:
         # The closed table FIRST, for the reason gain#358 gives on the raising
         # wrapper -- close() empties records_by_chr, so every contig, populated

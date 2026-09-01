@@ -23,7 +23,7 @@ GONE = "/nonexistent/dvc-cache/ab/cdef0123456789"
 
 
 def md5_of(content: str) -> str:
-    return hashlib.md5(  # noqa: S324
+    return hashlib.md5(  # ruff: ignore[hashlib-insecure-hash-function]
         content.encode("utf8")).hexdigest()
 
 

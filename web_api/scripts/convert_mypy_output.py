@@ -1,4 +1,4 @@
-# ruff: noqa: INP001  # standalone helper script, not a package member.
+# ruff: file-ignore[implicit-namespace-package]  # standalone helper script, not a package member.
 import pathlib
 import re
 import sys

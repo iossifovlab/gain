@@ -100,7 +100,7 @@ class DefaultRepositoryContextProvider(GenomicContextProvider):
 
     def init(
         self,
-        **kwargs: Any,  # noqa: ARG002
+        **kwargs: Any,  # ruff: ignore[unused-method-argument]
     ) -> GenomicContext:
         """Instantiate a context backed by the default GRR.
 

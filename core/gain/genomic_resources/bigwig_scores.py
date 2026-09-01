@@ -58,7 +58,7 @@ BIGWIG_VALUE_COLUMN = VALUE_COLUMN
 
 
 def extract_bigwig_value(
-    record: Record, score_def: GenomicScoreDef,  # noqa: ARG001
+    record: Record, score_def: GenomicScoreDef,  # ruff: ignore[unused-function-argument]
 ) -> ScoreValue:
     """Read the one score off a bigWig record: the payload IS the value.
 
@@ -195,7 +195,7 @@ def validate_bigwig_scoredefs(
 
 
 def build_bigwig_scoredefs(
-    config: dict[str, Any],  # noqa: ARG001
+    config: dict[str, Any],  # ruff: ignore[unused-function-argument]
     config_scoredefs: dict[str, GenomicScoreDef],
 ) -> dict[str, GenomicScoreDef]:
     """Finish a bigWig resource's score definitions.

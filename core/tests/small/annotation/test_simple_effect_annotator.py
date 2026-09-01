@@ -41,7 +41,7 @@ def grr() -> GenomicResourceProtocolRepo:
                 g6        tx6  foo   -      50      80    55       71     2         55,65      61,71
                 g2        tx3  bar   -      3       20    3        15     1         3          17
                 g7        tx7  baz   +      10      20    10       10     1         10         20
-                """)  # noqa
+                """)  # ruff: ignore[missing-trailing-comma, line-too-long, trailing-whitespace]
         },
     })
 
@@ -214,7 +214,7 @@ def grr2() -> GenomicResourceProtocolRepo:
                 g1        tx2  foo   +      2       72    12       42     1         12         42
                 g3        tx3  foo   +      102     192   112      142    2         112,152    142,182
                 g4        tx4  foo   +      202     292   202      202    2         212,252    242,282
-                """)  # noqa
+                """)  # ruff: ignore[missing-trailing-comma, line-too-long, trailing-whitespace]
         },
     })
 

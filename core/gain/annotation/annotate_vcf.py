@@ -413,7 +413,7 @@ def _annotate_vcf(
 def _concat(
     partfile_paths: list[str],
     output_path: str,
-    keep_parts: bool,  # noqa: FBT001
+    keep_parts: bool,  # ruff: ignore[boolean-type-hint-positional-argument]
 ) -> None:
     """Concatenate multiple VCF files into a single VCF file *in order*."""
     # Get any header from the partfiles, they should all be equal

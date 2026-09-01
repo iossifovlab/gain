@@ -20,7 +20,7 @@ GMM_CONTENT = """
 TP53      tx1  1     +      10      100   12       95     3         10,50,70   15,60,100
 TP53      tx1  1     +      10      100   12       95     2         10,70      15,100
 POGZ      tx3  17    +      10      100   12       95     3         10,50,70   15,60,100
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
 
 
 def test_gene_models_resource_with_format() -> None:
@@ -159,7 +159,7 @@ def test_gene_models_resource_with_chrom_mapping_del_prefix() -> None:
 TP53      tx1  chr1  +      10      100   12       95     3         10,50,70   15,60,100
 TP53      tx2  chr1  +      10      100   12       95     2         10,70      15,100
 POGZ      tx3  chr17 +      10      100   12       95     3         10,50,70   15,60,100
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
 
     res = build_inmemory_test_resource(
         content={

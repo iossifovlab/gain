@@ -6,4 +6,4 @@ except ImportError:
     # (e.g. inside CI Docker images that don't ship .git).
     __version__ = "0.0.0.dev0"
 
-import gain.utils.log_levels  # noqa: F401
+import gain.utils.log_levels  # ruff: ignore[unused-import]

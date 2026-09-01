@@ -1671,19 +1671,19 @@ def test_tabix_middle_optimization_regions(tmp_path: pathlib.Path) -> None:
             assert tuple(row[PAYLOAD]) == ("1", "1", "1", "1")
 
         row = None
-        for row in table.get_records_in_region("1", 4, 4):  # noqa: B007
+        for row in table.get_records_in_region("1", 4, 4):  # ruff: ignore[unused-loop-control-variable]
             pass
         assert row is not None
         assert tuple(row[PAYLOAD]) == ("1", "4", "8", "2")
 
         row = None
-        for row in table.get_records_in_region("1", 4, 4):  # noqa: B007
+        for row in table.get_records_in_region("1", 4, 4):  # ruff: ignore[unused-loop-control-variable]
             break
         assert row is not None
         assert tuple(row[PAYLOAD]) == ("1", "4", "8", "2")
 
         row = None
-        for row in table.get_records_in_region("1", 5, 5):  # noqa: B007
+        for row in table.get_records_in_region("1", 5, 5):  # ruff: ignore[unused-loop-control-variable]
             break
         assert row is not None
         assert tuple(row[PAYLOAD]) == ("1", "4", "8", "2")

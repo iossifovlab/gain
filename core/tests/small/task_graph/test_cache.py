@@ -1,6 +1,6 @@
 # pylint: disable=W0621,C0114,C0115,C0116,W0212,W0613,protected-access
 import os
-import pickle  # noqa: S403
+import pickle  # ruff: ignore[suspicious-pickle-import]
 import time
 from collections.abc import Generator
 from copy import deepcopy

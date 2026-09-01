@@ -125,7 +125,7 @@ Annotator to lift over a variant from one reference genome to another.
 
     def _do_annotate(
         self, annotatable: Annotatable,
-        context: dict[str, Any],  # noqa: ARG002
+        context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
         assert annotatable is not None
 
@@ -159,7 +159,7 @@ Annotator to lift over a variant from one reference genome to another.
             lo_chrom, lo_pos, lo_ref, lo_alt = lo_allele
             result = VCFAllele(lo_chrom, lo_pos, lo_ref, lo_alt)
 
-        except BaseException as ex:  # noqa BLE001 pylint: disable=broad-except
+        except BaseException as ex:
             logger.warning(
                 "problem in variant %s liftover: %s",
                 allele, ex, exc_info=True)

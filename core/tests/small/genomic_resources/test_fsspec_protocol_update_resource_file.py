@@ -834,7 +834,7 @@ def test_classify_resource_file_refreshes_state_on_drift(
     # date. Where the store offers a change token the token is what
     # decides, and it would still match the stored object -- correctly,
     # since the file itself has not been touched here (gain#881).
-    state.change_token = "stale-token"  # noqa: S105
+    state.change_token = "stale-token"  # ruff: ignore[hardcoded-password-string]
     proto.save_resource_file_state(dst_res, state)
 
     # When

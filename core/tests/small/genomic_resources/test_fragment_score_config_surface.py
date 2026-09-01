@@ -479,7 +479,7 @@ def test_legacy_annotator_name_annotates_identically_to_its_replacement(
         # a path that falls off the end of the function.
         with pipeline.open() as open_pipeline:
             annotated = open_pipeline.annotate(Region("1", 15, 60))
-        return annotated  # noqa: RET504
+        return annotated  # ruff: ignore[unnecessary-assign]
 
     assert annotate(legacy_name) == annotate(preferred_name)
 

@@ -39,7 +39,7 @@ from pydantic import ValidationError
 
 from .conftest import BASIC_RESOURCE_ID, BASIC_RESOURCE_LAYOUT
 
-_SECRET = "s3cr3t-do-not-log"  # noqa: S105
+_SECRET = "s3cr3t-do-not-log"  # ruff: ignore[hardcoded-password-string]
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +219,7 @@ def test_model_dump_masks_credentials() -> None:
         type="http", url="https://grr.example.com",
         user="alice", password=_SECRET)
     dumped = definition.model_dump()
-    assert dumped["password"] == "***"  # noqa: S105
+    assert dumped["password"] == "***"  # ruff: ignore[hardcoded-password-string]
     assert dumped["user"] == "***"
     assert _SECRET not in str(dumped)
     assert "alice" not in str(dumped)
@@ -365,7 +365,7 @@ def test_redact_definition_scrubs_url_token_only_userinfo() -> None:
     # A bearer token / PAT embedded as the SOLE userinfo component (no colon):
     # scheme://<token>@host. The whole userinfo is the secret, so it must be
     # fully masked (***@host), never split into a fake ``token:***``.
-    token = "ghp_SUPERSECRETTOKEN123"  # noqa: S105
+    token = "ghp_SUPERSECRETTOKEN123"  # ruff: ignore[hardcoded-password-string]
     definition = {"type": "url", "url": f"https://{token}@grr.example.com/path"}
     redacted = redact_definition(definition)
     assert token not in redacted["url"]
@@ -863,7 +863,7 @@ def _the_error_a_failed_copy_raises(
     try:
         download.dest_proto.copy_resource_file(
             download.src_res, download.dest_res, _DOWNLOAD_FILE_NAME)
-    except Exception as error:  # noqa: BLE001 - the type is what we assert on
+    except Exception as error:  # ruff: ignore[blind-except] - the type is what we assert on
         return error
     pytest.fail("the download was expected to fail")
 

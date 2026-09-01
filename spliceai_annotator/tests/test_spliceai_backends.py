@@ -26,8 +26,7 @@ def onnx_backend() -> ModuleType:
 
 @pytest.fixture(scope="module")
 def onnx_models(onnx_backend: ModuleType) -> Iterator[list]:
-    models = onnx_backend.spliceai_load_models()
-    yield models
+    yield onnx_backend.spliceai_load_models()
     onnx_backend.spliceai_close()
 
 
@@ -46,8 +45,7 @@ def tensorflow_backend() -> ModuleType:
 
 @pytest.fixture(scope="module")
 def tensorflow_models(tensorflow_backend: ModuleType) -> Iterator[list]:
-    models = tensorflow_backend.spliceai_load_models()
-    yield models
+    yield tensorflow_backend.spliceai_load_models()
     tensorflow_backend.spliceai_close()
 
 

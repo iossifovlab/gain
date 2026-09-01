@@ -102,10 +102,10 @@ class GeneModelsImpl(
         return {"config": self.config,
                 "stats": self.get_statistics()}
 
-    def get_info(self, **kwargs: Any) -> str:  # noqa: ARG002
+    def get_info(self, **kwargs: Any) -> str:  # ruff: ignore[unused-method-argument]
         return InfoImplementationMixin.get_info(self)
 
-    def get_statistics_info(self, **kwargs: Any) -> str:  # noqa: ARG002
+    def get_statistics_info(self, **kwargs: Any) -> str:  # ruff: ignore[unused-method-argument]
         return InfoImplementationMixin.get_statistics_info(self)
 
     def calc_info_hash(self) -> bytes:
@@ -123,7 +123,7 @@ class GeneModelsImpl(
         }, indent=2).encode()
 
     def create_statistics_build_tasks(
-        self, **kwargs: Any,  # noqa: ARG002
+        self, **kwargs: Any,  # ruff: ignore[unused-method-argument]
     ) -> list[TaskDesc]:
         task = TaskGraph.make_task(
             f"{self.resource_id}_calc_stats",

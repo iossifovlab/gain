@@ -76,7 +76,7 @@ def _search(
         # `error`, not `exception`: the traceback is the thing being
         # replaced. The message already names the argument, or the
         # repositories and the repair, which is all a user can act on.
-        logger.error("%s", err)  # noqa: TRY400
+        logger.error("%s", err)  # ruff: ignore[error-instead-of-exception]
         sys.exit(1)
 
 

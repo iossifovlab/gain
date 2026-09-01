@@ -1,7 +1,7 @@
 # pylint: disable=W0621,C0114,C0115,C0116,W0212,W0613,too-many-lines
 import argparse
 import pathlib
-import pickle  # noqa: S403
+import pickle  # ruff: ignore[suspicious-pickle-import]
 
 import fsspec
 import pytest

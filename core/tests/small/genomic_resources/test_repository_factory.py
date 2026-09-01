@@ -486,7 +486,7 @@ def test_cached_group_with_id_less_children_of_nested_groups(
 
 
 def test_duplicate_child_id_error_does_not_echo_a_password() -> None:
-    secret = "s3cr3t-445"  # noqa: S105
+    secret = "s3cr3t-445"  # ruff: ignore[hardcoded-password-string]
     with pytest.raises(ValueError, match="dup") as exc_info:
         build_genomic_resource_repository(
             {"type": "group", "children": [
@@ -507,7 +507,7 @@ def test_synthesised_child_id_does_not_echo_a_url_password() -> None:
     the slug, and this assertion would hold whether or not redaction
     happened.
     """
-    secret = "s3cr3tURL445"  # noqa: S105
+    secret = "s3cr3tURL445"  # ruff: ignore[hardcoded-password-string]
     repo = build_genomic_resource_repository(
         {"type": "group", "children": [
             {"type": "http", "url": f"https://alice:{secret}@a.example.com"},
@@ -785,7 +785,7 @@ def test_synthesised_root_id_does_not_echo_a_url_password() -> None:
     the slug, and this assertion would hold whether or not redaction
     happened.
     """
-    secret = "s3cr3tURL461"  # noqa: S105
+    secret = "s3cr3tURL461"  # ruff: ignore[hardcoded-password-string]
     repo = build_genomic_resource_repository(
         {"type": "http", "url": f"https://alice:{secret}@a.example.com"})
 

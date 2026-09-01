@@ -66,7 +66,7 @@ def call_with_timeout(
     def target() -> None:
         try:
             box["value"] = func(*args, **kwargs)
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:  # ruff: ignore[blind-except]
             box["error"] = exc
 
     worker = threading.Thread(target=target, daemon=True)

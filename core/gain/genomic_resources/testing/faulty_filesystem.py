@@ -305,7 +305,7 @@ class FaultyFileSystem(fsspec.AbstractFileSystem):
             self, path)
 
     def rm(
-        self, path: str, recursive: bool = False,  # noqa: FBT001, FBT002
+        self, path: str, recursive: bool = False,  # ruff: ignore[boolean-type-hint-positional-argument, boolean-default-value-positional-argument]
         maxdepth: int | None = None,
     ) -> Any:
         """Remove through the inner filesystem, under the script."""
@@ -336,7 +336,7 @@ class FaultyFileSystem(fsspec.AbstractFileSystem):
         return self.inner.isdir(path)
 
     def ls(
-        self, path: str, detail: bool = True,  # noqa: FBT001, FBT002
+        self, path: str, detail: bool = True,  # ruff: ignore[boolean-type-hint-positional-argument, boolean-default-value-positional-argument]
         **kwargs: Any,
     ) -> Any:
         """Delegate to the wrapped filesystem."""
@@ -348,8 +348,8 @@ class FaultyFileSystem(fsspec.AbstractFileSystem):
 
     def find(
         self, path: str, maxdepth: int | None = None,
-        withdirs: bool = False,  # noqa: FBT001, FBT002
-        detail: bool = False,  # noqa: FBT001, FBT002
+        withdirs: bool = False,  # ruff: ignore[boolean-type-hint-positional-argument, boolean-default-value-positional-argument]
+        detail: bool = False,  # ruff: ignore[boolean-type-hint-positional-argument, boolean-default-value-positional-argument]
         **kwargs: Any,
     ) -> Any:
         """Delegate to the wrapped filesystem."""
@@ -358,13 +358,13 @@ class FaultyFileSystem(fsspec.AbstractFileSystem):
             **kwargs)
 
     def makedirs(
-        self, path: str, exist_ok: bool = False,  # noqa: FBT001, FBT002
+        self, path: str, exist_ok: bool = False,  # ruff: ignore[boolean-type-hint-positional-argument, boolean-default-value-positional-argument]
     ) -> Any:
         """Delegate to the wrapped filesystem."""
         return self.inner.makedirs(path, exist_ok=exist_ok)
 
     def mkdir(
-        self, path: str, create_parents: bool = True,  # noqa: FBT001, FBT002
+        self, path: str, create_parents: bool = True,  # ruff: ignore[boolean-type-hint-positional-argument, boolean-default-value-positional-argument]
         **kwargs: Any,
     ) -> Any:
         """Delegate to the wrapped filesystem."""
@@ -372,7 +372,7 @@ class FaultyFileSystem(fsspec.AbstractFileSystem):
 
     def mv(
         self, path1: str, path2: str,
-        recursive: bool = False,  # noqa: FBT001, FBT002
+        recursive: bool = False,  # ruff: ignore[boolean-type-hint-positional-argument, boolean-default-value-positional-argument]
         maxdepth: int | None = None, **kwargs: Any,
     ) -> Any:
         """Delegate to the wrapped filesystem."""
@@ -384,7 +384,7 @@ class FaultyFileSystem(fsspec.AbstractFileSystem):
         return self.inner.cp_file(path1, path2, **kwargs)
 
     def delete(
-        self, path: str, recursive: bool = False,  # noqa: FBT001, FBT002
+        self, path: str, recursive: bool = False,  # ruff: ignore[boolean-type-hint-positional-argument, boolean-default-value-positional-argument]
         maxdepth: int | None = None,
     ) -> Any:
         """Delegate to the wrapped filesystem."""
@@ -404,7 +404,7 @@ class FaultyFileSystem(fsspec.AbstractFileSystem):
 
     def put(
         self, lpath: str, rpath: str,
-        recursive: bool = False,  # noqa: FBT001, FBT002
+        recursive: bool = False,  # ruff: ignore[boolean-type-hint-positional-argument, boolean-default-value-positional-argument]
         callback: Any = _DEFAULT_CALLBACK,
         maxdepth: int | None = None, **kwargs: Any,
     ) -> Any:
@@ -423,4 +423,4 @@ class FaultyFileSystem(fsspec.AbstractFileSystem):
         return str(self.inner.fsid)
 
     def _rm(self, path: str) -> Any:
-        return self.inner._rm(path)  # noqa: SLF001
+        return self.inner._rm(path)  # ruff: ignore[private-member-access]

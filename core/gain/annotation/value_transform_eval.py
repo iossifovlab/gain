@@ -371,5 +371,5 @@ def compile_value_transform(expr: str) -> Callable[[Any], Any]:
     # Building the lambda does not run its body; the defaults are fixed and
     # empty, so this eval only materialises the validated callable.
     # pylint: disable-next=eval-used
-    transform: Callable[[Any], Any] = eval(code, _EVAL_GLOBALS)  # noqa: S307
+    transform: Callable[[Any], Any] = eval(code, _EVAL_GLOBALS)  # ruff: ignore[suspicious-eval-usage]
     return transform

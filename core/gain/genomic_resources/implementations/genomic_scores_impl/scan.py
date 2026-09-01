@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Callable, Generator, Iterable
-from typing import Any, NamedTuple, TypeVar, cast
+from typing import Any, NamedTuple, cast
 
 import numpy as np
 
@@ -98,11 +98,6 @@ __all__ = [
     "unpack_score_defs",
     "update_hist_confs",
 ]
-
-# The per-batch accumulator target of a bulk region scan -- a Histogram for the
-# histogram pass, a MinMaxValue for the min/max pass.  A TypeVar keeps
-# ``bulk_region_scan`` generic without losing either caller's dict type.
-_AccT = TypeVar("_AccT")
 
 # The resource kinds whose statistics the vectorized scan may serve, in every
 # spelling of each.  Expanded through ``equivalent_resource_types`` rather than
@@ -612,14 +607,17 @@ def do_histogram_bulk(
         batches=batches, score=score)
 
 
-def bulk_region_scan(
+# ``AccT`` is the per-batch accumulator target of a bulk region scan -- a
+# Histogram for the histogram pass, a MinMaxValue for the min/max pass.  It
+# keeps ``bulk_region_scan`` generic without losing either caller's dict type.
+def bulk_region_scan[AccT](
     resource: GenomicResource,
-    result: dict[str, _AccT],
+    result: dict[str, AccT],
     chrom: str,
     start: int,
     end: int,
     accumulate: Callable[
-        [RecordArrays, dict[str, _AccT],
+        [RecordArrays, dict[str, AccT],
          tuple[str, int | None, int | None], GenomicScore],
         None],
     *,
@@ -627,7 +625,7 @@ def bulk_region_scan(
         [GenomicScore, str, int, int, list[str]],
         Iterable[RecordArrays]] | None = None,
     score: GenomicScore | None = None,
-) -> dict[str, _AccT]:
+) -> dict[str, AccT]:
     """Drive a bulk region scan, folding each batch into ``result``.
 
     Public though only this module calls it: ADR 0001 names it as
@@ -1088,7 +1086,7 @@ def _accumulate_min_max(
 
 
 def merge_histograms(
-    resource: GenomicResource,  # noqa: ARG001
+    resource: GenomicResource,  # ruff: ignore[unused-function-argument]
     *calculated_histograms: dict[str, Any],
 ) -> dict[str, Histogram]:
     """Fold each region's histograms into one histogram per score.
@@ -1148,7 +1146,7 @@ def _save_histograms(
     # module-level function in ``score_implementation`` retires
     # this suppression; that also edits ``gene_scores_impl``, its
     # other caller, so it is gain#1036 rather than gain#1007.
-    ScoreImplementationBase._save_and_plot_histograms(  # noqa: SLF001
+    ScoreImplementationBase._save_and_plot_histograms(  # ruff: ignore[private-member-access]
         resource, build_score_from_resource(resource),
         merged_histograms)
     return merged_histograms

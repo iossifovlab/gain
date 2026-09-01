@@ -256,7 +256,7 @@ def a_dvc_only_full_histogram(
     """
     full_path = resource_dir / "statistics" / f"histogram_{score_id}.json"
     content = full_path.read_bytes()
-    content_md5 = hashlib.md5(content).hexdigest()  # noqa: S324
+    content_md5 = hashlib.md5(content).hexdigest()  # ruff: ignore[hashlib-insecure-hash-function]
     (resource_dir / "statistics"
      / f"histogram_{score_id}.json.dvc").write_text(
         textwrap.dedent(f"""

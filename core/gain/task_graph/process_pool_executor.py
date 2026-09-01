@@ -51,7 +51,7 @@ class ProcessPoolTaskExecutor(TaskGraphExecutorBase):
     @staticmethod
     def _exec_internal(
         task: TaskDesc,
-        params: dict[str, Any],  # noqa: ARG004
+        params: dict[str, Any],  # ruff: ignore[unused-static-method-argument]
     ) -> Any:
         start = time.time()
         process = psutil.Process(os.getpid())
@@ -120,7 +120,7 @@ class ProcessPoolTaskExecutor(TaskGraphExecutorBase):
                 task = submitted_tasks[future]
                 try:
                     result = future.result()
-                except Exception as ex:  # noqa: BLE001
+                except Exception as ex:  # ruff: ignore[blind-except]
                     # pylint: disable=broad-except
                     result = ex
 

@@ -5,7 +5,7 @@ import tempfile
 
 import yaml
 
-from .settings import *  # noqa
+from .settings import *  # ruff: ignore[undefined-local-with-import-star]
 
 # Dir for all data storage
 DATA_STORAGE_DIR = tempfile.mkdtemp()

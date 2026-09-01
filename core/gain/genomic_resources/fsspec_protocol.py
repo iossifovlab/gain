@@ -299,7 +299,7 @@ def _rebuild_error_without_userinfo(
     """
     try:
         return type(exc)(redacted)
-    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+    except Exception:  # ruff: ignore[blind-except]  # pylint: disable=broad-exception-caught
         return OSError(redacted)
 
 
@@ -1071,7 +1071,7 @@ class FsspecReadOnlyProtocol(
 
         assert isinstance(data, bytes)
 
-        return hashlib.md5(data).hexdigest()  # noqa: S324
+        return hashlib.md5(data).hexdigest()  # ruff: ignore[hashlib-insecure-hash-function]
 
     def get_all_resources(self) -> Generator[GenomicResource, None, None]:
         """Return generator over all resources in the repository."""
@@ -1184,7 +1184,7 @@ class FsspecReadOnlyProtocol(
         self, resource: GenomicResource,
         filename: str,
         *,
-        uncompress: bool = True,  # noqa: ARG002
+        uncompress: bool = True,  # ruff: ignore[unused-method-argument]
         mode: str = "t",
     ) -> Any:
         """Return content of a file in given resource.
@@ -2409,7 +2409,7 @@ class FsspecReadWriteProtocol(
                     uncompress=False) as infile, \
                     self.filesystem.open(tmp_filepath, "wb") as outfile:
 
-                md5_hash = hashlib.md5()  # noqa
+                md5_hash = hashlib.md5()  # ruff: ignore[hashlib-insecure-hash-function]
                 while chunk := infile.read(self.CHUNK_SIZE):
                     outfile.write(chunk)
                     bytes_written += len(chunk)
@@ -2509,7 +2509,7 @@ class FsspecReadWriteProtocol(
             self.filesystem.rm(tmp_filepath)
         except FileNotFoundError:
             pass
-        except Exception as error:  # noqa: BLE001  pylint: disable=broad-except
+        except Exception as error:  # ruff: ignore[blind-except]  pylint: disable=broad-except
             # Deliberately no ``exc_info``. This runs from the download's
             # ``finally``, so the failure that got us here is still
             # propagating, and ``exc_info`` renders the whole ACTIVE chain --
@@ -2642,7 +2642,7 @@ class FsspecReadWriteProtocol(
             # to here.
             # The refusal message is complete on its own; a traceback
             # would only bury it, hence `error`, not `exception`.
-            logger.error(  # noqa: TRY400
+            logger.error(  # ruff: ignore[error-instead-of-exception]
                 "not publishing <%s> in the repository index: %s",
                 res.resource_id, err)
             return None
@@ -2773,7 +2773,7 @@ class FsspecReadWriteProtocol(
         if self.filesystem.exists(gz_path):
             with self.filesystem.open(gz_path, "rb") as gz_file:
                 gz_bytes: bytes = cast(bytes, gz_file.read())
-            sqlite3_hash = hashlib.md5(gz_bytes).hexdigest()  # noqa: S324
+            sqlite3_hash = hashlib.md5(gz_bytes).hexdigest()  # ruff: ignore[hashlib-insecure-hash-function]
 
         content_filepath = os.path.join(self.url, GR_INDEX_FILE_NAME)
         with self._publish_file(

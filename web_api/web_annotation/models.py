@@ -304,7 +304,7 @@ class User(AbstractUser):
         max_fn = "MAX" if connection.vendor == "sqlite" else "GREATEST"
         # max_fn is a hardcoded keyword (MAX/GREATEST), not user input.
         sql = (
-            "UPDATE web_annotation_user "  # noqa: S608
+            "UPDATE web_annotation_user "  # ruff: ignore[hardcoded-sql-expression]
             f"SET job_counter = {max_fn}(job_counter, "
             "(SELECT COUNT(*) FROM web_annotation_job "
             "WHERE owner_id = %s)) + 1 "
@@ -1174,7 +1174,12 @@ class Quota(models.Model):
             self.refresh_from_db(
                 from_queryset=self._meta.base_manager
                 .using(using).select_for_update())
-            yield
+            # RUF075 wants the yield wrapped so the save runs on failure too.
+            # It must not: `transaction.atomic` rolls the row back when the
+            # body raises, and saving the half-mutated instance on the way
+            # out would write exactly the state the rollback exists to
+            # discard.
+            yield  # ruff: ignore[fallible-context-manager]
             self.save(using=using)
 
     def _consume(self, *deductions: tuple[str, int]) -> None:

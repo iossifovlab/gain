@@ -575,7 +575,7 @@ async def test_loop_stall_proof_is_discriminating(
     is above ``STALL_THRESHOLD_SECONDS``. Without this the proof could pass
     for want of anything slow to detect.
     """
-    async def parse_on_the_event_loop(  # noqa: RUF029
+    async def parse_on_the_event_loop(  # ruff: ignore[unused-async]
         self: PipelineValidation, content: str,
     ) -> Any:
         # Awaits nothing on purpose -- that IS the sabotage. It must stay a
@@ -758,7 +758,7 @@ async def test_annotator_count_stall_proof_is_discriminating(
     ``STALL_THRESHOLD_SECONDS``. Without this the proof could pass for want
     of anything slow to detect.
     """
-    async def count_on_the_event_loop(  # noqa: RUF029
+    async def count_on_the_event_loop(  # ruff: ignore[unused-async]
         self: PipelineValidation, content: str,
     ) -> int | None:
         # Awaits nothing on purpose -- that IS the sabotage. It must stay a

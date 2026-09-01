@@ -836,7 +836,7 @@ def _run_in_thread_with_timeout(
         try:
             for task, result in executor.execute(graph):
                 results.append((task, result))
-        except BaseException as ex:  # noqa: BLE001
+        except BaseException as ex:  # ruff: ignore[blind-except]
             errors.append(ex)
         finally:
             done.set()

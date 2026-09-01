@@ -495,11 +495,11 @@ class GenomicPositionTable(abc.ABC):
 
     def get_region_value_arrays(
         self,
-        chrom: str,  # noqa: ARG002
-        start: int | None,  # noqa: ARG002
-        end: int | None,  # noqa: ARG002
-        value_columns: Iterable[int],  # noqa: ARG002
-        batch_size: int,  # noqa: ARG002
+        chrom: str,  # ruff: ignore[unused-method-argument]
+        start: int | None,  # ruff: ignore[unused-method-argument]
+        end: int | None,  # ruff: ignore[unused-method-argument]
+        value_columns: Iterable[int],  # ruff: ignore[unused-method-argument]
+        batch_size: int,  # ruff: ignore[unused-method-argument]
     ) -> Generator[
             tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]], None, None]:
         """Yield a region's rows as column arrays, without building records.

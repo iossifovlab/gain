@@ -26,8 +26,17 @@ os.environ.setdefault(
 django_asgi_app = get_asgi_application()
 
 # pylint: disable=wrong-import-position
-from web_annotation.models import WebAnnotationAnonymousUser  # noqa: E402
-from web_annotation.urls import websocket_urlpatterns  # noqa: E402
+# These two imports must stay below `get_asgi_application()`: importing the
+# models (and the URL conf that pulls them in) before the app registry is
+# populated raises AppRegistryNotReady.  Ruff 0.16's suppression migration
+# reformatted these to multi-line and dropped the trailing E402 directive
+# along the way, so the suppression is spelled out on the statement here.
+from web_annotation.models import (  # ruff: ignore[module-import-not-at-top-of-file]
+    WebAnnotationAnonymousUser,
+)
+from web_annotation.urls import (  # ruff: ignore[module-import-not-at-top-of-file]
+    websocket_urlpatterns,
+)
 
 
 class AnonymousAuthMiddleware(BaseMiddleware):
@@ -53,7 +62,7 @@ class AnonymousAuthMiddleware(BaseMiddleware):
         user = await get_user(scope)
         if user.is_anonymous:
             user = WebAnnotationAnonymousUser(scope["session"].session_key)
-        scope["user"]._wrapped = user  # noqa: SLF001
+        scope["user"]._wrapped = user  # ruff: ignore[private-member-access]
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> Any:
         scope = dict(scope)

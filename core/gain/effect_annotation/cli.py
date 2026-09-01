@@ -194,10 +194,10 @@ class VariantColumnInputFile:
             self.file = sys.stdin
         else:
             if filename.endswith("gz"):
-                self.file = gzip.open(filename, "rt")  # noqa: SIM115
+                self.file = gzip.open(filename, "rt")  # ruff: ignore[open-file-with-context-handler]
             else:
                 # pylint: disable=consider-using-with
-                self.file = open(filename, "rt")  # noqa: SIM115
+                self.file = open(filename, "rt")  # ruff: ignore[open-file-with-context-handler]
 
         # read header
         self.header: list[str] = self.file.readline(). \
@@ -250,10 +250,10 @@ class VariantColumnOutputFile:
             self.file = sys.stdout
         else:
             if filename.endswith("gz"):
-                self.file = gzip.open(filename, "wt")  # noqa: SIM115
+                self.file = gzip.open(filename, "wt")  # ruff: ignore[open-file-with-context-handler]
             else:
                 # pylint: disable=consider-using-with
-                self.file = open(filename, "wt")  # noqa: SIM115
+                self.file = open(filename, "wt")  # ruff: ignore[open-file-with-context-handler]
 
     def write_columns(self, columns: list[str]) -> None:
         print(*columns, sep=self.args.output_sep, file=self.file)
@@ -383,7 +383,7 @@ def cli_vcf() -> None:
         outfile = sys.stdout
     else:
         # pylint: disable=consider-using-with
-        outfile = open(args.output_filename, "w")  # noqa: SIM115
+        outfile = open(args.output_filename, "w")  # ruff: ignore[open-file-with-context-handler]
 
     # handling the header
     header = infile.header

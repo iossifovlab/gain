@@ -44,7 +44,7 @@ def simple_gene_models() -> GeneModels:
 #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
 TP53      tx1  1     +      10      100   12       95     3         10,50,70   15,60,100
 BRCA1     tx2  2     -      200     300   210      290    2         200,250    220,300
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
     res = build_inmemory_test_resource(
         content={
             "genomic_resource.yaml":
@@ -63,7 +63,7 @@ def noncoding_gene_models() -> GeneModels:
     content = """
 #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
 NCRNA     tx1  1     +      10      100   100      100    2         10,50      40,100
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
     res = build_inmemory_test_resource(
         content={
             "genomic_resource.yaml":
@@ -231,7 +231,7 @@ def test_gene_models_to_gtf_empty() -> None:
     """Test gene_models_to_gtf with empty gene models."""
     content = """
 #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
     res = build_inmemory_test_resource(
         content={
             "genomic_resource.yaml":
@@ -658,7 +658,7 @@ def test_save_as_default_gene_models_attributes_escaping(
     content = """
 #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
 TEST      tx1  1     +      10      100   12       95     2         10,50      40,100
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
     res = build_inmemory_test_resource(
         content={
             "genomic_resource.yaml":
@@ -705,7 +705,7 @@ def test_save_as_default_gene_models_empty_attributes() -> None:
     content = """
 #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
 TEST      tx1  1     +      10      100   12       95     1         10         100
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
     res = build_inmemory_test_resource(
         content={
             "genomic_resource.yaml":

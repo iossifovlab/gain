@@ -432,7 +432,7 @@ class InfoImplementationMixin:
             and not is_dvc_sidecar(entry.name)]
         return template_data
 
-    def get_info(self, **kwargs: Any) -> str:  # noqa: ARG002
+    def get_info(self, **kwargs: Any) -> str:  # ruff: ignore[unused-method-argument]
         """Construct the contents of the implementation's HTML info page."""
         template_data = self.get_template_data()
         return get_template(self.template_name).render(
@@ -442,7 +442,7 @@ class InfoImplementationMixin:
             styles_template=self.styles_template_name,
         )
 
-    def get_statistics_info(self, **kwargs: Any) -> str:  # noqa: ARG002
+    def get_statistics_info(self, **kwargs: Any) -> str:  # ruff: ignore[unused-method-argument]
         """Construct the contents of the implementation's HTML info page."""
         template_data = self.get_statistics_template_data()
         return get_template(self.template_name).render(

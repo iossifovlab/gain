@@ -14,7 +14,7 @@ GMM_CONTENT = """
 g1        tx1  foo   +      3       17    3        17     2         3,13       6,17
 g1        tx2  foo   +      3       9     3        6      1         3          6
 g2        tx3  bar   -      3       20    3        15     1         3          17
-"""  # noqa
+"""  # ruff: ignore[line-too-long]
 
 
 def foobar_genes(root_path: pathlib.Path) -> GeneModels:

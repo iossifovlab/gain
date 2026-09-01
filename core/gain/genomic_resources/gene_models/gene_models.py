@@ -371,7 +371,7 @@ def create_regions_from_genes(
             logger.warning("gene model for %s not found", gene_name)
             continue
         for gm in gene_model:
-            gene_regions.append(  # noqa: PERF401
+            gene_regions.append(  # ruff: ignore[manual-list-comprehension]
                 Region(
                     gm.chrom,
                     max(1, gm.tx[0] - 1 - gene_regions_heuristic_extend),

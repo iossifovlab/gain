@@ -339,7 +339,7 @@ class BigWigTable(GenomicPositionTable):
         start: int | None,
         end: int | None,
         value_columns: Iterable[int],
-        batch_size: int,  # noqa: ARG002
+        batch_size: int,  # ruff: ignore[unused-method-argument]
     ) -> Generator[
             tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]], None, None]:
         """Yield a region's intervals as column arrays, without records.
@@ -403,7 +403,7 @@ class BigWigTable(GenomicPositionTable):
 
     def find_chromosome_length(
         self, chrom: str,
-        step: int = 100_000_000,  # noqa: ARG002
+        step: int = 100_000_000,  # ruff: ignore[unused-method-argument]
     ) -> int | ContigExtent:
         # NEITHER ContigExtent member is reachable from this backend, and that
         # is a property of the format rather than an omission: a bigWig header

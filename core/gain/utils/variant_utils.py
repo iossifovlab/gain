@@ -23,9 +23,9 @@ def reverse_complement(nucleotides: str) -> str:
 
 def trim_str_left(pos: int, ref: str, alt: str) -> tuple[int, str, str]:
     """Trim identical nucleotides prefixes and adjust position accordingly."""
-    assert alt and ref, (pos, ref, alt)  # noqa PT018
+    assert alt and ref, (pos, ref, alt)  # ruff: ignore[pytest-composite-assertion] PT018
     idx = 0
-    for idx, sequence in enumerate(zip(ref, alt)):  # noqa B007
+    for idx, sequence in enumerate(zip(ref, alt)):  # ruff: ignore[unused-loop-control-variable, zip-without-explicit-strict] B007
         if sequence[0] != sequence[1]:
             break
 
@@ -47,7 +47,7 @@ def trim_str_right(pos: int, ref: str, alt: str) -> tuple[int, str, str]:
     assert ref, (pos, ref, alt)
 
     idx = 0
-    for idx, sequence in enumerate(zip(ref[::-1], alt[::-1])):  # noqa B007
+    for idx, sequence in enumerate(zip(ref[::-1], alt[::-1])):  # ruff: ignore[unused-loop-control-variable, zip-without-explicit-strict] B007
         if sequence[0] != sequence[1]:
             break
     # not made simple

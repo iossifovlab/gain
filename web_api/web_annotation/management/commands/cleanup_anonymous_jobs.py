@@ -82,7 +82,7 @@ class Command(BaseCommand):
             try:
                 job.delete()
                 deleted += 1
-            except Exception as exc:  # noqa: BLE001  pylint: disable=broad-except
+            except Exception as exc:  # ruff: ignore[blind-except]  pylint: disable=broad-except
                 failed += 1
                 self.stderr.write(
                     f"Failed to delete anonymous job {job.pk}: {exc}",

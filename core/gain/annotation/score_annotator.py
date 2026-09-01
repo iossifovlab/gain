@@ -189,7 +189,7 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
         aggregator_doc = self._build_score_aggregator_documentation(
             attr, aggregator, attribute_conf_agg)
 
-        attr._documentation = (  # noqa: SLF001
+        attr._documentation = (  # ruff: ignore[private-member-access]
             f"{attr.documentation}"
             f"\n\n{aggregator_doc}")
 
@@ -263,7 +263,7 @@ phastCons, phyloP, FitCons2, etc.
 
 <a href="{self.BASE_DOC_URL}#position-score-annotator" target="_blank">More info</a>
 
-""")  # noqa
+""")  # ruff: ignore[line-too-long]
 
         for attr, attr_config in zip(
             self._attributes, self.get_info().attributes, strict=True,
@@ -311,7 +311,7 @@ phastCons, phyloP, FitCons2, etc.
 
     def _do_annotate(
         self, annotatable: Annotatable,
-        context: dict[str, Any],  # noqa: ARG002
+        context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
 
         if annotatable.chromosome not in self.score.get_all_chromosomes():
@@ -421,7 +421,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 
 <a href="{self.BASE_DOC_URL}#allele-score-annotator" target="_blank">More info</a>
 
-""")  # noqa
+""")  # ruff: ignore[line-too-long]
 
         self.allele_attribute = None
         self.attrs_to_include = []
@@ -553,7 +553,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 
     def _do_annotate(
         self, annotatable: Annotatable,
-        context: dict[str, Any],  # noqa: ARG002
+        context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
         """Dispatch annotation based on annotatable type and mode.
 

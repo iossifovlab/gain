@@ -775,7 +775,7 @@ class PipelineValidation(AsyncAnnotationBaseView):
             # rather than letting the latter's own parse do the work twice:
             # it is the gate on the build that follows.
             _, expanded = await self._aparse_config(content)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # ruff: ignore[blind-except]
             # Same formatter as the deferred-load failure path (#155) so the
             # synchronous and background error messages stay identical.
             return self._memoise(content, format_config_error(e))
@@ -798,7 +798,7 @@ class PipelineValidation(AsyncAnnotationBaseView):
             # shared thread_sensitive sync-view thread nor the event loop
             # is occupied while it runs.
             await self._abuild_pipeline(content)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # ruff: ignore[blind-except]
             # Failures arrive from the worker thread through the future, so
             # the same formatter as the deferred-load path (#155) still
             # renders them -- identical text to the synchronous build.

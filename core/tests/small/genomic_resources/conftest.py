@@ -164,7 +164,7 @@ def run_in_threads() -> RunInThreads:
             try:
                 barrier.wait()
                 result = work()
-            except BaseException as exc:  # noqa: BLE001
+            except BaseException as exc:  # ruff: ignore[blind-except]
                 with guard:
                     errors.append(exc)
             else:

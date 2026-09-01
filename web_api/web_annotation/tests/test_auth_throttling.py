@@ -20,9 +20,9 @@ from web_annotation.throttling import (
 
 LOGIN = "/api/login"
 REGISTER = "/api/register"
-FORGOTTEN_PASSWORD = "/api/forgotten_password"  # noqa: S105
+FORGOTTEN_PASSWORD = "/api/forgotten_password"  # ruff: ignore[hardcoded-password-string]
 CONFIRM_ACCOUNT = "/api/confirm_account?code=no-such-code"
-RESET_PASSWORD = "/api/reset_password?code=no-such-code"  # noqa: S105
+RESET_PASSWORD = "/api/reset_password?code=no-such-code"  # ruff: ignore[hardcoded-password-string]
 
 
 def _login(client: Client, email: str, ip: str = "10.0.0.1") -> int:

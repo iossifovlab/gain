@@ -139,7 +139,7 @@ def _reconfigure_task_deps(
     return args, kwargs, deps
 
 
-def _chain_func(*args: Any, **kwargs: Any) -> Any:  # noqa: ARG001
+def _chain_func(*args: Any, **kwargs: Any) -> Any:  # ruff: ignore[unused-function-argument]
     task1 = kwargs.pop("task1")
     task2 = kwargs.pop("task2")
 
@@ -392,7 +392,7 @@ class TaskGraph:
                 if task not in self._tasks:
                     raise ValueError(f"task {task} not in graph")
                 result.append(
-                    TaskDesc._from_task_node(  # noqa: SLF001
+                    TaskDesc._from_task_node(  # ruff: ignore[private-member-access]
                         self._tasks[task]))
                 del self._tasks[task]
         return result

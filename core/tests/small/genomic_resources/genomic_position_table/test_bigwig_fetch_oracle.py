@@ -21,7 +21,7 @@ the retired one yielded.  See
 """
 from __future__ import annotations
 
-# ruff: noqa: S311
+# ruff: file-ignore[suspicious-non-cryptographic-random-usage]
 # S311 (no `random` for cryptography) does not apply: `random` builds the
 # track geometry and the query order here, seeded so a failure replays
 # exactly.

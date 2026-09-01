@@ -732,7 +732,7 @@ class CoverageStatistics(Statistic):
             accumulate_bins(merged, histogram)
         return merged
 
-    def add_value(self, value: Any) -> None:  # noqa: ARG002
+    def add_value(self, value: Any) -> None:  # ruff: ignore[unused-method-argument]
         raise TypeError(
             "CoverageStatistics accumulates regions, not values; "
             "use fold_region")
@@ -746,7 +746,7 @@ class CoverageStatistics(Statistic):
         """
         if not isinstance(other, CoverageStatistics):
             raise TypeError("unexpected type of statistics to merge with")
-        for region in other._regions.values():  # noqa: SLF001
+        for region in other._regions.values():  # ruff: ignore[private-member-access]
             self.fold_region(region)
 
     def serialize(self) -> str:

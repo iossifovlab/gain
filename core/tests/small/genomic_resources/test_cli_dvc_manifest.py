@@ -36,7 +36,7 @@ SAME_SIZE_TAMPERED_DATA = "TAMPERED DATA - trust me\n"
 
 
 def md5_of(content: str) -> str:
-    return hashlib.md5(  # noqa: S324
+    return hashlib.md5(  # ruff: ignore[hashlib-insecure-hash-function]
         content.encode("utf8")).hexdigest()
 
 

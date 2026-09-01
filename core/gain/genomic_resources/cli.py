@@ -426,9 +426,9 @@ def _configure_repo_fix_histograms_subparser(
 def _do_resource_manifest_command(
     proto: ReadWriteRepositoryProtocol,
     res: GenomicResource,
-    dry_run: bool,  # noqa: FBT001
-    force: bool,  # noqa: FBT001
-    use_dvc: bool,  # noqa: FBT001
+    dry_run: bool,  # ruff: ignore[boolean-type-hint-positional-argument]
+    force: bool,  # ruff: ignore[boolean-type-hint-positional-argument]
+    use_dvc: bool,  # ruff: ignore[boolean-type-hint-positional-argument]
 ) -> bool:
     """Check, and outside a dry run save, one resource's manifest.
 
@@ -463,7 +463,7 @@ def _do_resource_manifest_command(
         )
         if manifest_update.entries_to_delete:
             msg = (
-                f"{msg}; "  # noqa: S608
+                f"{msg}; "  # ruff: ignore[hardcoded-sql-expression]
                 f"entries to delete from manifest "
                 f"{sorted(manifest_update.entries_to_delete)}"
             )
@@ -593,7 +593,7 @@ def _create_contents_db(
             ).fetchone()
             if row and row[0] == current_md5:
                 return frozenset()
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.debug(
                 "Could not read existing contents db; rebuilding",
                 exc_info=True,
@@ -615,7 +615,7 @@ def _create_contents_db(
             # the interpolated SQL below unvetted (gain#464).
             validate_index_columns(res.resource_id, header)
             collected.append((res.resource_id, header, row))
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:  # ruff: ignore[blind-except]
             report_resource_failure(
                 err, "skipping FTS index for", res.resource_id)
             failed.add(res.resource_id)
@@ -636,7 +636,7 @@ def _create_contents_db(
             collected, key=operator.itemgetter(0)):
         try:
             claimed = merge_index_columns(resource_id, header, claimed)
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:  # ruff: ignore[blind-except]
             report_resource_failure(
                 err, "skipping FTS index for", resource_id)
             failed.add(resource_id)
@@ -675,7 +675,7 @@ def _create_contents_db(
                 # S608 fires on any SQL built by interpolation and cannot
                 # see the vetting the comment above describes; the values
                 # are bound, and only vetted identifiers are spliced.
-                f"INSERT INTO contents ({cols_str}) "  # noqa: S608
+                f"INSERT INTO contents ({cols_str}) "  # ruff: ignore[hardcoded-sql-expression]
                 f"VALUES ({', '.join(['?'] * len(columns))})"
             )
             for header, row in index_infos:
@@ -894,7 +894,7 @@ def _store_stats_hash(
         ) as outfile:
             stats_hash = impl.calc_statistics_hash()
             outfile.write(stats_hash)
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:  # ruff: ignore[blind-except]
         report_resource_failure(
             err, "couldn't store statistics hash for", resource.resource_id)
         return False
@@ -981,7 +981,7 @@ def _statistics_not_built(
                 logger.error(
                     "statistics of <%s> were not built", res.resource_id)
                 not_built.add(res.resource_id)
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:  # ruff: ignore[blind-except]
             report_resource_failure(
                 err, "could not check the statistics of", res.resource_id)
             not_built.add(res.resource_id)
@@ -1043,7 +1043,7 @@ def _run_stats_core(
                     graph, proto, impl, repo,
                     region_size=region_size)
                 stats_resources.append(res)
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:  # ruff: ignore[blind-except]
             # Collected, not raised: the resources after this one in the
             # repository are still repaired.
             report_resource_failure(
@@ -1170,7 +1170,7 @@ def _regenerate_resource_pages(
             continue
         try:
             wrote = _do_resource_info_command(repo, proto, res) or wrote
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:  # ruff: ignore[blind-except]
             report_resource_failure(
                 err, "skipping info page for", res.resource_id)
             failed.add(res.resource_id)
@@ -1296,7 +1296,7 @@ def _fix_resource_histograms(
         try:
             wrote = _fix_one_histogram(
                 proto, res, manifest, hist_filename) or wrote
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:  # ruff: ignore[blind-except]
             errors.append(err)
     return wrote, errors
 
@@ -1318,7 +1318,7 @@ def _run_repo_fix_histograms_command(
     for res in resources:
         try:
             wrote, errors = _fix_resource_histograms(proto, res)
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:  # ruff: ignore[blind-except]
             # The resource's manifest itself could not be read.
             wrote, errors = False, [err]
         if wrote:
@@ -1539,12 +1539,12 @@ def _run_management_command(
         sys.exit(1)
     except UnsupportedDvcDirectoryOutputError as ex:
         # A resource GAIn cannot verify: refuse it outright, loudly.
-        logger.error("%s", ex)  # noqa: TRY400
+        logger.error("%s", ex)  # ruff: ignore[error-instead-of-exception]
         sys.exit(1)
     except ValueError as ex:
         # The repository itself, rather than one of its resources, is
         # unusable -- there is no resource id to attribute this to.
-        logger.error(  # noqa: TRY400
+        logger.error(  # ruff: ignore[error-instead-of-exception]
             "Misconfigured repository %s; %s", repo_url, ex)
         logger.debug("repository %s is misconfigured", repo_url, exc_info=True)
         logger.warning("inconsistent GRR <%s> state", repo_url)

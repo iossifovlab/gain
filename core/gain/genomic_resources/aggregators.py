@@ -98,7 +98,7 @@ class Aggregator(abc.ABC):
 
     @classmethod
     def preserves_domain(
-        cls, *, value_type: str | None = None,  # noqa: ARG003
+        cls, *, value_type: str | None = None,  # ruff: ignore[unused-class-method-argument]
     ) -> bool:
         """Return True if output stays within the source value domain."""
         return False
@@ -208,7 +208,7 @@ class MaxAggregator(Aggregator):
 
     @classmethod
     def preserves_domain(
-        cls, *, value_type: str | None = None,  # noqa: ARG003
+        cls, *, value_type: str | None = None,  # ruff: ignore[unused-class-method-argument]
     ) -> bool:
         return True
 
@@ -240,7 +240,7 @@ class MinAggregator(Aggregator):
 
     @classmethod
     def preserves_domain(
-        cls, *, value_type: str | None = None,  # noqa: ARG003
+        cls, *, value_type: str | None = None,  # ruff: ignore[unused-class-method-argument]
     ) -> bool:
         return True
 
@@ -272,7 +272,7 @@ class MeanAggregator(Aggregator):
 
     @classmethod
     def preserves_domain(
-        cls, *, value_type: str | None = None,  # noqa: ARG003
+        cls, *, value_type: str | None = None,  # ruff: ignore[unused-class-method-argument]
     ) -> bool:
         return True
 
@@ -361,7 +361,7 @@ class MedianAggregator(Aggregator):
 
     @classmethod
     def preserves_domain(
-        cls, *, value_type: str | None = None,  # noqa: ARG003
+        cls, *, value_type: str | None = None,  # ruff: ignore[unused-class-method-argument]
     ) -> bool:
         return True
 
@@ -411,7 +411,7 @@ class ModeAggregator(Aggregator):
 
     @classmethod
     def preserves_domain(
-        cls, *, value_type: str | None = None,  # noqa: ARG003
+        cls, *, value_type: str | None = None,  # ruff: ignore[unused-class-method-argument]
     ) -> bool:
         return True
 

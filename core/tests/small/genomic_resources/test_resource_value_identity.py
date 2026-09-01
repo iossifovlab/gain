@@ -167,7 +167,7 @@ def test_comparison_with_a_foreign_type_is_symmetric(
     assert resource == mock.ANY
     # Deliberately reflected: that this direction agrees with the one above
     # is the whole property under test.
-    assert mock.ANY == resource  # noqa: SIM300
+    assert mock.ANY == resource  # ruff: ignore[yoda-conditions]
     assert resource != "not a resource"
 
 

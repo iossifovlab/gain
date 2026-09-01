@@ -238,7 +238,7 @@ class GeneSetCollection(
                 names_file = self.resource.open_raw_file(names_filename)
             map_file: IO[Any]
             if filename.endswith(".gz"):
-                map_file = gzip.open(  # noqa: SIM115
+                map_file = gzip.open(  # ruff: ignore[open-file-with-context-handler]
                     self.resource.open_raw_file(filename, "rb"), "rt")
             else:
                 map_file = self.resource.open_raw_file(filename)
