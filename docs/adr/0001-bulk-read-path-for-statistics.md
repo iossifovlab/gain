@@ -165,6 +165,24 @@ moved each kind's record semantics onto the score class as two facts, and made
 > its ordering rule in its own `validate_records` / `validate_record_arrays` body.
 > `RECORD_WEIGHT_IS_SPAN` is unchanged and still read by both paths.
 
+> **Amended by [gain#1095](https://github.com/iossifovlab/gain/issues/1095).**
+> `RECORD_WEIGHT_IS_SPAN` no longer exists either, and for the same reason the
+> row above it went: a flag plus a hook that derives from it is the weight rule
+> stated twice, and the span formula was written out three times besides. Each
+> kind now states it once, in its own `record_weight` — `right - left + 1` on
+> `PositionScore`, `1` on the other two. The bulk path still has no record to
+> hand a per-record hook, so it broadcasts that same hook over a batch's
+> position columns through `GenomicScore.record_weights`, whose contract is
+> that an implementation be numpy-elementwise. Both readings are pinned
+> together, per kind, by `test_the_weight_rule_is_stated_once_per_kind`.
+>
+> With the flag went the only thing `aggregate_region` derived from it besides
+> the weight: whether to clip a record to the query window first. That is a
+> position-score fact, so it is now stated on `PositionScore` alone, as a
+> `_aggregation_segments` override composing `clip_to_region` over the base
+> stream, and `fold_region_segments` no longer takes `clip`/`pos_begin`/`pos_end`
+> at all.
+
 A third fact was drafted and then dropped. `FragmentScoreImplementation` also
 overrode the per-record min/max add to accrue a **record count**, which the bulk
 path returned as 0 — so the first draft declared `RECORDS_ARE_COUNTED` to make
@@ -186,6 +204,16 @@ hook); the per-record path reads the same flag per record; and
 applies, derives from `RECORD_WEIGHT_IS_SPAN` rather than restating it. The
 defaults on `GenomicScore` are the "one record, one count" rule, so a kind that
 declares nothing gets the conservative answer.
+
+*Amended by gain#1095:* the paragraph above describes the arrangement this ADR
+shipped, not the one in the tree. There is no flag and no derived hook — one
+`record_weight` per kind, read directly by `aggregate_region` and the
+per-record scan and broadcast by `record_weights` for the bulk one. Nor is
+there a conservative default any more: `record_weight` is abstract and its base
+body raises, so a newly registered kind that states nothing fails the first time
+a weight is asked of it instead of quietly weighing every record 1. That is the
+stronger position — an inherited "counts once" reads exactly like a kind whose
+author considered the question and answered it.
 
 ### The condition is now a list of exercised kinds
 

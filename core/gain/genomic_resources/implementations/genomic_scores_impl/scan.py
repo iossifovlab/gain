@@ -455,7 +455,7 @@ def do_histogram(
     The per-record histogram pass, and the floor
     :func:`do_histogram_bulk` is required to match to the bit.  Reads
     through :func:`scan_region` and weighs each owned record the way
-    the score's kind weighs it (``RECORD_WEIGHT_IS_SPAN``).
+    the score's kind weighs it (``record_weight``).
 
     ``coverage`` and ``alleles`` ride the same read rather than
     costing the region a second one, and are accumulated IN PLACE --
@@ -864,7 +864,7 @@ def bulk_scan_eligible(
     * a resource kind the bulk path is exercised against
       (:data:`_BULK_SCAN_RESOURCE_TYPES`): a position, allele or fragment
       score.  Their record semantics are not assumed here -- the score
-      class states them, in ``RECORD_WEIGHT_IS_SPAN`` and in its own
+      class states them, in ``record_weight`` and in its own
       ``validate_record_arrays`` body.  The set names every score kind
       GAIn accepts, so this test cannot fail today; it is kept so that
       a newly registered kind lands on the per-record path by default;

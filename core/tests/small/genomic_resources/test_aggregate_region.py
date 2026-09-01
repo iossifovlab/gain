@@ -69,7 +69,7 @@ def test_one_score_may_be_requested_twice_with_different_aggregators(
 
 def test_a_position_score_weights_by_base_pair(wide: PositionScore) -> None:
     # 0.32 is the span-weighted mean; 0.5 would be the unweighted one.  The
-    # difference is the whole point of _record_weight.
+    # difference is the whole point of ``record_weight``.
     with wide:
         assert wide.aggregate_region("1", 10, 14, ["s"]) == [
             pytest.approx(0.32)]
@@ -83,7 +83,7 @@ def test_it_agrees_with_fetch_region_weighted_values(
     """The annotator's path and this one must fold the same pairs.
 
     ``fetch_region_weighted_values`` is what ``PositionScoreAnnotator``
-    aggregates; both now derive the weight from ``_record_weight``, and this
+    aggregates; both now derive the weight from ``record_weight``, and this
     is the test that says so in terms of values rather than of code.
     """
     with wide:
@@ -203,7 +203,7 @@ def test_an_allele_score_counts_each_line_once(
     """An allele line counts once, whatever the position span.
 
     The rule ``WeightedValues`` states per type, and the reason
-    ``_record_weight`` is a class hook rather than ``right - left + 1`` in
+    ``record_weight`` is a class hook rather than ``right - left + 1`` in
     the base: two alleles at one position must average as two values.
     """
     res = build_inmemory_test_resource({
