@@ -220,7 +220,7 @@ def build_bigwig_scoredefs(
     field that differed.
 
     The runtime saving it was reaching for is kept, and taken from the data
-    instead: ``GenomicScore._select_value_extractor`` binds the identity read
+    instead: ``value_extraction.select_value_extractor`` binds the identity read
     unless the NA set holds a sentinel a float could actually match.  A
     text-only set -- which is every unconfigured bigWig score -- takes the
     identity path either way.

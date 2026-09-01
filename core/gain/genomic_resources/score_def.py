@@ -19,6 +19,14 @@ read off ``self``.  The one piece that stayed behind is the dispatch over the
 table's TYPE (``GenomicScore._build_scoredefs``): it calls into ``vcf_scores``
 and ``bigwig_scores``, both of which import this module, so hosting it here
 would close a cycle.
+
+The other half of a definition's story is told elsewhere for the same reason.
+``genomic_scores.value_extraction`` (gain#1114) holds which extractor reads a
+table's payload and which payload column each definition is addressed to --
+both taken at open, and both above this module because the first of them
+dispatches into ``vcf_scores`` and ``bigwig_scores`` too.  So: what a
+definition IS and how it parses a cell are here; how one is ADDRESSED and
+which read reaches it are there.
 """
 from __future__ import annotations
 
