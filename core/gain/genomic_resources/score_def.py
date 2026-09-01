@@ -19,6 +19,12 @@ read off ``self``.  The one piece that stayed behind is the dispatch over the
 table's TYPE (``GenomicScore._build_scoredefs``): it calls into ``vcf_scores``
 and ``bigwig_scores``, both of which import this module, so hosting it here
 would close a cycle.
+
+The other half of a definition's story is told elsewhere, for that same
+reason: ``genomic_scores.value_extraction`` (gain#1114) sits above this
+module and holds both decisions taken at open.  So what a definition IS and
+how it parses a cell are here; how one is ADDRESSED and which read reaches
+it are there.
 """
 from __future__ import annotations
 
@@ -764,10 +770,10 @@ def extract_column_value(
     """Read one score off a record whose PAYLOAD is a raw row.
 
     The tabular backends and bigWig: a score is a CELL of the payload,
-    addressed by the integer column ``GenomicScore.open`` resolved into
-    ``score_index``.  Turning that cell into a value is the definition's job
-    (:meth:`GenomicScoreDef.parse_value`), so that this read and the bulk
-    column read cannot drift apart.
+    addressed by the integer column ``value_extraction.resolve_score_indices``
+    resolved into ``score_index``.  Turning that cell into a value is the
+    definition's job (:meth:`GenomicScoreDef.parse_value`), so that this read
+    and the bulk column read cannot drift apart.
 
     A pure function of ``(record, score_def)`` -- it holds no state and needs
     none, which is what let the per-line score-line objects go.  There is no
@@ -778,6 +784,6 @@ def extract_column_value(
 
 
 # How a score's value is read off a record: one of these is bound per
-# opened score by ``GenomicScore.open``, from the table's type, and
-# called per value.
+# opened score by ``value_extraction.select_value_extractor``, from the
+# table's type, and called per value.
 ValueExtractor = Callable[[Record, GenomicScoreDef], ScoreValue]

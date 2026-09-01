@@ -25,7 +25,10 @@ from gain.genomic_resources.testing import (
     build_inmemory_test_resource,
     convert_to_tab_separated,
 )
-from gain.genomic_resources.testing.builders import a_position_score
+from gain.genomic_resources.testing.builders import (
+    a_position_score,
+    a_vcf_info_score,
+)
 
 
 def _typed_def(
@@ -497,6 +500,52 @@ def test_the_resolution_guard_refuses_a_doubly_addressed_score_def() -> None:
     score.score_definitions["s"].col_name = "s"
 
     with pytest.raises(ValueError, match="configures both a column name"):
+        score.open()
+
+
+def test_the_resolution_guard_refuses_a_name_with_no_header_to_resolve(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A by-NAME score needs a header; a headerless table has none.
+
+    The builder refuses this shape at realize time
+    (test_header_mode_none_rejects_a_name_addressed_score), so the guard here
+    is reachable only by addressing a definition by name in code.  Without it
+    the branch would call ``header.index(name)`` on ``None``.
+    """
+    score = build_score_from_resource(
+        a_position_score()
+        .with_header_mode("none")
+        .with_score("s", "float", column_index=3)
+        .with_data("""
+            chrom  pos_begin  pos_end  s
+            chr1   10         12       0.5
+        """)
+        .build_resource(tmp_path),
+    )
+    # Score defs are built in __init__, so this is before any resolution.
+    score.score_definitions["s"].col_index = None
+    score.score_definitions["s"].col_name = "s"
+
+    with pytest.raises(ValueError, match="has no header to resolve that name"):
+        score.open()
+
+
+def test_the_resolution_guard_refuses_a_vcf_score_with_no_info_key(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A VCF score is addressed by INFO key, and there is nothing else.
+
+    The keys are derived from the VCF's own ``##INFO`` header rather than
+    configured, so a real resource always has one -- which is why this, like
+    its tabular siblings above, is reachable only by clearing it in code.
+    A VCF def carries no column to fall back on.
+    """
+    score = build_score_from_resource(
+        a_vcf_info_score().build_resource(tmp_path))
+    score.score_definitions["score"].col_name = None
+
+    with pytest.raises(ValueError, match="has no INFO key"):
         score.open()
 
 
