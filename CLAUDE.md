@@ -432,21 +432,62 @@ calling `self.append_meta_into(resource_dir)` after a
 `setup_*` helper wrote the config for it (the
 reference-genome path).
 
-**Three factories are NOT in `builders.py`** — import
+**Four factories are NOT in `builders.py`** — import
 each from its own sibling module:
 `a_data_frame` from
 `gain.genomic_resources.testing.data_frame_builder`,
-`an_ann_data` from `…testing.ann_data_builder`, and
-`a_gene_models` from `…testing.gene_models_builder`.
+`an_ann_data` from `…testing.ann_data_builder`,
+`a_gene_models` from `…testing.gene_models_builder`, and
+`a_grr_group` from `…testing.group_builder`.
 `builders.py` is ~1800 lines against pylint's
 `max-module-lines=1500`, which it carries a
 `too-many-lines` suppression for — so each new builder
 lives in a sibling module that imports the shared
 single-realize seam one way rather than growing a module
 that is already over the limit; `builders` does not
-import back, and there is no re-export. They compose
-into `a_grr().with_resource(...)` like any other
-builder.
+import back, and there is no re-export. The resource
+builders compose into `a_grr().with_resource(...)` like
+any other builder; `a_grr_group` composes whole `a_grr()`
+builders instead — see below.
+
+**Repository-level shapes.**
+`a_grr().with_public_url(url)` advertises a public
+mirror, so a test asserting on `get_public_url()` names
+only the url it varies. It is threaded straight through
+`build_filesystem_test_protocol` to `build_fsspec_protocol`,
+so there is ONE construction path whether or not a url is
+advertised — the repository type and the realized files
+are the same either way.
+
+The advertised url folds into the derived protocol *id*,
+because `public_url` is part of a protocol's identity and
+a rebuild that would repoint it is refused — two GRRs over
+one root advertising different mirrors are therefore two
+protocols, as with `read_only`. A group child cannot do
+that (its id is the `repository_id` callers look up by),
+so it takes the url into its *directory* instead — the
+other half of the memo key. Both spellings are
+canonicalized first, so a trailing separator does not
+split one address into two.
+
+`a_grr_group().with_child(id, a_grr()…)` composes a group
+whose children each carry their own resources and their
+own `public_url` — the shape production deploys, and the
+one that proves an address resolves per owning child
+rather than from a single base url. Each child realizes
+into its own `root/child_id`, so two children may carry
+the *same* resource id, and each is built through its own
+`a_grr()` — so a fixture does not change shape by being
+composed into a group. Its `build_repo` returns the plain
+`GenomicResourceRepo` seam: a group is not one protocol.
+
+Both forms also drive `build_definition`, so a CLI tool
+handed a `--grr` file gets the same GRR the in-process
+repository describes. A test whose subject *is* a
+hand-written definition spelling (a `directory` with a
+trailing separator, say) still states the definition
+itself — the builders take a `pathlib.Path`, which
+normalizes that away.
 
 `a_gene_models` authors transcripts ONCE, in gain's own
 1-based inclusive coordinates, and `with_format` decides

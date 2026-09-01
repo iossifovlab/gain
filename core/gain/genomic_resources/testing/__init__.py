@@ -27,6 +27,7 @@ from gain.genomic_resources.fsspec_protocol import (
     FsspecRepositoryProtocol,
     build_fsspec_protocol,
     build_inmemory_protocol,
+    canonical_public_url,
 )
 from gain.genomic_resources.gene_models import GeneModels
 from gain.genomic_resources.reference_genome import ReferenceGenome
@@ -344,7 +345,9 @@ def setup_empty_gene_models(out_path: pathlib.Path) -> GeneModels:
 _UNSAFE_ID_CHARACTER_RE = re.compile(r"[^A-Za-z0-9._-]")
 
 
-def _derive_test_proto_id(root: str, *, read_only: bool = False) -> str:
+def derive_test_proto_id(
+    root: str, *, read_only: bool = False, public_url: str | None = None,
+) -> str:
     """Derive a cache-compatible protocol id from a protocol's root.
 
     The id a testing protocol gets by default must satisfy three constraints
@@ -368,12 +371,30 @@ def _derive_test_proto_id(root: str, *, read_only: bool = False) -> str:
     the memo is keyed on the id and the url alone. Sharing one id between the
     two modes does not yield two protocols -- it is refused (#514) -- and a
     test that wants both modes over one root wants two protocols.
+
+    ``public_url`` folds into the digest for exactly the same reason: it is
+    part of a protocol's identity, and a rebuild that would repoint it is
+    refused rather than honoured (#841). Two GRRs over one root advertising
+    different mirrors are therefore two protocols, not one contested one --
+    which is what a test comparing two spellings of an advertised address
+    is asking for.
     """
-    digest = hashlib.sha256(root.encode("utf-8")).hexdigest()[:8]
+    identity = root if public_url is None else \
+        f"{root}\0{canonical_public_url(public_url)}"
     name = _UNSAFE_ID_CHARACTER_RE.sub(
         "_", pathlib.PurePosixPath(root).name)
     suffix = "-ro" if read_only else ""
-    return f"{name}-{digest}{suffix}"
+    return f"{name}-{short_identity_digest(identity)}{suffix}"
+
+
+def short_identity_digest(identity: str) -> str:
+    """Return the short digest the testing helpers name things by.
+
+    One spelling of "distinguish these by content" -- the width and the
+    hash are decided here rather than at each call site, so widening it
+    for collisions is one edit.
+    """
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:8]
 
 
 def build_inmemory_test_protocol(
@@ -381,7 +402,7 @@ def build_inmemory_test_protocol(
     """Build and return an embedded fsspec protocol for testing."""
     with tempfile.TemporaryDirectory("embedded_test_protocol") as root_path:
         return build_inmemory_protocol(
-            _derive_test_proto_id(root_path), root_path, content)
+            derive_test_proto_id(root_path), root_path, content)
 
 
 #: Roots :func:`build_faulty_test_protocol` has already been asked for.
@@ -437,7 +458,7 @@ def build_faulty_test_protocol(
 
     filesystem = FaultyFileSystem()
     proto = FsspecReadWriteProtocol(
-        _derive_test_proto_id(root), f"memory://{root}",
+        derive_test_proto_id(root), f"memory://{root}",
         filesystem=filesystem)
     if content:
         copy_proto_genomic_resources(
@@ -485,6 +506,7 @@ def build_filesystem_test_protocol(
     root_path: pathlib.Path, *,
     repair: bool = ...,
     proto_id: str | None = ...,
+    public_url: str | None = ...,
     read_only: Literal[False] = ...,
 ) -> FsspecReadWriteProtocol: ...
 
@@ -494,6 +516,7 @@ def build_filesystem_test_protocol(
     root_path: pathlib.Path, *,
     repair: bool = ...,
     proto_id: str | None = ...,
+    public_url: str | None = ...,
     read_only: Literal[True],
 ) -> FsspecReadOnlyProtocol: ...
 
@@ -502,6 +525,7 @@ def build_filesystem_test_protocol(
     root_path: pathlib.Path, *,
     repair: bool = True,
     proto_id: str | None = None,
+    public_url: str | None = None,
     read_only: bool = False,
 ) -> FsspecRepositoryProtocol:
     """Build and return an filesystem fsspec protocol for testing.
@@ -510,7 +534,7 @@ def build_filesystem_test_protocol(
     resources.
 
     Unless ``proto_id`` says otherwise the protocol is named by
-    :func:`_derive_test_proto_id`, so it can be wrapped in a
+    :func:`derive_test_proto_id`, so it can be wrapped in a
     ``GenomicResourceCachedRepo`` without ceremony.
 
     A ``read_only`` protocol is the shape a repository served from a remote
@@ -526,16 +550,23 @@ def build_filesystem_test_protocol(
     protocol over one root; an explicit id names one memoized instance, so
     ``build_fsspec_protocol`` refuses to reuse it in the other mode rather
     than answering with the mode built first (#514).
+
+    ``public_url`` is the address a deployment advertises the repository
+    at.  It is part of a protocol's identity -- a rebuild that would
+    repoint it is refused -- so it joins the derived id too, and two
+    protocols over one root advertising different mirrors are two
+    protocols, exactly as the two modes are.
     """
     if read_only and repair:
         raise ValueError(
             "a read-only test protocol cannot repair its repository; "
             "pass repair=False along with read_only=True")
-    resolved_id = proto_id or _derive_test_proto_id(
-        str(root_path), read_only=read_only)
+    resolved_id = proto_id or derive_test_proto_id(
+        str(root_path), read_only=read_only, public_url=public_url)
     proto = build_fsspec_protocol(
         resolved_id,
         str(root_path),
+        public_url=public_url,
         read_only=read_only)
     if repair:
         rw_proto = cast(FsspecReadWriteProtocol, proto)
@@ -548,13 +579,15 @@ def build_filesystem_test_protocol(
 def build_filesystem_test_repository(
     root_path: pathlib.Path, *,
     proto_id: str | None = None,
+    public_url: str | None = None,
 ) -> GenomicResourceProtocolRepo:
     """Build and return an filesystem fsspec repository for testing.
 
     The root_path is expected to point to a directory structure with all the
     resources.
     """
-    proto = build_filesystem_test_protocol(root_path, proto_id=proto_id)
+    proto = build_filesystem_test_protocol(
+        root_path, proto_id=proto_id, public_url=public_url)
     return GenomicResourceProtocolRepo(proto)
 
 
@@ -598,7 +631,7 @@ def build_http_test_protocol(
 
     try:
         yield build_fsspec_protocol(
-            _derive_test_proto_id(str(root_path)), server_address)
+            derive_test_proto_id(str(root_path)), server_address)
     except GeneratorExit:
         print("Generator exit")
     finally:
@@ -622,7 +655,7 @@ def s3_test_protocol() -> FsspecReadWriteProtocol:
     return cast(
         FsspecReadWriteProtocol,
         build_fsspec_protocol(
-            _derive_test_proto_id(bucket_url), bucket_url,
+            derive_test_proto_id(bucket_url), bucket_url,
             endpoint_url=endpoint_url))
 
 
@@ -668,7 +701,7 @@ def build_s3_test_protocol(
     proto = cast(
         FsspecReadWriteProtocol,
         build_fsspec_protocol(
-            _derive_test_proto_id(bucket_url), bucket_url,
+            derive_test_proto_id(bucket_url), bucket_url,
             endpoint_url=endpoint_url))
     copy_proto_genomic_resources(
         proto,

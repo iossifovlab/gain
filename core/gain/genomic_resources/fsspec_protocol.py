@@ -455,7 +455,7 @@ _FILESYSTEM_KWARGS = frozenset({
 })
 
 
-def _canonical_public_url(public_url: str) -> str:
+def canonical_public_url(public_url: str) -> str:
     """Return a public url in the one spelling two builds can be compared in.
 
     Only for comparison -- the value a protocol reports through
@@ -543,8 +543,8 @@ def _refuse_a_reconfiguring_rebuild(
     # to the url's display form -- so a trailing slash, or a bare path against
     # its ``file://`` form, would otherwise read as a request to republish the
     # repository somewhere else.
-    if _canonical_public_url(requested_public_url) != \
-            _canonical_public_url(existing.public_url):
+    if canonical_public_url(requested_public_url) != \
+            canonical_public_url(existing.public_url):
         raise ValueError(
             f"protocol {proto_id!r} over {_strip_url_userinfo(url)} is "
             f"already built with the public url "

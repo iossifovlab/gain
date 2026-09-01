@@ -27,11 +27,7 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     setup_directories,
 )
-
-from tests.small.genomic_resources.test_resource_public_url import (
-    a_repo_over,
-    a_score_at,
-)
+from gain.genomic_resources.testing.builders import a_grr, a_position_score
 
 
 def a_pipeline(filename: str = "annotation.yaml") -> dict[str, str]:
@@ -53,7 +49,7 @@ def grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
         "pipeline": a_pipeline(),
         "nested/deep/pipeline": a_pipeline("config.yaml"),
     })
-    a_score_at(root_path, "one")
+    a_position_score().realize_into(root_path / "one")
     return build_filesystem_test_repository(root_path)
 
 
@@ -66,9 +62,12 @@ OTHER_PUBLIC_URL = "http://other-grr.example.org"
 @pytest.fixture
 def other_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
     """A second, unmanaged GRR -- nothing in it is addressable relatively."""
-    root_path = tmp_path / "other_grr"
-    a_score_at(root_path, "other_score")
-    return a_repo_over(str(root_path), OTHER_PUBLIC_URL)
+    return (
+        a_grr()
+        .with_resource("other_score", a_position_score())
+        .with_public_url(OTHER_PUBLIC_URL)
+        .build_repo(tmp_path / "other_grr")
+    )
 
 
 def test_a_managed_resource_is_addressed_relative_to_the_repository_root(
