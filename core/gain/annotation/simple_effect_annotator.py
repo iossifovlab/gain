@@ -15,12 +15,10 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatorBase
+from gain.annotation.utils import find_annotator_gene_models
 from gain.genomic_resources.gene_models import (
-    GeneModels,
     TranscriptModel,
-    build_gene_models_from_resource,
 )
-from gain.genomic_resources.genomic_context import get_genomic_context
 from gain.utils.regions import Region
 
 logger = logging.getLogger(__name__)
@@ -133,19 +131,7 @@ class SimpleEffectAnnotator(AnnotatorBase):
 
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
 
-        gene_models_resrouce_id = info.parameters.get("gene_models")
-        if gene_models_resrouce_id is None:
-            gene_models = get_genomic_context().get_gene_models()
-            if gene_models is None:
-                raise ValueError(
-                    f"Can't create {info.type}: "
-                    "gene model resource are missing in config "
-                    "and context")
-        else:
-            resource = pipeline.repository.get_resource(
-                gene_models_resrouce_id)
-            gene_models = build_gene_models_from_resource(resource)
-        assert isinstance(gene_models, GeneModels)
+        gene_models = find_annotator_gene_models(info, pipeline.repository)
 
         info.documentation += textwrap.dedent(f"""
 

@@ -4,6 +4,9 @@ import textwrap
 import pytest
 import pytest_mock
 from gain.annotation.annotatable import VCFAllele
+from gain.annotation.annotation_config import (
+    AnnotationConfigurationError,
+)
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.genomic_resources.genomic_context_base import (
@@ -13,6 +16,7 @@ from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource_id,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.testing import build_inmemory_test_repository
 
 from spliceai_annotator.spliceai_annotator import SpliceAIAnnotator
 
@@ -335,14 +339,25 @@ def test_spliceai_annotator_genomeless_preamble_uses_the_context(
     mocker: pytest_mock.MockerFixture,
     spliceai_grr: GenomicResourceRepo,
 ) -> None:
-    """The third copy of the gain#1055 chain, in this plugin package.
+    """The gain#1055 chain, reached through this plugin's annotator.
 
-    ``__init__`` ends its ``or`` chain on the preamble's
-    ``input_reference_genome``, which the parser defaults to ``""`` when
-    the key is absent.  Guarding that with ``is None`` read the empty id
-    as a configured one, so a pipeline whose preamble carries only a
-    ``summary`` never reached the context fallback and died resolving
-    resource id ``""``.
+    ``find_annotator_reference_genome`` ends its ``or`` chain on the
+    preamble's ``input_reference_genome``, which the parser defaults to
+    ``""`` when the key is absent.  Guarding that with ``is None`` read
+    the empty id as a configured one, so a pipeline whose preamble
+    carries only a ``summary`` never reached the context fallback and
+    died resolving resource id ``""``.  This plugin used to carry its
+    own copy of that chain; gain#1077 collapsed it onto the shared
+    helper, so what this now guards is that the plugin still routes
+    through the helper at all.
+
+    That is why the patch targets ``gain.annotation.utils``: it binds
+    ``get_genomic_context`` at import time, so patching the definition
+    site in ``gain.genomic_resources.genomic_context`` is a silent no-op
+    and the annotator falls through to the ``ValueError``.  Patching this
+    plugin's own module does not work either, since the name is no longer
+    imported there -- but that one at least fails loudly with
+    ``AttributeError`` rather than quietly.
 
     ``hg19/gene_models_small`` declares no ``reference_genome`` label, so
     the preamble really is the last operand standing before the context.
@@ -367,10 +382,43 @@ def test_spliceai_annotator_genomeless_preamble_uses_the_context(
     context = SimpleGenomicContext(
         context_objects={"reference_genome": genome}, source="test_context")
     mocker.patch(
-        "spliceai_annotator.spliceai_annotator.get_genomic_context",
+        "gain.annotation.utils.get_genomic_context",
     ).return_value = context
 
     pipeline = load_pipeline_from_yaml(config, spliceai_grr)
 
     annotator = pipeline.annotators[0]
     assert annotator.resource_ids == {genome_id, gene_models}
+
+
+def test_spliceai_annotator_requires_gene_models_resource(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The plugin reports the shared helper's missing-gene-models error.
+
+    ``__init__`` used to hand-roll the parameter-then-context lookup and
+    raise its own near-identical ``ValueError``, which is why gain#1055
+    was a three-site defect.  Pinning the shared wording here fails if
+    the block is ever re-inlined.
+
+    The empty context is installed explicitly rather than assumed: core's
+    suite clears ``_REGISTERED_CONTEXTS`` for every test through an
+    autouse fixture, but this package has no equivalent, so leaning on
+    the ambient context being empty would make this test depend on no
+    other test in the process having registered a provider first.
+    """
+    mocker.patch(
+        "gain.annotation.utils.get_genomic_context",
+    ).return_value = SimpleGenomicContext(
+        context_objects={}, source="test_context")
+    empty_repo = build_inmemory_test_repository({})
+    with pytest.raises(
+        AnnotationConfigurationError,
+        match="gene models resource is missing in config and context",
+    ):
+        load_pipeline_from_yaml(
+            textwrap.dedent("""
+                - spliceai_annotator: {}
+                """),
+            empty_repo,
+        )
