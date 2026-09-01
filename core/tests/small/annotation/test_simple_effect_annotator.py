@@ -276,7 +276,7 @@ def test_simple_effect_annotator_requires_gene_models_resource(
     empty_repo = build_inmemory_test_repository({})
     with pytest.raises(
         AnnotationConfigurationError,
-        match="gene model resource are missing in config and context",
+        match="gene models resource is missing in config and context",
     ):
         load_pipeline_from_yaml(
             textwrap.dedent("""
