@@ -30,6 +30,7 @@ from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,
 )
 from gain.genomic_resources.repository_factory import (
+    build_genomic_resource_repository,
     build_resource_implementation,
 )
 from gain.genomic_resources.testing.builders import (
@@ -2156,6 +2157,77 @@ def test_build_definition_writes_a_usable_grr_yaml(
     assert (tmp_path / "grr" / "scores" / "pos" / "genomic_resource.yaml"
             ).is_file()
     assert not (tmp_path / "grr" / "grr.yaml").exists()
+
+
+def test_build_definition_carries_the_public_url(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A CLI tool is handed a definition *file*, so the advertised url has
+    # to survive the round trip through the written yaml -- not just the
+    # in-process ``build_repo`` path.
+    definition = (
+        a_grr()
+        .with_resource("scores/pos1", a_position_score())
+        .with_public_url("http://grr.example.org")
+        .build_definition(tmp_path)
+    )
+
+    parsed = yaml.safe_load(definition.read_text())
+    repo = build_genomic_resource_repository(file_name=str(definition))
+
+    assert parsed["public_url"] == "http://grr.example.org"
+    assert repo.get_resource("scores/pos1").get_public_url() == \
+        "http://grr.example.org/scores/pos1"
+
+
+def test_advertising_a_public_url_still_builds_a_protocol_repository(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The repository type is what ~200 existing call sites are annotated
+    # on, so advertising a url must not change it.
+    plain = a_grr().with_resource("scores/pos1", a_position_score())
+
+    advertised = plain.with_public_url("http://grr.example.org").build_repo(
+        tmp_path / "advertised")
+
+    assert isinstance(advertised, GenomicResourceProtocolRepo)
+    assert isinstance(plain.build_repo(tmp_path / "plain"),
+                      GenomicResourceProtocolRepo)
+
+
+def test_two_public_urls_over_one_root_are_two_protocols(
+    tmp_path: pathlib.Path,
+) -> None:
+    # ``public_url`` is part of a protocol's identity and a rebuild that
+    # would repoint it is refused outright.  So two GRRs over one root
+    # advertising different mirrors have to be two protocols -- the same
+    # answer the read-only mode already gets over a shared root.
+    grr = a_grr().with_resource("scores/pos1", a_position_score())
+
+    first = grr.with_public_url("http://one.example.org").build_repo(tmp_path)
+    second = grr.with_public_url("http://two.example.org").build_repo(tmp_path)
+
+    assert first.get_resource("scores/pos1").get_public_url() == \
+        "http://one.example.org/scores/pos1"
+    assert second.get_resource("scores/pos1").get_public_url() == \
+        "http://two.example.org/scores/pos1"
+
+
+def test_build_definition_omits_public_url_when_none_is_advertised(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The schema accepts an explicit null too, and it means the same
+    # thing -- but a deployment with no mirror writes no such key, and a
+    # definition a test reads back documents that shape.
+    definition = (
+        a_grr()
+        .with_resource("scores/pos1", a_position_score())
+        .build_definition(tmp_path)
+    )
+
+    parsed = yaml.safe_load(definition.read_text())
+
+    assert "public_url" not in parsed
 
 
 def test_with_aggregator_emits_the_field(

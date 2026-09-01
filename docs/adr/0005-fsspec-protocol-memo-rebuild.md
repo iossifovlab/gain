@@ -45,7 +45,7 @@ Three things were being rebound on that live instance:
    different credentials.
 
 The test builders had already met (2) and worked around it locally: since #488
-`_derive_test_proto_id` appends `-ro` so the two modes never share an id, and
+`derive_test_proto_id` appends `-ro` so the two modes never share an id, and
 `build_filesystem_test_protocol` re-checked `proto.mode()` after building. That
 fixed the test helpers and left every production caller exposed.
 
@@ -141,9 +141,19 @@ own.
   `read_only`/`public_url`/credentials fails loudly at build time instead of
   quietly serving whichever configuration was built last. The group repository's
   duplicate-child-id guard (#445) already refuses the common way to author that.
+- **The id half is not always the free one.** "Give it an id of its own" is the
+  remedy this ADR points every caller at, and it assumes the id is the caller's
+  to choose. For a *group child* it is not: a child's repository id is also the
+  `repository_id` a caller looks resources up by, and its cache directory name.
+  So a group that wants two builds over one root advertising different mirrors
+  has to vary the other half of the key — the url — by realizing each child
+  under a directory named for its advertised url. That is what
+  `gain.genomic_resources.testing.group_builder` does (#953). Note this is a
+  different problem from the duplicate-child-id guard (#445), which refuses two
+  children within *one* group rather than two builds of one group.
 - `build_filesystem_test_protocol`'s post-build `proto.mode()` re-check is gone,
   because the protocol layer now refuses before it could fire. The `-ro` suffix
-  in `_derive_test_proto_id` stays and is load-bearing: it is what gives a test
+  in `derive_test_proto_id` stays and is load-bearing: it is what gives a test
   wanting both modes over one root two ids rather than an error.
 - `_FILESYSTEM_KWARGS` must be kept in step with `_build_filesystem`. A keyword
   it learns to read without joining that set is one a rebuild could go on

@@ -103,9 +103,29 @@ class ResourceBuilder(Protocol):
 _DATA_FILENAME = "data.txt"
 
 # ``build_definition`` writes the GRR definition alongside, not inside, the
-# directory it points at.
-_GRR_DEFINITION_FILENAME = "grr.yaml"
-_GRR_RESOURCES_DIRNAME = "grr"
+# directory it points at.  Public because the sibling group builder writes
+# the same layout, and one definition of it is what keeps the two agreeing.
+GRR_DEFINITION_FILENAME = "grr.yaml"
+GRR_RESOURCES_DIRNAME = "grr"
+
+#: Repository id a ``build_definition`` writes when a test names none.
+_DEFAULT_GRR_ID = "test_grr"
+
+
+def write_grr_definition(
+    root: pathlib.Path, definition: dict[str, Any],
+) -> pathlib.Path:
+    """Write ``definition`` as ``root/grr.yaml`` and return its path.
+
+    Shared by the GRR and group builders so the serialization policy and
+    the "definition sits OUTSIDE the directory it points at" rule are
+    stated once.  A stray ``grr.yaml`` among the resources would be walked
+    as though it were one.
+    """
+    definition_path = root / GRR_DEFINITION_FILENAME
+    setup_directories(definition_path, yaml.safe_dump(
+        definition, default_flow_style=False, sort_keys=False))
+    return definition_path
 
 
 # The tabix table filename used when a table score is realized as tabix
@@ -1235,6 +1255,18 @@ class GRRBuilder:
     """
 
     resources: tuple[tuple[str, ResourceBuilder], ...] = ()
+    public_url: str | None = None
+
+    def with_public_url(self, public_url: str) -> GRRBuilder:
+        """Advertise this GRR under ``public_url``.
+
+        ``public_url`` is the address a deployment publishes its GRR at,
+        and the only one that means anything once a rendered document or
+        an API response leaves the server -- the repository's own url may
+        be a directory mounted into a container.  A resource's public
+        address is this url with the resource id joined to it.
+        """
+        return dataclasses.replace(self, public_url=public_url)
 
     def with_resource(
         self, resource_id: str, resource_builder: ResourceBuilder,
@@ -1255,14 +1287,43 @@ class GRRBuilder:
         )
 
     def build_repo(
-        self, tmp_path: pathlib.Path,
+        self, tmp_path: pathlib.Path, *, proto_id: str | None = None,
     ) -> GenomicResourceProtocolRepo:
-        """Realize a filesystem GRR into ``tmp_path``."""
-        self._realize_all(tmp_path)
-        return build_filesystem_test_repository(tmp_path)
+        """Realize a filesystem GRR into ``tmp_path``.
+
+        ``proto_id`` names the repository, for a caller that has to look it
+        up by name -- a group child, whose id is how a resource is asked
+        for.  Left unset, the id is derived from the root and the
+        advertised url.
+        """
+        self.realize_all(tmp_path)
+        return build_filesystem_test_repository(
+            tmp_path, proto_id=proto_id, public_url=self.public_url)
+
+    def definition(
+        self, root: pathlib.Path, *, grr_id: str = _DEFAULT_GRR_ID,
+    ) -> dict[str, Any]:
+        """Render this GRR as a ``dir`` repository definition.
+
+        Shared by ``build_repo`` and ``build_definition`` so the in-process
+        repository and the written yaml cannot describe different GRRs.
+        ``public_url`` is omitted entirely when none was advertised, rather
+        than written as an explicit null.  The schema accepts either and
+        both mean "no public mirror", but a definition a test reads back is
+        also documentation of the shape a deployment writes -- and a
+        deployment with no mirror simply has no such key.
+        """
+        definition: dict[str, Any] = {
+            "id": grr_id,
+            "type": "dir",
+            "directory": str(root),
+        }
+        if self.public_url is not None:
+            definition["public_url"] = self.public_url
+        return definition
 
     def build_definition(
-        self, root: pathlib.Path, *, grr_id: str = "test_grr",
+        self, root: pathlib.Path, *, grr_id: str = _DEFAULT_GRR_ID,
     ) -> pathlib.Path:
         """Realize into ``root/grr`` and write a ``root/grr.yaml``.
 
@@ -1273,15 +1334,12 @@ class GRRBuilder:
         ``grr.yaml`` sitting among the resources would be walked as though
         it were one.
         """
-        resources_dir = root / _GRR_RESOURCES_DIRNAME
-        self._realize_all(resources_dir)
-        definition_path = root / _GRR_DEFINITION_FILENAME
-        setup_directories(definition_path, yaml.safe_dump(
-            {"id": grr_id, "type": "dir", "directory": str(resources_dir)},
-            default_flow_style=False, sort_keys=False))
-        return definition_path
+        resources_dir = root / GRR_RESOURCES_DIRNAME
+        self.realize_all(resources_dir)
+        return write_grr_definition(
+            root, self.definition(resources_dir, grr_id=grr_id))
 
-    def _realize_all(self, root: pathlib.Path) -> None:
+    def realize_all(self, root: pathlib.Path) -> None:
         """Realize every attached resource into ``root/<resource_id>``."""
         for resource_id, builder in self.resources:
             resource_dir = root / resource_id

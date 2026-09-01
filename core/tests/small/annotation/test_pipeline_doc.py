@@ -31,11 +31,7 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
 )
-
-from tests.small.genomic_resources.test_resource_public_url import (
-    a_repo_over,
-    a_score_at,
-)
+from gain.genomic_resources.testing.builders import a_grr, a_position_score
 
 PIPELINE = "- position_score: scores/pos1\n"
 
@@ -62,8 +58,12 @@ class RelativeStub:
 @pytest.fixture
 def public_repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
     """A GRR with one score, advertising a public mirror of its own."""
-    a_score_at(tmp_path / "grr")
-    return a_repo_over(str(tmp_path / "grr"), PUBLIC_URL)
+    return (
+        a_grr()
+        .with_resource("scores/pos1", a_position_score())
+        .with_public_url(PUBLIC_URL)
+        .build_repo(tmp_path / "grr")
+    )
 
 
 def render(
