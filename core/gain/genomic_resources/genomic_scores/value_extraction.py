@@ -5,15 +5,12 @@ once per open, from the table's TYPE and the score definitions, and neither
 needs a ``GenomicScore``:
 
 - :func:`select_value_extractor` picks the per-record read, *before*
-  ``table.open()`` -- everything it turns on is known at construction, so a
-  refusal costs no handle;
+  ``table.open()``;
 - :func:`resolve_score_indices` addresses each definition to a payload
-  column, *after* ``table.open()``, because the by-name case is the one
-  thing here that has to consult the table's header.
+  column, *after* it.
 
-That order is load-bearing and belongs to the caller
-(:meth:`~.base.GenomicScore.open`), which is why it is stated in both
-places.
+That order is load-bearing -- each function's docstring says what forces its
+half -- and it belongs to the caller, :meth:`~.base.GenomicScore.open`.
 
 The extractors themselves are not here: they live with the backends that
 know what a payload IS -- :mod:`~gain.genomic_resources.vcf_scores`,
@@ -29,10 +26,7 @@ alone could have gone there; it is here so that the seam reads as one
 module rather than two homes.
 
 :func:`resolve_score_indices` **mutates the definitions in place** and
-returns nothing.  "Defs are finished in place at open" is the contract
-:mod:`.base` documents and both the column-array path and the statistics
-scan read; handing back a mapping would only mean every caller writes it
-back.
+returns nothing; its docstring says who reads what it wrote.
 """
 
 from __future__ import annotations
@@ -52,6 +46,10 @@ from gain.genomic_resources.score_def import (
 from gain.genomic_resources.vcf_scores import extract_vcf_value
 
 if TYPE_CHECKING:
+    # Annotation-only, and NOT a layering fence: ``bigwig_scores`` above
+    # pulls the table package in at runtime anyway.  Same statement
+    # ``score_def`` makes about the same symbol -- nothing here constructs a
+    # table or calls into one, so nothing at runtime needs the name.
     from gain.genomic_resources.genomic_position_table.table import (
         GenomicPositionTable,
     )
@@ -140,8 +138,12 @@ def resolve_score_indices(
 
     Writes ``score_index`` onto the definitions it is handed, and returns
     nothing: "the defs are finished in place at open" is the contract
-    :mod:`.base` states and the column-array path and the statistics scan
-    read.
+    :mod:`.base` states.  Two paths read what it wrote --
+    :func:`~gain.genomic_resources.score_def.extract_column_value`, on every
+    record of the tabular per-record read, and so the very extractor this
+    module's other half binds; and ``fetch_region_value_arrays``, which the
+    statistics scan reaches it through.  Handing back a mapping would only
+    mean every caller writes it back.
 
     These raise rather than assert: an assert reported a misconfigured
     resource with a message-less AssertionError naming neither the resource

@@ -15,9 +15,11 @@ seam, and is deliberately not duplicated here:
   choice between the two identity reads -- test_record_value_extraction.py
   and test_bigwig_scores.py;
 - the four refusals of a definition addressed to no usable column --
-  test_score_def_parsing.py, whose ``resolution_guard`` tests reach them by
-  addressing a def in code, since the schema and the builders refuse those
-  shapes in a config.
+  test_score_def_parsing.py.  Three of them are its ``resolution_guard``
+  tests, which address a def in code because the schema and the builders
+  refuse those shapes in a config; the fourth, a score addressing nothing at
+  all, a config does still express, and
+  ``test_a_score_addressing_nothing_is_refused_by_name`` reaches it that way.
 """
 from __future__ import annotations
 

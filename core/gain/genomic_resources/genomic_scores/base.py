@@ -23,11 +23,11 @@ other children.
 
 A score's defs are **finished in place at open**:
 :func:`~.value_extraction.resolve_score_indices` writes ``score_index`` onto
-the definitions this class already holds rather than handing back new ones,
-and the column-array path and the statistics scan read what it wrote.  (The
-earlier half of the lifecycle differs: ``finish_scoredefs`` runs inside
-:meth:`GenomicScore._build_scoredefs`, before there is a
-``score_definitions`` to write onto, and so returns the mapping.)
+the definitions this class already holds rather than handing back new ones
+(it says there who reads them).  The earlier half of the lifecycle differs:
+``finish_scoredefs`` runs inside :meth:`GenomicScore._build_scoredefs`,
+before there is a ``score_definitions`` to write onto, and so returns the
+mapping.
 """
 
 from __future__ import annotations

@@ -14,7 +14,6 @@ import pathlib
 import numpy as np
 import pytest
 from gain.genomic_resources.genomic_scores import (
-    AlleleScore,
     PositionScore,
     build_score_from_resource,
 )
@@ -27,7 +26,6 @@ from gain.genomic_resources.testing import (
     convert_to_tab_separated,
 )
 from gain.genomic_resources.testing.builders import (
-    a_grr,
     a_position_score,
     a_vcf_info_score,
 )
@@ -505,9 +503,9 @@ def test_the_resolution_guard_refuses_a_doubly_addressed_score_def() -> None:
         score.open()
 
 
-def test_the_resolution_guard_refuses_a_name_with_no_header_to_resolve() -> (
-    None
-):
+def test_the_resolution_guard_refuses_a_name_with_no_header_to_resolve(
+    tmp_path: pathlib.Path,
+) -> None:
     """A by-NAME score needs a header; a headerless table has none.
 
     The builder refuses this shape at realize time
@@ -515,27 +513,16 @@ def test_the_resolution_guard_refuses_a_name_with_no_header_to_resolve() -> (
     is reachable only by addressing a definition by name in code.  Without it
     the branch would call ``header.index(name)`` on ``None``.
     """
-    res = build_inmemory_test_resource({
-        "genomic_resource.yaml": """
-            type: position_score
-            table:
-                header_mode: none
-                filename: data.mem
-                chrom:
-                    index: 0
-                pos_begin:
-                    index: 1
-                pos_end:
-                    index: 2
-            scores:
-            - id: s
-              column_index: 3
-              type: float""",
-        "data.mem": convert_to_tab_separated("""
-            chr1  10  12  0.5
-        """),
-    })
-    score = build_score_from_resource(res)
+    score = build_score_from_resource(
+        a_position_score()
+        .with_header_mode("none")
+        .with_score("s", "float", column_index=3)
+        .with_data("""
+            chrom  pos_begin  pos_end  s
+            chr1   10         12       0.5
+        """)
+        .build_resource(tmp_path),
+    )
     # Score defs are built in __init__, so this is before any resolution.
     score.score_definitions["s"].col_index = None
     score.score_definitions["s"].col_name = "s"
@@ -554,19 +541,9 @@ def test_the_resolution_guard_refuses_a_vcf_score_with_no_info_key(
     its tabular siblings above, is reachable only by clearing it in code.
     A VCF def carries no column to fall back on.
     """
-    repo = (
-        a_grr()
-        .with_resource("vcf", a_vcf_info_score().with_data("""
-##fileformat=VCFv4.1
-##INFO=<ID=S,Number=1,Type=Float,Description="a score">
-##contig=<ID=chrA>
-#CHROM POS ID REF ALT QUAL FILTER INFO
-chrA   1   .  A   T   .    .      S=0.5
-        """))
-        .build_repo(tmp_path)
-    )
-    score = AlleleScore(repo.get_resource("vcf"))
-    score.score_definitions["S"].col_name = None
+    score = build_score_from_resource(
+        a_vcf_info_score().build_resource(tmp_path))
+    score.score_definitions["score"].col_name = None
 
     with pytest.raises(ValueError, match="has no INFO key"):
         score.open()
