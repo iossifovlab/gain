@@ -101,7 +101,7 @@ def test_pipeline_without_a_reference_genome_omits_the_row(
     -- the address callable's own result -- and both address policies
     dereference their argument unconditionally, so evaluating the guard
     itself raised (#1021).  This tool renders with the default
-    ``public_resource_url``, so here it was ``AttributeError: 'NoneType'
+    ``PublicMirrorAddresses``, so here it was ``AttributeError: 'NoneType'
     object has no attribute 'get_public_url'``; the ``grr_manage`` path
     reaches the same template through the repository-relative policy and
     named ``get_url`` instead.

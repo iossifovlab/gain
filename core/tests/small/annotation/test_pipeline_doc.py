@@ -26,7 +26,11 @@ from typing import Any
 import pytest
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.pipeline_doc import render_pipeline_doc
-from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.genomic_scores import GenomicScore
+from gain.genomic_resources.repository import (
+    GenomicResource,
+    GenomicResourceRepo,
+)
 
 from tests.small.genomic_resources.test_resource_public_url import (
     a_repo_over,
@@ -36,6 +40,23 @@ from tests.small.genomic_resources.test_resource_public_url import (
 PIPELINE = "- position_score: scores/pos1\n"
 
 PUBLIC_URL = "http://grr.example.org"
+
+
+class RelativeStub:
+    """An address policy that is *not* the public mirror.
+
+    A stand-in rather than the real ``RepositoryRelativeAddresses``: what
+    these tests pin is that the renderer asks the injected policy at all,
+    not how that policy builds its addresses.
+    """
+
+    def resource_url(self, resource: GenomicResource) -> str:
+        return f"../{resource.resource_id}"
+
+    def histogram_url(
+        self, score: GenomicScore, score_id: str,
+    ) -> str | None:
+        return f"../{score.resource.resource_id}/{score_id}.png"
 
 
 @pytest.fixture
@@ -86,10 +107,7 @@ def test_an_injected_address_policy_replaces_the_public_mirror_default(
     # every static page under grr-*.iossifovlab.com.
     html = render(
         public_repo, tmp_path / "work",
-        res_url=lambda resource: f"../{resource.resource_id}",
-        hist_url=lambda score, score_id: (
-            f"../{score.resource.resource_id}/{score_id}.png"
-        ),
+        addresses=RelativeStub(),
     )
 
     assert 'href="../scores/pos1/index.html"' in html
