@@ -335,6 +335,23 @@ def transcript_to_gtf(transcript: TranscriptModel) -> list[GTFRecord]:
     return record_buffer
 
 
+def _no_frame_message(transcript_model: TranscriptModel) -> str:
+    """What an exon with no frame is refused with, wherever it is met.
+
+    The precondition and the writer's own guard report the same
+    condition, and which one a caller meets depends only on the entry
+    point it came through. Spelling the message once is what keeps them
+    from drifting: they are pinned by different suites, so a reword of
+    either would otherwise pass unnoticed with both still green.
+    """
+    return (
+        f"transcript {transcript_model.tr_id} at "
+        f"{transcript_model.chrom} has an exon with no frame "
+        f"to write in the exonFrames column; the frames are "
+        f"computed by update_frames()"
+    )
+
+
 def _format_exon_frames(transcript_model: TranscriptModel) -> str:
     """Pack the exon reading frames into the ``exonFrames`` column.
 
@@ -350,16 +367,20 @@ def _format_exon_frames(transcript_model: TranscriptModel) -> str:
     and it refuses rather than substituting the ``-1`` such an exon
     would most likely have taken: writing a value the model never held
     is what made the fabricated ``nan`` of gain#931 a defect.
+
+    A caller coming through ``save_as_default_gene_models`` no longer
+    reaches this: the precondition stops it before the output file is
+    opened (gain#978), because raising from here left a truncated file
+    behind. This stays as the backstop for the three test modules that
+    drive the writer directly against an already-open file object. It
+    guards this one shape only -- a loop over no exons has nothing to
+    object to, so the exonless transcript the precondition also
+    refuses passes through here unremarked.
     """
     frames = []
     for exon in transcript_model.exons:
         if exon.frame is None:
-            raise ValueError(
-                f"transcript {transcript_model.tr_id} at "
-                f"{transcript_model.chrom} has an exon with no frame "
-                f"to write in the exonFrames column; the frames are "
-                f"computed by update_frames()",
-            )
+            raise ValueError(_no_frame_message(transcript_model))
         frames.append(str(exon.frame))
     return ",".join(frames)
 
@@ -431,12 +452,56 @@ def _save_as_default_gene_models(
         outfile.write("\n")
 
 
+def _check_default_format_can_express(gene_models: GeneModels) -> None:
+    """Refuse models the default format has no way to write down.
+
+    Two transcript shapes have no spelling in the columnar format. A
+    transcript with no exons joins to a blank cell in all three exon
+    columns, and the read side treats a blank exon cell as a hard parse
+    error (gain#929) -- so the file gain wrote is one gain cannot read
+    back, reported through format inference as "can't infer gene models
+    file format" with the real cause buried in the formats it tried. An
+    exon with no frame spells `str(None)` into the exonFrames column, a
+    token the format cannot express either (gain#951).
+
+    This runs before the output file is opened, which is the whole
+    point of it being a separate pass. gain#965 prototyped refusing
+    from inside the write loop and rejected it: both open branches
+    create and truncate, so a refusal part-way through leaves a
+    truncated file holding every record up to the offender -- one that
+    loads cleanly and is simply missing data. Refusing here creates
+    nothing and truncates nothing, and a file already at the path is
+    left as it was.
+
+    It does not make the write atomic. A failure during the write
+    itself -- a full disk, an encoding error -- still leaves a partial
+    file; covering that would need a write-to-temp-and-rename, which is
+    a pattern this package does not have.
+    """
+    for transcript_model in gene_models.transcript_models.values():
+        # Nothing is formatted until there is a message to format: this
+        # runs over every transcript of every save, and the shape it
+        # looks for is one no parsed model has.
+        if not transcript_model.exons:
+            raise ValueError(
+                f"transcript {transcript_model.tr_id} at "
+                f"{transcript_model.chrom} has no exons to write in the "
+                f"exonStarts, exonEnds and exonFrames columns; the "
+                f"default format has no spelling for a transcript "
+                f"without them",
+            )
+        if any(exon.frame is None for exon in transcript_model.exons):
+            raise ValueError(_no_frame_message(transcript_model))
+
+
 def save_as_default_gene_models(
     gene_models: GeneModels,
     output_filename: str, *,
     gzipped: bool = True,
 ) -> None:
     """Save gene models in a file in default file format."""
+    _check_default_format_can_express(gene_models)
+
     if gzipped:
         if not output_filename.endswith(".gz"):
             output_filename = f"{output_filename}.gz"
