@@ -25,6 +25,7 @@ from gain.genomic_resources.repository import (
     GR_INDEX_FILE_NAME,
     GR_SQLITE_META_FILE_NAME,
     GenomicResource,
+    ResourceFileState,
 )
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
@@ -200,13 +201,21 @@ SMALL_REPO_RESOURCE_IDS = ("one", "two", "three")
 #: The files ``content_fixture``'s ``one`` resource publishes, in manifest
 #: order. Pinned rather than derived because the tests that use it assert a
 #: per-file cost, and a resource that quietly lost its files would make those
-#: assertions vacuous rather than failing. Shared by the three modules
-#: covering what a download must not spend -- on re-reading the md5 (#865),
-#: on re-stating the stat (#936), and on probing directories (#1042) -- for
-#: the reason above: a second copy of one list is how the first of them
-#: would silently stop describing the fixture. Assert it through
+#: assertions vacuous rather than failing. Shared by the four modules
+#: covering what a sync must not spend -- three on the download (re-reading
+#: the md5 (#865), re-stating the stat (#936), probing directories (#1042))
+#: and one on the cache verdict for a file it keeps (#1039) -- for the reason
+#: above: a second copy of one list is how the first of them would silently
+#: stop describing the fixture. Assert it through
 #: :func:`assert_published_one` rather than by hand.
 ONE_RESOURCE_FILES = ["data.txt", "data.txt.gz", "genomic_resource.yaml"]
+
+#: The filesystem operations that ask the store about a path without moving
+#: any of its bytes -- what a per-file budget counts. Shared for the reason
+#: :data:`ONE_RESOURCE_FILES` is: an operation added to one copy of this
+#: tuple and not to the other is how a budget stops noticing the call that
+#: regressed. Pass it to :func:`record_filesystem_calls`.
+METADATA_OPERATIONS = ("info", "exists", "modified", "ls")
 
 
 @pytest.fixture
@@ -345,6 +354,43 @@ def assert_published_one(
     published = sorted(entry.name for entry in proto.get_manifest(resource))
     assert published == ONE_RESOURCE_FILES, "fixture changed; update this pin"
     return published
+
+
+def copy_one_resource(
+    src_resource: GenomicResource, dest_proto: FsspecReadWriteProtocol,
+) -> tuple[GenomicResource, list[str]]:
+    """Copy ``src_resource`` in, and return it with its published names.
+
+    Takes the source rather than the fixture dict so a caller that also
+    needs it -- a cache verdict is asked against the same remote the
+    cache was filled from -- passes the one it holds. Building a second
+    source would populate the fixture twice, under two roots, and leave
+    the reader to establish that the two are the same thing.
+    """
+    dest_resource = dest_proto.copy_resource(src_resource)
+    return dest_resource, assert_published_one(dest_proto, dest_resource)
+
+
+def assert_state_matches_accessors(
+    proto: FsspecReadWriteProtocol, resource: GenomicResource, name: str,
+) -> None:
+    """Assert the recorded state is what the accessors report for ``name``.
+
+    The claim every path that assembles a state from fields it holds --
+    a download (#936), a cache verdict (#1039) -- has to keep: a field
+    that now comes from somewhere else must still read identically, to
+    its rounding and to the ``None`` a store without tokens reports.
+    Spelled once, because a copy that misses a newly added field stops
+    comparing it without failing.
+    """
+    recorded = proto.load_resource_file_state(resource, name)
+    assert recorded == ResourceFileState(
+        filename=name,
+        size=proto.get_resource_file_size(resource, name),
+        timestamp=proto.get_resource_file_timestamp(resource, name),
+        md5=proto.compute_md5_sum(resource, name),
+        change_token=proto.get_resource_file_change_token(resource, name),
+    ), name
 
 
 def setup_small_repo(root_path: pathlib.Path) -> None:

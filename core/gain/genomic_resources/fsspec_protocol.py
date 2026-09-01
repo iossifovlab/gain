@@ -2536,12 +2536,42 @@ class FsspecReadWriteProtocol(
         the remote manifest), but it never copies/downloads. The
         verdict's ``size`` is the manifest byte size for files that will
         download (0 otherwise). See gain#78.
+
+        The one question it opens with -- is the file there at all -- is
+        asked as a stat rather than as a boolean, because the same dict
+        carries the size and the change token a rebuilt state needs. So
+        the rebuild reads only what that dict cannot say: the
+        modification time, and the md5 off the bytes themselves. Asking
+        for a bool and then rebuilding from scratch asked the store
+        about one key five times where twice will do (gain#1039). Only
+        the rebuild is cheaper for it: a verdict that finds its recorded
+        state current spends what it always did, one stat either way.
+
+        A stat that fails for a reason other than the file being absent
+        now reaches the caller instead of reading as "not cached". That
+        is the one thing ``exists()`` did that this does not: fsspec's
+        base implementation answers False to *every* exception, so an
+        unreadable cache directory used to be answered with a download
+        that was going to fail on the same directory a moment later. On
+        s3 it is not even a change -- s3fs's own ``exists`` swallows
+        only ``FileNotFoundError``.
+
+        The stat is taken before the md5 that is recorded beside it, so
+        a file rewritten in between is recorded with the older token
+        beside the newer digest. That pairing is self-correcting rather
+        than a lost update: the next verdict reads the token, finds it
+        moved, and rebuilds. It is the safe half of the ordering -- a
+        token read *after* the digest would pair a fresh token with a
+        superseded md5, and nothing afterwards would notice.
         """
         assert dest_resource.resource_id == remote_resource.resource_id
 
         remote_manifest = remote_resource.get_manifest()
 
-        if not self.file_exists(dest_resource, filename):
+        url = self.get_resource_file_url(dest_resource, filename)
+        try:
+            stored = self._stat_filepath(url)
+        except FileNotFoundError:
             size = (
                 remote_manifest[filename].size
                 if filename in remote_manifest else 0)
@@ -2551,7 +2581,8 @@ class FsspecReadWriteProtocol(
         if local_state is None or not self._state_describes_stored_file(
                 dest_resource, local_state):
             local_state = self.build_resource_file_state(
-                dest_resource, filename)
+                dest_resource, filename,
+                size=stored.size, change_token=stored.change_token)
             self.save_resource_file_state(dest_resource, local_state)
 
         if filename not in remote_manifest:

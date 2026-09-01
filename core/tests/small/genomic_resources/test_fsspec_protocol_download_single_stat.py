@@ -11,10 +11,6 @@ from typing import Any
 
 import pytest
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
-from gain.genomic_resources.repository import (
-    GenomicResource,
-    ResourceFileState,
-)
 from gain.genomic_resources.testing.faulty_filesystem import (
     corrupt_same_length,
 )
@@ -23,13 +19,14 @@ from gain.genomic_resources.testing.faulty_filesystem import (
 # ``test_fsspec_protocol_download_md5_reuse.py`` makes the sibling claim
 # about the md5 over the same fixture.
 from .conftest import (
+    METADATA_OPERATIONS,
     a_source_resource,
     assert_published_one,
+    assert_state_matches_accessors,
     calls_for,
+    copy_one_resource,
     record_filesystem_calls,
 )
-
-METADATA_OPERATIONS = ("info", "exists", "modified", "ls")
 
 
 @pytest.mark.grr_full
@@ -63,15 +60,6 @@ def test_a_downloaded_file_is_asked_about_twice(
         assert spent == ["info", "modified"], (name, spent)
 
 
-def _copy_one(
-    content_fixture: dict[str, Any],
-    dest_proto: FsspecReadWriteProtocol,
-) -> tuple[GenomicResource, list[str]]:
-    """Copy the ``one`` resource in, and return it with its file names."""
-    dest_resource = dest_proto.copy_resource(a_source_resource(content_fixture))
-    return dest_resource, assert_published_one(dest_proto, dest_resource)
-
-
 @pytest.mark.grr_full
 def test_a_downloaded_state_says_what_the_accessors_would_have_said(
     content_fixture: dict[str, Any],
@@ -87,7 +75,8 @@ def test_a_downloaded_state_says_what_the_accessors_would_have_said(
     file that re-downloads on every sync.
     """
     dest_proto = download_dest
-    dest_resource, names = _copy_one(content_fixture, dest_proto)
+    dest_resource, names = copy_one_resource(
+        a_source_resource(content_fixture), dest_proto)
 
     # Read every field back from the store rather than from a listing
     # left over from the copy. On s3 the modification time is reported to
@@ -99,16 +88,7 @@ def test_a_downloaded_state_says_what_the_accessors_would_have_said(
     dest_proto.filesystem.invalidate_cache()
 
     for name in names:
-        recorded = dest_proto.load_resource_file_state(dest_resource, name)
-        assert recorded == ResourceFileState(
-            filename=name,
-            size=dest_proto.get_resource_file_size(dest_resource, name),
-            timestamp=dest_proto.get_resource_file_timestamp(
-                dest_resource, name),
-            md5=dest_proto.compute_md5_sum(dest_resource, name),
-            change_token=dest_proto.get_resource_file_change_token(
-                dest_resource, name),
-        ), name
+        assert_state_matches_accessors(dest_proto, dest_resource, name)
 
 
 @pytest.mark.grr_full
@@ -126,7 +106,8 @@ def test_a_downloaded_state_still_judges_a_rewrite(
     each half of this test passing on its own.
     """
     dest_proto = download_dest
-    dest_resource, _ = _copy_one(content_fixture, dest_proto)
+    dest_resource, _ = copy_one_resource(
+        a_source_resource(content_fixture), dest_proto)
 
     state = dest_proto.load_resource_file_state(dest_resource, "data.txt")
     assert state is not None
