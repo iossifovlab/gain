@@ -82,8 +82,8 @@ from gain.genomic_resources.vcf_scores import (
 
 from .aggregation import (
     build_region_aggregator,
-    distinct_score_ids,
     fold_region_segments,
+    request_score_ids,
     resolve_aggregator_requests,
 )
 from .records import (
@@ -1327,8 +1327,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         ]
         return fold_region_segments(
             self._aggregation_segments(
-                chrom, pos_begin, pos_end, distinct_score_ids(
-                    score_id for score_id, _ in requests)),
+                chrom, pos_begin, pos_end, request_score_ids(requests)),
             aggregators,
             requests,
             weigh=self.record_weight,
@@ -1356,11 +1355,14 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         would be a second statement of the weight rule.
 
         Underscored, alone among the per-kind hooks, because it is the only
-        one that is not also part of the read API: the others answer a
-        caller (``fetch_region_segments`` IS
-        :meth:`region_values_from_records`; the scan calls
-        :meth:`validate_records` and :meth:`record_weight` by name), while
-        this one is reached only from :meth:`aggregate_region` in this
-        class.  A kind overrides it; nothing else calls it.
+        one no caller asks for BY NAME: the others answer a caller
+        (``fetch_region_segments`` IS :meth:`region_values_from_records`;
+        the scan calls :meth:`validate_records` and :meth:`record_weight`
+        by name), while this one is reached only through a read that
+        composes it.  Two do: :meth:`aggregate_region` here, and
+        :meth:`~.position.PositionScore.fetch_region_weighted_values`,
+        which weighs this stream for the annotators rather than restating
+        the kind's clip (gain#1087).  A kind overrides it; nothing outside
+        those reads calls it.
         """
         return self.fetch_region_segments(chrom, pos_begin, pos_end, scores)

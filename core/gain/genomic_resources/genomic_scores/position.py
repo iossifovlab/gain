@@ -154,11 +154,13 @@ class PositionScore(GenomicScore):
         of times.
 
         Written as the ADR 0008 idiom -- compose the region transducer over
-        the unclipped stream.  The ONE statement of the rule for this kind:
-        :meth:`aggregate_region` folds this stream and
-        :meth:`fetch_region_weighted_values` weighs it, so the annotators'
-        read and the aggregating one cannot come to differ about which part
-        of a record the query asked for (gain#1087).
+        the unclipped stream.  Every SEGMENT-shaped read of this kind states
+        the rule here and only here: :meth:`aggregate_region` folds this
+        stream and :meth:`fetch_region_weighted_values` weighs it, so the
+        annotators' read and the aggregating one cannot come to differ about
+        which part of a record the query asked for (gain#1087).  The logical
+        plane's :meth:`_position_runs` clips for itself still, because it is
+        not reducing records but tiling positions -- gain#1027 carries that.
         """
         return clip_to_region(
             super()._aggregation_segments(chrom, pos_begin, pos_end, scores),

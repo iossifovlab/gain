@@ -13,6 +13,11 @@ Nothing here knows what a KIND is, which is why nothing here pins clipping:
 whether a record is cut down to the query window before it reaches the fold
 is settled by the kind's ``_aggregation_segments``, and pinned against the
 score classes in ``test_aggregate_region`` and ``test_clip_span``.
+
+The exception is the last section, which reaches for a ``PositionScore``
+deliberately: what it pins is that the position score's own query surface
+and this machinery state one rule between them rather than two, and that
+is not observable from either side alone.
 """
 from __future__ import annotations
 
@@ -352,11 +357,21 @@ def test_each_aggregation_refusal_is_written_in_exactly_one_place() -> None:
     it is satisfied just as well by two copies -- which is how the missing
     default's remedy came to differ in the first place while the rule half
     still matched.  So the "stated once" half of gain#1087 is pinned where
-    it lives: in the source, by counting the files that spell each rule.
+    it lives: in the source, by counting where each rule is spelled.
+
+    OCCURRENCES and not files: a second copy is just as much a second
+    statement for living in the same module as the first, and a fence that
+    only counted files would pass while ``resolve_aggregator_requests``
+    quietly re-inlined the guard that ``score_def_for`` exists to be.
+
+    Two limits worth knowing.  This matches raw source text, so a copy
+    whose f-string happens to wrap mid-phrase evades it -- which is why
+    each anchor is short.  And it scans the ``gain`` package, so a copy
+    that appeared in another distribution of this repo would go unseen.
 
     An intentional rewording goes red here, and should: the new wording
-    wants re-anchoring, and the point of the trip is to notice whether a
-    second file has picked the sentence up again.
+    wants re-anchoring, and the point of the trip is to notice whether
+    something else has picked the sentence up again.
     """
     package = pathlib.Path(gain.__file__).parent
     sources = sorted(package.rglob("*.py"))
@@ -366,8 +381,8 @@ def test_each_aggregation_refusal_is_written_in_exactly_one_place() -> None:
 
     for rule in _REFUSAL_RULES:
         sites = sorted(
-            str(path.relative_to(package))
+            f"{path.relative_to(package)}:{path.read_text().count(rule)}"
             for path in sources
             if rule in path.read_text()
         )
-        assert sites == [_STATED_IN], (rule, sites)
+        assert sites == [f"{_STATED_IN}:1"], (rule, sites)

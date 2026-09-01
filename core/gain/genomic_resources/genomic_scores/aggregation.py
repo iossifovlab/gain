@@ -142,9 +142,26 @@ def distinct_score_ids(score_ids: Iterable[str]) -> list[str]:
     request is shaped differently on each surface -- a pair here, a
     :class:`~gain.genomic_resources.aggregators.PositionScoreAggregationQuery`
     resolved to a triple on the position score's plane -- and none of that
-    is what the derivation is about.
+    is what the derivation is about.  Each surface projects its own shape
+    to ids and asks here; for the request list that projection is
+    :func:`request_score_ids`, so its two callers cannot come to disagree
+    about it either.
     """
     return list(dict.fromkeys(score_ids))
+
+
+def request_score_ids(requests: list[tuple[str, str]]) -> list[str]:
+    """The DISTINCT scores ``requests`` needs, in the order asked for.
+
+    :func:`distinct_score_ids` for a request list, and the one place that
+    list is projected to ids.  Two callers need it and need the SAME
+    answer: :meth:`~.base.GenomicScore.aggregate_region` names the scores
+    to fetch with it, and :func:`fold_region_segments` indexes the fetched
+    values with it.  Spelled out at each of them instead, the two would
+    agree only by looking alike -- and a divergence would not fail, it
+    would have every aggregator quietly reading its neighbour's column.
+    """
+    return distinct_score_ids(score_id for score_id, _ in requests)
 
 
 def build_region_aggregator(
@@ -182,7 +199,7 @@ def fold_region_segments(
 
     ``segments`` is a stream of ``(left, right, values)`` as
     :meth:`~.base.GenomicScore.fetch_region_segments` yields it for
-    :func:`distinct_score_ids` of these ``requests`` -- which is how a
+    :func:`request_score_ids` of these ``requests`` -- which is how a
     request finds its column: two requests for one score share the fetch
     and keep separate accumulators.
 
@@ -203,7 +220,7 @@ def fold_region_segments(
     column_of = {
         score_id: i
         for i, score_id in enumerate(
-            distinct_score_ids(score_id for score_id, _ in requests))
+            request_score_ids(requests))
     }
     targets = [
         (aggregator, column_of[score_id])

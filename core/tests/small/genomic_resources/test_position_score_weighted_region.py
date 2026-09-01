@@ -57,8 +57,10 @@ def test_a_record_the_query_clips_to_nothing_is_not_yielded(
     index cannot be decoded is declined with a warning and reads on
     unvalidated (gain#553, ADR 0008).  This is the read
     ``PositionScoreAnnotator`` aggregates from, and annotation never
-    scans, so this method's ``clip_span`` is what stands between such a
-    backend and a non-positive weight in an aggregator (gain#639).
+    scans, so the clip this read composes -- ``_aggregation_segments``,
+    the kind's one statement of it since gain#1087 -- is what stands
+    between such a backend and a non-positive weight in an aggregator
+    (gain#639).
     """
     def outside(
         chrom: str,
