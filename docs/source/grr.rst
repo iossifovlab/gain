@@ -721,6 +721,28 @@ are also read by GAIn itself — gene models and scores use ``reference_genome``
 declare the assembly they are built against, and liftover chains use ``source_genome``
 and ``target_genome``.
 
+Each of those three labels names another resource, so **its value must be a
+non-empty string**. Label *values* are free-form YAML and nothing validates them,
+so a value that cannot be a resource id — a number, a list, a nested mapping, or
+an empty string — is read as if the label were absent, and GAIn logs a warning
+naming the resource, the label and what it found instead. The read itself never
+fails; what follows is whatever that resource does when unlabelled. A score
+builds its info page and its statistics from what it can measure itself (see
+below). A liftover chain then has no genomes to offer, so a ``liftover_annotator``
+that does not name ``source_genome`` and ``target_genome`` itself will fail to
+build, saying which parameter it is missing. Quote an id that YAML would
+otherwise read as a number:
+
+.. code-block:: yaml
+
+    meta:
+      labels:
+        reference_genome: "2019"   # unquoted, this is the integer 2019
+
+Note that the value is used exactly as written — surrounding whitespace is not
+trimmed, so ``reference_genome: " hg38 "`` is a non-empty string that simply names
+no resource, and fails at resolution rather than being read as absent.
+
 For a score, the ``reference_genome`` label is what makes its resource info page
 answer **what part of the reference genome has values**. The Coverage section of
 the page reports covered positions as a percentage of the whole assembly — every

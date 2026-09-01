@@ -6,7 +6,7 @@ import pathlib
 import re
 import textwrap
 from collections.abc import Iterable
-from typing import cast
+from typing import Any, cast
 
 import pysam
 import pytest
@@ -55,6 +55,8 @@ from gain.task_graph.executor import (
 )
 from gain.task_graph.graph import TaskGraph
 from gain.task_graph.sequential_executor import SequentialExecutor
+
+from .conftest import UNUSABLE_RESOURCE_ID_LABELS, label_warnings
 
 
 def test_unpack_score_defs_classifies_histograms() -> None:
@@ -434,6 +436,53 @@ def test_get_chrom_regions_inmemory_splits_on_the_tables_own_length() -> None:
     assert regions_for(1001, 1000) == [("1", 1, 1000), ("1", 1001, 2000)]
     assert regions_for(2500, 1000) == [
         ("1", 1, 1000), ("1", 1001, 2000), ("1", 2001, 3000)]
+
+
+@pytest.mark.parametrize(
+    ("value", "reported_as"), UNUSABLE_RESOURCE_ID_LABELS)
+def test_an_unusable_genome_label_still_builds_statistics_tasks(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    value: Any,
+    reported_as: str,
+) -> None:
+    """The statistics half of the same narrowing, at its own seam.
+
+    The genome is a denominator here too -- it supplies the contig
+    lengths the region split is computed from -- and the label reaching
+    it unnarrowed raised ``TypeError`` before any task was built: the
+    int in the genome regex, the list and the dict in the resolution
+    cache's own key lookup.  Nothing catches that, so one mis-authored
+    resource aborted a repository-wide statistics walk rather than
+    building without the genome (gain#1053, the gain#654 shape).
+    """
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores/one",
+            a_position_score()
+            .with_score("value", "float")
+            .with_data(
+                """
+                chrom  pos_begin  value
+                chr1   10         0.1
+                """)
+            .with_labels(reference_genome=value))
+        .build_repo(tmp_path)
+    )
+    impl = build_score_implementation_from_resource(
+        repo.get_resource("scores/one"))
+
+    with caplog.at_level(logging.WARNING):
+        tasks = impl.create_statistics_build_tasks(
+            region_size=1000, grr=repo)
+
+    assert tasks
+    warnings = label_warnings(caplog)
+    assert len(warnings) == 1
+    assert "scores/one" in warnings[0]
+    assert "reference_genome" in warnings[0]
+    assert reported_as in warnings[0]
 
 
 def test_add_statistics_build_tasks_creates_min_max_tasks() -> None:

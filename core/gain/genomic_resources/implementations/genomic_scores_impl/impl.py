@@ -51,6 +51,7 @@ from gain.genomic_resources.statistics.coverage import (
     build_fragment_display,
     resolve_chrom_lengths,
 )
+from gain.genomic_resources.utils import read_resource_id_label
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
 from gain.utils.regions import (
     Region,
@@ -209,11 +210,18 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
         A label naming something that is not a genome is a reason to
         degrade to raw counts, not to fail the page build.
+
+        Two ways it can fail to name one, and the guard below only ever
+        covered the second.  A value that is not a resource id at all --
+        the int, list or dict a free-form ``meta.labels`` allows -- used
+        to reach resolution as itself and raise ``TypeError`` past the
+        ``except ValueError``, failing the page build this comment says
+        must not fail; it is now read as absent and reported by the
+        narrowing (gain#1053).  A value that IS an id but names no
+        genome still reaches resolution and is caught here.
         """
-        genome_id = cast(
-            str | None,
-            self.resource.get_labels().get("reference_genome"),
-        )
+        genome_id = read_resource_id_label(
+            self.resource, "reference_genome")
         try:
             return self._get_reference_genome_cached(
                 self._render_repo, genome_id)
@@ -403,10 +411,14 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> list[Region]:
 
         regions = []
-        ref_genome_id = cast(
-            str,
-            self.resource.get_labels().get("reference_genome"),
-        )
+        # Narrowed rather than cast: a label that is not a resource id
+        # used to reach the resolution cache as itself and raise
+        # ``TypeError`` here, aborting a repository-wide statistics walk
+        # over one mis-authored resource.  Read as absent, the contig
+        # lengths fall through to the table's own answer below, which is
+        # what an unlabelled score already does (gain#1053).
+        ref_genome_id = read_resource_id_label(
+            self.resource, "reference_genome")
         ref_genome = self._get_reference_genome_cached(grr, ref_genome_id)
         for chrom in self.score.get_all_chromosomes():
             # Resolved afresh for every contig, never inherited from the
