@@ -1,13 +1,14 @@
 import tempfile
 from pathlib import Path
 from typing import Any, ClassVar
-from urllib.parse import quote
 
 from gain import logging
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
-from gain.annotation.pipeline_doc import render_pipeline_doc
-from gain.genomic_resources.genomic_scores import GenomicScore
+from gain.annotation.pipeline_doc import (
+    RepositoryRelativeAddresses,
+    render_pipeline_doc,
+)
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
@@ -80,55 +81,18 @@ class AnnotationPipelineImplementation(
 
     template_name: ClassVar[str] = "annotation_pipeline.jinja"
 
-    @property
-    def _relative_prefix_to_root_dir(self) -> str:
-        return "/".join([".."] * len(self.resource.resource_id.split("/")))
-
-    def _make_resource_url(self, resource: GenomicResource) -> str:
-        repo_url = self.resource.get_repo_url()
-        res_url = resource.get_url()
-        if repo_url in res_url:
-            res_url = "/".join([
-                self._relative_prefix_to_root_dir,
-                resource.resource_id,
-            ])
-        else:
-            logger.warning(
-                "Referencing resource outside managed GRR %s",
-                resource.get_id(),
-            )
-            res_url = resource.get_public_url()
-        return res_url
-
-    def _make_histogram_url(
-        self, score: GenomicScore, score_id: str,
-    ) -> str | None:
-        repo_url = self.resource.get_repo_url()
-        hist_url = score.get_histogram_image_url(score_id)
-        if hist_url is None:
-            return None
-        if repo_url in hist_url:
-            hist_url = "/".join([
-                self._relative_prefix_to_root_dir,
-                score.resource.resource_id,
-                quote(score.get_histogram_image_filename(score_id)),
-            ])
-        else:
-            logger.warning(
-                "Referencing resource outside managed GRR %s",
-                score.resource.get_id(),
-            )
-            hist_url = score.get_histogram_image_public_url(score_id)
-        return hist_url
-
     def _get_template_data(self) -> dict[str, Any]:
         if self.pipeline is None:
             raise ValueError
         return {
+            # This page is published inside the GRR tree, so it must carry
+            # addresses relative to the repository root -- the renderer's
+            # default is the public mirror, which resolves nowhere from
+            # there. Pinned by
+            # ``test_the_rendered_page_carries_the_relative_addresses``.
             "content": render_pipeline_doc(
                 self.pipeline,
-                res_url=self._make_resource_url,
-                hist_url=self._make_histogram_url,
+                addresses=RepositoryRelativeAddresses(self.resource),
             ),
         }
 
