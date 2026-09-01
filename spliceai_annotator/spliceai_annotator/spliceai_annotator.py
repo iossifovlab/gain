@@ -110,7 +110,7 @@ SpliceAI Annotator plugin uses
 <a href="https://www.cell.com/cell/fulltext/S0092-8674(18)31629-5">SpliceAI</a>
 models to predict splice site variant effects.
 
-""")  # ruff: ignore[too-many-blank-lines, trailing-whitespace]
+""")  # ruff: ignore[trailing-whitespace]
         info.resources += [genome.resource, gene_models.resource]
 
         super().__init__(pipeline, info)

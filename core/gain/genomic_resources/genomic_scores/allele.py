@@ -154,7 +154,11 @@ class AlleleScore(GenomicScore):
     }
 
     @classmethod
-    def record_weight(cls, left: int, right: int) -> int:  # noqa: ARG003
+    def record_weight(
+        cls,
+        left: int,  # ruff: ignore[unused-class-method-argument]
+        right: int,  # ruff: ignore[unused-class-method-argument]
+    ) -> int:
         """An allele line counts once.
 
         Several records share a position -- one per ref/alt pair -- and
