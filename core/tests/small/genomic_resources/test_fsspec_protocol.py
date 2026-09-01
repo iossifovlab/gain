@@ -151,14 +151,15 @@ class _RefusingFilesystem:
 def test_a_fully_supplied_state_never_touches_the_store(
         fsspec_proto: FsspecReadWriteProtocol,
         monkeypatch: pytest.MonkeyPatch) -> None:
-    """Supplying every field leaves nothing to read, including the guard.
+    """Supplying every field leaves nothing at all to ask the store.
 
-    The existence check at the top only protects the reads below it, so
-    a caller that has already read everything -- the download path, which
-    holds the size and token from the stat that verified its move, and
-    the md5 from the bytes it hashed -- must not pay a stat for it. The
-    supplied ``None`` token is the point of the sentinel: it means *this
-    store has no token*, not *go and find out*. See gain#936.
+    A caller that has already read everything -- the download path,
+    which holds the size and token from the stat that verified its move,
+    and the md5 from the bytes it hashed -- must reach the store zero
+    times. The supplied ``None`` token is the point of the sentinel: it
+    means *this store has no token*, not *go and find out*. See
+    gain#936, and gain#1039, which removed the pre-flight existence
+    probe this used to have to argue away separately.
     """
     proto = fsspec_proto
     res = proto.get_resource("one")
@@ -179,19 +180,49 @@ def test_a_fully_supplied_state_never_touches_the_store(
 @pytest.mark.grr_rw
 def test_build_resource_file_state_still_refuses_a_missing_file(
         fsspec_proto: FsspecReadWriteProtocol) -> None:
-    """The guard is skipped only for a caller that reads nothing.
+    """A caller that reads anything off the store still hears ValueError.
 
     A caller that supplies no keywords is asking for every field to be
-    read off the stored file, so it keeps the check and the ``ValueError``
-    -- which is what distinguishes "you asked about a file that is not
-    there" from the ``FileNotFoundError`` the reads below would raise.
-    See gain#936, which made the check conditional.
+    read off the stored file, and what a missing file gets it is the
+    ``ValueError`` naming the resource -- which is what distinguishes
+    "you asked about a file that is not there" from the bare
+    ``FileNotFoundError`` the reads raise of their own accord. See
+    gain#936, which made the check conditional on reading anything at
+    all, and gain#1039, which replaced the check with translating that
+    ``FileNotFoundError`` where it happens.
     """
     proto = fsspec_proto
     res = proto.get_resource("one")
 
     with pytest.raises(ValueError, match="not existing resource file"):
         proto.build_resource_file_state(res, "no-such-file.txt")
+
+
+@pytest.mark.grr_rw
+@pytest.mark.parametrize("supplied", [
+    pytest.param({"size": 7, "change_token": None}, id="md5-notices"),
+    pytest.param(
+        {"md5": "d9636a8dca9e5626851471d1c0ea92b1"}, id="timestamp-notices"),
+])
+def test_build_resource_file_state_refuses_a_missing_file_partly_supplied(
+        fsspec_proto: FsspecReadWriteProtocol,
+        supplied: dict[str, Any]) -> None:
+    """The refusal cannot be bought off with the fields that were supplied.
+
+    The first case is the cache verdict's shape: it supplies the size
+    and the change token out of the stat it opened with, and leaves the
+    md5 and the modification time to be read (gain#1039). The second
+    supplies the md5 instead, so that a *different* read is the one that
+    meets the missing file -- with no check ahead of them, the refusal
+    is each read's to raise, and a case where only the first read was
+    ever exercised would say nothing about the rest.
+    """
+    proto = fsspec_proto
+    res = proto.get_resource("one")
+
+    with pytest.raises(ValueError, match="not existing resource file"):
+        proto.build_resource_file_state(
+            res, "no-such-file.txt", **supplied)
 
 
 @pytest.mark.grr_rw

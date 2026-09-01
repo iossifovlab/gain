@@ -2402,37 +2402,38 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         value -- which for ``md5`` costs a full re-read of the file, and
         for the others a stat. See gain#865.
 
-        The existence check is skipped when every field is supplied. It
-        is worth being plain about what that check is: not a safeguard,
-        but a *message*. Every read below it would raise
-        ``FileNotFoundError`` of its own accord on a file that is not
-        there; all the check adds is that the caller hears
-        ``ValueError`` naming the resource instead. So a call that reads
-        nothing has nothing to say it about, and the check would be the
-        only thing that touched the store. Callers that leave any field
-        to be read keep it, and keep the ``ValueError`` with it.
+        A file that is not there is still refused with a ``ValueError``
+        naming the resource and the filename -- but it is noticed by the
+        reads rather than ahead of them. It is worth being plain about
+        what the check that used to run first was: not a safeguard, but
+        a *message*. Every read below raises ``FileNotFoundError`` of its
+        own accord on a file that is not there; all the check added was
+        that the caller hears the ``ValueError`` instead. A message can
+        be phrased where the failure happens, and asking first cost a
+        probe of a key the caller may have just been told about -- the
+        cache verdict opens by stating the very file whose state it then
+        rebuilds, and paid for that twice (gain#1039). A caller that
+        supplies every field reads nothing, so it raises nothing here,
+        exactly as before.
         """
-        reads_the_stored_file = (
-            md5 is None or timestamp is None or size is None
-            or change_token is Unread.UNREAD)
+        try:
+            if md5 is None:
+                md5 = self.compute_md5_sum(resource, filename)
 
-        if reads_the_stored_file and not self.file_exists(resource, filename):
+            if timestamp is None:
+                timestamp = self.get_resource_file_timestamp(
+                    resource, filename)
+
+            if size is None:
+                size = self.get_resource_file_size(resource, filename)
+
+            if change_token is Unread.UNREAD:
+                change_token = self.get_resource_file_change_token(
+                    resource, filename)
+        except FileNotFoundError as error:
             raise ValueError(
                 f"can't build resource state for not existing resource file "
-                f"{resource.resource_id} > {filename}")
-
-        if md5 is None:
-            md5 = self.compute_md5_sum(resource, filename)
-
-        if timestamp is None:
-            timestamp = self.get_resource_file_timestamp(resource, filename)
-
-        if size is None:
-            size = self.get_resource_file_size(resource, filename)
-
-        if change_token is Unread.UNREAD:
-            change_token = self.get_resource_file_change_token(
-                resource, filename)
+                f"{resource.resource_id} > {filename}") from error
 
         return ResourceFileState(
             filename=filename, size=size, timestamp=timestamp, md5=md5,
