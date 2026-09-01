@@ -27,15 +27,17 @@ from typing import (
 
 import numpy as np
 
-# One batch as :meth:`GenomicScore.fetch_region_value_arrays` produces it:
-# the RAW one-based begin and end columns, plus one parsed value array per
-# requested score id.  Named because the vectorized scan validators are
-# transducers over a stream of these.
+#: One batch as :meth:`GenomicScore.fetch_region_value_arrays()
+#: <.base.GenomicScore.fetch_region_value_arrays>` produces it:
+#: the RAW one-based begin and end columns, plus one parsed value array per
+#: requested score id.  Named because the vectorized scan validators are
+#: transducers over a stream of these.
 RecordArrays = tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]]
 
 
 class AlleleRecordArrays(NamedTuple):
-    """One batch as :meth:`AlleleScore.fetch_region_allele_arrays` makes it.
+    """One batch as :meth:`AlleleScore.fetch_region_allele_arrays()
+    <.allele.AlleleScore.fetch_region_allele_arrays>` makes it.
 
     :data:`RecordArrays` widened by the two key columns an allele row has and
     a position row does not.  The first three fields are that tuple exactly,

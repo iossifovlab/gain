@@ -54,8 +54,8 @@ class FragmentScore(GenomicScore):
 
     Nothing here is copy-number specific; a CNV collection is one
     application of it.  Accepts either resource type in
-    :data:`FRAGMENT_SCORE_TYPES`, warning once per resource on the
-    deprecated one.
+    :data:`~gain.genomic_resources.resource_types.FRAGMENT_SCORE_TYPES`,
+    warning once per resource on the deprecated one.
     """
 
     # A fragment weighs 1 however long it is.
@@ -175,13 +175,15 @@ class FragmentScore(GenomicScore):
         """Fetch score values for every fragment overlapping a region.
 
         One dict per overlapping fragment, keyed by score id, as
-        :meth:`AlleleScore.fetch_allele_scores` keys one allele's values --
+        :meth:`AlleleScore.fetch_allele_scores()
+        <.allele.AlleleScore.fetch_allele_scores>` keys one allele's values --
         the list is per fragment, not per score.  A region no fragment
         overlaps gives ``[]``; unlike the two per-position reads there is no
         ``None``, because several fragments overlapping is the normal case
         and "none of them" is a count of zero rather than absent data.
 
-        ``score_filter`` -- from :meth:`GenomicScore.compile_filter` -- drops
+        ``score_filter`` -- from :meth:`GenomicScore.compile_filter()
+        <.base.GenomicScore.compile_filter>` -- drops
         the fragments it rejects, which are then simply not among the dicts.
         It reads the RECORD, so it may name any score the resource defines,
         including one outside ``scores``, and a rejected fragment costs no
@@ -194,7 +196,7 @@ class FragmentScore(GenomicScore):
 
         A fragment's own span is not reported.  Callers want the values it
         carries; a caller that needs the intervals themselves reads records
-        through :meth:`fetch_records`.
+        through :meth:`~.base.GenomicScore.fetch_records`.
         """
         if not self.is_open():
             raise ValueError(f"The resource <{self.resource_id}> is not open")

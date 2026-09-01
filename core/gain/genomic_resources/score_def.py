@@ -73,9 +73,9 @@ _DEFAULT_NA_VALUES: dict[str, tuple[str, ...]] = {
 # so a numeric raw payload (e.g. a bigWig ``float``) matches by value, not text.
 _NA_COERCIBLE_TYPES = ("int", "float")
 
-# Value types ``GenomicScoreDef.parse_array`` defines a column parse for, and
-# so the ones a bulk column read can serve.  ``bool`` is absent because no
-# column consumer asks for it.
+#: Value types :meth:`GenomicScoreDef.parse_array` defines a column parse for,
+#: and so the ones a bulk column read can serve.  ``bool`` is absent because no
+#: column consumer asks for it.
 BULK_PARSEABLE_VALUE_TYPES = ("float", "int", "str")
 
 

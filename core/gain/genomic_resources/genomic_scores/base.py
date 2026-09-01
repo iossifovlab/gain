@@ -4,7 +4,7 @@ Everything the three score kinds share: config parsing and score-def
 construction, the open/close lifecycle over the position table, and the
 record and array reads. The kinds themselves live in :mod:`.position`,
 :mod:`.allele` and :mod:`.fragment`, and the factories that dispatch
-between them in :mod:`.builders`.
+between them in :mod:`~gain.genomic_resources.genomic_scores.builders`.
 
 Decomposing this class -- so that a kind's author reads the handful of hooks
 their kind overrides rather than the whole base -- is gain#1027.  Its first
@@ -519,7 +519,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
           test_the_score_is_routed_before_it_reports_itself_open.
 
         It does not make open() as a whole safe to race, and does not claim to:
-        :meth:`_resolve_score_indices` still runs after the score has published
+        ``_resolve_score_indices`` still runs after the score has published
         itself open, so a caller that catches that window reads a score def
         with no ``score_index`` yet.  That window is older than this ordering
         and untouched by it -- open() is not synchronised, and making it so is
@@ -631,9 +631,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         combined with ``not``, ``and`` and ``or``; the result is
         passed back to any of the record reads as ``score_filter``.
 
-        Raises :class:`ScoreFilterError` on an expression that does not
-        parse or that names a score this resource does not define.  See
-        :func:`compile_score_filter` for what compiling settles,
+        Raises :class:`~gain.genomic_resources.score_filter.ScoreFilterError`
+        on an expression that does not parse or that names a score this
+        resource does not define.  See
+        :func:`~gain.genomic_resources.score_filter.compile_score_filter` for
+        what compiling settles,
         ``docs/adr/0017-score-filtering-is-a-score-capability.md`` for why
         the capability sits on the score, and
         ``docs/adr/0018-score-filter-grammar-extension.md`` for the
@@ -673,7 +675,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         preserve by structuring this any other way.  That is a property of
         *this* read rather than a rule for the family: a read that
         materialises has no generator body to defer a refusal into, and
-        :meth:`AlleleScore.fetch_allele_records` accordingly refuses from
+        :meth:`AlleleScore.fetch_allele_records()
+        <.allele.AlleleScore.fetch_allele_records>` accordingly refuses from
         the call.
         """
         records = self.table.get_records_in_region(chrom, pos_begin, pos_end)
@@ -739,9 +742,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         The value-type half is not a consumer's condition leaking in: the
         facade parses, so it serves the value types
-        :meth:`GenomicScoreDef.parse_array` defines a column parse for
-        (:data:`BULK_PARSEABLE_VALUE_TYPES`) and no others.
-        What a *consumer* additionally needs stays with the consumer: the
+        :meth:`GenomicScoreDef.parse_array()
+        <gain.genomic_resources.score_def.GenomicScoreDef.parse_array>`
+        defines a column parse for
+        (:data:`~gain.genomic_resources.score_def.BULK_PARSEABLE_VALUE_TYPES`)
+        and no others.  What a *consumer* additionally needs stays with the
+        consumer: the
         statistics scan also requires a bounded region and a resource kind it
         is exercised against, and it keeps asking that itself (see
         ``genomic_scores_impl.scan.bulk_scan_eligible``).  What it does
@@ -812,8 +818,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         requested score.
 
         **Values are parsed, by the same contract the per-record read uses.**
-        Each column goes through :meth:`GenomicScoreDef.parse_array`, whose
-        agreement with the per-value :meth:`GenomicScoreDef.parse_value` is
+        Each column goes through :meth:`GenomicScoreDef.parse_array()
+        <gain.genomic_resources.score_def.GenomicScoreDef.parse_array>`, whose
+        agreement with the per-value :meth:`GenomicScoreDef.parse_value()
+        <gain.genomic_resources.score_def.GenomicScoreDef.parse_value>` is
         pinned by test_parse_array_agrees_with_parse_value_fuzz.  So NA
         sentinels and unparseable cells arrive as that score's non-value,
         whatever the backend stores underneath: a ``float`` or ``int`` score
@@ -840,7 +848,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         The guards below run when this method is CALLED, not on the first
         ``next()`` -- which is why the streaming half lives in
-        :meth:`_value_array_batches` rather than a ``yield`` here.
+        ``_value_array_batches`` rather than a ``yield`` here.
         """
         if not self.supports_region_value_arrays(scores):
             # Refuse here rather than let the call reach the table.  A VCF
@@ -958,12 +966,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         were asked for.  Nothing is fetched here, and nothing is reshaped to
         the window either -- what a partial overlap means belongs to the
         caller (ADR 0008); a consumer answering a question about the window
-        clips with :func:`clip_span`.  The positions are what the guards
-        below are about.
+        clips with :func:`~.records.clip_span`.  The positions are what the
+        guards below are about.
 
         The guards run when this is CALLED rather than on the first
         ``next()`` -- the pattern :meth:`fetch_records` documents -- which is
-        why the streaming half lives in :meth:`_score_segments`.  They
+        why the streaming half lives in ``_score_segments``.  They
         stay here rather than moving down into ``fetch_records``: that method
         is on the annotation hot path, where a per-call
         ``get_all_chromosomes()`` membership scan is a real cost.
@@ -1079,7 +1087,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         The ordering rule is all it states.  The per-record path additionally
         refuses a record whose end precedes its begin (the message is
-        :meth:`_inverted_span_error`); there is no array counterpart, because
+        ``_inverted_span_error``); there is no array counterpart, because
         no backend the bulk path reads can produce one (tabix refuses to index
         such a row, and a bigWig cannot express it).  If that ever stops being
         true, this is where the check belongs.
@@ -1107,8 +1115,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         this kind means them.  A record straddling the region's edge is
         reported whole: what a partial overlap means depends on what the
         caller is computing, so a caller answering a question about the
-        window composes :func:`clip_to_region` over this stream, or calls
-        :func:`clip_span` per segment (ADR 0008).
+        window composes :func:`~.records.clip_to_region` over this stream, or
+        calls :func:`~.records.clip_span` per segment (ADR 0008).
 
         A plain read: it checks nothing.  The statistics scan reads the same
         records through the same transform with :meth:`validate_records`
@@ -1143,8 +1151,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             removal is tracked as gain#844.
 
         The body is the worked example of composing the region transducer:
-        the unclipped segment stream, with :func:`clip_to_region` deciding
-        what a partial overlap means.
+        the unclipped segment stream, with :func:`~.records.clip_to_region`
+        deciding what a partial overlap means.
         """
         warnings.warn(
             _SEGMENT_SCORES_DEPRECATION
@@ -1170,9 +1178,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         .. deprecated::
             Use :meth:`fetch_region_segments` -- note it reports each
             record's own extent, where this alias yields the record
-            clipped to the queried window (compose :func:`clip_to_region`
-            over it where the clipped spans matter).  Retained as a thin
-            compatibility alias only because the published
+            clipped to the queried window (compose
+            :func:`~.records.clip_to_region` over it where the clipped spans
+            matter).  Retained as a thin compatibility alias only because the
+            published
             ``docs/source/python_interface.rst`` showed this name to
             external readers; no in-tree or known cross-repo caller
             remains.  Removal is tracked as gain#730.
