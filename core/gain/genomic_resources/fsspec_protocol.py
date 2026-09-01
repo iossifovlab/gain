@@ -1180,6 +1180,44 @@ class FsspecReadOnlyProtocol(
         content = self.get_file_content(resource, GR_MANIFEST_FILE_NAME)
         return Manifest.from_file_content(content)
 
+    def get_file_content(
+        self, resource: GenomicResource,
+        filename: str,
+        *,
+        uncompress: bool = True,  # noqa: ARG002
+        mode: str = "t",
+    ) -> Any:
+        """Return content of a file in given resource.
+
+        Overrides the base, which opens through ``open_raw_file`` and reads
+        on the handle it returns: that open is redacted and the read is not,
+        so on an authed GRR a failure mid-read surfaces the credential-bearing
+        fetch url verbatim (gain#1058). ``_read_fetch_file`` covers both.
+
+        This sits IN FRONT of the fasta-index copy gain#1017 fixed --
+        ``ReferenceGenome.open`` reads the ``.fai`` through here first -- and
+        also backs ``load_manifest`` and ``load_yaml``.
+
+        ``get_loaded_manifest`` reads a missing manifest's
+        ``FileNotFoundError`` as "no manifest", and the rebuild keeps that
+        type: it reconstructs via ``type(exc)(message)``, which
+        ``FileNotFoundError`` supports.
+
+        An error that CANNOT be reconstructed from a message alone comes back
+        an ``OSError`` instead -- an ``aiohttp.ClientResponseError`` (an HTTP
+        5xx, which fsspec does not translate) needs ``request_info`` and
+        ``history``. Safe here for the reason
+        ``_copy_resource_file_to_local`` sets out: no retry or control-flow
+        decision on this path keys off the type.
+
+        ``uncompress`` names nothing on this path and never has, so
+        ``compression=None`` preserves the as-stored read exactly -- see
+        ``_copy_resource_file_to_local``, which found the same. Repairing the
+        dead parameter is separate work.
+        """
+        filepath = self.get_resource_file_url(resource, filename)
+        return self._read_fetch_file(filepath, f"r{mode}", None)
+
     def open_raw_file(
             self, resource: GenomicResource, filename: str,
             mode: str = "rt", **kwargs: str | bool | None) -> IO:

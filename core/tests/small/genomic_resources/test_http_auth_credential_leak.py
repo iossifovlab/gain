@@ -1,4 +1,5 @@
 # pylint: disable=C0114,C0116,W0212
+import gzip
 import logging
 import pathlib
 import textwrap
@@ -17,6 +18,9 @@ from gain.genomic_resources.fsspec_protocol import (
     FsspecRepositoryProtocol,
     build_fsspec_protocol,
 )
+from gain.genomic_resources.reference_genome import (
+    build_reference_genome_from_resource,
+)
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.repository_factory import (
     _REPO_DEFINITION_ADAPTER,
@@ -25,7 +29,10 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
     redact_definition,
 )
-from gain.genomic_resources.testing import build_faulty_test_protocol
+from gain.genomic_resources.testing import (
+    build_faulty_test_protocol,
+    setup_directories,
+)
 from gain.genomic_resources.testing.faulty_filesystem import FaultyFileSystem
 from multidict import CIMultiDict, CIMultiDictProxy
 from pydantic import ValidationError
@@ -1064,3 +1071,194 @@ def test_fasta_index_copy_lands_the_bytes_it_read(
     # read as stored: the old `uncompress=False` named nothing, and
     # `_read_fetch_file` must not be handed a compression either.
     assert opened.call_args.kwargs["compression"] is None
+
+
+# ---------------------------------------------------------------------------
+# gain#1058 — ``get_file_content`` is the same open-then-read-on-the-returned-
+# handle shape, and it sits IN FRONT of the path gain#1017 fixed:
+# ``ReferenceGenome.open`` reads the ``.fai`` through ``get_file_content``
+# before the backend open ever copies it. It also backs ``load_manifest`` and
+# ``load_yaml``, putting the shape on essentially every authed remote read.
+# ---------------------------------------------------------------------------
+
+def _a_remote_resource_whose_read_fails(
+    proto_id: str, url: str, filename: str,
+    mocker: pytest_mock.MockerFixture,
+    config: dict | None = None,
+) -> tuple[FsspecRepositoryProtocol, GenomicResource, BaseException]:
+    """Arrange an https protocol whose every file read fails.
+
+    Returns the protocol, the resource, and the very error the read raises,
+    so a test can assert on identity and not merely on the message. The
+    failure is planted on the READ and not on the open, because the open is
+    already redacted and would prove nothing.
+
+    ``config`` is what a caller reading the file through a typed façade needs
+    -- ``ReferenceGenome`` refuses a resource that is not ``type: genome``.
+    """
+    proto = build_fsspec_protocol(proto_id, url)
+    resource = GenomicResource("sub/res", (1, 0), proto, config or {})
+    planted = FileNotFoundError(
+        proto.get_resource_file_url(resource, filename))
+    handle = mocker.MagicMock()
+    handle.__enter__.return_value.read.side_effect = planted
+    mocker.patch.object(proto.filesystem, "open", return_value=handle)
+    return proto, resource, planted
+
+
+def test_get_file_content_read_failure_does_not_leak_url_credential(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    proto, resource, planted = _a_remote_resource_whose_read_fails(
+        "i1058-read", f"https://alice:{_SECRET}@127.0.0.1:1/path",
+        "data.txt", mocker)
+
+    with pytest.raises(OSError) as excinfo:
+        proto.get_file_content(resource, "data.txt")
+
+    exc = excinfo.value
+    tb = "".join(traceback.format_exception(exc))
+    assert _SECRET not in str(exc)
+    assert "alice" not in str(exc)
+    assert _SECRET not in tb
+    for linked in _walk_exception_chain(exc):
+        assert _SECRET not in str(linked)
+    # host, port and filename preserved so the error stays diagnosable.
+    assert "127.0.0.1:1" in str(exc)
+    assert "data.txt" in str(exc)
+    # a redacted rebuild, not the error the read raised.
+    assert exc is not planted
+
+
+def test_reference_genome_open_index_read_does_not_leak_url_credential(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # The route from the issue: ``ReferenceGenome.open`` reads the ``.fai``
+    # through ``get_file_content`` BEFORE the backend open, so a transient
+    # index-read failure surfaces here and never reaches the redacted copy
+    # gain#1017 added. End-to-end through the public genome interface.
+    _proto, resource, _planted = _a_remote_resource_whose_read_fails(
+        "i1058-genome", f"https://alice:{_SECRET}@127.0.0.1:1/path",
+        f"{_FASTA_FILE_NAME}.fai", mocker,
+        config={"type": "genome", "filename": _FASTA_FILE_NAME})
+
+    with pytest.raises(OSError) as excinfo:
+        build_reference_genome_from_resource(resource).open()
+
+    exc = excinfo.value
+    tb = "".join(traceback.format_exception(exc))
+    assert _SECRET not in str(exc)
+    assert "alice" not in str(exc)
+    assert _SECRET not in tb
+    for linked in _walk_exception_chain(exc):
+        assert _SECRET not in str(linked)
+    assert "127.0.0.1:1" in str(exc)
+    assert f"{_FASTA_FILE_NAME}.fai" in str(exc)
+
+
+def test_loaded_manifest_is_none_when_the_redacted_manifest_read_fails(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # ``get_loaded_manifest`` reads a ``FileNotFoundError`` out of
+    # ``load_manifest`` as "this resource has no manifest" -- the pure-read
+    # path that must not build one. The redaction rebuilds the error via
+    # ``type(exc)(message)``, so that control flow only survives while the
+    # rebuild keeps the type: an ``OSError`` here would propagate instead of
+    # answering ``None``. Planted with userinfo in the message so the rebuild
+    # path, not the propagate-unchanged path, is what runs.
+    #
+    # (``get_manifest`` -- the building sibling -- catches nothing and
+    # propagates, both before and after this change.)
+    _proto, resource, planted = _a_remote_resource_whose_read_fails(
+        "i1058-manifest", f"https://alice:{_SECRET}@127.0.0.1:1/path",
+        ".MANIFEST", mocker)
+
+    assert resource.get_loaded_manifest() is None
+    # the arrangement really did exercise the rebuild: the planted error
+    # carried a credential, so it cannot have propagated in place.
+    assert _SECRET in str(planted)
+
+
+def test_get_file_content_read_failure_without_userinfo_is_unchanged(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # Nothing to redact must mean nothing touched: the read's own error
+    # propagates as-is, keeping its traceback and the full url a diagnosis
+    # needs. Asserted on identity, because a rebuild carrying an identical
+    # message would satisfy any assertion on the message alone.
+    proto, resource, planted = _a_remote_resource_whose_read_fails(
+        "i1058-plain", "https://127.0.0.1:1/path", "data.txt", mocker)
+
+    with pytest.raises(OSError) as excinfo:
+        proto.get_file_content(resource, "data.txt")
+
+    assert excinfo.value is planted
+
+
+@pytest.mark.parametrize("mode", ["t", "b"])
+def test_get_file_content_forwards_the_mode_and_the_credential(
+    mode: str, mocker: pytest_mock.MockerFixture,
+) -> None:
+    # What only a mock can show: the url fsspec is handed. The ``str``/
+    # ``bytes`` split and the as-stored read are demonstrated for real in
+    # ``..._reads_a_real_gzip_file_as_stored`` -- a mocked handle answers the
+    # same payload whatever mode it was opened in, so it could only argue
+    # them.
+    proto = build_fsspec_protocol(
+        f"i1058-ok-{mode}", f"https://alice:{_SECRET}@127.0.0.1:1/path")
+    resource = GenomicResource("sub/res", (1, 0), proto, {})
+    handle = mocker.MagicMock()
+    handle.__enter__.return_value.read.return_value = "content"
+    opened = mocker.patch.object(
+        proto.filesystem, "open", return_value=handle)
+
+    proto.get_file_content(resource, "data.txt", mode=mode)
+
+    # the base's ``mode="t"``/``"b"`` still becomes fsspec's ``"rt"``/``"rb"``,
+    # which is what decides ``str`` against ``bytes``.
+    assert opened.call_args.args[1] == f"r{mode}"
+    # The credential must still travel on the fetch url so aiohttp can
+    # authenticate -- only the surfaced error is redacted. Asserted on the
+    # call args, because resolving to the credential-free display url
+    # instead would break every authed read with this suite still green.
+    assert _SECRET in opened.call_args.args[0]
+    assert opened.call_args.args[0].endswith("data.txt")
+    # read as stored: ``uncompress`` named nothing here either -- only
+    # ``open_raw_file``'s ``compression`` kwarg did, and no caller supplies
+    # it -- so ``_read_fetch_file`` must not be handed a compression.
+    assert opened.call_args.kwargs["compression"] is None
+
+
+def test_get_file_content_reads_a_real_gzip_file_as_stored(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Against a real filesystem and a real gzip file, not a mock: a mocked
+    # handle answers the same payload whatever mode it is opened in, so it
+    # can argue the ``str``/``bytes`` split but not demonstrate it, and it
+    # cannot demonstrate "as stored" at all. Here the gzip magic surviving
+    # into the answer IS the proof that nothing decompressed it.
+    root = tmp_path / "grr"
+    stored = gzip.compress(b"payload")
+    setup_directories(root, {
+        "sub": {"res(1.0)": {
+            "plain.txt": "plain-text",
+            "data.txt.gz": stored,
+        }},
+    })
+
+    proto = build_fsspec_protocol("i1058-real", f"file://{root}")
+    resource = GenomicResource("sub/res", (1, 0), proto, {})
+
+    text = proto.get_file_content(resource, "plain.txt")
+    assert text == "plain-text"
+    assert isinstance(text, str)
+
+    # ``uncompress`` is the base contract's default and decompresses nothing
+    # here, in either position: both callers get the bytes as stored, gzip
+    # magic and all. Preserved, not repaired.
+    for uncompress in (True, False):
+        raw = proto.get_file_content(
+            resource, "data.txt.gz", mode="b", uncompress=uncompress)
+        assert isinstance(raw, bytes)
+        assert raw == stored
+        assert raw[:2] == b"\x1f\x8b"
