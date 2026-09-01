@@ -58,6 +58,7 @@ def _built_impl(
 def _a_repo_with_genome(
     where: pathlib.Path,
     genome_id: str,
+    score: Any = None,
     **chrom_lengths: int,
 ) -> GenomicResourceRepo:
     """The chr1 score, labelled with a genome of these contig lengths.
@@ -66,13 +67,18 @@ def _a_repo_with_genome(
     repositories sharing one id -- each defining it differently -- is
     itself a case under test here.  Contigs beyond chr1 are the ones
     the score never touches.
+
+    ``score`` replaces the module's shared chr1 score for the cases
+    that need a different covered count (see
+    :func:`_a_chr1_score_covering`); it carries its own label, so a
+    caller passing one names ``genome_id`` on both.
     """
     genome = a_reference_genome()
     for chrom, length in chrom_lengths.items():
         genome = genome.with_chromosome(chrom, "A" * length)
     return (
         a_grr()
-        .with_resource("scores/one", _a_chr1_score(genome_id))
+        .with_resource("scores/one", score or _a_chr1_score(genome_id))
         .with_resource(genome_id, genome)
         .build_repo(where)
     )
@@ -576,3 +582,92 @@ def test_several_untouched_contigs_roll_up_into_one_row(
 
     assert "2 contigs with no values (900 bp)" in page
     assert ">0.90%<" in page  # the global row: 9 of the genome's 1000
+
+
+#: A contig long enough that the chr1 score's nine covered positions do
+#: not survive two decimals: 9 of a million is 0.0009%.
+_A_MILLION = 1_000_000
+
+
+def test_coverage_too_small_to_show_is_floored_on_the_rendered_page(
+    tmp_path: pathlib.Path,
+) -> None:
+    """gain#1057: one page, one rule for a share of a whole.
+
+    Rendered rather than payload-level (its siblings in
+    ``test_coverage_display_payload.py`` pin the arithmetic) because
+    what this adds is the escaping and the cell count.
+
+    What it does NOT observe is the agreement with the Alleles tables:
+    this fixture is a position score, which renders no Alleles section
+    at all.  That half rests on both sections reaching the same
+    ``percentage_of``, which ``test_share_percentages.py`` pins.
+    """
+    repo = _a_repo_with_genome(tmp_path, "genomes/g1057a", chr1=_A_MILLION)
+    impl = _built_impl(repo, "scores/one")
+
+    page = impl.get_info(repo=repo)
+
+    # Escaped, as the Alleles tables' shares are: raw, the "<" would
+    # open a bogus tag and the browser would swallow the cell.
+    assert page.count("&lt;0.01%") == 2  # the chr1 row and the global row
+    assert ">0.00%<" not in page
+
+
+def _a_chr1_score_covering(genome_id: str, covered: int):
+    """The module's score shape, over a chosen number of positions.
+
+    :func:`_a_chr1_score` holds nine, which no integer contig length
+    can put within rounding distance of the whole -- 9 of 10 is 90%,
+    and 9 of 9 is exactly all of it -- so the CEILING needs a score
+    whose covered count is a parameter.
+    """
+    return (
+        a_position_score()
+        .with_score("score", "float")
+        .with_data(
+            f"""
+            chrom  pos_begin  pos_end  score
+            chr1   1          {covered}  0.1
+            """)
+        .with_tabix()
+        .with_labels(reference_genome=genome_id)
+    )
+
+
+def test_coverage_short_of_the_whole_contig_is_not_written_as_all_of_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The ceiling half of gain#1057, at the shape the issue names.
+
+    A chromosome covered all but entirely read ``100.00%`` here while
+    the Alleles tables below said ``>99.99%`` of the identical shape.
+    """
+    genome_id = "genomes/g1057b"
+    repo = _a_repo_with_genome(
+        tmp_path, genome_id,
+        score=_a_chr1_score_covering(genome_id, 99_999),
+        chr1=100_000)
+    impl = _built_impl(repo, "scores/one")
+
+    page = impl.get_info(repo=repo)
+
+    assert page.count("&gt;99.99%") == 2  # the chr1 row and the global row
+    assert ">100.00%<" not in page
+
+
+def test_a_fully_covered_contig_is_still_written_as_all_of_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The ceiling is for a share short of the whole, not for the whole."""
+    genome_id = "genomes/g1057c"
+    repo = _a_repo_with_genome(
+        tmp_path, genome_id,
+        score=_a_chr1_score_covering(genome_id, 100_000),
+        chr1=100_000)
+    impl = _built_impl(repo, "scores/one")
+
+    page = impl.get_info(repo=repo)
+
+    assert page.count(">100.00%<") == 2  # the chr1 row and the global row
+    assert "&gt;99.99%" not in page

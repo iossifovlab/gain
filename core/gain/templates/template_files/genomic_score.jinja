@@ -122,6 +122,11 @@
             <td data-sort-value="{{ natural_chromosome_key(row.chrom) }}">{{ row.chrom }}</td>
             <td data-sort-value="{{ row.covered }}">{{ row.covered }}</td>
             {#- The cell shows a percentage and sorts on the fraction.
+               Both come off the row rather than being formatted here:
+               the share is written by the one rule the Alleles tables
+               below use too, and a "%.2f%%" here would be a second
+               copy of that rule -- which is exactly what this page
+               carried, and what gain#1057 removed.
                A row with no denominator renders empty and carries no
                attribute at all rather than an empty one.  The sorter
                treats both as "no value", so this is about the markup
@@ -130,7 +135,7 @@
                blank. -#}
             {%- if has_fractions -%}
             {%- if row.fraction != None %}
-            <td data-sort-value="{{ row.fraction }}">{{ "%.2f%%"|format(row.fraction * 100) }}</td>
+            <td data-sort-value="{{ row.fraction }}">{{ row.percent }}</td>
             {%- else %}
             <td></td>
             {%- endif %}
@@ -152,7 +157,7 @@
         <td>{{ uncovered.contigs }} {{ "contig" if uncovered.contigs == 1 else "contigs" }} with no values ({{ uncovered.length }} bp)</td>
         <td>0</td>
         {%- if has_fractions %}
-        <td>{{ "%.2f%%"|format(0) }}</td>
+        <td>{{ uncovered.percent }}</td>
         {%- endif %}
         {%- if has_segments %}
         <td>0</td>
@@ -163,8 +168,11 @@
         <td>all chromosomes</td>
         <td>{{ coverage.global_covered }}</td>
         {%- if has_fractions %}
+        {#- Guarded on the fraction, exactly as the per-chromosome cell
+           above is: "did a denominator resolve" is one question, and
+           the two cells must not read it off two different fields. -#}
         <td>{% if coverage.global_fraction != None -%}
-            {{ "%.2f%%"|format(coverage.global_fraction * 100) }}
+            {{ coverage.global_percent }}
         {%- endif %}</td>
         {%- endif %}
         {%- if has_segments %}
