@@ -29,6 +29,7 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_resource,
     build_http_test_protocol,
     build_inmemory_test_repository,
+    build_inmemory_test_resource,
     build_s3_test_protocol,
     setup_directories,
     setup_genome,
@@ -679,3 +680,94 @@ def test_declared_files_match_what_a_custom_index_genome_realizes(
 
     assert impl.files == realized
     assert realized == {"chr.fa.gz", "custom.fai", "chr.fa.gz.gzi"}
+
+
+DOCUMENTED_GENOME_CONFIG = textwrap.dedent("""
+    type: genome
+    filename: chr.fa
+    index_file: chr.custom.fai
+    chrom_prefix: "chr"
+    PARS:
+      "X":
+        - "chrX:10000-2781479"
+      "Y":
+        - "chrY:10000-2781479"
+    meta:
+      description: |
+        Every field documented for `type: genome` in docs/source/grr.rst.
+      labels:
+        reference_genome: hg38
+""")
+
+
+def _genome_resource_with_config(config: str) -> GenomicResource:
+    """Build a genome resource that is nothing but ``config``.
+
+    No FASTA: a genome config is validated in ``ReferenceGenome.__init__``,
+    before any file is read.
+    """
+    return build_inmemory_test_resource({GR_CONF_FILE_NAME: config})
+
+
+def test_genome_config_with_every_documented_field_validates() -> None:
+    genome = build_reference_genome_from_resource(
+        _genome_resource_with_config(DOCUMENTED_GENOME_CONFIG))
+
+    assert genome.config["index_file"] == "chr.custom.fai"
+    assert genome.config["chrom_prefix"] == "chr"
+
+
+def test_genome_config_with_pars_on_x_only_is_accepted() -> None:
+    """``PARS.Y: ~`` means an assembly whose Y carries no PARS."""
+    genome = build_reference_genome_from_resource(
+        _genome_resource_with_config(textwrap.dedent("""
+            type: genome
+            filename: chr.fa
+            PARS:
+              "X":
+                - "chrX:10000-2781479"
+              "Y": ~
+        """)))
+
+    assert genome.pars == {"chrX": [Region("chrX", 10000, 2781479)]}
+
+
+def test_genome_config_with_a_bare_chrom_prefix_is_accepted() -> None:
+    """A bare ``chrom_prefix:`` reads as the documented "no prefix"."""
+    genome = build_reference_genome_from_resource(
+        _genome_resource_with_config(textwrap.dedent("""
+            type: genome
+            filename: chr.fa
+            chrom_prefix:
+        """)))
+
+    assert genome.config["chrom_prefix"] is None
+
+
+@pytest.mark.parametrize("config", [
+    pytest.param(
+        "type: genome\nfilename: chr.fa\nseqFile: chr.fa\n",
+        id="unknown-field"),
+    pytest.param(
+        "type: genome\n",
+        id="missing-filename"),
+    # `_load_genome_index` defaults only a MISSING key, so a null would
+    # reach `get_file_content` as None rather than as `<filename>.fai`.
+    pytest.param(
+        "type: genome\nfilename: chr.fa\nindex_file:\n",
+        id="null-index-file"),
+    pytest.param(
+        textwrap.dedent("""
+            type: genome
+            filename: chr.fa
+            PARS:
+              "X":
+                - "chrX:10000-2781479"
+        """),
+        id="pars-without-y"),
+])
+def test_genome_config_is_rejected(config: str) -> None:
+    res = _genome_resource_with_config(config)
+
+    with pytest.raises(ValueError, match="Invalid configuration"):
+        build_reference_genome_from_resource(res)

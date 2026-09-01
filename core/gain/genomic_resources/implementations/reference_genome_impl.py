@@ -320,10 +320,14 @@ class ReferenceGenomeImplementation(
     def __init__(self, resource: GenomicResource):
         super().__init__(resource)
         self.reference_genome = build_reference_genome_from_resource(resource)
+        # One config on this object: the genome's validated one, so the
+        # implementation and the genome it wraps can never read a config
+        # apart (gain#1067).
+        self.config = self.reference_genome.config
 
     @property
     def files(self) -> set[str]:
-        return reference_genome_files(self.resource.get_config())
+        return reference_genome_files(self.config)
 
     template_name: ClassVar[str] = "reference_genome.jinja"
     styles_template_name: ClassVar[str] = "reference_genome_styles.jinja"

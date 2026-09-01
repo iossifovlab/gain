@@ -177,18 +177,21 @@ class ReferenceGenome(
         self._chromosomes: list[str] = []
         self._chromosome_lengths: dict[str, int] = {}
 
-        config = resource.get_config()
-        filename = config["filename"]
+        self.config: dict[str, Any] = self.validate_and_normalize_schema(
+            resource.get_config(), resource,
+        )
+
+        filename = self.config["filename"]
         # Each backend is handed the index it needs at construction: the
         # pysam reader the .fai name to open, the raw-seek reader the
         # parsed index dict it seeks with.
         if endswith_ci(filename, COMPRESSED_EXTENSIONS):
             self._backend: _SequenceBackend = _PysamFastaSequence(
-                genome_index_file(config))
+                genome_index_file(self.config))
         else:
             self._backend = _RawSeekSequence(self._index)
 
-        self.pars: dict = self._parse_pars(config)
+        self.pars: dict = self._parse_pars(self.config)
 
     @property
     def resource_id(self) -> str:
@@ -199,7 +202,6 @@ class ReferenceGenome(
         if "PARS" not in config:
             return {}
 
-        assert config["PARS"]["X"] is not None
         regions_x = [
             Region.from_str(region) for region in config["PARS"]["X"]
         ]
@@ -235,9 +237,8 @@ class ReferenceGenome(
     def _load_genome_index(self) -> None:
         if self._index:
             return
-        config = self.resource.get_config()
         index_content = self.resource.get_file_content(
-            genome_index_file(config))
+            genome_index_file(self.config))
         self._parse_genome_index(index_content)
 
     def _parse_genome_index(self, index_content: str) -> None:
@@ -277,8 +278,7 @@ class ReferenceGenome(
         # rather than deeper inside htslib.
         self._load_genome_index()
 
-        config = self.resource.get_config()
-        self._backend.open(self.resource, config["filename"])
+        self._backend.open(self.resource, self.config["filename"])
 
         return self
 
@@ -394,10 +394,23 @@ class ReferenceGenome(
     def get_schema() -> dict[str, Any]:
         return {
             **get_base_resource_schema(),
-            "filename": {"type": "string"},
+            "filename": {"type": "string", "required": True},
+            # Not nullable: only a MISSING key defaults to
+            # `<filename>.fai`, so `index_file: ~` would reach
+            # `get_file_content` as None.
+            "index_file": {"type": "string"},
+            "chrom_prefix": {"type": "string", "nullable": True},
+            # `_parse_pars` subscripts both keys, and branches on Y being
+            # None for an assembly whose Y carries no PARS.
             "PARS": {"type": "dict", "schema": {
-                "X": {"type": "list", "schema": {"type": "string"}},
-                "Y": {"type": "list", "schema": {"type": "string"}},
+                "X": {
+                    "type": "list", "schema": {"type": "string"},
+                    "required": True,
+                },
+                "Y": {
+                    "type": "list", "schema": {"type": "string"},
+                    "required": True, "nullable": True,
+                },
             }},
         }
 
