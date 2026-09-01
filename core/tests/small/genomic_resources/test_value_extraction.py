@@ -5,11 +5,19 @@ how a record's cell becomes a value: which extractor reads the payload, and
 which payload column each score def is addressed to.  Both used to be private
 methods on the class (gain#1114 moved them out; gain#1027 is the epic).
 
-What is pinned HERE is only what ``open()`` cannot reach on its own -- the
-refusals that no buildable resource produces, and the bigWig sentinel choice
-that turns on a value the config normally leaves at its default.  The routing
-that a real opened score does exercise stays pinned from the score's side, in
-test_record_value_extraction.py, and is deliberately not duplicated.
+What is pinned HERE is only what no opened score can reach at all: the
+refusal of a table that yields no records, which needs a backend that does
+not exist in the tree.  Everything the seam does for a resource somebody can
+actually build is pinned from the score's side, at the higher ``open()``
+seam, and is deliberately not duplicated here:
+
+- which extractor each backend is routed to, and the bigWig NA-sentinel
+  choice between the two identity reads -- test_record_value_extraction.py
+  and test_bigwig_scores.py;
+- the four refusals of a definition addressed to no usable column --
+  test_score_def_parsing.py, whose ``resolution_guard`` tests reach them by
+  addressing a def in code, since the schema and the builders refuse those
+  shapes in a config.
 """
 from __future__ import annotations
 

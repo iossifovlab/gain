@@ -21,10 +21,13 @@ score def to a payload column -- to :mod:`.value_extraction`, leaving
 the two public per-record getters here.  The remaining seams are #1027's
 other children.
 
-The defs a score opens with are **finished in place**: ``finish_scoredefs``
-and :func:`~.value_extraction.resolve_score_indices` write onto the
-definitions this class holds rather than handing back new ones, and the
-column-array path and the statistics scan read what they wrote.
+A score's defs are **finished in place at open**:
+:func:`~.value_extraction.resolve_score_indices` writes ``score_index`` onto
+the definitions this class already holds rather than handing back new ones,
+and the column-array path and the statistics scan read what it wrote.  (The
+earlier half of the lifecycle differs: ``finish_scoredefs`` runs inside
+:meth:`GenomicScore._build_scoredefs`, before there is a
+``score_definitions`` to write onto, and so returns the mapping.)
 """
 
 from __future__ import annotations
