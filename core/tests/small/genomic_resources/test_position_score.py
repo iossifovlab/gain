@@ -199,13 +199,15 @@ def test_position_score_chrom_prefix() -> None:
 def test_a_walk_of_point_reads_leaves_the_tabix_buffer_pruned(
     tmp_path: pathlib.Path,
 ) -> None:
-    # ``fetch_position_scores`` DRAINS the region generator it opens.  An
-    # abandoned one leaves ``TabixGenomicPositionTable.get_records_in_region``
-    # suspended short of the ``buffer.prune()`` that ends its buffered walk,
-    # and abandoning a generator does not tear down what it was iterating --
-    # the eviction would wait on a garbage collection that may never come.
-    # Annotation reads position after position through here, so the
-    # ``LineBuffer`` would grow for the length of a run.
+    # ``fetch_position_scores`` DRAINS the region generator it opens, so the
+    # buffered walk reaches the ``buffer.prune()`` that ends it and the
+    # annotation path -- which reads position after position through here --
+    # does not grow a ``LineBuffer`` across a run.
+    #
+    # Since gain#1120 the prune runs in a ``finally``, so an ABANDONED walk
+    # is pruned too; this pins the drained half.  The abandoned half is
+    # test_abandoned_queries_keep_the_buffer_bounded, over in
+    # genomic_position_table/test_overlapping_intervals.py.
     data = "chrom  pos_begin  pos_end  s\n" + "\n".join(
         f"chr1  {pos}  {pos}  0.1" for pos in range(1, 201))
     resource = (

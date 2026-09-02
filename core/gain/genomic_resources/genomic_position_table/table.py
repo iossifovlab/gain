@@ -498,9 +498,15 @@ class GenomicPositionTable(abc.ABC):
         reaches: what it retains may not grow with the number of abandoned
         reads, and the reads that follow must answer as though none had been
         abandoned.  :meth:`buffered_record_count` is how a backend reports
-        what it is holding, and
-        ``test_backend_record_contract.py`` holds every backend to both
-        halves (gain#1120).
+        what it is holding, and ``test_backend_record_contract.py`` holds
+        every backend to both halves (gain#1120).
+
+        Releasing from a ``finally`` puts the release under the *caller's*
+        control, since that is who decides when a generator is closed -- so a
+        backend whose release depends on query order has to say so itself
+        rather than assume it.  See
+        ``TabixGenomicPositionTable._prune_if_current`` for the one in-tree
+        case and what a stale release would otherwise cost.
         """
 
     def buffered_record_count(self) -> int:

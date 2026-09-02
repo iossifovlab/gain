@@ -562,6 +562,7 @@ class TabixGenomicPositionTable(GenomicPositionTable):
 
         prev_call_chrom, prev_call_begin, prev_call_end = self._last_call
         self._last_call = chrom, pos_begin, pos_end
+        this_call = self._last_call
 
         # The buffer can only answer from the previous query's start onwards.
         # It is pruned to that position once the query has been served (and a
@@ -610,12 +611,16 @@ class TabixGenomicPositionTable(GenomicPositionTable):
             # What this rests on: the ``finally`` runs when the generator is
             # CLOSED or DROPPED, and CPython calls ``close()`` at refcount
             # zero.  That reaches here even through the generator expression
-            # ``ScoreFilter.select`` wraps a filtered read in -- a genexp does
-            # not propagate ``close()`` to what it iterates, but it holds the
-            # only reference to us, so its own unwinding takes ours to zero.
-            # A reference CYCLE is what defers it, to a cyclic GC pass that is
-            # not guaranteed to come; nothing in tree builds one, and a caller
-            # that does gets the old unbounded behaviour back.
+            # ``ScoreFilter.select`` wraps a filtered read in: a genexp does
+            # not propagate ``close()`` to what it iterates, but it and
+            # ``fetch_records``' own frame are the only things holding us, and
+            # they are torn down together.  A reference CYCLE is what defers
+            # it, to a cyclic GC pass that is not guaranteed to come; nothing
+            # in tree builds one, and a caller that does gets the old
+            # unbounded behaviour back.
+            #
+            # ``_prune_if_current`` rather than a bare prune, because the
+            # caller also controls *when* the close happens: see there.
             if self.buffer.contains(chrom, pos_begin):
                 try:
                     for record in self._gen_from_buffer_and_tabix(
@@ -623,17 +628,20 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                         self.stats["yield from buffer and tabix"] += 1
                         yield record
                 finally:
-                    self.buffer.prune(chrom, pos_begin)
+                    self._prune_if_current(this_call)
                 return
 
             if self._should_use_sequential_seek_forward(chrom, pos_begin):
-                self._sequential_seek_forward(chrom, pos_begin)
-
+                # Inside the ``try``: the seek is where the whole run-up to
+                # the query gets buffered, so a raise in it is the moment the
+                # prune helps most.  It cannot raise ``GeneratorExit`` -- it
+                # runs between yields, not at one.
                 try:
+                    self._sequential_seek_forward(chrom, pos_begin)
                     yield from self._gen_from_buffer_and_tabix(
                             chrom, pos_begin, pos_end)
                 finally:
-                    self.buffer.prune(chrom, pos_begin)
+                    self._prune_if_current(this_call)
                 return
 
         # without using buffer
@@ -641,13 +649,57 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         # No prune here, and none is wanted -- not even a ``finally`` one.
         # This path re-seeks the file, and ``get_line_iterator`` CLEARS the
         # buffer before the first record is read, so what this read leaves
-        # behind is one query's worth and not an accumulation: bounded by
-        # ``BUFFER_MAXSIZE``, which is what made the query buffered at all.
-        # Abandoning it therefore retains no more than draining it does, and
-        # a prune to ``pos_begin`` would be close to a no-op anyway, since
-        # every record this read buffers lies at or after that position.
+        # behind is ONE query's worth rather than an accumulation: abandoning
+        # it retains no more than draining it does, which is the whole of
+        # what gain#1120 asks of a read.
+        #
+        # A prune to ``pos_begin`` would also be close to a no-op, since
+        # ``prune`` evicts by ``pos_end`` and tabix has already excluded the
+        # records ending before the region.  (Not because the records all
+        # BEGIN at or after ``pos_begin`` -- the fetch starts at
+        # ``pos_begin - 1`` and a record overlapping the region can begin far
+        # to its left.)
+        #
+        # What this path does not promise is a bound in RECORDS.
+        # ``BUFFER_MAXSIZE`` caps the query's width in base pairs, and a
+        # dense enough table can hold many more records than that in the
+        # window -- and an unbuffered read (``buffering=False``) lands here
+        # too, appending nothing at all.
         self.line_iterator = self.get_line_iterator(chrom, pos_begin - 1)
         yield from self._gen_from_tabix(chrom, pos_end, buffering=buffering)
+
+    def _prune_if_current(
+        self, this_call: tuple[str, int, int | None],
+    ) -> None:
+        """Evict the dead records, unless another query has moved us on.
+
+        A query prunes to its own start once it has been served.  That is
+        sound while the prune runs in query order -- the buffered paths are
+        gated on ``pos_begin >= prev_call_begin``, so every later query starts
+        at or after the position pruned to, and a backward query re-fetches
+        instead.
+
+        A ``finally`` breaks that ordering, because the caller decides when
+        the generator is closed.  Hold a read at 500 open, run a backward
+        query at 200 (which re-seeks and refills the buffer), then close the
+        held generator: its prune lands on the *new* buffer with the *old*
+        query's ``pos_begin``, evicting records at 200 that are live.  The
+        answer at 205 then silently loses a record -- ``contains`` still
+        admits it, because a wide record keeps ``_max_end`` past it, and
+        gain#250's fix gates on the query's start rather than on that edge.
+
+        So the prune is conditional on this generator still being the table's
+        current reader.  A stale one evicts nothing, which costs a query's
+        worth of retained records exactly once -- the buffer stays bounded,
+        because whichever query IS current prunes on its own way out.
+
+        The late direction needs no guard and gets none: a prune to a position
+        the table has already passed evicts *less* than the current query
+        would, never more.  It is the held-open-across-a-backward-query
+        direction that loses records, and the token catches both.
+        """
+        if self._last_call == this_call:
+            self.buffer.prune(this_call[0], this_call[1])
 
     def buffered_record_count(self) -> int:
         """The records held in the ``LineBuffer`` between queries.

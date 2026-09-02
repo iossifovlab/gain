@@ -537,6 +537,64 @@ def _buffered_begins(table: GenomicPositionTable) -> list[int]:
     return [record[POS_BEGIN] for record in table.buffer.deque]
 
 
+def test_closing_a_stale_generator_does_not_prune_a_later_query(
+    build_tables: Any,
+) -> None:
+    """A prune deferred past another query must not evict that query's records.
+
+    ``close()`` runs the ``finally``, and a caller controls WHEN -- so the
+    prune can land after other reads have moved the table on.  Pruning to a
+    ``pos_begin`` from the past is harmless (it evicts less), but a generator
+    held open across a BACKWARD query prunes to a position ahead of the
+    table's current read, which evicts records the next query needs.
+
+    A wide record keeps ``_max_end`` high, so ``contains()`` still admits the
+    later query and it is served from a buffer that no longer holds its
+    records -- silently, which is what makes this worth a test rather than a
+    comment.
+    """
+    rows = [(100, 100), (190, 600)]
+    rows += [(pos, pos) for pos in range(200, 248)]
+    rows += [(500, 500)]
+    tabix_table, mem_table = build_tables(sorted(rows))
+
+    # Prime, then hold a forward query open without draining it.
+    list(tabix_table.get_records_in_region(CHROM, 100, 100))
+    held = tabix_table.get_records_in_region(CHROM, 500, 500)
+    assert next(held, None) is not None
+
+    # A backward query re-seeks the file and refills the buffer from scratch.
+    _assert_same(tabix_table, mem_table, 200, 245)
+
+    # Only now is the stale generator torn down.
+    held.close()
+
+    _assert_same(tabix_table, mem_table, 205, 205)
+
+
+def test_the_tabix_backend_reports_what_it_actually_buffers(
+    build_tables: Any,
+) -> None:
+    """``buffered_record_count`` must read the buffer, not return a constant.
+
+    The cross-backend contract asserts boundedness through this method, so
+    every backend there is taken at its word -- and a tabix override that
+    answered ``0`` would satisfy the contract while leaking.  (Measured: with
+    the override replaced by ``return 0``, every test that consumes the
+    method still passes.)  This is the one place the number is held against
+    the thing it reports, which is what the rest of them rest on.
+    """
+    tabix_table, _ = build_tables([(pos, pos) for pos in range(10, 61, 2)])
+
+    assert tabix_table.buffered_record_count() == 0, "cold, before any read"
+
+    list(tabix_table.get_records_in_region(CHROM, 10, 20))
+
+    assert tabix_table.buffered_record_count() > 0, \
+        "a warm buffer that reports nothing would hide any leak"
+    assert tabix_table.buffered_record_count() == len(tabix_table.buffer)
+
+
 def test_the_buffer_hit_path_prunes_when_abandoned(
     build_tables: Any,
 ) -> None:
@@ -596,7 +654,14 @@ def test_the_sequential_seek_path_prunes_when_abandoned(
 def test_abandoned_queries_do_not_corrupt_later_answers(
     build_tables: Any, shape: str,
 ) -> None:
-    """Every query is preceded by an abandoned one, and still matches.
+    """Every query is preceded by a read that stopped early, and still matches.
+
+    The scan covers the gaps as well as the rows, so the reads that precede a
+    query are a mix: at a position holding a record the generator really is
+    abandoned, and at one that does not it runs to exhaustion.  Both are
+    wanted here -- this is about the answers, and a scan of real positions is
+    a mix of the two.  (The boundedness tests cannot afford the mix, and say
+    so: an exhausted generator prunes on its own.)
 
     This one holds on the UNFIXED code too, and is here to say so.  Skipping
     the prune retains records that are dead and can never drop one that is
@@ -623,14 +688,16 @@ def test_abandoned_queries_do_not_corrupt_later_answers(
         _assert_same(tabix_table, mem_table, pos, pos)
 
 
-def test_a_drained_scan_is_unchanged(build_tables: Any) -> None:
-    """The fix must not cost the warm buffer its whole reason for existing.
+def test_a_drained_scan_leaves_the_buffer_at_the_live_set(
+    build_tables: Any,
+) -> None:
+    """A drained scan is bounded too, and by the same cap.
 
-    A ``finally`` that ran the prune too eagerly -- or a "fix" that cleared
-    the buffer instead -- would leave every equality test in this module
-    passing while turning the scan back into one tabix seek per query.  So
-    pin what a drained monotonic scan does: one fetch to prime the buffer,
-    the rest served warm, and a buffer that stays at the live set.
+    That the warm buffer still WORKS after the fix -- one tabix fetch for the
+    whole scan, the rest served from the buffer -- is already pinned by
+    test_monotonic_scan_keeps_the_buffer_warm above, which a "fix" that
+    cleared the buffer instead of pruning it fails.  This adds only the half
+    that test does not measure: the size the scan leaves behind.
     """
     rows = make_rows("points_unique", count=400)
     tabix_table, _ = build_tables(rows)
@@ -638,8 +705,4 @@ def test_a_drained_scan_is_unchanged(build_tables: Any) -> None:
     for pos in (beg for beg, _ in rows):
         list(tabix_table.get_records_in_region(CHROM, pos, pos))
 
-    stats = tabix_table.stats
-    assert stats["calls"] == len(rows)
-    assert stats["tabix fetch"] == 1
-    assert stats["yield from buffer"] > 0
     assert len(tabix_table.buffer) <= LineBuffer.COMPACT_FLOOR

@@ -600,10 +600,13 @@ def test_abandoning_a_region_read_leaves_the_table_bounded_and_correct(
     * **correct** -- the answers after the scan must be the answers a table
       that was never abandoned gives.
 
-    Trivially true for the in-memory, VCF-over-tabix and bigWig backends, and
-    load-bearing for tabix, which serves a query from a warm ``LineBuffer``
-    and evicts the dead records only once the query has been served.  That
-    asymmetry is the point: the guarantee is stated once, here, so that
+    Trivially true for the in-memory and bigWig backends, which retain
+    nothing between queries.  Load-bearing for **two**: tabix, which serves a
+    query from a warm ``LineBuffer`` and evicts the dead records only once the
+    query has been served -- and VCF, which subclasses it and inherits the
+    buffer, the read and the leak along with them.  (Reverting the fix fails
+    both params, at 200 retained records each.)  That asymmetry is the point:
+    the guarantee is stated once, here, so that
     gain#834 can stream an allele region on the strength of it rather than
     re-verifying it, and so that a NEW backend introducing cross-query
     retention has to meet it.

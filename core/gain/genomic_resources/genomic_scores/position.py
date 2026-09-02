@@ -288,13 +288,17 @@ class PositionScore(GenomicScore):
         stopped enforcing, on the same path, so it leaves with it.
 
         The region generator is DRAINED rather than abandoned after that
-        first record.  Abandoning it would leave
+        first record.  A one-position region is one or two records, so
+        materialising it costs nothing, and it keeps this read out of the
+        question of what a backend owes an abandoned generator.
+
+        It used to be load-bearing rather than free: abandoning left
         ``TabixGenomicPositionTable.get_records_in_region`` suspended short
-        of the ``buffer.prune()`` that ends its buffered walk, and a
-        suspended generator is not torn down by the caller moving on -- its
-        cleanup waits on a garbage collection that may never come.  The
+        of the ``buffer.prune()`` that ended its buffered walk, and the
         annotation path reads position after position through here, so the
-        ``LineBuffer`` would grow without bound across a run.
+        ``LineBuffer`` grew across a run.  That prune runs in a ``finally``
+        since gain#1120 and abandoning is safe now; draining stays because it
+        is the simpler thing to write, not because it is load-bearing.
         """
         if chrom not in self.get_all_chromosomes():
             raise ValueError(
