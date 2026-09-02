@@ -1,5 +1,18 @@
 {% extends "genomic_score.jinja" %}
-{# An allele score's page IS the genomic-score page plus one section. #}
+{# An allele score's page IS the genomic-score page, plus one section and
+   minus another. #}
+
+{# An allele row collapses to the point it sits at, so there is no span
+   to union and the coverage scan deliberately skips this kind.  Nothing
+   would ever fill the section, so it renders no heading at all rather
+   than one permanently reading "not computed" (gain#1118).
+
+   This is the ONLY kind that empties it; the shared template carries
+   Coverage as the block's default so that position and fragment scores
+   -- and any kind added later that is genuinely scanned -- keep it
+   without having to opt back in. #}
+{% block coverage %}{% endblock %}
+
 {% block alleles %}
 <h2>Alleles</h2>
 {% set alleles = impl.get_allele_display() %}
@@ -9,53 +22,59 @@
     <thead>
         <tr>
             <th data-sort="text">Chromosome</th>
-            <th data-sort="number">Covered positions</th>
             <th data-sort="number">Alleles</th>
+            {%- for name in alleles.class_names %}
+            <th data-sort="number">{{ name }} %</th>
+            {%- endfor %}
+        </tr>
+        {#- The total, pinned in the sticky header (gain#1118).  Its
+           share cells are the resource-wide composition, which is what
+           the "Allele classes" table below used to say in a table of
+           its own; the per-chromosome counts it also showed are now
+           the hover titles on the rows. -#}
+        <tr>
+            <td>all chromosomes</td>
+            <td>{{ alleles.allele_count }}</td>
+            {#- Titled with the resource-wide count, as the rows below
+               are with their own: that count was a column of the
+               removed classes table, and without it here the global
+               number would be recoverable only by adding up the
+               chromosomes' hover titles by hand. -#}
+            {%- for name in alleles.class_names %}
+            <td title="{{ alleles.class_counts[name] }} alleles">{% if alleles.class_percentages is not none -%}
+                {{ alleles.class_percentages[name] }}
+            {%- endif %}</td>
+            {%- endfor %}
         </tr>
     </thead>
     <tbody>
     {%- for row in alleles.rows -%}
         <tr>
             <td data-sort-value="{{ natural_chromosome_key(row.chrom) }}">{{ row.chrom }}</td>
-            <td data-sort-value="{{ row.covered_positions }}">{{ row.covered_positions }}</td>
             <td data-sort-value="{{ row.allele_count }}">{{ row.allele_count }}</td>
+            {#- The cell shows the share, sorts on the FRACTION and
+               titles itself with the exact count -- the three
+               renderings ClassShare carries.  Sorting on the rendered
+               text would order "<0.01%" against "9.99%" as strings.
+
+               A chromosome with no alleles has no composition, so its
+               cells render empty and carry no key at all rather than
+               an empty one, exactly as the Coverage table's row with
+               no resolvable denominator does. -#}
+            {%- for name in alleles.class_names %}
+            {%- if row.shares is not none %}
+            {%- set share = row.shares[name] %}
+            <td data-sort-value="{{ share.fraction }}" title="{{ share.alleles }} alleles">{{ share.percentage }}</td>
+            {%- else %}
+            <td></td>
+            {%- endif %}
+            {%- endfor %}
         </tr>
     {%- endfor %}
     </tbody>
-    <tfoot>
-    <tr>
-        <td>all chromosomes</td>
-        <td>{{ alleles.covered_positions }}</td>
-        <td>{{ alleles.allele_count }}</td>
-    </tr>
-    </tfoot>
 </table>
 </div>
-<h3>Allele classes</h3>
 {% set allele_display = alleles.detail %}
-{% set class_percentages = alleles.class_percentages %}
-<div class="scrollable-table-container">
-<table>
-    <thead>
-        <tr>
-            <th>Class</th>
-            <th>Alleles</th>
-            {%- if class_percentages is not none %}
-            <th>% of alleles</th>
-            {%- endif %}
-        </tr>
-    </thead>
-    {%- for name, count in alleles.class_counts.items() -%}
-        <tr>
-            <td>{{ name }}</td>
-            <td>{{ count }}</td>
-            {%- if class_percentages is not none %}
-            <td>{{ class_percentages[name] }}</td>
-            {%- endif %}
-        </tr>
-    {%- endfor %}
-</table>
-</div>
 <h3>Substitution matrix</h3>
 {% if allele_display is not none and allele_display.substitution_matrix is not none %}
 <div class="scrollable-table-container">
@@ -80,12 +99,24 @@
     {%- endfor %}
 </table>
 </div>
-<p>ts/tv ratio:
-{%- if allele_display.ts_tv is not none %}
-{{ "%.2f"|format(allele_display.ts_tv) }}
-{%- else %}
-not applicable
-{%- endif %}</p>
+{#- The headline number of the matrix above, rendered as one rather
+   than as a sentence in a <p>.  The second line is what the ratio is
+   MADE of: both counts are computed already and were rendered nowhere,
+   and 3/2 reads identically to 3,000,000/2,000,000 without them. -#}
+<div class="key-figure">
+    <div class="key-figure-label text-muted">ts/tv</div>
+    {%- if allele_display.ts_tv is not none %}
+    <div class="key-figure-value">{{ "%.2f"|format(allele_display.ts_tv) }}</div>
+    <div class="key-figure-detail text-muted">{{ "{:,}".format(allele_display.transitions) }} transitions
+        / {{ "{:,}".format(allele_display.transversions) }} transversions</div>
+    {%- else %}
+    {#- No transversions to divide by.  The counts still say why, and
+       the transition count is the interesting half of that. -#}
+    <div class="key-figure-value">not applicable</div>
+    <div class="key-figure-detail text-muted">{{ "{:,}".format(allele_display.transitions) }} transitions
+        / no transversions</div>
+    {%- endif %}
+</div>
 {% else %}
 <p>not computed</p>
 {% endif %}
@@ -98,21 +129,90 @@ not applicable
        and allele_display.deletion_lengths is none) %}
 <p>not computed</p>
 {% else %}
+{#- The statistics come FIRST: they are the exact answer, and the
+   charts below are the shape of the same numbers.  Global only -- per
+   chromosome this would be eight more columns on the table above, to
+   answer a question nobody asks.  The comparison these exist for is
+   between the two groups: is the deletion tail longer than the
+   insertion tail? -#}
+<div class="scrollable-table-container">
+<table>
+    <thead>
+        <tr>
+            <th></th>
+            <th>alleles</th>
+            <th>min</th>
+            <th>max</th>
+            <th>mean</th>
+            <th>median</th>
+        </tr>
+    </thead>
+    <tbody>
+    {%- for row in allele_display.indel_rows() -%}
+        <tr>
+            <td>{{ row.group }}</td>
+            <td>{{ row.alleles }}</td>
+            <td>{{ row.min }}</td>
+            <td>{{ row.max }}</td>
+            <td>{{ row.mean }}</td>
+            <td>{{ row.median }}</td>
+        </tr>
+    {%- endfor %}
+    </tbody>
+</table>
+</div>
+{#- The two charts side by side at about half width, so the pair takes
+   one row instead of two.  Each is a thumbnail that opens the
+   full-size image in the modal this page already uses for the score
+   histograms -- so the smaller size costs no detail.  The figure
+   itself is unchanged at figsize=(15, 10): changing that would need
+   every resource rebuilt before it took effect, where markup and CSS
+   improve every already-built resource the next time its page is
+   generated. -#}
+<div class="figure-pair">
 {% if allele_display.insertion_lengths is none %}
 <p>insertion lengths not computed</p>
-{% elif allele_display.insertion_lengths | sum %}
+{% elif allele_display.insertion_lengths.has_counts_to_plot %}
 <img src="{{ impl.get_allele_insertion_lengths_image_filename() }}"
-     alt="insertion length histogram" class="statistics-figure">
+     alt="insertion length histogram" class="figure-thumbnail"
+     data-modal-trigger="modal-allele-insertion-lengths">
 {% else %}
 <p>no insertions</p>
 {% endif %}
 {% if allele_display.deletion_lengths is none %}
 <p>deletion lengths not computed</p>
-{% elif allele_display.deletion_lengths | sum %}
+{% elif allele_display.deletion_lengths.has_counts_to_plot %}
 <img src="{{ impl.get_allele_deletion_lengths_image_filename() }}"
-     alt="deletion length histogram" class="statistics-figure">
+     alt="deletion length histogram" class="figure-thumbnail"
+     data-modal-trigger="modal-allele-deletion-lengths">
 {% else %}
 <p>no deletions</p>
+{% endif %}
+</div>
+{#- One modal per figure that has one, emitted beside the pair.  A
+   trigger whose modal was never rendered opens nothing, so these are
+   gated on exactly what the thumbnails are. -#}
+{% if allele_display.insertion_lengths is not none
+   and allele_display.insertion_lengths.has_counts_to_plot %}
+<div id="modal-allele-insertion-lengths" class="modal">
+    <div class="modal-content">
+        <span title="insertion lengths" class="close">&times;</span>
+        <img src="{{ impl.get_allele_insertion_lengths_image_filename() }}"
+             alt="insertion length histogram"
+             style="max-width: min(100%, 800px);">
+    </div>
+</div>
+{% endif %}
+{% if allele_display.deletion_lengths is not none
+   and allele_display.deletion_lengths.has_counts_to_plot %}
+<div id="modal-allele-deletion-lengths" class="modal">
+    <div class="modal-content">
+        <span title="deletion lengths" class="close">&times;</span>
+        <img src="{{ impl.get_allele_deletion_lengths_image_filename() }}"
+             alt="deletion length histogram"
+             style="max-width: min(100%, 800px);">
+    </div>
+</div>
 {% endif %}
 {% endif %}
 <h3>Complex alleles</h3>

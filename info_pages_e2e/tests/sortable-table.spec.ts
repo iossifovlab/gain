@@ -92,18 +92,23 @@ test('the all-chromosomes total stays put in either direction',
      * that had been dragged into the body would sort to an end rather
      * than stay where it is -- both assertions below would see it. */
     const total = ['all chromosomes', '21', '', '3'];
+    /* The total is pinned as a second thead row rather than a tfoot
+     * (gain#1118), so it stays in view down a long table.  `thead td`
+     * selects it and nothing else: the header row above it is all th. */
+    const pinned = table.locator('thead td');
 
-    await expect(table.locator('tfoot td')).toHaveText(total);
+    await expect(pinned).toHaveText(total);
+    await expect(table.locator('tfoot')).toHaveCount(0);
 
     await header.click();
 
     await expect(table.locator('tbody tr')).toHaveCount(3);
-    await expect(table.locator('tfoot td')).toHaveText(total);
+    await expect(pinned).toHaveText(total);
 
     await header.click();
 
     await expect(table.locator('tbody tr')).toHaveCount(3);
-    await expect(table.locator('tfoot td')).toHaveText(total);
+    await expect(pinned).toHaveText(total);
   });
 
 test('a cell with no sort key sinks to the bottom in either direction',

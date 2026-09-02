@@ -21,9 +21,6 @@ from gain.genomic_resources.statistics.alleles import (
     AlleleStatistics,
     serves_allele_arrays,
 )
-from gain.genomic_resources.statistics.length_histogram import (
-    length_histogram_bin_index,
-)
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
     a_position_score,
@@ -118,22 +115,6 @@ def test_build_counts_alleles_per_chromosome(
         chrom: counts.allele_count
         for chrom, counts in stats.by_chromosome().items()
     } == {"chr1": 9, "chr2": 1}
-
-
-def test_rows_sharing_a_position_count_one_covered_position(
-    tmp_path: pathlib.Path,
-) -> None:
-    # chr1 carries three rows at position 10 -- two of them the same
-    # (chrom, pos, ref, alt) -- and one each at 20, 30, 40, 50, 60
-    # and 70.
-    resource = _mixed_allele_score(tmp_path)
-
-    stats = _built_statistics(tmp_path, resource)
-
-    assert {
-        chrom: counts.covered_positions
-        for chrom, counts in stats.by_chromosome().items()
-    } == {"chr1": 7, "chr2": 1}
 
 
 def test_build_totals_every_allele_class_globally(
@@ -317,7 +298,7 @@ def test_a_row_spanning_several_chunks_is_counted_once(
 
     counts = AlleleStatistics.deserialize(
         whole.get_file_content(ALLELE_STATISTICS_FILE)).global_counts()
-    assert (counts.allele_count, counts.covered_positions) == (4, 3)
+    assert counts.allele_count == 4
     assert counts.substitution_matrix is not None
     assert sum(counts.substitution_matrix.values()) \
         == counts.class_counts["substitution"]
@@ -359,7 +340,6 @@ def test_a_table_with_no_key_columns_counts_every_row_as_other(
 
     counts = stats.global_counts()
     assert counts.allele_count == 3
-    assert counts.covered_positions == 2
     assert counts.class_counts["other"] == 3
     assert counts.substitution_matrix is not None
     assert sum(counts.substitution_matrix.values()) == 0
@@ -529,47 +509,88 @@ def test_info_page_renders_a_row_per_chromosome(
     table = table_after(
         _info_page(resource), "<h2>Alleles</h2>")
 
-    # Whole rows: gain#988 adds a share to the classes table and the
-    # matrix only, and a stray fourth column here would leave an
-    # unanchored assertion on these rows passing.
+    # Whole rows, so a stray extra column leaves no unanchored
+    # assertion passing.  The covered-position column that sat between
+    # chromosome and alleles is gone and five class shares follow the
+    # allele count (gain#1118).  chr1's nine alleles are five
+    # substitutions and one each of the rest; chr2 carries one
+    # substitution and nothing else.
     assert [[cell.text for cell in row] for row in table.rows] == [
-        ["chr1", "7", "9"], ["chr2", "1", "1"]]
+        ["chr1", "9", "55.56%", "11.11%", "11.11%", "11.11%", "11.11%"],
+        ["chr2", "1", "100.00%", "0.00%", "0.00%", "0.00%", "0.00%"]]
 
 
-def test_info_page_renders_the_global_class_summary(
+def test_a_chromosome_with_no_alleles_renders_empty_share_cells(
     tmp_path: pathlib.Path,
 ) -> None:
+    # The markup half of the no-denominator rule, which the display
+    # layer states as ``shares is None``.  The cells must be EMPTY and
+    # carry no ``data-sort-value`` at all -- not an empty one -- so the
+    # sorter reads "no value" and sinks the row either way, exactly as
+    # the Coverage table's row with no resolvable genome length does.
+    #
+    # A contig with no allele rows never reaches the file from a scan,
+    # so the entry is added to the built statistics the way this suite
+    # doctors its other boundary fixtures.
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    stored = json.loads(resource.get_file_content(ALLELE_STATISTICS_FILE))
+    stored["chromosomes"]["chr3"] = {
+        "allele_count": 0,
+        "class_counts": dict.fromkeys(
+            stored["chromosomes"]["chr1"]["class_counts"], 0),
+    }
+    with resource.proto.open_raw_file(
+            resource, ALLELE_STATISTICS_FILE, mode="wt") as outfile:
+        outfile.write(json.dumps(stored))
+
+    table = table_after(_info_page(resource), "<h2>Alleles</h2>")
+
+    empty = next(row for row in table.rows if row[0].text == "chr3")
+    assert [cell.text for cell in empty] == ["chr3", "0", "", "", "", "", ""]
+    assert all(
+        "data-sort-value" not in cell.attrs for cell in empty[2:]), \
+        "an empty share cell must carry no sort key, not an empty one"
+    # The populated rows beside it still carry theirs, so this is not
+    # passing because the column stopped emitting keys altogether.
+    populated = next(row for row in table.rows if row[0].text == "chr1")
+    assert all("data-sort-value" in cell.attrs for cell in populated[2:])
+
+
+def test_info_page_titles_the_total_row_with_the_global_class_counts(
+    tmp_path: pathlib.Path,
+) -> None:
+    # What the removed "Allele classes" table's Alleles column said
+    # (gain#1118).  It is the pinned total row's hover titles now, so
+    # the resource-wide count per class stays readable without adding
+    # up the chromosomes' own titles by hand.
     resource = _mixed_allele_score(tmp_path)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
-    table = table_after(
-        _info_page(resource),
-        "<h3>Allele classes</h3>")
+    total = table_after(_info_page(resource), "<h2>Alleles</h2>").head[1]
 
-    # The class and its count; the share column beside them is what the
-    # next test is about.
-    assert [[cell.text for cell in row[:2]] for row in table.rows] == [
-        ["substitution", "6"], ["insertion", "1"], ["deletion", "1"],
-        ["complex", "1"], ["other", "1"]]
+    assert [cell.attrs.get("title") for cell in total[2:]] == [
+        "6 alleles", "1 alleles", "1 alleles", "1 alleles", "1 alleles"]
 
 
 def test_info_page_renders_each_class_as_a_share_of_the_alleles(
     tmp_path: pathlib.Path,
 ) -> None:
     # Ten alleles over the two chromosomes: six substitutions and one
-    # each of the other four classes.
+    # each of the other four classes.  These shares were the removed
+    # classes table's "% of alleles" column; they are the pinned total
+    # row now, and the column headings name the classes.
     resource = _mixed_allele_score(tmp_path)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
-    table = table_after(
-        _info_page(resource),
-        "<h3>Allele classes</h3>")
+    table = table_after(_info_page(resource), "<h2>Alleles</h2>")
 
     assert [cell.text for cell in table.head[0]] == [
-        "Class", "Alleles", "% of alleles"]
-    rows = _rows_by_first_cell(table)
-    assert rows["substitution"] == ["substitution", "6", "60.00%"]
-    assert rows["other"] == ["other", "1", "10.00%"]
+        "Chromosome", "Alleles", "substitution %", "insertion %",
+        "deletion %", "complex %", "other %"]
+    assert [cell.text for cell in table.head[1]] == [
+        "all chromosomes", "10",
+        "60.00%", "10.00%", "10.00%", "10.00%", "10.00%"]
 
 
 def test_info_page_tells_a_rare_class_from_an_empty_one(
@@ -604,17 +625,21 @@ def test_info_page_tells_a_rare_class_from_an_empty_one(
 
     page = _info_page(resource)
 
-    rows = _rows_by_first_cell(table_after(page, "<h3>Allele classes</h3>"))
-    assert rows["substitution"] == ["substitution", "20000", ">99.99%"]
-    assert rows["complex"] == ["complex", "1", "<0.01%"]
-    assert rows["other"] == ["other", "0", "0.00%"]
+    total = table_after(page, "<h2>Alleles</h2>").head[1]
+    assert [cell.text for cell in total] == [
+        "all chromosomes", "20001",
+        ">99.99%", "0.00%", "0.00%", "<0.01%", "0.00%"]
+    # The counts the shares round off stay exact on the hover titles.
+    assert [cell.attrs.get("title") for cell in total[2:]] == [
+        "20000 alleles", "0 alleles", "0 alleles", "1 alleles",
+        "0 alleles"]
     # Both bounds read off the MARKUP, because that is the only place the
     # two forms differ: the parser above resolves the entities, so a cell
     # cannot tell a rendered "&lt;"/"&gt;" from a raw "<"/">" -- and a raw
     # one would open a bogus tag and have the browser swallow the cell.
-    classes = section_after(page, "<h3>Allele classes</h3>")
-    assert "&lt;0.01%" in classes
-    assert "&gt;99.99%" in classes
+    alleles = section_after(page, "<h2>Alleles</h2>")
+    assert "&lt;0.01%" in alleles
+    assert "&gt;99.99%" in alleles
 
 
 def test_info_page_renders_the_substitution_matrix(
@@ -667,6 +692,24 @@ def test_info_page_renders_the_ts_tv_ratio(
     assert "1.50" in section
 
 
+def test_info_page_shows_what_the_ts_tv_ratio_is_made_of(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The counts behind the ratio are computed today and were rendered
+    # nowhere (gain#1118).  Showing them lets a reader see a resource
+    # with too few transversions for the ratio to mean anything --
+    # 3/2 and 3,000,000/2,000,000 are the same number and not at all
+    # the same claim.
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = section_after(
+        _info_page(resource), "<h2>Alleles</h2>")
+
+    assert "3 transitions" in section
+    assert "2 transversions" in section
+
+
 def test_info_page_without_transversions_says_not_applicable(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -712,15 +755,15 @@ def test_info_page_over_a_pre_display_file_still_renders_the_shares(
             resource, ALLELE_STATISTICS_FILE, mode="wt") as outfile:
         outfile.write(json.dumps(stored))
 
-    table = table_after(
-        _info_page(resource),
-        "<h3>Allele classes</h3>")
+    table = table_after(_info_page(resource), "<h2>Alleles</h2>")
 
-    assert [cell.text for cell in table.head[0]] == [
-        "Class", "Alleles", "% of alleles"]
-    rows = _rows_by_first_cell(table)
-    assert rows["substitution"] == ["substitution", "6", "60.00%"]
-    assert rows["other"] == ["other", "1", "10.00%"]
+    assert [cell.text for cell in table.head[1]] == [
+        "all chromosomes", "10",
+        "60.00%", "10.00%", "10.00%", "10.00%", "10.00%"]
+    # The per-chromosome shares resolve off the same stored fields, so
+    # the rows carry theirs too rather than going empty.
+    assert [cell.text for cell in table.rows[0]][2:] == [
+        "55.56%", "11.11%", "11.11%", "11.11%", "11.11%"]
 
 
 def test_info_page_over_a_matrixless_file_says_matrix_not_computed(
@@ -742,9 +785,13 @@ def test_info_page_over_a_matrixless_file_says_matrix_not_computed(
     page = _info_page(resource)
 
     assert [cell.text for cell in table_after(
-        page, "<h2>Alleles</h2>").rows[0]] == ["chr1", "7", "9"]
+        page, "<h2>Alleles</h2>").rows[0]] == [
+            "chr1", "9", "55.56%", "11.11%", "11.11%", "11.11%", "11.11%"]
+    # The class composition survives the missing matrix: it is read off
+    # the stored counts, which every file carries.
     assert [cell.text for cell in table_after(
-        page, "<h3>Allele classes</h3>").rows[0][:2]] == ["substitution", "6"]
+        page, "<h2>Alleles</h2>").head[1]][:3] == [
+            "all chromosomes", "10", "60.00%"]
     # Bound to the subsection that must say it, not to the Alleles section
     # at large -- which renders "not computed" for other groups too.
     assert "<p>not computed</p>" in section_after(
@@ -872,6 +919,77 @@ def test_the_alleles_section_is_absent_on_a_position_score(
     assert "Alleles" not in page
 
 
+def test_the_coverage_section_is_absent_on_an_allele_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The converse of the two tests around it, and the reason gain#1118
+    # could drop the count: an allele row collapses to a point, so the
+    # span union is never scanned for this kind
+    # (``_COVERAGE_SCAN_RESOURCE_TYPES`` excludes it) and the distinct
+    # count that stood in for it is gone.  Nothing can ever fill the
+    # section, so it does not exist -- the same rule the Alleles section
+    # follows on a position score.
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    page = _info_page(resource)
+
+    assert "Coverage" not in page
+
+
+def test_an_unbuilt_position_score_still_offers_to_compute_coverage(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The other half of gain#1118's gating rule, and the reason it is
+    # keyed on the KIND rather than on the statistic being absent.
+    # Statistics are never built here, so the section has nothing to
+    # show -- but a rebuild WOULD fill it, and "not computed" is the
+    # wording that says so.  Gating on the payload instead would
+    # collapse *never applicable* and *not yet built* into one blank.
+    resource = (
+        a_position_score()
+        .with_score("score", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  score
+            chr1   5          9        0.1
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+    page = _info_page(resource)
+
+    assert "<h2>Coverage</h2>" in page
+    assert "<p>not computed</p>" in section_after(page, "<h2>Coverage</h2>")
+
+
+def test_the_coverage_section_survives_on_a_fragment_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A fragment score IS coverage-scanned -- it sits in
+    # ``_COVERAGE_SCAN_RESOURCE_TYPES`` beside position scores -- so
+    # emptying the block for allele scores must not empty it here.
+    resource = (
+        a_fragment_score()
+        .with_score("score", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  score
+            chr1   10         100      0.1
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    page = _info_page(resource)
+
+    assert "<h2>Coverage</h2>" in page
+    assert "<p>not computed</p>" not in section_after(
+        page, "<h2>Coverage</h2>")
+
+
 def test_the_alleles_section_is_absent_on_a_fragment_score(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -956,13 +1074,10 @@ def test_build_stores_the_length_histograms_per_chromosome(
     chr2 = chromosomes["chr2"].insertion_lengths
     assert chr1 is not None
     assert chr2 is not None
-    assert {index: count for index, count in enumerate(chr1) if count} == {
-        length_histogram_bin_index(1): 1,
-        length_histogram_bin_index(4): 1,
-    }
-    assert {index: count for index, count in enumerate(chr2) if count} == {
-        length_histogram_bin_index(2): 1,
-    }
+    assert chr1.lengths == {1: 1, 4: 1}
+    assert (chr1.alleles, chr1.sum, chr1.min, chr1.max) == (2, 5, 1, 4)
+    assert chr2.lengths == {2: 1}
+    assert (chr2.alleles, chr2.sum, chr2.min, chr2.max) == (1, 2, 2, 2)
 
 
 def test_build_stores_the_complex_grid_per_chromosome(
@@ -987,18 +1102,11 @@ def test_the_global_groups_are_the_merge_of_the_chromosomes(
     counts = stats.global_counts()
     assert counts.insertion_lengths is not None
     assert counts.deletion_lengths is not None
-    assert {
-        index: count
-        for index, count in enumerate(counts.insertion_lengths) if count
-    } == {
-        length_histogram_bin_index(1): 1,
-        length_histogram_bin_index(2): 1,
-        length_histogram_bin_index(4): 1,
-    }
-    assert {
-        index: count
-        for index, count in enumerate(counts.deletion_lengths) if count
-    } == {length_histogram_bin_index(3): 1}
+    assert counts.insertion_lengths.lengths == {1: 1, 2: 1, 4: 1}
+    assert (counts.insertion_lengths.min, counts.insertion_lengths.max) \
+        == (1, 4)
+    assert counts.insertion_lengths.sum == 7
+    assert counts.deletion_lengths.lengths == {3: 1}
     assert counts.complex_grid == {(2, 2): 1, (2, 3): 1, (3, 3): 1}
 
 
@@ -1015,9 +1123,15 @@ def test_the_group_totals_reconcile_with_the_class_counts(
         assert counts.insertion_lengths is not None
         assert counts.deletion_lengths is not None
         assert counts.complex_grid is not None
-        assert sum(counts.insertion_lengths) == \
+        assert counts.insertion_lengths.alleles == \
             counts.class_counts["insertion"]
-        assert sum(counts.deletion_lengths) == \
+        assert counts.deletion_lengths.alleles == \
+            counts.class_counts["deletion"]
+        # The clamp is TOTAL: every indel lands in exactly one bucket,
+        # so the map's values sum to the group's count too.
+        assert sum(counts.insertion_lengths.lengths.values()) == \
+            counts.class_counts["insertion"]
+        assert sum(counts.deletion_lengths.lengths.values()) == \
             counts.class_counts["deletion"]
         assert sum(counts.complex_grid.values()) == \
             counts.class_counts["complex"]
@@ -1067,11 +1181,55 @@ def test_the_indel_groups_are_chunk_invariant(
         == whole.get_file_content(ALLELE_STATISTICS_FILE)
 
 
+def test_info_page_renders_the_indel_statistics_table(
+    tmp_path: pathlib.Path,
+) -> None:
+    # chr1 carries a 1bp and a 4bp insertion, chr2 a 2bp one, and there
+    # is one 3bp deletion.  Insertions: min 1, max 4, mean 7/3 = 2.33,
+    # and with three alleles the median is the middle one, 2.
+    resource = _indel_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    table = table_after(_info_page(resource), "<h3>Indel lengths</h3>")
+
+    assert [cell.text for cell in table.head[0]] == [
+        "", "alleles", "min", "max", "mean", "median"]
+    assert [[cell.text for cell in row] for row in table.rows] == [
+        ["insertions", "3", "1", "4", "2.33", "2"],
+        ["deletions", "1", "3", "3", "3", "3"],
+    ]
+
+
+def test_the_indel_figures_open_in_the_modal(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Half-width thumbnails lose no detail because each opens the
+    # full-size image in the modal this page already uses for the score
+    # histograms.  A trigger whose modal was never rendered opens
+    # nothing, so both halves are asserted together.
+    resource = _indel_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = section_after(_info_page(resource), "<h2>Alleles</h2>")
+
+    for group in ("insertion", "deletion"):
+        assert f'data-modal-trigger="modal-allele-{group}-lengths"' \
+            in section
+        assert f'id="modal-allele-{group}-lengths"' in section
+
+
 def test_the_build_writes_one_global_image_per_group(
     tmp_path: pathlib.Path,
 ) -> None:
-    # Three images, each referenced ONCE -- the count is what says there
-    # are no per-chromosome images, as the fragments section has it.
+    # Three images, one per group -- the count is what says there are no
+    # per-chromosome images, as the fragments section has it.
+    #
+    # The two indel images are referenced TWICE each: once by the
+    # half-width thumbnail and once inside the modal it opens
+    # (gain#1118).  The complex grid is still a single full-width
+    # figure, so it appears once -- and that asymmetry is the assertion
+    # that would catch a thumbnail rendered with no modal behind it, or
+    # a modal nothing opens.
     #
     # The complex group needs a grid dense enough to be drawn at all: a
     # sparse one publishes a table and no image (gain#989), which is
@@ -1082,13 +1240,13 @@ def test_the_build_writes_one_global_image_per_group(
     section = section_after(
         _info_page(resource), "<h2>Alleles</h2>")
 
-    for image in (
-        ALLELE_INSERTION_LENGTHS_IMAGE_FILE,
-        ALLELE_DELETION_LENGTHS_IMAGE_FILE,
-        ALLELE_COMPLEX_GRID_IMAGE_FILE,
+    for image, references in (
+        (ALLELE_INSERTION_LENGTHS_IMAGE_FILE, 2),
+        (ALLELE_DELETION_LENGTHS_IMAGE_FILE, 2),
+        (ALLELE_COMPLEX_GRID_IMAGE_FILE, 1),
     ):
         assert resource.file_exists(image)
-        assert section.count(image) == 1
+        assert section.count(image) == references
 
 
 def _allele_score_over(
@@ -1267,8 +1425,8 @@ def test_info_page_over_a_pre_indel_file_says_the_groups_not_computed(
     stored = json.loads(resource.get_file_content(ALLELE_STATISTICS_FILE))
     for entry in (*stored["chromosomes"].values(), stored["global"]):
         for key in (
-            "insertion_length_histogram",
-            "deletion_length_histogram",
+            "insertion_lengths",
+            "deletion_lengths",
             "complex_grid",
         ):
             entry.pop(key, None)

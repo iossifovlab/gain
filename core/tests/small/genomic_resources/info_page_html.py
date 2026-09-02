@@ -77,11 +77,18 @@ class Cell(NamedTuple):
     ``text`` is then the two run together -- a count of 1 at a 33.33% share
     reads ``133.33%``, which is neither number -- so an assertion about the
     count wants ``own_text`` and one about the whole rendering wants ``text``.
+
+    ``tag`` is ``td`` or ``th``.  It matters inside ``<thead>``, where the
+    per-chromosome tables pin their total (gain#1118): the same row read as
+    ``<th>`` would be announced as a column header for the data beneath it
+    and would be eligible for the ``aria-sort`` the sorter sets, so which
+    of the two a cell is cannot be assumed from where it sits.
     """
 
     attrs: dict[str, str]
     text: str
     own_text: str
+    tag: str
 
     @property
     def sort_value(self) -> str | None:
@@ -143,6 +150,7 @@ class _TableReader(HTMLParser):
         #: nested element, which is where the muted share sits.
         self._depth = 0
         self._attrs: dict[str, str] = {}
+        self._tag = ""
 
     def handle_starttag(
         self, tag: str, attrs: list[tuple[str, str | None]],
@@ -156,6 +164,7 @@ class _TableReader(HTMLParser):
             self._own_text = []
             self._depth = 0
             self._attrs = {k: v if v is not None else "" for k, v in attrs}
+            self._tag = tag
         elif self._text is not None and tag not in _VOID_ELEMENTS:
             self._depth += 1
 
@@ -180,6 +189,7 @@ class _TableReader(HTMLParser):
                     self._attrs,
                     "".join(self._text).strip(),
                     "".join(self._own_text or []).strip(),
+                    self._tag,
                 ))
             self._text = None
             self._own_text = None

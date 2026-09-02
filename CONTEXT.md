@@ -113,10 +113,11 @@ exceed the covered count wherever different-valued rows overlap, so neither
 statistic may be derived from the other (ADR 0020).
 What a row *spans* is the kind's own answer, not the columns': a **position
 score** and a **fragment score** span the row's interval and their covered
-count is a union of those, whereas an **allele score** row is the point it
-sits at, so its covered count is the number of **distinct positions** its
-rows sit on and an optional `pos_end` reaches over nothing. Both are the
-same term — a position with data — counted the way the kind means a row.
+count is a union of those. An **allele score** has **no covered-position
+count at all** (gain#1118): its rows are points, so there is no span to
+union, and the distinct-position count it kept in place of one is removed —
+its info page renders no Coverage section rather than one permanently
+reading "not computed".
 _Avoid_: covered base, coverage depth (nothing here counts how many rows
 span a position), breadth
 
@@ -256,10 +257,10 @@ reason a read of one is not a read of the other
   **resource**'s table; a **covered position** is spanned by *any* row, values
   ignored. Segments are value-aware, coverage is not, and the two coincide
   only where no different-valued rows overlap. An **allele score** has
-  **covered positions** but no **segments**: its rows are points, so there is
-  nothing to merge and nothing to union — the count is of distinct positions.
+  neither: its rows are points, so there is nothing to merge and nothing to
+  union, and it carries no covered-position count of its own (gain#1118).
   A **fragment score** has **covered positions** and **fragments** but no
-  **segments** either: its rows overlap, and merging them is not wanted.
+  **segments**: its rows overlap, and merging them is not wanted.
 - The **regions** a contig is scanned in own the rows whose `pos_begin` falls
   inside them, and measure those rows whole. So the regions partition the
   contig's **fragments**, and every statistic that sums over rows is

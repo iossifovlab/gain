@@ -151,8 +151,13 @@
 
     function enable(table) {
         // Only the rows in <tbody> ever move, so the "all chromosomes"
-        // total in <tfoot> cannot be displaced by any comparator.  The
-        // caller already matched "thead th[data-sort]", so a <thead>
+        // total cannot be displaced by any comparator.  It is pinned as
+        // a SECOND <thead> row (gain#1118, moved there from <tfoot> so
+        // it stays visible while the table scrolls), and this reads
+        // headers from rows[0] alone -- so the total is outside both
+        // the row set that moves and the cells that become sortable,
+        // which is the same guarantee <tfoot> gave for the same reason.
+        // The caller already matched "thead th[data-sort]", so a <thead>
         // with a row in it is the one thing we do not have to check.
         if (!table.tBodies[0]) {
             return;

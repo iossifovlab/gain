@@ -139,6 +139,15 @@ SORT_KINDS = {
     "Covered %": "number",
     "Segments": "number",
     "Alleles": "number",
+    # One share column per allele class (gain#1118).  Written out
+    # rather than derived from CLASS_NAMES: a column added to the
+    # template must be added HERE too, deliberately, or this map stops
+    # being an independent statement of what the table emits.
+    "substitution %": "number",
+    "insertion %": "number",
+    "deletion %": "number",
+    "complex %": "number",
+    "other %": "number",
 }
 
 
@@ -178,12 +187,23 @@ def pages(
 
 
 @pytest.mark.parametrize(("resource_id", "heading"), PER_CHROMOSOME_TABLES)
-def test_every_per_chromosome_table_pins_its_total_in_a_tfoot(
+def test_every_per_chromosome_table_pins_its_total_in_the_thead(
     pages: dict[str, str],
     resource_id: str,
     heading: str,
 ) -> None:
-    """Data in ``<tbody>``, the total in ``<tfoot>``, nothing loose.
+    """Data in ``<tbody>``, the total as a second ``<thead>`` row.
+
+    It moved out of ``<tfoot>`` (gain#1118) so that a reader scrolling
+    a few hundred contigs keeps the total in view: the container
+    already makes ``thead`` sticky, and a second row inside it inherits
+    that for nothing.
+
+    The guarantee that the total cannot be reordered is unchanged and
+    needs no JavaScript: the sorter reads its headers from
+    ``tHead.rows[0]`` and only ever reorders ``tBodies[0].rows``, so a
+    second head row is outside both.  What ``<tfoot>`` used to give,
+    ``<thead>`` gives for the same structural reason.
 
     Fragments is here despite not opting into sorting: the structure is
     what makes opting it in later two attributes and nothing else, and
@@ -193,8 +213,30 @@ def test_every_per_chromosome_table_pins_its_total_in_a_tfoot(
     table = table_after(pages[resource_id], heading)
 
     assert [row[0].text for row in table.body] == CONTIGS
-    assert [row[0].text for row in table.foot] == ["all chromosomes"]
+    assert len(table.head) == 2, "the total is the second <thead> row"
+    assert table.head[1][0].text == "all chromosomes"
+    assert table.foot == []
     assert table.loose == []
+
+
+@pytest.mark.parametrize(("resource_id", "heading"), PER_CHROMOSOME_TABLES)
+def test_no_total_row_cell_is_announced_as_a_column_header(
+    pages: dict[str, str],
+    resource_id: str,
+    heading: str,
+) -> None:
+    """The pinned row is data in the header, not a second header row.
+
+    Its cells are ``<td>``: a ``<th>`` there would be announced as a
+    column header for the rows beneath it, and would be eligible for
+    the ``aria-sort`` the sorter sets -- which it clears by querying
+    ``thead th[aria-sort]``, so a ``<th>`` total could take the marker
+    off the column that is actually sorted.
+    """
+    table = table_after(pages[resource_id], heading)
+
+    assert all(cell.tag == "td" for cell in table.head[1]), (
+        f"{heading} pins its total with <th> cells")
 
 
 @pytest.mark.parametrize(("resource_id", "heading"), PER_CHROMOSOME_TABLES)
@@ -217,14 +259,20 @@ def test_a_section_that_rendered_no_table_is_refused(
 ) -> None:
     """The helper every other test here leans on must not silently drift.
 
-    An allele score's Indel lengths subsection renders images or a
-    sentence, never a table.  If ``table_after`` scanned past the end of
-    the section it would return the Files table at the foot of the page,
-    and an assertion about a table that was never rendered would pass
-    against that one instead.
+    If ``table_after`` scanned past the end of the section it would
+    return the Files table at the foot of the page, and an assertion
+    about a table that was never rendered would pass against that one
+    instead.
+
+    The subject is the Complex alleles subsection, which renders a
+    heatmap or a sentence and only becomes a table once enough cells are
+    lit (gain#989) -- this fixture's three substitutions light none, so
+    it is the sentence.  It took over from Indel lengths, which was the
+    example until gain#1118 gave that subsection a statistics table of
+    its own.
     """
     with pytest.raises(AssertionError, match="rendered no table"):
-        table_after(pages["scores/alleles"], "<h3>Indel lengths</h3>")
+        table_after(pages["scores/alleles"], "<h3>Complex alleles</h3>")
 
 
 @pytest.mark.parametrize(("resource_id", "heading"), SORTABLE_TABLES)
@@ -291,6 +339,51 @@ def test_a_count_column_carries_the_number_not_the_rendered_text(
     assert sorted(keys) != [str(n) for n in sorted(COVERED_POSITIONS)]
 
 
+def test_a_class_share_sorts_on_the_fraction_not_the_rendered_share(
+    pages: dict[str, str],
+) -> None:
+    """The share column's key is the number, never the text it shows.
+
+    What this pins is that the key and the rendered text are DIFFERENT
+    things: the cell reads ``100.00%`` and sorts on ``1.0``, so a
+    template emitting ``data-sort-value="{{ share.percentage }}"`` fails
+    here.
+
+    It does not exercise the ordering that makes the distinction matter
+    -- these three rows are all one class -- because the floor and
+    ceiling that misorder as text need a fixture of tens of thousands of
+    alleles to reach.  That case is pinned where such a fixture already
+    exists, by
+    ``test_allele_statistics_scan.test_info_page_tells_a_rare_class_from_an_empty_one``.
+    """
+    cells = table_after(
+        pages["scores/alleles"], "<h2>Alleles</h2>").column("substitution %")
+
+    assert [cell.text for cell in cells] == ["100.00%"] * 3
+    assert [float(key) for key in sort_keys(cells)] == [1.0] * 3
+
+
+def test_a_class_share_titles_itself_with_its_exact_count(
+    pages: dict[str, str],
+) -> None:
+    """The share rounds; the title does not.
+
+    This is what replaced the "Allele classes" table's Alleles column
+    (gain#1118), and it is strictly more: that column carried one
+    resource-wide count per class, while these carry one per class per
+    chromosome, which is the number the share on the same cell rounds
+    off.
+    """
+    table = table_after(pages["scores/alleles"], "<h2>Alleles</h2>")
+
+    assert [
+        cell.attrs.get("title") for cell in table.column("substitution %")
+    ] == ["1 alleles"] * 3
+    assert [
+        cell.attrs.get("title") for cell in table.column("insertion %")
+    ] == ["0 alleles"] * 3
+
+
 def test_covered_percent_sorts_by_the_fraction_it_renders(
     pages: dict[str, str],
 ) -> None:
@@ -334,8 +427,10 @@ def test_a_row_with_no_denominator_carries_no_covered_percent_key(
 #: headers are ``<th>``, not data, so a reorder would strand them; the
 #: Allele classes table is four rows; Fragments is opted out for now and
 #: gets the structure only.
+#: gain#1118 removed the "Allele classes" table -- its shares became the
+#: Alleles table's pinned total row and its counts the hover titles --
+#: so the tables that render without opting into sorting are now two.
 OPTED_OUT_TABLES = [
-    ("scores/alleles", "<h3>Allele classes</h3>"),
     ("scores/alleles", "<h3>Substitution matrix</h3>"),
     ("scores/fragments", "<h2>Fragments</h2>"),
 ]
@@ -365,7 +460,13 @@ def test_an_opted_out_table_carries_neither_sort_attribute(
 def test_the_untouched_contig_rollup_sits_in_the_tfoot(
     tmp_path: pathlib.Path,
 ) -> None:
-    """The roll-up is a summary, so it lives where the total lives.
+    """The roll-up stays in ``<tfoot>``, and is now alone there.
+
+    It did NOT follow the total into the sticky header (gain#1118),
+    and the distinction is the point: a total summarises the rows
+    above it, while this describes what is *not* in the table at all.
+    Pinning it would also make the sticky header three rows deep and
+    eat the 500px the data scrolls in.
 
     No fixture above emits one -- every one of their genomes is a
     subset of what its score covers -- so this builds its own: a chr1
@@ -402,5 +503,8 @@ def test_the_untouched_contig_rollup_sits_in_the_tfoot(
 
     assert [row[0].text for row in table.body] == ["chr1"]
     assert [row[0].text for row in table.foot] == [
-        "1 contig with no values (300 bp)", "all chromosomes"]
+        "1 contig with no values (300 bp)"]
+    assert table.head[1][0].text == "all chromosomes", (
+        "the total moved to the sticky header; only the roll-up is left "
+        "in the foot")
     assert table.loose == []

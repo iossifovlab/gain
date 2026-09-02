@@ -213,8 +213,10 @@ def test_the_info_page_renders_a_fragments_section(
     # that had swapped them.
     assert [[cell.text for cell in row] for row in table.rows] == [
         ["chr1", "4"], ["chr2", "1"]]
-    assert [[cell.text for cell in row] for row in table.foot] == [
-        ["all chromosomes", "5"]]
+    # Pinned as a second <thead> row rather than a <tfoot> (gain#1118),
+    # the same shape its two sibling tables now have.
+    assert [cell.text for cell in table.head[1]] == ["all chromosomes", "5"]
+    assert table.foot == []
     # Counted over the WHOLE Fragments section, subsection included, which
     # is what makes this "one global image and no per-chromosome ones":
     # a per-chromosome image would render beside the table above, inside

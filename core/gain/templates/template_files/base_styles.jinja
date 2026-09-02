@@ -87,6 +87,13 @@
 
       .histogram-thumbnail {
         max-width: 200px;
+      }
+
+      /* What makes an image clickable is the trigger attribute, not the
+         class that sizes it, so the cursor follows the attribute.  Each
+         thumbnail class then says only how big its image is, and the
+         next kind of trigger gets the pointer for free. */
+      [data-modal-trigger] {
         cursor: pointer;
       }
 
@@ -102,6 +109,59 @@
         display: block;
         width: 100%;
         height: auto;
+      }
+
+      /* Two related figures side by side, each about half width, so the
+         pair reads as one comparison and occupies one row.  It wraps to
+         a column when there is not room for two, which is what keeps
+         this from needing a media query. */
+      .figure-pair {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        align-items: flex-start;
+        margin-bottom: 16px;
+      }
+
+      /* Sized by the row rather than by the image: each takes half the
+         pair minus the gap, and shrinks together with it. */
+      .figure-pair > .figure-thumbnail {
+        flex: 1 1 calc(50% - 16px);
+        min-width: 0;
+        height: auto;
+      }
+
+      /* One number worth reading on its own, with the quantities it
+         was computed from underneath it.  Sized to sit under a table
+         without competing with the <h3> above it: inline-block so the
+         tint stops at the number rather than running the page width. */
+      .key-figure {
+        display: inline-block;
+        border: 1px solid #cfd8df;
+        border-radius: 4px;
+        background-color: #f7f9fa;
+        padding: 10px 16px;
+        margin-bottom: 16px;
+      }
+
+      /* The label and the detail line take their grey from
+         `.text-muted` in the markup rather than restating it here --
+         the same muted grey the matrix cells' shares already use, in
+         one place, so a palette change is one line. */
+      .key-figure-label {
+        font-size: 0.85em;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .key-figure-value {
+        font-size: 1.8em;
+        font-weight: bold;
+        line-height: 1.2;
+      }
+
+      .key-figure-detail {
+        font-size: 0.9em;
       }
 
       .text-muted {
