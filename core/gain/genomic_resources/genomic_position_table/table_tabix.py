@@ -637,6 +637,15 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                 return
 
         # without using buffer
+        #
+        # No prune here, and none is wanted -- not even a ``finally`` one.
+        # This path re-seeks the file, and ``get_line_iterator`` CLEARS the
+        # buffer before the first record is read, so what this read leaves
+        # behind is one query's worth and not an accumulation: bounded by
+        # ``BUFFER_MAXSIZE``, which is what made the query buffered at all.
+        # Abandoning it therefore retains no more than draining it does, and
+        # a prune to ``pos_begin`` would be close to a no-op anyway, since
+        # every record this read buffers lies at or after that position.
         self.line_iterator = self.get_line_iterator(chrom, pos_begin - 1)
         yield from self._gen_from_tabix(chrom, pos_end, buffering=buffering)
 
