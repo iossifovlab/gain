@@ -41,10 +41,12 @@ from typing import Any
 
 import pytest
 from gain.genomic_resources.genomic_position_table import (
+    LineBuffer,
     build_genomic_position_table,
 )
 from gain.genomic_resources.genomic_position_table.record import (
     PAYLOAD,
+    POS_BEGIN,
     Record,
 )
 from gain.genomic_resources.genomic_position_table.table import (
@@ -405,8 +407,6 @@ def test_buffer_keeps_a_non_monotonic_pos_end() -> None:
     ``pos_begin``, and a wide first record legitimately outlives a narrow last
     one.
     """
-    from gain.genomic_resources.genomic_position_table import LineBuffer
-
     buffer = LineBuffer()
     buffer.append(rec("1", 10, 100))
     buffer.append(rec("1", 20, 30))
@@ -425,8 +425,6 @@ def test_buffer_finds_a_record_hidden_behind_a_shorter_one() -> None:
     the first predecessor that fails to reach the position, so the record that
     *does* reach it was never found.
     """
-    from gain.genomic_resources.genomic_position_table import LineBuffer
-
     buffer = LineBuffer()
     buffer.append(rec("1", 10, 100, "wide"))
     buffer.append(rec("1", 20, 30, "narrow"))
@@ -470,11 +468,233 @@ def test_backward_query_does_not_trust_a_pruned_buffer(
 
 def test_buffer_still_clears_on_a_non_monotonic_pos_begin() -> None:
     """The ordering the buffer does rely on is ``pos_begin``'s."""
-    from gain.genomic_resources.genomic_position_table import LineBuffer
-
     buffer = LineBuffer()
     buffer.append(rec("1", 100, 200))
     buffer.append(rec("1", 1, 10))
 
     assert buffer.region() == (None, None, None)
     assert len(buffer) == 0
+
+
+# ---------------------------------------------------------------------------
+# A region read that is ABANDONED part-way (gain#1120).
+# ---------------------------------------------------------------------------
+
+def _scan_abandoning_each_query(
+    table: GenomicPositionTable, positions: list[int],
+) -> None:
+    """Walk ``positions``, taking ONE record from each query and stopping.
+
+    The shape a lazy consumer has: it reads until it has what it came for and
+    drops the generator.  ``close()`` is explicit here so the test does not
+    rest on when CPython would have collected it.
+
+    Every position must actually hold a record, or this walk does not do what
+    it says.  A query that yields *nothing* runs its generator to exhaustion,
+    which reaches the code after the yield loop -- so a scan over empty
+    positions prunes on every step and stays bounded no matter what
+    ``get_records_in_region`` does with ``GeneratorExit``.  Mixing the two is
+    how a first draft of this test passed against the unfixed code: the gaps
+    in a point table outnumbered its rows, and their pruning masked the leak.
+    """
+    for pos in positions:
+        records = table.get_records_in_region(CHROM, pos, pos)
+        assert next(records, None) is not None, \
+            f"position {pos} holds no record: the query would not be abandoned"
+        records.close()
+
+
+def test_abandoned_queries_keep_the_buffer_bounded(build_tables: Any) -> None:
+    """The buffer must not grow with the number of ABANDONED queries.
+
+    ``get_records_in_region`` prunes the buffer once a query has been served.
+    On the buffered paths that prune sat *after* the yield loop, so a consumer
+    that stopped iterating raised ``GeneratorExit`` at the suspended yield and
+    the prune never ran -- the records of every query stayed, and the buffer
+    grew linearly with the length of the scan (gain#1120).
+
+    The scan visits the row positions themselves, so every query yields a
+    record and every one of them is abandoned holding it.
+
+    The cap is :attr:`LineBuffer.COMPACT_FLOOR` rather than a number of this
+    test's own choosing: it is the size below which the buffer declines to
+    walk itself at all, so it is the largest residue a *bounded* buffer is
+    entitled to over point data, whose live set is one record.  Before the
+    fix this scan ended holding one record per query.
+    """
+    rows = make_rows("points_unique", count=400)
+    tabix_table, _ = build_tables(rows)
+
+    positions = [beg for beg, _ in rows]
+    _scan_abandoning_each_query(tabix_table, positions)
+
+    assert len(positions) > LineBuffer.COMPACT_FLOOR, \
+        "the scan is too short to tell a bounded buffer from a leaking one"
+    assert len(tabix_table.buffer) <= LineBuffer.COMPACT_FLOOR
+
+
+def _buffered_begins(table: GenomicPositionTable) -> list[int]:
+    return [record[POS_BEGIN] for record in table.buffer.deque]
+
+
+def test_closing_a_stale_generator_does_not_prune_a_later_query(
+    build_tables: Any,
+) -> None:
+    """A prune deferred past another query must not evict that query's records.
+
+    ``close()`` runs the ``finally``, and a caller controls WHEN -- so the
+    prune can land after other reads have moved the table on.  Pruning to a
+    ``pos_begin`` from the past is harmless (it evicts less), but a generator
+    held open across a BACKWARD query prunes to a position ahead of the
+    table's current read, which evicts records the next query needs.
+
+    A wide record keeps ``_max_end`` high, so ``contains()`` still admits the
+    later query and it is served from a buffer that no longer holds its
+    records -- silently, which is what makes this worth a test rather than a
+    comment.
+    """
+    rows = [(100, 100), (190, 600)]
+    rows += [(pos, pos) for pos in range(200, 248)]
+    rows += [(500, 500)]
+    tabix_table, mem_table = build_tables(sorted(rows))
+
+    # Prime, then hold a forward query open without draining it.
+    list(tabix_table.get_records_in_region(CHROM, 100, 100))
+    held = tabix_table.get_records_in_region(CHROM, 500, 500)
+    assert next(held, None) is not None
+
+    # A backward query re-seeks the file and refills the buffer from scratch.
+    _assert_same(tabix_table, mem_table, 200, 245)
+
+    # Only now is the stale generator torn down.
+    held.close()
+
+    _assert_same(tabix_table, mem_table, 205, 205)
+
+
+def test_the_tabix_backend_reports_what_it_actually_buffers(
+    build_tables: Any,
+) -> None:
+    """``buffered_record_count`` must read the buffer, not return a constant.
+
+    The cross-backend contract asserts boundedness through this method, so
+    every backend there is taken at its word -- and a tabix override that
+    answered ``0`` would satisfy the contract while leaking.  (Measured: with
+    the override replaced by ``return 0``, every test that consumes the
+    method still passes.)  This is the one place the number is held against
+    the thing it reports, which is what the rest of them rest on.
+    """
+    tabix_table, _ = build_tables([(pos, pos) for pos in range(10, 61, 2)])
+
+    assert tabix_table.buffered_record_count() == 0, "cold, before any read"
+
+    list(tabix_table.get_records_in_region(CHROM, 10, 20))
+
+    assert tabix_table.buffered_record_count() > 0, \
+        "a warm buffer that reports nothing would hide any leak"
+    assert tabix_table.buffered_record_count() == len(tabix_table.buffer)
+
+
+def test_the_buffer_hit_path_prunes_when_abandoned(
+    build_tables: Any,
+) -> None:
+    """One abandoned query on the buffer-hit path, pruned.
+
+    There are TWO buffered paths, and a scan alternates between them -- 199
+    buffer hits to 200 sequential seeks over a 400-query point scan, measured
+    -- so a scan-shaped test cannot tell them apart: whichever path still
+    prunes keeps the buffer bounded on behalf of the one that does not.  So
+    each path is pinned here by a single query, identified by the stats
+    counter only it increments.
+
+    The production code now prunes from ONE ``finally`` wrapping the whole
+    buffered branch, which is what makes "a path that forgets to prune"
+    unwriteable rather than merely untested.  These two tests keep saying
+    which paths that exit is responsible for, and would catch a future path
+    that returned around it.
+    """
+    tabix_table, _ = build_tables([(pos, pos) for pos in range(10, 61, 2)])
+
+    # Warm a window wide enough that the next query lands INSIDE it.
+    list(tabix_table.get_records_in_region(CHROM, 10, 20))
+    assert _buffered_begins(tabix_table) == [10, 12, 14, 16, 18, 20, 22]
+    assert tabix_table.buffer.contains(CHROM, 18)
+
+    records = tabix_table.get_records_in_region(CHROM, 18, 18)
+    assert next(records, None) is not None
+    records.close()
+
+    assert tabix_table.stats["yield from buffer and tabix"] == 1, \
+        "this query did not take the buffer-hit path; the test proves nothing"
+    assert _buffered_begins(tabix_table) == [18, 20, 22], \
+        "the records ending before the abandoned query were not evicted"
+
+
+def test_the_sequential_seek_path_prunes_when_abandoned(
+    build_tables: Any,
+) -> None:
+    """The same, for the path that reads forward to reach the query.
+
+    A query past the buffered window but within ``jump_threshold`` seeks
+    forward rather than re-fetching -- and everything it reads on the way is
+    buffered.  Abandoning it is how the whole run-up stayed behind.
+    """
+    tabix_table, _ = build_tables([(pos, pos) for pos in range(10, 61, 2)])
+
+    list(tabix_table.get_records_in_region(CHROM, 10, 12))
+    assert _buffered_begins(tabix_table) == [10, 12, 14]
+    assert not tabix_table.buffer.contains(CHROM, 30)
+
+    records = tabix_table.get_records_in_region(CHROM, 30, 30)
+    assert next(records, None) is not None
+    records.close()
+
+    assert tabix_table.stats["sequential seek forward"] == 1, \
+        "this query did not take the sequential-seek path; it proves nothing"
+    assert _buffered_begins(tabix_table) == [30, 32], \
+        "the records the seek read on the way were not evicted"
+
+
+@pytest.mark.parametrize("shape", SHAPES)
+def test_abandoned_queries_do_not_corrupt_later_answers(
+    build_tables: Any, shape: str,
+) -> None:
+    """Every query is preceded by a read that stopped early, and still matches.
+
+    The scan covers the gaps as well as the rows, so the reads that precede a
+    query are a mix: at a position holding a record the generator really is
+    abandoned, and at one that does not it runs to exhaustion.  Both are
+    wanted here -- this is about the answers, and a scan of real positions is
+    a mix of the two.  (The boundedness tests cannot afford the mix, and say
+    so: an exhausted generator prunes on its own.)
+
+    This one holds on the UNFIXED code too, and is here to say so.  Skipping
+    the prune retains records that are dead and can never drop one that is
+    live, and :meth:`LineBuffer.contains` gates on the query's own start
+    rather than on the buffer's edge -- so an abandoned read costs memory and
+    nothing else.
+
+    That is the half #834 needs in order to stream an allele region instead of
+    materialising it: a lazy read that a caller walks away from must not leave
+    the table answering differently.  Pinned here over the overlapping and
+    nested shapes that gain#250 exists for, so it is a guarantee to cite
+    rather than one to re-derive.
+    """
+    rows = make_rows(shape)
+    tabix_table, mem_table = build_tables(rows)
+
+    lo = min(beg for beg, _ in rows)
+    hi = max(end for _, end in rows)
+    for pos in range(lo - 2, hi + 3):
+        abandoned = tabix_table.get_records_in_region(CHROM, pos, pos)
+        next(abandoned, None)
+        abandoned.close()
+
+        _assert_same(tabix_table, mem_table, pos, pos)
+
+
+# The DRAINED half of the same guarantee is pinned elsewhere and is not
+# repeated here: test_monotonic_scan_keeps_the_buffer_warm (above) holds the
+# scan to one tabix fetch, and
+# test_a_walk_of_point_reads_leaves_the_tabix_buffer_pruned (over in
+# test_position_score.py) holds a drained walk's buffer bounded.

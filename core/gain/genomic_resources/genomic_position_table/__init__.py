@@ -528,6 +528,37 @@ through ``fetch_region_weighted_values``' values slot as well.  A caller's
 ``None`` guard on a yielded values slot is dead code now, as
 ``aggregate_region``'s was.  ``fetch_position_scores`` keeps its ``| None``:
 that one is real, and means "no record covers this position".
+
+**New method, and a new obligation on backend authors:
+``buffered_record_count()``** (gain#1120).  ``BigWigTable``,
+``TabixGenomicPositionTable`` and ``VCFGenomicPositionTable`` are in
+``__all__`` below, so this adds public surface to ``gain`` and is recorded for
+the same reason as everything above.
+
+It answers how many records a table is holding from PREVIOUS reads -- not its
+contents, and not the last region's size.  The base returns ``0``, which is
+the honest answer for a backend that carries nothing across queries: an
+in-memory table holds every record and buffers none of them.  Only the tabix
+backend (and the VCF one that subclasses it) has a non-zero answer.
+
+The obligation is the reason the method exists. **A caller may stop iterating
+a region read at any point**, so a backend that carries state between queries
+must release it from a ``finally`` -- the code after a yield loop is never
+reached by a generator that is closed part-way. What it retains may not grow
+with the number of abandoned reads, and the reads that follow must answer as
+though none had been abandoned.
+
+Releasing from a ``finally`` also hands the caller the *timing*: a held
+generator can be closed after other queries have moved the table on, so a
+backend whose release depends on query order must check that it still is the
+current reader (``TabixGenomicPositionTable._prune_if_current``).  A table
+serves ONE live region read at a time -- a held generator may be closed
+across another query, not resumed.
+
+``test_backend_record_contract.py`` holds every in-tree backend to both
+halves.  There is no such sweep for a backend outside this repo, which is
+what this entry is for: a backend with cross-query state overrides the method
+and releases from a ``finally``.
 """
 from .line import LineBuffer
 from .table import ContigExtent

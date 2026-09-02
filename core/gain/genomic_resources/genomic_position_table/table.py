@@ -491,7 +491,44 @@ class GenomicPositionTable(abc.ABC):
         the delegation.  :meth:`get_all_records` is that second job, is not
         going anywhere, and says what it does in its name.  Callers that
         passed no contig call it directly instead.
+
+        **A caller may stop iterating at any point.**  A backend that carries
+        state between queries must therefore release it from a ``finally``
+        rather than after the yield loop, which an abandoned generator never
+        reaches: what it retains may not grow with the number of abandoned
+        reads, and the reads that follow must answer as though none had been
+        abandoned.  :meth:`buffered_record_count` is how a backend reports
+        what it is holding, and ``test_backend_record_contract.py`` holds
+        every backend to both halves (gain#1120).
+
+        Releasing from a ``finally`` puts the release under the *caller's*
+        control, since that is who decides when a generator is closed -- so a
+        backend whose release depends on query order has to say so itself
+        rather than assume it.  See
+        ``TabixGenomicPositionTable._prune_if_current`` for the one in-tree
+        case and what a stale release would otherwise cost.
         """
+
+    def buffered_record_count(self) -> int:
+        """How many records this table is holding from PREVIOUS reads.
+
+        Not the table's contents, and not the size of the region last read:
+        the records retained *between* queries, which is the quantity a lazy
+        consumer can make grow without bound by walking away from its reads.
+
+        Zero is the honest answer for a backend that carries nothing across
+        queries, and that is most of them -- an in-memory table holds every
+        one of its records and buffers none of them, so it reports zero while
+        holding the lot.  Only :class:`TabixGenomicPositionTable`, which
+        serves what it can from a warm ``LineBuffer``, has anything to
+        report.
+
+        It exists to be *asserted on*: without it the contract test would
+        have to reach into a backend's internals and know which ones have a
+        buffer, which is the ``isinstance(Tabix)`` that the capability
+        declarations on this class exist to replace.
+        """
+        return 0
 
     def get_region_value_arrays(
         self,

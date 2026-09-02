@@ -3,9 +3,6 @@
 import pathlib
 
 from gain.genomic_resources import GenomicResource
-from gain.genomic_resources.genomic_position_table import (
-    TabixGenomicPositionTable,
-)
 from gain.genomic_resources.genomic_scores import (
     PositionScore,
 )
@@ -199,13 +196,15 @@ def test_position_score_chrom_prefix() -> None:
 def test_a_walk_of_point_reads_leaves_the_tabix_buffer_pruned(
     tmp_path: pathlib.Path,
 ) -> None:
-    # ``fetch_position_scores`` DRAINS the region generator it opens.  An
-    # abandoned one leaves ``TabixGenomicPositionTable.get_records_in_region``
-    # suspended short of the ``buffer.prune()`` that ends its buffered walk,
-    # and abandoning a generator does not tear down what it was iterating --
-    # the eviction would wait on a garbage collection that may never come.
-    # Annotation reads position after position through here, so the
-    # ``LineBuffer`` would grow for the length of a run.
+    # ``fetch_position_scores`` DRAINS the region generator it opens, so the
+    # buffered walk reaches the ``buffer.prune()`` that ends it and the
+    # annotation path -- which reads position after position through here --
+    # does not grow a ``LineBuffer`` across a run.
+    #
+    # Since gain#1120 the prune runs in a ``finally``, so an ABANDONED walk
+    # is pruned too; this pins the drained half.  The abandoned half is
+    # test_abandoned_queries_keep_the_buffer_bounded, over in
+    # genomic_position_table/test_overlapping_intervals.py.
     data = "chrom  pos_begin  pos_end  s\n" + "\n".join(
         f"chr1  {pos}  {pos}  0.1" for pos in range(1, 201))
     resource = (
@@ -222,8 +221,12 @@ def test_a_walk_of_point_reads_leaves_the_tabix_buffer_pruned(
     score = PositionScore(resource)
     score.open()
     table = score.table
-    assert isinstance(table, TabixGenomicPositionTable)
 
+    # ``buffered_record_count`` rather than ``isinstance`` plus
+    # ``len(table.buffer)``: the count is what a table owes a caller asking
+    # what it retains, and asking it needs no knowledge of which backend has
+    # a buffer (gain#1120).
+    #
     # The claim of the bound is that the buffer does NOT grow with the
     # walk -- without the drain it reaches the walk's length (200).  On
     # this walk of point records ``LineBuffer.prune``'s cheap leading pop
@@ -235,4 +238,4 @@ def test_a_walk_of_point_reads_leaves_the_tabix_buffer_pruned(
     # while a buffer that scales with the reads cannot.
     for pos in range(1, 201):
         assert score.fetch_position_scores("chr1", pos) == [0.1]
-        assert len(table.buffer) <= 64
+        assert table.buffered_record_count() <= 64
