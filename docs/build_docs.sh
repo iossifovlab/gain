@@ -9,10 +9,11 @@
 #     docs/build/html/           rendered site
 #     docs/gaindocs-html.tar.gz  tarball consumed by docs/deploy/
 #
-# In CI, the Build docs Jenkinsfile stage only runs when the
-# `docs/**` tree changes (see `when { changeset 'docs/**' }` in
-# Jenkinsfile). Edits outside docs/ do not refresh the rendered
-# autodoc page until a subsequent docs-tree commit lands.
+# In CI, the Build docs Jenkinsfile stage is unconditional: it runs
+# on every build, so an edit anywhere — including a docstring under
+# core/gain, which sphinx-apidoc renders into the development
+# section — refreshes the rendered page. The Deploy docs stage
+# publishes on master builds only.
 #
 # The Deploy docs stage authenticates to iossifovlab.com via the
 # `gpf-docs-deploy` Jenkins-managed SSH credential (shared with

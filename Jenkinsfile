@@ -411,9 +411,10 @@ pipeline {
                     // build's changeset lives under docs/. Heavy stages
                     // (Conda builder image, Sub-projects, Conda packages,
                     // Build & push prod images, downstream triggers) gate
-                    // on it and skip when only docs changed. Build docs /
-                    // Deploy docs keep their existing `changeset 'docs/**'`
-                    // clauses.
+                    // on it and skip when only docs changed. Build docs is
+                    // unconditional and Deploy docs is gated on master
+                    // alone, so neither consults DOCS_ONLY or the
+                    // changeset (gain#1139).
                     //
                     // Empty changeset (first build, manual rebuild, no
                     // commits since last build) → DOCS_ONLY='false' →
@@ -911,7 +912,6 @@ pipeline {
                 }
 
                 stage('Build docs') {
-                    when { changeset 'docs/**' }
                     // Migrated from iossifovlab/gpf_documentation
                     // (iossifovlab/gain#6). The Sphinx source tree now
                     // lives in docs/. Build runs inside the core CI image
@@ -919,11 +919,25 @@ pipeline {
                     // the docs dependency group from the root pyproject.toml
                     // is layered on top at run-time.
                     //
-                    // Only runs when docs/** changed in this build's
-                    // commit range; saves time on code-only changes. A
-                    // docstring tweak in core/gain won't refresh the
-                    // rendered autodoc page until a docs-side commit
-                    // lands — accepted trade-off (same as gpf docs).
+                    // Unconditional: runs on every build of the CI
+                    // wrapper — every branch, every PR, and builds with
+                    // an empty changeset (a first build, or a manual
+                    // rebuild of master). It used to carry
+                    // `when { changeset 'docs/**' }`, but the rendered
+                    // development section is sphinx-apidoc output over
+                    // core/gain, so its prose lives in docstrings that
+                    // the changeset clause does not watch: a docstring
+                    // commit refreshed nothing, and `changeset` is false
+                    // on an empty changeset, so a rebuild refreshed
+                    // nothing either (gain#1139). Building always also
+                    // turns a docs-breaking PR red before merge instead
+                    // of after. Costs ~90s per build.
+                    //
+                    // Keep this stage a SIBLING of Sub-projects, not a
+                    // child of it: Sub-projects is gated
+                    // `not DOCS_ONLY`, so nesting this inside it would
+                    // silently stop docs building on the docs-only
+                    // commits that need it most.
                     //
                     // When DOCS_ONLY=true the Sub-projects > core stage
                     // is skipped, so we build the core CI image inline
@@ -959,17 +973,23 @@ pipeline {
                 }
 
                 stage('Deploy docs') {
-                    when {
-                        allOf {
-                            branch 'master'
-                            changeset 'docs/**'
-                        }
-                    }
-                    // Master-only ansible push to iossifovlab.com, only
-                    // when docs/** changed. Skipped on every branch
-                    // build and on master builds that don't touch the
-                    // docs tree, so the live site keeps serving the
-                    // last good build's content untouched.
+                    when { branch 'master' }
+                    // Master-only ansible push to iossifovlab.com, on
+                    // EVERY master build. Still skipped on every branch
+                    // and PR build, so only master ever publishes; the
+                    // `changeset 'docs/**'` half of this gate was dropped
+                    // with the one on Build docs above, so that the
+                    // published site always reflects the current master
+                    // commit rather than the last one that happened to
+                    // touch the docs tree (gain#1139).
+                    //
+                    // Consequences accepted with that: the nightly job
+                    // rebuilds master with an empty changeset, so the
+                    // site is now republished nightly; and this stage's
+                    // apt-get install of ansible + openssh-client (~70s,
+                    // the bulk of its runtime) is now on the critical
+                    // path of every master build. Baking those into the
+                    // CI image would reclaim most of it.
                     //
                     // Reuses the `gpf-docs-deploy` Jenkins SSH credential
                     // (same SSH login + target host as gpf docs; one key
