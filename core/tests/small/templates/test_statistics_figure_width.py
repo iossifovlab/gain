@@ -13,8 +13,14 @@ the shared figure class and none carries an inline width of its own.
 The in-table thumbnails and the modal image are *not* page-flow figures
 and keep their own sizing.
 
+Three of the original five are still page-flow.  The two indel figures
+became thumbnails in gain#1118 -- half width, side by side, each opening
+the full-size image in the modal -- so they joined the exemption above
+rather than the list below, and are held to the same "no inline width"
+half of the rule by a test of their own.
+
 Scoped to the genomic- and fragment-score pages, which are the only
-ones that render these five.  Gene-score and gene-set-collection pages
+ones that render them.  Gene-score and gene-set-collection pages
 have page-flow figures of their own, sized inline; those are covered
 only by the blanket cap, not by the class.
 """
@@ -260,17 +266,26 @@ _FIGURES: list[tuple[str, _Builder, str]] = [
     # one figure the genomic-score page itself never renders.
     ("fragment lengths",
      _fragment_score, "statistics/coverage_fragment_lengths.png"),
-    # These three used to be pinned to an inline `width:50%` -- half the
-    # page, and a third width beside the tables and the two unstyled
-    # charts.  The class replaces the inline style outright.
-    ("insertion lengths",
-     _indel_allele_score, ALLELE_INSERTION_LENGTHS_IMAGE_FILE),
-    ("deletion lengths",
-     _indel_allele_score, ALLELE_DELETION_LENGTHS_IMAGE_FILE),
+    # The two indel figures LEFT this list in gain#1118: they render as
+    # half-width thumbnails that open the full-size image in the modal,
+    # so they are no longer page-flow figures at all -- the same
+    # exemption the in-table score thumbnails and the modal image have
+    # always had, for the same reason.  Their own sizing is asserted by
+    # test_the_indel_thumbnails_are_sized_by_their_pair below, so
+    # leaving here is not leaving unchecked.
+    #
     # Its own resource: this is the one figure whose existence depends
     # on the DATA and not just on the group being present.
     ("complex grid",
      _dense_complex_allele_score, ALLELE_COMPLEX_GRID_IMAGE_FILE),
+]
+
+#: The indel figures, which are thumbnails rather than page-flow
+#: figures.  Named here so the pair test below and the list above cannot
+#: disagree about which images are which.
+_THUMBNAIL_FIGURES = [
+    ALLELE_INSERTION_LENGTHS_IMAGE_FILE,
+    ALLELE_DELETION_LENGTHS_IMAGE_FILE,
 ]
 
 
@@ -291,6 +306,34 @@ def test_every_statistics_figure_carries_the_shared_figure_class(
 
     assert FIGURE_CLASS in _classes(figure)
     assert not _inline(figure)
+
+
+@pytest.mark.parametrize("filename", _THUMBNAIL_FIGURES)
+def test_the_indel_thumbnails_are_sized_by_their_pair(
+    filename: str,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A thumbnail takes its width from the pair, and nowhere else.
+
+    The same rule the page-flow figures are held to -- no inline width,
+    the class decides -- asked of the images that left that list in
+    gain#1118.  Two ``<img>`` carry each of these now: the thumbnail in
+    the pair and the full-size one inside the modal it opens, and only
+    the thumbnail is the one this is about.
+    """
+    page = _built_page(_indel_allele_score(tmp_path))
+
+    thumbnails = [
+        image for image in _images(page)
+        if image.get("src", "").endswith(filename)
+        and "figure-thumbnail" in _classes(image)
+    ]
+
+    assert len(thumbnails) == 1, \
+        f"expected exactly one thumbnail for {filename}"
+    assert not _inline(thumbnails[0])
+    assert FIGURE_CLASS not in _classes(thumbnails[0]), \
+        "a thumbnail sized by its pair must not also take the page-flow width"
 
 
 def test_page_flow_images_are_capped_at_the_content_width(
