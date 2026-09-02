@@ -25,9 +25,17 @@ no other test states:
   answers reached through different entry points: ``None`` short-circuits
   in ``Annotator.annotate`` and never reaches the score, while an empty
   region is a real walk that found nothing.
+
+One thing a pipeline answers DIFFERENTLY, pinned here because it is the
+one exception to "output is unchanged": a region starting below position
+1 is now refused rather than answered.  The old path called the record
+primitive, which carries no span guard; the plane's reads call
+``_guard_region_span``.  gain#1131 made exactly this change for the
+position annotator and pinned it there for the same reason -- so a
+fragment annotator that still accepted a 0 would now be the inconsistent
+one.
 """
 
-import gc
 import pathlib
 import textwrap
 import tracemalloc
@@ -159,6 +167,33 @@ def test_a_none_annotatable_and_an_empty_region_are_different_answers(
     assert for_empty_region == {"count": 0, "as_max": None}
 
 
+def test_a_region_below_position_one_is_refused_rather_than_answered(
+    repo: GenomicResourceRepo,
+) -> None:
+    """The one answer this move CHANGES, pinned deliberately.
+
+    Positions are 1-based, so a region starting at 0 is a caller error.
+    The old path reached the record primitive, which carries no span
+    guard, and answered it; the plane's reads call ``_guard_region_span``,
+    which refuses it -- and which exists partly because a backend testing
+    its bounds for truthiness would read that 0 as "unbounded" and answer
+    a caller error with a whole contig.
+
+    gain#1131 made the same change for the position annotator, so this is
+    the fragment annotator catching up rather than diverging.  It is a
+    real behaviour change and it is stated here rather than left for a
+    user to discover: a BED-derived TSV annotated through
+    ``RecordToRegion``, which passes its integers through unadjusted, is
+    where it would be met.
+    """
+    with _pipeline(repo, """
+        - source: count
+          name: count
+    """) as pipeline, pytest.raises(
+            ValueError, match="positions are 1-based"):
+        pipeline.annotate(Region("chr1", 0, 120))
+
+
 def _repo_of_overlapping_fragments(
     tmp_path: pathlib.Path, count: int,
 ) -> GenomicResourceRepo:
@@ -190,7 +225,10 @@ def _peak_bytes_annotating(
 
     The pipeline is loaded, opened and annotated once before measuring, so
     what is measured is a steady-state annotate rather than the one-off
-    allocation of the pipeline, the score and the table behind it.
+    allocation of the pipeline, the score and the table behind it.  That
+    warm-up is the whole of the setup: ``tracemalloc`` traces only blocks
+    allocated after ``start()``, so collecting garbage first would change
+    nothing about the peak of the traced set.
     """
     with _pipeline(repo, """
         - source: v
@@ -199,7 +237,6 @@ def _peak_bytes_annotating(
     """) as pipeline:
         pipeline.annotate(region)
 
-        gc.collect()
         tracemalloc.start()
         try:
             pipeline.annotate(region)

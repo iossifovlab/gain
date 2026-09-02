@@ -145,6 +145,12 @@ class FragmentScoreAnnotator(AnnotatorBase):
         #: fragment COUNT instead.  That is not only the `count`
         #: attribute: a `bool` score has no default aggregator either, so
         #: an attribute over one lands here too.
+        #:
+        #: That filter is the one difference from
+        #: `PositionScoreAnnotator._region_queries`, which otherwise reads
+        #: the same: it builds a query for EVERY attribute, passing a
+        #: `None` aggregator through to be refused as the pipeline loads.
+        #: This kind has nothing to refuse there, so it filters instead.
         self._region_queries: list[ScoreAggregationQuery] = [
             ScoreAggregationQuery(
                 attr.source, aggregator_name(attr.aggregator))
@@ -179,8 +185,8 @@ class FragmentScoreAnnotator(AnnotatorBase):
                 # "kept" rather than "overlapping": with a `fragment_filter`
                 # configured the rejected fragments are not counted, which
                 # has always been true and was never said here.
-                description="The number of fragments overlapping with the "
-                "annotatable that the fragment filter kept.",
+                description="The number of fragments overlapping the "
+                "annotatable and kept by the fragment filter.",
             ),
         }
         for score_id, score_def in \
@@ -224,19 +230,31 @@ class FragmentScoreAnnotator(AnnotatorBase):
                 queries=self._region_queries,
                 score_filter=self.fragment_filter)
 
+        # One value per query, so as many as there are queries.  Checked
+        # rather than assumed, because the pairing below is POSITIONAL and
+        # a plane that answered a different number would otherwise slide
+        # every attribute onto its neighbour's value.  A length compare,
+        # not a `zip(strict=True)`: the strict zip needs a second list of
+        # names to zip against, and building one costs about three times
+        # what this whole method costs (measured, gain#1124).
+        if len(aggregate.values) != len(self._region_queries):
+            raise ValueError(
+                f"{self.get_info().type} asked "
+                f"{len(self._region_queries)} queries of resource "
+                f"'{self.fragment_score.resource_id}' and got "
+                f"{len(aggregate.values)} values back")
+
         # Paired back by ORDER, against the same filter that built the
         # queries.  The names are read HERE rather than cached beside the
-        # queries: a pipeline naming one attribute twice renames the later
-        # ones (`resolve_repeated_attributes`) after every annotator has
-        # been constructed, so names captured in `__init__` would key the
-        # answers by names the pipeline has since moved away from.
+        # queries, for the reason `AggregatedValues` states.
         #
         # An attribute with no aggregator has no reduction of its own and
         # answers the fragment count instead -- see `_region_queries`.
+        # Walked over `self._attributes`, so the result keeps attribute
+        # order, as the base's own reduction did.
         values = iter(aggregate.values)
-        result = AggregatedValues()
-        for attr in self._attributes:
-            result[attr.name] = (
-                next(values) if attr.aggregator is not None
-                else aggregate.count)
-        return result
+        return AggregatedValues(
+            (attr.name,
+             next(values) if attr.aggregator is not None
+             else aggregate.count)
+            for attr in self._attributes)

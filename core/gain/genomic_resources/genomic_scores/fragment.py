@@ -91,6 +91,12 @@ class FragmentAggregate:
     values: tuple[ScoreValue, ...]
 
 
+#: One fragment as this plane reports it -- its own unclipped span, then
+#: the values for the scores asked for, positionally.  Written once here
+#: rather than spelled out at each end of the pass-through below.
+_Segment = tuple[int, int, tuple[ScoreValue, ...]]
+
+
 class _CountingStream:
     """A pass-through over segments that tallies them as they flow.
 
@@ -99,17 +105,21 @@ class _CountingStream:
     stream itself, so the tally cannot be a local the caller increments --
     it lives here and is read once the fold has RETURNED.  Reading it
     before then answers however far the fold happened to have got.
+
+    Kept a class, and kept private, deliberately.  It knows nothing about
+    fragments, so it looks like shared machinery -- but this package
+    promotes a helper into :mod:`.aggregation` when TWO readers must agree
+    on a derivation (see :func:`~.aggregation.request_score_ids`), and
+    this has one.  Should a second kind come to want a per-walk tally, the
+    move is to make the fold report what it folded and delete this, rather
+    than to relocate it.
     """
 
-    def __init__(
-        self, segments: Iterable[tuple[int, int, tuple[ScoreValue, ...]]],
-    ) -> None:
+    def __init__(self, segments: Iterable[_Segment]) -> None:
         self._segments = segments
         self.count = 0
 
-    def __iter__(
-        self,
-    ) -> Generator[tuple[int, int, tuple[ScoreValue, ...]], None, None]:
+    def __iter__(self) -> Generator[_Segment, None, None]:
         for segment in self._segments:
             self.count += 1
             yield segment
@@ -575,22 +585,50 @@ class FragmentScore(GenomicScore):
         :func:`~.aggregation.resolve_aggregator_name` rather than routed
         through :func:`~.aggregation.resolve_aggregator_requests`, which
         serves :meth:`~.base.GenomicScore.aggregate_region` alone.  The
-        temptation is real -- that function returns exactly the
-        ``(score_id, aggregator)`` pairs wanted here -- and taking it would
-        mean widening it to :class:`~..aggregators.ScoreAggregationQuery`.
-        Since gain#1121 made the position query a SUBCLASS of that, a
-        widened signature would accept a
+        temptation is real: that function returns exactly the
+        ``(score_id, aggregator)`` pairs wanted here, and already expands a
+        ``None`` request list to every score.
+
+        Two routes to it, and the distinction matters.  PROJECTING at the
+        call site -- handing it ``[(q.score, q.aggregator) for q in
+        queries]`` -- is type-safe and would work; what it needs is a
+        ``remedy`` parameter, since that function hardcodes
+        :data:`~.aggregation.PAIR_AGGREGATOR_REMEDY` and a query surface
+        must say :data:`~.aggregation.QUERY_AGGREGATOR_REMEDY`.  That is a
+        change to a function :meth:`~.base.GenomicScore.aggregate_region`
+        also calls, and it is not made here.
+
+        WIDENING it to :class:`~..aggregators.ScoreAggregationQuery` is the
+        route that must not be taken, and it is the one that looks
+        tidier.  Since gain#1121 made the position query a SUBCLASS of
+        that, a widened signature would accept a
         :class:`~..aggregators.PositionScoreAggregationQuery` too, and its
         pair return has nowhere to put ``none_value_replacement``: a type
-        error today would become a silent drop.  A fragment query has no
-        such field, so resolving locally costs nothing and keeps that door
-        shut.
+        error today would become a silent drop.
+
+        Private, unlike :meth:`~.position.PositionScore
+        .resolve_aggregation_queries`, which gain#1131 made public so the
+        position annotator could refuse a bad attribute as the pipeline
+        LOADS.  A fragment annotator has nothing to refuse there: an
+        attribute naming no aggregator is not an error on this kind, it is
+        one that answers the fragment count instead.
 
         Aggregators are built FRESH per call, never held on the score: an
         aggregator is a mutable accumulator and explicitly not thread-safe,
-        and a score may be read from several threads at once.  That is a
-        deliberate trade against the annotator's build-once-and-clear
-        reuse -- it is what makes the read safe to use outside annotation.
+        so a reused one would have two concurrent reads accumulating into
+        each other.  That is a deliberate trade against the annotator's
+        build-once-and-clear reuse, and it costs an
+        :meth:`~..aggregators.Aggregator.build` per query per call.
+
+        It removes ONE hazard, not the class of them: it does not make the
+        read thread-safe, and this is deliberately not claimed.  The
+        TABLE's line iterator is shared too, so two concurrent region reads
+        of one open score still collide -- on a tabix-backed table with a
+        ``generator already executing`` -- exactly as
+        :meth:`get_fragment_scores_overlapping_region` says under "one live
+        region read per score at a time".  Fresh aggregators mean a caller
+        that serialises its reads needs no further care; they do not
+        license concurrent ones.
 
         ``queries`` of ``None`` means every score the resource defines,
         each with its own default aggregator.
@@ -600,20 +638,18 @@ class FragmentScore(GenomicScore):
                 ScoreAggregationQuery(score_id)
                 for score_id in self.get_all_scores()
             ]
-        requests = [
-            (
+        requests = []
+        for query in queries:
+            score_def = score_def_for(
+                query.score,
+                score_definitions=self.score_definitions,
+                resource_id=self.resource_id)
+            requests.append((
                 query.score,
                 resolve_aggregator_name(
-                    query.aggregator,
-                    score_def_for(
-                        query.score,
-                        score_definitions=self.score_definitions,
-                        resource_id=self.resource_id),
+                    query.aggregator, score_def,
                     resource_id=self.resource_id,
-                    remedy=QUERY_AGGREGATOR_REMEDY),
-            )
-            for query in queries
-        ]
+                    remedy=QUERY_AGGREGATOR_REMEDY)))
         aggregators = [
             build_region_aggregator(
                 score_id, aggregator, resource_id=self.resource_id)
@@ -650,11 +686,24 @@ class FragmentScore(GenomicScore):
         fragments, and answers ``None`` rather than ``0`` for a region no
         fragment overlaps.
 
-        Memory is constant in the number of fragments, aggregators
-        permitting: the stream is folded as it arrives and never
-        materialised.  An aggregator that keeps every value it is given --
-        ``list``, ``value_count`` -- still keeps them, which is a property
-        of that aggregator and not of this read.
+        THIS READ holds nothing per fragment: the stream is folded as it
+        arrives and never materialised.  Whether the CALL is constant in
+        the number of fragments is then the AGGREGATORS' business, and
+        they divide three ways:
+
+        - constant -- ``max``, ``min``, ``mean``, ``count``, ``bool``;
+        - one entry per DISTINCT value -- ``mode``, ``value_count``, so
+          bounded by how many values a resource has rather than by how
+          many fragments a region holds;
+        - one entry per FRAGMENT -- ``list``, ``median``, ``concatenate``
+          and ``join``.  ``join(,)`` is the DEFAULT for a ``str`` score,
+          which makes this the ordinary case for a CNV collection rather
+          than an exotic one.
+
+        Under the last group the fold still allocates per fragment.  What
+        this read removes is the SECOND copy the annotator used to build
+        beside it, which is a halving there and a flattening everywhere
+        else.
         """
         requests, aggregators = self._resolve_fragment_aggregation_queries(
             queries)

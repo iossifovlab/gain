@@ -49,6 +49,18 @@ class AggregatedValues(dict[str, Any]):  # ruff: ignore[subclass-builtin]
     The legacy shape -- a source-keyed dict of raw values for the base to
     fold -- stays live beside it while the annotators move over one at a
     time.
+
+    **Read the names when you ANSWER, never in ``__init__``.**  The one
+    statement of the rule every annotator building one of these has to
+    follow, kept here rather than in each of them.  A pipeline naming one
+    attribute twice renames the later ones --
+    ``annotation_factory.resolve_repeated_attributes`` -- and it does so
+    AFTER every annotator has been constructed.  So an annotator that
+    captured ``attr.name`` while building its queries would key its
+    answers by names the pipeline has since moved away from, and the
+    attributes it renamed would come back empty.  Whatever a query list
+    caches, it must not cache names; ``self._attributes`` is walked again
+    at annotate time and the names read off it then.
     """
 
 
