@@ -127,6 +127,15 @@ class FragmentScoreAnnotator(AnnotatorBase):
 
         super().__init__(pipeline, info)
 
+        #: The score ids to read, in the order the values come back in.
+        #: Deduped because two attributes may name one source under
+        #: different attribute names, and a repeated id would pair the same
+        #: value into the same list twice.  Fixed once here, as the position
+        #: and allele annotators fix theirs.
+        self.aggregated_sources: list[str] = list(dict.fromkeys(
+            attr.source for attr in self._attributes
+            if attr.aggregator is not None))
+
         for attr in self._attributes:
             spec = self.attribute_specs[attr.source]
             score_def = self.fragment_score\
@@ -185,21 +194,13 @@ class FragmentScoreAnnotator(AnnotatorBase):
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
-        # The read yields values positionally, so the ids are asked for
-        # explicitly and the attribute -> position map is read off the SAME
-        # list -- the parallelism holds by construction rather than by two
-        # derivations agreeing.  An attribute naming something the resource
-        # does not score raises here, as it did when the values arrived
-        # keyed.
-        score_ids = self.fragment_score.get_all_scores()
-        at = {score_id: position for position, score_id in enumerate(score_ids)}
-        positions = {
-            attr.source: at[attr.source]
-            for attr in self._attributes
-            if attr.aggregator is not None
-        }
-
-        raw: dict[str, list] = {source: [] for source in positions}
+        # The read yields values positionally, parallel to the ids it was
+        # asked for -- so asking for exactly the sources wanted makes the
+        # pairing a zip, and leaves the scores no attribute reads
+        # unextracted.  An attribute naming something the resource does not
+        # score is refused by the read, naming the resource and the id.
+        sources = self.aggregated_sources
+        raw: dict[str, list] = {source: [] for source in sources}
 
         # Counted while streaming: the read is a generator, so the fragments
         # are gone once walked, and an attribute with no aggregator wants
@@ -207,10 +208,10 @@ class FragmentScoreAnnotator(AnnotatorBase):
         count = 0
         for _beg, _end, values in self.fragment_score.fetch_fragment_scores(
                 annotatable.chrom, annotatable.pos, annotatable.pos_end,
-                score_ids, score_filter=self.fragment_filter):
+                sources, score_filter=self.fragment_filter):
             count += 1
-            for source, position in positions.items():
-                raw[source].append(values[position])
+            for source, value in zip(sources, values, strict=True):
+                raw[source].append(value)
 
         # An attribute with no aggregator has no values of its own to carry,
         # and answers the fragment count instead.

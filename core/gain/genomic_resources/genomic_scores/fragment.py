@@ -218,9 +218,9 @@ class FragmentScore(GenomicScore):
 
         The REQUEST is checked when this is called; the READING is lazy.  A
         closed score, a contig this resource does not have and an unknown
-        score id are all refused before the first ``next()``, not on it, so a
-        typo cannot answer differently on a populated contig than on an empty
-        one.  A malformed RECORD is a different matter and is refused when the
+        score id are refused before the first ``next()`` rather than on it,
+        for the reason :meth:`~.base.GenomicScore._region_read_defs` gives.
+        A malformed RECORD is a different matter and is refused when the
         record is reached: a fragment whose end precedes its begin ends the
         iteration then, mid-stream.
 

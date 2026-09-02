@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pathlib  # ruff: ignore[unsorted-imports]
 import textwrap
+from collections.abc import Iterator
 from typing import Any, cast
 
 import numpy as np
@@ -35,6 +36,9 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     convert_to_tab_separated,
     setup_directories,
+)
+from gain.genomic_resources.testing.builders import (
+    a_fragment_score,
 )
 from gain.task_graph.cli_tools import task_graph_run
 from gain.task_graph.sequential_executor import SequentialExecutor
@@ -144,7 +148,7 @@ def test_fragment_score_resource(
 
 
 def test_fragment_read_refuses_a_record_whose_end_precedes_its_begin(
-    fragments: FragmentScore,
+    tmp_path: pathlib.Path,
 ) -> None:
     """A backwards record ends the iteration, mid-stream.
 
@@ -153,23 +157,29 @@ def test_fragment_read_refuses_a_record_whose_end_precedes_its_begin(
     for itself.  Unlike the request guards it fires when the record is
     reached, not when the method is called -- there is nothing to check it
     against until the record arrives.
+
+    A zero-based row is how a backwards record is authored: the zero-based
+    adjustment bumps end only when begin == end, so an end < begin row is
+    left unrepaired and reaches the score layer as POS_END < POS_BEGIN.
     """
-    with fragments.open() as score:
-        backwards: list[Record] = [
-            ("1", 200, 100, None, None, ("1", "200", "100", "0.5", "SSC",
-                                         "affected")),
-        ]
+    score = FragmentScore(
+        a_fragment_score()
+        .with_score("v", "float")
+        .with_zero_based()
+        .with_data("""
+            chrom  pos_begin  pos_end  v
+            1      5          3        0.5
+        """)
+        .build_resource(tmp_path),
+    ).open()
 
-        with pytest.MonkeyPatch.context() as patch:
-            patch.setattr(score, "fetch_records", lambda *_a, **_k: backwards)
-            fragment_scores = score.fetch_fragment_scores("1", 1, 300)
-
-            with pytest.raises(OSError, match="smaller than the beginning"):
-                list(fragment_scores)
+    with pytest.raises(OSError, match="has a region"):
+        list(score.fetch_fragment_scores("1", 1, 100))
 
 
 def test_fragment_read_pulls_records_only_as_it_is_consumed(
     fragments: FragmentScore,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Taking one fragment reads one record, not the whole region.
 
@@ -179,22 +189,24 @@ def test_fragment_read_pulls_records_only_as_it_is_consumed(
     was asked for is what tells the two apart.
     """
     with fragments.open() as score:
-        pulled: list[int] = []
+        pulled: list[Record] = []
         real_fetch_records = score.fetch_records
 
-        def counting_fetch_records(*args: Any, **kwargs: Any) -> Any:
+        def counting_fetch_records(
+            *args: Any, **kwargs: Any,
+        ) -> Iterator[Record]:
             for record in real_fetch_records(*args, **kwargs):
-                pulled.append(1)
+                pulled.append(record)
                 yield record
 
-        # "1", 10, 65 spans both of the contig's fragments.
-        with pytest.MonkeyPatch.context() as patch:
-            patch.setattr(score, "fetch_records", counting_fetch_records)
-            fragment_scores = score.fetch_fragment_scores("1", 10, 65)
+        monkeypatch.setattr(score, "fetch_records", counting_fetch_records)
 
-            assert pulled == []
-            next(fragment_scores)
-            assert pulled == [1]
+        # "1", 10, 65 spans both of the contig's fragments.
+        fragment_scores = score.fetch_fragment_scores("1", 10, 65)
+
+        assert pulled == []
+        next(fragment_scores)
+        assert len(pulled) == 1
 
 
 def test_fragment_span_is_reported_unclipped(
