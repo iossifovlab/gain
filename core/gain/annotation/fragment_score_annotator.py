@@ -185,13 +185,16 @@ class FragmentScoreAnnotator(AnnotatorBase):
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
-        # The read yields values positionally, parallel to the score ids it
-        # was asked for -- everything the resource defines, since no
-        # ``scores`` is passed.  The attribute -> position map is built once
-        # per annotation rather than per fragment.
+        # The read yields values positionally, so the ids are asked for
+        # explicitly and the attribute -> position map is read off the SAME
+        # list -- the parallelism holds by construction rather than by two
+        # derivations agreeing.  An attribute naming something the resource
+        # does not score raises here, as it did when the values arrived
+        # keyed.
         score_ids = self.fragment_score.get_all_scores()
+        at = {score_id: position for position, score_id in enumerate(score_ids)}
         positions = {
-            attr.source: score_ids.index(attr.source)
+            attr.source: at[attr.source]
             for attr in self._attributes
             if attr.aggregator is not None
         }
@@ -204,7 +207,7 @@ class FragmentScoreAnnotator(AnnotatorBase):
         count = 0
         for _beg, _end, values in self.fragment_score.fetch_fragment_scores(
                 annotatable.chrom, annotatable.pos, annotatable.pos_end,
-                score_filter=self.fragment_filter):
+                score_ids, score_filter=self.fragment_filter):
             count += 1
             for source, position in positions.items():
                 raw[source].append(values[position])

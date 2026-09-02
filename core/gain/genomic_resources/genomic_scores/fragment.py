@@ -189,10 +189,10 @@ class FragmentScore(GenomicScore):
     ) -> Generator[tuple[int, int, tuple[ScoreValue, ...]], None, None]:
         """Stream ``(begin, end, values)`` for the fragments over a region.
 
-        **Private to the fragment plane.**  This is the primitive the
-        ``get_fragment_score*`` reads compose over, not a read to reach for
-        directly; it keeps its name because it had one, not because the name
-        is an invitation.  It diverges from the internals beside it
+        **Private to the fragment plane.**  This is the primitive the plane's
+        public reads are to be built on, not a read to reach for directly; it
+        keeps its name because it had one, not because the name is an
+        invitation.  It diverges from the internals beside it
         (``_score_segments``, ``_region_read_defs``) in spelling only.
 
         One entry per overlapping fragment, in table order, each reporting
@@ -216,21 +216,35 @@ class FragmentScore(GenomicScore):
         it may name any score the resource defines, including one outside
         ``scores``, and a rejected fragment costs no extraction.
 
-        **Consume it promptly.**  The guards run when this is CALLED -- a
-        closed score, a contig this resource does not have, and an unknown
-        score id are all refused before the first ``next()``, not on it -- but
-        the reading is lazy, and a genomic score is not thread-safe.  Holding
-        a half-consumed generator widens the window in which the score must
-        not be touched from inside one call to however long the caller takes
-        between yields.  A caller that needs to keep the answer around
-        materialises it; a caller that abandons it mid-stream pays a
-        :class:`~..genomic_position_table.table_tabix.TabixGenomicPositionTable`
-        buffer prune and nothing worse (gain#1120).
+        The REQUEST is checked when this is called; the READING is lazy.  A
+        closed score, a contig this resource does not have and an unknown
+        score id are all refused before the first ``next()``, not on it, so a
+        typo cannot answer differently on a populated contig than on an empty
+        one.  A malformed RECORD is a different matter and is refused when the
+        record is reached: a fragment whose end precedes its begin ends the
+        iteration then, mid-stream.
+
+        **One live read at a time.**  A score serves a single region read at
+        once -- the table's line iterator and line buffer are the table's, not
+        the generator's -- so starting a second read invalidates one that is
+        still being consumed, and on a tabix-backed table the two then answer
+        each other's records with no error raised.  Materialising is what
+        makes a held answer safe to keep:
+
+        .. code-block:: python
+
+            kept = list(score.fetch_fragment_scores(chrom, beg, end))
+
+        Abandoning a read mid-stream is safe and costs only a
+        :class:`~gain.genomic_resources.genomic_position_table.table_tabix.TabixGenomicPositionTable`
+        buffer prune, which gain#1120 moved into a ``finally`` -- though that
+        runs when the generator is released, so a caller holding a reference
+        to a ``close()``-ed generator still holds the read open.
         """
-        score_defs = self._region_read_defs(chrom, scores)
         records = self.fetch_records(
             chrom, start, stop, score_filter=score_filter)
         return (
             (beg, end, tuple(values))
-            for beg, end, values in self._score_segments(records, score_defs)
+            for beg, end, values in self.region_values_from_records(
+                records, chrom, start, stop, scores)
         )

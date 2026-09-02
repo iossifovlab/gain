@@ -9,6 +9,7 @@ import pytest
 import pytest_mock
 
 from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_scores import (
     FragmentScore,
 )
@@ -140,6 +141,60 @@ def test_fragment_score_resource(
     """Every overlapping fragment, as its own span and a positional tuple."""
     with fragments.open() as score:
         assert list(score.fetch_fragment_scores(chrom, beg, end)) == expected
+
+
+def test_fragment_read_refuses_a_record_whose_end_precedes_its_begin(
+    fragments: FragmentScore,
+) -> None:
+    """A backwards record ends the iteration, mid-stream.
+
+    Reading through the shared segments means the read inherits their claim
+    about a RECORD, which this read did not make while it extracted values
+    for itself.  Unlike the request guards it fires when the record is
+    reached, not when the method is called -- there is nothing to check it
+    against until the record arrives.
+    """
+    with fragments.open() as score:
+        backwards: list[Record] = [
+            ("1", 200, 100, None, None, ("1", "200", "100", "0.5", "SSC",
+                                         "affected")),
+        ]
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(score, "fetch_records", lambda *_a, **_k: backwards)
+            fragment_scores = score.fetch_fragment_scores("1", 1, 300)
+
+            with pytest.raises(OSError, match="smaller than the beginning"):
+                list(fragment_scores)
+
+
+def test_fragment_read_pulls_records_only_as_it_is_consumed(
+    fragments: FragmentScore,
+) -> None:
+    """Taking one fragment reads one record, not the whole region.
+
+    Laziness is the point of the read, and every other test here consumes it
+    whole -- which an implementation that materialised internally and handed
+    back ``iter(...)`` would satisfy just as well.  Counting what the backend
+    was asked for is what tells the two apart.
+    """
+    with fragments.open() as score:
+        pulled: list[int] = []
+        real_fetch_records = score.fetch_records
+
+        def counting_fetch_records(*args: Any, **kwargs: Any) -> Any:
+            for record in real_fetch_records(*args, **kwargs):
+                pulled.append(1)
+                yield record
+
+        # "1", 10, 65 spans both of the contig's fragments.
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(score, "fetch_records", counting_fetch_records)
+            fragment_scores = score.fetch_fragment_scores("1", 10, 65)
+
+            assert pulled == []
+            next(fragment_scores)
+            assert pulled == [1]
 
 
 def test_fragment_span_is_reported_unclipped(
