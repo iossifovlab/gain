@@ -659,6 +659,23 @@ class AggregatorDefinition:
 AggregatorSource = AggregatorDefinition | str | dict[str, Any]
 
 
+def aggregator_name(aggregator: AggregatorSource) -> str:
+    """The canonical string spelling of an aggregator, whatever its form.
+
+    An annotation pipeline may write an attribute's aggregator as a name,
+    as a ``{aggregator_type, parameters}`` mapping, or as an already
+    parsed :class:`AggregatorDefinition`; a resource may only write the
+    name.  Everything downstream of the config -- a ``ScoreDef``'s field,
+    a :class:`ScoreAggregationQuery`'s -- holds the name alone, so the
+    three spellings collapse here, once, on the way in.
+    """
+    if isinstance(aggregator, str):
+        return aggregator
+    if isinstance(aggregator, AggregatorDefinition):
+        return str(aggregator)
+    return str(AggregatorDefinition.from_dict(aggregator))
+
+
 @dataclass(frozen=True)
 class ScoreAggregationQuery:
     """One score's reduction request, in the terms every kind shares.

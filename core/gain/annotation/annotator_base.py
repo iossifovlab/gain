@@ -26,6 +26,32 @@ from gain.genomic_resources.aggregators import (
 )
 
 
+# A real ``dict`` subclass, not a ``UserDict``: ``_do_annotate`` promises
+# ``dict[str, Any]`` to every caller and every other annotator still returns
+# a plain one, so the marker has to BE a dict to travel that contract.  What
+# is added is the type itself -- there is no behaviour here to get wrong,
+# which is the hazard the rule guards against.
+class AggregatedValues(dict[str, Any]):  # ruff: ignore[subclass-builtin]
+    """Values a ``_do_annotate`` has already reduced, keyed by ATTRIBUTE NAME.
+
+    The contract an annotator uses to say "these are finished".
+    :meth:`AnnotatorBase._apply_aggregators` recognises it by type and
+    passes it through untouched, reducing nothing and re-keying nothing.
+
+    Both parts of that matter, and both are why a marker type is needed
+    rather than a convention (gain#1130).  A finished ``list`` aggregation
+    is indistinguishable BY VALUE from a raw list of values still to be
+    reduced, so the type is what tells the base which it is holding.  And
+    the keys are attribute names rather than sources because a source
+    exposed twice with two aggregators has two different finished values,
+    which a source-keyed mapping has nowhere to put.
+
+    The legacy shape -- a source-keyed dict of raw values for the base to
+    fold -- stays live beside it while the annotators move over one at a
+    time.
+    """
+
+
 class AnnotatorBase(Annotator):
     """Base implementation of the `Annotator` class."""
 
@@ -147,7 +173,16 @@ class AnnotatorBase(Annotator):
         The aggregator instance is the attribute's own and is reused
         across annotate calls; each call clears it first.  This is
         correct single-threaded and is not thread-safe.
+
+        An :class:`AggregatedValues` is the other case: the annotator's
+        score has already reduced, and already keyed by attribute name, so
+        there is nothing left to do and doing it anyway would fold a
+        finished list a second time.  It arrives here rather than bypassing
+        this method because ``annotate`` and ``batch_annotate`` both route
+        through it, so one branch answers for both paths.
         """
+        if isinstance(values, AggregatedValues):
+            return dict(values)
         result = {}
         for attr in self._attributes:
             value = values.get(attr.source)

@@ -420,10 +420,10 @@ class PositionScore(GenomicScore):
             chrom, start, end, [self._resolve_single_score(score)])
         return (row[0] for row in rows)
 
-    def _resolve_aggregation_queries(
+    def resolve_aggregation_queries(
         self, queries: Sequence[PositionScoreAggregationQuery],
-    ) -> list[tuple[str, Aggregator, ScoreValue]]:
-        """Resolve each query to its (score_id, aggregator, replacement).
+    ) -> list[tuple[str, str, ScoreValue]]:
+        """Resolve each query to its (score_id, aggregator NAME, replacement).
 
         The third element is the query's ``none_value_replacement``.
 
@@ -444,6 +444,15 @@ class PositionScore(GenomicScore):
         rather than the one it left out.  That order is a decision and not
         an accident of composition; it is pinned by
         ``test_a_query_invalid_several_ways_reports_the_first_ground``.
+
+        Public, and stopping at the NAME, because asking whether a query is
+        answerable is a question a caller may have without wanting to read
+        (gain#1131).  ``PositionScoreAnnotator`` asks it once when the
+        pipeline loads, so an attribute naming no aggregator for a ``bool``
+        score is refused there rather than on the first region that reaches
+        it.  Building the accumulators is the READ's business --
+        :meth:`_resolve_aggregation_queries` adds them, per call, which is
+        what keeps a read thread-safe and an annotator stateless.
         """
         resolved = []
         for query in queries:
@@ -459,13 +468,28 @@ class PositionScore(GenomicScore):
                 resource_id=self.resource_id,
                 remedy=QUERY_AGGREGATOR_REMEDY)
             resolved.append((
-                query.score,
-                build_region_aggregator(
-                    query.score, aggregator,
-                    resource_id=self.resource_id),
-                query.none_value_replacement,
-            ))
+                query.score, aggregator, query.none_value_replacement))
         return resolved
+
+    def _resolve_aggregation_queries(
+        self, queries: Sequence[PositionScoreAggregationQuery],
+    ) -> list[tuple[str, Aggregator, ScoreValue]]:
+        """The read's form of :meth:`resolve_aggregation_queries`.
+
+        The same triples with the aggregator NAME replaced by a freshly
+        built accumulator -- one per call, never shared between reads.
+        """
+        return [
+            (
+                score_id,
+                build_region_aggregator(
+                    score_id, aggregator,
+                    resource_id=self.resource_id),
+                none_value_replacement,
+            )
+            for score_id, aggregator, none_value_replacement
+            in self.resolve_aggregation_queries(queries)
+        ]
 
     # Which python types a none_value_replacement may have per score value
     # type.  A ``bool`` is deliberately not a valid int or float

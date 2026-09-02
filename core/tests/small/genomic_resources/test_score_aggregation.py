@@ -395,3 +395,81 @@ def test_each_aggregation_refusal_is_written_in_exactly_one_place() -> None:
             if (count := path.read_text().count(rule))
         )
         assert sites == [f"{_STATED_IN}:1"], (rule, sites)
+
+
+# -- Resolving a query without reading, and without building (gain#1131) ---
+#
+# ``PositionScoreAnnotator`` asks the two questions a query asks when the
+# PIPELINE loads, so a misconfigured attribute is refused there rather than
+# on the first annotatable that reaches it.  What it must NOT do is build
+# the aggregators: the read builds a fresh one per call, which is what keeps
+# it thread-safe, and an annotator holding instances of its own is the state
+# this seam exists to avoid.  So the resolve half is public and answers
+# NAMES; the private one adds the instances for the read.
+
+
+def test_the_resolver_answers_the_aggregator_name_not_an_instance(
+    flags: PositionScore,
+) -> None:
+    """The whole point of the split: resolution without instantiation.
+
+    A caller that only wants to know whether a query is answerable -- the
+    annotator, at load -- gets the name the read would build, and builds
+    nothing.  An ``Aggregator`` here instead of a ``str`` would mean the
+    annotator was holding accumulators after all.
+    """
+    resolved = flags.resolve_aggregation_queries(
+        [PositionScoreAggregationQuery("flag", "bool")])
+
+    assert resolved == [("flag", "bool", None)]
+
+
+def test_the_resolver_refuses_a_missing_default_in_the_read_s_own_words(
+    flags: PositionScore,
+) -> None:
+    """Asked earlier is still the SAME refusal, not a second one.
+
+    The annotator surfaces this when the pipeline loads; the read surfaces
+    it on the first region.  A caller who moved between them must not get
+    two different sentences about one misconfiguration, which is what a
+    split that copied the rule instead of sharing it would produce.
+
+    The resolver is asked of an UNOPENED score on purpose: the annotator
+    builds its queries in ``__init__``, long before anything opens the
+    resource, so a resolver that needed the table would refuse nothing at
+    load and the whole seam would be pointless.
+    """
+    query = PositionScoreAggregationQuery("flag")
+
+    from_resolver = _refusal(
+        lambda: flags.resolve_aggregation_queries([query]))
+    with flags.open() as score:
+        from_read = _refusal(
+            lambda: score.get_scores_in_region_agg("1", 10, 10, [query]))
+
+    assert from_resolver == from_read == (
+        "score 'flag' of resource 'flags' has no default aggregator for "
+        "value type 'bool'; name one on the query")
+
+
+def test_the_resolver_names_the_aggregator_the_read_goes_on_to_use(
+    two: PositionScore,
+) -> None:
+    """The name is only worth having if it is the read's own choice.
+
+    A resolver that answered a plausible name while the read defaulted to
+    something else would refuse the right queries and describe the wrong
+    reduction.  ``s`` declares no aggregator, so both must land on the
+    ``float`` class default -- and the region's answer must be that
+    aggregator's, not another's.
+    """
+    query = PositionScoreAggregationQuery("s")
+
+    assert two.resolve_aggregation_queries([query]) == [("s", "mean", None)]
+
+    with two.open() as score:
+        assert score.get_scores_in_region_agg("1", 10, 14, [query]) == (
+            pytest.approx(0.32),)
+        assert score.get_scores_in_region_agg(
+            "1", 10, 14, [PositionScoreAggregationQuery("s", "max")]) == (
+            pytest.approx(0.8),)

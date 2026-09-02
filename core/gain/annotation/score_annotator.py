@@ -22,10 +22,11 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatorBase
+from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
 from gain.genomic_resources.aggregators import (
     AggregatorSource,
-    WeightedValues,
+    PositionScoreAggregationQuery,
+    aggregator_name,
 )
 from gain.genomic_resources.genomic_position_table.record import (
     ALT,
@@ -271,6 +272,25 @@ phastCons, phyloP, FitCons2, etc.
             self.add_score_aggregator_documentation(
                 attr, "aggregator", attr_config.aggregator)
 
+        # One query per attribute, in attribute order, so the tuple the
+        # plane answers with indexes straight back to the names.  A source
+        # named twice is two queries and two answers, which is the whole
+        # reason the result is keyed by name.
+        self._region_queries = [
+            PositionScoreAggregationQuery(
+                attr.source,
+                aggregator_name(attr.aggregator)
+                if attr.aggregator is not None else None)
+            for attr in self._attributes
+        ]
+        # Ask the two questions a query asks now, and throw the answers
+        # away: what is wanted is the refusal.  An attribute whose score
+        # has no default aggregator and names none -- only ``bool`` can be
+        # in that position -- fails HERE, as the pipeline loads, with the
+        # plane's own remedy, rather than on the first region that reaches
+        # it.  Resolution only; the read builds its aggregators per call.
+        self.position_score.resolve_aggregation_queries(self._region_queries)
+
     def get_attribute_defaults(
         self, spec: AttributeSpec,
     ) -> dict[str, Any]:
@@ -289,26 +309,6 @@ phastCons, phyloP, FitCons2, etc.
             attr, "aggregator", attr.aggregator)
         return [doc]
 
-    def _fetch_raw_region_scores(
-        self, chrom: str, pos_begin: int, pos_end: int,
-        sources: list[str],
-    ) -> dict[str, WeightedValues]:
-        """Collect the region's records as weighted values, one per record.
-
-        The weight of a record -- how many base pairs of the region it
-        covers -- comes from the score layer, which has already clipped
-        the record to the query window.  Nothing here is materialised per
-        base pair.
-        """
-        raw: dict[str, WeightedValues] = {
-            source: WeightedValues() for source in sources}
-        for values, weight in self.position_score.fetch_region_weighted_values(
-            chrom, pos_begin, pos_end, sources,
-        ):
-            for source, value in zip(sources, values, strict=True):
-                raw[source].add(value, weight)
-        return raw
-
     def _do_annotate(
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
@@ -317,11 +317,10 @@ phastCons, phyloP, FitCons2, etc.
         if annotatable.chromosome not in self.score.get_all_chromosomes():
             return self._empty_result()
 
-        sources = list(dict.fromkeys(
-            attr.source for attr in self._attributes))
-
         if annotatable.type == Annotatable.Type.SUBSTITUTION:
             assert isinstance(annotatable, VCFAllele)
+            sources = list(dict.fromkeys(
+                attr.source for attr in self._attributes))
             point_scores = self.position_score.fetch_position_scores(
                 annotatable.chromosome, annotatable.position, sources)
             if not point_scores:
@@ -330,11 +329,12 @@ phastCons, phyloP, FitCons2, etc.
 
         if len(annotatable) > self._region_length_cutoff:
             return self._empty_result()
-        raw = self._fetch_raw_region_scores(
-            annotatable.chrom, annotatable.pos, annotatable.pos_end, sources)
-        if not any(raw.values()):
-            return self._empty_result()
-        return raw
+
+        values = self.position_score.get_scores_in_region_agg(
+            annotatable.chrom, annotatable.pos, annotatable.pos_end,
+            self._region_queries)
+        return AggregatedValues(zip(
+            (attr.name for attr in self._attributes), values, strict=True))
 
 
 def build_allele_score_annotator(pipeline: AnnotationPipeline,

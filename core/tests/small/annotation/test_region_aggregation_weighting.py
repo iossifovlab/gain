@@ -2,13 +2,21 @@
 """How much each record weighs when a region is aggregated (#260).
 
 A position-score record counts once per base pair of the region it
-covers, so the position-score annotator streams (value, weight) pairs:
-aggregating a region costs one aggregator call per *record*, not one per
-base pair, and the weight comes from the score layer's already-clipped
-bounds rather than being re-derived here.
+covers: aggregating a region costs one aggregator call per *record*, not
+one per base pair, and the weight comes from the score layer's
+already-clipped bounds.
+
+Since #1131 the position score applies that rule ITSELF -- the annotator
+asks the logical plane for a region already reduced -- so the position
+cases below are pinned against the score's own answers rather than by
+watching values arrive at an annotator-owned aggregator.  There is no
+longer such an aggregator to watch: what would once have been a silent
+change of weighting is now a disagreement between the annotator and the
+score, which is the sharper thing to assert anyway.
 
 An allele line and a fragment each count exactly once, however long they are.
-That is pinned here too, because it is what the weighted seam must *not*
+Those two still reduce through the base, so they are still pinned by
+watching the calls -- and they are what the weighted seam must *not*
 change.
 """
 
@@ -20,6 +28,9 @@ import pytest
 from gain.annotation.annotatable import Region
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
+from gain.genomic_resources.genomic_scores import (
+    build_position_score_from_resource,
+)
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
@@ -99,28 +110,49 @@ def _record_aggregator_calls(
     aggregator.add = spy  # type: ignore[method-assign]
 
 
-def test_each_record_reaches_the_aggregator_exactly_once(
+def _score_answer(
+    fixture_repo: GenomicResourceRepo, pos: int, pos_end: int,
+) -> Any:
+    """What the score itself reduces that region to, by the same rule."""
+    score = build_position_score_from_resource(
+        fixture_repo.get_resource("position_score1"))
+    with score.open() as opened:
+        return opened.get_score_in_region_agg(
+            "chr1", pos, pos_end, "test100way", "mean")
+
+
+def test_each_record_counts_once_per_base_pair_it_covers(
     fixture_repo: GenomicResourceRepo,
 ) -> None:
-    calls: list[tuple[Any, int]] = []
+    """Two records of equal width average to their midpoint.
+
+    Ten bases of 1.0 and ten of 2.0.  Were a record counted once rather
+    than once per base, this region would answer 1.5 as well -- which is
+    why the clipped case below, where the two weights differ, is the one
+    that can tell the rule apart.
+    """
     with _pipeline(fixture_repo, "mean") as pipeline:
-        _record_aggregator_calls(pipeline, calls)
         result = pipeline.annotate(Region("chr1", 10, 29))
 
-    assert calls == [(1.0, 10), (2.0, 10)]
     assert result["test100"] == 1.5
+    assert result["test100"] == _score_answer(fixture_repo, 10, 29)
 
 
 def test_a_records_weight_is_clipped_to_the_annotatable(
     fixture_repo: GenomicResourceRepo,
 ) -> None:
-    calls: list[tuple[Any, int]] = []
+    """Only the part of a record inside the annotatable counts.
+
+    Five bases of 1.0 and three of 2.0, so the answer leans to 1.0 -- and
+    not to 1.5, which is what counting each record once, or counting them
+    at their full ten-base width, would give.
+    """
     with _pipeline(fixture_repo, "mean") as pipeline:
-        _record_aggregator_calls(pipeline, calls)
         result = pipeline.annotate(Region("chr1", 15, 22))
 
-    assert calls == [(1.0, 5), (2.0, 3)]
     assert result["test100"] == pytest.approx((1.0 * 5 + 2.0 * 3) / 8)
+    assert result["test100"] != pytest.approx(1.5)
+    assert result["test100"] == _score_answer(fixture_repo, 15, 22)
 
 
 def test_an_allele_line_counts_once_however_wide_the_region(
