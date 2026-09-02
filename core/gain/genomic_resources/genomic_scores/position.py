@@ -327,22 +327,6 @@ class PositionScore(GenomicScore):
         if cursor <= end:
             yield None, end - cursor + 1
 
-    def _guard_position_span(self, start: int, end: int) -> None:
-        """Refuse a span no genomic region can mean.
-
-        There is deliberately no UPPER bound check: the exact chromosome
-        length is not knowable for most position scores, and a position past
-        the end of the data is simply uncovered (see #727).
-        """
-        if start < 1:
-            raise ValueError(
-                f"genomic score <{self.resource_id}> asked for a region "
-                f"with start {start}; positions are 1-based")
-        if end < start:
-            raise ValueError(
-                f"genomic score <{self.resource_id}> asked for a region "
-                f"whose end {end} precedes its start {start}")
-
     @staticmethod
     def _expand_position_runs(
         runs: Iterator[tuple[list[ScoreValue] | None, int]],
@@ -534,7 +518,7 @@ class PositionScore(GenomicScore):
         record count.  Where two records cover one position the first
         answers, so accumulated weight never exceeds the region width.
         """
-        self._guard_position_span(start, end)
+        self._guard_region_span(start, end)
         targets, score_ids = self._resolve_aggregation_query_targets(
             chrom, queries)
         for values, length in self._position_runs(
@@ -612,7 +596,7 @@ class PositionScore(GenomicScore):
         boundary contributes its weight to each bin it touches, split at
         the boundary.
         """
-        self._guard_position_span(start, end)
+        self._guard_region_span(start, end)
         if bin_size < 1:
             raise ValueError(
                 f"genomic score <{self.resource_id}> asked for bins of "
@@ -668,7 +652,7 @@ class PositionScore(GenomicScore):
         every position no record covers.  ``scores`` of ``None`` asks for
         every score this resource defines, in definition order.
         """
-        self._guard_position_span(start, end)
+        self._guard_region_span(start, end)
         score_ids = [
             score_def.score_id
             for score_def in self._region_read_defs(

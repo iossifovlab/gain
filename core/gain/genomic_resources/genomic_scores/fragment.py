@@ -9,7 +9,7 @@ announces it through
 from __future__ import annotations
 
 import copy
-from collections.abc import Generator, Iterator
+from collections.abc import Generator, Iterator, Sequence
 from typing import (
     Any,
     ClassVar,
@@ -44,7 +44,11 @@ from ..aggregators import (
     AGGREGATOR_SCHEMA,
 )
 from .base import GenomicScore
-from .records import RecordArrays
+from .records import (
+    RecordArrays,
+    overlap_fractions_admit,
+    owns_record,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -248,3 +252,248 @@ class FragmentScore(GenomicScore):
             for beg, end, values in self.region_values_from_records(
                 records, chrom, start, stop, scores)
         )
+
+    # -- The logical read plane (#1123) -------------------------------------
+    #
+    # On this plane a fragment score is a collection of measured intervals:
+    # one entry per FRAGMENT, carrying that fragment's own span and the
+    # values it was asked for.  That is the kind's semantic unit, as a
+    # position is the position kind's -- there is no per-base expansion
+    # here, because a fragment's length says nothing about how many times
+    # its value counts (see :meth:`record_weight`).
+    #
+    # ``get_*`` is this plane; ``fetch_*`` is the record plane beneath it.
+    # The singular of each pair is a thin wrapper over its plural through
+    # :meth:`~.base.GenomicScore._resolve_single_score`, and everything
+    # after the locus is keyword-only -- see
+    # :meth:`get_fragment_scores_overlapping_region` for why that is not
+    # cosmetic.
+
+    def _guard_overlap_fraction(
+        self, name: str, fraction: float | None,
+    ) -> None:
+        """Refuse an overlap threshold no fraction can ever reach.
+
+        An *overlap / length* ratio lies in ``[0, 1]``, so a threshold
+        outside it names a filter that is either vacuous or empty whatever
+        the data -- a caller error, and one worth reporting where it is
+        made.  Checked when the read is CALLED rather than on the first
+        ``next()``, which is where every other request guard on this plane
+        fires: a refusal deferred into a generator body reaches only a
+        caller that iterates, and hands a caller that does not iterate a
+        plausible nothing.
+        """
+        if fraction is not None and not 0.0 <= fraction <= 1.0:
+            raise ValueError(
+                f"genomic score <{self.resource_id}> was asked for "
+                f"{name}={fraction}; an overlap fraction is between 0 and 1")
+
+    def get_fragment_scores_overlapping_region(
+        self, chrom: str, start: int, end: int,
+        *,
+        scores: list[str] | None = None,
+        score_filter: ScoreFilter | None = None,
+        min_region_overlap_fraction: float | None = None,
+        min_fragment_overlap_fraction: float | None = None,
+    ) -> Generator[tuple[int, int, tuple[ScoreValue, ...]], None, None]:
+        """Yield ``(begin, end, values)`` per fragment overlapping a region.
+
+        The plane's workhorse.  Entries are shaped as
+        :meth:`fetch_fragment_scores` shapes them -- one per overlapping
+        fragment, in table order, at the fragment's OWN unclipped extent,
+        with ``values`` positional and parallel to ``scores`` -- and
+        ``score_filter`` behaves as it documents there.  What this adds is
+        the two thresholds below.
+
+        **The two overlap fractions** are
+        :func:`~.records.overlap_fractions_admit`, applied with this
+        region as ``[start, end]`` and each fragment as the record; that
+        function defines them.  In this plane's vocabulary
+        ``min_region_overlap_fraction`` is "the fragment must cover at
+        least this much of MY region" and
+        ``min_fragment_overlap_fraction`` is "at least this much of the
+        FRAGMENT must fall in my region".  Both unset filters nothing,
+        which is what this read did before the thresholds existed.
+
+        They SELECT, they do not RESHAPE: a fragment that passes is still
+        reported at its own unclipped span.  That is this plane's rule and
+        it has no decision record of its own -- ADR 0008 is about who
+        validates, not about what a read may do to a span, so it is not
+        the authority for it.
+
+        **Everything after the locus is keyword-only**, and that is not
+        cosmetic: :meth:`fetch_fragment_scores` takes its score list
+        positionally, so a caller migrating from
+        ``fetch_fragment_scores(chrom, start, stop, scores)`` would
+        otherwise bind that list to whatever this signature happens to put
+        fourth -- no error, just a plausible-looking filtered result.
+
+        The REQUEST is checked when this is called; the READING is lazy.  A
+        closed score, an unknown contig, an unknown score id, a region no
+        genomic span can mean and an out-of-range fraction are all refused
+        before the first ``next()``.
+
+        **One live region read per score at a time.**  The table's line
+        iterator and line buffer belong to the table, not to the generator,
+        so starting a second read invalidates one that is still being
+        consumed -- on a tabix-backed table the two then answer each other's
+        records with no error raised.  A held generator may be *closed*
+        across another query, never *resumed* across one.  Materialise
+        (``list(...)``) whatever has to outlive the next read.
+        """
+        self._guard_region_span(start, end)
+        self._guard_overlap_fraction(
+            "min_region_overlap_fraction", min_region_overlap_fraction)
+        self._guard_overlap_fraction(
+            "min_fragment_overlap_fraction", min_fragment_overlap_fraction)
+        rows = self.fetch_fragment_scores(
+            chrom, start, end, scores, score_filter=score_filter)
+        return (
+            (beg, end_, values)
+            for beg, end_, values in rows
+            if overlap_fractions_admit(
+                beg, end_, start, end,
+                min_region_fraction=min_region_overlap_fraction,
+                min_record_fraction=min_fragment_overlap_fraction)
+        )
+
+    def get_fragment_score_overlapping_region(
+        self, chrom: str, start: int, end: int,
+        *,
+        score: str | None = None,
+        score_filter: ScoreFilter | None = None,
+        min_region_overlap_fraction: float | None = None,
+        min_fragment_overlap_fraction: float | None = None,
+    ) -> Generator[tuple[int, int, ScoreValue], None, None]:
+        """Yield ``(begin, end, value)`` per fragment overlapping a region.
+
+        The singular form of :meth:`get_fragment_scores_overlapping_region`,
+        which documents the overlap fractions and the one-live-read limit
+        this inherits; ``score`` of ``None`` is honoured only when the
+        resource declares exactly one.
+        """
+        rows = self.get_fragment_scores_overlapping_region(
+            chrom, start, end,
+            scores=[self._resolve_single_score(score)],
+            score_filter=score_filter,
+            min_region_overlap_fraction=min_region_overlap_fraction,
+            min_fragment_overlap_fraction=min_fragment_overlap_fraction)
+        return ((beg, end_, values[0]) for beg, end_, values in rows)
+
+    def get_fragment_scores_at_position(
+        self, chrom: str, pos: int,
+        *,
+        scores: list[str] | None = None,
+        score_filter: ScoreFilter | None = None,
+    ) -> Sequence[tuple[int, int, tuple[ScoreValue, ...]]]:
+        """Return ``(begin, end, values)`` per fragment covering a position.
+
+        A one-position region read of
+        :meth:`get_fragment_scores_overlapping_region`, which documents
+        what an entry is; spans are unclipped here too, so a fragment
+        answering a position is reported at its full extent.
+
+        **Materialised, for the caller's convenience.**  A point query
+        returns a handful of fragments, callers want all of them, and a
+        materialised answer can be measured with ``len()``, iterated twice
+        and kept across a later read.  It is NOT the drain hazard
+        :meth:`~.position.PositionScore.fetch_position_scores` documents:
+        that was gain#1120's to fix, and abandoning a region generator has
+        been safe since.
+
+        The overlap fractions are deliberately absent.  Over a one-base
+        region ``overlap / region_length`` is always 1, so the region
+        fraction could only ever be vacuous, and the fragment fraction of a
+        single base is a ratio no caller has been found to want.
+
+        ``pos`` is refused below 1, through the same
+        :meth:`~.base.GenomicScore._guard_region_span` the region reads use:
+        a backend that reads ``0`` as "unbounded" would otherwise answer a
+        caller error with the whole contig.
+        """
+        return list(self.get_fragment_scores_overlapping_region(
+            chrom, pos, pos, scores=scores, score_filter=score_filter))
+
+    def get_fragment_score_at_position(
+        self, chrom: str, pos: int,
+        *,
+        score: str | None = None,
+        score_filter: ScoreFilter | None = None,
+    ) -> Sequence[tuple[int, int, ScoreValue]]:
+        """Return ``(begin, end, value)`` per fragment covering a position.
+
+        The singular form of :meth:`get_fragment_scores_at_position`, which
+        says why it materialises; ``score`` of ``None`` is honoured only
+        when the resource declares exactly one.
+        """
+        return [
+            (beg, end, values[0])
+            for beg, end, values in self.get_fragment_scores_at_position(
+                chrom, pos,
+                scores=[self._resolve_single_score(score)],
+                score_filter=score_filter)
+        ]
+
+    def get_fragment_scores_starting_in_region(
+        self, chrom: str, start: int, end: int,
+        *,
+        scores: list[str] | None = None,
+        score_filter: ScoreFilter | None = None,
+    ) -> Generator[tuple[int, int, tuple[ScoreValue, ...]], None, None]:
+        """Yield ``(begin, end, values)`` per fragment BEGINNING in a region.
+
+        Exactly the fragments whose begin lies in ``[start, end]``, so a set
+        of adjacent windows answers each fragment from exactly ONE of them:
+        no duplicates and no gaps.  That is the property chunked and
+        parallel work depends on, and it is the only predicate on this plane
+        that guarantees it -- :meth:`get_fragment_scores_overlapping_region`
+        answers a fragment from every window it reaches into.  The rule is
+        :func:`~.records.owns_record`.
+
+        The allele statistics scan makes the same ownership claim inline, as
+        ``_owns``, but spells it ``clip_span(pos, pos, start, end)``: an
+        allele row sits AT one position, so for it the record partition and
+        the position one coincide.  For a fragment they emphatically do not,
+        which is why this read names the record partition rather than
+        reusing that spelling.  That scan is left as it is.
+
+        There is no caller yet.  It is kept for that meaning, so the
+        partition has a name before something needs it.
+
+        Entries are shaped as
+        :meth:`get_fragment_scores_overlapping_region` shapes them, spans
+        unclipped, and the one-live-read limit it documents applies here
+        too.
+
+        The overlap fractions are deliberately absent: this read partitions,
+        and a fraction filter would let a fragment fall out of every window,
+        which is the property being partitioned FOR.
+        """
+        self._guard_region_span(start, end)
+        rows = self.fetch_fragment_scores(
+            chrom, start, end, scores, score_filter=score_filter)
+        return (
+            (beg, end_, values)
+            for beg, end_, values in rows
+            if owns_record(beg, start, end)
+        )
+
+    def get_fragment_score_starting_in_region(
+        self, chrom: str, start: int, end: int,
+        *,
+        score: str | None = None,
+        score_filter: ScoreFilter | None = None,
+    ) -> Generator[tuple[int, int, ScoreValue], None, None]:
+        """Yield ``(begin, end, value)`` per fragment BEGINNING in a region.
+
+        The singular form of
+        :meth:`get_fragment_scores_starting_in_region`, which documents the
+        partition it answers and the one-live-read limit this inherits;
+        ``score`` of ``None`` is honoured only when the resource declares
+        exactly one.
+        """
+        rows = self.get_fragment_scores_starting_in_region(
+            chrom, start, end,
+            scores=[self._resolve_single_score(score)],
+            score_filter=score_filter)
+        return ((beg, end_, values[0]) for beg, end_, values in rows)

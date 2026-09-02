@@ -693,6 +693,46 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             raise ValueError(
                 f"{chrom} is not among the available chromosomes.")
 
+    def _guard_region_span(self, start: int, end: int) -> None:
+        """Refuse a span no genomic region can mean.
+
+        A 1-based lower bound and an end that does not precede its start.
+        There is deliberately no UPPER bound check: the exact chromosome
+        length is not knowable for most scores, and a position past the end
+        of the data is simply uncovered (see #727).
+
+        Here rather than on the one kind that spelled it first: the rule is
+        about what a REGION can be, which is a property of neither the
+        positions a score is read at nor the records it holds.  Two kinds
+        call it -- the position and fragment logical planes, whose region
+        bounds are mandatory ints.  ``AlleleScore`` does not, and that is
+        not an omission: it has no logical plane, and its record reads take
+        ``int | None`` bounds where ``None`` legitimately means unbounded.
+
+        It also stops a backend's own leniency from reaching a reader --
+        the in-memory table tests its bounds for truthiness, so a ``0``
+        would otherwise arrive as "unbounded" and answer a caller error
+        with a whole contig.
+
+        Called by each read rather than folded into
+        :meth:`_region_read_defs`, which is the seam every kind's
+        ``region_values_from_records`` already shares and which already
+        receives the two positions it ignores.  Folding it in is the
+        deeper placement and is deliberately not taken here: it would
+        refuse ``fetch_*`` requests that are accepted today, on all three
+        kinds at once, which is a behaviour change no reader of this slice
+        asked for.  Until that is decided, a read that takes a mandatory
+        region calls this first.
+        """
+        if start < 1:
+            raise ValueError(
+                f"genomic score <{self.resource_id}> asked for a region "
+                f"with start {start}; positions are 1-based")
+        if end < start:
+            raise ValueError(
+                f"genomic score <{self.resource_id}> asked for a region "
+                f"whose end {end} precedes its start {start}")
+
     def _value_arrays_refusal_reason(self) -> str:
         """Why :meth:`supports_region_value_arrays` said no, for a raiser.
 
