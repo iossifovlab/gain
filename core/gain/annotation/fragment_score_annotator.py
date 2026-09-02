@@ -11,7 +11,11 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatorBase
+from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
+from gain.genomic_resources.aggregators import (
+    ScoreAggregationQuery,
+    aggregator_name,
+)
 from gain.genomic_resources.genomic_scores import FragmentScore
 from gain.genomic_resources.resource_types import (
     warn_deprecated_spelling,
@@ -127,14 +131,26 @@ class FragmentScoreAnnotator(AnnotatorBase):
 
         super().__init__(pipeline, info)
 
-        #: The score ids to read, in the order the values come back in.
-        #: Deduped because two attributes may name one source under
-        #: different attribute names, and a repeated id would pair the same
-        #: value into the same list twice.  Fixed once here, as the position
-        #: and allele annotators fix theirs.
-        self.aggregated_sources: list[str] = list(dict.fromkeys(
-            attr.source for attr in self._attributes
-            if attr.aggregator is not None))
+        #: One query per attribute that HAS an aggregator, in attribute
+        #: order, so the tuple the plane answers indexes straight back to
+        #: the attributes it was built from.
+        #:
+        #: Deliberately NOT deduped, unlike the source list this replaces:
+        #: a source named twice under two aggregators is two queries and
+        #: two answers, which is what lets each attribute keep its own
+        #: reduction.  One fetch still serves both -- the fold shares a
+        #: column between requests naming one score.
+        #:
+        #: An attribute with no aggregator is left out and answers the
+        #: fragment COUNT instead.  That is not only the `count`
+        #: attribute: a `bool` score has no default aggregator either, so
+        #: an attribute over one lands here too.
+        self._region_queries: list[ScoreAggregationQuery] = [
+            ScoreAggregationQuery(
+                attr.source, aggregator_name(attr.aggregator))
+            for attr in self._attributes
+            if attr.aggregator is not None
+        ]
 
         for attr in self._attributes:
             spec = self.attribute_specs[attr.source]
@@ -159,8 +175,12 @@ class FragmentScoreAnnotator(AnnotatorBase):
                 # here, with the vocabulary.  This is a DESCRIPTION, not an
                 # attribute name -- the attribute is still `count`, so no
                 # pipeline that requests it breaks.
+                #
+                # "kept" rather than "overlapping": with a `fragment_filter`
+                # configured the rejected fragments are not counted, which
+                # has always been true and was never said here.
                 description="The number of fragments overlapping with the "
-                "annotatable.",
+                "annotatable that the fragment filter kept.",
             ),
         }
         for score_id, score_def in \
@@ -194,28 +214,29 @@ class FragmentScoreAnnotator(AnnotatorBase):
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
-        # The read yields values positionally, parallel to the ids it was
-        # asked for -- so asking for exactly the sources wanted makes the
-        # pairing a zip, and leaves the scores no attribute reads
-        # unextracted.  An attribute naming something the resource does not
-        # score is refused by the read, naming the resource and the id.
-        sources = self.aggregated_sources
-        raw: dict[str, list] = {source: [] for source in sources}
-
-        # Counted while streaming: the read is a generator, so the fragments
-        # are gone once walked, and an attribute with no aggregator wants
-        # their number.  One pass serves both.
-        count = 0
-        for _beg, _end, values in self.fragment_score.fetch_fragment_scores(
+        # The SCORE reduces (gain#1124).  What comes back is one value per
+        # query and the number of fragments the walk saw, off a single pass
+        # that never materialises the fragments -- which is what keeps peak
+        # memory flat however many of them overlap the annotatable.
+        aggregate = self.fragment_score \
+            .get_fragment_scores_overlapping_region_agg(
                 annotatable.chrom, annotatable.pos, annotatable.pos_end,
-                sources, score_filter=self.fragment_filter):
-            count += 1
-            for source, value in zip(sources, values, strict=True):
-                raw[source].append(value)
+                queries=self._region_queries,
+                score_filter=self.fragment_filter)
 
-        # An attribute with no aggregator has no values of its own to carry,
-        # and answers the fragment count instead.
-        return {
-            attr.source: raw.get(attr.source, count)
-            for attr in self._attributes
-        }
+        # Paired back by ORDER, against the same filter that built the
+        # queries.  The names are read HERE rather than cached beside the
+        # queries: a pipeline naming one attribute twice renames the later
+        # ones (`resolve_repeated_attributes`) after every annotator has
+        # been constructed, so names captured in `__init__` would key the
+        # answers by names the pipeline has since moved away from.
+        #
+        # An attribute with no aggregator has no reduction of its own and
+        # answers the fragment count instead -- see `_region_queries`.
+        values = iter(aggregate.values)
+        result = AggregatedValues()
+        for attr in self._attributes:
+            result[attr.name] = (
+                next(values) if attr.aggregator is not None
+                else aggregate.count)
+        return result
