@@ -90,13 +90,27 @@ def two_score_fragments(tmp_path: pathlib.Path) -> FragmentScore:
     )
 
 
+@pytest.mark.parametrize("method,locus", [
+    ("get_fragment_score_at_position", ("1", 155)),
+    ("get_fragment_score_overlapping_region", ("1", 100, 199)),
+    ("get_fragment_score_starting_in_region", ("1", 100, 199)),
+])
 def test_a_singular_read_refuses_score_none_when_there_are_two(
     two_score_fragments: FragmentScore,
+    method: str,
+    locus: tuple[object, ...],
 ) -> None:
-    """``score=None`` means "all of them", which a singular read cannot do."""
+    """``score=None`` means "all of them", which a singular read cannot do.
+
+    Pinned on all three singular reads, and pinned on the message: a read
+    that passed ``[score]`` straight through instead of resolving it would
+    still raise, but from ``_resolve_score_defs`` complaining that the
+    resource does not define ``None``.  Not iterated, so the refusal has to
+    come from the call rather than from a generator body.
+    """
     with two_score_fragments.open() as score, \
             pytest.raises(ValueError, match="exactly one"):
-        list(score.get_fragment_score_overlapping_region("1", 100, 199))
+        getattr(score, method)(*locus)
 
 
 def test_values_follow_the_requested_score_order(
@@ -184,6 +198,71 @@ def test_a_fraction_outside_zero_to_one_is_refused_on_the_call(
         with pytest.raises(ValueError, match="between 0 and 1"):
             score.get_fragment_score_overlapping_region(
                 "1", 100, 199, **kwargs)
+
+
+@pytest.mark.parametrize("method", [
+    "get_fragment_score_overlapping_region",
+    "get_fragment_scores_overlapping_region",
+    "get_fragment_score_starting_in_region",
+    "get_fragment_scores_starting_in_region",
+])
+@pytest.mark.parametrize("start,end", [(0, 199), (100, 99), (100, 50)])
+def test_a_region_no_genomic_span_can_mean_is_refused_on_the_call(
+    fragments: FragmentScore,
+    method: str,
+    start: int,
+    end: int,
+) -> None:
+    """A 1-based lower bound and an end that precedes its start.
+
+    The same rule
+    :meth:`~.position.PositionScore.get_scores_in_region` refuses by, and
+    the fragment plane owes it for the same reason: an inverted region has
+    a NEGATIVE width, which the overlap fractions then divide by.
+    """
+    with fragments.open() as score, \
+            pytest.raises(ValueError, match=r"1-based|precedes its start"):
+        getattr(score, method)("1", start, end)
+
+
+def test_an_inverted_region_is_refused_whether_or_not_a_fraction_is_given(
+    fragments: FragmentScore,
+) -> None:
+    """The refusal cannot depend on which optional argument was supplied.
+
+    ``end == start - 1`` makes the region width zero, so a fraction divides
+    by it; every other width makes it negative, so every fragment is
+    silently rejected.  Both are the same caller error, and answering one
+    of them with data and the other with a ``ZeroDivisionError`` would make
+    the region's validity look like a property of the fraction.
+    """
+    with fragments.open() as score:
+        with pytest.raises(ValueError, match="precedes its start"):
+            score.get_fragment_scores_overlapping_region("1", 100, 99)
+        with pytest.raises(ValueError, match="precedes its start"):
+            score.get_fragment_scores_overlapping_region(
+                "1", 100, 99, min_region_overlap_fraction=0.5)
+
+
+@pytest.mark.parametrize("method", [
+    "get_fragment_score_at_position",
+    "get_fragment_scores_at_position",
+])
+def test_a_position_below_one_is_refused_rather_than_read_as_unbounded(
+    fragments: FragmentScore,
+    method: str,
+) -> None:
+    """Position 0 is a caller error, not "the whole contig".
+
+    The in-memory table tests its bounds for truthiness, so a ``0`` reaches
+    it as "unbounded" and every fragment on the contig comes back -- a
+    plausible answer to a question nobody asked.  The plane refuses it
+    before the backend is reached, as
+    :meth:`~.position.PositionScore.get_scores_at_position` does.
+    """
+    with fragments.open() as score, \
+            pytest.raises(ValueError, match="1-based"):
+        getattr(score, method)("1", 0)
 
 
 def test_at_position_answers_every_fragment_covering_the_position(

@@ -64,6 +64,7 @@ from .records import (
     RecordArrays,
     clip_span,
     clip_to_region,
+    overlap_fractions_admit,
     owned_records_mask,
     owns_record,
 )
@@ -86,6 +87,7 @@ __all__ = [
     "build_score_from_resource_id",
     "clip_span",
     "clip_to_region",
+    "overlap_fractions_admit",
     "owned_records_mask",
     "owns_record",
 ]

@@ -5,12 +5,13 @@ shape of a read batch (:data:`RecordArrays`, :class:`AlleleRecordArrays`)
 and the five functions that decide which part of a record a region gets,
 or whether it gets it at all.
 
-Three of those partition different things and are deliberately
-neighbours -- :func:`clip_span` partitions POSITIONS, :func:`owns_record`
-partitions RECORDS by where they BEGIN, and :func:`overlap_fractions_admit`
-selects RECORDS by how much of the region, or of themselves, the two share --
-so that the halves of the algebra have one home and a caller picks the one it
-means.
+Two of those partition different things and are deliberately neighbours --
+:func:`clip_span` partitions POSITIONS, :func:`owns_record` partitions
+RECORDS by where they BEGIN -- so that the two halves of the algebra have one
+home and a caller picks the one it means.  :func:`overlap_fractions_admit`
+sits beside them without partitioning anything: it SELECTS records by how
+much of the region, or of themselves, the two share, and a record it rejects
+is answered by no region at all.
 
 Nothing here imports a score class. That is a property of this module, not
 yet a saving for its callers: the scan and the statistics layer still reach
@@ -152,27 +153,33 @@ def overlap_fractions_admit(
     rec_begin: int, rec_end: int,
     start: int, end: int,
     min_region_fraction: float | None,
-    min_fragment_fraction: float | None,
+    min_record_fraction: float | None,
 ) -> bool:
     """Whether a record overlaps a region by enough of either side.
 
     With *overlap* the length of the intersection, ``min_region_fraction``
     is ``overlap / region_length`` -- "the record covers at least this much
-    of MY region" -- and ``min_fragment_fraction`` is
+    of MY region" -- and ``min_record_fraction`` is
     ``overlap / record_length`` -- "at least this much of the RECORD falls
     in my region".  The two answer different questions: a 10 bp record
     inside a 1 Mb region scores ~0.00001 on the first and 1.0 on the second.
 
     Every threshold supplied must hold, and each is compared with ``>=``, so
     ``1.0`` means full containment of the side it is about.  Both ``None``
-    admits everything -- including a record with no overlap at all, which is
-    a backend answering a region query with a record outside it rather than
-    a question this predicate was asked to decide.
+    admits everything, which is what a region read does with no thresholds
+    at all.
+
+    ``0.0`` is not the same request as ``None``, though both admit every
+    record a region query actually answers: ``0 / length >= 0.0`` holds, so
+    ``0.0`` also admits a record with NO overlap.  Such a record means a
+    backend answered a region query with a row outside it, which ADR 0008
+    refuses at ``open()`` rather than here -- this predicate is not the
+    place that decision is made.
 
     A SELECTION predicate, not a reshaping one: it says whether the record
     is answered, never what span is reported for it (ADR 0008).
     """
-    if min_region_fraction is None and min_fragment_fraction is None:
+    if min_region_fraction is None and min_record_fraction is None:
         return True
     span = clip_span(rec_begin, rec_end, start, end)
     overlap = 0 if span is None else span[1] - span[0] + 1
@@ -180,6 +187,6 @@ def overlap_fractions_admit(
         (min_region_fraction is None
          or overlap / (end - start + 1) >= min_region_fraction)
         and
-        (min_fragment_fraction is None
-         or overlap / (rec_end - rec_begin + 1) >= min_fragment_fraction)
+        (min_record_fraction is None
+         or overlap / (rec_end - rec_begin + 1) >= min_record_fraction)
     )

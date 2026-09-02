@@ -59,6 +59,7 @@ RECORD_HELPERS = [
     "owns_record",
     "owned_records_mask",
     "clip_to_region",
+    "overlap_fractions_admit",
 ]
 
 # Public by naming and by being a default argument value a caller can read,

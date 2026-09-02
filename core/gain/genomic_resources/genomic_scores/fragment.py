@@ -278,10 +278,10 @@ class FragmentScore(GenomicScore):
         outside it names a filter that is either vacuous or empty whatever
         the data -- a caller error, and one worth reporting where it is
         made.  Checked when the read is CALLED rather than on the first
-        ``next()``, for the reason
-        :meth:`~.base.GenomicScore._region_read_defs` gives: a refusal
-        deferred into a generator body reaches a caller that iterates, and
-        hands a caller that does not iterate a plausible nothing.
+        ``next()``, which is where every other request guard on this plane
+        fires: a refusal deferred into a generator body reaches only a
+        caller that iterates, and hands a caller that does not iterate a
+        plausible nothing.
         """
         if fraction is not None and not 0.0 <= fraction <= 1.0:
             raise ValueError(
@@ -320,7 +320,8 @@ class FragmentScore(GenomicScore):
         10 bp fragment inside a 1 Mb CNV scores ~0.00001 on the first and
         1.0 on the second.  A fragment is kept when it satisfies EVERY
         threshold supplied, compared with ``>=`` so ``1.0`` means full
-        containment; both unset keeps any overlap of at least one base.
+        containment; both unset filters nothing, which is what this read
+        did before the thresholds existed.
 
         They SELECT, they do not RESHAPE: a fragment that passes is still
         reported at its own unclipped span, so ADR 0008 is intact.
@@ -339,8 +340,9 @@ class FragmentScore(GenomicScore):
         fourth -- no error, just a plausible-looking filtered result.
 
         The REQUEST is checked when this is called; the READING is lazy.  A
-        closed score, an unknown contig, an unknown score id and an
-        out-of-range fraction are all refused before the first ``next()``.
+        closed score, an unknown contig, an unknown score id, a region no
+        genomic span can mean and an out-of-range fraction are all refused
+        before the first ``next()``.
 
         **One live region read per score at a time.**  The table's line
         iterator and line buffer belong to the table, not to the generator,
@@ -350,6 +352,7 @@ class FragmentScore(GenomicScore):
         across another query, never *resumed* across one.  Materialise
         (``list(...)``) whatever has to outlive the next read.
         """
+        self._guard_region_span(start, end)
         self._guard_overlap_fraction(
             "min_region_overlap_fraction", min_region_overlap_fraction)
         self._guard_overlap_fraction(
@@ -412,6 +415,11 @@ class FragmentScore(GenomicScore):
         region ``overlap / region_length`` is always 1, so the region
         fraction could only ever be vacuous, and the fragment fraction of a
         single base is a ratio no caller has been found to want.
+
+        ``pos`` is refused below 1, through the same
+        :meth:`~.base.GenomicScore._guard_region_span` the region reads use:
+        a backend that reads ``0`` as "unbounded" would otherwise answer a
+        caller error with the whole contig.
         """
         return list(self.get_fragment_scores_overlapping_region(
             chrom, pos, pos, scores=scores, score_filter=score_filter))
@@ -450,8 +458,14 @@ class FragmentScore(GenomicScore):
         parallel work depends on, and it is the only predicate on this plane
         that guarantees it -- :meth:`get_fragment_scores_overlapping_region`
         answers a fragment from every window it reaches into.  The rule is
-        :func:`~.records.owns_record`, the same one the allele statistics
-        scan applies inline; that scan is left as it is.
+        :func:`~.records.owns_record`.
+
+        The allele statistics scan makes the same ownership claim inline, as
+        ``_owns``, but spells it ``clip_span(pos, pos, start, end)``: an
+        allele row sits AT one position, so for it the record partition and
+        the position one coincide.  For a fragment they emphatically do not,
+        which is why this read names the record partition rather than
+        reusing that spelling.  That scan is left as it is.
 
         There is no caller yet.  It is kept for that meaning, so the
         partition has a name before something needs it.
@@ -465,6 +479,7 @@ class FragmentScore(GenomicScore):
         and a fraction filter would let a fragment fall out of every window,
         which is the property being partitioned FOR.
         """
+        self._guard_region_span(start, end)
         rows = self.fetch_fragment_scores(
             chrom, start, end, scores, score_filter=score_filter)
         return (
@@ -483,8 +498,9 @@ class FragmentScore(GenomicScore):
 
         The singular form of
         :meth:`get_fragment_scores_starting_in_region`, which documents the
-        partition it answers; ``score`` of ``None`` is honoured only when
-        the resource declares exactly one.
+        partition it answers and the one-live-read limit this inherits;
+        ``score`` of ``None`` is honoured only when the resource declares
+        exactly one.
         """
         rows = self.get_fragment_scores_starting_in_region(
             chrom, start, end,
