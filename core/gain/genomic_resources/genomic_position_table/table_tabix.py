@@ -595,21 +595,45 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                 self.stats["not found"] += 1
                 return
 
+            # The prune runs in a ``finally`` on both buffered paths, because
+            # a consumer is under no obligation to finish reading.  It used to
+            # sit after the yield loop, which a caller that stopped part-way
+            # never reached: ``GeneratorExit`` is raised at the suspended
+            # yield, the query's records were never evicted, and the buffer
+            # grew by a query's worth on every abandoned read (gain#1120).
+            #
+            # Pruning after an *exception* is new too, and safe for the same
+            # reason it is safe at all: ``prune`` drops only the records that
+            # can no longer match ``pos_begin`` or later, so it can retain
+            # dead records but never lose live ones.
+            #
+            # What this rests on: the ``finally`` runs when the generator is
+            # CLOSED or DROPPED, and CPython calls ``close()`` at refcount
+            # zero.  That reaches here even through the generator expression
+            # ``ScoreFilter.select`` wraps a filtered read in -- a genexp does
+            # not propagate ``close()`` to what it iterates, but it holds the
+            # only reference to us, so its own unwinding takes ours to zero.
+            # A reference CYCLE is what defers it, to a cyclic GC pass that is
+            # not guaranteed to come; nothing in tree builds one, and a caller
+            # that does gets the old unbounded behaviour back.
             if self.buffer.contains(chrom, pos_begin):
-                for record in self._gen_from_buffer_and_tabix(
-                        chrom, pos_begin, pos_end):
-                    self.stats["yield from buffer and tabix"] += 1
-                    yield record
-
-                self.buffer.prune(chrom, pos_begin)
+                try:
+                    for record in self._gen_from_buffer_and_tabix(
+                            chrom, pos_begin, pos_end):
+                        self.stats["yield from buffer and tabix"] += 1
+                        yield record
+                finally:
+                    self.buffer.prune(chrom, pos_begin)
                 return
 
             if self._should_use_sequential_seek_forward(chrom, pos_begin):
                 self._sequential_seek_forward(chrom, pos_begin)
 
-                yield from self._gen_from_buffer_and_tabix(
-                        chrom, pos_begin, pos_end)
-                self.buffer.prune(chrom, pos_begin)
+                try:
+                    yield from self._gen_from_buffer_and_tabix(
+                            chrom, pos_begin, pos_end)
+                finally:
+                    self.buffer.prune(chrom, pos_begin)
                 return
 
         # without using buffer

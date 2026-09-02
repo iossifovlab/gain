@@ -41,6 +41,7 @@ from typing import Any
 
 import pytest
 from gain.genomic_resources.genomic_position_table import (
+    LineBuffer,
     build_genomic_position_table,
 )
 from gain.genomic_resources.genomic_position_table.record import (
@@ -470,11 +471,66 @@ def test_backward_query_does_not_trust_a_pruned_buffer(
 
 def test_buffer_still_clears_on_a_non_monotonic_pos_begin() -> None:
     """The ordering the buffer does rely on is ``pos_begin``'s."""
-    from gain.genomic_resources.genomic_position_table import LineBuffer
-
     buffer = LineBuffer()
     buffer.append(rec("1", 100, 200))
     buffer.append(rec("1", 1, 10))
 
     assert buffer.region() == (None, None, None)
     assert len(buffer) == 0
+
+
+# ---------------------------------------------------------------------------
+# A region read that is ABANDONED part-way (gain#1120).
+# ---------------------------------------------------------------------------
+
+def _scan_abandoning_each_query(
+    table: GenomicPositionTable, positions: list[int],
+) -> None:
+    """Walk ``positions``, taking ONE record from each query and stopping.
+
+    The shape a lazy consumer has: it reads until it has what it came for and
+    drops the generator.  ``close()`` is explicit here so the test does not
+    rest on when CPython would have collected it.
+
+    Every position must actually hold a record, or this walk does not do what
+    it says.  A query that yields *nothing* runs its generator to exhaustion,
+    which reaches the code after the yield loop -- so a scan over empty
+    positions prunes on every step and stays bounded no matter what
+    ``get_records_in_region`` does with ``GeneratorExit``.  Mixing the two is
+    how a first draft of this test passed against the unfixed code: the gaps
+    in a point table outnumbered its rows, and their pruning masked the leak.
+    """
+    for pos in positions:
+        records = table.get_records_in_region(CHROM, pos, pos)
+        assert next(records, None) is not None, \
+            f"position {pos} holds no record: the query would not be abandoned"
+        records.close()
+
+
+def test_abandoned_queries_keep_the_buffer_bounded(build_tables: Any) -> None:
+    """The buffer must not grow with the number of ABANDONED queries.
+
+    ``get_records_in_region`` prunes the buffer once a query has been served.
+    On the buffered paths that prune sat *after* the yield loop, so a consumer
+    that stopped iterating raised ``GeneratorExit`` at the suspended yield and
+    the prune never ran -- the records of every query stayed, and the buffer
+    grew linearly with the length of the scan (gain#1120).
+
+    The scan visits the row positions themselves, so every query yields a
+    record and every one of them is abandoned holding it.
+
+    The cap is :attr:`LineBuffer.COMPACT_FLOOR` rather than a number of this
+    test's own choosing: it is the size below which the buffer declines to
+    walk itself at all, so it is the largest residue a *bounded* buffer is
+    entitled to over point data, whose live set is one record.  Before the
+    fix this scan ended holding one record per query.
+    """
+    rows = make_rows("points_unique", count=400)
+    tabix_table, _ = build_tables(rows)
+
+    positions = [beg for beg, _ in rows]
+    _scan_abandoning_each_query(tabix_table, positions)
+
+    assert len(positions) > LineBuffer.COMPACT_FLOOR, \
+        "the scan is too short to tell a bounded buffer from a leaking one"
+    assert len(tabix_table.buffer) <= LineBuffer.COMPACT_FLOOR
