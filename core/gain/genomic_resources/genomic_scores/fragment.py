@@ -298,39 +298,28 @@ class FragmentScore(GenomicScore):
     ) -> Generator[tuple[int, int, tuple[ScoreValue, ...]], None, None]:
         """Yield ``(begin, end, values)`` per fragment overlapping a region.
 
-        The plane's workhorse: one entry per overlapping fragment, in table
-        order, each reporting the fragment's OWN extent -- unclipped, even
-        where it runs past the region asked for.  What a partial overlap
-        means depends on what the caller is computing, so ADR 0008 leaves it
-        to them; a caller that wants the window intersected composes
-        :func:`~.records.clip_span`.
+        The plane's workhorse.  Entries are shaped as
+        :meth:`fetch_fragment_scores` shapes them -- one per overlapping
+        fragment, in table order, at the fragment's OWN unclipped extent,
+        with ``values`` positional and parallel to ``scores`` -- and
+        ``score_filter`` behaves as it documents there.  What this adds is
+        the two thresholds below.
 
-        ``values`` is positional, parallel to ``scores`` as requested (to
-        :meth:`~.base.GenomicScore.get_all_scores` when that is ``None``).
-        A value may be ``None`` where the record carries no value for that
-        score; a fragment score has no notion of an uncovered position, so
-        that is the only ``None`` here.
-
-        **The two overlap fractions**, with *overlap* the length of the
-        intersection: ``min_region_overlap_fraction`` is
-        ``overlap / region_length`` -- "the fragment must cover at least
-        this much of MY region" -- and ``min_fragment_overlap_fraction`` is
-        ``overlap / fragment_length`` -- "at least this much of the FRAGMENT
-        must fall in my region".  The two answer different questions: a
-        10 bp fragment inside a 1 Mb CNV scores ~0.00001 on the first and
-        1.0 on the second.  A fragment is kept when it satisfies EVERY
-        threshold supplied, compared with ``>=`` so ``1.0`` means full
-        containment; both unset filters nothing, which is what this read
-        did before the thresholds existed.
+        **The two overlap fractions** are
+        :func:`~.records.overlap_fractions_admit`, applied with this
+        region as ``[start, end]`` and each fragment as the record; that
+        function defines them.  In this plane's vocabulary
+        ``min_region_overlap_fraction`` is "the fragment must cover at
+        least this much of MY region" and
+        ``min_fragment_overlap_fraction`` is "at least this much of the
+        FRAGMENT must fall in my region".  Both unset filters nothing,
+        which is what this read did before the thresholds existed.
 
         They SELECT, they do not RESHAPE: a fragment that passes is still
-        reported at its own unclipped span, so ADR 0008 is intact.
-
-        ``score_filter`` -- from :meth:`GenomicScore.compile_filter()
-        <.base.GenomicScore.compile_filter>` -- drops the fragments it
-        rejects, which are then simply not yielded.  It reads the RECORD, so
-        it may name any score the resource defines, including one outside
-        ``scores``, and a rejected fragment costs no extraction.
+        reported at its own unclipped span.  That is this plane's rule and
+        it has no decision record of its own -- ADR 0008 is about who
+        validates, not about what a read may do to a span, so it is not
+        the authority for it.
 
         **Everything after the locus is keyword-only**, and that is not
         cosmetic: :meth:`fetch_fragment_scores` takes its score list
@@ -364,7 +353,8 @@ class FragmentScore(GenomicScore):
             for beg, end_, values in rows
             if overlap_fractions_admit(
                 beg, end_, start, end,
-                min_region_overlap_fraction, min_fragment_overlap_fraction)
+                min_region_fraction=min_region_overlap_fraction,
+                min_record_fraction=min_fragment_overlap_fraction)
         )
 
     def get_fragment_score_overlapping_region(

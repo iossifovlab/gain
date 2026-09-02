@@ -703,11 +703,26 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         Here rather than on the one kind that spelled it first: the rule is
         about what a REGION can be, which is a property of neither the
-        positions a score is read at nor the records it holds, and the two
-        kinds that take a region want the same refusal.  It also stops a
-        backend's own leniency from reaching a reader -- the in-memory
-        table tests its bounds for truthiness, so a ``0`` would otherwise
-        arrive as "unbounded" and answer a caller error with a whole contig.
+        positions a score is read at nor the records it holds.  Two kinds
+        call it -- the position and fragment logical planes, whose region
+        bounds are mandatory ints.  ``AlleleScore`` does not, and that is
+        not an omission: it has no logical plane, and its record reads take
+        ``int | None`` bounds where ``None`` legitimately means unbounded.
+
+        It also stops a backend's own leniency from reaching a reader --
+        the in-memory table tests its bounds for truthiness, so a ``0``
+        would otherwise arrive as "unbounded" and answer a caller error
+        with a whole contig.
+
+        Called by each read rather than folded into
+        :meth:`_region_read_defs`, which is the seam every kind's
+        ``region_values_from_records`` already shares and which already
+        receives the two positions it ignores.  Folding it in is the
+        deeper placement and is deliberately not taken here: it would
+        refuse ``fetch_*`` requests that are accepted today, on all three
+        kinds at once, which is a behaviour change no reader of this slice
+        asked for.  Until that is decided, a read that takes a mandatory
+        region calls this first.
         """
         if start < 1:
             raise ValueError(

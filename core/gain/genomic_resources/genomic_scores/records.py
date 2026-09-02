@@ -171,15 +171,25 @@ def overlap_fractions_admit(
 
     ``0.0`` is not the same request as ``None``, though both admit every
     record a region query actually answers: ``0 / length >= 0.0`` holds, so
-    ``0.0`` also admits a record with NO overlap.  Such a record means a
-    backend answered a region query with a row outside it, which ADR 0008
-    refuses at ``open()`` rather than here -- this predicate is not the
-    place that decision is made.
+    ``0.0`` also admits a record with NO overlap at all.  A region query
+    answering with such a row is a backend that over-returns; one cause of
+    it -- a tabix table whose index and ``pos_end`` name different columns
+    -- ADR 0008 refuses at ``open()``, and no threshold here is a check
+    for the rest.
 
     A SELECTION predicate, not a reshaping one: it says whether the record
-    is answered, never what span is reported for it (ADR 0008).
+    is answered, never what span is reported for it.
+
+    ``rec_end`` is assumed not to precede ``rec_begin``, so that the record
+    length it divides by is at least 1.  This does not check it: the record
+    reads refuse an inverted span at
+    :meth:`~.base.GenomicScore._score_segments`, before any consumer sees
+    the record.  Called with one directly, it divides by zero or worse.
     """
     if min_region_fraction is None and min_record_fraction is None:
+        # A fast path, not a rule -- the fall-through answers True for this
+        # case too.  It is here because the no-threshold read is the common
+        # one and runs this per record.
         return True
     span = clip_span(rec_begin, rec_end, start, end)
     overlap = 0 if span is None else span[1] - span[0] + 1

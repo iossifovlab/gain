@@ -9,14 +9,34 @@ on the one-live-read limit a tabix-backed score has and this backend does not.
 """
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pathlib
+from collections.abc import Iterator
+from typing import Any
 
 import pytest
+from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_scores import (
     FragmentScore,
 )
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
 )
+
+#: The three singular reads and the three plural ones, each with a locus its
+#: signature accepts.  Named because several tests below are ABOUT the family
+#: being complete -- the keyword-only test is exactly their concatenation, so
+#: a seventh read joins it by being declared here rather than by being
+#: remembered.
+SINGULAR_READS = [
+    ("get_fragment_score_at_position", ("1", 155)),
+    ("get_fragment_score_overlapping_region", ("1", 100, 199)),
+    ("get_fragment_score_starting_in_region", ("1", 100, 199)),
+]
+
+PLURAL_READS = [
+    ("get_fragment_scores_at_position", ("1", 155)),
+    ("get_fragment_scores_overlapping_region", ("1", 100, 199)),
+    ("get_fragment_scores_starting_in_region", ("1", 100, 199)),
+]
 
 
 @pytest.fixture
@@ -52,7 +72,7 @@ def fragments(tmp_path: pathlib.Path) -> FragmentScore:
 def test_overlapping_region_answers_every_fragment_at_its_own_extent(
     fragments: FragmentScore,
 ) -> None:
-    """One entry per overlapping fragment, spans unclipped (ADR 0008)."""
+    """One entry per overlapping fragment, each at its own unclipped span."""
     with fragments.open() as score:
         assert list(score.get_fragment_scores_overlapping_region(
             "1", 100, 199)) == [
@@ -90,11 +110,7 @@ def two_score_fragments(tmp_path: pathlib.Path) -> FragmentScore:
     )
 
 
-@pytest.mark.parametrize("method,locus", [
-    ("get_fragment_score_at_position", ("1", 155)),
-    ("get_fragment_score_overlapping_region", ("1", 100, 199)),
-    ("get_fragment_score_starting_in_region", ("1", 100, 199)),
-])
+@pytest.mark.parametrize("method,locus", SINGULAR_READS)
 def test_a_singular_read_refuses_score_none_when_there_are_two(
     two_score_fragments: FragmentScore,
     method: str,
@@ -181,9 +197,14 @@ def test_the_two_fractions_combine_with_and(
     {"min_fragment_overlap_fraction": -0.1},
     {"min_fragment_overlap_fraction": 1.5},
 ])
+@pytest.mark.parametrize("method", [
+    "get_fragment_score_overlapping_region",
+    "get_fragment_scores_overlapping_region",
+])
 def test_a_fraction_outside_zero_to_one_is_refused_on_the_call(
     fragments: FragmentScore,
     kwargs: dict[str, float],
+    method: str,
 ) -> None:
     """And refused BEFORE the first ``next()``, as the request guards are.
 
@@ -191,13 +212,9 @@ def test_a_fraction_outside_zero_to_one_is_refused_on_the_call(
     is a caller error, and a read that reported it only once consumed would
     hand a plausible empty result to a caller that never iterated.
     """
-    with fragments.open() as score:
-        with pytest.raises(ValueError, match="between 0 and 1"):
-            score.get_fragment_scores_overlapping_region(
-                "1", 100, 199, **kwargs)
-        with pytest.raises(ValueError, match="between 0 and 1"):
-            score.get_fragment_score_overlapping_region(
-                "1", 100, 199, **kwargs)
+    with fragments.open() as score, \
+            pytest.raises(ValueError, match="between 0 and 1"):
+        getattr(score, method)("1", 100, 199, **kwargs)
 
 
 @pytest.mark.parametrize("method", [
@@ -339,14 +356,7 @@ def test_adjacent_windows_partition_the_fragments(
     assert [row for window in per_window for row in window] == whole_contig
 
 
-@pytest.mark.parametrize("method,locus", [
-    ("get_fragment_score_at_position", ("1", 155)),
-    ("get_fragment_scores_at_position", ("1", 155)),
-    ("get_fragment_score_overlapping_region", ("1", 100, 199)),
-    ("get_fragment_scores_overlapping_region", ("1", 100, 199)),
-    ("get_fragment_score_starting_in_region", ("1", 100, 199)),
-    ("get_fragment_scores_starting_in_region", ("1", 100, 199)),
-])
+@pytest.mark.parametrize("method,locus", SINGULAR_READS + PLURAL_READS)
 def test_everything_after_the_locus_is_keyword_only(
     fragments: FragmentScore,
     method: str,
@@ -380,11 +390,13 @@ def test_a_region_read_pulls_records_only_as_it_is_consumed(
     ``iter(...)`` would satisfy every other assertion here just as well.
     """
     with fragments.open() as score:
-        pulled: list[object] = []
+        pulled: list[Record] = []
         real_fetch_records = score.fetch_records
 
-        def counting_fetch_records(*args: object, **kwargs: object) -> object:
-            for record in real_fetch_records(*args, **kwargs):  # type: ignore[arg-type]
+        def counting_fetch_records(
+            *args: Any, **kwargs: Any,
+        ) -> Iterator[Record]:
+            for record in real_fetch_records(*args, **kwargs):
                 pulled.append(record)
                 yield record
 
@@ -397,11 +409,7 @@ def test_a_region_read_pulls_records_only_as_it_is_consumed(
         assert len(pulled) == 1
 
 
-@pytest.mark.parametrize("method,locus", [
-    ("get_fragment_scores_at_position", ("1", 155)),
-    ("get_fragment_scores_overlapping_region", ("1", 100, 199)),
-    ("get_fragment_scores_starting_in_region", ("1", 100, 199)),
-])
+@pytest.mark.parametrize("method,locus", PLURAL_READS)
 def test_a_rejected_fragment_is_simply_not_among_the_answers(
     fragments: FragmentScore,
     method: str,
