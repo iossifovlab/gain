@@ -1,5 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
+from dataclasses import fields
+
 import numpy
 from gain.genomic_resources.aggregators import (
     AGGREGATOR_CLASS_DICT,
@@ -15,6 +17,8 @@ from gain.genomic_resources.aggregators import (
     MedianAggregator,
     MinAggregator,
     ModeAggregator,
+    PositionScoreAggregationQuery,
+    ScoreAggregationQuery,
 )
 
 
@@ -252,6 +256,45 @@ def test_counter_aggregator_aggregate_method_empty_list() -> None:
 def test_counter_aggregator_aggregate_method_none_input() -> None:
     agg = CounterAggregator()
     assert agg.aggregate(None) == {}
+
+
+# The reduction requests.  What is pinned here is the SHAPE of the request
+# types -- that the kind-neutral one carries only what every kind can ask,
+# and that splitting it out left the position request's own shape alone.
+# What a request MEANS once resolved belongs to test_score_aggregation and
+# the score classes' own suites.
+
+
+def test_a_position_query_is_a_kind_neutral_score_aggregation_query() -> None:
+    # A reader should not have to infer the relationship from three
+    # overlapping fields: asking to reduce a score with an aggregator is
+    # the general request, and the position query IS one.
+    query = PositionScoreAggregationQuery("s", "max", 0.0)
+
+    assert isinstance(query, ScoreAggregationQuery)
+    assert (query.score, query.aggregator) == ("s", "max")
+
+
+def test_the_kind_neutral_query_carries_no_none_value_replacement() -> None:
+    # Hoisting the field onto the base would break no call site and pass
+    # every other test here, while quietly undoing the split: a fragment
+    # or allele request would carry a field that can only speak for an
+    # uncovered position, which neither kind has.
+    assert [f.name for f in fields(ScoreAggregationQuery)] == [
+        "score", "aggregator",
+    ]
+
+
+def test_the_position_query_still_binds_three_positional_arguments() -> None:
+    # The whole reason splitting a base type out needed no migration: the
+    # subclass's own field lands third, exactly where it was on the flat
+    # dataclass, so every positional call site keeps its meaning.  If this
+    # breaks, callers do not fail -- they silently bind the wrong field.
+    query = PositionScoreAggregationQuery("s", "max", 0.0)
+
+    assert (
+        query.score, query.aggregator, query.none_value_replacement,
+    ) == ("s", "max", 0.0)
 
 
 def test_numeric_aggregators_appear_first_in_dict() -> None:

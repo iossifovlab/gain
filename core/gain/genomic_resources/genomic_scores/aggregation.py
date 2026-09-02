@@ -27,7 +27,7 @@ gain#1027's remaining work, not this module's promise.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 
 from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
 
@@ -207,7 +207,7 @@ def build_region_aggregator(
 
 
 def fold_region_segments(
-    segments: Iterable[tuple[int, int, list[ScoreValue]]],
+    segments: Iterable[tuple[int, int, Sequence[ScoreValue]]],
     aggregators: list[Aggregator],
     requests: list[tuple[str, str]],
     *,
@@ -219,7 +219,9 @@ def fold_region_segments(
     :meth:`~.base.GenomicScore.fetch_region_segments` yields it for
     :func:`request_score_ids` of these ``requests`` -- which is how a
     request finds its column: two requests for one score share the fetch
-    and keep separate accumulators.
+    and keep separate accumulators.  Any ``Sequence`` of values will do --
+    the fold only ever indexes ``values[column]`` -- so a kind that hands
+    over tuples folds exactly as one that hands over lists.
 
     ``aggregators`` is parallel to ``requests`` and built by the CALLER,
     which is what lets an invalid aggregator name be refused before the

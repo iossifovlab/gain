@@ -660,18 +660,50 @@ AggregatorSource = AggregatorDefinition | str | dict[str, Any]
 
 
 @dataclass(frozen=True)
-class PositionScoreAggregationQuery:
-    """One score's reduction request on the logical read plane (gain#727).
+class ScoreAggregationQuery:
+    """One score's reduction request, in the terms every kind shares.
 
-    ``aggregator`` of ``None`` resolves to the score's own default from its
-    definition.  ``none_value_replacement`` substitutes for every null the
-    per-position expansion holds -- uncovered and covered-but-NA alike --
-    before the aggregator sees it; unset, nulls stay inert for every
-    aggregator, all of which already skip ``None``.
+    Names a score and how to reduce it, and nothing else; ``aggregator``
+    of ``None`` resolves to the score's own default from its definition.
+    Kind-neutral because nothing about "reduce this score with this
+    aggregator" depends on how a kind lays its records out, so a position
+    score, a fragment score and an allele score all ask the same thing
+    here.
+
+    It deliberately carries no ``none_value_replacement``.  That field
+    speaks for a locus NO record covers, which only a kind that reads a
+    value at every position of a region even has -- see
+    :class:`PositionScoreAggregationQuery`, which adds it.  Keeping it off
+    the base is what makes the base kind-neutral at all.
     """
 
     score: str
     aggregator: str | None = None
+
+
+@dataclass(frozen=True)
+class PositionScoreAggregationQuery(ScoreAggregationQuery):
+    """The same request over a position score's expansion (gain#727).
+
+    Adds the one part of a position score's request that no other kind
+    can ask.  ``none_value_replacement`` substitutes for every null the
+    per-position expansion holds -- uncovered and covered-but-NA alike --
+    before the aggregator sees it; unset, nulls stay inert for every
+    aggregator, all of which already skip ``None``.
+
+    A position score answers with a value at every position of the
+    queried region, so a position no record covers is still a position,
+    and a caller may need it to count as a zero rather than go missing.
+    A kind whose records are either in the result or not -- a fragment, an
+    allele -- has no such position to speak for, and only the
+    covered-but-NA half of the field would ever apply to it.  That is why
+    it lives here and not on the base.
+
+    Declaring only this field preserves the field order the flat dataclass
+    had (``score``, ``aggregator``, ``none_value_replacement``), so every
+    positional call site keeps its meaning.
+    """
+
     none_value_replacement: ScoreValue | None = None
 
 
