@@ -58,11 +58,16 @@ from gain.genomic_resources.statistics.base_statistic import (
     refuse_unmergeable,
     regions_in_genomic_order,
 )
+from gain.genomic_resources.statistics.indel_lengths import (
+    NO_INDELS,
+    IndelLengths,
+    IndelStatisticsRow,
+    IndelTally,
+    indel_length_ladder,
+    merged_indels,
+    merged_tallies,
+)
 from gain.genomic_resources.statistics.length_histogram import (
-    LENGTH_HISTOGRAM_BIN_COUNT,
-    accumulate_bins,
-    has_counts_to_plot,
-    length_histogram_bin_index,
     plot_length_histogram,
 )
 from gain.genomic_resources.statistics.percentages import percentage_of
@@ -224,8 +229,8 @@ class AlleleCounts(NamedTuple):
     allele_count: int
     class_counts: dict[str, int]
     substitution_matrix: dict[tuple[str, str], int] | None
-    insertion_lengths: list[int] | None = None
-    deletion_lengths: list[int] | None = None
+    insertion_lengths: IndelLengths | None = None
+    deletion_lengths: IndelLengths | None = None
     complex_grid: dict[tuple[int, int], int] | None = None
 
     def display(self) -> AlleleDisplay | None:
@@ -268,10 +273,8 @@ class AlleleCounts(NamedTuple):
             ts_tv,
             None if matrix is None
             else percentages_over(matrix, sum(matrix.values())),
-            None if self.insertion_lengths is None
-            else list(self.insertion_lengths),
-            None if self.deletion_lengths is None
-            else list(self.deletion_lengths),
+            self.insertion_lengths,
+            self.deletion_lengths,
             None if self.complex_grid is None else dict(self.complex_grid))
 
 
@@ -291,22 +294,6 @@ def _merged_matrix(
     return {cell: left[cell] + right[cell] for cell in MATRIX_CELLS}
 
 
-def _merged_bins(
-    left: list[int] | None,
-    right: list[int] | None,
-) -> list[int] | None:
-    """The binwise sum of two length histograms, unknown if either is.
-
-    The :func:`_merged_matrix` rule on the fixed ladder: an unknown side
-    makes the whole merge unknown rather than a smaller number.
-    """
-    if left is None or right is None:
-        return None
-    merged = list(left)
-    accumulate_bins(merged, right)
-    return merged
-
-
 def _total(counts: Iterable[AlleleCounts]) -> AlleleCounts:
     """The roll-up of several chromosomes' counts into one.
 
@@ -318,16 +305,16 @@ def _total(counts: Iterable[AlleleCounts]) -> AlleleCounts:
     allele_count = 0
     matrix: dict[tuple[str, str], int] | None = dict.fromkeys(
         MATRIX_CELLS, 0)
-    insertions: list[int] | None = [0] * LENGTH_HISTOGRAM_BIN_COUNT
-    deletions: list[int] | None = [0] * LENGTH_HISTOGRAM_BIN_COUNT
+    insertions: IndelLengths | None = NO_INDELS
+    deletions: IndelLengths | None = NO_INDELS
     grid: dict[tuple[int, int], int] | None = {}
     for entry in counts:
         allele_count += entry.allele_count
         for name, count in entry.class_counts.items():
             class_counts[name] = class_counts.get(name, 0) + count
         matrix = _merged_matrix(matrix, entry.substitution_matrix)
-        insertions = _merged_bins(insertions, entry.insertion_lengths)
-        deletions = _merged_bins(deletions, entry.deletion_lengths)
+        insertions = merged_indels(insertions, entry.insertion_lengths)
+        deletions = merged_indels(deletions, entry.deletion_lengths)
         grid = _merged_grid(grid, entry.complex_grid)
     return AlleleCounts(
         allele_count, class_counts, matrix,
@@ -352,10 +339,26 @@ def _serialized(counts: AlleleCounts) -> dict[str, Any]:
             ref: {alt: matrix[ref, alt] for alt in NUCLEOTIDES}
             for ref in NUCLEOTIDES
         }
-    if counts.insertion_lengths is not None:
-        entry["insertion_length_histogram"] = list(counts.insertion_lengths)
-    if counts.deletion_lengths is not None:
-        entry["deletion_length_histogram"] = list(counts.deletion_lengths)
+    for key, lengths in (
+        ("insertion_lengths", counts.insertion_lengths),
+        ("deletion_lengths", counts.deletion_lengths),
+    ):
+        if lengths is None:
+            continue
+        # Keys SORTED and written as strings, as the complex grid's
+        # are: the map is sparse and two chunkings of one resource meet
+        # its lengths in different orders, so sorting is what makes the
+        # file byte-identical however the rows arrived.
+        entry[key] = {
+            "lengths": {
+                str(length): lengths.lengths[length]
+                for length in sorted(lengths.lengths)
+            },
+            "count": lengths.alleles,
+            "sum": lengths.sum,
+            "min": lengths.min,
+            "max": lengths.max,
+        }
     if counts.complex_grid is not None:
         # Written ref-then-alt SORTED, not in encounter order: the cells
         # are a sparse dict, and two chunkings of one resource meet the
@@ -401,16 +404,38 @@ def _merged_grid(
     return merged
 
 
-def _deserialized_bins(
+def _deserialized_indels(
     entry: dict[str, Any], key: str,
-) -> list[int] | None:
-    """A stored length histogram, ``None`` when the file carries none."""
+) -> IndelLengths | None:
+    """A stored indel group, ``None`` when the file carries none.
+
+    The map is the ONLY thing read.  A file predating it -- one written
+    with the log2 ``insertion_length_histogram`` / ``deletion_length_
+    histogram`` this replaced -- carries neither key, so its indel
+    groups read as unknown and the page says "not computed" until the
+    resource is rebuilt.
+
+    That is one reader rather than a compatibility branch, deliberately.
+    A branch that read the old histograms would have to publish them as
+    an :class:`IndelLengths` whose exact map, sum, min and max are all
+    unrecoverable, so every statistic in the table would be a guess at
+    bin resolution presented as a number.
+    """
     stored = entry.get(key)
     if stored is None:
         return None
-    bins = [0] * LENGTH_HISTOGRAM_BIN_COUNT
-    accumulate_bins(bins, (int(count) for count in stored))
-    return bins
+    minimum = stored.get("min")
+    maximum = stored.get("max")
+    return IndelLengths(
+        {
+            int(length): int(count)
+            for length, count in stored["lengths"].items()
+        },
+        int(stored["count"]),
+        int(stored["sum"]),
+        None if minimum is None else int(minimum),
+        None if maximum is None else int(maximum),
+    )
 
 
 def _deserialized_matrix(
@@ -461,10 +486,8 @@ class RegionAlleles:
         # would silently drop soft-masked rows no cell claims.
         self._substitution_matrix: dict[tuple[str, str], int] | None = \
             dict.fromkeys(MATRIX_CELLS, 0)
-        self._insertion_lengths: list[int] | None = \
-            [0] * LENGTH_HISTOGRAM_BIN_COUNT
-        self._deletion_lengths: list[int] | None = \
-            [0] * LENGTH_HISTOGRAM_BIN_COUNT
+        self._insertion_lengths: IndelTally | None = IndelTally()
+        self._deletion_lengths: IndelTally | None = IndelTally()
         self._complex_grid: dict[tuple[int, int], int] | None = {}
 
     @classmethod
@@ -475,8 +498,8 @@ class RegionAlleles:
         class_counts: dict[str, int],
         *,
         substitution_matrix: dict[tuple[str, str], int] | None = None,
-        insertion_lengths: list[int] | None = None,
-        deletion_lengths: list[int] | None = None,
+        insertion_lengths: IndelLengths | None = None,
+        deletion_lengths: IndelLengths | None = None,
         complex_grid: dict[tuple[int, int], int] | None = None,
     ) -> RegionAlleles:
         """A region restored from serialized counts, with no scan state.
@@ -492,8 +515,10 @@ class RegionAlleles:
             if substitution_matrix is None else {
                 cell: substitution_matrix.get(cell, 0)
                 for cell in MATRIX_CELLS}
-        region._insertion_lengths = insertion_lengths
-        region._deletion_lengths = deletion_lengths
+        region._insertion_lengths = None if insertion_lengths is None \
+            else IndelTally.restored(insertion_lengths)
+        region._deletion_lengths = None if deletion_lengths is None \
+            else IndelTally.restored(deletion_lengths)
         region._complex_grid = complex_grid
         return region
 
@@ -505,9 +530,9 @@ class RegionAlleles:
             None if self._substitution_matrix is None
             else dict(self._substitution_matrix),
             None if self._insertion_lengths is None
-            else list(self._insertion_lengths),
+            else self._insertion_lengths.frozen(),
             None if self._deletion_lengths is None
-            else list(self._deletion_lengths),
+            else self._deletion_lengths.frozen(),
             None if self._complex_grid is None
             else dict(self._complex_grid))
 
@@ -538,13 +563,13 @@ class RegionAlleles:
         if classification.allele_class is AlleleClass.INSERTION \
                 and self._insertion_lengths is not None:
             assert classification.length_change is not None
-            self._insertion_lengths[length_histogram_bin_index(
-                abs(classification.length_change))] += multiplicity
+            self._insertion_lengths.add(
+                abs(classification.length_change), multiplicity)
         if classification.allele_class is AlleleClass.DELETION \
                 and self._deletion_lengths is not None:
             assert classification.length_change is not None
-            self._deletion_lengths[length_histogram_bin_index(
-                abs(classification.length_change))] += multiplicity
+            self._deletion_lengths.add(
+                abs(classification.length_change), multiplicity)
         if classification.allele_class is AlleleClass.COMPLEX \
                 and self._complex_grid is not None:
             assert classification.ref_length is not None
@@ -632,9 +657,9 @@ class RegionAlleles:
                 other._class_counts[name]
         self._substitution_matrix = _merged_matrix(
             self._substitution_matrix, other._substitution_matrix)
-        self._insertion_lengths = _merged_bins(
+        self._insertion_lengths = merged_tallies(
             self._insertion_lengths, other._insertion_lengths)
-        self._deletion_lengths = _merged_bins(
+        self._deletion_lengths = merged_tallies(
             self._deletion_lengths, other._deletion_lengths)
         self._complex_grid = _merged_grid(
             self._complex_grid, other._complex_grid)
@@ -744,10 +769,10 @@ class AlleleStatistics(Statistic):
                     for name, count in counts["class_counts"].items()
                 },
                 substitution_matrix=_deserialized_matrix(counts),
-                insertion_lengths=_deserialized_bins(
-                    counts, "insertion_length_histogram"),
-                deletion_lengths=_deserialized_bins(
-                    counts, "deletion_length_histogram"),
+                insertion_lengths=_deserialized_indels(
+                    counts, "insertion_lengths"),
+                deletion_lengths=_deserialized_indels(
+                    counts, "deletion_lengths"),
                 complex_grid=_deserialized_grid(counts),
             ))
         return result
@@ -812,9 +837,31 @@ class AlleleDisplay(NamedTuple):
     substitution_percentages: dict[tuple[str, str], str] | None
     #: The three gain#779 groups, ``None`` when the file predates them.
     #: An empty grid is KNOWN and empty, which is not the same thing.
-    insertion_lengths: list[int] | None = None
-    deletion_lengths: list[int] | None = None
+    insertion_lengths: IndelLengths | None = None
+    deletion_lengths: IndelLengths | None = None
     complex_grid: dict[tuple[int, int], int] | None = None
+
+    def indel_rows(self) -> list[IndelStatisticsRow]:
+        """The indel statistics table: one row per known group.
+
+        Global only.  Per-chromosome indel statistics would add eight
+        columns to the Alleles table to answer a question nobody asks;
+        the comparison these exist for is between the two GROUPS -- is
+        the deletion tail longer than the insertion tail -- and that
+        wants them side by side.
+
+        A group the file does not carry is left out rather than shown
+        empty; the page says "not computed" for it, as it does for
+        every other unknown group.
+        """
+        return [
+            IndelStatisticsRow.of(group, lengths)
+            for group, lengths in (
+                ("insertions", self.insertion_lengths),
+                ("deletions", self.deletion_lengths),
+            )
+            if lengths is not None
+        ]
 
     @property
     def nucleotides(self) -> tuple[str, ...]:
@@ -1260,10 +1307,11 @@ def save_allele_statistics(
         ("deletion", ALLELE_DELETION_LENGTHS_IMAGE_FILE,
          counts.deletion_lengths),
     ):
-        if not has_counts_to_plot(lengths):
+        if lengths is None or not lengths.alleles:
             continue
         with resource.open_raw_file(image, mode="wb") as imagefile:
-            plot_length_histogram(imagefile, lengths, item)
+            plot_length_histogram(
+                imagefile, indel_length_ladder(lengths), item)
     # The same question the page asks: a grid sparse enough to be
     # tabled publishes no image, so writing one would leave a file
     # nothing references (gain#989).

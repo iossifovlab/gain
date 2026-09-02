@@ -11,6 +11,11 @@ from gain.genomic_resources.statistics.alleles import (
     RegionAlleles,
     build_allele_section_display,
 )
+from gain.genomic_resources.statistics.indel_lengths import (
+    INDEL_LENGTH_CLAMP,
+    IndelStatisticsRow,
+    indel_length_ladder,
+)
 from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
 )
@@ -605,26 +610,34 @@ def test_merging_two_statistics_of_one_chromosome_needs_adjacency() -> None:
         left.merge(right)
 
 
-def test_an_insertion_is_binned_by_the_bases_it_adds() -> None:
+def test_an_insertion_is_recorded_at_the_exact_bases_it_adds() -> None:
+    # Exact lengths, not the shared log2 ladder (gain#1118).  The ladder
+    # lumps {2, 3} into one bin and {4, 5, 6, 7} into the next, which is
+    # precisely where indels live -- so no exact min, max, mean or
+    # median survives it.
     region = _region()
 
-    region.add_allele(10, "A", "ATTT")
+    region.add_allele(10, "A", "AT")
+    region.add_allele(11, "A", "ATTT")
+    region.add_allele(12, "A", "AT")
 
-    lengths = region.counts().insertion_lengths
-    assert lengths is not None
-    assert sum(lengths) == 1
-    assert lengths[length_histogram_bin_index(3)] == 1
+    insertions = region.counts().insertion_lengths
+    assert insertions is not None
+    assert insertions.lengths == {1: 2, 3: 1}
+    assert (insertions.alleles, insertions.sum) == (3, 5)
+    assert (insertions.min, insertions.max) == (1, 3)
 
 
-def test_a_deletion_is_binned_by_the_bases_it_removes() -> None:
+def test_a_deletion_is_recorded_at_the_exact_bases_it_removes() -> None:
     region = _region()
 
     region.add_allele(10, "ACGT", "A")
 
-    lengths = region.counts().deletion_lengths
-    assert lengths is not None
-    assert sum(lengths) == 1
-    assert lengths[length_histogram_bin_index(3)] == 1
+    deletions = region.counts().deletion_lengths
+    assert deletions is not None
+    assert deletions.lengths == {3: 1}
+    assert (deletions.alleles, deletions.sum) == (1, 3)
+    assert (deletions.min, deletions.max) == (3, 3)
 
 
 def test_the_global_roll_up_sums_the_length_histograms() -> None:
@@ -637,7 +650,8 @@ def test_the_global_roll_up_sums_the_length_histograms() -> None:
     lengths = statistics.global_counts().insertion_lengths
 
     assert lengths is not None
-    assert lengths[length_histogram_bin_index(1)] == 2
+    assert lengths.lengths == {1: 2}
+    assert (lengths.alleles, lengths.sum) == (2, 2)
 
 
 def test_an_unknown_histogram_makes_the_whole_roll_up_unknown() -> None:
@@ -652,20 +666,172 @@ def test_an_unknown_histogram_makes_the_whole_roll_up_unknown() -> None:
     assert statistics.global_counts().insertion_lengths is None
 
 
-def test_merge_adds_the_length_histograms_of_the_adjacent_region() -> None:
+def test_merge_adds_the_length_maps_of_the_adjacent_region() -> None:
+    # Maps add per length and the extremes take the extreme, so a
+    # chunked scan and a whole one reach the same four scalars.  The
+    # right side carries both a shorter and a longer insertion than the
+    # left, which is what makes min and max move in opposite directions.
     left = _region(start=1, end=10)
-    left.add_allele(5, "A", "AT")
+    left.add_allele(5, "A", "ATT")
     right = _region(start=11, end=20)
     right.add_allele(11, "A", "AT")
-    right.add_allele(12, "ACGT", "A")
+    right.add_allele(12, "A", "ATTTT")
+    right.add_allele(13, "ACGT", "A")
 
     left.merge(right)
 
     counts = left.counts()
     assert counts.insertion_lengths is not None
-    assert counts.insertion_lengths[length_histogram_bin_index(1)] == 2
+    assert counts.insertion_lengths.lengths == {1: 1, 2: 1, 4: 1}
+    assert (counts.insertion_lengths.alleles, counts.insertion_lengths.sum) \
+        == (3, 7)
+    assert (counts.insertion_lengths.min, counts.insertion_lengths.max) \
+        == (1, 4)
     assert counts.deletion_lengths is not None
-    assert counts.deletion_lengths[length_histogram_bin_index(3)] == 1
+    assert counts.deletion_lengths.lengths == {3: 1}
+
+
+def test_an_indel_past_the_clamp_folds_into_the_overflow_bucket() -> None:
+    # The map stops resolving at the clamp; the scalars do not.  This is
+    # the whole reason they are stored: a max recovered from the map
+    # would read 8192 for a 40,000 bp deletion, which is the one number
+    # the statistic exists to report.
+    region = _region()
+
+    region.add_allele(10, "A" * 40001, "A")
+    region.add_allele(11, "ACGT", "A")
+
+    deletions = region.counts().deletion_lengths
+    assert deletions is not None
+    assert deletions.lengths == {3: 1, INDEL_LENGTH_CLAMP: 1}
+    assert (deletions.min, deletions.max) == (3, 40000)
+    assert deletions.sum == 40003
+    assert deletions.mean == pytest.approx(20001.5)
+
+
+def test_a_median_in_the_overflow_bucket_is_read_as_a_floor() -> None:
+    # The one statistic the clamp can blunt, so it says so rather than
+    # reporting a median of exactly 8192 that a reader would have to
+    # know to distrust.
+    region = _region()
+    for pos in range(3):
+        region.add_allele(10 + pos, "A" * 20001, "A")
+
+    deletions = region.counts().deletion_lengths
+    assert deletions is not None
+    assert deletions.median_is_clamped
+    assert IndelStatisticsRow.of("deletions", deletions).median \
+        == f"≥{INDEL_LENGTH_CLAMP}"
+
+
+def test_an_even_allele_count_takes_the_mean_of_the_middle_two() -> None:
+    # The standard convention, over the ALLELES rather than the distinct
+    # lengths: {2, 3} is 2.5.
+    region = _region()
+    region.add_allele(10, "A", "AT")
+    region.add_allele(11, "A", "ATT")
+
+    insertions = region.counts().insertion_lengths
+    assert insertions is not None
+    assert insertions.median == 1.5
+    assert IndelStatisticsRow.of("insertions", insertions).median == "1.5"
+
+
+def test_a_whole_number_average_carries_no_trailing_zeros() -> None:
+    # Base-pair counts, so most averages land whole: a median of 2 reads
+    # "2", not "2.00".
+    region = _region()
+    for pos in range(3):
+        region.add_allele(10 + pos, "A", "ATT")
+
+    insertions = region.counts().insertion_lengths
+    assert insertions is not None
+    row = IndelStatisticsRow.of("insertions", insertions)
+    assert (row.mean, row.median, row.min, row.max) == ("2", "2", "2", "2")
+    assert row.alleles == "3"
+
+
+def test_the_serialized_group_carries_the_map_and_not_the_ladder() -> None:
+    statistics = AlleleStatistics()
+    region = _region()
+    region.add_allele(10, "A", "AT")
+    region.add_allele(11, "A", "ATTT")
+    statistics.fold_region(region)
+
+    stored = json.loads(statistics.serialize())["chromosomes"]["chr1"]
+
+    assert stored["insertion_lengths"] == {
+        "lengths": {"1": 1, "3": 1},
+        "count": 2, "sum": 4, "min": 1, "max": 3,
+    }
+    # The log2 histograms this replaced are gone, not written beside it:
+    # two spellings of the same counts is exactly the drift the derived
+    # chart exists to prevent.
+    assert "insertion_length_histogram" not in stored
+    assert "deletion_length_histogram" not in stored
+
+
+def test_the_chart_bins_are_derived_from_the_map() -> None:
+    # The chart keeps the shared log2 ladder as a RENDERING choice, so
+    # an already-built page looks the same; what changed is that the
+    # bins are computed from the stored map instead of being stored
+    # alongside it, so counts and statistics cannot disagree.
+    region = _region()
+    region.add_allele(10, "A", "AT")        # 1 -> bin 0
+    region.add_allele(11, "A", "ATT")       # 2 -> bin 1
+    region.add_allele(12, "A", "ATTT")      # 3 -> bin 1
+    region.add_allele(13, "A", "A" + "T" * 4)   # 4 -> bin 2
+
+    insertions = region.counts().insertion_lengths
+    assert insertions is not None
+    ladder = indel_length_ladder(insertions)
+
+    assert ladder[length_histogram_bin_index(1)] == 1
+    assert ladder[length_histogram_bin_index(2)] == 2, \
+        "the ladder lumps {2, 3}, which is why the map had to stop doing it"
+    assert ladder[length_histogram_bin_index(4)] == 1
+    assert sum(ladder) == insertions.alleles
+
+
+def test_a_clamped_length_lands_in_the_bin_the_chart_would_have_drawn(
+) -> None:
+    # Why the clamp may equal the display cap and lose nothing: the plot
+    # sums every bin at or above the cap into one overflow bar, and the
+    # clamp folds at exactly that length -- so a 40,000 bp deletion is
+    # drawn in the same bar whether the map resolved it or not.
+    region = _region()
+    region.add_allele(10, "A" * 40001, "A")
+
+    deletions = region.counts().deletion_lengths
+    assert deletions is not None
+    ladder = indel_length_ladder(deletions)
+
+    assert ladder[length_histogram_bin_index(INDEL_LENGTH_CLAMP)] == 1
+    assert sum(ladder) == 1
+
+
+def test_a_pre_map_file_reads_its_indel_groups_as_unknown() -> None:
+    # A statistics file carrying gain#779's log2 histograms and no map.
+    # One reader, not a compatibility branch: nothing exact is
+    # recoverable from those bins, so the page says "not computed" for
+    # the groups until the resource is rebuilt.
+    content = json.dumps({
+        "format_version": 1,
+        "chromosomes": {
+            "chr1": {
+                "allele_count": 1,
+                "class_counts": {"insertion": 1},
+                "insertion_length_histogram": [0, 1] + [0] * 30,
+                "deletion_length_histogram": [0] * 32,
+            },
+        },
+    })
+
+    counts = AlleleStatistics.deserialize(content).global_counts()
+
+    assert counts.insertion_lengths is None
+    assert counts.deletion_lengths is None
+    assert counts.class_counts["insertion"] == 1
 
 
 def test_a_complex_row_lands_at_its_exact_length_cell() -> None:

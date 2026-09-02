@@ -129,21 +129,90 @@
        and allele_display.deletion_lengths is none) %}
 <p>not computed</p>
 {% else %}
+{#- The statistics come FIRST: they are the exact answer, and the
+   charts below are the shape of the same numbers.  Global only -- per
+   chromosome this would be eight more columns on the table above, to
+   answer a question nobody asks.  The comparison these exist for is
+   between the two groups: is the deletion tail longer than the
+   insertion tail? -#}
+<div class="scrollable-table-container">
+<table>
+    <thead>
+        <tr>
+            <th></th>
+            <th>alleles</th>
+            <th>min</th>
+            <th>max</th>
+            <th>mean</th>
+            <th>median</th>
+        </tr>
+    </thead>
+    <tbody>
+    {%- for row in allele_display.indel_rows() -%}
+        <tr>
+            <td>{{ row.group }}</td>
+            <td>{{ row.alleles }}</td>
+            <td>{{ row.min }}</td>
+            <td>{{ row.max }}</td>
+            <td>{{ row.mean }}</td>
+            <td>{{ row.median }}</td>
+        </tr>
+    {%- endfor %}
+    </tbody>
+</table>
+</div>
+{#- The two charts side by side at about half width, so the pair takes
+   one row instead of two.  Each is a thumbnail that opens the
+   full-size image in the modal this page already uses for the score
+   histograms -- so the smaller size costs no detail.  The figure
+   itself is unchanged at figsize=(15, 10): changing that would need
+   every resource rebuilt before it took effect, where markup and CSS
+   improve every already-built resource the next time its page is
+   generated. -#}
+<div class="figure-pair">
 {% if allele_display.insertion_lengths is none %}
 <p>insertion lengths not computed</p>
-{% elif allele_display.insertion_lengths | sum %}
+{% elif allele_display.insertion_lengths.alleles %}
 <img src="{{ impl.get_allele_insertion_lengths_image_filename() }}"
-     alt="insertion length histogram" class="statistics-figure">
+     alt="insertion length histogram" class="figure-thumbnail"
+     data-modal-trigger="modal-allele-insertion-lengths">
 {% else %}
 <p>no insertions</p>
 {% endif %}
 {% if allele_display.deletion_lengths is none %}
 <p>deletion lengths not computed</p>
-{% elif allele_display.deletion_lengths | sum %}
+{% elif allele_display.deletion_lengths.alleles %}
 <img src="{{ impl.get_allele_deletion_lengths_image_filename() }}"
-     alt="deletion length histogram" class="statistics-figure">
+     alt="deletion length histogram" class="figure-thumbnail"
+     data-modal-trigger="modal-allele-deletion-lengths">
 {% else %}
 <p>no deletions</p>
+{% endif %}
+</div>
+{#- One modal per figure that has one, emitted beside the pair.  A
+   trigger whose modal was never rendered opens nothing, so these are
+   gated on exactly what the thumbnails are. -#}
+{% if allele_display.insertion_lengths is not none
+   and allele_display.insertion_lengths.alleles %}
+<div id="modal-allele-insertion-lengths" class="modal">
+    <div class="modal-content">
+        <span title="insertion lengths" class="close">&times;</span>
+        <img src="{{ impl.get_allele_insertion_lengths_image_filename() }}"
+             alt="insertion length histogram"
+             style="max-width: min(100%, 800px);">
+    </div>
+</div>
+{% endif %}
+{% if allele_display.deletion_lengths is not none
+   and allele_display.deletion_lengths.alleles %}
+<div id="modal-allele-deletion-lengths" class="modal">
+    <div class="modal-content">
+        <span title="deletion lengths" class="close">&times;</span>
+        <img src="{{ impl.get_allele_deletion_lengths_image_filename() }}"
+             alt="deletion length histogram"
+             style="max-width: min(100%, 800px);">
+    </div>
+</div>
 {% endif %}
 {% endif %}
 <h3>Complex alleles</h3>

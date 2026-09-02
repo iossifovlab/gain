@@ -21,9 +21,6 @@ from gain.genomic_resources.statistics.alleles import (
     AlleleStatistics,
     serves_allele_arrays,
 )
-from gain.genomic_resources.statistics.length_histogram import (
-    length_histogram_bin_index,
-)
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
     a_position_score,
@@ -1040,13 +1037,10 @@ def test_build_stores_the_length_histograms_per_chromosome(
     chr2 = chromosomes["chr2"].insertion_lengths
     assert chr1 is not None
     assert chr2 is not None
-    assert {index: count for index, count in enumerate(chr1) if count} == {
-        length_histogram_bin_index(1): 1,
-        length_histogram_bin_index(4): 1,
-    }
-    assert {index: count for index, count in enumerate(chr2) if count} == {
-        length_histogram_bin_index(2): 1,
-    }
+    assert chr1.lengths == {1: 1, 4: 1}
+    assert (chr1.alleles, chr1.sum, chr1.min, chr1.max) == (2, 5, 1, 4)
+    assert chr2.lengths == {2: 1}
+    assert (chr2.alleles, chr2.sum, chr2.min, chr2.max) == (1, 2, 2, 2)
 
 
 def test_build_stores_the_complex_grid_per_chromosome(
@@ -1071,18 +1065,11 @@ def test_the_global_groups_are_the_merge_of_the_chromosomes(
     counts = stats.global_counts()
     assert counts.insertion_lengths is not None
     assert counts.deletion_lengths is not None
-    assert {
-        index: count
-        for index, count in enumerate(counts.insertion_lengths) if count
-    } == {
-        length_histogram_bin_index(1): 1,
-        length_histogram_bin_index(2): 1,
-        length_histogram_bin_index(4): 1,
-    }
-    assert {
-        index: count
-        for index, count in enumerate(counts.deletion_lengths) if count
-    } == {length_histogram_bin_index(3): 1}
+    assert counts.insertion_lengths.lengths == {1: 1, 2: 1, 4: 1}
+    assert (counts.insertion_lengths.min, counts.insertion_lengths.max) \
+        == (1, 4)
+    assert counts.insertion_lengths.sum == 7
+    assert counts.deletion_lengths.lengths == {3: 1}
     assert counts.complex_grid == {(2, 2): 1, (2, 3): 1, (3, 3): 1}
 
 
@@ -1099,9 +1086,15 @@ def test_the_group_totals_reconcile_with_the_class_counts(
         assert counts.insertion_lengths is not None
         assert counts.deletion_lengths is not None
         assert counts.complex_grid is not None
-        assert sum(counts.insertion_lengths) == \
+        assert counts.insertion_lengths.alleles == \
             counts.class_counts["insertion"]
-        assert sum(counts.deletion_lengths) == \
+        assert counts.deletion_lengths.alleles == \
+            counts.class_counts["deletion"]
+        # The clamp is TOTAL: every indel lands in exactly one bucket,
+        # so the map's values sum to the group's count too.
+        assert sum(counts.insertion_lengths.lengths.values()) == \
+            counts.class_counts["insertion"]
+        assert sum(counts.deletion_lengths.lengths.values()) == \
             counts.class_counts["deletion"]
         assert sum(counts.complex_grid.values()) == \
             counts.class_counts["complex"]
@@ -1151,11 +1144,55 @@ def test_the_indel_groups_are_chunk_invariant(
         == whole.get_file_content(ALLELE_STATISTICS_FILE)
 
 
+def test_info_page_renders_the_indel_statistics_table(
+    tmp_path: pathlib.Path,
+) -> None:
+    # chr1 carries a 1bp and a 4bp insertion, chr2 a 2bp one, and there
+    # is one 3bp deletion.  Insertions: min 1, max 4, mean 7/3 = 2.33,
+    # and with three alleles the median is the middle one, 2.
+    resource = _indel_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    table = table_after(_info_page(resource), "<h3>Indel lengths</h3>")
+
+    assert [cell.text for cell in table.head[0]] == [
+        "", "alleles", "min", "max", "mean", "median"]
+    assert [[cell.text for cell in row] for row in table.rows] == [
+        ["insertions", "3", "1", "4", "2.33", "2"],
+        ["deletions", "1", "3", "3", "3", "3"],
+    ]
+
+
+def test_the_indel_figures_open_in_the_modal(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Half-width thumbnails lose no detail because each opens the
+    # full-size image in the modal this page already uses for the score
+    # histograms.  A trigger whose modal was never rendered opens
+    # nothing, so both halves are asserted together.
+    resource = _indel_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = section_after(_info_page(resource), "<h2>Alleles</h2>")
+
+    for group in ("insertion", "deletion"):
+        assert f'data-modal-trigger="modal-allele-{group}-lengths"' \
+            in section
+        assert f'id="modal-allele-{group}-lengths"' in section
+
+
 def test_the_build_writes_one_global_image_per_group(
     tmp_path: pathlib.Path,
 ) -> None:
-    # Three images, each referenced ONCE -- the count is what says there
-    # are no per-chromosome images, as the fragments section has it.
+    # Three images, one per group -- the count is what says there are no
+    # per-chromosome images, as the fragments section has it.
+    #
+    # The two indel images are referenced TWICE each: once by the
+    # half-width thumbnail and once inside the modal it opens
+    # (gain#1118).  The complex grid is still a single full-width
+    # figure, so it appears once -- and that asymmetry is the assertion
+    # that would catch a thumbnail rendered with no modal behind it, or
+    # a modal nothing opens.
     #
     # The complex group needs a grid dense enough to be drawn at all: a
     # sparse one publishes a table and no image (gain#989), which is
@@ -1166,13 +1203,13 @@ def test_the_build_writes_one_global_image_per_group(
     section = section_after(
         _info_page(resource), "<h2>Alleles</h2>")
 
-    for image in (
-        ALLELE_INSERTION_LENGTHS_IMAGE_FILE,
-        ALLELE_DELETION_LENGTHS_IMAGE_FILE,
-        ALLELE_COMPLEX_GRID_IMAGE_FILE,
+    for image, references in (
+        (ALLELE_INSERTION_LENGTHS_IMAGE_FILE, 2),
+        (ALLELE_DELETION_LENGTHS_IMAGE_FILE, 2),
+        (ALLELE_COMPLEX_GRID_IMAGE_FILE, 1),
     ):
         assert resource.file_exists(image)
-        assert section.count(image) == 1
+        assert section.count(image) == references
 
 
 def _allele_score_over(
@@ -1351,8 +1388,8 @@ def test_info_page_over_a_pre_indel_file_says_the_groups_not_computed(
     stored = json.loads(resource.get_file_content(ALLELE_STATISTICS_FILE))
     for entry in (*stored["chromosomes"].values(), stored["global"]):
         for key in (
-            "insertion_length_histogram",
-            "deletion_length_histogram",
+            "insertion_lengths",
+            "deletion_lengths",
             "complex_grid",
         ):
             entry.pop(key, None)

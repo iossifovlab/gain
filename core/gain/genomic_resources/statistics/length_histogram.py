@@ -74,9 +74,13 @@ def has_counts_to_plot(
 
     Unknown and known-and-empty are one answer here: the counts axis is
     logarithmic and can render neither, and a chart of nothing under a
-    "Segment lengths" heading states nothing either.  One predicate, so
-    the callers -- coverage's two groups and the indel ones -- cannot
-    drift apart again, as they had.
+    "Segment lengths" heading states nothing either.
+
+    Coverage's two groups -- segments and fragments -- are the callers.
+    The indel groups asked this too until gain#1118 took them off the
+    stored ladder: they carry an exact length map now, so the same
+    question is ``lengths is None or not lengths.count``, read off the
+    thing they actually store rather than off bins derived from it.
     """
     return histogram is not None and any(histogram)
 
