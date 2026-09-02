@@ -562,7 +562,6 @@ class TabixGenomicPositionTable(GenomicPositionTable):
 
         prev_call_chrom, prev_call_begin, prev_call_end = self._last_call
         self._last_call = chrom, pos_begin, pos_end
-        this_call = self._last_call
 
         # The buffer can only answer from the previous query's start onwards.
         # It is pruned to that position once the query has been served (and a
@@ -581,68 +580,79 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         # Eviction is also amortized (gain#287): between walks the buffer
         # knowingly holds records that already died, which only ever makes it
         # answer *more* than it must -- ``fetch`` filters exactly.
+        #
+        # ONE ``try/finally`` around the whole buffered branch, rather than one
+        # per path.  A consumer is under no obligation to finish reading, and
+        # the prune used to sit after each path's yield loop, which a caller
+        # that stopped part-way never reached: ``GeneratorExit`` is raised at
+        # the suspended yield, the query's records were never evicted, and the
+        # buffer grew by a query's worth on every abandoned read (gain#1120).
+        #
+        # Wrapping the branch and not the paths is deliberate.  A per-path
+        # ``finally`` is one a later path can be written without: the paths
+        # here alternate over a scan -- 199 buffer hits to 200 sequential
+        # seeks, measured -- so whichever one still prunes keeps the buffer
+        # bounded on behalf of the one that does not, and a scan-shaped test
+        # passes either way.  There is nothing to forget if there is one exit.
+        #
+        # It also covers the two exits that had no prune and want none: the
+        # ``not found`` return above (every buffered record begins past
+        # ``pos_end``, so none of them ends before ``pos_begin`` and the prune
+        # drops nothing) and the fall-through to the unbuffered read below
+        # (which clears the buffer as its first act).  Both are no-ops, which
+        # is what makes the single exit safe as well as tidy.
+        #
+        # Pruning after an *exception* is new too, and safe for the same
+        # reason it is safe at all: ``prune`` drops only the records that can
+        # no longer match ``pos_begin`` or later, so it can retain dead
+        # records but never lose live ones.
+        #
+        # What this rests on: the ``finally`` runs when the generator is
+        # CLOSED or DROPPED, and CPython calls ``close()`` at refcount zero.
+        # That reaches here even through the generator expression
+        # ``ScoreFilter.select`` wraps a filtered read in: a genexp does not
+        # propagate ``close()`` to what it iterates, but it and
+        # ``fetch_records``' own frame are the only things holding us, and
+        # they are torn down together.  A reference CYCLE is what defers it,
+        # to a cyclic GC pass that is not guaranteed to come; nothing in tree
+        # builds one, and a caller that does gets the old unbounded behaviour
+        # back.
+        #
+        # ``_prune_if_current`` rather than a bare prune, because the caller
+        # also controls *when* the close happens: see there.
         if buffering and len(self.buffer) > 0 \
                 and prev_call_chrom == chrom \
                 and pos_begin >= prev_call_begin:
 
-            first = self.buffer.peek_first()
-            assert pos_end is not None
-            if first[CHROM] == chrom \
-               and prev_call_end is not None \
-               and pos_begin > prev_call_end \
-               and pos_end < first[POS_BEGIN]:
+            try:
+                first = self.buffer.peek_first()
+                assert pos_end is not None
+                if first[CHROM] == chrom \
+                   and prev_call_end is not None \
+                   and pos_begin > prev_call_end \
+                   and pos_end < first[POS_BEGIN]:
 
-                assert first[CHROM] == prev_call_chrom
-                self.stats["not found"] += 1
-                return
+                    assert first[CHROM] == prev_call_chrom
+                    self.stats["not found"] += 1
+                    return
 
-            # The prune runs in a ``finally`` on both buffered paths, because
-            # a consumer is under no obligation to finish reading.  It used to
-            # sit after the yield loop, which a caller that stopped part-way
-            # never reached: ``GeneratorExit`` is raised at the suspended
-            # yield, the query's records were never evicted, and the buffer
-            # grew by a query's worth on every abandoned read (gain#1120).
-            #
-            # Pruning after an *exception* is new too, and safe for the same
-            # reason it is safe at all: ``prune`` drops only the records that
-            # can no longer match ``pos_begin`` or later, so it can retain
-            # dead records but never lose live ones.
-            #
-            # What this rests on: the ``finally`` runs when the generator is
-            # CLOSED or DROPPED, and CPython calls ``close()`` at refcount
-            # zero.  That reaches here even through the generator expression
-            # ``ScoreFilter.select`` wraps a filtered read in: a genexp does
-            # not propagate ``close()`` to what it iterates, but it and
-            # ``fetch_records``' own frame are the only things holding us, and
-            # they are torn down together.  A reference CYCLE is what defers
-            # it, to a cyclic GC pass that is not guaranteed to come; nothing
-            # in tree builds one, and a caller that does gets the old
-            # unbounded behaviour back.
-            #
-            # ``_prune_if_current`` rather than a bare prune, because the
-            # caller also controls *when* the close happens: see there.
-            if self.buffer.contains(chrom, pos_begin):
-                try:
+                if self.buffer.contains(chrom, pos_begin):
                     for record in self._gen_from_buffer_and_tabix(
                             chrom, pos_begin, pos_end):
                         self.stats["yield from buffer and tabix"] += 1
                         yield record
-                finally:
-                    self._prune_if_current(this_call)
-                return
+                    return
 
-            if self._should_use_sequential_seek_forward(chrom, pos_begin):
-                # Inside the ``try``: the seek is where the whole run-up to
-                # the query gets buffered, so a raise in it is the moment the
-                # prune helps most.  It cannot raise ``GeneratorExit`` -- it
-                # runs between yields, not at one.
-                try:
+                if self._should_use_sequential_seek_forward(chrom, pos_begin):
+                    # The seek is where the whole run-up to the query gets
+                    # buffered, so a raise in it is the moment the prune helps
+                    # most -- another exit the single wrapper covers for free.
                     self._sequential_seek_forward(chrom, pos_begin)
                     yield from self._gen_from_buffer_and_tabix(
                             chrom, pos_begin, pos_end)
-                finally:
-                    self._prune_if_current(this_call)
-                return
+                    return
+            finally:
+                self._prune_if_current(chrom, pos_begin, pos_end)
 
         # without using buffer
         #
@@ -669,7 +679,7 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         yield from self._gen_from_tabix(chrom, pos_end, buffering=buffering)
 
     def _prune_if_current(
-        self, this_call: tuple[str, int, int | None],
+        self, chrom: str, pos_begin: int, pos_end: int | None,
     ) -> None:
         """Evict the dead records, unless another query has moved us on.
 
@@ -697,9 +707,17 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         the table has already passed evicts *less* than the current query
         would, never more.  It is the held-open-across-a-backward-query
         direction that loses records, and the token catches both.
+
+        **This does not make interleaved region reads supported, and must not
+        be read as saying so.**  A table serves ONE live region read at a
+        time: ``line_iterator`` is the table's cursor, and a second query
+        replaces it, so a held generator may be CLOSED across another query --
+        which is what this guard is for -- but not resumed.  Resuming one
+        reads from wherever the other query left the cursor, and that was
+        true before this guard and is unchanged by it.
         """
-        if self._last_call == this_call:
-            self.buffer.prune(this_call[0], this_call[1])
+        if self._last_call == (chrom, pos_begin, pos_end):
+            self.buffer.prune(chrom, pos_begin)
 
     def buffered_record_count(self) -> int:
         """The records held in the ``LineBuffer`` between queries.

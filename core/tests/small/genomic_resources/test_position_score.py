@@ -3,9 +3,6 @@
 import pathlib
 
 from gain.genomic_resources import GenomicResource
-from gain.genomic_resources.genomic_position_table import (
-    TabixGenomicPositionTable,
-)
 from gain.genomic_resources.genomic_scores import (
     PositionScore,
 )
@@ -224,8 +221,12 @@ def test_a_walk_of_point_reads_leaves_the_tabix_buffer_pruned(
     score = PositionScore(resource)
     score.open()
     table = score.table
-    assert isinstance(table, TabixGenomicPositionTable)
 
+    # ``buffered_record_count`` rather than ``isinstance`` plus
+    # ``len(table.buffer)``: the count is what a table owes a caller asking
+    # what it retains, and asking it needs no knowledge of which backend has
+    # a buffer (gain#1120).
+    #
     # The claim of the bound is that the buffer does NOT grow with the
     # walk -- without the drain it reaches the walk's length (200).  On
     # this walk of point records ``LineBuffer.prune``'s cheap leading pop
@@ -237,4 +238,4 @@ def test_a_walk_of_point_reads_leaves_the_tabix_buffer_pruned(
     # while a buffer that scales with the reads cannot.
     for pos in range(1, 201):
         assert score.fetch_position_scores("chr1", pos) == [0.1]
-        assert len(table.buffer) <= 64
+        assert table.buffered_record_count() <= 64

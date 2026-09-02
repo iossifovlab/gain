@@ -600,13 +600,18 @@ def test_the_buffer_hit_path_prunes_when_abandoned(
 ) -> None:
     """One abandoned query on the buffer-hit path, pruned.
 
-    There are TWO buffered paths, and a scan alternates between them -- so a
-    scan-shaped test cannot tell them apart: whichever path still prunes keeps
-    the buffer bounded on behalf of the one that does not.  (Measured: over a
-    400-query point scan the split is 199 buffer hits to 200 sequential seeks,
-    and removing either ``finally`` alone leaves every scan-shaped assertion
-    passing.)  So each path is pinned here by a single query, identified by
-    the stats counter only it increments.
+    There are TWO buffered paths, and a scan alternates between them -- 199
+    buffer hits to 200 sequential seeks over a 400-query point scan, measured
+    -- so a scan-shaped test cannot tell them apart: whichever path still
+    prunes keeps the buffer bounded on behalf of the one that does not.  So
+    each path is pinned here by a single query, identified by the stats
+    counter only it increments.
+
+    The production code now prunes from ONE ``finally`` wrapping the whole
+    buffered branch, which is what makes "a path that forgets to prune"
+    unwriteable rather than merely untested.  These two tests keep saying
+    which paths that exit is responsible for, and would catch a future path
+    that returned around it.
     """
     tabix_table, _ = build_tables([(pos, pos) for pos in range(10, 61, 2)])
 
@@ -688,21 +693,8 @@ def test_abandoned_queries_do_not_corrupt_later_answers(
         _assert_same(tabix_table, mem_table, pos, pos)
 
 
-def test_a_drained_scan_leaves_the_buffer_at_the_live_set(
-    build_tables: Any,
-) -> None:
-    """A drained scan is bounded too, and by the same cap.
-
-    That the warm buffer still WORKS after the fix -- one tabix fetch for the
-    whole scan, the rest served from the buffer -- is already pinned by
-    test_monotonic_scan_keeps_the_buffer_warm above, which a "fix" that
-    cleared the buffer instead of pruning it fails.  This adds only the half
-    that test does not measure: the size the scan leaves behind.
-    """
-    rows = make_rows("points_unique", count=400)
-    tabix_table, _ = build_tables(rows)
-
-    for pos in (beg for beg, _ in rows):
-        list(tabix_table.get_records_in_region(CHROM, pos, pos))
-
-    assert len(tabix_table.buffer) <= LineBuffer.COMPACT_FLOOR
+# The DRAINED half of the same guarantee is pinned elsewhere and is not
+# repeated here: test_monotonic_scan_keeps_the_buffer_warm (above) holds the
+# scan to one tabix fetch, and
+# test_a_walk_of_point_reads_leaves_the_tabix_buffer_pruned (over in
+# test_position_score.py) holds a drained walk's buffer bounded.

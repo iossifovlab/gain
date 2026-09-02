@@ -44,22 +44,23 @@ what it yields fails here, naming the backend -- the one moment this catches it.
 from __future__ import annotations
 
 import pathlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 import numpy as np
 import pytest
 from gain.genomic_resources.bigwig_scores import (
     extract_bigwig_value,
 )
-from gain.genomic_resources.genomic_position_table import (
-    LineBuffer,
-)
 from gain.genomic_resources.genomic_position_table.record import (
     PAYLOAD,
     POS_BEGIN,
     POS_END,
     RECORD_SLOTS,
+    Record,
     sort_key,
+)
+from gain.genomic_resources.genomic_position_table.table import (
+    GenomicPositionTable,
 )
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
@@ -502,13 +503,26 @@ def test_a_backend_serves_value_arrays_exactly_when_it_claims_to(
 # having nothing to retain.  These build a long forward scan instead, which is
 # the shape that told the two apart (the tabix backend ended it holding one
 # record per query).
-_SCAN_ROWS = 200
-_SCAN_STEP = 3
-_SCAN_START = 10
+_SCAN_POSITIONS = list(range(10, 610, 3))
 
 
-def _scan_positions() -> list[int]:
-    return [_SCAN_START + i * _SCAN_STEP for i in range(_SCAN_ROWS)]
+def _abandon_every_query(
+    table: GenomicPositionTable, positions: list[int], backend: str,
+) -> int:
+    """Take one record from each query, drop it, and report what is retained.
+
+    Every position must hold a record.  A query that yields nothing runs its
+    generator to exhaustion, which reaches whatever cleanup sits after the
+    yield loop -- so a scan over empty positions is bounded whatever the
+    backend does with ``GeneratorExit``, and would measure nothing.
+    """
+    for pos in positions:
+        records = table.get_records_in_region("1", pos, pos)
+        assert next(records, None) is not None, (
+            f"{backend} yields nothing at {pos}: the query would run to "
+            f"exhaustion and the read would never be abandoned")
+        records.close()
+    return table.buffered_record_count()
 
 
 def _build_tabular_scan(
@@ -516,7 +530,7 @@ def _build_tabular_scan(
 ) -> GenomicScore:
     lines = ["chrom  pos_begin  s_float"]
     lines.extend(
-        f"1  {pos}  {pos / 10}" for pos in _scan_positions())
+        f"1  {pos}  {pos / 10}" for pos in _SCAN_POSITIONS)
     builder = (
         a_position_score()
         .with_score("s_float", "float")
@@ -544,7 +558,7 @@ def _build_vcf_scan(tmp_path: pathlib.Path) -> GenomicScore:
     ]
     lines.extend(
         f"1   {pos}  .  A   T   .    .      scoreA={pos / 10}"
-        for pos in _scan_positions()
+        for pos in _SCAN_POSITIONS
     )
     builder = a_vcf_info_score().with_data("\n".join(lines))
     repo = a_grr().with_resource("vcf", builder).build_repo(tmp_path)
@@ -555,12 +569,12 @@ def _build_bigwig_scan(tmp_path: pathlib.Path) -> GenomicScore:
     # bigWig intervals are half-open and 0-based, so a row covering the 1-based
     # position ``pos`` is ``[pos - 1, pos)``.
     lines = [
-        f"1  {pos - 1}  {pos}  {pos / 10}" for pos in _scan_positions()]
+        f"1  {pos - 1}  {pos}  {pos / 10}" for pos in _SCAN_POSITIONS]
     builder = (
         a_bigwig_score()
         .with_score("bw", "float")
         .with_data("\n".join(lines))
-        .with_chrom_lens({"1": _scan_positions()[-1] + 100})
+        .with_chrom_lens({"1": _SCAN_POSITIONS[-1] + 100})
     )
     repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
     return PositionScore(repo.get_resource("bw"))
@@ -613,34 +627,48 @@ def test_abandoning_a_region_read_leaves_the_table_bounded_and_correct(
 
     What this does NOT do is pin the tabix backend's two buffered paths
     separately.  A scan alternates between them, so either one's prune keeps
-    the buffer bounded on behalf of the other, and this fails only once both
-    are broken.  ``test_the_buffer_hit_path_prunes_when_abandoned`` and
+    the buffer bounded on behalf of the other.
+    ``test_the_buffer_hit_path_prunes_when_abandoned`` and
     ``test_the_sequential_seek_path_prunes_when_abandoned``, over in
-    test_overlapping_intervals.py, take one path each with a single query.
+    test_overlapping_intervals.py, take one path each with a single query --
+    as does the tabix-level statement of this same boundedness,
+    ``test_abandoned_queries_keep_the_buffer_bounded``, which measures the
+    growth in records where this measures it in queries.
     """
-    score = build_backend(tmp_path)
-    positions = _scan_positions()
+    half = _SCAN_POSITIONS[:len(_SCAN_POSITIONS) // 2]
 
+    score = build_backend(tmp_path)
     with score.open() as opened:
         table = opened.table
         backend = type(table).__name__
 
-        for pos in positions:
-            records = table.get_records_in_region("1", pos, pos)
-            assert next(records, None) is not None, (
-                f"{backend} yields nothing at {pos}: the query would run to "
-                f"exhaustion and the read would never be abandoned")
-            records.close()
+        # The scan is run at two lengths and the GROWTH between them is what
+        # is asserted, rather than a cap: the contract's claim is that
+        # retention does not grow with the length of the scan, and doubling
+        # the scan asks exactly that without borrowing a number from one
+        # backend's internals.  (An earlier draft capped this at
+        # ``LineBuffer.COMPACT_FLOOR`` -- a tabix performance knob.  Retuning
+        # it would have changed what a cross-backend correctness test
+        # asserts, and a new backend retaining 30 records per query would
+        # have passed.)
+        #
+        # The longer scan restarts at the first position, which is BACKWARD
+        # for every backend that tracks a cursor, so the second measurement
+        # does not inherit the first's retention.
+        retained_half = _abandon_every_query(table, half, backend)
+        retained_full = _abandon_every_query(table, _SCAN_POSITIONS, backend)
 
-        retained = table.buffered_record_count()
-        assert retained <= LineBuffer.COMPACT_FLOOR, (
-            f"{backend} retained {retained} records across "
-            f"{len(positions)} abandoned queries; a bounded backend holds at "
-            f"most its live set, and this scan's live set is one record")
+        added = len(_SCAN_POSITIONS) - len(half)
+        growth = retained_full - retained_half
+        assert growth < added // 2, (
+            f"{backend} retained {retained_half} records over {len(half)} "
+            f"abandoned queries and {retained_full} over "
+            f"{len(_SCAN_POSITIONS)}: {added} more queries grew retention by "
+            f"{growth}, which is not sublinear")
 
         abandoned_answers = [
             _positions_of(table.get_records_in_region("1", pos, pos))
-            for pos in positions
+            for pos in _SCAN_POSITIONS
         ]
 
     # The oracle: the same scan on a table no one walked away from.
@@ -649,15 +677,12 @@ def test_abandoning_a_region_read_leaves_the_table_bounded_and_correct(
         expected = [
             _positions_of(
                 opened_fresh.table.get_records_in_region("1", pos, pos))
-            for pos in positions
+            for pos in _SCAN_POSITIONS
         ]
 
     assert abandoned_answers == expected
 
 
-def _positions_of(records: object) -> list[tuple[int, int]]:
+def _positions_of(records: Iterable[Record]) -> list[tuple[int, int]]:
     """Project records onto their spans -- comparable across backends."""
-    return [
-        (record[POS_BEGIN], record[POS_END])
-        for record in records  # type: ignore[attr-defined]
-    ]
+    return [(record[POS_BEGIN], record[POS_END]) for record in records]
