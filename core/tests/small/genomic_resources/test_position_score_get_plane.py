@@ -432,7 +432,7 @@ def test_a_record_outside_the_region_is_dropped_not_counted(
     ``_score_segments`` deliberately yields such a record through, at its
     own extent -- the misconfigured backend it implies is refused at
     ``open()``, not by a read (gain#553, ADR 0008).  The walker must drop
-    it, as ``aggregate_region`` and ``fetch_region_weighted_values`` drop
+    it, as ``aggregate_region`` drops
     it with the same ``clip_span``; counting it would yield phantom
     positions past the region width and feed the aggregator a negative
     weight.

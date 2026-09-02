@@ -23,6 +23,7 @@ import textwrap
 
 import pytest
 from gain.annotation.annotatable import Region
+from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import (
@@ -136,3 +137,106 @@ def test_an_attribute_may_spell_its_aggregator_as_a_mapping(
         result = pipeline.annotate(Region("chr1", 10, 29))
 
     assert result["joined"] == "|".join(["1.0"] * 10 + ["2.0"] * 10)
+
+
+def test_one_source_twice_with_two_aggregators_is_two_answers(
+    repo: GenomicResourceRepo,
+) -> None:
+    """The fault the attribute-name key exists to fix.
+
+    Both attributes read ``s``; only the aggregator differs.  The score
+    fetches the column once and folds it twice, and the answers come back
+    positionally, one per query -- so keying the result by SOURCE would
+    have the second write over the first and both attributes report one
+    of the two reductions.  Values chosen so max and min differ, because
+    two answers that happened to coincide would pass either way.
+    """
+    with _pipeline(repo, """
+        - source: s
+          name: highest
+          aggregator: max
+        - source: s
+          name: lowest
+          aggregator: min
+    """) as pipeline:
+        result = pipeline.annotate(Region("chr1", 10, 29))
+
+    assert result == {"highest": 2.0, "lowest": 1.0}
+
+
+def test_a_bool_attribute_naming_no_aggregator_is_refused_at_load(
+    repo: GenomicResourceRepo,
+) -> None:
+    """Refused building the pipeline, not on the first region.
+
+    ``bool`` is the one value type whose class default aggregator is
+    deliberately ``None``, so it is the only way an attribute can reach
+    the annotator with nothing to reduce it.  The old path answered such
+    an attribute with the region's per-base expansion -- one value per
+    base pair of a CNV, output nobody asked for.
+
+    Nothing is annotated here: reaching the refusal without an annotatable
+    is the whole point, and a pipeline that only failed once a region
+    arrived would have shipped the misconfiguration.
+
+    It arrives as an ``AnnotationConfigurationError`` naming the annotator,
+    because the factory wraps what building one raises -- which is what
+    makes this a configuration complaint about a pipeline the user wrote
+    rather than a stray ``ValueError`` from the score layer.  The plane's
+    own remedy survives the wrapping, and that is what the tail pins.
+    """
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        _pipeline(repo, """
+            - source: flag
+              name: flag
+        """)
+
+    assert str(excinfo.value).endswith(
+        "score 'flag' of resource 'scores' has no default aggregator "
+        "for value type 'bool'; name one on the query")
+
+
+def test_a_bool_attribute_that_names_one_loads_and_answers(
+    repo: GenomicResourceRepo,
+) -> None:
+    """The other side of that boundary: naming one is all it takes.
+
+    Guards the refusal against over-reach -- were it refusing on the value
+    type rather than on the missing default, this would fail too.
+    """
+    with _pipeline(repo, """
+        - source: flag
+          name: flag
+          aggregator: bool
+    """) as pipeline:
+        result = pipeline.annotate(Region("chr1", 10, 19))
+
+    assert result == {"flag": True}
+
+
+def test_a_region_starting_below_one_is_refused_rather_than_answered(
+    repo: GenomicResourceRepo,
+) -> None:
+    """The plane's span guard is allowed through (#1131).
+
+    Positions are 1-based, so a region starting at 0 is malformed input.
+    The read the annotator left yielded nothing for it and the attribute
+    came back ``None``; the read it moved onto refuses it, and a loud
+    refusal is the better answer for a caller who has built a region that
+    cannot mean anything.
+
+    ``Region`` itself does not object -- it is constructible, which is why
+    this is reachable at all and worth pinning.  A REVERSED region is a
+    different story and not this change's doing: ``len()`` of it raises
+    before the annotator gets as far as the score.
+    """
+    with _pipeline(repo, """
+        - source: s
+          name: s
+          aggregator: mean
+    """) as pipeline, pytest.raises(ValueError) as excinfo:
+        pipeline.annotate(Region("chr1", 0, 10))
+
+    assert str(excinfo.value) == (
+        "genomic score <scores> asked for a region with start 0; "
+        "positions are 1-based")

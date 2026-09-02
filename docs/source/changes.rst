@@ -2,6 +2,36 @@ Release Notes
 =============
 
 * unreleased
+    * **Behaviour change.** A ``position_score`` annotator answers a
+      region no record touches per aggregator, instead of ``None`` for
+      every attribute at once. A ``list`` aggregator gives ``[]``, a
+      ``value_count`` gives ``{}`` and a ``bool`` gives ``False``; the
+      aggregators with no empty answer to give -- ``mean``, ``max``,
+      ``min``, ``median``, ``count``, ``mode``, ``concatenate``,
+      ``join`` -- still give ``None``. Annotating off the end of a
+      chromosome the resource does not have, or a region longer than
+      the annotator's cutoff, still answers ``None`` for every
+      attribute (:issue:`1131`).
+    * **Behaviour change.** A ``position_score`` attribute whose score
+      declares no default aggregator and which names none is refused
+      when the pipeline loads, rather than annotating a region with its
+      per-base expansion -- one value per base pair of a CNV. Only a
+      ``bool`` score can be in that position, ``bool`` being the one
+      value type with no default reduction; name an aggregator on the
+      attribute to fix it (:issue:`1131`).
+    * **Behaviour change.** A ``position_score`` annotator now raises
+      on an annotatable whose region is malformed -- a start below 1,
+      or an end before its start -- where it previously answered
+      ``None``. The read it moved onto guards the span; the one it left
+      did not. No in-tree annotatable constructor produces such a
+      region (:issue:`1131`).
+    * ``PositionScore.fetch_region_weighted_values`` is **removed**. Its
+      only caller was the position-score annotator, which reduces
+      through ``get_scores_in_region_agg`` now.
+      ``PositionScore.resolve_aggregation_queries`` is added, answering
+      whether an aggregation query is answerable -- and by which
+      aggregator -- without building one or reading anything
+      (:issue:`1131`).
     * The **Alleles** section of a genomic score's info page is rebuilt
       around composition. The per-chromosome table gains one share
       column per allele class, taken over that chromosome's own allele

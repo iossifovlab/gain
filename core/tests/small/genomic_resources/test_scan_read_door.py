@@ -2,7 +2,7 @@
 
 The scan reads a region as ``region_values_from_records`` over
 ``validate_records(fetch_records(...))``; every plain read -- ``fetch_records``,
-``fetch_region_segments``, ``fetch_region_weighted_values``,
+``fetch_region_segments``,
 ``fetch_position_scores`` -- is the same transform over the same records with
 that middle link left out, and checks nothing.  These tests pin both halves of
 the split, because either half alone is quietly undoable: a scan that stops
@@ -129,20 +129,6 @@ def test_reading_a_position_score_whose_records_touch_yields_them_all(
     assert list(score.fetch_region_segments("chr1", 1, 10)) == [
         (1, 5, [0.1]),
         (5, 9, [0.2]),
-    ]
-
-
-def test_weighting_a_position_score_whose_records_touch_yields_them_all(
-    tmp_path: pathlib.Path,
-) -> None:
-    # The weighted read is built on the region read, so it is the same guard;
-    # it gets its own test because a guard restored in either place would be
-    # invisible to the other's.
-    score = _position_score(tmp_path, "touching", TOUCHING_RECORDS)
-
-    assert list(score.fetch_region_weighted_values("chr1", 1, 10)) == [
-        ([0.1], 5),
-        ([0.2], 5),
     ]
 
 

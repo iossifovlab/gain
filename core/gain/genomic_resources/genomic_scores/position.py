@@ -88,10 +88,12 @@ class PositionScore(GenomicScore):
         ...     for pos_begin, pos_end, scores in region:
         ...         print(f"{pos_begin}-{pos_end}: {scores}")
 
-    Aggregating those values over the region is the *annotator's* job, not the
-    resource's -- see ``gain.annotation.score_annotator``.  What the resource
-    contributes is ``fetch_region_weighted_values``, which pairs every record
-    with the number of queried bases it covers.
+    Aggregating those values over the region is the *resource's* job since
+    gain#1131: ``get_scores_in_region_agg`` reduces a region to one value
+    per query, and ``gain.annotation.score_annotator`` asks for that rather
+    than folding records of its own.  What the kind contributes to the
+    reduction is ``record_weight`` -- how many queried bases a record
+    covers, and so how many times its value counts.
 
     Attributes:
         resource: The underlying GenomicResource object
@@ -104,8 +106,8 @@ class PositionScore(GenomicScore):
         fetch_position_scores: Get score values at a specific position
         fetch_region_segments: Iterate over score segments in a
             genomic region, each at its record's own extent
-        fetch_region_weighted_values: Iterate over ``(values, weight)`` pairs
-            in a genomic region, for a caller that aggregates it
+        get_scores_in_region_agg: Reduce a genomic region to one value per
+            aggregation query, weighing each record by the bases it covers
     """
 
     # A region of positions reduces by ``mean``: each position's value counts
@@ -156,12 +158,12 @@ class PositionScore(GenomicScore):
 
         Written as the ADR 0008 idiom -- compose the region transducer over
         the unclipped stream.  Every SEGMENT-shaped read of this kind states
-        the rule here and only here: :meth:`aggregate_region` folds this
-        stream and :meth:`fetch_region_weighted_values` weighs it, so the
-        annotators' read and the aggregating one cannot come to differ about
-        which part of a record the query asked for (gain#1087).  The logical
-        plane's :meth:`_position_runs` clips for itself still, because it is
-        not reducing records but tiling positions -- gain#1027 carries that.
+        the rule here and only here, which is now
+        :meth:`aggregate_region` alone: the weighted read that was its
+        other reader left with gain#1131, when the annotator moved to the
+        logical plane.  The plane's :meth:`_position_runs` clips for itself
+        still, because it is not reducing records but tiling positions --
+        gain#1027 carries that.
         """
         return clip_to_region(
             super()._aggregation_segments(chrom, pos_begin, pos_end, scores),
@@ -245,35 +247,6 @@ class PositionScore(GenomicScore):
                         int(pos_begin[first + 1]), int(pos_end[first]))
                 prev_end = int(pos_end[-1])
             yield batch
-
-    def fetch_region_weighted_values(
-        self,
-        chrom: str,
-        pos_begin: int | None = None,
-        pos_end: int | None = None,
-        scores: list[str] | None = None,
-    ) -> Generator[
-            tuple[list[ScoreValue], int], None, None]:
-        """Yield ``(values, weight)`` for every record touching the region.
-
-        The weight of a position-score record is the number of base pairs
-        of the queried region it covers -- how many times its value counts
-        when the region is aggregated.  It is derived here so that a caller
-        aggregating a region never clips a record nor materialises one copy
-        of a value per base pair.
-
-        The stream is :meth:`_aggregation_segments`, not
-        :meth:`fetch_region_segments`: this read and
-        :meth:`~.base.GenomicScore.aggregate_region` must agree about which
-        part of a record the query asked for, and they agree by reading one
-        statement of it rather than by both being right (gain#1087).  What
-        remains here is the other half -- how many times that part counts --
-        which is :meth:`record_weight`, likewise the kind's own.
-        """
-        for left, right, values in self._aggregation_segments(
-            chrom, pos_begin, pos_end, scores,
-        ):
-            yield (values, self.record_weight(left, right))
 
     def fetch_position_scores(
         self, chrom: str, position: int,

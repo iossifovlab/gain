@@ -5,6 +5,16 @@ apart from any score class: resolving a caller's request list to
 ``(score_id, aggregator)`` pairs, building a fresh aggregator for each, and
 folding a stream of fetched segments into one value per request.
 
+Resolving and building are separate steps here because they are separate
+questions.  :func:`score_def_for` and :func:`resolve_aggregator_name`
+answer "is this request answerable, and by what", which a caller may ask
+without meaning to read -- since gain#1131
+:meth:`~.position.PositionScore.resolve_aggregation_queries` asks exactly
+that when an annotation pipeline loads, so a misconfigured attribute is
+refused before any annotatable arrives.  :func:`build_region_aggregator`
+answers "give me somewhere to accumulate", which only a read needs, and
+which a read needs freshly every time.
+
 Nothing here knows what a score KIND is.  The one thing that differs
 between kinds -- how many times a record's value counts -- reaches
 :func:`fold_region_segments` as ``weigh``, the kind's own
