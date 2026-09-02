@@ -156,8 +156,12 @@ class AnnotatorBase(Annotator):
             -> dict[str, Any]:
         """Annotate the annotatable.
 
-        Internal abstract method used for annotation. It should produce
-        a source-keyed dict, one entry per configured attribute.
+        Internal abstract method used for annotation.  Either shape will
+        do, and :meth:`_apply_aggregators` tells them apart by type: a
+        source-keyed dict of values still to be reduced, one entry per
+        configured attribute, or an :class:`AggregatedValues` whose keys
+        are attribute NAMES and whose values the annotator's score has
+        already reduced.
         """
 
     def _apply_aggregators(
@@ -165,10 +169,16 @@ class AnnotatorBase(Annotator):
     ) -> dict[str, Any]:
         """Reduce each attribute's raw values with its aggregator.
 
-        A ``_do_annotate`` implementation may hand over either a plain
-        list -- every value counting once -- or a
-        :class:`WeightedValues`, in which each value carries the number of
-        times it counts.
+        A ``_do_annotate`` implementation hands over a plain list --
+        every value counting once -- or a :class:`WeightedValues`, in
+        which each value carries the number of times it counts.
+
+        No annotator in gain builds a ``WeightedValues`` any more: the
+        position annotator was the last, and gain#1131 moved it onto its
+        score's own reduction.  The branch stays because the contract is
+        still published and retiring it is gain#1133's job, once every
+        annotator has moved; until then it is reachable only from
+        outside.
 
         The aggregator instance is the attribute's own and is reused
         across annotate calls; each call clears it first.  This is

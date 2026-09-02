@@ -7,7 +7,7 @@ one ``PositionScoreAggregationQuery`` per attribute, built when the
 pipeline loads -- and hands the base an ``AggregatedValues``, keyed by
 attribute NAME, which the base passes through untouched.
 
-Three things follow that were not true of the old path, and they are what
+Five things follow that were not true of the old path, and they are what
 this file pins:
 
 - a source exposed twice with two aggregators is two answers, because the
@@ -15,7 +15,15 @@ this file pins:
 - a region no record touches answers per aggregator rather than
   short-circuiting to ``None`` for every attribute at once;
 - an attribute whose score has no default aggregator and names none is
-  refused when the pipeline LOADS, not on the first region.
+  refused when the pipeline LOADS, not on the first region;
+- a region starting below position 1 is refused rather than clipped and
+  answered;
+- where records overlap, a covered position counts once rather than once
+  per record covering it.
+
+The last two are consequences of reducing over the plane rather than
+choices made here, but they are user-visible, so they are pinned where
+someone changing this path will see them.
 """
 
 import pathlib
@@ -116,16 +124,21 @@ def test_an_attribute_may_spell_its_aggregator_as_a_mapping(
 
     ``{aggregator_type: ..., parameters: [...]}`` is the annotation
     pipeline's own spelling -- the resource level is string-only, but an
-    attribute may use either.  The query the annotator hands the plane
-    carries an aggregator NAME, so the mapping has to be reduced to its
-    canonical string on the way in; left as a mapping it would travel a
-    slot typed ``str`` all the way to ``Aggregator.build``.
+    attribute may use either -- and the move to the plane must not lose
+    it.  ``join`` is the aggregator that makes this visible, being the
+    only parametrized one: the separator has to survive the trip.
 
-    ``join`` is the aggregator that makes this visible, being the only
-    parametrized one: the separator has to survive the trip.  It also
-    shows the weighting plainly, each record's value joined once per base
-    pair it covers -- the same expansion the old weighted fold produced,
-    since both hand the aggregator ``(value, weight)``.
+    This is an end-to-end guard, and deliberately not the pin on
+    ``aggregator_name``: ``Aggregator.build`` accepts a mapping as
+    happily as a name, so passing the mapping straight through would
+    still ANSWER correctly here.  What it would break is the query's
+    ``str`` slot and the name ``resolve_aggregation_queries`` promises,
+    which is a contract rather than a behaviour and is pinned as a unit
+    in ``test_aggregators``.
+
+    It also shows the weighting plainly, each record's value joined once
+    per base pair it covers -- the same expansion the old weighted fold
+    produced, since both hand the aggregator ``(value, weight)``.
     """
     with _pipeline(repo, """
         - source: s
@@ -220,15 +233,21 @@ def test_a_region_starting_below_one_is_refused_rather_than_answered(
     """The plane's span guard is allowed through (#1131).
 
     Positions are 1-based, so a region starting at 0 is malformed input.
-    The read the annotator left yielded nothing for it and the attribute
-    came back ``None``; the read it moved onto refuses it, and a loud
-    refusal is the better answer for a caller who has built a region that
-    cannot mean anything.
+    The read the annotator left did NOT decline it -- it clipped to the
+    covered part and answered normally, so this fixture's region 0-10
+    used to annotate as ``1.0``.  The read it moved onto refuses it
+    instead, which is a real answer becoming an error and not merely a
+    ``None`` becoming one.
 
-    ``Region`` itself does not object -- it is constructible, which is why
-    this is reachable at all and worth pinning.  A REVERSED region is a
-    different story and not this change's doing: ``len()`` of it raises
-    before the annotator gets as far as the score.
+    Worth pinning because it is reachable, not theoretical: ``Region``
+    is happy to be constructed this way, and ``annotate_columns`` builds
+    regions with a bare ``int()`` of the start column, so a 0-based or
+    BED-derived input produces one.
+
+    A REVERSED region is not this change's doing and is deliberately not
+    pinned here: ``len()`` of it raises in the cutoff check, before the
+    annotator gets as far as the score, on this revision and the one
+    before it alike.
     """
     with _pipeline(repo, """
         - source: s
@@ -240,3 +259,47 @@ def test_a_region_starting_below_one_is_refused_rather_than_answered(
     assert str(excinfo.value) == (
         "genomic score <scores> asked for a region with start 0; "
         "positions are 1-based")
+
+
+def test_overlapping_records_count_each_position_once(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A position covered twice counts once, to the first record (#1131).
+
+    A position score promises one value per position, so records that
+    overlap are malformed -- the statistics scan refuses such a resource
+    and a point lookup already answered from the first record covering
+    the position.  Region annotation used to be the exception: it folded
+    every record at its full clipped width, so the five positions these
+    share counted twice.
+
+    Reducing over POSITIONS rather than over records settles that the
+    same way the rest of the kind already had.  The two answers differ,
+    which is why this is pinned rather than assumed: counting 10-19 and
+    15-24 twice over their overlap gives 2.0, once gives 5/3.
+    """
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores",
+            a_position_score()
+            .with_score("s", "float", desc="a float score")
+            .with_data("""
+                chrom  pos_begin  pos_end  s
+                chr1   10         19       1.0
+                chr1   15         24       3.0
+            """),
+        )
+        .build_repo(tmp_path)
+    )
+
+    with _pipeline(repo, """
+        - source: s
+          name: s
+          aggregator: mean
+    """) as pipeline:
+        result = pipeline.annotate(Region("chr1", 10, 24))
+
+    # 1.0 for 10-19 and 3.0 for 20-24: fifteen positions, each once.
+    assert result["s"] == pytest.approx((1.0 * 10 + 3.0 * 5) / 15)
+    assert result["s"] != pytest.approx(2.0)

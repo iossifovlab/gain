@@ -18,13 +18,31 @@ Release Notes
       per-base expansion -- one value per base pair of a CNV. Only a
       ``bool`` score can be in that position, ``bool`` being the one
       value type with no default reduction; name an aggregator on the
-      attribute to fix it (:issue:`1131`).
-    * **Behaviour change.** A ``position_score`` annotator now raises
-      on an annotatable whose region is malformed -- a start below 1,
-      or an end before its start -- where it previously answered
-      ``None``. The read it moved onto guards the span; the one it left
-      did not. No in-tree annotatable constructor produces such a
-      region (:issue:`1131`).
+      attribute to fix it. The refusal is at load, so it applies to
+      every pipeline carrying such an attribute -- including one that
+      only ever annotates substitutions, which never reduce anything
+      and were unaffected before (:issue:`1131`).
+    * **Behaviour change.** A ``position_score`` annotator raises
+      ``ValueError`` on a region starting below position 1, where it
+      previously annotated it -- clipping the region to the covered
+      part and answering normally. The read it moved onto guards the
+      span; the one it left did not. Positions are 1-based, so such a
+      region is malformed, but note it is reachable from ordinary
+      input: ``annotate_columns`` builds regions with ``int()`` and no
+      lower bound, so a 0-based or BED-derived start column produces
+      one, and there is no per-row recovery -- a single such row now
+      aborts the run. Convert such input to 1-based coordinates before
+      annotating (:issue:`1131`).
+    * **Behaviour change.** Where a ``position_score``'s records
+      overlap, a region annotation counts each covered position once,
+      to the first record covering it, instead of counting every record
+      at its full clipped width. Two records overlapping by five bases
+      previously contributed those five positions twice. Such a
+      resource is malformed -- a position score promises one value per
+      position, the statistics scan refuses it, and a point lookup
+      already took the first record -- so this brings region annotation
+      into line with the rest rather than changing what a well-formed
+      resource answers (:issue:`1131`).
     * ``PositionScore.fetch_region_weighted_values`` is **removed**. Its
       only caller was the position-score annotator, which reduces
       through ``get_scores_in_region_agg`` now.

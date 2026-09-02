@@ -25,8 +25,12 @@ import pathlib
 from collections.abc import Callable, Sequence
 
 import gain
+import gain.genomic_resources.genomic_scores.position
 import pytest
-from gain.genomic_resources.aggregators import PositionScoreAggregationQuery
+from gain.genomic_resources.aggregators import (
+    Aggregator,
+    PositionScoreAggregationQuery,
+)
 from gain.genomic_resources.genomic_scores import PositionScore
 from gain.genomic_resources.genomic_scores.aggregation import (
     build_region_aggregator,
@@ -450,6 +454,52 @@ def test_the_resolver_refuses_a_missing_default_in_the_read_s_own_words(
     assert from_resolver == from_read == (
         "score 'flag' of resource 'flags' has no default aggregator for "
         "value type 'bool'; name one on the query")
+
+
+def test_the_resolver_refuses_an_unknown_score_in_the_read_s_own_words(
+    flags: PositionScore,
+) -> None:
+    """The other ground a query can be refused on, asked at the same door.
+
+    Both grounds have to reach the annotator's load-time call, or a
+    misconfiguration would be caught for one reason and not the other.
+    """
+    query = PositionScoreAggregationQuery("nope")
+
+    from_resolver = _refusal(
+        lambda: flags.resolve_aggregation_queries([query]))
+    with flags.open() as score:
+        from_read = _refusal(
+            lambda: score.get_scores_in_region_agg("1", 10, 10, [query]))
+
+    assert from_resolver == from_read == (
+        "score 'nope' is not defined by resource 'flags'; it has ['flag']")
+
+
+def test_the_resolver_builds_no_aggregator(
+    flags: PositionScore, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Resolution without instantiation, asserted rather than assumed.
+
+    The whole reason this half is public is that the annotator must ask
+    the question without acquiring accumulators, so "it does not build"
+    is the property and not an implementation detail.  A returned NAME
+    does not say it on its own: a resolver that built an aggregator and
+    discarded it would answer identically.
+
+    Sabotaging the builder is what tells the two apart -- if resolution
+    reaches it at all, this raises instead of answering.
+    """
+    def refuse(*args: object, **kwargs: object) -> Aggregator:
+        raise AssertionError("resolution must not build an aggregator")
+
+    monkeypatch.setattr(
+        gain.genomic_resources.genomic_scores.position,
+        "build_region_aggregator", refuse)
+
+    assert flags.resolve_aggregation_queries(
+        [PositionScoreAggregationQuery("flag", "bool")],
+    ) == [("flag", "bool", None)]
 
 
 def test_the_resolver_names_the_aggregator_the_read_goes_on_to_use(
