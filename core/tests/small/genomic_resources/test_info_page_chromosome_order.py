@@ -19,7 +19,7 @@ from tests.small.genomic_resources.info_page_html import table_after
 # Every fixture below carries these three contigs.  They reach the
 # stored statistics sorted as plain strings -- chr1, chr10, chr2 -- so a
 # page rendering them in this order is rendering the natural key.
-_NATURAL_ORDER = ["chr1", "chr2", "chr10", "all chromosomes"]
+_NATURAL_ORDER = ["all chromosomes", "chr1", "chr2", "chr10"]
 
 
 def _built_page(resource: GenomicResource) -> str:
@@ -90,9 +90,13 @@ def test_per_chromosome_rows_render_in_natural_order(
 
     table = table_after(page, f"<h2>{heading}</h2>")
 
-    # The tfoot total is read back in deliberately.  It is not a data row,
-    # but the order this test is about is the order a reader sees, and that
-    # ends with "all chromosomes" -- stopping at the data rows would no
-    # longer notice a total floated into the middle of them.
+    # The pinned total is read back in deliberately.  It is not a data
+    # row, but the order this test is about is the order a reader sees,
+    # and since gain#1118 that BEGINS with "all chromosomes" -- the total
+    # moved from <tfoot> to a second <thead> row.  Stopping at the data
+    # rows would no longer notice a total floated into the middle of
+    # them, which is the thing this guards.
     assert [
-        row[0].text for row in table.rows + table.foot] == _NATURAL_ORDER
+        row[0].text
+        for row in table.head[1:] + table.rows + table.foot
+    ] == _NATURAL_ORDER

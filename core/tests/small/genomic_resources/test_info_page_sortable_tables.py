@@ -259,14 +259,20 @@ def test_a_section_that_rendered_no_table_is_refused(
 ) -> None:
     """The helper every other test here leans on must not silently drift.
 
-    An allele score's Indel lengths subsection renders images or a
-    sentence, never a table.  If ``table_after`` scanned past the end of
-    the section it would return the Files table at the foot of the page,
-    and an assertion about a table that was never rendered would pass
-    against that one instead.
+    If ``table_after`` scanned past the end of the section it would
+    return the Files table at the foot of the page, and an assertion
+    about a table that was never rendered would pass against that one
+    instead.
+
+    The subject is the Complex alleles subsection, which renders a
+    heatmap or a sentence and only becomes a table once enough cells are
+    lit (gain#989) -- this fixture's three substitutions light none, so
+    it is the sentence.  It took over from Indel lengths, which was the
+    example until gain#1118 gave that subsection a statistics table of
+    its own.
     """
     with pytest.raises(AssertionError, match="rendered no table"):
-        table_after(pages["scores/alleles"], "<h3>Indel lengths</h3>")
+        table_after(pages["scores/alleles"], "<h3>Complex alleles</h3>")
 
 
 @pytest.mark.parametrize(("resource_id", "heading"), SORTABLE_TABLES)
