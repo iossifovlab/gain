@@ -1,6 +1,43 @@
 Release Notes
 =============
 
+* unreleased
+    * The **Alleles** section of a genomic score's info page is rebuilt
+      around composition. The per-chromosome table gains one share
+      column per allele class, taken over that chromosome's own allele
+      count, each cell sorting on the fraction and carrying its exact
+      count as a hover title; the separate "Allele classes" table is
+      removed, its shares becoming the table's total row and its counts
+      those titles. The ts/tv ratio renders as a key figure with the
+      transition and transversion counts it is computed from
+      (:issue:`1118`).
+    * The "all chromosomes" total is pinned as a second ``<thead>`` row
+      on the Alleles, Coverage and Fragments tables, so it stays visible
+      while the table scrolls. No sorting behaviour changes
+      (:issue:`1118`).
+    * An **allele score** no longer counts covered positions, and its
+      info page renders no ``Coverage`` section — the span-union scan
+      never applied to the kind, and the distinct-position count that
+      stood in for it answered a question the page never asked. A
+      position score with unbuilt statistics still reports ``Coverage``
+      as not computed (:issue:`1118`).
+    * **Stored-format change.** An allele score's indel groups store an
+      exact ``{length: count}`` map clamped at ``INDEL_LENGTH_CLAMP``
+      (8192) plus ``count``/``sum``/``min``/``max``, in place of the
+      log2 histograms ``insertion_length_histogram`` and
+      ``deletion_length_histogram``. This makes the new indel statistics
+      table -- alleles, min, max, mean and median per group -- exact
+      rather than accurate only to bin resolution. The chart's bins are
+      derived from the map at render time and are unchanged. Only the
+      map is read back, so an allele score built before this reports its
+      indel groups as not computed until it is rebuilt with
+      ``repo-stats --force``; the statistics hash covers inputs, not the
+      computing code, so a plain rebuild will not notice (ADR 0014,
+      ADR 0020, :issue:`1118`).
+    * The two indel length figures render side by side at half width,
+      each opening the full-size image in the info page's existing modal
+      (:issue:`1118`).
+
 * 2026.8.5
     * The deprecated ``np_score`` spellings are removed -- the resource
       ``type:`` and the ``np_score`` / ``np_score_annotator`` annotator

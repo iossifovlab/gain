@@ -86,6 +86,16 @@ holds only for a resource with no different-valued overlap. Nothing may
 present the sum of segment lengths as coverage; coverage has its own
 statistic.
 
+*Amended by gain#1118: an **allele score** has no covered-position count at
+all.* Its rows collapse to points, so the span union above never applied to the
+kind — it is deliberately excluded from the coverage scan — and what stood in
+its place was a DISTINCT-position count kept inside the allele statistic. That
+count is removed. An allele score's statistic answers only what its rows *are*,
+and its info page renders no Coverage section rather than one permanently
+reading "not computed". Position and fragment scores are unaffected: they are
+span-union scanned, and a position score whose statistics are not yet built
+still says "not computed", where the message is true and a rebuild acts on it.
+
 ### Allele classification — strict VCF anchoring
 
 Allele-score rows are classified from ref/alt as written, VCF-anchored:
@@ -124,10 +134,11 @@ alt-minus-ref, not an absolute value.
 ### Bins, storage, rollout
 
 - **Fixed log-scale bins, a code-level constant.** Length histograms
-  (segments, fragments, indels) use one fixed binning everywhere, so
+  (segments, fragments, ~~indels~~) use one fixed binning everywhere, so
   per-chromosome results merge into exact global ones at build time — no
   second pass, no approximate merge, and chunked scans merge exactly for the
-  same reason.
+  same reason. *(The indel groups left the stored ladder in gain#1118; see
+  the amendment below. Segments and fragments still store it.)*
 - **Raw counts stored; fractions at render.** The statistics file holds
   counts only. Coverage *fractions* need chromosome lengths, which belong to
   a reference genome, not to the score — so they are computed at render time
@@ -197,6 +208,35 @@ length histograms that share the ladder — segments, fragments, **indels** — 
 the ins/del histograms duly use it, binning the length change absolutely, since
 the class already names the direction and the shared bin index refuses a length
 below 1.
+
+*Amended by gain#1118: the indel groups leave the ladder as a STORED format,
+and keep it only as a rendering choice.* Each group now stores an **exact
+`{length: count}` map**, clamped at a code-level `INDEL_LENGTH_CLAMP` of 8192,
+alongside four exactly-mergeable scalars — `count`, `sum`, `min` and `max`, all
+accumulated on the *unclamped* length.
+
+The ladder was wrong here for the reason it is wrong for the complex grid, and
+the two amendments are the same finding reached twice: its second bin is
+{2, 3} and its third {4, 5, 6, 7}, which is precisely where indels live. **No
+exact minimum, maximum, mean or median survives it** — and those four are what
+the info page's indel statistics table exists to show. The scalars are what
+keep the clamp from becoming a lie: min, max and the mean stay exact however
+far the tail runs, and only a median landing in the overflow bucket degrades,
+which the page renders as a floor rather than as a number.
+
+The ladder remains the **stored** format for segments and fragments, and
+remains what the indel *chart* is drawn on — derived from the map at render
+time rather than stored beside it, so the picture and the statistics beneath it
+cannot drift. The derived bins are identical to the stored ones, because the
+plot already sums every bin at or above its display cap into one overflow bar
+and the clamp is equal to that cap.
+
+The rollout is the one this ADR already describes: **deserialization reads the
+map only**, so an allele score built before this renders "not computed" for its
+indel groups until it is rebuilt with `--force`. One reader rather than a
+compatibility branch, deliberately — a branch reading the old histograms could
+publish no exact sum, min or max at all, so every figure in the table would be
+a guess at bin resolution presented as a number.
 The **complex `(len_ref, len_alt)` grid deliberately does not.** Its cells are
 the two lengths **exactly**, each clamped at a code-level maximum of 64, so
 the grid is a sparse map over a bounded 64×64 square.
@@ -224,7 +264,14 @@ pair whose sides are both ≥64 but unequal — a 5000→70 complex — lands th
 too.
 
 Like the clamp, the ladder constant is part of the stored format: neither may
-change once resources carry statistics built from it.
+change once resources carry statistics built from it. The same now holds for
+`INDEL_LENGTH_CLAMP` (gain#1118), with one added constraint of its own: it must
+never fall **below** the histogram's display cap, because the indel chart's
+bins are derived from the map and a bin between the two would be drawn from
+lengths the map had already folded away. The two are equal today, which is the
+tightest that rule allows — so the display cap, documented as a rendering
+choice free to change, is no longer free to be *raised* without a
+stored-format change here first.
 
 ## Rejected alternatives
 
