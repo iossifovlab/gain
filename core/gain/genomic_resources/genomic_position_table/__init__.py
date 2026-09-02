@@ -523,10 +523,11 @@ both producers build the values slot as a list comprehension over
 hoisted the extractor out of the loop) -- so the new name promises
 ``list[ScoreValue]`` and the narrowing runs down the private chain
 (``region_values_from_records``, ``_clipped_score_values``,
-``_allele_point_values``) and, since gain#734,
-through ``fetch_region_weighted_values``' values slot as well.  A caller's
+``_allele_point_values``).  A caller's
 ``None`` guard on a yielded values slot is dead code now, as
-``aggregate_region``'s was.  ``fetch_position_scores`` keeps its ``| None``:
+``aggregate_region``'s was.  (``fetch_region_weighted_values`` carried the
+narrowing too from gain#734 until gain#1131 retired it.)
+``fetch_position_scores`` keeps its ``| None``:
 that one is real, and means "no record covers this position".
 
 **New method, and a new obligation on backend authors:

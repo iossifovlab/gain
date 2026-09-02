@@ -12,8 +12,8 @@ import yaml
 from gain import logging
 from gain.genomic_resources.aggregators import (
     Aggregator,
-    AggregatorDefinition,
     AggregatorSource,
+    aggregator_name,
 )
 from gain.genomic_resources.repository import (
     GenomicResource,
@@ -182,13 +182,7 @@ class AttributeConfig:
         if self.internal is not None:
             d["internal"] = self.internal
         if self.aggregator is not None:
-            if isinstance(self.aggregator, str):
-                d["aggregator"] = self.aggregator
-            elif isinstance(self.aggregator, AggregatorDefinition):
-                d["aggregator"] = str(self.aggregator)
-            else:
-                d["aggregator"] = str(
-                    AggregatorDefinition.from_dict(self.aggregator))
+            d["aggregator"] = aggregator_name(self.aggregator)
         return d
 
 

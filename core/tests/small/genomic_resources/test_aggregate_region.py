@@ -7,6 +7,14 @@ and
 the per-type weighting rule ``WeightedValues`` documents -- because a helper
 that answers a region differently from the annotator would be worse than no
 helper at all.
+
+Two of those agreements were with ``fetch_region_weighted_values``, the
+read the position annotator used to fold.  Both left with it in gain#1131:
+the position annotator asks the logical plane for a reduced region now, so
+there is no second weighted read of this kind for this one to agree with.
+What remains here is ``aggregate_region``'s own behaviour, including the
+clip that ``_aggregation_segments`` states -- still worth pinning, and now
+the only reader of that statement.
 """
 from __future__ import annotations
 
@@ -75,55 +83,6 @@ def test_a_position_score_weights_by_base_pair(wide: PositionScore) -> None:
             pytest.approx(0.32)]
         assert wide.aggregate_region("1", 10, 14, ["s"]) != [
             pytest.approx(0.5)]
-
-
-def test_it_agrees_with_fetch_region_weighted_values(
-    wide: PositionScore,
-) -> None:
-    """The annotator's path and this one must fold the same pairs.
-
-    ``fetch_region_weighted_values`` is what ``PositionScoreAnnotator``
-    aggregates; both now derive the weight from ``record_weight``, and this
-    is the test that says so in terms of values rather than of code.
-    """
-    with wide:
-        from gain.genomic_resources.aggregators import Aggregator
-        aggregator = Aggregator.build("mean")
-        expected = aggregator.aggregate_weighted(
-            (values[0], weight)
-            for values, weight in wide.fetch_region_weighted_values(
-                "1", 10, 14, ["s"])
-        )
-        assert wide.aggregate_region("1", 10, 14, ["s"]) == [
-            pytest.approx(expected)]
-
-
-def test_the_annotator_read_folds_the_aggregation_stream(
-    wide: PositionScore, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """One clipped stream serves both reads, so neither can drift (#1087).
-
-    ``_aggregation_segments`` is where this kind states that a record is cut
-    down to the query window before its weight is measured.  The pins below
-    reach it through ``fetch_region_segments``, so they cannot tell whether
-    ``fetch_region_weighted_values`` reads THAT statement or a second copy
-    of it -- which is what it used to do.  Installing a stream at the seam
-    itself is what tells the two apart: values that no record of the fixture
-    carries, at a span the query does not name.
-    """
-    def segments(
-        chrom: str,
-        pos_begin: int | None = None,
-        pos_end: int | None = None,
-        scores: list[str] | None = None,
-    ) -> Generator[tuple[int, int, list[float]], None, None]:
-        yield (10, 12, [7.0])
-
-    monkeypatch.setattr(wide, "_aggregation_segments", segments)
-
-    with wide:
-        assert list(wide.fetch_region_weighted_values(
-            "1", 10, 14, ["s"])) == [([7.0], 3)]
 
 
 def test_a_record_the_query_clips_to_nothing_is_not_aggregated(

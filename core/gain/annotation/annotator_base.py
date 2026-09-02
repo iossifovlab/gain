@@ -26,6 +26,32 @@ from gain.genomic_resources.aggregators import (
 )
 
 
+# A real ``dict`` subclass, not a ``UserDict``: ``_do_annotate`` promises
+# ``dict[str, Any]`` to every caller and every other annotator still returns
+# a plain one, so the marker has to BE a dict to travel that contract.  What
+# is added is the type itself -- there is no behaviour here to get wrong,
+# which is the hazard the rule guards against.
+class AggregatedValues(dict[str, Any]):  # ruff: ignore[subclass-builtin]
+    """Values a ``_do_annotate`` has already reduced, keyed by ATTRIBUTE NAME.
+
+    The contract an annotator uses to say "these are finished".
+    :meth:`AnnotatorBase._apply_aggregators` recognises it by type and
+    passes it through untouched, reducing nothing and re-keying nothing.
+
+    Both parts of that matter, and both are why a marker type is needed
+    rather than a convention (gain#1130).  A finished ``list`` aggregation
+    is indistinguishable BY VALUE from a raw list of values still to be
+    reduced, so the type is what tells the base which it is holding.  And
+    the keys are attribute names rather than sources because a source
+    exposed twice with two aggregators has two different finished values,
+    which a source-keyed mapping has nowhere to put.
+
+    The legacy shape -- a source-keyed dict of raw values for the base to
+    fold -- stays live beside it while the annotators move over one at a
+    time.
+    """
+
+
 class AnnotatorBase(Annotator):
     """Base implementation of the `Annotator` class."""
 
@@ -130,8 +156,12 @@ class AnnotatorBase(Annotator):
             -> dict[str, Any]:
         """Annotate the annotatable.
 
-        Internal abstract method used for annotation. It should produce
-        a source-keyed dict, one entry per configured attribute.
+        Internal abstract method used for annotation.  Either shape will
+        do, and :meth:`_apply_aggregators` tells them apart by type: a
+        source-keyed dict of values still to be reduced, one entry per
+        configured attribute, or an :class:`AggregatedValues` whose keys
+        are attribute NAMES and whose values the annotator's score has
+        already reduced.
         """
 
     def _apply_aggregators(
@@ -139,15 +169,30 @@ class AnnotatorBase(Annotator):
     ) -> dict[str, Any]:
         """Reduce each attribute's raw values with its aggregator.
 
-        A ``_do_annotate`` implementation may hand over either a plain
-        list -- every value counting once -- or a
-        :class:`WeightedValues`, in which each value carries the number of
-        times it counts.
+        A ``_do_annotate`` implementation hands over a plain list --
+        every value counting once -- or a :class:`WeightedValues`, in
+        which each value carries the number of times it counts.
+
+        No annotator in gain builds a ``WeightedValues`` any more: the
+        position annotator was the last, and gain#1131 moved it onto its
+        score's own reduction.  The branch stays because the contract is
+        still published and retiring it is gain#1133's job, once every
+        annotator has moved; until then it is reachable only from
+        outside.
 
         The aggregator instance is the attribute's own and is reused
         across annotate calls; each call clears it first.  This is
         correct single-threaded and is not thread-safe.
+
+        An :class:`AggregatedValues` is the other case: the annotator's
+        score has already reduced, and already keyed by attribute name, so
+        there is nothing left to do and doing it anyway would fold a
+        finished list a second time.  It arrives here rather than bypassing
+        this method because ``annotate`` and ``batch_annotate`` both route
+        through it, so one branch answers for both paths.
         """
+        if isinstance(values, AggregatedValues):
+            return dict(values)
         result = {}
         for attr in self._attributes:
             value = values.get(attr.source)

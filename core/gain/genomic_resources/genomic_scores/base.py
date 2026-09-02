@@ -1119,13 +1119,22 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         fragment counts once however long it is".  One record, one count,
         is the answer for everything except a position score.
 
-        **The kind's single statement of that rule**, and every reader goes
-        through it: :meth:`aggregate_region` folds with it, the per-record
-        statistics scan calls it, and the bulk scan broadcasts it over a
-        whole batch through :meth:`record_weights`.  One statement, so a
-        kind cannot weigh its records one way when annotating and another
-        when computing statistics.  Pinned by
+        **The kind's single statement of that rule**, and every reader that
+        weighs a RECORD goes through it: :meth:`aggregate_region` folds
+        with it, the per-record statistics scan calls it, and the bulk scan
+        broadcasts it over a whole batch through :meth:`record_weights`.
+        One statement, so a kind cannot weigh its records one way in one
+        of those and another way in the next.  Pinned by
         test_the_weight_rule_is_stated_once_per_kind.
+
+        A position score's logical plane is deliberately NOT among them.
+        It tiles POSITIONS rather than folding records --
+        ``get_scores_in_region_agg`` weighs each run by its length -- and
+        since gain#1131 that is the path annotation takes.  The two agree
+        for this kind, a clipped record's width being exactly the length of
+        the run it covers, but they agree by arithmetic rather than by
+        reading one statement, so a change here is not automatically a
+        change there.
 
         **An implementation must be numpy-elementwise** -- an arithmetic
         expression over ``left`` and ``right``, or a constant.  It is

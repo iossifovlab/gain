@@ -88,10 +88,12 @@ class PositionScore(GenomicScore):
         ...     for pos_begin, pos_end, scores in region:
         ...         print(f"{pos_begin}-{pos_end}: {scores}")
 
-    Aggregating those values over the region is the *annotator's* job, not the
-    resource's -- see ``gain.annotation.score_annotator``.  What the resource
-    contributes is ``fetch_region_weighted_values``, which pairs every record
-    with the number of queried bases it covers.
+    Aggregating those values over the region is the *resource's* job since
+    gain#1131: ``get_scores_in_region_agg`` reduces a region to one value
+    per query, and ``gain.annotation.score_annotator`` asks for that rather
+    than folding records of its own.  What the kind contributes to the
+    reduction is ``record_weight`` -- how many queried bases a record
+    covers, and so how many times its value counts.
 
     Attributes:
         resource: The underlying GenomicResource object
@@ -104,8 +106,8 @@ class PositionScore(GenomicScore):
         fetch_position_scores: Get score values at a specific position
         fetch_region_segments: Iterate over score segments in a
             genomic region, each at its record's own extent
-        fetch_region_weighted_values: Iterate over ``(values, weight)`` pairs
-            in a genomic region, for a caller that aggregates it
+        get_scores_in_region_agg: Reduce a genomic region to one value per
+            aggregation query, weighing each record by the bases it covers
     """
 
     # A region of positions reduces by ``mean``: each position's value counts
@@ -156,12 +158,12 @@ class PositionScore(GenomicScore):
 
         Written as the ADR 0008 idiom -- compose the region transducer over
         the unclipped stream.  Every SEGMENT-shaped read of this kind states
-        the rule here and only here: :meth:`aggregate_region` folds this
-        stream and :meth:`fetch_region_weighted_values` weighs it, so the
-        annotators' read and the aggregating one cannot come to differ about
-        which part of a record the query asked for (gain#1087).  The logical
-        plane's :meth:`_position_runs` clips for itself still, because it is
-        not reducing records but tiling positions -- gain#1027 carries that.
+        the rule here and only here, which is now
+        :meth:`aggregate_region` alone: the weighted read that was its
+        other reader left with gain#1131, when the annotator moved to the
+        logical plane.  The plane's :meth:`_position_runs` clips for itself
+        still, because it is not reducing records but tiling positions --
+        gain#1027 carries that.
         """
         return clip_to_region(
             super()._aggregation_segments(chrom, pos_begin, pos_end, scores),
@@ -245,35 +247,6 @@ class PositionScore(GenomicScore):
                         int(pos_begin[first + 1]), int(pos_end[first]))
                 prev_end = int(pos_end[-1])
             yield batch
-
-    def fetch_region_weighted_values(
-        self,
-        chrom: str,
-        pos_begin: int | None = None,
-        pos_end: int | None = None,
-        scores: list[str] | None = None,
-    ) -> Generator[
-            tuple[list[ScoreValue], int], None, None]:
-        """Yield ``(values, weight)`` for every record touching the region.
-
-        The weight of a position-score record is the number of base pairs
-        of the queried region it covers -- how many times its value counts
-        when the region is aggregated.  It is derived here so that a caller
-        aggregating a region never clips a record nor materialises one copy
-        of a value per base pair.
-
-        The stream is :meth:`_aggregation_segments`, not
-        :meth:`fetch_region_segments`: this read and
-        :meth:`~.base.GenomicScore.aggregate_region` must agree about which
-        part of a record the query asked for, and they agree by reading one
-        statement of it rather than by both being right (gain#1087).  What
-        remains here is the other half -- how many times that part counts --
-        which is :meth:`record_weight`, likewise the kind's own.
-        """
-        for left, right, values in self._aggregation_segments(
-            chrom, pos_begin, pos_end, scores,
-        ):
-            yield (values, self.record_weight(left, right))
 
     def fetch_position_scores(
         self, chrom: str, position: int,
@@ -420,10 +393,10 @@ class PositionScore(GenomicScore):
             chrom, start, end, [self._resolve_single_score(score)])
         return (row[0] for row in rows)
 
-    def _resolve_aggregation_queries(
+    def resolve_aggregation_queries(
         self, queries: Sequence[PositionScoreAggregationQuery],
-    ) -> list[tuple[str, Aggregator, ScoreValue]]:
-        """Resolve each query to its (score_id, aggregator, replacement).
+    ) -> list[tuple[str, str, ScoreValue]]:
+        """Resolve each query to its (score_id, aggregator NAME, replacement).
 
         The third element is the query's ``none_value_replacement``.
 
@@ -444,6 +417,27 @@ class PositionScore(GenomicScore):
         rather than the one it left out.  That order is a decision and not
         an accident of composition; it is pinned by
         ``test_a_query_invalid_several_ways_reports_the_first_ground``.
+
+        Public, and stopping at the NAME, because asking whether a query is
+        answerable is a question a caller may have without wanting to read
+        (gain#1131).  ``PositionScoreAnnotator`` asks it once when the
+        pipeline loads, so an attribute naming no aggregator for a ``bool``
+        score is refused there rather than on the first region that reaches
+        it.  Building the accumulators is the READ's business --
+        :meth:`_resolve_aggregation_queries` adds them, per call, which is
+        what keeps a read thread-safe and an annotator stateless.
+
+        It lives on this kind rather than on
+        :class:`~.base.GenomicScore` because of its middle step:
+        ``none_value_replacement`` is a field only a
+        ``PositionScoreAggregationQuery`` carries, a position score being
+        the only kind with an uncovered position to speak for.  Should a
+        fragment or an allele score come to want a resolver of its own
+        (gain#1124, gain#1132), the ``score_def_for`` /
+        ``resolve_aggregator_name`` pair is the part that generalises --
+        both already live in :mod:`.aggregation`, kind-neutral, for that
+        reason -- and the replacement validation is the part that does
+        not.
         """
         resolved = []
         for query in queries:
@@ -459,13 +453,28 @@ class PositionScore(GenomicScore):
                 resource_id=self.resource_id,
                 remedy=QUERY_AGGREGATOR_REMEDY)
             resolved.append((
-                query.score,
-                build_region_aggregator(
-                    query.score, aggregator,
-                    resource_id=self.resource_id),
-                query.none_value_replacement,
-            ))
+                query.score, aggregator, query.none_value_replacement))
         return resolved
+
+    def _resolve_aggregation_queries(
+        self, queries: Sequence[PositionScoreAggregationQuery],
+    ) -> list[tuple[str, Aggregator, ScoreValue]]:
+        """The read's form of :meth:`resolve_aggregation_queries`.
+
+        The same triples with the aggregator NAME replaced by a freshly
+        built accumulator -- one per call, never shared between reads.
+        """
+        return [
+            (
+                score_id,
+                build_region_aggregator(
+                    score_id, aggregator,
+                    resource_id=self.resource_id),
+                none_value_replacement,
+            )
+            for score_id, aggregator, none_value_replacement
+            in self.resolve_aggregation_queries(queries)
+        ]
 
     # Which python types a none_value_replacement may have per score value
     # type.  A ``bool`` is deliberately not a valid int or float

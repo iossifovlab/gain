@@ -189,12 +189,7 @@ class Aggregator(abc.ABC):
     @staticmethod
     def build(source: AggregatorSource) -> Aggregator:
         """Build an aggregator from a definition, string, or dict."""
-        if isinstance(source, AggregatorDefinition):
-            definition = source
-        elif isinstance(source, str):
-            definition = AggregatorDefinition.from_string(source)
-        else:
-            definition = AggregatorDefinition.from_dict(source)
+        definition = AggregatorDefinition.coerce(source)
         aggregator_class = get_aggregator_class(definition.aggregator_type)
         if definition.parameters:
             return aggregator_class(*definition.parameters)
@@ -643,6 +638,23 @@ class AggregatorDefinition:
             parameters=list(data.get("parameters", [])),
         )
 
+    @classmethod
+    def coerce(cls, source: AggregatorSource) -> AggregatorDefinition:
+        """Whichever of the three spellings arrived, as a definition.
+
+        An aggregator reaches this module written three ways -- a name, a
+        ``{aggregator_type, parameters}`` mapping, or an already parsed
+        definition -- and every consumer wants the last of those.  The
+        cascade that gets there is stated once here so a fourth spelling,
+        or a fix to the parsing rules, is one edit rather than a hunt for
+        the copies.
+        """
+        if isinstance(source, AggregatorDefinition):
+            return source
+        if isinstance(source, str):
+            return cls.from_string(source)
+        return cls.from_dict(source)
+
     def as_dict(self) -> dict[str, Any]:
         """Serialize to a dictionary."""
         d: dict[str, Any] = {"aggregator_type": self.aggregator_type}
@@ -657,6 +669,30 @@ class AggregatorDefinition:
 
 
 AggregatorSource = AggregatorDefinition | str | dict[str, Any]
+
+
+def aggregator_name(aggregator: AggregatorSource) -> str:
+    """The canonical string spelling of an aggregator, whatever its form.
+
+    An annotation pipeline may write an attribute's aggregator as a name,
+    as a ``{aggregator_type, parameters}`` mapping, or as an already
+    parsed :class:`AggregatorDefinition`; a resource may only write the
+    name.  Everything downstream of the config -- a ``ScoreDef``'s field,
+    a :class:`ScoreAggregationQuery`'s -- holds the name alone, so the
+    spellings collapse here, on the way in.
+
+    A name is returned as it stands rather than parsed and printed again.
+    The round trip is exact for every registered aggregator and for the
+    parametrized forms (pinned by
+    ``test_the_three_aggregator_spellings_collapse_to_one_name``), so this
+    is not about the answer differing -- it is that a caller holding a
+    malformed name should meet the complaint where its aggregator is
+    BUILT, naming the score, rather than here while a config is being
+    serialised.
+    """
+    if isinstance(aggregator, str):
+        return aggregator
+    return str(AggregatorDefinition.coerce(aggregator))
 
 
 @dataclass(frozen=True)
@@ -720,12 +756,7 @@ def validate_aggregator(
         raise ValueError(
             f"Incorrect aggregator '{aggregator}'", ex) from ex
     if value_type is not None:
-        if isinstance(aggregator, AggregatorDefinition):
-            definition = aggregator
-        elif isinstance(aggregator, str):
-            definition = AggregatorDefinition.from_string(aggregator)
-        else:
-            definition = AggregatorDefinition.from_dict(aggregator)
+        definition = AggregatorDefinition.coerce(aggregator)
         if definition.aggregator_type in NUMERIC_ONLY_AGGREGATORS \
                 and value_type not in {"int", "float"}:
             raise ValueError(

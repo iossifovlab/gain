@@ -6,6 +6,7 @@ import numpy
 from gain.genomic_resources.aggregators import (
     AGGREGATOR_CLASS_DICT,
     NUMERIC_ONLY_AGGREGATORS,
+    AggregatorDefinition,
     BoolAggregator,
     ConcatAggregator,
     CountAggregator,
@@ -19,6 +20,7 @@ from gain.genomic_resources.aggregators import (
     ModeAggregator,
     PositionScoreAggregationQuery,
     ScoreAggregationQuery,
+    aggregator_name,
 )
 
 
@@ -295,6 +297,29 @@ def test_the_position_query_still_binds_three_positional_arguments() -> None:
     assert (
         query.score, query.aggregator, query.none_value_replacement,
     ) == ("s", "max", 0.0)
+
+
+def test_the_three_aggregator_spellings_collapse_to_one_name() -> None:
+    """An attribute may write its aggregator three ways; a query holds one.
+
+    An annotation pipeline accepts a name, a ``{aggregator_type,
+    parameters}`` mapping, or an already-parsed ``AggregatorDefinition``,
+    but everything downstream of the config -- a ``ScoreDef``'s field, a
+    ``ScoreAggregationQuery``'s -- is typed to the NAME alone, so the
+    three have to meet somewhere.
+
+    ``join`` is the case that can tell them apart, being the only
+    parametrized aggregator: an unparametrized one collapses to the same
+    string however it was written, so a canonicalisation that dropped the
+    parameter would still look right for every other aggregator.
+    """
+    spellings = [
+        "join(|)",
+        {"aggregator_type": "join", "parameters": ["|"]},
+        AggregatorDefinition("join", ["|"]),
+    ]
+
+    assert [aggregator_name(s) for s in spellings] == ["join(|)"] * 3
 
 
 def test_numeric_aggregators_appear_first_in_dict() -> None:
