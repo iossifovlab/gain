@@ -520,6 +520,43 @@ def test_info_page_renders_a_row_per_chromosome(
         ["chr2", "1", "100.00%", "0.00%", "0.00%", "0.00%", "0.00%"]]
 
 
+def test_a_chromosome_with_no_alleles_renders_empty_share_cells(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The markup half of the no-denominator rule, which the display
+    # layer states as ``shares is None``.  The cells must be EMPTY and
+    # carry no ``data-sort-value`` at all -- not an empty one -- so the
+    # sorter reads "no value" and sinks the row either way, exactly as
+    # the Coverage table's row with no resolvable genome length does.
+    #
+    # A contig with no allele rows never reaches the file from a scan,
+    # so the entry is added to the built statistics the way this suite
+    # doctors its other boundary fixtures.
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    stored = json.loads(resource.get_file_content(ALLELE_STATISTICS_FILE))
+    stored["chromosomes"]["chr3"] = {
+        "allele_count": 0,
+        "class_counts": dict.fromkeys(
+            stored["chromosomes"]["chr1"]["class_counts"], 0),
+    }
+    with resource.proto.open_raw_file(
+            resource, ALLELE_STATISTICS_FILE, mode="wt") as outfile:
+        outfile.write(json.dumps(stored))
+
+    table = table_after(_info_page(resource), "<h2>Alleles</h2>")
+
+    empty = next(row for row in table.rows if row[0].text == "chr3")
+    assert [cell.text for cell in empty] == ["chr3", "0", "", "", "", "", ""]
+    assert all(
+        "data-sort-value" not in cell.attrs for cell in empty[2:]), \
+        "an empty share cell must carry no sort key, not an empty one"
+    # The populated rows beside it still carry theirs, so this is not
+    # passing because the column stopped emitting keys altogether.
+    populated = next(row for row in table.rows if row[0].text == "chr1")
+    assert all("data-sort-value" in cell.attrs for cell in populated[2:])
+
+
 def test_info_page_titles_the_total_row_with_the_global_class_counts(
     tmp_path: pathlib.Path,
 ) -> None:

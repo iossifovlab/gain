@@ -237,7 +237,9 @@ indel groups until it is rebuilt with `--force`. One reader rather than a
 compatibility branch, deliberately — a branch reading the old histograms could
 publish no exact sum, min or max at all, so every figure in the table would be
 a guess at bin resolution presented as a number.
-The **complex `(len_ref, len_alt)` grid deliberately does not.** Its cells are
+
+The **complex `(len_ref, len_alt)` grid deliberately does not share the
+ladder either.** Its cells are
 the two lengths **exactly**, each clamped at a code-level maximum of 64, so
 the grid is a sparse map over a bounded 64×64 square.
 

@@ -424,6 +424,11 @@ def _deserialized_indels(
     stored = entry.get(key)
     if stored is None:
         return None
+    # ``min`` and ``max`` are read tolerantly and the other three are
+    # not, which is deliberate rather than sloppy: those two are
+    # legitimately ``null`` for a group that was scanned and found
+    # nothing, so absent and null must read alike.  A group missing its
+    # map, count or sum is a malformed file, and raising names it.
     minimum = stored.get("min")
     maximum = stored.get("max")
     return IndelLengths(
@@ -607,8 +612,8 @@ class RegionAlleles:
         """Fold a batch of column arrays, the counting vectorized.
 
         The same rule :meth:`add_allele` applies row by row.  Ownership
-        and the distinct-position count are vectorized outright; the
-        classification cannot be -- a class is a property of one ref/alt
+        is vectorized outright; the classification cannot be -- a class
+        is a property of one ref/alt
         PAIR, and an array statement of it would be a second spelling of
         :func:`classify_allele` -- so instead each DISTINCT pair in the
         batch is classified once and its multiplicity added.  Same
@@ -1015,11 +1020,12 @@ class AlleleSectionDisplay(NamedTuple):
     def class_names(self) -> tuple[str, ...]:
         """The class columns, in the order ADR 0020 states them.
 
-        Read off the payload rather than reached for as a module
-        constant, because the template renders fields off an inert
-        record -- and because the template layer deliberately does not
-        import :mod:`gain.genomic_resources`, which is why
-        ``natural_chromosome_key`` lives in ``gain.utils``.
+        Reached for THROUGH the payload rather than as a template
+        global, because the template layer deliberately does not import
+        :mod:`gain.genomic_resources` -- which is why
+        ``natural_chromosome_key`` lives in ``gain.utils`` instead.  The
+        constant itself is what this returns; the property is the seam
+        that keeps the import out of the template environment.
         """
         return CLASS_NAMES
 

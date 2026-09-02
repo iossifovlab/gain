@@ -99,15 +99,14 @@ class IndelLengths(NamedTuple):
             return None
         return self.sum / self.alleles
 
-    @property
-    def median(self) -> float | None:
-        """The middle length, or the mean of the middle two if even.
+    def _middle_lengths(self) -> tuple[int, int] | None:
+        """The one or two lengths the median is taken over.
 
-        The standard convention, stated on the ALLELES rather than on
-        the distinct lengths: {2, 3} is 2.5, and a group of one 2 and
-        nine 3s has a median of 3, not 2.5.
-
-        Read off the map, so it degrades where the map does -- see
+        Both indices land on the same allele when the count is odd, so
+        the pair collapses and the median is that length.  Kept as the
+        PAIR rather than folded straight into an average, because
+        whether the clamp blunted the answer is a property of these two
+        lengths and cannot be read back off their mean -- see
         :attr:`median_is_clamped`.
         """
         if not self.alleles:
@@ -123,24 +122,63 @@ class IndelLengths(NamedTuple):
             if seen > upper_index:
                 upper = length
                 break
-        assert lower is not None
-        assert upper is not None
-        return (lower + upper) / 2
+        if lower is None or upper is None:
+            # Only reachable from a file whose ``count`` disagrees with
+            # its map.  Degrade to "no median" rather than crash the
+            # whole page render over one malformed group.
+            return None
+        return lower, upper
+
+    @property
+    def median(self) -> float | None:
+        """The middle length, or the mean of the middle two if even.
+
+        The standard convention, stated on the ALLELES rather than on
+        the distinct lengths: {2, 3} is 2.5, and a group of one 2 and
+        nine 3s has a median of 3, not 2.5.
+
+        Read off the map, so it degrades where the map does.  When
+        :attr:`median_is_clamped` this is a LOWER BOUND rather than the
+        median, and the page renders it as one.
+        """
+        middle = self._middle_lengths()
+        if middle is None:
+            return None
+        return sum(middle) / 2
 
     @property
     def median_is_clamped(self) -> bool:
-        """Whether the median fell in the overflow bucket.
+        """Whether either middle allele fell in the overflow bucket.
 
         The one statistic here the clamp can blunt, so it is asked
-        outright rather than left to a reader to notice that a median of
-        exactly 8192 is suspicious.  The page renders it as a floor.
+        outright rather than left to a reader to notice that a suspicious
+        number is suspicious.
+
+        Asked of the two middle LENGTHS, never of their average, which
+        is the distinction a first cut got wrong.  Every key in the map
+        is at most the clamp, so an average reaching it means BOTH
+        middles were in the overflow bucket; a group with one middle
+        below the clamp and one above averages to something under it and
+        would have been published as though exact.  On a group of one
+        1 bp and one 40,000 bp deletion that reads 4096.5, where the
+        truth is 20,000.5 -- a fabricated number beside three exact ones.
+
+        Since the clamped side is a floor, the average is a floor too:
+        the true median is at least what :attr:`median` computes,
+        whichever of the two middles was clamped.
         """
-        median = self.median
-        return median is not None and median >= INDEL_LENGTH_CLAMP
+        middle = self._middle_lengths()
+        return middle is not None and middle[1] >= INDEL_LENGTH_CLAMP
 
 
 #: An indel group that was scanned and holds nothing -- distinct from a
 #: group that was never scanned, which is ``None``.
+#:
+#: Its map is shared, so nothing may mutate it.  Nothing does: it is the
+#: identity the roll-up starts from, and :func:`merged_indels` copies
+#: both sides through :meth:`IndelTally.restored` rather than folding
+#: into either.  Add a path that mutates a group in place and it must
+#: start from ``IndelTally()``, not from this.
 NO_INDELS = IndelLengths({}, 0, 0, None, None)
 
 
@@ -290,12 +328,13 @@ class IndelStatisticsRow(NamedTuple):
 
     @classmethod
     def of(cls, group: str, lengths: IndelLengths) -> IndelStatisticsRow:
-        """One group's row, all cells empty when it holds no alleles.
+        """One group's row; the LENGTH cells empty when it holds none.
 
-        A group that was scanned and found nothing has a count of zero
-        and no shortest, longest or average at all -- rendered as empty
-        cells rather than as zeros, which would read as indels of
-        length nothing.
+        A group that was scanned and found nothing has a genuine count
+        of zero, which renders as ``0`` -- that is the answer, not a
+        missing one.  What it has no answer for is a shortest, longest
+        or average length, so those four render empty rather than as
+        zeros, which would read as indels of length nothing.
         """
         mean = lengths.mean
         median = lengths.median
@@ -311,7 +350,14 @@ class IndelStatisticsRow(NamedTuple):
             # clamped cells already use, so one page says one thing one
             # way.  min, max and mean are exact from the scalars and
             # need no such hedge.
+            #
+            # The floor is the COMPUTED value, not the clamp.  With both
+            # middles in the overflow bucket the two coincide and this
+            # reads "≥8192"; with only the upper one clamped the average
+            # is smaller, and it is still a true lower bound -- the
+            # clamped side can only be longer.  Printing the clamp there
+            # would overstate a median that is genuinely below it.
             "" if median is None
-            else f"≥{INDEL_LENGTH_CLAMP}" if lengths.median_is_clamped
+            else f"≥{_trimmed(median)}" if lengths.median_is_clamped
             else _trimmed(median),
         )

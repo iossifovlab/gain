@@ -724,9 +724,33 @@ def test_a_median_in_the_overflow_bucket_is_read_as_a_floor() -> None:
         == f"≥{INDEL_LENGTH_CLAMP}"
 
 
+def test_a_median_straddling_the_clamp_is_read_as_a_floor() -> None:
+    # Only the UPPER of the two middle alleles is past the clamp, so the
+    # map knows its length only as "8192 or more" and their average is a
+    # LOWER BOUND, not a median.  Rendered plain it would sit beside
+    # three exact figures with nothing saying to distrust it: 4096.5
+    # where the truth is 20000.5.
+    #
+    # The all-past-the-clamp case cannot catch this -- there the average
+    # of two clamped lengths is the clamp itself, so a predicate reading
+    # only the average is right by accident.
+    region = _region()
+    region.add_allele(10, "AT", "A")
+    region.add_allele(11, "A" * 40001, "A")
+
+    deletions = region.counts().deletion_lengths
+    assert deletions is not None
+    assert deletions.median_is_clamped
+    row = IndelStatisticsRow.of("deletions", deletions)
+    assert row.median == "≥4096.5"
+    # The three that stay exact past the clamp say so by carrying the
+    # real numbers, which is what makes the hedged one legible.
+    assert (row.min, row.max, row.mean) == ("1", "40000", "20000.5")
+
+
 def test_an_even_allele_count_takes_the_mean_of_the_middle_two() -> None:
     # The standard convention, over the ALLELES rather than the distinct
-    # lengths: {2, 3} is 2.5.
+    # lengths: a 1 bp and a 2 bp insertion give 1.5.
     region = _region()
     region.add_allele(10, "A", "AT")
     region.add_allele(11, "A", "ATT")

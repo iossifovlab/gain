@@ -79,7 +79,7 @@ def has_counts_to_plot(
     Coverage's two groups -- segments and fragments -- are the callers.
     The indel groups asked this too until gain#1118 took them off the
     stored ladder: they carry an exact length map now, so the same
-    question is ``lengths is None or not lengths.count``, read off the
+    question is ``lengths is None or not lengths.alleles``, read off the
     thing they actually store rather than off bins derived from it.
     """
     return histogram is not None and any(histogram)

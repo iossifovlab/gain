@@ -344,11 +344,17 @@ def test_a_class_share_sorts_on_the_fraction_not_the_rendered_share(
 ) -> None:
     """The share column's key is the number, never the text it shows.
 
-    The rendered strings do not order as their values do:
-    :func:`percentage_of` writes a floor of ``<0.01%`` and a ceiling of
-    ``>99.99%``, and ``<`` and ``>`` sort either side of the digits, so
-    a column comparing text would put the two rarest and commonest
-    classes in the wrong places specifically.
+    What this pins is that the key and the rendered text are DIFFERENT
+    things: the cell reads ``100.00%`` and sorts on ``1.0``, so a
+    template emitting ``data-sort-value="{{ share.percentage }}"`` fails
+    here.
+
+    It does not exercise the ordering that makes the distinction matter
+    -- these three rows are all one class -- because the floor and
+    ceiling that misorder as text need a fixture of tens of thousands of
+    alleles to reach.  That case is pinned where such a fixture already
+    exists, by
+    ``test_allele_statistics_scan.test_info_page_tells_a_rare_class_from_an_empty_one``.
     """
     cells = table_after(
         pages["scores/alleles"], "<h2>Alleles</h2>").column("substitution %")
