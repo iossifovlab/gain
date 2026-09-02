@@ -25,12 +25,39 @@ extensions = [
     "sphinx_copybutton",
     "sphinxcontrib.httpdomain",
     "sphinx_autorun",
-    "sphinxcontrib.video"
+    "sphinxcontrib.video",
+    # Markdown source alongside reST, so repo-root documents (CONTEXT.md and
+    # the like) can be ``include``d rather than copied into a ``.rst``.
+    "myst_parser",
+    # Diagrams as text in the repo -- diffable and reviewable in a PR.  Every
+    # one of the 60 figures under docs/ today is a PNG with no committed
+    # source.
+    "sphinxcontrib.mermaid",
+    # Already in the `docs` dependency group but never loaded, so it was a
+    # dependency being paid for and not used.  Per-page "last updated" stamps
+    # are a cheap partial mitigation for docs staleness.
+    "sphinx_last_updated_by_git",
 ]
 
 extlinks = {
     "issue": ("https://github.com/iossifovlab/gain/issues/%s", "#%s"),
 }
+
+# ``sphinx_last_updated_by_git`` dates each page from its last Git commit, and
+# a page Git has never seen loses its "View page source" link by default
+# (``git_untracked_show_sourcelink`` is False).  The whole ``sphinx-apidoc``
+# tree under ``development/gain/`` is exactly that case: ``build_docs.sh``
+# deletes and regenerates it on every build and none of it is committed.  Left
+# at the default, enabling the extension would silently strip a sourcelink
+# those pages carry today -- a change this issue did not ask for.  Keep them.
+#
+# The stamps themselves do survive on that tree, which is worth knowing before
+# anyone "fixes" it: ``git_untracked_check_dependencies`` defaults to True, so
+# an untracked page is dated from its dependencies instead, and an
+# ``automodule`` page depends on the ``.py`` files it documents.  21 of the 22
+# generated pages are therefore stamped with the last commit of the module
+# they render.
+git_untracked_show_sourcelink = True
 
 # ``sphinx-apidoc`` emits one ``automodule`` per submodule plus a "Module
 # contents" one for the package itself.  Where a package ``__init__``

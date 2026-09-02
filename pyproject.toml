@@ -48,5 +48,7 @@ docs = [
     "sphinx-autorun",
     "sphinxcontrib-video",
     "sphinx-last-updated-by-git",
+    "myst-parser",
+    "sphinxcontrib-mermaid",
     "jinja2",
 ]
