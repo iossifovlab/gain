@@ -22,7 +22,7 @@ is not observable from either side alone.
 from __future__ import annotations
 
 import pathlib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import gain
 import pytest
@@ -77,7 +77,7 @@ def _counts_once(left: int, right: int) -> int:
 
 
 def _fold(
-    segments: list[tuple[int, int, list[ScoreValue]]],
+    segments: Sequence[tuple[int, int, Sequence[ScoreValue]]],
     requests: list[tuple[str, str]],
     *,
     weigh: Callable[[int, int], int],
@@ -143,6 +143,24 @@ def test_the_handed_weight_is_what_each_value_counts_for() -> None:
         [("s", "mean")],
         weigh=_by_span,
     ) == [pytest.approx((0.2 * 4 + 0.8) / 5)]
+
+
+def test_a_tuple_valued_stream_folds_exactly_like_a_list_valued_one() -> None:
+    # The fold only ever indexes ``values[column]``, so which container the
+    # values arrive in is not part of its contract -- which is why widening
+    # the annotation to ``Sequence`` costs nothing.  Pinned because the
+    # fragment plane hands it tuples while every caller today hands it
+    # lists, and the two must not answer differently.
+    requests = [("s", "mean"), ("s", "max")]
+    as_lists = _fold(
+        [(10, 13, [0.2]), (14, 14, [0.8])], requests, weigh=_by_span)
+    as_tuples = _fold(
+        [(10, 13, (0.2,)), (14, 14, (0.8,))], requests, weigh=_by_span)
+
+    assert as_tuples == as_lists
+    # Not just equal to each other: a fold that answered ``[None, None]``
+    # both ways would satisfy the line above and nothing else.
+    assert as_tuples == [pytest.approx((0.2 * 4 + 0.8) / 5), 0.8]
 
 
 def test_a_pair_names_the_aggregator_and_passes_through(
