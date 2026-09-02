@@ -534,3 +534,56 @@ def test_abandoned_queries_keep_the_buffer_bounded(build_tables: Any) -> None:
     assert len(positions) > LineBuffer.COMPACT_FLOOR, \
         "the scan is too short to tell a bounded buffer from a leaking one"
     assert len(tabix_table.buffer) <= LineBuffer.COMPACT_FLOOR
+
+
+@pytest.mark.parametrize("shape", SHAPES)
+def test_abandoned_queries_do_not_corrupt_later_answers(
+    build_tables: Any, shape: str,
+) -> None:
+    """Every query is preceded by an abandoned one, and still matches.
+
+    This one holds on the UNFIXED code too, and is here to say so.  Skipping
+    the prune retains records that are dead and can never drop one that is
+    live, and :meth:`LineBuffer.contains` gates on the query's own start
+    rather than on the buffer's edge -- so an abandoned read costs memory and
+    nothing else.
+
+    That is the half #834 needs in order to stream an allele region instead of
+    materialising it: a lazy read that a caller walks away from must not leave
+    the table answering differently.  Pinned here over the overlapping and
+    nested shapes that gain#250 exists for, so it is a guarantee to cite
+    rather than one to re-derive.
+    """
+    rows = make_rows(shape)
+    tabix_table, mem_table = build_tables(rows)
+
+    lo = min(beg for beg, _ in rows)
+    hi = max(end for _, end in rows)
+    for pos in range(lo - 2, hi + 3):
+        abandoned = tabix_table.get_records_in_region(CHROM, pos, pos)
+        next(abandoned, None)
+        abandoned.close()
+
+        _assert_same(tabix_table, mem_table, pos, pos)
+
+
+def test_a_drained_scan_is_unchanged(build_tables: Any) -> None:
+    """The fix must not cost the warm buffer its whole reason for existing.
+
+    A ``finally`` that ran the prune too eagerly -- or a "fix" that cleared
+    the buffer instead -- would leave every equality test in this module
+    passing while turning the scan back into one tabix seek per query.  So
+    pin what a drained monotonic scan does: one fetch to prime the buffer,
+    the rest served warm, and a buffer that stays at the live set.
+    """
+    rows = make_rows("points_unique", count=400)
+    tabix_table, _ = build_tables(rows)
+
+    for pos in (beg for beg, _ in rows):
+        list(tabix_table.get_records_in_region(CHROM, pos, pos))
+
+    stats = tabix_table.stats
+    assert stats["calls"] == len(rows)
+    assert stats["tabix fetch"] == 1
+    assert stats["yield from buffer"] > 0
+    assert len(tabix_table.buffer) <= LineBuffer.COMPACT_FLOOR
