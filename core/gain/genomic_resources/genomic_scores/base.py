@@ -601,6 +601,27 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 f"{sorted(self.score_definitions)}")
         return [self.score_definitions[score_id] for score_id in scores]
 
+    def _resolve_single_score(self, score: str | None) -> str:
+        """Resolve a singular method's ``score`` argument to one score id.
+
+        ``None`` means "all the scores this resource has", which a singular
+        method can honour only when there is exactly one.
+
+        Here rather than on one kind because "a singular read resolves
+        ``None`` only against a single-score resource" is the same rule
+        whichever plane asks it, and one statement of it keeps the refusal
+        worded the same way across them.
+        """
+        if score is not None:
+            return score
+        all_scores = self.get_all_scores()
+        if len(all_scores) != 1:
+            raise ValueError(
+                f"genomic score <{self.resource_id}> defines "
+                f"{sorted(all_scores)}; a singular read can resolve "
+                f"score=None only when there is exactly one")
+        return all_scores[0]
+
     def get_score_values_from_record(
         self, record: Record, score_defs: list[GenomicScoreDef],
     ) -> list[ScoreValue]:

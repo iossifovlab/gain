@@ -6,9 +6,7 @@ import pytest
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.genomic_position_table.record import (
     ALT,
-    CHROM,
     POS_BEGIN,
-    POS_END,
     REF,
 )
 from gain.genomic_resources.genomic_scores import (
@@ -425,18 +423,14 @@ def test_fragment_score_fetch_fragments() -> None:
     fragment_score = FragmentScore(res)
     fragment_score.open()
 
-    fragments = fragment_score.fetch_fragment_scores("1", 150, 350)
-    assert len(fragments) == 2
-    assert fragments[0]["cnv_type"] == "DEL"
-    assert fragments[0]["frequency"] == 0.01
-    # A fragment's own span is read through the records, not the score fetch.
-    records = list(fragment_score.fetch_records("1", 150, 350))
-    assert (records[0][CHROM], records[0][POS_BEGIN], records[0][POS_END]) \
-        == ("1", 100, 200)
+    # Each fragment at its own span, values positional to the score ids.
+    assert list(fragment_score.fetch_fragment_scores("1", 150, 350)) == [
+        (100, 200, ("DEL", 0.01)),
+        (300, 400, ("DUP", 0.02)),
+    ]
 
-    # A region no fragment overlaps is empty ...
-    fragments = fragment_score.fetch_fragment_scores("1", 1000, 2000)
-    assert len(fragments) == 0
+    # A region no fragment overlaps is an empty stream ...
+    assert list(fragment_score.fetch_fragment_scores("1", 1000, 2000)) == []
 
     # ... but a contig the resource does not have is refused, so the two
     # cannot be confused for each other.

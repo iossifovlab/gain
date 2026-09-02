@@ -185,25 +185,33 @@ class FragmentScoreAnnotator(AnnotatorBase):
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
-        fragments = self.fragment_score.fetch_fragment_scores(
-            annotatable.chrom, annotatable.pos, annotatable.pos_end,
-            score_filter=self.fragment_filter)
-
-        raw: dict[str, list] = {
-            attr.source: []
+        # The read yields values positionally, parallel to the score ids it
+        # was asked for -- everything the resource defines, since no
+        # ``scores`` is passed.  The attribute -> position map is built once
+        # per annotation rather than per fragment.
+        score_ids = self.fragment_score.get_all_scores()
+        positions = {
+            attr.source: score_ids.index(attr.source)
             for attr in self._attributes
             if attr.aggregator is not None
         }
 
-        for fragment in fragments:
-            for source in raw:
-                raw[source].append(fragment[source])
+        raw: dict[str, list] = {source: [] for source in positions}
 
-        result: dict[str, Any] = {}
-        for attr in self._attributes:
-            if attr.source in raw:
-                result[attr.source] = raw[attr.source]
-            else:
-                result[attr.source] = len(fragments)
+        # Counted while streaming: the read is a generator, so the fragments
+        # are gone once walked, and an attribute with no aggregator wants
+        # their number.  One pass serves both.
+        count = 0
+        for _beg, _end, values in self.fragment_score.fetch_fragment_scores(
+                annotatable.chrom, annotatable.pos, annotatable.pos_end,
+                score_filter=self.fragment_filter):
+            count += 1
+            for source, position in positions.items():
+                raw[source].append(values[position])
 
-        return result
+        # An attribute with no aggregator has no values of its own to carry,
+        # and answers the fragment count instead.
+        return {
+            attr.source: raw.get(attr.source, count)
+            for attr in self._attributes
+        }
