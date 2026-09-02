@@ -891,6 +891,26 @@ class AlleleDisplay(NamedTuple):
         ]
 
 
+class ClassShare(NamedTuple):
+    """One class's slice of one chromosome's alleles.
+
+    Three renderings of one count, because the cell shows one, sorts on
+    another and titles itself with the third: ``percentage`` is the
+    text, ``fraction`` is the sort key -- the NUMBER, so that a column
+    sorts by size rather than by the string ``<0.01%`` -- and
+    ``alleles`` is the exact count the hover title carries.
+
+    The count is what the global classes table used to show as a column
+    of its own (gain#1118 removed it).  Keeping it here is what lets a
+    reader recover the exact number the share rounds off, per
+    chromosome rather than only for the resource.
+    """
+
+    alleles: int
+    percentage: str
+    fraction: float
+
+
 class AlleleChromosomeRow(NamedTuple):
     """One chromosome's allele counts, as the info page renders them.
 
@@ -901,6 +921,17 @@ class AlleleChromosomeRow(NamedTuple):
 
     chrom: str
     allele_count: int
+    shares: dict[str, ClassShare] | None
+    """What this chromosome's alleles are MADE OF, one entry per class.
+
+    Keyed by :data:`CLASS_NAMES`, and ``None`` for a chromosome with no
+    alleles to take a share of -- the row then renders empty cells
+    carrying no sort key, exactly as the Coverage table's row with no
+    resolvable denominator does.  :func:`percentages_over` owns that
+    rule; the difference is only where it is asked.  Coverage resolves
+    a denominator per ROW and so does this, while the classes total
+    that used to sit below the table resolved one for the whole table.
+    """
 
 
 class AlleleSectionDisplay(NamedTuple):
@@ -934,6 +965,18 @@ class AlleleSectionDisplay(NamedTuple):
     """
 
     @property
+    def class_names(self) -> tuple[str, ...]:
+        """The class columns, in the order ADR 0020 states them.
+
+        Read off the payload rather than reached for as a module
+        constant, because the template renders fields off an inert
+        record -- and because the template layer deliberately does not
+        import :mod:`gain.genomic_resources`, which is why
+        ``natural_chromosome_key`` lives in ``gain.utils``.
+        """
+        return CLASS_NAMES
+
+    @property
     def allele_count(self) -> int:
         """The table's total, summed off the rows it shows.
 
@@ -943,6 +986,30 @@ class AlleleSectionDisplay(NamedTuple):
         the rows under it.
         """
         return sum(row.allele_count for row in self.rows)
+
+
+def _class_shares(counts: AlleleCounts) -> dict[str, ClassShare] | None:
+    """What one chromosome's alleles are made of, class by class.
+
+    ``None`` without a denominator, which is :func:`percentages_over`'s
+    rule asked of ONE chromosome: a contig with no alleles has no
+    composition, and the row renders empty cells rather than five
+    ``0.00%``.
+
+    Every class in :data:`CLASS_NAMES` gets an entry, including the
+    ones this chromosome has none of -- a genuine ``0.00%`` is an
+    answer, and the column must not go ragged from row to row.
+    """
+    percentages = percentages_over(counts.class_counts, counts.allele_count)
+    if percentages is None:
+        return None
+    return {
+        name: ClassShare(
+            counts.class_counts.get(name, 0),
+            percentages[name],
+            counts.class_counts.get(name, 0) / counts.allele_count)
+        for name in CLASS_NAMES
+    }
 
 
 def build_allele_section_display(
@@ -965,7 +1032,8 @@ def build_allele_section_display(
     global_counts = _total(chromosomes.values())
     return AlleleSectionDisplay(
         [
-            AlleleChromosomeRow(chrom, counts.allele_count)
+            AlleleChromosomeRow(
+                chrom, counts.allele_count, _class_shares(counts))
             for chrom, counts in chromosomes.items()
         ],
         dict(global_counts.class_counts),

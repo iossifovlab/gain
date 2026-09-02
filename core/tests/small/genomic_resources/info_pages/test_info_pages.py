@@ -849,13 +849,19 @@ def test_coverage_tables_render_the_expected_columns(
 
 
 def test_coverage_tables_are_sortable(built_grr: BuiltGRR) -> None:
-    """The ``data-sort`` / ``data-sort-value`` / ``tfoot`` contract (#984).
+    """The ``data-sort`` / ``data-sort-value`` / ``thead`` contract (#984).
 
     The client-side sort reads ``data-sort`` off the header to learn the
     column's type and ``data-sort-value`` off each body cell to sort on
     something other than the rendered text -- ``chr10`` has to sort after
-    ``chr9``.  The totals row lives in ``tfoot`` so sorting leaves it at the
-    bottom instead of shuffling it in among the chromosomes.
+    ``chr9``.
+
+    The totals row lives in ``thead`` as a second row (gain#1118, moved
+    there from ``tfoot``) so that it stays visible while the table
+    scrolls.  Sorting still cannot reach it: the script reorders
+    ``tBodies[0].rows`` only.  Its cells must be ``<td>`` -- and the
+    header check above is what enforces that, since a ``<th>`` in that
+    row would be a header carrying no ``data-sort``.
     """
     tables = _coverage_tables(built_grr)
     assert tables, "no resource rendered a populated Coverage table"
@@ -882,14 +888,21 @@ def test_coverage_tables_are_sortable(built_grr: BuiltGRR) -> None:
             problems.append(
                 "a body cell carries no data-sort-value, so it sorts on its "
                 "rendered text and chr10 sorts before chr9")
-        foot = _section_slice(events, "tfoot")
-        if not foot:
-            problems.append("the totals row is not in a tfoot")
+        head = _section_slice(events, "thead")
+        if not head:
+            problems.append("the totals row is not in a thead")
         elif _COVERAGE_TOTALS_LABEL not in "".join(
-                event.data for event in foot if event.kind == "data"):
+                event.data for event in head if event.kind == "data"):
             problems.append(
-                f"the tfoot does not carry the {_COVERAGE_TOTALS_LABEL!r} "
+                f"the thead does not carry the {_COVERAGE_TOTALS_LABEL!r} "
                 f"totals row")
+        if _COVERAGE_TOTALS_LABEL in "".join(
+                event.data
+                for event in _section_slice(events, "tbody")
+                if event.kind == "data"):
+            problems.append(
+                f"the {_COVERAGE_TOTALS_LABEL!r} row is in the tbody, where "
+                f"a sort would shuffle it in among the chromosomes")
         if problems:
             faults[name] = problems
     assert not faults, f"Coverage tables break the sortable contract: {faults}"

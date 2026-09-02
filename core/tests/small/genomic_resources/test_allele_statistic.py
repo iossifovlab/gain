@@ -403,6 +403,45 @@ def test_the_section_totals_are_the_roll_up_over_every_chromosome() -> None:
     assert section.class_counts["insertion"] == 2
 
 
+def test_each_row_takes_its_shares_over_its_own_alleles() -> None:
+    # The columns answer "what are chr2's alleles made of", so the
+    # denominator is the ROW's own count.  A global denominator would
+    # only restate chromosome size: here the two chromosomes have the
+    # same 3:1 composition over totals a thousandfold apart, and the
+    # shares must read identically.
+    section = _section_of(
+        RegionAlleles.frozen(
+            "chr1", 4000, {"substitution": 3000, "insertion": 1000}),
+        RegionAlleles.frozen(
+            "chr2", 4, {"substitution": 3, "insertion": 1}),
+    )
+
+    assert [
+        (row.chrom,
+         row.shares["substitution"].percentage,
+         row.shares["insertion"].percentage)
+        for row in section.rows
+    ] == [
+        ("chr1", "75.00%", "25.00%"),
+        ("chr2", "75.00%", "25.00%"),
+    ]
+
+
+def test_a_chromosome_with_no_alleles_has_no_composition() -> None:
+    # Per ROW, where the classes table below the table used to resolve
+    # one denominator for the whole of it.  A contig carrying no
+    # alleles is not five classes of 0.00% -- it has nothing to be
+    # made of -- so the cells go empty and the sorter gets no key.
+    section = _section_of(
+        RegionAlleles.frozen("chr1", 2, {"substitution": 2}),
+        RegionAlleles.frozen("chr2", 0, {}),
+    )
+
+    by_chrom = {row.chrom: row.shares for row in section.rows}
+    assert by_chrom["chr2"] is None
+    assert by_chrom["chr1"] is not None
+
+
 def test_a_matrixless_file_yields_no_display() -> None:
     # "Matrix unknown" collapses to None, as the fragment display
     # collapses a file that predates its field; a genuinely empty

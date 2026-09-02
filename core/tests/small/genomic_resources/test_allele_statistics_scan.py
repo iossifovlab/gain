@@ -512,48 +512,51 @@ def test_info_page_renders_a_row_per_chromosome(
     table = table_after(
         _info_page(resource), "<h2>Alleles</h2>")
 
-    # Whole rows: gain#988 adds a share to the classes table and the
-    # matrix only, and a stray extra column here would leave an
-    # unanchored assertion on these rows passing.  The covered-position
-    # column that sat between chromosome and alleles is gone (gain#1118).
+    # Whole rows, so a stray extra column leaves no unanchored
+    # assertion passing.  The covered-position column that sat between
+    # chromosome and alleles is gone and five class shares follow the
+    # allele count (gain#1118).  chr1's nine alleles are five
+    # substitutions and one each of the rest; chr2 carries one
+    # substitution and nothing else.
     assert [[cell.text for cell in row] for row in table.rows] == [
-        ["chr1", "9"], ["chr2", "1"]]
+        ["chr1", "9", "55.56%", "11.11%", "11.11%", "11.11%", "11.11%"],
+        ["chr2", "1", "100.00%", "0.00%", "0.00%", "0.00%", "0.00%"]]
 
 
-def test_info_page_renders_the_global_class_summary(
+def test_info_page_titles_the_total_row_with_the_global_class_counts(
     tmp_path: pathlib.Path,
 ) -> None:
+    # What the removed "Allele classes" table's Alleles column said
+    # (gain#1118).  It is the pinned total row's hover titles now, so
+    # the resource-wide count per class stays readable without adding
+    # up the chromosomes' own titles by hand.
     resource = _mixed_allele_score(tmp_path)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
-    table = table_after(
-        _info_page(resource),
-        "<h3>Allele classes</h3>")
+    total = table_after(_info_page(resource), "<h2>Alleles</h2>").head[1]
 
-    # The class and its count; the share column beside them is what the
-    # next test is about.
-    assert [[cell.text for cell in row[:2]] for row in table.rows] == [
-        ["substitution", "6"], ["insertion", "1"], ["deletion", "1"],
-        ["complex", "1"], ["other", "1"]]
+    assert [cell.attrs.get("title") for cell in total[2:]] == [
+        "6 alleles", "1 alleles", "1 alleles", "1 alleles", "1 alleles"]
 
 
 def test_info_page_renders_each_class_as_a_share_of_the_alleles(
     tmp_path: pathlib.Path,
 ) -> None:
     # Ten alleles over the two chromosomes: six substitutions and one
-    # each of the other four classes.
+    # each of the other four classes.  These shares were the removed
+    # classes table's "% of alleles" column; they are the pinned total
+    # row now, and the column headings name the classes.
     resource = _mixed_allele_score(tmp_path)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
-    table = table_after(
-        _info_page(resource),
-        "<h3>Allele classes</h3>")
+    table = table_after(_info_page(resource), "<h2>Alleles</h2>")
 
     assert [cell.text for cell in table.head[0]] == [
-        "Class", "Alleles", "% of alleles"]
-    rows = _rows_by_first_cell(table)
-    assert rows["substitution"] == ["substitution", "6", "60.00%"]
-    assert rows["other"] == ["other", "1", "10.00%"]
+        "Chromosome", "Alleles", "substitution %", "insertion %",
+        "deletion %", "complex %", "other %"]
+    assert [cell.text for cell in table.head[1]] == [
+        "all chromosomes", "10",
+        "60.00%", "10.00%", "10.00%", "10.00%", "10.00%"]
 
 
 def test_info_page_tells_a_rare_class_from_an_empty_one(
@@ -588,17 +591,21 @@ def test_info_page_tells_a_rare_class_from_an_empty_one(
 
     page = _info_page(resource)
 
-    rows = _rows_by_first_cell(table_after(page, "<h3>Allele classes</h3>"))
-    assert rows["substitution"] == ["substitution", "20000", ">99.99%"]
-    assert rows["complex"] == ["complex", "1", "<0.01%"]
-    assert rows["other"] == ["other", "0", "0.00%"]
+    total = table_after(page, "<h2>Alleles</h2>").head[1]
+    assert [cell.text for cell in total] == [
+        "all chromosomes", "20001",
+        ">99.99%", "0.00%", "0.00%", "<0.01%", "0.00%"]
+    # The counts the shares round off stay exact on the hover titles.
+    assert [cell.attrs.get("title") for cell in total[2:]] == [
+        "20000 alleles", "0 alleles", "0 alleles", "1 alleles",
+        "0 alleles"]
     # Both bounds read off the MARKUP, because that is the only place the
     # two forms differ: the parser above resolves the entities, so a cell
     # cannot tell a rendered "&lt;"/"&gt;" from a raw "<"/">" -- and a raw
     # one would open a bogus tag and have the browser swallow the cell.
-    classes = section_after(page, "<h3>Allele classes</h3>")
-    assert "&lt;0.01%" in classes
-    assert "&gt;99.99%" in classes
+    alleles = section_after(page, "<h2>Alleles</h2>")
+    assert "&lt;0.01%" in alleles
+    assert "&gt;99.99%" in alleles
 
 
 def test_info_page_renders_the_substitution_matrix(
@@ -696,15 +703,15 @@ def test_info_page_over_a_pre_display_file_still_renders_the_shares(
             resource, ALLELE_STATISTICS_FILE, mode="wt") as outfile:
         outfile.write(json.dumps(stored))
 
-    table = table_after(
-        _info_page(resource),
-        "<h3>Allele classes</h3>")
+    table = table_after(_info_page(resource), "<h2>Alleles</h2>")
 
-    assert [cell.text for cell in table.head[0]] == [
-        "Class", "Alleles", "% of alleles"]
-    rows = _rows_by_first_cell(table)
-    assert rows["substitution"] == ["substitution", "6", "60.00%"]
-    assert rows["other"] == ["other", "1", "10.00%"]
+    assert [cell.text for cell in table.head[1]] == [
+        "all chromosomes", "10",
+        "60.00%", "10.00%", "10.00%", "10.00%", "10.00%"]
+    # The per-chromosome shares resolve off the same stored fields, so
+    # the rows carry theirs too rather than going empty.
+    assert [cell.text for cell in table.rows[0]][2:] == [
+        "55.56%", "11.11%", "11.11%", "11.11%", "11.11%"]
 
 
 def test_info_page_over_a_matrixless_file_says_matrix_not_computed(
@@ -726,9 +733,13 @@ def test_info_page_over_a_matrixless_file_says_matrix_not_computed(
     page = _info_page(resource)
 
     assert [cell.text for cell in table_after(
-        page, "<h2>Alleles</h2>").rows[0]] == ["chr1", "9"]
+        page, "<h2>Alleles</h2>").rows[0]] == [
+            "chr1", "9", "55.56%", "11.11%", "11.11%", "11.11%", "11.11%"]
+    # The class composition survives the missing matrix: it is read off
+    # the stored counts, which every file carries.
     assert [cell.text for cell in table_after(
-        page, "<h3>Allele classes</h3>").rows[0][:2]] == ["substitution", "6"]
+        page, "<h2>Alleles</h2>").head[1]][:3] == [
+            "all chromosomes", "10", "60.00%"]
     # Bound to the subsection that must say it, not to the Alleles section
     # at large -- which renders "not computed" for other groups too.
     assert "<p>not computed</p>" in section_after(

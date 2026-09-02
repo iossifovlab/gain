@@ -129,6 +129,35 @@
             <th data-sort="number">Segments</th>
             {%- endif %}
         </tr>
+        {#- The total is pinned as a SECOND head row so it stays in view
+           down a few hundred contigs: the scrollable container already
+           makes `thead` sticky, and this inherits it for nothing.
+
+           It is as safe from the sorter here as it was in <tfoot>, and
+           for a structural reason rather than a promise: the script
+           reads its headers from `tHead.rows[0]` and reorders only
+           `tBodies[0].rows`, so this row is outside both.
+
+           <td>, never <th>: a <th> here would be announced as a column
+           header for the data below, and would match the
+           `thead th[aria-sort]` query the sorter clears the previous
+           column's marker with. -#}
+        <tr>
+            <td>all chromosomes</td>
+            <td>{{ coverage.global_covered }}</td>
+            {%- if has_fractions %}
+            {#- Guarded on the fraction, exactly as the per-chromosome
+               cell above is: "did a denominator resolve" is one
+               question, and the two cells must not read it off two
+               different fields. -#}
+            <td>{% if coverage.global_fraction != None -%}
+                {{ coverage.global_percent }}
+            {%- endif %}</td>
+            {%- endif %}
+            {%- if has_segments %}
+            <td>{{ coverage.global_segments }}</td>
+            {%- endif %}
+        </tr>
     </thead>
     <tbody>
     {%- for row in coverage.rows -%}
@@ -160,13 +189,22 @@
         </tr>
     {%- endfor %}
     </tbody>
-    <tfoot>
     {#- The untouched part of the reference (see UncoveredContigs for why
-       it is one row) sits in <tfoot> with the total, and for the same
-       reason -- the sorter reorders tbody > tr only, so no comparator
-       can float a summary into the middle of the data. -#}
+       it is one row) stays in <tfoot>, and is now the only thing in it.
+
+       It did not follow the total into the sticky header, because it is
+       not a total: it describes what is NOT in the table.  Pinning it
+       would also make the sticky header three rows deep and eat the
+       500px the data scrolls in.  Out of <tbody> for the same reason as
+       ever -- the sorter reorders tbody > tr only, so no comparator can
+       float a summary into the middle of the data.
+
+       The element itself is conditional now that the total has left it:
+       most resources have no uncovered contigs, and an always-emitted
+       <tfoot></tfoot> would be an empty element on every one of them. -#}
     {%- if coverage.uncovered != None %}
     {%- set uncovered = coverage.uncovered %}
+    <tfoot>
     <tr>
         <td>{{ uncovered.contigs }} {{ "contig" if uncovered.contigs == 1 else "contigs" }} with no values ({{ uncovered.length }} bp)</td>
         <td>0</td>
@@ -177,23 +215,8 @@
         <td>0</td>
         {%- endif %}
     </tr>
-    {%- endif %}
-    <tr>
-        <td>all chromosomes</td>
-        <td>{{ coverage.global_covered }}</td>
-        {%- if has_fractions %}
-        {#- Guarded on the fraction, exactly as the per-chromosome cell
-           above is: "did a denominator resolve" is one question, and
-           the two cells must not read it off two different fields. -#}
-        <td>{% if coverage.global_fraction != None -%}
-            {{ coverage.global_percent }}
-        {%- endif %}</td>
-        {%- endif %}
-        {%- if has_segments %}
-        <td>{{ coverage.global_segments }}</td>
-        {%- endif %}
-    </tr>
     </tfoot>
+    {%- endif %}
 </table>
 </div>
 {%- if has_segments %}

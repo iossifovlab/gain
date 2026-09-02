@@ -11,6 +11,15 @@
             <th>Chromosome</th>
             <th>Fragments</th>
         </tr>
+        {#- Pinned in the sticky header rather than <tfoot>, as the
+           Coverage and Alleles totals are, and with <td> cells for the
+           same reason.  This table does not opt into sorting yet; it
+           keeps the shape of its two siblings so that opting in stays
+           two attributes and nothing else. -#}
+        <tr>
+            <td>all chromosomes</td>
+            <td>{{ fragments.global_fragments }}</td>
+        </tr>
     </thead>
     <tbody>
     {%- for row in fragments.rows -%}
@@ -20,12 +29,6 @@
         </tr>
     {%- endfor %}
     </tbody>
-    <tfoot>
-    <tr>
-        <td>all chromosomes</td>
-        <td>{{ fragments.global_fragments }}</td>
-    </tr>
-    </tfoot>
 </table>
 </div>
 <h3>Fragment lengths</h3>
