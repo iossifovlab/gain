@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pathlib  # ruff: ignore[unsorted-imports]
 import textwrap
+from collections.abc import Iterator
 from typing import Any, cast
 
 import numpy as np
@@ -9,6 +10,7 @@ import pytest
 import pytest_mock
 
 from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_scores import (
     FragmentScore,
 )
@@ -34,6 +36,9 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     convert_to_tab_separated,
     setup_directories,
+)
+from gain.genomic_resources.testing.builders import (
+    a_fragment_score,
 )
 from gain.task_graph.cli_tools import task_graph_run
 from gain.task_graph.sequential_executor import SequentialExecutor
@@ -108,26 +113,26 @@ def fragments_resource(test_grr: GenomicResourceRepo) -> GenomicResource:
     return test_grr.get_resource("score_one")
 
 
-@pytest.mark.parametrize("chrom,beg,end,count,attributes", [
-    ("1", 5, 15, 1, [
-        {"freq": 0.02, "collection": "SSC", "status": "affected"},
+@pytest.mark.parametrize("chrom,beg,end,expected", [
+    ("1", 5, 15, [
+        (10, 20, (0.02, "SSC", "affected")),
     ]),
-    ("1", 60, 70, 1, [
-        {"freq": 0.1, "collection": "SSC", "status": "affected"},
+    ("1", 60, 70, [
+        (50, 100, (0.1, "SSC", "affected")),
     ]),
-    ("1", 10, 65, 2, [
-        {"freq": 0.02, "collection": "SSC", "status": "affected"},
-        {"freq": 0.1, "collection": "SSC", "status": "affected"},
+    ("1", 10, 65, [
+        (10, 20, (0.02, "SSC", "affected")),
+        (50, 100, (0.1, "SSC", "affected")),
     ]),
-    ("2", 5, 15, 1, [
-        {"freq": 0.00001, "collection": "AGRE", "status": "unaffected"},
+    ("2", 5, 15, [
+        (1, 8, (0.00001, "AGRE", "unaffected")),
     ]),
-    ("2", 15, 25, 1, [
-        {"freq": 0.3, "collection": "SSC", "status": "affected"},
+    ("2", 15, 25, [
+        (16, 20, (0.3, "SSC", "affected")),
     ]),
-    ("2", 8, 25, 2, [
-        {"freq": 0.00001, "collection": "AGRE", "status": "unaffected"},
-        {"freq": 0.3, "collection": "SSC", "status": "affected"},
+    ("2", 8, 25, [
+        (1, 8, (0.00001, "AGRE", "unaffected")),
+        (16, 20, (0.3, "SSC", "affected")),
     ]),
 ])
 def test_fragment_score_resource(
@@ -135,14 +140,103 @@ def test_fragment_score_resource(
     chrom: str,
     beg: int,
     end: int,
-    count: int,
-    attributes: list[dict[str, Any]],
+    expected: list[tuple[int, int, tuple[Any, ...]]],
 ) -> None:
+    """Every overlapping fragment, as its own span and a positional tuple."""
     with fragments.open() as score:
-        aaa = score.fetch_fragment_scores(
-            chrom, beg, end)
-        assert len(aaa) == count
-        assert aaa == attributes
+        assert list(score.fetch_fragment_scores(chrom, beg, end)) == expected
+
+
+def test_fragment_read_refuses_a_record_whose_end_precedes_its_begin(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A backwards record ends the iteration, mid-stream.
+
+    Reading through the shared segments means the read inherits their claim
+    about a RECORD, which this read did not make while it extracted values
+    for itself.  Unlike the request guards it fires when the record is
+    reached, not when the method is called -- there is nothing to check it
+    against until the record arrives.
+
+    A zero-based row is how a backwards record is authored: the zero-based
+    adjustment bumps end only when begin == end, so an end < begin row is
+    left unrepaired and reaches the score layer as POS_END < POS_BEGIN.
+    """
+    score = FragmentScore(
+        a_fragment_score()
+        .with_score("v", "float")
+        .with_zero_based()
+        .with_data("""
+            chrom  pos_begin  pos_end  v
+            1      5          3        0.5
+        """)
+        .build_resource(tmp_path),
+    ).open()
+
+    with pytest.raises(OSError, match="has a region"):
+        list(score.fetch_fragment_scores("1", 1, 100))
+
+
+def test_fragment_read_pulls_records_only_as_it_is_consumed(
+    fragments: FragmentScore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Taking one fragment reads one record, not the whole region.
+
+    Laziness is the point of the read, and every other test here consumes it
+    whole -- which an implementation that materialised internally and handed
+    back ``iter(...)`` would satisfy just as well.  Counting what the backend
+    was asked for is what tells the two apart.
+    """
+    with fragments.open() as score:
+        pulled: list[Record] = []
+        real_fetch_records = score.fetch_records
+
+        def counting_fetch_records(
+            *args: Any, **kwargs: Any,
+        ) -> Iterator[Record]:
+            for record in real_fetch_records(*args, **kwargs):
+                pulled.append(record)
+                yield record
+
+        monkeypatch.setattr(score, "fetch_records", counting_fetch_records)
+
+        # "1", 10, 65 spans both of the contig's fragments.
+        fragment_scores = score.fetch_fragment_scores("1", 10, 65)
+
+        assert pulled == []
+        next(fragment_scores)
+        assert len(pulled) == 1
+
+
+def test_fragment_span_is_reported_unclipped(
+    fragments: FragmentScore,
+) -> None:
+    """A fragment enclosing the region is reported at its OWN extent.
+
+    The region asked about here sits strictly inside the fragment, so a read
+    that intersected the two would answer ``(12, 15)``.  What a partial
+    overlap means belongs to the caller (ADR 0008), so nothing is clipped.
+    """
+    with fragments.open() as score:
+        assert list(score.fetch_fragment_scores("1", 12, 15)) == [
+            (10, 20, (0.02, "SSC", "affected")),
+        ]
+
+
+def test_fragment_values_follow_the_requested_score_order(
+    fragments: FragmentScore,
+) -> None:
+    """Values are positional, parallel to ``scores`` as asked for.
+
+    Not to the order the resource declares them in -- the caller reads the
+    tuple by the order it passed.
+    """
+    with fragments.open() as score:
+        assert list(score.fetch_fragment_scores(
+            "1", 5, 15, ["status", "freq"])) == [
+            (10, 20, ("affected", 0.02)),
+        ]
 
 
 def test_fragment_score_wrong_resource_types(
@@ -162,22 +256,41 @@ def test_fragment_score_wrong_resource_types(
 
 
 def test_fragment_score_no_open(fragments: FragmentScore) -> None:
+    """Refused on the CALL, in the wording every kind's region read uses.
+
+    The bare call is the point: a generator that deferred this to the first
+    ``next()`` would let a closed score be read from.
+    """
     with pytest.raises(
         ValueError,
-        match="The resource <score_one> is not open",
+        match="genomic score <score_one> is not open",
     ):
         fragments.fetch_fragment_scores("1", 5, 15)
 
 
 def test_fragment_score_bad_chrom(fragments: FragmentScore) -> None:
-    """A contig the resource does not have is refused, not answered ``[]``.
+    """A contig the resource does not have is refused, not answered empty.
 
-    ``[]`` would make "no fragments here" and "no such contig" the same
-    answer, and the per-position reads refuse it too.
+    An empty stream would make "no fragments here" and "no such contig" the
+    same answer, and the per-position reads refuse it too.  Refused on the
+    call, not on the first ``next()``.
     """
     score = fragments.open()
     with pytest.raises(ValueError, match="not among the available"):
         score.fetch_fragment_scores("3", 5, 15)
+
+
+def test_fragment_score_unknown_score_id_is_refused_on_the_call(
+    fragments: FragmentScore,
+) -> None:
+    """An unknown score id is refused before a record is read.
+
+    Eagerness is what stops a typo answering differently on a populated
+    contig than on an empty one, so it is asserted on the bare call.
+    """
+    with fragments.open() as score, \
+            pytest.raises(ValueError, match="does not define"):
+        score.fetch_fragment_scores("1", 5, 15, ["no_such_score"])
 
 
 @pytest.fixture

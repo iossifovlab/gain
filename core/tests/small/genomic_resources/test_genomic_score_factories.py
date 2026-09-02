@@ -176,10 +176,10 @@ def test_two_versions_of_one_resource_id_are_distinct_scores(
     with old.open() as old_open, new.open() as new_open:
         # Distinct score values, so each is demonstrably reading its own
         # version's data.
-        assert old_open.fetch_fragment_scores("1", 1, 1000) \
-            == [{"score": 0.1}]
-        assert new_open.fetch_fragment_scores("1", 1, 1000) \
-            == [{"score": 0.2}]
+        assert list(old_open.fetch_fragment_scores("1", 1, 1000)) \
+            == [(100, 200, (0.1,))]
+        assert list(new_open.fetch_fragment_scores("1", 1, 1000)) \
+            == [(300, 400, (0.2,))]
 
 
 def test_position_and_allele_scores_are_fresh_per_build(

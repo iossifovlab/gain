@@ -601,6 +601,28 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 f"{sorted(self.score_definitions)}")
         return [self.score_definitions[score_id] for score_id in scores]
 
+    def _resolve_single_score(self, score: str | None) -> str:
+        """Resolve a singular method's ``score`` argument to one score id.
+
+        ``None`` means "all the scores this resource has", which a singular
+        method can honour only when there is exactly one.
+
+        Here rather than on the one kind that calls it today: the rule is
+        about what a SINGULAR read can resolve, which is a property of the
+        score rather than of the positions it is read at, and the fragment
+        and allele planes reach for it as they grow singular reads of their
+        own.  Until they do, ``PositionScore`` is its only caller.
+        """
+        if score is not None:
+            return score
+        all_scores = self.get_all_scores()
+        if len(all_scores) != 1:
+            raise ValueError(
+                f"genomic score <{self.resource_id}> defines "
+                f"{sorted(all_scores)}; a singular read can resolve "
+                f"score=None only when there is exactly one")
+        return all_scores[0]
+
     def get_score_values_from_record(
         self, record: Record, score_defs: list[GenomicScoreDef],
     ) -> list[ScoreValue]:

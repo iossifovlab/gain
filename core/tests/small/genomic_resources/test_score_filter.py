@@ -229,17 +229,17 @@ def test_fragment_reads_drop_the_fragments_the_filter_rejects(
 ) -> None:
     """Filtered per fragment, and filtered before anything is extracted.
 
-    A region read reports one dict per overlapping fragment, so a rejected
-    fragment simply is not among them -- the empty list stays reserved for
+    A region read yields one entry per overlapping fragment, so a rejected
+    fragment simply is not among them -- an empty stream stays reserved for
     a region no fragment overlaps.
     """
     with fragment_score.open() as score:
         score_filter = score.compile_filter('collection == "AGRE"')
 
-        fragments = score.fetch_fragment_scores(
-            "1", 10, 30, score_filter=score_filter)
+        fragments = list(score.fetch_fragment_scores(
+            "1", 10, 30, score_filter=score_filter))
 
-    assert fragments == [{"freq": pytest.approx(0.1), "collection": "AGRE"}]
+    assert fragments == [(15, 30, (pytest.approx(0.1), "AGRE"))]
 
 
 def test_the_new_syntax_reaches_the_fragment_read(
@@ -254,10 +254,10 @@ def test_the_new_syntax_reaches_the_fragment_read(
         score_filter = score.compile_filter(
             '(collection == "SSC" or collection == "AGRE") and freq >= 0.1')
 
-        fragments = score.fetch_fragment_scores(
-            "1", 10, 30, score_filter=score_filter)
+        fragments = list(score.fetch_fragment_scores(
+            "1", 10, 30, score_filter=score_filter))
 
-    assert fragments == [{"freq": pytest.approx(0.1), "collection": "AGRE"}]
+    assert fragments == [(15, 30, (pytest.approx(0.1), "AGRE"))]
 
 
 def test_a_negated_clause_reaches_the_allele_read(
@@ -385,19 +385,19 @@ def test_the_region_read_refuses_a_foreign_filter_on_an_empty_region_too(
 def test_a_fragment_filter_may_name_a_score_that_was_not_requested(
     fragment_score: FragmentScore,
 ) -> None:
-    """The filter reads the record, not the dict that is handed back.
+    """The filter reads the record, not the values that are handed back.
 
     Naming a score outside ``scores`` used to read ``None`` out of the
-    extracted dict and silently match nothing; the record carries every
+    extracted values and silently match nothing; the record carries every
     score the resource defines, so the filter answers on the real value.
     """
     with fragment_score.open() as score:
         score_filter = score.compile_filter('collection == "AGRE"')
 
-        fragments = score.fetch_fragment_scores(
-            "1", 10, 30, scores=["freq"], score_filter=score_filter)
+        fragments = list(score.fetch_fragment_scores(
+            "1", 10, 30, scores=["freq"], score_filter=score_filter))
 
-    assert fragments == [{"freq": pytest.approx(0.1)}]
+    assert fragments == [(15, 30, (pytest.approx(0.1),))]
 
 
 def test_a_real_nan_is_missing_too(tmp_path: pathlib.Path) -> None:

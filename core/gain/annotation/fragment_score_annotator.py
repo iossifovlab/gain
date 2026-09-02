@@ -127,6 +127,15 @@ class FragmentScoreAnnotator(AnnotatorBase):
 
         super().__init__(pipeline, info)
 
+        #: The score ids to read, in the order the values come back in.
+        #: Deduped because two attributes may name one source under
+        #: different attribute names, and a repeated id would pair the same
+        #: value into the same list twice.  Fixed once here, as the position
+        #: and allele annotators fix theirs.
+        self.aggregated_sources: list[str] = list(dict.fromkeys(
+            attr.source for attr in self._attributes
+            if attr.aggregator is not None))
+
         for attr in self._attributes:
             spec = self.attribute_specs[attr.source]
             score_def = self.fragment_score\
@@ -185,25 +194,28 @@ class FragmentScoreAnnotator(AnnotatorBase):
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
-        fragments = self.fragment_score.fetch_fragment_scores(
-            annotatable.chrom, annotatable.pos, annotatable.pos_end,
-            score_filter=self.fragment_filter)
+        # The read yields values positionally, parallel to the ids it was
+        # asked for -- so asking for exactly the sources wanted makes the
+        # pairing a zip, and leaves the scores no attribute reads
+        # unextracted.  An attribute naming something the resource does not
+        # score is refused by the read, naming the resource and the id.
+        sources = self.aggregated_sources
+        raw: dict[str, list] = {source: [] for source in sources}
 
-        raw: dict[str, list] = {
-            attr.source: []
+        # Counted while streaming: the read is a generator, so the fragments
+        # are gone once walked, and an attribute with no aggregator wants
+        # their number.  One pass serves both.
+        count = 0
+        for _beg, _end, values in self.fragment_score.fetch_fragment_scores(
+                annotatable.chrom, annotatable.pos, annotatable.pos_end,
+                sources, score_filter=self.fragment_filter):
+            count += 1
+            for source, value in zip(sources, values, strict=True):
+                raw[source].append(value)
+
+        # An attribute with no aggregator has no values of its own to carry,
+        # and answers the fragment count instead.
+        return {
+            attr.source: raw.get(attr.source, count)
             for attr in self._attributes
-            if attr.aggregator is not None
         }
-
-        for fragment in fragments:
-            for source in raw:
-                raw[source].append(fragment[source])
-
-        result: dict[str, Any] = {}
-        for attr in self._attributes:
-            if attr.source in raw:
-                result[attr.source] = raw[attr.source]
-            else:
-                result[attr.source] = len(fragments)
-
-        return result

@@ -1758,7 +1758,8 @@ def test_bare_fragment_score_is_readable_minimal(
     res = a_fragment_score().build_resource(tmp_path)
 
     assert res.get_type() == "fragment_score"
-    fragments = FragmentScore(res).open().fetch_fragment_scores("1", 10, 200)
+    fragments = list(
+        FragmentScore(res).open().fetch_fragment_scores("1", 10, 200))
     assert len(fragments) == 2
 
 
@@ -1796,13 +1797,9 @@ def test_fragment_score_reads_back_its_regions(
     )
     score = FragmentScore(res).open()
 
-    assert score.fetch_fragment_scores("chr1", 10, 200) \
-        == [{"frequency": 0.1}, {"frequency": 0.2}]
-    # The spans themselves are not part of the score read; a caller that
-    # wants the intervals goes through the records.
-    assert [(r[POS_BEGIN], r[POS_END])
-            for r in score.fetch_records("chr1", 10, 200)] \
-        == [(10, 19), (20, 200)]
+    # Each fragment at its own span, with the one score it defines.
+    assert list(score.fetch_fragment_scores("chr1", 10, 200)) \
+        == [(10, 19, (0.1,)), (20, 200, (0.2,))]
 
 
 def test_vcf_info_score_reads_back(tmp_path: pathlib.Path) -> None:

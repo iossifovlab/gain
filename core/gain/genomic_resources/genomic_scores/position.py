@@ -382,22 +382,6 @@ class PositionScore(GenomicScore):
             for _ in range(length):
                 yield row
 
-    def _resolve_single_score(self, score: str | None) -> str:
-        """Resolve a singular method's ``score`` argument to one score id.
-
-        ``None`` means "all the scores this resource has", which a singular
-        method can honour only when there is exactly one.
-        """
-        if score is not None:
-            return score
-        all_scores = self.get_all_scores()
-        if len(all_scores) != 1:
-            raise ValueError(
-                f"genomic score <{self.resource_id}> defines "
-                f"{sorted(all_scores)}; a singular read can resolve "
-                f"score=None only when there is exactly one")
-        return all_scores[0]
-
     def get_score_at_position(
         self, chrom: str, pos: int,
         score: str | None = None,

@@ -186,51 +186,65 @@ class FragmentScore(GenomicScore):
         scores: list[str] | None = None,
         *,
         score_filter: ScoreFilter | None = None,
-    ) -> list[dict[str, ScoreValue]]:
-        """Fetch score values for every fragment overlapping a region.
+    ) -> Generator[tuple[int, int, tuple[ScoreValue, ...]], None, None]:
+        """Stream ``(begin, end, values)`` for the fragments over a region.
 
-        One dict per overlapping fragment, keyed by score id, as
-        :meth:`AlleleScore.fetch_allele_scores()
-        <.allele.AlleleScore.fetch_allele_scores>` keys one allele's values --
-        the list is per fragment, not per score.  A region no fragment
-        overlaps gives ``[]``; unlike the two per-position reads there is no
-        ``None``, because several fragments overlapping is the normal case
-        and "none of them" is a count of zero rather than absent data.
+        **Private to the fragment plane.**  This is the primitive the plane's
+        public reads are to be built on, not a read to reach for directly; it
+        keeps its name because it had one, not because the name is an
+        invitation.  It diverges from the internals beside it
+        (``_score_segments``, ``_region_read_defs``) in spelling only.
+
+        One entry per overlapping fragment, in table order, each reporting
+        the fragment's OWN extent -- unclipped, even where it runs past the
+        region asked for.  What a partial overlap means depends on what the
+        caller is computing, so ADR 0008 leaves it to them; a caller that
+        wants the window intersected composes
+        :func:`~.records.clip_span`.
+
+        ``values`` is positional, parallel to ``scores`` as requested (to
+        :meth:`~.base.GenomicScore.get_all_scores` when that is ``None``),
+        rather than a mapping: the caller already knows what it asked for and
+        in what order.  A value may be ``None`` where the record carries no
+        value for that score -- unlike the per-position reads, that is the
+        only ``None`` here, because a fragment score has no notion of an
+        uncovered position.
 
         ``score_filter`` -- from :meth:`GenomicScore.compile_filter()
-        <.base.GenomicScore.compile_filter>` -- drops
-        the fragments it rejects, which are then simply not among the dicts.
-        It reads the RECORD, so it may name any score the resource defines,
-        including one outside ``scores``, and a rejected fragment costs no
-        extraction.
+        <.base.GenomicScore.compile_filter>` -- drops the fragments it
+        rejects, which are then simply not yielded.  It reads the RECORD, so
+        it may name any score the resource defines, including one outside
+        ``scores``, and a rejected fragment costs no extraction.
 
-        A contig this resource does not have is a different answer: that is
-        the caller asking about something that does not exist, and it is
-        refused, as the per-position reads refuse it.  Answering ``[]`` would
-        make "no fragments here" and "no such contig" indistinguishable.
+        The REQUEST is checked when this is called; the READING is lazy.  A
+        closed score, a contig this resource does not have and an unknown
+        score id are refused before the first ``next()`` rather than on it,
+        for the reason :meth:`~.base.GenomicScore._region_read_defs` gives.
+        A malformed RECORD is a different matter and is refused when the
+        record is reached: a fragment whose end precedes its begin ends the
+        iteration then, mid-stream.
 
-        A fragment's own span is not reported.  Callers want the values it
-        carries; a caller that needs the intervals themselves reads records
-        through :meth:`~.base.GenomicScore.fetch_records`.
+        **One live read at a time.**  A score serves a single region read at
+        once -- the table's line iterator and line buffer are the table's, not
+        the generator's -- so starting a second read invalidates one that is
+        still being consumed, and on a tabix-backed table the two then answer
+        each other's records with no error raised.  Materialising is what
+        makes a held answer safe to keep:
+
+        .. code-block:: python
+
+            kept = list(score.fetch_fragment_scores(chrom, beg, end))
+
+        Abandoning a read mid-stream is safe and costs only a
+        :class:`~gain.genomic_resources.genomic_position_table.table_tabix.TabixGenomicPositionTable`
+        buffer prune, which gain#1120 moved into a ``finally`` -- though that
+        runs when the generator is released, so a caller holding a reference
+        to a ``close()``-ed generator still holds the read open.
         """
-        if not self.is_open():
-            raise ValueError(f"The resource <{self.resource_id}> is not open")
-        if chrom not in self.get_all_chromosomes():
-            raise ValueError(
-                f"{chrom} is not among the available chromosomes.")
-
-        requested_scores = scores or self.get_all_scores()
-        score_defs = self._resolve_score_defs(requested_scores)
-
-        records = list(self.fetch_records(
-            chrom, start, stop, score_filter=score_filter))
-        if not records:
-            return []
-
-        return [
-            dict(zip(
-                requested_scores,
-                self.get_score_values_from_record(record, score_defs),
-                strict=True))
-            for record in records
-        ]
+        records = self.fetch_records(
+            chrom, start, stop, score_filter=score_filter)
+        return (
+            (beg, end, tuple(values))
+            for beg, end, values in self.region_values_from_records(
+                records, chrom, start, stop, scores)
+        )

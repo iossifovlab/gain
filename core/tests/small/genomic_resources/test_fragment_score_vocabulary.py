@@ -85,11 +85,11 @@ def test_new_resource_type_opens_and_reads(
     assert resource.get_type() == FRAGMENT_SCORE_TYPE
 
     with FragmentScore(resource).open() as score:
-        fragments = score.fetch_fragment_scores("1", 5, 60)
+        fragments = list(score.fetch_fragment_scores("1", 5, 60))
 
     assert fragments == [
-        {"frequency": 0.02, "collection": "SSC"},
-        {"frequency": 0.1, "collection": "AGRE"},
+        (10, 20, (0.02, "SSC")),
+        (50, 100, (0.1, "AGRE")),
     ]
 
 

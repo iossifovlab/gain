@@ -422,14 +422,18 @@ def test_the_fragment_read_of_that_same_score_raises_nothing(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The kind's own read, which goes straight to ``fetch_records`` rather
-    # than through the region transform -- so a guard reintroduced on either
-    # of the two would be invisible to the other's test.
+    # The kind's own read.  It reaches the same segments as
+    # ``fetch_region_segments`` above, so this does not cover a second path
+    # any more -- what it still covers is the entry point: the scan's rule
+    # must not creep into the read the annotator actually calls.
     score = _fragment_score_reading_backwards(tmp_path, monkeypatch)
 
-    assert score.fetch_fragment_scores("chr1", 1, 30) == [
-        {"s": 0.1},
-        {"s": 0.2},
+    # Handed straight through in the order the backend yields them, which
+    # here is the descending one the fixture forces -- the read neither
+    # refuses the ordering nor repairs it.
+    assert list(score.fetch_fragment_scores("chr1", 1, 30)) == [
+        (20, 29, (0.1,)),
+        (10, 19, (0.2,)),
     ]
 
 
