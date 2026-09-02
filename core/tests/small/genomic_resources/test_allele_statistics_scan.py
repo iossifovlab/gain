@@ -658,6 +658,24 @@ def test_info_page_renders_the_ts_tv_ratio(
     assert "1.50" in section
 
 
+def test_info_page_shows_what_the_ts_tv_ratio_is_made_of(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The counts behind the ratio are computed today and were rendered
+    # nowhere (gain#1118).  Showing them lets a reader see a resource
+    # with too few transversions for the ratio to mean anything --
+    # 3/2 and 3,000,000/2,000,000 are the same number and not at all
+    # the same claim.
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    section = section_after(
+        _info_page(resource), "<h2>Alleles</h2>")
+
+    assert "3 transitions" in section
+    assert "2 transversions" in section
+
+
 def test_info_page_without_transversions_says_not_applicable(
     tmp_path: pathlib.Path,
 ) -> None:

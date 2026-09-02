@@ -99,12 +99,24 @@
     {%- endfor %}
 </table>
 </div>
-<p>ts/tv ratio:
-{%- if allele_display.ts_tv is not none %}
-{{ "%.2f"|format(allele_display.ts_tv) }}
-{%- else %}
-not applicable
-{%- endif %}</p>
+{#- The headline number of the matrix above, rendered as one rather
+   than as a sentence in a <p>.  The second line is what the ratio is
+   MADE of: both counts are computed already and were rendered nowhere,
+   and 3/2 reads identically to 3,000,000/2,000,000 without them. -#}
+<div class="key-figure">
+    <div class="key-figure-label">ts/tv</div>
+    {%- if allele_display.ts_tv is not none %}
+    <div class="key-figure-value">{{ "%.2f"|format(allele_display.ts_tv) }}</div>
+    <div class="key-figure-detail">{{ "{:,}".format(allele_display.transitions) }} transitions
+        / {{ "{:,}".format(allele_display.transversions) }} transversions</div>
+    {%- else %}
+    {#- No transversions to divide by.  The counts still say why, and
+       the transition count is the interesting half of that. -#}
+    <div class="key-figure-value">not applicable</div>
+    <div class="key-figure-detail">{{ "{:,}".format(allele_display.transitions) }} transitions
+        / no transversions</div>
+    {%- endif %}
+</div>
 {% else %}
 <p>not computed</p>
 {% endif %}
