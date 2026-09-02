@@ -11,6 +11,14 @@ general programming concepts. Reasoning behind decisions lives in
 
 ## Language
 
+<!-- Everything between the two `published-on-docs-site` markers is rendered
+     on the public documentation site (docs/source/development/
+     architecture_overview.rst includes it by these markers, not by heading).
+     Move this section freely -- the slice follows the markers, not the
+     heading. Do not delete or rename the markers: without them the include
+     logs a CRITICAL error and publishes nothing in place of the section. -->
+<!-- published-on-docs-site: start -->
+
 ### Repositories
 
 **Genomic Resource Repository (GRR)**:
@@ -248,6 +256,8 @@ gene id and the probe id are two different things and a read reports both.
 refuses the other kind rather than reading it (ADR 0014).
 _Avoid_: calling either "the 10x h5 format" — the distinction is the whole
 reason a read of one is not a read of the other
+
+<!-- published-on-docs-site: end -->
 
 ## Relationships
 
