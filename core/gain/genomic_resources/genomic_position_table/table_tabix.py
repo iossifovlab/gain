@@ -640,6 +640,17 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         self.line_iterator = self.get_line_iterator(chrom, pos_begin - 1)
         yield from self._gen_from_tabix(chrom, pos_end, buffering=buffering)
 
+    def buffered_record_count(self) -> int:
+        """The records held in the ``LineBuffer`` between queries.
+
+        The one backend with a non-zero answer.  It over-reports by design:
+        eviction is amortized (gain#287), so between walks the buffer
+        knowingly holds records that are already dead.  What the contract
+        asks of this number is that it stay bounded across a scan, not that
+        it equal the live set on any given query.
+        """
+        return len(self.buffer)
+
     def get_line_iterator(
         self, chrom: str | None = None,
         pos_begin: int | None = None,

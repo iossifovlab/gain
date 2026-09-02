@@ -46,6 +46,7 @@ from gain.genomic_resources.genomic_position_table import (
 )
 from gain.genomic_resources.genomic_position_table.record import (
     PAYLOAD,
+    POS_BEGIN,
     Record,
 )
 from gain.genomic_resources.genomic_position_table.table import (
@@ -406,8 +407,6 @@ def test_buffer_keeps_a_non_monotonic_pos_end() -> None:
     ``pos_begin``, and a wide first record legitimately outlives a narrow last
     one.
     """
-    from gain.genomic_resources.genomic_position_table import LineBuffer
-
     buffer = LineBuffer()
     buffer.append(rec("1", 10, 100))
     buffer.append(rec("1", 20, 30))
@@ -426,8 +425,6 @@ def test_buffer_finds_a_record_hidden_behind_a_shorter_one() -> None:
     the first predecessor that fails to reach the position, so the record that
     *does* reach it was never found.
     """
-    from gain.genomic_resources.genomic_position_table import LineBuffer
-
     buffer = LineBuffer()
     buffer.append(rec("1", 10, 100, "wide"))
     buffer.append(rec("1", 20, 30, "narrow"))
@@ -534,6 +531,65 @@ def test_abandoned_queries_keep_the_buffer_bounded(build_tables: Any) -> None:
     assert len(positions) > LineBuffer.COMPACT_FLOOR, \
         "the scan is too short to tell a bounded buffer from a leaking one"
     assert len(tabix_table.buffer) <= LineBuffer.COMPACT_FLOOR
+
+
+def _buffered_begins(table: GenomicPositionTable) -> list[int]:
+    return [record[POS_BEGIN] for record in table.buffer.deque]
+
+
+def test_the_buffer_hit_path_prunes_when_abandoned(
+    build_tables: Any,
+) -> None:
+    """One abandoned query on the buffer-hit path, pruned.
+
+    There are TWO buffered paths, and a scan alternates between them -- so a
+    scan-shaped test cannot tell them apart: whichever path still prunes keeps
+    the buffer bounded on behalf of the one that does not.  (Measured: over a
+    400-query point scan the split is 199 buffer hits to 200 sequential seeks,
+    and removing either ``finally`` alone leaves every scan-shaped assertion
+    passing.)  So each path is pinned here by a single query, identified by
+    the stats counter only it increments.
+    """
+    tabix_table, _ = build_tables([(pos, pos) for pos in range(10, 61, 2)])
+
+    # Warm a window wide enough that the next query lands INSIDE it.
+    list(tabix_table.get_records_in_region(CHROM, 10, 20))
+    assert _buffered_begins(tabix_table) == [10, 12, 14, 16, 18, 20, 22]
+    assert tabix_table.buffer.contains(CHROM, 18)
+
+    records = tabix_table.get_records_in_region(CHROM, 18, 18)
+    assert next(records, None) is not None
+    records.close()
+
+    assert tabix_table.stats["yield from buffer and tabix"] == 1, \
+        "this query did not take the buffer-hit path; the test proves nothing"
+    assert _buffered_begins(tabix_table) == [18, 20, 22], \
+        "the records ending before the abandoned query were not evicted"
+
+
+def test_the_sequential_seek_path_prunes_when_abandoned(
+    build_tables: Any,
+) -> None:
+    """The same, for the path that reads forward to reach the query.
+
+    A query past the buffered window but within ``jump_threshold`` seeks
+    forward rather than re-fetching -- and everything it reads on the way is
+    buffered.  Abandoning it is how the whole run-up stayed behind.
+    """
+    tabix_table, _ = build_tables([(pos, pos) for pos in range(10, 61, 2)])
+
+    list(tabix_table.get_records_in_region(CHROM, 10, 12))
+    assert _buffered_begins(tabix_table) == [10, 12, 14]
+    assert not tabix_table.buffer.contains(CHROM, 30)
+
+    records = tabix_table.get_records_in_region(CHROM, 30, 30)
+    assert next(records, None) is not None
+    records.close()
+
+    assert tabix_table.stats["sequential seek forward"] == 1, \
+        "this query did not take the sequential-seek path; it proves nothing"
+    assert _buffered_begins(tabix_table) == [30, 32], \
+        "the records the seek read on the way were not evicted"
 
 
 @pytest.mark.parametrize("shape", SHAPES)
