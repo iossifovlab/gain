@@ -120,22 +120,6 @@ def test_build_counts_alleles_per_chromosome(
     } == {"chr1": 9, "chr2": 1}
 
 
-def test_rows_sharing_a_position_count_one_covered_position(
-    tmp_path: pathlib.Path,
-) -> None:
-    # chr1 carries three rows at position 10 -- two of them the same
-    # (chrom, pos, ref, alt) -- and one each at 20, 30, 40, 50, 60
-    # and 70.
-    resource = _mixed_allele_score(tmp_path)
-
-    stats = _built_statistics(tmp_path, resource)
-
-    assert {
-        chrom: counts.covered_positions
-        for chrom, counts in stats.by_chromosome().items()
-    } == {"chr1": 7, "chr2": 1}
-
-
 def test_build_totals_every_allele_class_globally(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -317,7 +301,7 @@ def test_a_row_spanning_several_chunks_is_counted_once(
 
     counts = AlleleStatistics.deserialize(
         whole.get_file_content(ALLELE_STATISTICS_FILE)).global_counts()
-    assert (counts.allele_count, counts.covered_positions) == (4, 3)
+    assert counts.allele_count == 4
     assert counts.substitution_matrix is not None
     assert sum(counts.substitution_matrix.values()) \
         == counts.class_counts["substitution"]
@@ -359,7 +343,6 @@ def test_a_table_with_no_key_columns_counts_every_row_as_other(
 
     counts = stats.global_counts()
     assert counts.allele_count == 3
-    assert counts.covered_positions == 2
     assert counts.class_counts["other"] == 3
     assert counts.substitution_matrix is not None
     assert sum(counts.substitution_matrix.values()) == 0
@@ -530,10 +513,11 @@ def test_info_page_renders_a_row_per_chromosome(
         _info_page(resource), "<h2>Alleles</h2>")
 
     # Whole rows: gain#988 adds a share to the classes table and the
-    # matrix only, and a stray fourth column here would leave an
-    # unanchored assertion on these rows passing.
+    # matrix only, and a stray extra column here would leave an
+    # unanchored assertion on these rows passing.  The covered-position
+    # column that sat between chromosome and alleles is gone (gain#1118).
     assert [[cell.text for cell in row] for row in table.rows] == [
-        ["chr1", "7", "9"], ["chr2", "1", "1"]]
+        ["chr1", "9"], ["chr2", "1"]]
 
 
 def test_info_page_renders_the_global_class_summary(
@@ -742,7 +726,7 @@ def test_info_page_over_a_matrixless_file_says_matrix_not_computed(
     page = _info_page(resource)
 
     assert [cell.text for cell in table_after(
-        page, "<h2>Alleles</h2>").rows[0]] == ["chr1", "7", "9"]
+        page, "<h2>Alleles</h2>").rows[0]] == ["chr1", "9"]
     assert [cell.text for cell in table_after(
         page, "<h3>Allele classes</h3>").rows[0][:2]] == ["substitution", "6"]
     # Bound to the subsection that must say it, not to the Alleles section
@@ -870,6 +854,77 @@ def test_the_alleles_section_is_absent_on_a_position_score(
     page = _info_page(resource)
 
     assert "Alleles" not in page
+
+
+def test_the_coverage_section_is_absent_on_an_allele_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The converse of the two tests around it, and the reason gain#1118
+    # could drop the count: an allele row collapses to a point, so the
+    # span union is never scanned for this kind
+    # (``_COVERAGE_SCAN_RESOURCE_TYPES`` excludes it) and the distinct
+    # count that stood in for it is gone.  Nothing can ever fill the
+    # section, so it does not exist -- the same rule the Alleles section
+    # follows on a position score.
+    resource = _mixed_allele_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    page = _info_page(resource)
+
+    assert "Coverage" not in page
+
+
+def test_an_unbuilt_position_score_still_offers_to_compute_coverage(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The other half of gain#1118's gating rule, and the reason it is
+    # keyed on the KIND rather than on the statistic being absent.
+    # Statistics are never built here, so the section has nothing to
+    # show -- but a rebuild WOULD fill it, and "not computed" is the
+    # wording that says so.  Gating on the payload instead would
+    # collapse *never applicable* and *not yet built* into one blank.
+    resource = (
+        a_position_score()
+        .with_score("score", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  score
+            chr1   5          9        0.1
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+    page = _info_page(resource)
+
+    assert "<h2>Coverage</h2>" in page
+    assert "<p>not computed</p>" in section_after(page, "<h2>Coverage</h2>")
+
+
+def test_the_coverage_section_survives_on_a_fragment_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A fragment score IS coverage-scanned -- it sits in
+    # ``_COVERAGE_SCAN_RESOURCE_TYPES`` beside position scores -- so
+    # emptying the block for allele scores must not empty it here.
+    resource = (
+        a_fragment_score()
+        .with_score("score", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  score
+            chr1   10         100      0.1
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    page = _info_page(resource)
+
+    assert "<h2>Coverage</h2>" in page
+    assert "<p>not computed</p>" not in section_after(
+        page, "<h2>Coverage</h2>")
 
 
 def test_the_alleles_section_is_absent_on_a_fragment_score(

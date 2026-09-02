@@ -1,5 +1,18 @@
 {% extends "genomic_score.jinja" %}
-{# An allele score's page IS the genomic-score page plus one section. #}
+{# An allele score's page IS the genomic-score page, plus one section and
+   minus another. #}
+
+{# An allele row collapses to the point it sits at, so there is no span
+   to union and the coverage scan deliberately skips this kind.  Nothing
+   would ever fill the section, so it renders no heading at all rather
+   than one permanently reading "not computed" (gain#1118).
+
+   This is the ONLY kind that empties it; the shared template carries
+   Coverage as the block's default so that position and fragment scores
+   -- and any kind added later that is genuinely scanned -- keep it
+   without having to opt back in. #}
+{% block coverage %}{% endblock %}
+
 {% block alleles %}
 <h2>Alleles</h2>
 {% set alleles = impl.get_allele_display() %}
@@ -9,7 +22,6 @@
     <thead>
         <tr>
             <th data-sort="text">Chromosome</th>
-            <th data-sort="number">Covered positions</th>
             <th data-sort="number">Alleles</th>
         </tr>
     </thead>
@@ -17,7 +29,6 @@
     {%- for row in alleles.rows -%}
         <tr>
             <td data-sort-value="{{ natural_chromosome_key(row.chrom) }}">{{ row.chrom }}</td>
-            <td data-sort-value="{{ row.covered_positions }}">{{ row.covered_positions }}</td>
             <td data-sort-value="{{ row.allele_count }}">{{ row.allele_count }}</td>
         </tr>
     {%- endfor %}
@@ -25,7 +36,6 @@
     <tfoot>
     <tr>
         <td>all chromosomes</td>
-        <td>{{ alleles.covered_positions }}</td>
         <td>{{ alleles.allele_count }}</td>
     </tr>
     </tfoot>

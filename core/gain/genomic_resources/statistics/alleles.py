@@ -2,17 +2,19 @@
 
 Vocabulary per ``CONTEXT.md`` and ADR 0020.  Where the coverage statistic
 answers *where* a score holds data, this one answers *what* its rows are:
-how many **alleles** a resource carries, over how many **covered
-positions**, how those alleles distribute over the five **allele
-classes**, and what the classes with structure look like inside -- the
-4x4 ref->alt matrix for substitutions, length histograms for the two
-anchored classes, and the **complex grid** for the rest.
+how many **alleles** a resource carries, how those alleles distribute
+over the five **allele classes**, and what the classes with structure
+look like inside -- the 4x4 ref->alt matrix for substitutions, the exact
+length maps for the two anchored classes, and the **complex grid** for
+the rest.
 
-An allele row collapses to the point it sits at, so its coverage is a
-DISTINCT-POSITION count rather than the span union
-:mod:`gain.genomic_resources.statistics.coverage` computes -- which is
-why allele scores are deliberately absent from that statistic's kinds and
-counted here instead.
+An allele score counts no **covered positions** at all (gain#1118).  Its
+rows collapse to points, so the span union
+:mod:`gain.genomic_resources.statistics.coverage` computes never applied
+to the kind -- which is why it is deliberately absent from that
+statistic's kinds -- and the DISTINCT-position count this module used to
+keep in its place answered a question the page never asked.  What an
+allele score's rows ARE is the whole of what this statistic says.
 
 Raw counts only.  Anything needing a denominator is computed at render
 time, as the coverage statistic's fractions are.
@@ -220,7 +222,6 @@ class AlleleCounts(NamedTuple):
     """
 
     allele_count: int
-    covered_positions: int
     class_counts: dict[str, int]
     substitution_matrix: dict[tuple[str, str], int] | None
     insertion_lengths: list[int] | None = None
@@ -315,7 +316,6 @@ def _total(counts: Iterable[AlleleCounts]) -> AlleleCounts:
     """
     class_counts = dict.fromkeys(CLASS_NAMES, 0)
     allele_count = 0
-    covered = 0
     matrix: dict[tuple[str, str], int] | None = dict.fromkeys(
         MATRIX_CELLS, 0)
     insertions: list[int] | None = [0] * LENGTH_HISTOGRAM_BIN_COUNT
@@ -323,7 +323,6 @@ def _total(counts: Iterable[AlleleCounts]) -> AlleleCounts:
     grid: dict[tuple[int, int], int] | None = {}
     for entry in counts:
         allele_count += entry.allele_count
-        covered += entry.covered_positions
         for name, count in entry.class_counts.items():
             class_counts[name] = class_counts.get(name, 0) + count
         matrix = _merged_matrix(matrix, entry.substitution_matrix)
@@ -331,7 +330,7 @@ def _total(counts: Iterable[AlleleCounts]) -> AlleleCounts:
         deletions = _merged_bins(deletions, entry.deletion_lengths)
         grid = _merged_grid(grid, entry.complex_grid)
     return AlleleCounts(
-        allele_count, covered, class_counts, matrix,
+        allele_count, class_counts, matrix,
         insertions, deletions, grid)
 
 
@@ -345,7 +344,6 @@ def _serialized(counts: AlleleCounts) -> dict[str, Any]:
     """
     entry: dict[str, Any] = {
         "allele_count": counts.allele_count,
-        "covered_positions": counts.covered_positions,
         "class_counts": counts.class_counts,
     }
     if counts.substitution_matrix is not None:
@@ -432,8 +430,7 @@ class RegionAlleles:
     """The allele content of one scanned region, accumulated row by row.
 
     Counts each ROW as an allele -- duplicate ``(chrom, pos, ref, alt)``
-    rows are legitimate per-transcript data and each is one allele --
-    and each POSITION once however many rows sit on it.
+    rows are legitimate per-transcript data and each is one allele.
 
     A region owns the rows whose point falls inside it, which is what
     makes the statistic chunk-invariant: the regions of a contig
@@ -444,13 +441,6 @@ class RegionAlleles:
     :func:`~gain.genomic_resources.genomic_scores.records.clip_span` asked about
     the point, and gain#636's edge is answered there rather than again
     here.
-
-    Distinct positions are counted against the LAST position seen
-    rather than a set of every position: the scan's door refuses a
-    record beginning before the one before it, so the positions arrive
-    non-decreasing and a change of position is a new one.  A set would
-    be exact for the same rows at the cost of holding a whole
-    chromosome's positions in memory.
     """
 
     def __init__(
@@ -463,7 +453,6 @@ class RegionAlleles:
         self.start = start
         self.end = end
         self.allele_count = 0
-        self.covered_positions = 0
         self._class_counts: dict[str, int] = dict.fromkeys(CLASS_NAMES, 0)
         # ``None`` only on a region restored from a file that predates
         # the matrix -- a scanned region always carries one, however
@@ -477,14 +466,12 @@ class RegionAlleles:
         self._deletion_lengths: list[int] | None = \
             [0] * LENGTH_HISTOGRAM_BIN_COUNT
         self._complex_grid: dict[tuple[int, int], int] | None = {}
-        self._last_pos: int | None = None
 
     @classmethod
     def frozen(
         cls,
         chrom: str,
         allele_count: int,
-        covered_positions: int,
         class_counts: dict[str, int],
         *,
         substitution_matrix: dict[tuple[str, str], int] | None = None,
@@ -499,7 +486,6 @@ class RegionAlleles:
         """
         region = cls(chrom, None, None)
         region.allele_count = allele_count
-        region.covered_positions = covered_positions
         region._class_counts = {
             name: class_counts.get(name, 0) for name in CLASS_NAMES}
         region._substitution_matrix = None \
@@ -515,7 +501,6 @@ class RegionAlleles:
         """This region's counts, class map keyed by class name."""
         return AlleleCounts(
             self.allele_count,
-            self.covered_positions,
             dict(self._class_counts),
             None if self._substitution_matrix is None
             else dict(self._substitution_matrix),
@@ -529,11 +514,6 @@ class RegionAlleles:
     def _owns(self, pos: int) -> bool:
         """Whether this region owns the row sitting at ``pos``."""
         return clip_span(pos, pos, self.start, self.end) is not None
-
-    def _count_position(self, pos: int) -> None:
-        if pos != self._last_pos:
-            self.covered_positions += 1
-            self._last_pos = pos
 
     def _count_pair(
         self, ref: str | None, alt: str | None, multiplicity: int,
@@ -582,7 +562,6 @@ class RegionAlleles:
         if not self._owns(pos):
             return
         self.allele_count += 1
-        self._count_position(pos)
         self._count_pair(ref, alt, 1)
 
     def add_record(self, record: Record) -> None:
@@ -635,14 +614,6 @@ class RegionAlleles:
             alts = alternative[keep]
 
         self.allele_count += int(positions.shape[0])
-        # The positions arrive non-decreasing (the door's rule), so the
-        # distinct count is the number of CHANGES within the batch, plus
-        # the batch's first position unless the last batch ended on it.
-        self._count_position(int(positions[0]))
-        self.covered_positions += int(
-            np.count_nonzero(positions[1:] != positions[:-1]))
-        self._last_pos = int(positions[-1])
-
         for pair, multiplicity in Counter(
                 zip(refs.tolist(), alts.tolist(), strict=True)).items():
             self._count_pair(*pair, multiplicity)
@@ -651,12 +622,11 @@ class RegionAlleles:
         """Fold the adjacent region to the right into this one.
 
         It is the adjacency -- asserted by ``refuse_unmergeable`` -- that
-        lets the counts simply add: a position belongs to exactly one of
-        two adjacent regions, so none is counted twice.
+        lets the counts simply add: a row belongs to exactly one of two
+        adjacent regions, so none is counted twice.
         """
         refuse_unmergeable(_MERGE_FAILURE, self, other)
         self.allele_count += other.allele_count
-        self.covered_positions += other.covered_positions
         for name in CLASS_NAMES:
             self._class_counts[name] += \
                 other._class_counts[name]
@@ -668,8 +638,6 @@ class RegionAlleles:
             self._deletion_lengths, other._deletion_lengths)
         self._complex_grid = _merged_grid(
             self._complex_grid, other._complex_grid)
-        if other._last_pos is not None:
-            self._last_pos = other._last_pos
         self.end = other.end
 
 
@@ -686,9 +654,8 @@ class AlleleStatistics(Statistic):
     def __init__(self) -> None:
         super().__init__(
             "alleles",
-            "Allele counts, covered positions, class totals, the "
-            "substitution matrix, the indel length histograms and the "
-            "complex grid")
+            "Allele counts, class totals, the substitution matrix, the "
+            "indel length maps and the complex grid")
         self._regions: dict[str, RegionAlleles] = {}
 
     def fold_region(self, region: RegionAlleles) -> None:
@@ -758,17 +725,20 @@ class AlleleStatistics(Statistic):
     @staticmethod
     def deserialize(content: str) -> AlleleStatistics:
         # Only the per-chromosome counts round-trip; the global entry is
-        # a roll-up recomputed from them by ``_total``, and the
-        # last-position bookkeeping is scan state and is never written.
-        # Unknown keys are ignored rather than rejected, so a file
-        # carrying fields a later slice added still reads.
+        # a roll-up recomputed from them by ``_total``.
+        #
+        # Named keys are read one by one and the entry dict is never
+        # iterated, so unknown keys are ignored rather than rejected: a
+        # file carrying fields a later slice added still reads, and so
+        # does one written before gain#1118 dropped the allele
+        # ``covered_positions`` count -- that key is simply no longer
+        # anything this looks for.
         data = json.loads(content)
         result = AlleleStatistics()
         for chrom, counts in data["chromosomes"].items():
             result.fold_region(RegionAlleles.frozen(
                 chrom,
                 int(counts["allele_count"]),
-                int(counts["covered_positions"]),
                 {
                     name: int(count)
                     for name, count in counts["class_counts"].items()
@@ -930,7 +900,6 @@ class AlleleChromosomeRow(NamedTuple):
     """
 
     chrom: str
-    covered_positions: int
     allele_count: int
 
 
@@ -965,7 +934,7 @@ class AlleleSectionDisplay(NamedTuple):
     """
 
     @property
-    def covered_positions(self) -> int:
+    def allele_count(self) -> int:
         """The table's total, summed off the rows it shows.
 
         Derived rather than stored, as :attr:`CoverageDisplay.
@@ -973,11 +942,6 @@ class AlleleSectionDisplay(NamedTuple):
         are: the counts have one source, so a total cannot drift from
         the rows under it.
         """
-        return sum(row.covered_positions for row in self.rows)
-
-    @property
-    def allele_count(self) -> int:
-        """The allele total, summed off the rows, as above."""
         return sum(row.allele_count for row in self.rows)
 
 
@@ -1001,8 +965,7 @@ def build_allele_section_display(
     global_counts = _total(chromosomes.values())
     return AlleleSectionDisplay(
         [
-            AlleleChromosomeRow(
-                chrom, counts.covered_positions, counts.allele_count)
+            AlleleChromosomeRow(chrom, counts.allele_count)
             for chrom, counts in chromosomes.items()
         ],
         dict(global_counts.class_counts),

@@ -34,15 +34,18 @@ def test_a_row_outside_the_region_is_not_counted() -> None:
     assert region.counts().allele_count == 1
 
 
-def test_rows_at_one_position_count_one_covered_position() -> None:
+def test_every_row_at_one_position_is_its_own_allele() -> None:
+    # Three rows over two positions are three alleles.  The count that
+    # used to make the second position visible here -- the distinct
+    # POSITION count -- is gone (gain#1118), and what remains is the
+    # row-per-allele rule that never depended on it.
     region = _region()
 
     region.add_allele(10, "A", "G")
     region.add_allele(10, "A", "C")
     region.add_allele(11, "A", "G")
 
-    counts = region.counts()
-    assert (counts.allele_count, counts.covered_positions) == (3, 2)
+    assert region.counts().allele_count == 3
 
 
 def test_substitution_rows_land_in_their_matrix_cells() -> None:
@@ -99,7 +102,7 @@ def test_merge_adds_the_counts_of_the_adjacent_region() -> None:
     left.merge(right)
 
     counts = left.counts()
-    assert (counts.allele_count, counts.covered_positions) == (2, 2)
+    assert counts.allele_count == 2
     assert counts.class_counts["substitution"] == 1
     assert counts.class_counts["insertion"] == 1
 
@@ -149,9 +152,32 @@ def test_serialized_counts_round_trip() -> None:
     assert restored.global_counts() == statistics.global_counts()
 
 
+def test_an_allele_score_writes_no_covered_position_count() -> None:
+    # An allele row is the point it sits at, and the DISTINCT-position
+    # count was the only "coverage" this kind ever computed -- the
+    # span-union statistic deliberately never scans it.  gain#1118 drops
+    # the count outright, so the file must stop carrying one: three rows
+    # over two positions used to write ``covered_positions: 2``.
+    statistics = AlleleStatistics()
+    region = _region()
+    region.add_allele(10, "A", "G")
+    region.add_allele(10, "A", "C")
+    region.add_allele(11, "A", "G")
+    statistics.fold_region(region)
+
+    assert "covered_positions" not in statistics.serialize()
+
+
 def test_deserialize_ignores_keys_it_does_not_know() -> None:
     # Forward compatibility, as the coverage statistic has it: a file
     # carrying fields a later slice added still reads here.
+    #
+    # ``covered_positions`` is the BACKWARD half of the same rule, and
+    # the reason this test carries it: every allele statistic written
+    # before gain#1118 has the key, none written after it does, and the
+    # reader must not care either way.  Nothing is rebuilt for this --
+    # the 38 published allele scores keep the key until their next
+    # forced rebuild, and go on reading correctly with it.
     content = json.dumps({
         "format_version": 1,
         "chromosomes": {
@@ -169,9 +195,12 @@ def test_deserialize_ignores_keys_it_does_not_know() -> None:
     statistics = AlleleStatistics.deserialize(content)
 
     counts = statistics.global_counts()
-    assert (counts.allele_count, counts.covered_positions) == (2, 1)
+    assert counts.allele_count == 2
     assert counts.class_counts["substitution"] == 2
     assert counts.class_counts["other"] == 0
+    # Read and dropped, not read and kept: the next write of this
+    # resource carries no such key.
+    assert "covered_positions" not in statistics.serialize()
 
 
 def test_a_file_without_the_matrix_reads_as_matrix_unknown() -> None:
@@ -202,7 +231,7 @@ def test_the_global_matrix_is_unknown_when_any_chromosome_lacks_it() -> None:
     scanned.add_allele(10, "A", "G")
     statistics.fold_region(scanned)
     statistics.fold_region(RegionAlleles.frozen(
-        "chr2", 1, 1, {"substitution": 1}))
+        "chr2", 1, {"substitution": 1}))
 
     counts = statistics.global_counts()
 
@@ -220,7 +249,7 @@ def _complex_display(grid: dict[tuple[int, int], int]) -> AlleleDisplay:
     """A display carrying exactly this complex grid and nothing else."""
     alleles = sum(grid.values())
     display = _display_of(RegionAlleles.frozen(
-        "chr1", alleles, alleles, {"complex": alleles}, complex_grid=grid))
+        "chr1", alleles, {"complex": alleles}, complex_grid=grid))
     assert display is not None
     return display
 
@@ -278,7 +307,7 @@ def test_a_class_below_the_display_resolution_is_not_a_zero() -> None:
     # decimals round to 0.00 -- while ``other`` is genuinely empty.  A
     # class that exists and one that does not must not read the same.
     section = _section_of(RegionAlleles.frozen(
-        "chr1", 20001, 20001,
+        "chr1", 20001,
         {"substitution": 20000, "complex": 1, "other": 0}))
 
     assert section.class_percentages is not None
@@ -293,7 +322,7 @@ def test_a_class_just_short_of_the_whole_is_not_all_of_them() -> None:
     # same table shows at ``<0.01%``, that is one column claiming the
     # resource is entirely substitutions while showing that it is not.
     section = _section_of(RegionAlleles.frozen(
-        "chr1", 20001, 20001,
+        "chr1", 20001,
         {"substitution": 20000, "complex": 1, "other": 0}))
 
     assert section.class_percentages is not None
@@ -305,7 +334,7 @@ def test_a_class_that_is_every_allele_reads_as_a_flat_hundred() -> None:
     # of them and the column says so exactly; only a share that falls
     # SHORT of the total and rounds up is written ``>99.99%``.
     section = _section_of(RegionAlleles.frozen(
-        "chr1", 20000, 20000, {"substitution": 20000}))
+        "chr1", 20000, {"substitution": 20000}))
 
     assert section.class_percentages is not None
     assert section.class_percentages["substitution"] == "100.00%"
@@ -315,7 +344,7 @@ def test_no_alleles_is_no_percentage_rather_than_zero_percent() -> None:
     # No denominator resolves, so the share of every class is unknown
     # rather than zero -- the coverage display's answer when it cannot
     # resolve a chromosome length.
-    section = _section_of(RegionAlleles.frozen("chr1", 0, 0, {}))
+    section = _section_of(RegionAlleles.frozen("chr1", 0, {}))
 
     assert section.class_percentages is None
 
@@ -328,7 +357,7 @@ def test_the_shares_resolve_without_any_optional_group() -> None:
     # Both halves are asserted together: the shares are only
     # interesting here BECAUSE the detail is gone.
     section = _section_of(
-        RegionAlleles.frozen("chr1", 4, 4, {"substitution": 4}))
+        RegionAlleles.frozen("chr1", 4, {"substitution": 4}))
 
     assert section.detail is None
     assert section.class_percentages == {
@@ -353,24 +382,22 @@ def test_each_section_row_carries_its_own_chromosome_in_natural_order(
     # reading it off a mapping key; ``chr10`` sorts after ``chr2``, the
     # digit-run ordering gain#983 established.
     section = _section_of(
-        RegionAlleles.frozen("chr10", 3, 30, {"substitution": 3}),
-        RegionAlleles.frozen("chr2", 2, 20, {"substitution": 2}),
-        RegionAlleles.frozen("chr1", 1, 10, {"substitution": 1}),
+        RegionAlleles.frozen("chr10", 3, {"substitution": 3}),
+        RegionAlleles.frozen("chr2", 2, {"substitution": 2}),
+        RegionAlleles.frozen("chr1", 1, {"substitution": 1}),
     )
 
     assert [
-        (row.chrom, row.covered_positions, row.allele_count)
-        for row in section.rows
-    ] == [("chr1", 10, 1), ("chr2", 20, 2), ("chr10", 30, 3)]
+        (row.chrom, row.allele_count) for row in section.rows
+    ] == [("chr1", 1), ("chr2", 2), ("chr10", 3)]
 
 
 def test_the_section_totals_are_the_roll_up_over_every_chromosome() -> None:
     section = _section_of(
-        RegionAlleles.frozen("chr1", 1, 10, {"substitution": 1}),
-        RegionAlleles.frozen("chr2", 2, 20, {"insertion": 2}),
+        RegionAlleles.frozen("chr1", 1, {"substitution": 1}),
+        RegionAlleles.frozen("chr2", 2, {"insertion": 2}),
     )
 
-    assert section.covered_positions == 30
     assert section.allele_count == 3
     assert section.class_counts["substitution"] == 1
     assert section.class_counts["insertion"] == 2
@@ -381,7 +408,7 @@ def test_a_matrixless_file_yields_no_display() -> None:
     # collapses a file that predates its field; a genuinely empty
     # matrix still yields a display of zeros.
     display = _display_of(
-        RegionAlleles.frozen("chr1", 1, 1, {"substitution": 1}))
+        RegionAlleles.frozen("chr1", 1, {"substitution": 1}))
 
     assert display is None
 
@@ -404,7 +431,7 @@ def test_a_pre_indel_file_displays_its_matrix_and_nothing_else() -> None:
     # independently optional, so its matrix must still render while the
     # three new sections say "not computed".
     display = _display_of(RegionAlleles.frozen(
-        "chr1", 1, 1, {"substitution": 1},
+        "chr1", 1, {"substitution": 1},
         substitution_matrix={("A", "G"): 1}))
 
     assert display is not None
@@ -500,7 +527,7 @@ def test_both_ends_of_the_rule_reach_the_matrix_cells() -> None:
     # 100.01% -- and the ceiling makes that systematic rather than new.
     # Still not something to apportion away.
     display = _display_of(RegionAlleles.frozen(
-        "chr1", 20001, 20001, {"substitution": 20001},
+        "chr1", 20001, {"substitution": 20001},
         substitution_matrix={("A", "G"): 20000, ("A", "C"): 1}))
 
     assert display is not None
@@ -531,9 +558,9 @@ def test_merging_two_statistics_of_one_chromosome_needs_adjacency() -> None:
     # Two DESERIALIZED statistics carry no extents, so their regions
     # refuse to merge -- the same guard the coverage statistic has.
     left = AlleleStatistics()
-    left.fold_region(RegionAlleles.frozen("chr1", 1, 1, {"other": 1}))
+    left.fold_region(RegionAlleles.frozen("chr1", 1, {"other": 1}))
     right = AlleleStatistics()
-    right.fold_region(RegionAlleles.frozen("chr1", 1, 1, {"other": 1}))
+    right.fold_region(RegionAlleles.frozen("chr1", 1, {"other": 1}))
 
     with pytest.raises(ValueError, match="adjacent-and-in-order"):
         left.merge(right)
@@ -581,7 +608,7 @@ def test_an_unknown_histogram_makes_the_whole_roll_up_unknown() -> None:
     scanned = RegionAlleles("chr1", 1, 100)
     scanned.add_allele(10, "A", "AT")
     statistics.fold_region(scanned)
-    statistics.fold_region(RegionAlleles.frozen("chr2", 1, 1, {}))
+    statistics.fold_region(RegionAlleles.frozen("chr2", 1, {}))
 
     assert statistics.global_counts().insertion_lengths is None
 
@@ -711,7 +738,7 @@ def test_a_display_of_the_new_groups_survives_a_missing_matrix() -> None:
     # is observable only the other way round from the pre-indel file:
     # groups present, matrix absent.
     display = _display_of(RegionAlleles.frozen(
-        "chr1", 1, 1, {"complex": 1}, complex_grid={(2, 3): 1}))
+        "chr1", 1, {"complex": 1}, complex_grid={(2, 3): 1}))
 
     assert display is not None
     assert display.substitution_matrix is None

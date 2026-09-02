@@ -97,6 +97,20 @@
 </table>
 </div>
 
+{# FILLED by default, unlike the two blocks below -- the asymmetry is the
+   point.  Coverage applies to every kind this template serves except
+   one: position and fragment scores are both span-union scanned
+   (``_COVERAGE_SCAN_RESOURCE_TYPES``), and an allele score is not, so
+   the exception overrides this block empty rather than every other kind
+   having to fill it (gain#1118).
+
+   Keyed on the KIND, which is what choosing a template already is, and
+   never on ``get_coverage_display()`` returning None: a position score
+   whose statistics are not built yet must keep reading "not computed",
+   where the message is true and a rebuild acts on it.  Gating on the
+   payload would collapse *never applicable* and *not yet built* into
+   one silent blank. #}
+{% block coverage %}
 <h2>Coverage</h2>
 {% set coverage = impl.get_coverage_display() %}
 {% if coverage != None %}
@@ -199,6 +213,7 @@
 {% else %}
 <p>not computed</p>
 {% endif %}
+{% endblock %}
 
 {# Empty by default, for the reason the fragments block below is:
    a kind whose rows carry no ref/alt pair can never fill this
