@@ -104,16 +104,16 @@
    MADE of: both counts are computed already and were rendered nowhere,
    and 3/2 reads identically to 3,000,000/2,000,000 without them. -#}
 <div class="key-figure">
-    <div class="key-figure-label">ts/tv</div>
+    <div class="key-figure-label text-muted">ts/tv</div>
     {%- if allele_display.ts_tv is not none %}
     <div class="key-figure-value">{{ "%.2f"|format(allele_display.ts_tv) }}</div>
-    <div class="key-figure-detail">{{ "{:,}".format(allele_display.transitions) }} transitions
+    <div class="key-figure-detail text-muted">{{ "{:,}".format(allele_display.transitions) }} transitions
         / {{ "{:,}".format(allele_display.transversions) }} transversions</div>
     {%- else %}
     {#- No transversions to divide by.  The counts still say why, and
        the transition count is the interesting half of that. -#}
     <div class="key-figure-value">not applicable</div>
-    <div class="key-figure-detail">{{ "{:,}".format(allele_display.transitions) }} transitions
+    <div class="key-figure-detail text-muted">{{ "{:,}".format(allele_display.transitions) }} transitions
         / no transversions</div>
     {%- endif %}
 </div>
@@ -172,7 +172,7 @@
 <div class="figure-pair">
 {% if allele_display.insertion_lengths is none %}
 <p>insertion lengths not computed</p>
-{% elif allele_display.insertion_lengths.alleles %}
+{% elif allele_display.insertion_lengths.has_counts_to_plot %}
 <img src="{{ impl.get_allele_insertion_lengths_image_filename() }}"
      alt="insertion length histogram" class="figure-thumbnail"
      data-modal-trigger="modal-allele-insertion-lengths">
@@ -181,7 +181,7 @@
 {% endif %}
 {% if allele_display.deletion_lengths is none %}
 <p>deletion lengths not computed</p>
-{% elif allele_display.deletion_lengths.alleles %}
+{% elif allele_display.deletion_lengths.has_counts_to_plot %}
 <img src="{{ impl.get_allele_deletion_lengths_image_filename() }}"
      alt="deletion length histogram" class="figure-thumbnail"
      data-modal-trigger="modal-allele-deletion-lengths">
@@ -193,7 +193,7 @@
    trigger whose modal was never rendered opens nothing, so these are
    gated on exactly what the thumbnails are. -#}
 {% if allele_display.insertion_lengths is not none
-   and allele_display.insertion_lengths.alleles %}
+   and allele_display.insertion_lengths.has_counts_to_plot %}
 <div id="modal-allele-insertion-lengths" class="modal">
     <div class="modal-content">
         <span title="insertion lengths" class="close">&times;</span>
@@ -204,7 +204,7 @@
 </div>
 {% endif %}
 {% if allele_display.deletion_lengths is not none
-   and allele_display.deletion_lengths.alleles %}
+   and allele_display.deletion_lengths.has_counts_to_plot %}
 <div id="modal-allele-deletion-lengths" class="modal">
     <div class="modal-content">
         <span title="deletion lengths" class="close">&times;</span>

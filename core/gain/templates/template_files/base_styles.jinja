@@ -87,6 +87,13 @@
 
       .histogram-thumbnail {
         max-width: 200px;
+      }
+
+      /* What makes an image clickable is the trigger attribute, not the
+         class that sizes it, so the cursor follows the attribute.  Each
+         thumbnail class then says only how big its image is, and the
+         next kind of trigger gets the pointer for free. */
+      [data-modal-trigger] {
         cursor: pointer;
       }
 
@@ -122,7 +129,6 @@
         flex: 1 1 calc(50% - 16px);
         min-width: 0;
         height: auto;
-        cursor: pointer;
       }
 
       /* One number worth reading on its own, with the quantities it
@@ -138,11 +144,14 @@
         margin-bottom: 16px;
       }
 
+      /* The label and the detail line take their grey from
+         `.text-muted` in the markup rather than restating it here --
+         the same muted grey the matrix cells' shares already use, in
+         one place, so a palette change is one line. */
       .key-figure-label {
         font-size: 0.85em;
         text-transform: uppercase;
         letter-spacing: 0.05em;
-        color: #919191;
       }
 
       .key-figure-value {
@@ -153,7 +162,6 @@
 
       .key-figure-detail {
         font-size: 0.9em;
-        color: #919191;
       }
 
       .text-muted {

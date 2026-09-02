@@ -613,10 +613,10 @@ class RegionAlleles:
 
         The same rule :meth:`add_allele` applies row by row.  Ownership
         is vectorized outright; the classification cannot be -- a class
-        is a property of one ref/alt
-        PAIR, and an array statement of it would be a second spelling of
-        :func:`classify_allele` -- so instead each DISTINCT pair in the
-        batch is classified once and its multiplicity added.  Same
+        is a property of one ref/alt PAIR, and an array statement of it
+        would be a second spelling of :func:`classify_allele` -- so
+        instead each DISTINCT pair in the batch is classified once and
+        its multiplicity added.  Same
         function, same answer, called once per pair rather than once per
         row: a real allele score is overwhelmingly substitutions, so a
         100,000-row batch usually holds a handful of distinct pairs, and
@@ -1056,11 +1056,15 @@ def _class_shares(counts: AlleleCounts) -> dict[str, ClassShare] | None:
     percentages = percentages_over(counts.class_counts, counts.allele_count)
     if percentages is None:
         return None
+    # Indexed, not ``.get(name, 0)``: ``percentages`` is keyed off the
+    # same map on the line above, so a class missing from it would
+    # already have raised there.  Guarding one of the two reads and not
+    # the other only hides which line the KeyError came from.
     return {
         name: ClassShare(
-            counts.class_counts.get(name, 0),
+            counts.class_counts[name],
             percentages[name],
-            counts.class_counts.get(name, 0) / counts.allele_count)
+            counts.class_counts[name] / counts.allele_count)
         for name in CLASS_NAMES
     }
 
@@ -1313,7 +1317,7 @@ def save_allele_statistics(
         ("deletion", ALLELE_DELETION_LENGTHS_IMAGE_FILE,
          counts.deletion_lengths),
     ):
-        if lengths is None or not lengths.alleles:
+        if lengths is None or not lengths.has_counts_to_plot:
             continue
         with resource.open_raw_file(image, mode="wb") as imagefile:
             plot_length_histogram(

@@ -10,10 +10,13 @@ template.  So one page could read ``100.00%`` in Coverage and
 ``>99.99%`` in Alleles of the identical shape.
 
 The rule is deliberately SCALAR -- one (count, total) pair to one
-string.  What varies between the two callers is the contract around a
-MISSING denominator, and that is theirs to keep: Alleles drops the
-whole column when its one total is zero, while Coverage resolves a
-denominator per row and degrades only that row.
+string.  What varies between the callers is the contract around a
+MISSING denominator, and that is theirs to keep.  Coverage resolves a
+denominator per row and degrades only that row; so, since gain#1118,
+do the Alleles table's per-class share columns, whose denominator is
+each chromosome's own allele count.  The whole-map answer -- no total,
+no column at all -- is still :func:`percentages_over`'s, and still what
+the substitution matrix and the complex table ask.
 
 The REFERENCE GENOME page's nucleotide distributions are a third table
 of this shape and do not come through here yet: they are stored already
