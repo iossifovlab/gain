@@ -426,6 +426,18 @@ class PositionScore(GenomicScore):
         it.  Building the accumulators is the READ's business --
         :meth:`_resolve_aggregation_queries` adds them, per call, which is
         what keeps a read thread-safe and an annotator stateless.
+
+        It lives on this kind rather than on
+        :class:`~.base.GenomicScore` because of its middle step:
+        ``none_value_replacement`` is a field only a
+        ``PositionScoreAggregationQuery`` carries, a position score being
+        the only kind with an uncovered position to speak for.  Should a
+        fragment or an allele score come to want a resolver of its own
+        (gain#1124, gain#1132), the ``score_def_for`` /
+        ``resolve_aggregator_name`` pair is the part that generalises --
+        both already live in :mod:`.aggregation`, kind-neutral, for that
+        reason -- and the replacement validation is the part that does
+        not.
         """
         resolved = []
         for query in queries:
