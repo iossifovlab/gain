@@ -691,6 +691,18 @@ in the fragment score resource (for example, class, frequency, dataset label). I
 
 ``fragment_filter`` expressions are written in the same language as ``allele_filter`` above — the same operators, the same literals, the same treatment of missing values and of names the resource does not define.
 
+Score attributes (all attributes other than ``count``) can overlap multiple fragments per
+annotatable. Each score attribute carries a resource-defined aggregator default and supports
+override via ``aggregator``:
+
+.. code:: yaml
+
+    - fragment_score_annotator:
+        resource_id: <resource id>
+        attributes:
+        - source: attribute.<score attribute id>
+          aggregator: <aggregator>
+
 Requiring a substantial overlap
 *******************************
 
@@ -724,24 +736,14 @@ Both are optional and independent. Supplying both requires *both* to hold. Omitt
 them is not the same as setting them to ``0.0``: omitted means no threshold is applied
 at all, while ``0.0`` is a threshold every fragment a region query answers happens to
 meet. A value outside ``[0, 1]``, or one that is not a number, is refused when the
-pipeline is loaded.
+pipeline is loaded. Quoting is safe: ``min_region_overlap_fraction: "0.5"`` means the
+same threshold as ``0.5``, which is what lets the same value be typed into the
+annotation editor's form.
 
 These parameters **select** fragments; they do not reshape them. A fragment that passes
 is still reported at its own full extent, and the ``count`` attribute counts the
 fragments that were kept — so raising either threshold lowers ``count`` as well as
 changing the aggregated attribute values.
-
-Score attributes (all attributes other than ``count``) can overlap multiple fragments per
-annotatable. Each score attribute carries a resource-defined aggregator default and supports
-override via ``aggregator``:
-
-.. code:: yaml
-
-    - fragment_score_annotator:
-        resource_id: <resource id>
-        attributes:
-        - source: attribute.<score attribute id>
-          aggregator: <aggregator>
 
 gene_set_annotator
 ^^^^^^^^^^^^^^^^^^^^^

@@ -277,7 +277,9 @@ MINIMAL_FRAGMENT_PIPELINE = textwrap.dedent("""
 
 
 @pytest.mark.django_db
-def test_the_template_offers_every_parameter_the_annotator_reads() -> None:
+def test_the_template_offers_every_parameter_the_annotator_reads(
+    client: APIClient,
+) -> None:
     """The two declarations of this annotator's vocabulary agree.
 
     A gain annotator parameter is declared TWICE: once by the constructor
@@ -290,10 +292,18 @@ def test_the_template_offers_every_parameter_the_annotator_reads() -> None:
     Nothing else here catches that.  The other tests assert that SPECIFIC
     keys are present, and the round-trip one compares the template against
     ITSELF, so a key missing from both the template and every assertion
-    leaves this file green.  This compares the two SETS, which makes the
-    drift impossible rather than caught once.
+    leaves this file green.  This compares the two SETS instead, so a
+    parameter added to the annotator and forgotten here is caught without
+    anyone having to remember to assert it.
+
+    What it does NOT catch: `get_used_keys` records the keys actually
+    read, and this builds a MINIMAL pipeline, so a parameter read only
+    when some sibling key is present would be invisible to it.  Every read
+    in this annotator is unconditional today -- deliberately, since
+    `info.parameters` refuses a key nobody read -- which is what makes the
+    comparison total.  A future conditional read would quietly narrow it.
     """
-    template = _config_template(APIClient(), "fragment_score_annotator")
+    template = _config_template(client, "fragment_score_annotator")
     offered = set(template) - {"annotator_type", "documentation_url"}
 
     grr = build_inmemory_test_repository(FRAGMENT_GRR_CONTENT)

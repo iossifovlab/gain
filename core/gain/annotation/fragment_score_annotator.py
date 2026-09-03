@@ -48,6 +48,21 @@ LEGACY_ANNOTATOR_NAMES = {
 }
 
 
+def _not_a_number(
+    info: AnnotatorInfo, parameter: str, value: object,
+) -> AnnotationConfigurationError:
+    """The refusal for a fraction that is not a number, in one place.
+
+    Three readings reach it -- a bool, a string that will not parse, and
+    anything else -- and they say the same thing, so the wording lives
+    here rather than in three copies of it.
+    """
+    return AnnotationConfigurationError(
+        f"{info.type} configures {parameter}: {value!r}, which is not a "
+        f"number. An overlap fraction is a share of a length, written "
+        f"as a number between 0 and 1")
+
+
 def _read_overlap_fraction(
     info: AnnotatorInfo, parameter: str,
 ) -> float | None:
@@ -70,10 +85,7 @@ def _read_overlap_fraction(
     # `min_region_overlap_fraction: true` would be admitted as 1.0 -- a
     # threshold the user never asked for, silently applied.
     if isinstance(value, bool):
-        raise AnnotationConfigurationError(
-            f"{info.type} configures {parameter}: {value!r}, which is not a "
-            f"number. An overlap fraction is a share of a length, written "
-            f"as a number between 0 and 1")
+        raise _not_a_number(info, parameter, value)
     # A STRING that spells a number is accepted, because the annotation
     # editor posts one: its form controls hold text, so a fraction typed
     # there arrives as `"0.5"`.  Refusing it would 400 the editor on its
@@ -85,15 +97,9 @@ def _read_overlap_fraction(
         try:
             value = float(value)
         except ValueError:
-            raise AnnotationConfigurationError(
-                f"{info.type} configures {parameter}: {value!r}, which is "
-                f"not a number. An overlap fraction is a share of a length, "
-                f"written as a number between 0 and 1") from None
+            raise _not_a_number(info, parameter, value) from None
     if not isinstance(value, (int, float)):
-        raise AnnotationConfigurationError(
-            f"{info.type} configures {parameter}: {value!r}, which is not a "
-            f"number. An overlap fraction is a share of a length, written "
-            f"as a number between 0 and 1")
+        raise _not_a_number(info, parameter, value)
     if not 0.0 <= value <= 1.0:
         raise AnnotationConfigurationError(
             f"{info.type} configures {parameter}: {value}. An overlap "

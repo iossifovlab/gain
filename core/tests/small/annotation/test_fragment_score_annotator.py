@@ -456,12 +456,13 @@ def test_both_fractions_unset_admits_every_overlapping_fragment(
     assert atts["frequency"] == "0.02;0.1"
 
 
+@pytest.mark.parametrize("configured", ["1.5", "-0.5"])
 @pytest.mark.parametrize("parameter", [
     "min_region_overlap_fraction",
     "min_fragment_overlap_fraction",
 ])
 def test_a_fraction_outside_the_unit_interval_is_refused_by_name(
-    parameter: str, grr: GenomicResourceRepo,
+    parameter: str, configured: str, grr: GenomicResourceRepo,
 ) -> None:
     """Refused as the PIPELINE LOADS, naming the key the user wrote.
 
@@ -475,14 +476,18 @@ def test_a_fraction_outside_the_unit_interval_is_refused_by_name(
             textwrap.dedent(f"""
                 - fragment_score:
                     resource_id: fragments
-                    {parameter}: 1.5
+                    {parameter}: {configured}
                 """),
             grr)
 
 
 @pytest.mark.parametrize("configured", ["half", "true"])
+@pytest.mark.parametrize("parameter", [
+    "min_region_overlap_fraction",
+    "min_fragment_overlap_fraction",
+])
 def test_a_non_numeric_fraction_is_refused_by_name(
-    configured: str, grr: GenomicResourceRepo,
+    parameter: str, configured: str, grr: GenomicResourceRepo,
 ) -> None:
     """A fraction has to be a number, and `true` is not one of them.
 
@@ -490,14 +495,12 @@ def test_a_non_numeric_fraction_is_refused_by_name(
     range check alone would admit it as 1.0 -- full containment, a
     threshold nobody asked for, applied silently.  It is refused instead.
     """
-    with pytest.raises(
-            AnnotationConfigurationError,
-            match="min_region_overlap_fraction"):
+    with pytest.raises(AnnotationConfigurationError, match=parameter):
         load_pipeline_from_yaml(
             textwrap.dedent(f"""
                 - fragment_score:
                     resource_id: fragments
-                    min_region_overlap_fraction: {configured}
+                    {parameter}: {configured}
                 """),
             grr)
 
