@@ -30,6 +30,14 @@ FRAGMENT_FILTER_PARAMETER = "fragment_filter"
 #: it.  Stops being accepted in ``LEGACY_VOCABULARY_REMOVAL_RELEASE``.
 LEGACY_FILTER_PARAMETER = "cnv_filter"
 
+#: The two overlap thresholds, each named for the length it is denominated
+#: by: ``min_region_overlap_fraction`` is a share of the ANNOTATABLE's span
+#: and ``min_fragment_overlap_fraction`` a share of the FRAGMENT's.  New in
+#: gain#1125, so one spelling each -- deliberately no alias machinery like
+#: the filter parameter above carries.
+MIN_REGION_OVERLAP_FRACTION_PARAMETER = "min_region_overlap_fraction"
+MIN_FRAGMENT_OVERLAP_FRACTION_PARAMETER = "min_fragment_overlap_fraction"
+
 #: The annotator names that mean this annotator, deprecated spelling to the
 #: preferred one it should be rewritten as.  Both are registered entry-point
 #: keys, so a pipeline naming either builds; only the value is worth typing
@@ -38,6 +46,41 @@ LEGACY_ANNOTATOR_NAMES = {
     "cnv_collection": "fragment_score",
     "cnv_collection_annotator": "fragment_score_annotator",
 }
+
+
+def _read_overlap_fraction(
+    info: AnnotatorInfo, parameter: str,
+) -> float | None:
+    """Read one overlap threshold, refusing what no fraction can be.
+
+    Validated HERE as well as in the score, deliberately: the score's
+    guard raises ``ValueError`` on the first annotated variant, addressed
+    to a caller, whereas a pipeline is wrong the moment it is written and
+    the person who has to fix it is reading YAML.  So this refuses as the
+    annotator is CONSTRUCTED and names the key they typed (gain#477).
+    The score keeps its own guard -- it has callers this never sees.
+
+    Reading the parameter is what DECLARES it: ``info.parameters`` refuses
+    a key nobody read, so both fractions must be read unconditionally.
+    """
+    value = info.parameters.get(parameter)
+    if value is None:
+        return None
+    # `bool` before `int`, because it is a subclass of it: without this
+    # `min_region_overlap_fraction: true` would be admitted as 1.0 -- a
+    # threshold the user never asked for, silently applied.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise AnnotationConfigurationError(
+            f"{info.type} configures {parameter}: {value!r}, which is not a "
+            f"number. An overlap fraction is a share of a length, written "
+            f"as a number between 0 and 1")
+    if not 0.0 <= value <= 1.0:
+        raise AnnotationConfigurationError(
+            f"{info.type} configures {parameter}: {value}. An overlap "
+            f"fraction is a share of a length, so it lies between 0 and 1; "
+            f"a threshold outside that is either vacuous or matches nothing "
+            f"whatever the data")
+    return float(value)
 
 
 def build_fragment_score_annotator(pipeline: AnnotationPipeline,
@@ -128,6 +171,12 @@ class FragmentScoreAnnotator(AnnotatorBase):
                 # is handed an expression, not the parameter it came from.
                 raise AnnotationConfigurationError(
                     f"Error parsing {used_parameter}: {e}") from e
+
+        # Both read unconditionally -- see `_read_overlap_fraction`.
+        self.min_region_overlap_fraction = _read_overlap_fraction(
+            info, MIN_REGION_OVERLAP_FRACTION_PARAMETER)
+        self.min_fragment_overlap_fraction = _read_overlap_fraction(
+            info, MIN_FRAGMENT_OVERLAP_FRACTION_PARAMETER)
 
         super().__init__(pipeline, info)
 
@@ -228,6 +277,9 @@ class FragmentScoreAnnotator(AnnotatorBase):
             .get_fragment_scores_overlapping_region_agg(
                 annotatable.chrom, annotatable.pos, annotatable.pos_end,
                 queries=self._region_queries,
+                min_region_overlap_fraction=self.min_region_overlap_fraction,
+                min_fragment_overlap_fraction=(
+                    self.min_fragment_overlap_fraction),
                 score_filter=self.fragment_filter)
 
         # One value per query, so as many as there are queries.  Checked
