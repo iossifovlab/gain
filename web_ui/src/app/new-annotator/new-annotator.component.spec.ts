@@ -859,6 +859,68 @@ describe('NewAnnotatorComponent', () => {
     expect(component.errorMessage).toBe('attr error');
   });
 
+  describe('invalid-field highlight on the configuration step', () => {
+    // A fragment-score config: one picker, three free-text (string) fields.
+    // `min_region_overlap_fraction` is a string field the UI never named
+    // anywhere -- the highlight must come from the field's type, not from a
+    // list of keys kept in the template (gain#1164).
+    const fragmentScoreConfigMock = new AnnotatorConfig(
+      'fragment_score_annotator',
+      'annotatorUrl',
+      [
+        new AnnotatorConfigResource('resource_id', 'resource', 'fragment_score', '', ['hg38/fragments/a'], false, ''),
+        new AnnotatorConfigResource('fragment_filter', 'string', '', '', [], true, ''),
+        new AnnotatorConfigResource('min_region_overlap_fraction', 'string', '', '', [], true, ''),
+        new AnnotatorConfigResource('min_fragment_overlap_fraction', 'string', '', '', [], true, ''),
+      ]
+    );
+
+    const renderConfigurationStep = (): void => {
+      jest.spyOn(pipelineEditorServiceMock, 'getAnnotatorConfig').mockReturnValueOnce(of(fragmentScoreConfigMock));
+      // The stepper is linear: step 2 only renders once the annotator control
+      // is valid, and validity needs a type the mocked getAnnotators() offers.
+      component.annotatorStep.get('annotator').setValue('effect_annotator');
+      component.requestResources();
+      fixture.detectChanges();
+    };
+
+    const host = (): HTMLElement => fixture.nativeElement as HTMLElement;
+
+    const stringInputs = (): HTMLInputElement[] =>
+      Array.from(host().querySelectorAll<HTMLInputElement>('input.resource-field'));
+
+    it('should highlight a string field the template never names once the error banner is set', () => {
+      renderConfigurationStep();
+
+      component.errorMessage = 'Invalid annotator configuration: min_region_overlap_fraction: 1.5';
+      fixture.detectChanges();
+
+      const input = host().querySelector<HTMLInputElement>('#min_region_overlap_fraction-input');
+      expect(input).not.toBeNull();
+      expect(input.classList.contains('invalid-field')).toBe(true);
+    });
+
+    it('should highlight every string field, fragment_filter included, once the error banner is set', () => {
+      renderConfigurationStep();
+
+      component.errorMessage = 'Invalid annotator configuration: Error parsing fragment_filter';
+      fixture.detectChanges();
+
+      const highlighted = stringInputs().filter(i => i.classList.contains('invalid-field')).map(i => i.id);
+      expect(highlighted).toStrictEqual([
+        'fragment_filter-input', 'min_region_overlap_fraction-input', 'min_fragment_overlap_fraction-input'
+      ]);
+    });
+
+    it('should highlight nothing while the error banner is empty', () => {
+      renderConfigurationStep();
+
+      const inputs = stringInputs();
+      expect(inputs).toHaveLength(3);
+      expect(inputs.filter(i => i.classList.contains('invalid-field'))).toStrictEqual([]);
+    });
+  });
+
   it('should set errorMessage when getAnnotatorYml fails in onFinish', () => {
     jest.spyOn(pipelineEditorServiceMock, 'getAnnotatorYml').mockReturnValueOnce(
       throwError(() => new Error('yml error'))

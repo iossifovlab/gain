@@ -207,7 +207,7 @@
                   [formControlName]="resource.key"
                   autocomplete="off"
                   [attr.id]="resource.key + '-input'"
-                  [ngClass]="{ 'invalid-field': ['fragment_filter', 'cnv_filter'].includes(resource.key) && errorMessage }" />
+                  [class.invalid-field]="errorMessage" />
                 } @else if(resource.fieldType === 'bool') {
                 <div>
                   <input type="radio" [formControlName]="resource.key" [value]="true" [id]="resource.key + '-true'" />
