@@ -17,6 +17,14 @@
   — `build_scores_agg`, `fetch_scores_agg` and their query / aggregate-holder
   types — was removed. A score resource fetches records; it does not aggregate.
 
+- That last sentence stopped being true with #1163. `AlleleScore` grew a
+  folding read, `get_allele_scores_in_region_agg`, which reduces a region
+  itself in one streaming walk and answers an `AlleleAggregate` — one value
+  per `ScoreAggregationQuery`, plus the allele keys when asked — or `None`
+  for a region no record overlaps. The annotator's region mode reads through
+  it and materialises nothing (design: `2026-09-03-gain-allele-folding-read-
+  design.html` in the meta-repo's `docs/`).
+
 ---
 
 ## `score_annotator.py`
@@ -31,10 +39,14 @@
 
 The annotator has two modes selected by the `mode` parameter:
 
-- **`region`** (**default**): iterates all allele lines overlapping the
-  annotatable's span and aggregates their scores. Works with any `Annotatable`.
+- **`region`** (**default**): the score reduces all allele lines overlapping
+  the annotatable's span, streaming them through
+  `AlleleScore.get_allele_scores_in_region_agg`. Works with any `Annotatable`.
   Each score attribute must have an aggregator defined either in the attribute
-  config or as the resource's `allele_aggregator` default.
+  config or as the resource's default; an attribute with neither — only a
+  `bool` score has no default — is refused when the pipeline loads, in
+  **either** mode, because a CNV or a `Region` takes the region path whatever
+  the mode.
 
 - **`allele`**: performs an exact chrom/pos/ref/alt lookup. The annotatable must
   be a `VCFAllele`; any other type produces an empty result.
@@ -93,7 +105,13 @@ Optionally append score values by setting `include_attributes`:
 
 #### `region` mode (default)
 
-Collects allele strings from all lines in the region.
+Collects the distinct allele strings of the lines in the region, in the
+order the lines were first met — the resource's own genomic order (#1163;
+it was an arbitrary set order before). The `include_attributes` suffix is
+part of a string's identity, so two lines at one allele that differ in a
+suffixed score are two strings. Every `include_attributes` id is resolved
+against the resource when the pipeline loads; an unknown one is refused
+there, naming the valid ids.
 
 - **No `allele_filter`**: every allele in the region is collected.
 - **With `allele_filter`**: only alleles whose scores satisfy the expression are
@@ -128,5 +146,5 @@ precedence and character rules. The user-facing syntax is documented in
 |---|---|---|
 | `AlleleScoreAnnotator.get_all_attribute_descriptions` | override | Extends the parent implementation to add the virtual `"allele"` attribute with `default=False`. |
 | `AlleleScoreAnnotator._annotate_allele` | private | Exact chrom/pos/ref/alt lookup; used in `allele` mode. |
-| `AlleleScoreAnnotator._annotate_region` | private | Aggregates scores for all allele lines overlapping the annotatable span; used in `region` mode. |
+| `AlleleScoreAnnotator._annotate_region` | private | Asks the score's folding read for the region already reduced and answers an `AggregatedValues` keyed by attribute name; used in `region` mode. |
 | `AlleleScoreAnnotator.annotate` | public | Dispatches to `_annotate_allele` or `_annotate_region` based on `self.mode`. |

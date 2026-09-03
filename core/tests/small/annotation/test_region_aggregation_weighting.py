@@ -16,10 +16,10 @@ score, which is the sharper thing to assert anyway.
 
 An allele line and a fragment each count exactly once, however long they
 are.  gain#1124 moved the FRAGMENT the same way the position score moved,
-so it is pinned the same way: against the score's own answer, with an
-aggregator that can tell the two weighting rules apart.  The allele line
-still reduces through the base, so it is still pinned by watching the
-calls -- and it is what the weighted seam must *not* change.
+and gain#1163 the ALLELE line, so both are pinned the same way: against
+the score's own answer, with an aggregator that can tell the two
+weighting rules apart.  No annotator in gain watches values arrive at an
+aggregator of its own any more.
 """
 
 import pathlib
@@ -30,7 +30,9 @@ import pytest
 from gain.annotation.annotatable import Region
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
+from gain.genomic_resources.aggregators import ScoreAggregationQuery
 from gain.genomic_resources.genomic_scores import (
+    build_allele_score_from_resource,
     build_fragment_score_from_resource,
     build_position_score_from_resource,
 )
@@ -63,11 +65,14 @@ def fixture_repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
             "allele_score1",
             an_allele_score()
             .with_score("freq", "float", desc="test values")
+            # One line carries a ``pos_end`` span of ten bases: an allele
+            # line is a point whatever such a column says, and the span is
+            # what lets ``mean`` tell counting-once from weighing-by-span.
             .with_data("""
-                chrom  pos_begin  reference  alternative  freq
-                chr1   10         A          C            0.1
-                chr1   10         A          G            0.2
-                chr1   11         C          A            0.3
+                chrom  pos_begin  pos_end  reference  alternative  freq
+                chr1   10         19       A          C            0.1
+                chr1   10         10       A          G            0.2
+                chr1   11         11       C          A            0.3
             """),
         )
         .with_resource(
@@ -96,21 +101,6 @@ def _pipeline(
               name: test100
               aggregator: {aggregator}
         """), fixture_repo)
-
-
-def _record_aggregator_calls(
-    pipeline: AnnotationPipeline, calls: list[tuple[Any, int]],
-) -> None:
-    """Record every (value, weight) pair the annotator adds."""
-    aggregator = pipeline.annotators[0].attributes[0].aggregator_instance
-    assert aggregator is not None
-    original_add = aggregator.add
-
-    def spy(value: Any, count: int = 1) -> None:
-        calls.append((value, count))
-        original_add(value, count)
-
-    aggregator.add = spy  # type: ignore[method-assign]
 
 
 def _score_answer(
@@ -158,10 +148,34 @@ def test_a_records_weight_is_clipped_to_the_annotatable(
     assert result["test100"] == _score_answer(fixture_repo, 15, 22)
 
 
+def _allele_score_answer(
+    fixture_repo: GenomicResourceRepo, pos: int, pos_end: int,
+) -> Any:
+    """What the allele score itself reduces that region to."""
+    score = build_allele_score_from_resource(
+        fixture_repo.get_resource("allele_score1"))
+    with score.open() as opened:
+        aggregate = opened.get_allele_scores_in_region_agg(
+            "chr1", pos, pos_end,
+            queries=[ScoreAggregationQuery("freq", "mean")])
+    assert aggregate is not None
+    return aggregate.values[0]
+
+
 def test_an_allele_line_counts_once_however_wide_the_region(
     fixture_repo: GenomicResourceRepo,
 ) -> None:
-    calls: list[tuple[Any, int]] = []
+    """Three allele lines average to their plain mean, spans notwithstanding.
+
+    One of them carries a ten-base ``pos_end`` span.  Counting each line
+    once gives 0.2; weighing it by the two bases of that span inside the
+    region, as a position-score record is weighed, would give 0.175.
+    ``mean`` is what tells the two apart -- under ``max`` both answer 0.3.
+
+    Pinned against the SCORE's own answer, for the reason the module
+    docstring gives: since gain#1163 the allele score reduces for itself,
+    so there is no annotator-owned aggregator left to watch.
+    """
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - allele_score:
             resource_id: allele_score1
@@ -169,15 +183,15 @@ def test_an_allele_line_counts_once_however_wide_the_region(
             attributes:
             - source: freq
               name: freq
-              aggregator: max
+              aggregator: mean
         """), fixture_repo)
 
     with pipeline:
-        _record_aggregator_calls(pipeline, calls)
         result = pipeline.annotate(Region("chr1", 10, 11))
 
-    assert calls == [(0.1, 1), (0.2, 1), (0.3, 1)]
-    assert result["freq"] == 0.3
+    assert result["freq"] == pytest.approx((0.1 + 0.2 + 0.3) / 3)
+    assert result["freq"] != pytest.approx((0.1 * 2 + 0.2 + 0.3) / 4)
+    assert result["freq"] == _allele_score_answer(fixture_repo, 10, 11)
 
 
 def _fragment_score_answer(

@@ -43,6 +43,7 @@ from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
 
 from ..aggregators import (
     Aggregator,
+    ScoreAggregationQuery,
 )
 
 # How each surface tells a caller to name an aggregator the score has no
@@ -87,6 +88,62 @@ def resolve_aggregator_requests(
             resource_id=resource_id,
             remedy=PAIR_AGGREGATOR_REMEDY)
         requests.append((score_id, resolved))
+    return requests
+
+
+def resolve_aggregation_queries(
+    queries: Sequence[ScoreAggregationQuery] | None,
+    *,
+    score_definitions: dict[str, GenomicScoreDef],
+    all_scores: list[str],
+    resource_id: str,
+) -> list[tuple[str, str]]:
+    """Resolve kind-neutral queries to ``(score_id, aggregator NAME)`` pairs.
+
+    :func:`resolve_aggregator_requests` for the query surface: the same
+    two questions (:func:`score_def_for`, :func:`resolve_aggregator_name`),
+    the query's remedy, and ``None`` expanded to every score with its own
+    default.  Stops at the NAME, as
+    :meth:`~.position.PositionScore.resolve_aggregation_queries` does, so
+    a caller can ask whether a query list is answerable without reading --
+    an annotator asks exactly that as its pipeline loads.  Building the
+    accumulators is the READ's business, per call
+    (:func:`build_region_aggregator`).
+
+    Shared by the fragment and allele folding reads, which is what
+    promoted it here from the fragment kind: this package keeps a
+    derivation on the one kind that needs it and moves it here when a
+    second does.  The position kind keeps its own resolver because its
+    query carries a third field, ``none_value_replacement``, that has to
+    be judged between the two questions -- see that method for why the
+    two must not be merged.  That is also why this function must NOT be
+    handed a :class:`~..aggregators.PositionScoreAggregationQuery`: it
+    would type-check, being a subclass, and the pair answered here has
+    nowhere to put the replacement, so it would be dropped silently.
+
+    Not routed through :func:`resolve_aggregator_requests`, though that
+    returns exactly these pairs and already expands ``None``: it hardcodes
+    :data:`PAIR_AGGREGATOR_REMEDY`, and a query surface must say
+    :data:`QUERY_AGGREGATOR_REMEDY`.  Giving it a ``remedy`` parameter
+    would change a function :meth:`~.base.GenomicScore.aggregate_region`
+    also calls, for the sake of one sentence.
+    """
+    if queries is None:
+        queries = [
+            ScoreAggregationQuery(score_id) for score_id in all_scores
+        ]
+    requests = []
+    for query in queries:
+        score_def = score_def_for(
+            query.score,
+            score_definitions=score_definitions,
+            resource_id=resource_id)
+        requests.append((
+            query.score,
+            resolve_aggregator_name(
+                query.aggregator, score_def,
+                resource_id=resource_id,
+                remedy=QUERY_AGGREGATOR_REMEDY)))
     return requests
 
 
@@ -215,6 +272,26 @@ def build_region_aggregator(
             f"score {score_id!r} of resource {resource_id!r} asks "
             f"for aggregator {aggregator!r}, which is not valid: "
             f"{err}") from err
+
+
+def build_region_aggregators(
+    requests: list[tuple[str, str]], *, resource_id: str,
+) -> list[Aggregator]:
+    """One FRESH aggregator per request, parallel to the request list.
+
+    :func:`build_region_aggregator` over a resolved request list -- the
+    shape every folding read hands :func:`fold_region_segments`, built
+    once per READ and never held on the score, for the reason that
+    function gives.  Fresh accumulators remove one hazard, not the class
+    of them: two concurrent region reads of one open score still share
+    the table's line iterator, which is each read's "one live region read
+    at a time" rule and not this function's promise.
+    """
+    return [
+        build_region_aggregator(
+            score_id, aggregator, resource_id=resource_id)
+        for score_id, aggregator in requests
+    ]
 
 
 def fold_region_segments(

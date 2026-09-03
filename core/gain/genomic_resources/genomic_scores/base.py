@@ -88,7 +88,7 @@ from gain.genomic_resources.vcf_scores import (
 )
 
 from .aggregation import (
-    build_region_aggregator,
+    build_region_aggregators,
     fold_region_segments,
     request_score_ids,
     resolve_aggregator_requests,
@@ -1280,11 +1280,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         # afterwards would have a misspelled name reported only for the
         # regions a resource happens to cover, so `mediann` would be a
         # missing-contig error until someone queried a covered contig.
-        aggregators = [
-            build_region_aggregator(
-                score_id, aggregator, resource_id=self.resource_id)
-            for score_id, aggregator in requests
-        ]
+        aggregators = build_region_aggregators(
+            requests, resource_id=self.resource_id)
         score_ids = request_score_ids(requests)
         return fold_region_segments(
             self._aggregation_segments(

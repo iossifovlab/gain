@@ -12,7 +12,8 @@ from __future__ import annotations
 import copy
 import enum
 import warnings
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator, Sequence
+from dataclasses import dataclass
 from itertools import chain
 from typing import (
     Any,
@@ -23,6 +24,7 @@ import numpy as np
 
 from gain.genomic_resources.genomic_position_table.record import (
     ALT,
+    CHROM,
     POS_BEGIN,
     POS_END,
     REF,
@@ -46,9 +48,17 @@ from gain.genomic_resources.score_filter import (
     ScoreFilter,
     select_records,
 )
+from gain.utils.stringify import stringify
 
 from ..aggregators import (
     AGGREGATOR_SCHEMA,
+    ScoreAggregationQuery,
+)
+from .aggregation import (
+    build_region_aggregators,
+    fold_region_segments,
+    request_score_ids,
+    resolve_aggregation_queries,
 )
 from .base import (
     _SEGMENT_SCORES_DEPRECATION,
@@ -60,6 +70,95 @@ from .records import (
     RecordArrays,
     _key_column_array,
 )
+
+
+@dataclass(frozen=True)
+class AlleleAggregate:
+    """What one folding read reduced a region to, off a single walk.
+
+    ``values`` is parallel to the QUERIES asked, never keyed by score id:
+    one score asked twice with two aggregators is two queries and
+    therefore two values, which a mapping keyed by score id would
+    silently collapse to one.
+
+    ``allele_keys`` is ``None`` unless the read was asked for them; when
+    asked, the distinct keys in first-seen order (D1, D2 of the allele
+    folding-read design, gain#1132).  Built off the same walk the values
+    were folded from, so nothing a caller can do makes the two disagree
+    about which records were seen.
+    """
+
+    values: tuple[ScoreValue, ...]
+    allele_keys: tuple[str, ...] | None
+
+
+def allele_key(
+    chrom: str, pos: int, ref: str | None, alt: str | None,
+    suffix: Sequence[ScoreValue] = (),
+) -> str:
+    """The allele key: ``chrom:pos[:ref:alt][:v1,v2]``.
+
+    An allele's identity as annotation output spells it, and the ONE
+    statement of that spelling: the folding read builds it per record and
+    the annotator's exact-match path builds it from the annotatable, and
+    the two must not drift.  It lives on the score rather than in the
+    annotator because the key is the record's identity, which is
+    score-layer knowledge.
+
+    The nucleotides are omitted when EITHER is absent: a table may declare
+    only one of the two key columns, and ``1:10:None:C`` would name an
+    allele that does not exist.  ``suffix`` is the values of the scores a
+    caller asked to append, in the order asked, each rendered as
+    :func:`~gain.utils.stringify.stringify` renders it for output and
+    joined with ``,``; it is part of the key's identity, so two records at
+    one allele that differ in a suffixed score are two keys.
+    """
+    key = f"{chrom}:{pos}"
+    if ref is not None and alt is not None:
+        key += f":{ref}:{alt}"
+    if suffix:
+        key += ":" + ",".join(stringify(value) for value in suffix)
+    return key
+
+
+class _AlleleKeyCollector:
+    """A pass-through over records that collects their allele keys.
+
+    The fragment kind's ``_CountingStream`` for this kind's side channel:
+    :func:`~.aggregation.fold_region_segments` consumes the stream itself,
+    so what is collected cannot be a local the caller appends to -- it
+    lives here and is read once the fold has RETURNED.  That class says a
+    second kind wanting a per-walk tally should make the fold report it
+    rather than relocate the class; this is a private sibling instead,
+    because what it collects is not a property of the segments the fold
+    sees but of the RECORDS beneath them -- the nucleotides and the
+    suffix values -- so it has to sit on the record stream, above
+    :meth:`AlleleScore.region_values_from_records`, where the fold cannot
+    reach.
+
+    Keys de-duplicate in first-seen order -- ``dict.fromkeys`` semantics
+    over the walk -- because repeated ``(chrom, pos, ref, alt)`` keys are
+    normal published data, and the order is the file's own genomic order
+    (D2 of the design).  Holds one entry per DISTINCT key and nothing per
+    record.
+    """
+
+    def __init__(self, key_of: Callable[[Record], str]) -> None:
+        self._key_of = key_of
+        self._keys: dict[str, None] = {}
+
+    def __call__(
+        self, records: Iterator[Record],
+    ) -> Generator[Record, None, None]:
+        """Yield ``records`` unchanged, noting each one's key as it passes."""
+        for record in records:
+            self._keys[self._key_of(record)] = None
+            yield record
+
+    @property
+    def keys(self) -> tuple[str, ...]:
+        """The distinct keys seen so far, in first-seen order."""
+        return tuple(self._keys)
 
 
 class AlleleScore(GenomicScore):
@@ -113,8 +212,11 @@ class AlleleScore(GenomicScore):
         ...         print(f"{record[POS_BEGIN]} "
         ...               f"{record[REF]}>{record[ALT]}: {values}")
 
-    Aggregating those values over the region is the *annotator's* job, not the
-    resource's -- see ``gain.annotation.score_annotator``.
+    Reducing those values over a region is the resource's own job:
+    :meth:`get_allele_scores_in_region_agg` folds a region in one streaming
+    walk, one value per :class:`~..aggregators.ScoreAggregationQuery`, with
+    the allele keys beside them when asked, and the allele annotator's
+    region mode reads through it (``gain.annotation.score_annotator``).
 
     Attributes:
         resource: The underlying GenomicResource object
@@ -129,6 +231,9 @@ class AlleleScore(GenomicScore):
         fetch_allele_records: Get the records of a region, filtered, telling
             a region holding no allele apart from one whose alleles were all
             rejected
+        get_allele_scores_in_region_agg: Reduce the alleles of a region to
+            one value per query -- and their keys -- in one walk, telling
+            the same two answers apart
         fetch_region_segments: Iterate over allele scores in a
             genomic region
         substitutions_mode: Check if operating in SUBSTITUTIONS mode
@@ -533,27 +638,169 @@ class AlleleScore(GenomicScore):
 
         Materialising is what the ``list``/``None`` answer costs: a caller
         reading a region far larger than it can hold wants the streaming
-        read instead.  Records the filter rejects are never held, though --
-        only the accepted ones accumulate.
+        read instead -- or, to reduce the region rather than hold it,
+        :meth:`get_allele_scores_in_region_agg`, which shares this read's
+        two answers and its peek.  Records the filter rejects are never
+        held, though -- only the accepted ones accumulate.
+        """
+        selected = self._selected_allele_records(
+            chrom, pos_begin, pos_end, score_filter)
+        if selected is None:
+            return None
+        return list(selected)
+
+    def _selected_allele_records(
+        self, chrom: str, pos_begin: int | None, pos_end: int | None,
+        score_filter: ScoreFilter | None,
+    ) -> Iterator[Record] | None:
+        """Records of a region the filter keeps; ``None`` when none overlap.
+
+        The absence peek :meth:`fetch_allele_records` and
+        :meth:`get_allele_scores_in_region_agg` share, stated once so the
+        two reads cannot come to disagree about what ``None`` means or
+        when a filter is checked.  ``None`` is a region no record overlaps,
+        judged BEFORE the filter; an iterator -- possibly empty -- is a
+        region that held records, of which these are the ones the filter
+        accepted.
+
+        The ownership check runs first of all, ahead of the peek: a foreign
+        filter is a programming error and must not be refused on a
+        populated region and accepted on an empty one.  ``select`` checks
+        it again, at the cost of one identity comparison per read.
+
+        A contig the resource does not have is refused from the call, as
+        every other allele read refuses it: answering ``None`` would make
+        a caller's typo indistinguishable from real absent data.
         """
         if chrom not in self.get_all_chromosomes():
             raise ValueError(
                 f"{chrom} is not among the available chromosomes for "
                 f"allele score resource {self.resource_id}")
         if score_filter is not None:
-            # Here rather than left to the application below, which a
-            # region holding no record never reaches: a foreign filter is a
-            # programming error and must not be refused on a populated
-            # region and accepted on an empty one.  `select` checks it
-            # again, at the cost of one identity comparison per read.
             score_filter.require_owner(self)
 
         overlapping = self.fetch_records(chrom, pos_begin, pos_end)
         first = next(overlapping, None)
         if first is None:
             return None
-        return list(select_records(
-            self, chain([first], overlapping), score_filter))
+        return select_records(
+            self, chain([first], overlapping), score_filter)
+
+    def resolve_aggregation_queries(
+        self, queries: Sequence[ScoreAggregationQuery] | None,
+    ) -> list[tuple[str, str]]:
+        """Resolve each query to its ``(score_id, aggregator NAME)`` pair.
+
+        The shared :func:`~.aggregation.resolve_aggregation_queries` on
+        this score, made public so ``AlleleScoreAnnotator`` can refuse a
+        bad attribute as the pipeline loads (D6 of the allele folding-read
+        design) -- see that function for why it stops at the name.
+        """
+        return resolve_aggregation_queries(
+            queries,
+            score_definitions=self.score_definitions,
+            all_scores=self.get_all_scores(),
+            resource_id=self.resource_id)
+
+    def resolve_allele_key_scores(
+        self, allele_keys: Sequence[str],
+    ) -> list[GenomicScoreDef]:
+        """The definitions of the scores an allele-key request suffixes.
+
+        The other half of what :meth:`get_allele_scores_in_region_agg`
+        checks on the call, made askable without reading: the same
+        refusal every allele read gives an unknown score id, with the
+        valid names listed, which is how the annotator refuses a bad
+        ``include_attributes`` as the pipeline loads rather than per
+        record.
+        """
+        return self._resolve_score_defs(list(allele_keys))
+
+    def get_allele_scores_in_region_agg(
+        self, chrom: str, start: int, end: int,
+        *,
+        queries: Sequence[ScoreAggregationQuery] | None = None,
+        allele_keys: Sequence[str] | None = None,
+        score_filter: ScoreFilter | None = None,
+    ) -> AlleleAggregate | None:
+        """Reduce the alleles in a region to one value per query, or ``None``.
+
+        The kind's folding read (gain#1132): what
+        :meth:`fetch_allele_records` would hand back, already reduced, in
+        ONE walk that holds no record.  ``queries`` of ``None`` means every
+        score the resource defines, each with its own default aggregator;
+        a query's own aggregator wins over the default.  An allele line
+        is weighed by :meth:`record_weight`, which counts it once.
+
+        ``None`` is absent data, judged before ``score_filter`` and with
+        ownership checked first, exactly as :meth:`fetch_allele_records`
+        answers it -- both through :meth:`_selected_allele_records`, which
+        states the contract.  An :class:`AlleleAggregate` whose fold saw
+        nothing is the other answer: records were there and the filter
+        rejected every one, so each aggregator answers for an empty
+        selection (``list`` gives ``[]``, ``max`` gives ``None``, ...).
+        That asymmetry with the fragment kind's folding read is a property
+        of the data, and ADR 0017's Consequences say why.
+
+        ``allele_keys`` of ``None`` -- the default -- builds no keys, so a
+        caller that wants none pays nothing per record for them.  A
+        sequence, possibly empty, asks for the keys and names the score
+        ids to suffix each with: ``()`` is the bare ``chrom:pos:ref:alt``.
+        :func:`allele_key` states the format; the keys come back distinct
+        and in first-seen order, off the same walk the values were folded
+        from.
+
+        The REQUEST is checked when this is called: an unknown score id --
+        in a query or in ``allele_keys`` -- a query with no aggregator to
+        resolve to, an unknown contig and a foreign filter are all refused
+        before a record is read.  Aggregators are built fresh per call
+        (:func:`~.aggregation.build_region_aggregators`).
+        """
+        requests = self.resolve_aggregation_queries(queries)
+        aggregators = build_region_aggregators(
+            requests, resource_id=self.resource_id)
+        collector = (
+            None if allele_keys is None
+            else self._allele_key_collector(allele_keys))
+        records = self._selected_allele_records(
+            chrom, start, end, score_filter)
+        if records is None:
+            return None
+        if collector is not None:
+            records = collector(records)
+        score_ids = request_score_ids(requests)
+        # The kind's streaming half directly, not `region_values_from_records`:
+        # that entry re-checks the contig, and on a tabix table the
+        # chromosome list is rebuilt per call -- a cost linear in the
+        # contig count, which `_selected_allele_records` has already paid.
+        values = fold_region_segments(
+            self._allele_point_values(
+                records, self._resolve_score_defs(score_ids)),
+            aggregators, requests,
+            score_ids=score_ids, weigh=self.record_weight)
+        return AlleleAggregate(
+            tuple(values),
+            None if collector is None else collector.keys)
+
+    def _allele_key_collector(
+        self, suffix_scores: Sequence[str],
+    ) -> _AlleleKeyCollector:
+        """A collector building each record's key with these scores suffixed.
+
+        The suffix ids are resolved here, up front and by name, so an
+        unknown one is refused from the call with the valid names listed
+        -- earlier than the per-record ``KeyError`` the annotator used to
+        raise, and on an empty region too.
+        """
+        suffix_defs = self.resolve_allele_key_scores(suffix_scores)
+        extract = self._extract_value
+
+        def key_of(record: Record) -> str:
+            return allele_key(
+                record[CHROM], record[POS_BEGIN], record[REF], record[ALT],
+                [extract(record, score_def) for score_def in suffix_defs])
+
+        return _AlleleKeyCollector(key_of)
 
     def supports_region_allele_arrays(self, scores: list[str]) -> bool:
         """Whether :meth:`fetch_region_allele_arrays` will serve these scores.

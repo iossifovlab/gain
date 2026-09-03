@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import abc
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -175,6 +175,46 @@ class AnnotatorBase(Annotator):
         are attribute NAMES and whose values the annotator's score has
         already reduced.
         """
+
+    def _pair_aggregated(
+        self,
+        values: Sequence[Any],
+        query_count: int,
+        *,
+        resource_id: str,
+        reduced: Callable[[Attribute], bool],
+        otherwise: Callable[[Attribute], Any],
+    ) -> AggregatedValues:
+        """Pair a score's reduced ``values`` back onto the attributes, by ORDER.
+
+        The one statement of how an annotator turns what its score's
+        folding read answered into an :class:`AggregatedValues`.  The
+        read's tuple is parallel to the queries the annotator built over
+        ``self._attributes`` in attribute order, so the attributes are
+        walked again here and each one for which ``reduced`` holds takes
+        the next value; every other attribute takes ``otherwise(attr)`` --
+        the fragment count, the allele keys -- whatever that kind answers
+        beside its reductions.  The names are read HERE, never cached
+        beside the queries, for the reason :class:`AggregatedValues`
+        states.
+
+        One value per query, so as many as there are queries: checked
+        rather than assumed, because the pairing is POSITIONAL and a read
+        that answered a different number would otherwise slide every
+        attribute onto its neighbour's value.  A length compare, not a
+        ``zip(strict=True)``: the strict zip needs a second list of names
+        to zip against, and building one costs about three times what the
+        whole annotate call costs (measured, gain#1124).
+        """
+        if len(values) != query_count:
+            raise ValueError(
+                f"{self.get_info().type} asked {query_count} queries of "
+                f"resource '{resource_id}' and got {len(values)} values "
+                f"back")
+        answers = iter(values)
+        return AggregatedValues(
+            (attr.name, next(answers) if reduced(attr) else otherwise(attr))
+            for attr in self._attributes)
 
     def _apply_aggregators(
         self, values: dict[str, Any],

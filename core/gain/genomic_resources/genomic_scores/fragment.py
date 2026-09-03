@@ -43,16 +43,13 @@ from gain.genomic_resources.score_filter import (
 
 from ..aggregators import (
     AGGREGATOR_SCHEMA,
-    Aggregator,
     ScoreAggregationQuery,
 )
 from .aggregation import (
-    QUERY_AGGREGATOR_REMEDY,
-    build_region_aggregator,
+    build_region_aggregators,
     fold_region_segments,
     request_score_ids,
-    resolve_aggregator_name,
-    score_def_for,
+    resolve_aggregation_queries,
 )
 from .base import GenomicScore
 from .records import (
@@ -582,87 +579,6 @@ class FragmentScore(GenomicScore):
     # consumer -- as ``PositionScore`` grew ``_agg`` only where something
     # needed it.  A predicate that later wants one adds it then.
 
-    def _resolve_fragment_aggregation_queries(
-        self, queries: Sequence[ScoreAggregationQuery] | None,
-    ) -> tuple[list[tuple[str, str]], list[Aggregator]]:
-        """Resolve queries to fold requests, each with a fresh aggregator.
-
-        Built from the kind-neutral :func:`~.aggregation.score_def_for` and
-        :func:`~.aggregation.resolve_aggregator_name` rather than routed
-        through :func:`~.aggregation.resolve_aggregator_requests`, which
-        serves :meth:`~.base.GenomicScore.aggregate_region` alone.  The
-        temptation is real: that function returns exactly the
-        ``(score_id, aggregator)`` pairs wanted here, and already expands a
-        ``None`` request list to every score.
-
-        Two routes to it, and the distinction matters.  PROJECTING at the
-        call site -- handing it ``[(q.score, q.aggregator) for q in
-        queries]`` -- is type-safe and would work; what it needs is a
-        ``remedy`` parameter, since that function hardcodes
-        :data:`~.aggregation.PAIR_AGGREGATOR_REMEDY` and a query surface
-        must say :data:`~.aggregation.QUERY_AGGREGATOR_REMEDY`.  That is a
-        change to a function :meth:`~.base.GenomicScore.aggregate_region`
-        also calls, and it is not made here.
-
-        WIDENING it to :class:`~..aggregators.ScoreAggregationQuery` is the
-        route that must not be taken, and it is the one that looks
-        tidier.  Since gain#1121 made the position query a SUBCLASS of
-        that, a widened signature would accept a
-        :class:`~..aggregators.PositionScoreAggregationQuery` too, and its
-        pair return has nowhere to put ``none_value_replacement``: a type
-        error today would become a silent drop.
-
-        Private, unlike :meth:`~.position.PositionScore
-        .resolve_aggregation_queries`, which gain#1131 made public so the
-        position annotator could refuse a bad attribute as the pipeline
-        LOADS.  A fragment annotator has nothing to refuse there: an
-        attribute naming no aggregator is not an error on this kind, it is
-        one that answers the fragment count instead.
-
-        Aggregators are built FRESH per call, never held on the score: an
-        aggregator is a mutable accumulator and explicitly not thread-safe,
-        so a reused one would have two concurrent reads accumulating into
-        each other.  That is a deliberate trade against the annotator's
-        build-once-and-clear reuse, and it costs an
-        :meth:`~..aggregators.Aggregator.build` per query per call.
-
-        It removes ONE hazard, not the class of them: it does not make the
-        read thread-safe, and this is deliberately not claimed.  The
-        TABLE's line iterator is shared too, so two concurrent region reads
-        of one open score still collide -- on a tabix-backed table with a
-        ``generator already executing`` -- exactly as
-        :meth:`get_fragment_scores_overlapping_region` says under "one live
-        region read per score at a time".  Fresh aggregators mean a caller
-        that serialises its reads needs no further care; they do not
-        license concurrent ones.
-
-        ``queries`` of ``None`` means every score the resource defines,
-        each with its own default aggregator.
-        """
-        if queries is None:
-            queries = [
-                ScoreAggregationQuery(score_id)
-                for score_id in self.get_all_scores()
-            ]
-        requests = []
-        for query in queries:
-            score_def = score_def_for(
-                query.score,
-                score_definitions=self.score_definitions,
-                resource_id=self.resource_id)
-            requests.append((
-                query.score,
-                resolve_aggregator_name(
-                    query.aggregator, score_def,
-                    resource_id=self.resource_id,
-                    remedy=QUERY_AGGREGATOR_REMEDY)))
-        aggregators = [
-            build_region_aggregator(
-                score_id, aggregator, resource_id=self.resource_id)
-            for score_id, aggregator in requests
-        ]
-        return requests, aggregators
-
     def get_fragment_scores_overlapping_region_agg(
         self, chrom: str, start: int, end: int,
         *,
@@ -711,8 +627,16 @@ class FragmentScore(GenomicScore):
         beside it, which is a halving there and a flattening everywhere
         else.
         """
-        requests, aggregators = self._resolve_fragment_aggregation_queries(
-            queries)
+        # No public resolver on this kind, unlike its siblings: an
+        # attribute naming no aggregator is not an error here, it answers
+        # the fragment count instead, so nothing asks at pipeline load.
+        requests = resolve_aggregation_queries(
+            queries,
+            score_definitions=self.score_definitions,
+            all_scores=self.get_all_scores(),
+            resource_id=self.resource_id)
+        aggregators = build_region_aggregators(
+            requests, resource_id=self.resource_id)
         score_ids = request_score_ids(requests)
         segments = _CountingStream(
             self.get_fragment_scores_overlapping_region(

@@ -11,7 +11,7 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
+from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.aggregators import (
     ScoreAggregationQuery,
     aggregator_name,
@@ -308,31 +308,11 @@ class FragmentScoreAnnotator(AnnotatorBase):
                     self.min_fragment_overlap_fraction),
                 score_filter=self.fragment_filter)
 
-        # One value per query, so as many as there are queries.  Checked
-        # rather than assumed, because the pairing below is POSITIONAL and
-        # a plane that answered a different number would otherwise slide
-        # every attribute onto its neighbour's value.  A length compare,
-        # not a `zip(strict=True)`: the strict zip needs a second list of
-        # names to zip against, and building one costs about three times
-        # what this whole method costs (measured, gain#1124).
-        if len(aggregate.values) != len(self._region_queries):
-            raise ValueError(
-                f"{self.get_info().type} asked "
-                f"{len(self._region_queries)} queries of resource "
-                f"'{self.fragment_score.resource_id}' and got "
-                f"{len(aggregate.values)} values back")
-
-        # Paired back by ORDER, against the same filter that built the
-        # queries.  The names are read HERE rather than cached beside the
-        # queries, for the reason `AggregatedValues` states.
-        #
-        # An attribute with no aggregator has no reduction of its own and
+        # Paired back against the same filter that built the queries.  An
+        # attribute with no aggregator has no reduction of its own and
         # answers the fragment count instead -- see `_region_queries`.
-        # Walked over `self._attributes`, so the result keeps attribute
-        # order, as the base's own reduction did.
-        values = iter(aggregate.values)
-        return AggregatedValues(
-            (attr.name,
-             next(values) if attr.aggregator is not None
-             else aggregate.count)
-            for attr in self._attributes)
+        return self._pair_aggregated(
+            aggregate.values, len(self._region_queries),
+            resource_id=self.fragment_score.resource_id,
+            reduced=lambda attr: attr.aggregator is not None,
+            otherwise=lambda _attr: aggregate.count)
