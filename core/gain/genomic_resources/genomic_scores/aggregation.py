@@ -275,7 +275,7 @@ def build_region_aggregator(
 
 
 def build_region_aggregators(
-    requests: list[tuple[str, str]], *, resource_id: str,
+    requests: Sequence[tuple[str, str]], *, resource_id: str,
 ) -> list[Aggregator]:
     """One FRESH aggregator per request, parallel to the request list.
 
@@ -297,7 +297,7 @@ def build_region_aggregators(
 def fold_region_segments(
     segments: Iterable[tuple[int, int, Sequence[ScoreValue]]],
     aggregators: list[Aggregator],
-    requests: list[tuple[str, str]],
+    requests: Sequence[tuple[str, str]],
     *,
     score_ids: Sequence[str],
     weigh: Callable[[int, int], int],

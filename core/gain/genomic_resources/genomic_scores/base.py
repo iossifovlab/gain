@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import warnings
 from abc import abstractmethod
-from collections.abc import Generator, Iterator
+from collections.abc import Generator, Iterator, Sequence
 from types import TracebackType
 from typing import (
     TYPE_CHECKING,
@@ -577,7 +577,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         return self._extract_value(record, self.score_definitions[score_id])
 
     def _resolve_score_defs(
-        self, scores: list[str] | None,
+        self, scores: Sequence[str] | None,
     ) -> list[GenomicScoreDef]:
         """Resolve requested score ids to definitions, refusing unknown ones.
 
@@ -898,7 +898,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         chrom: str,
         pos_begin: int | None = None,  # ruff: ignore[unused-method-argument]
         pos_end: int | None = None,  # ruff: ignore[unused-method-argument]
-        scores: list[str] | None = None,
+        scores: Sequence[str] | None = None,
     ) -> Generator[
             tuple[int, int, list[ScoreValue]], None, None]:
         """Extract this kind's ``(begin, end, values)`` from raw records.
@@ -933,7 +933,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         return self._score_segments(records, score_defs)
 
     def _region_read_defs(
-        self, chrom: str, scores: list[str] | None,
+        self, chrom: str, scores: Sequence[str] | None,
     ) -> list[GenomicScoreDef]:
         """Refuse a region request this score cannot serve, before any record.
 

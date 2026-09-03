@@ -179,27 +179,38 @@ def test_min_fragment_overlap_fraction_keeps_what_falls_inside_enough(
         ]
 
 
+@pytest.mark.parametrize(("read", "seen", "everything", "half"), [
+    ("get_fragment_scores_overlapping_region",
+     lambda rows: [v for _, _, (v,) in rows],
+     [3.0, 1.0, 2.0, 4.0], [3.0, 1.0]),
+    ("get_fragment_scores_overlapping_region_agg",
+     lambda aggregate: aggregate.values,
+     (4.0,), (3.0,)),
+], ids=["the plural read", "the folding read"])
 def test_no_threshold_means_no_per_fragment_selection_at_all(
     fragments: FragmentScore,
     monkeypatch: pytest.MonkeyPatch,
+    read: str,
+    seen: Any,
+    everything: Any,
+    half: Any,
 ) -> None:
     # Both fractions unset admits everything, and the annotator's every
     # call today is shaped so.  That case does not run the predicate per
     # fragment only to hear "yes" each time (gain#1157): pinned by
-    # counting its calls.  A threshold given still consults it.
+    # counting its calls, on the public read and on the fold, which share
+    # the selection.  A threshold given still consults it.
     calls = count_calls(
         monkeypatch, "overlap_fractions_admit", fragment_module)
 
     with fragments.open() as score:
-        unfiltered = list(score.get_fragment_scores_overlapping_region(
-            "1", 100, 199))
-        assert [v for _, _, (v,) in unfiltered] == [3.0, 1.0, 2.0, 4.0]
+        assert seen(getattr(score, read)("1", 100, 199)) == everything
         assert calls == []
 
-        filtered = list(score.get_fragment_scores_overlapping_region(
+        filtered = seen(getattr(score, read)(
             "1", 100, 199, min_region_overlap_fraction=0.5))
 
-    assert [v for _, _, (v,) in filtered] == [3.0, 1.0]
+    assert filtered == half
     assert len(calls) == 4
 
 
@@ -499,21 +510,155 @@ def test_the_folding_read_answers_the_fragments_seen_and_their_reduction(
     assert aggregate == FragmentAggregate(count=4, values=(4.0,))
 
 
-def test_the_folding_read_derives_its_score_list_once(
+def test_the_folding_read_resolves_a_query_list_once_however_often_it_reads(
     fragments: FragmentScore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The list naming the fetched columns is derived once and handed to
-    # both the fetch and the fold (gain#1157).
-    calls = count_calls(
-        monkeypatch, "request_score_ids", aggregation, fragment_module)
+    """Resolution is per DISTINCT query list, not per read (gain#1161).
+
+    Which definition a query names and which columns the fetch carries are
+    pure over the queries and the score's definitions, and an annotator
+    asks the same list on every annotatable.  So two reads of one list
+    resolve it once, and a different list resolves again -- the fetched
+    column list still derived once and handed to both ends of the read
+    (gain#1157), just not once per read any more.
+    """
+    resolutions = count_calls(monkeypatch, "score_def_for", aggregation)
+    a_max = [ScoreAggregationQuery("v", "max")]
+    a_min = [ScoreAggregationQuery("v", "min")]
 
     with fragments.open() as score:
-        aggregate = score.get_fragment_scores_overlapping_region_agg(
-            "1", 100, 199)
+        first = score.get_fragment_scores_overlapping_region_agg(
+            "1", 100, 199, queries=a_max)
+        again = score.get_fragment_scores_overlapping_region_agg(
+            "1", 100, 199, queries=list(a_max))
+        assert len(resolutions) == 1
 
-    assert aggregate == FragmentAggregate(count=4, values=(4.0,))
-    assert len(calls) == 1
+        other = score.get_fragment_scores_overlapping_region_agg(
+            "1", 100, 199, queries=a_min)
+
+    assert first == again == FragmentAggregate(count=4, values=(4.0,))
+    assert other == FragmentAggregate(count=4, values=(1.0,))
+    assert len(resolutions) == 2
+
+
+def test_the_folding_read_folds_the_record_plane_stream_itself(
+    fragments: FragmentScore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No per-fragment tuple stands between the records and the fold.
+
+    The public reads answer tuples -- their contract, and a generator
+    layer per fragment to build them.  The fold only ever indexes a
+    column, so it takes the list-valued stream the record plane yields
+    (gain#1161) and never passes through :meth:`fetch_fragment_scores`.
+    The selection is still the public read's: the fraction below admits
+    two of the four fragments, and both the count and the max say so.
+    """
+    with fragments.open() as score:
+        records = count_calls(
+            monkeypatch, "region_values_from_records", score)
+        tupled = count_calls(monkeypatch, "fetch_fragment_scores", score)
+
+        aggregate = score.get_fragment_scores_overlapping_region_agg(
+            "1", 100, 199, min_region_overlap_fraction=0.5)
+
+    assert aggregate == FragmentAggregate(count=2, values=(3.0,))
+    assert (len(records), len(tupled)) == (1, 0)
+
+
+def test_a_remembered_query_list_still_gets_fresh_accumulators(
+    two_score_fragments: FragmentScore,
+) -> None:
+    """What is remembered is the RESOLUTION, never the accumulators.
+
+    ``join(,)`` is the aggregator that shows a reused one: a second read
+    into the same accumulator would answer ``SSC,SSC``.  Each read builds
+    its own, so the second answers what the first did.
+    """
+    queries = [ScoreAggregationQuery("collection", "join(,)")]
+
+    with two_score_fragments.open() as score:
+        first = score.get_fragment_scores_overlapping_region_agg(
+            "1", 100, 199, queries=queries)
+        again = score.get_fragment_scores_overlapping_region_agg(
+            "1", 100, 199, queries=queries)
+
+    assert first == again == FragmentAggregate(count=1, values=("SSC",))
+
+
+def test_a_query_list_given_as_an_iterator_is_remembered_whole(
+    fragments: FragmentScore,
+) -> None:
+    """A one-pass ``queries`` must not leave an empty resolution behind.
+
+    The memo keys on ``tuple(queries)``, which consumes an iterator; a
+    resolver that then walked ``queries`` again would resolve nothing and
+    remember that under the real key -- for every later caller of the
+    same list, on a score shared across threads.  The signature says
+    ``Sequence``, but the read is public and the wrong answer is silent.
+    """
+    with fragments.open() as score:
+        from_iterator = score.get_fragment_scores_overlapping_region_agg(
+            "1", 100, 199, queries=iter([ScoreAggregationQuery("v", "max")]))
+        from_list = score.get_fragment_scores_overlapping_region_agg(
+            "1", 100, 199, queries=[ScoreAggregationQuery("v", "max")])
+
+    assert from_iterator == from_list == FragmentAggregate(
+        count=4, values=(4.0,))
+
+
+@pytest.mark.parametrize(("query", "refusal"), [
+    (ScoreAggregationQuery("nope"),
+     "score 'nope' is not defined by resource"),
+    (ScoreAggregationQuery("flag"),
+     "score 'flag' of resource '.*' has no default aggregator"),
+])
+def test_a_query_list_that_was_refused_is_refused_again(
+    tmp_path: pathlib.Path,
+    query: ScoreAggregationQuery,
+    refusal: str,
+) -> None:
+    # Only a RESOLVED list is remembered; a refusal is answered every time
+    # it is asked, with the same words -- whichever of the two questions
+    # (which score, what reduces it) the list fails.
+    fragments = FragmentScore(
+        a_fragment_score()
+        .with_score("v", "float")
+        .with_score("flag", "bool")
+        .with_data("""
+            chrom  pos_begin  pos_end  v    flag
+            1      100        199      1.0  True
+        """)
+        .build_resource(tmp_path),
+    )
+
+    with fragments.open() as score:
+        for _ in range(2):
+            with pytest.raises(ValueError, match=refusal):
+                score.get_fragment_scores_overlapping_region_agg(
+                    "1", 100, 199, queries=[query])
+
+
+def test_a_score_remembers_a_bounded_number_of_query_lists(
+    fragments: FragmentScore,
+) -> None:
+    """A caller that asks a new list per read cannot grow the score.
+
+    An annotator asks one list forever, but the read is public and the
+    web api asks per request.  Every list below is distinct -- it reaches
+    into the memo because size is the only thing this pins, not what is
+    kept -- and every answer stays right.
+    """
+    bound = FragmentScore._RESOLVED_QUERIES_BOUND
+
+    with fragments.open() as score:
+        for i in range(bound + 5):
+            queries = [ScoreAggregationQuery("v", "max")] * (i + 1)
+            aggregate = score.get_fragment_scores_overlapping_region_agg(
+                "1", 100, 199, queries=queries)
+            assert aggregate.values == (4.0,) * (i + 1)
+            assert score._resolve_query_tuple.cache_info().currsize <= bound
 
 
 def test_one_source_asked_twice_answers_twice(
