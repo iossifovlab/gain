@@ -265,7 +265,7 @@ _FIGURES: list[tuple[str, _Builder, str]] = [
     # The fragments section lives in a child template, so this is the
     # one figure the genomic-score page itself never renders.
     ("fragment lengths",
-     _fragment_score, "statistics/coverage_fragment_lengths.png"),
+     _fragment_score, "statistics/fragment_lengths.png"),
     # The two indel figures LEFT this list in gain#1118: they render as
     # half-width thumbnails that open the full-size image in the modal,
     # so they are no longer page-flow figures at all -- the same

@@ -23,7 +23,7 @@ that belong with that grid rather than here.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import IO, TypeGuard
+from typing import IO, Any, TypeGuard
 
 import numpy as np
 
@@ -66,6 +66,37 @@ def accumulate_bins(target: list[int], source: Iterable[int]) -> None:
     """
     for index, count in enumerate(source):
         target[index] += count
+
+
+def binwise_sum(histograms: Iterable[Iterable[int]]) -> list[int]:
+    """Merge any number of histograms on this ladder into one.
+
+    Exact rather than approximate, and that is the point of the fixed
+    edges: every histogram is binned the same way, so a global roll-up
+    is a merge and never a re-scan.
+    """
+    merged = [0] * LENGTH_HISTOGRAM_BIN_COUNT
+    for histogram in histograms:
+        accumulate_bins(merged, histogram)
+    return merged
+
+
+def histogram_on_this_ladder(counts: Iterable[Any] | None) -> list[int] | None:
+    """A stored histogram, or ``None`` when it is not one of ours.
+
+    ``None`` in means the key was absent; ``None`` out additionally
+    covers a histogram of the wrong length, which was binned on foreign
+    edges and so cannot merge with these fixed bins.  Either way the
+    reader learns *unknown*, which is a different answer from an
+    all-zero histogram -- that one says the thing was measured and found
+    empty.  Stated once here because both stored statistics apply it.
+    """
+    if counts is None:
+        return None
+    histogram = [int(count) for count in counts]
+    if len(histogram) != LENGTH_HISTOGRAM_BIN_COUNT:
+        return None
+    return histogram
 
 
 def _bin_edge_label(edge: int) -> str:

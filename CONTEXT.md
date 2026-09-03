@@ -111,13 +111,18 @@ A position spanned by at least one table row — **value-blind**, union
 semantics, computed independently of **segments**. Σ segment lengths can
 exceed the covered count wherever different-valued rows overlap, so neither
 statistic may be derived from the other (ADR 0020).
-What a row *spans* is the kind's own answer, not the columns': a **position
-score** and a **fragment score** span the row's interval and their covered
-count is a union of those. An **allele score** has **no covered-position
-count at all** (gain#1118): its rows are points, so there is no span to
-union, and the distinct-position count it kept in place of one is removed —
-its info page renders no Coverage section rather than one permanently
-reading "not computed".
+Defined for **position scores only**, and for the same reason **segments**
+are: the union is a genuine measure of what a resource covers exactly when
+its rows are pairwise disjoint. The other two kinds have none at all, and
+their info pages render no Coverage section rather than one permanently
+reading "not computed":
+an **allele score** because its rows are points, so there is no span to
+union — the distinct-position count it once kept in place of one is gone
+(gain#1118);
+a **fragment score** because its rows deliberately overlap, so the union of
+their spans counts neither fragments nor completeness in any way that
+compares across resources (gain#1127). Its **fragments** are the honest
+statistic and it keeps those.
 _Avoid_: covered base, coverage depth (nothing here counts how many rows
 span a position), breadth
 
@@ -127,11 +132,14 @@ deliberate opposite of a **segment**. Overlapping, nested and duplicate rows
 are each their own fragment, and a fragment's length is its own span,
 `pos_end - pos_begin + 1`. Only a fragment score publishes fragment
 statistics — a count and a length histogram, on the same fixed log2 bins as
-segment lengths. Nothing publishes fragment *segments*, and nothing will:
+segment lengths, in a file of their own. Its **own** statistic since
+gain#1127: it used to ride inside the covered-position one, which meant a
+fragment score could not stop publishing covered positions without losing
+its fragment counts too. Nothing publishes fragment *segments*, and nothing will:
 they would need an exact run algebra fragments do not have, and no consumer
-question survives that fragment coverage and the fragment count/length
-histogram cannot already answer between them (ADR 0020, amended by gain#848
-and closed by gain#926).
+question survives that the fragment count and length histogram cannot already
+answer (ADR 0020, amended by gain#848 and closed by gain#926; a fragment score
+has no coverage to help answer it either, since gain#1127).
 _Avoid_: row (ambiguous — every kind has table rows), interval, CNV, call,
 event
 
@@ -256,11 +264,12 @@ reason a read of one is not a read of the other
 - A **segment** merges touching-or-overlapping *equal-valued* rows of one
   **resource**'s table; a **covered position** is spanned by *any* row, values
   ignored. Segments are value-aware, coverage is not, and the two coincide
-  only where no different-valued rows overlap. An **allele score** has
-  neither: its rows are points, so there is nothing to merge and nothing to
-  union, and it carries no covered-position count of its own (gain#1118).
-  A **fragment score** has **covered positions** and **fragments** but no
-  **segments**: its rows overlap, and merging them is not wanted.
+  only where no different-valued rows overlap. Both are **position score**
+  statistics and neither other kind has either. An **allele score** has
+  neither because its rows are points, so there is nothing to merge and
+  nothing to union (gain#1118). A **fragment score** has neither because
+  its rows overlap: merging them is not wanted, and unioning them measures
+  nothing (gain#1127). What a fragment score has instead is **fragments**.
 - The **regions** a contig is scanned in own the rows whose `pos_begin` falls
   inside them, and measure those rows whole. So the regions partition the
   contig's **fragments**, and every statistic that sums over rows is

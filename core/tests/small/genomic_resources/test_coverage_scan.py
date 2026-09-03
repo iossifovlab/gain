@@ -12,7 +12,6 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.coverage import (
-    COVERAGE_FRAGMENT_LENGTHS_IMAGE_FILE,
     COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
     COVERAGE_STATISTICS_FILE,
     CoverageStatistics,
@@ -20,6 +19,9 @@ from gain.genomic_resources.statistics.coverage import (
     accumulate_coverage,
     merge_region_coverage,
     save_and_plot_coverage,
+)
+from gain.genomic_resources.statistics.fragments import (
+    FRAGMENT_STATISTICS_FILE,
 )
 from gain.genomic_resources.statistics.length_histogram import (
     LENGTH_HISTOGRAM_BIN_COUNT,
@@ -288,80 +290,6 @@ def test_coverage_is_chunk_invariant(
     assert merged.segment_length_histogram() == _expected_histogram()
 
 
-# Five fragments over chr1, scanned to 200.  Overlapping (10-100 and
-# 90-120), nested (20-30 inside 10-100) and duplicated (20-30 twice), so
-# a chunked scan has every shape of row to get wrong.
-_FRAGMENT_ROWS = ((10, 100), (20, 30), (20, 30), (90, 120), (150, 151))
-_FRAGMENT_CONTIG_END = 200
-
-
-def _fragment_chunk_fixture(tmp_path: pathlib.Path) -> GenomicResource:
-    rows = "\n".join(
-        f"            chr1   {begin}  {end}  0.{index + 1}"
-        for index, (begin, end) in enumerate(_FRAGMENT_ROWS))
-    return (
-        a_fragment_score()
-        .with_score("s", "float")
-        .with_data(f"            chrom  pos_begin  pos_end  s\n{rows}\n")
-        .with_tabix()
-        .build_resource(tmp_path)
-    )
-
-
-@pytest.mark.parametrize("region_size", [1, 2, 3, 7, 100])
-def test_fragment_statistics_are_chunk_invariant(
-    tmp_path: pathlib.Path,
-    region_size: int,
-) -> None:
-    # The sibling ``test_coverage_is_chunk_invariant`` discards the
-    # histograms it computes and scans a position score, which is immune
-    # to gain#816 -- which is why the defect survived it.  This one
-    # asserts the VALUE histograms too, on a fragment fixture.
-    resource = _fragment_chunk_fixture(tmp_path)
-    confs: dict = {"s": _hist_conf()}
-    starts = list(range(1, _FRAGMENT_CONTIG_END + 1, region_size))
-    # Vacuity guard: a chunk-invariance test where nothing is chunked
-    # passes trivially.  More than one region, and at least one fragment
-    # genuinely straddling a region boundary at THIS size.
-    assert len(starts) > 1
-    boundaries = [start - 1 for start in starts[1:]]
-    assert any(
-        begin <= boundary < end
-        for begin, end in _FRAGMENT_ROWS
-        for boundary in boundaries
-    )
-
-    results = [
-        scan.do_histogram_task(
-            resource, confs, "chr1", start,
-            min(start + region_size - 1, _FRAGMENT_CONTIG_END))
-        for start in starts
-    ]
-    whole = scan.do_histogram_task(
-        resource, confs, "chr1", 1, _FRAGMENT_CONTIG_END)
-
-    merged = scan.merge_histograms(
-        resource, *(result.histograms for result in results))
-    assert merged["s"].bars.tolist() == whole.histograms["s"].bars.tolist()
-    assert merged["s"].bars.sum() == len(_FRAGMENT_ROWS)
-
-    stats = merge_region_coverage(
-        resource.resource_id, (result.coverage for result in results))
-    assert stats is not None
-    assert stats.covered_by_chromosome() == {"chr1": 113}
-    assert stats.fragments_global() == len(_FRAGMENT_ROWS)
-    # 91, 11, 11, 31 and 2 base pairs on the fixed log2 bins.
-    assert stats.fragment_lengths_global() == _length_bins(
-        {1: 1, 3: 2, 4: 1, 6: 1})
-
-
-def _length_bins(counts: dict[int, int]) -> list[int]:
-    histogram = [0] * 32
-    for index, count in counts.items():
-        histogram[index] = count
-    return histogram
-
-
 def test_statistics_hash_is_untouched_by_the_coverage_build(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -405,9 +333,15 @@ def test_info_page_without_the_statistics_file_says_not_computed(
     assert "not computed" in page
 
 
-def test_fragment_rows_overlapping_and_nested_count_once(
+def test_the_union_counts_overlapping_and_nested_rows_once(
     tmp_path: pathlib.Path,
 ) -> None:
+    # Pins RegionCoverage's union algebra DIRECTLY, by handing it a
+    # coverage object the scan would not build for this kind: since
+    # gain#1127 no coverage-scanned kind has overlapping rows, and a
+    # fragment fixture is the only way to feed the union any.  The
+    # running-maximum union is still the class's documented contract,
+    # and a frozen or merged region can still carry such counts.
     resource = (
         a_fragment_score()
         .with_score("frequency", "float")
@@ -435,12 +369,18 @@ def test_fragment_rows_overlapping_and_nested_count_once(
     assert bulk.covered == 122
 
 
-def test_fragment_build_publishes_no_segment_statistics(
+def test_a_fragment_build_is_not_coverage_scanned_at_all(
     tmp_path: pathlib.Path,
 ) -> None:
-    # Fragment run identity is chunk-dependent (overlapping rows have
-    # no exact run algebra -- gain#794), so fragment resources publish
-    # covered positions only: no segment keys, no histogram image.
+    # A fragment score's rows deliberately overlap, so the union of
+    # their spans counts nothing a reader wants: not fragments (that is
+    # the fragment statistic, which the kind has) and not completeness
+    # in a way that compares across resources.  So the kind is not
+    # coverage-scanned, and writes no coverage file at all -- absence,
+    # not a file whose numbers mean nothing (gain#1127).
+    #
+    # ADR 0020 already recorded the adjacent half: no segments either,
+    # because merging overlapping rows is not wanted (gain#926).
     resource = (
         a_fragment_score()
         .with_score("frequency", "float")
@@ -457,13 +397,11 @@ def test_fragment_build_publishes_no_segment_statistics(
 
     scan.do_noregion_histograms(resource)
 
-    stats = CoverageStatistics.deserialize(
-        resource.get_file_content("statistics/coverage.json"))
-    assert stats.covered_by_chromosome() == {"chr1": 111}
-    assert stats.segments_by_chromosome() == {}
-    assert stats.segments_global() is None
-    assert not resource.file_exists(
-        "statistics/coverage_segment_lengths.png")
+    assert not resource.file_exists(COVERAGE_STATISTICS_FILE)
+    assert not resource.file_exists(COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE)
+    # The statistic the kind DOES publish is untouched by that -- the
+    # point of splitting the two apart before dropping this one.
+    assert resource.file_exists(FRAGMENT_STATISTICS_FILE)
 
 
 def test_a_record_beginning_past_the_region_end_contributes_zero() -> None:
@@ -624,34 +562,3 @@ def test_info_page_says_a_resource_genuinely_has_no_segments(
 
     assert "no segments" in page
     assert COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE not in page
-
-
-def test_info_page_says_a_resource_genuinely_has_no_fragments(
-    tmp_path: pathlib.Path,
-) -> None:
-    # The fragment section gates its image on the same counts as the
-    # segment one; the two groups are independent but not asymmetric.
-    resource = (
-        a_fragment_score()
-        .with_score("frequency", "float")
-        .with_data(
-            """
-            chrom  pos_begin  pos_end  frequency
-            chr1   10         100      0.1
-            """)
-        .with_tabix()
-        .build_resource(tmp_path)
-    )
-    save_and_plot_coverage(resource, CoverageStatistics.deserialize(json.dumps({
-        "format_version": 1,
-        "chromosomes": {"chr1": {
-            "covered_positions": 0,
-            "fragment_count": 0,
-            "fragment_length_histogram": [0] * LENGTH_HISTOGRAM_BIN_COUNT,
-        }},
-    })))
-
-    page = build_score_implementation_from_resource(resource).get_info()
-
-    assert "no fragments" in page
-    assert COVERAGE_FRAGMENT_LENGTHS_IMAGE_FILE not in page

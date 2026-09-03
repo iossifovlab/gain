@@ -1,5 +1,17 @@
 {% extends "genomic_score.jinja" %}
-{# A fragment score's page IS the genomic-score page plus one section. #}
+{# A fragment score's page IS the genomic-score page, plus one section
+   and minus another. #}
+
+{# A fragment score's rows deliberately OVERLAP, so the union of their
+   spans measures nothing a reader wants: not fragments -- that is the
+   section below, and it is the honest one -- and not completeness in a
+   way that compares across resources.  The kind is therefore not
+   coverage-scanned at all, so nothing would ever fill the section and
+   it renders no heading rather than one permanently reading "not
+   computed" (gain#1127).  ADR 0020 records the adjacent half: no
+   segments either, for the same reason. #}
+{% block coverage %}{% endblock %}
+
 {% block fragments %}
 <h2>Fragments</h2>
 {% set fragments = impl.get_fragment_display() %}
@@ -32,8 +44,16 @@
 </table>
 </div>
 <h3>Fragment lengths</h3>
-{% if fragments.fragment_lengths and fragments.fragment_lengths | sum %}
-<img src="{{ impl.get_coverage_fragment_lengths_image_filename() }}"
+{#- Three answers, not two.  The counts and the histogram are read
+   independently: a stored histogram binned on foreign edges cannot
+   merge with this code's fixed bins, so the LENGTHS are unknown while
+   the counts above stay exact.  Collapsing that into the empty branch
+   would print "no fragments" directly beneath a table saying there are
+   several.  The allele sections draw the same three-way distinction. -#}
+{% if fragments.fragment_lengths is none %}
+<p>fragment lengths not computed</p>
+{% elif fragments.fragment_lengths | sum %}
+<img src="{{ impl.get_fragment_lengths_image_filename() }}"
     alt="global fragment-length histogram"
     class="statistics-figure"
     title="Fragment lengths across all chromosomes, fixed log2 bins">

@@ -7,10 +7,14 @@
    would ever fill the section, so it renders no heading at all rather
    than one permanently reading "not computed" (gain#1118).
 
-   This is the ONLY kind that empties it; the shared template carries
-   Coverage as the block's default so that position and fragment scores
-   -- and any kind added later that is genuinely scanned -- keep it
-   without having to opt back in. #}
+   A fragment score empties it too, for its own reason -- its rows
+   overlap, so the union measures nothing (gain#1127) -- which leaves
+   the POSITION score as the only kind the shared template's default
+   still serves.  A default that carries the minority is a trap worth
+   naming: a kind added later inherits a Coverage section whether or
+   not it is coverage-scanned, and the way to notice is a page reading
+   "not computed" forever.  gain#1116 tracks gating the block on the
+   scan's own kind set instead, which would delete both overrides. #}
 {% block coverage %}{% endblock %}
 
 {% block alleles %}

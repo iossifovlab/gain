@@ -59,6 +59,12 @@ from gain.genomic_resources.statistics.coverage import (
     normalize_values,
     save_and_plot_coverage,
 )
+from gain.genomic_resources.statistics.fragments import (
+    RegionFragments,
+    accumulate_fragments,
+    merge_region_fragments,
+    save_and_plot_fragments,
+)
 from gain.genomic_resources.statistics.min_max import MinMaxValue
 
 logger = logging.getLogger(__name__)
@@ -112,15 +118,23 @@ _BULK_SCAN_RESOURCE_TYPES = frozenset(
     for spelling in equivalent_resource_types(resource_type)
 )
 
-# The kinds whose rows have a span coverage can union: position scores and
-# fragment scores (in both spellings).  Allele scores are deliberately out:
-# their rows collapse to points and their coverage is a DISTINCT-position
-# count with its own slice (gain#777), not this union.
+# The kinds whose covered positions are worth unioning: position scores
+# alone.  The union answers "is there data at this position at all?",
+# which is a question about a kind whose rows are PAIRWISE DISJOINT --
+# then the count is a genuine measure of what the resource covers and
+# the fraction a genuine completeness figure.
+#
+# The two kinds deliberately out, for different reasons.  An allele
+# score's rows collapse to points, so there is no span to union at all
+# (gain#777).  A fragment score's rows deliberately OVERLAP, so their
+# union counts nothing a reader wants: not fragments -- that is the
+# fragment statistic, which the kind has and which is the honest one --
+# and not completeness in a way that compares across resources
+# (gain#1127).  ADR 0020 already records the adjacent half: a fragment
+# score has no segments because merging its rows is not wanted, and the
+# same objection applies to unioning them.
 _COVERAGE_SCAN_RESOURCE_TYPES = frozenset(
-    spelling
-    for resource_type in ("position_score", "fragment_score")
-    for spelling in equivalent_resource_types(resource_type)
-)
+    equivalent_resource_types("position_score"))
 
 # The kinds whose rows are PAIRWISE DISJOINT -- no two share a position.
 # Position scores, whose ``validate_records`` refuses a row beginning at
@@ -132,19 +146,28 @@ _COVERAGE_SCAN_RESOURCE_TYPES = frozenset(
 # Named for the FACT rather than for one of its consequences, because it
 # has two: disjoint rows have an exact run algebra, so their segment
 # statistics are published; and they cannot double-count a position, so
-# the scan hands their coverage full unclipped spans.  Fragment rows
-# overlap, so they get neither (their counts are their own statistic --
-# gain#794), and segments for them are not wanted rather than pending:
-# ADR 0020 as amended by gain#926 closes that question.
+# the scan hands their coverage full unclipped spans.
+#
+# Equal to the coverage set above SINCE gain#1127, and deliberately not
+# merged with it: they answer different questions, and the clipping
+# machinery this gates (``clip_span``, ``RegionCoverage.add_span``) is
+# retained for a future overlapping kind that is genuinely
+# coverage-scanned.  No production scan reaches it today -- fragment
+# rows overlap but are no longer coverage-scanned at all, and their
+# counts are their own statistic (gain#794).  Segments for them are not
+# wanted rather than pending: ADR 0020 as amended by gain#926 closes
+# that question.
 _NON_OVERLAPPING_ROW_RESOURCE_TYPES = frozenset(
     equivalent_resource_types("position_score"))
 
 # The kinds whose rows ARE fragments, in both spellings, and so publish
-# a fragment count and fragment-length histogram (gain#794).  A separate
-# statement from the one above rather than its complement: that these
-# are exactly the coverage-scanned kinds that overlap is true today and
-# incidental -- a future overlapping kind that is not a fragment score
-# would inherit fragment counts it has no business publishing.
+# a fragment count and fragment-length histogram (gain#794).  Gates a
+# statistic of its OWN -- its own accumulator, its own file -- and no
+# longer a group riding inside the coverage one: while the two shared a
+# carrier, this set could only ever narrow a coverage object that had
+# already been built, so dropping the kind from the set above would have
+# silently dropped the tally with it (gain#1127).  These two sets are
+# now disjoint, and neither is the other's complement.
 _FRAGMENT_STATISTICS_RESOURCE_TYPES = frozenset(
     equivalent_resource_types("fragment_score"))
 
@@ -230,6 +253,7 @@ class RegionScanResult(NamedTuple):
 
     histograms: dict[str, Histogram]
     coverage: RegionCoverage | None
+    fragments: RegionFragments | None
     alleles: RegionAlleles | None
 
 
@@ -442,6 +466,7 @@ def do_histogram(
     end: int | None,
     *,
     coverage: RegionCoverage | None = None,
+    fragments: RegionFragments | None = None,
     alleles: RegionAlleles | None = None,
     score: GenomicScore | None = None,
 ) -> dict[str, Histogram]:
@@ -452,10 +477,10 @@ def do_histogram(
     through :func:`scan_region` and weighs each owned record the way
     the score's kind weighs it (``record_weight``).
 
-    ``coverage`` and ``alleles`` ride the same read rather than
-    costing the region a second one, and are accumulated IN PLACE --
-    the caller owns them, because it is the task's return value that
-    has to travel under a distributed executor.
+    ``coverage``, ``fragments`` and ``alleles`` ride the same read
+    rather than costing the region a second one, and are accumulated IN
+    PLACE -- the caller owns them, because it is the task's return value
+    that has to travel under a distributed executor.
 
     A histogram that refuses a value is nullified on its own and the
     resource's other scores carry on.
@@ -482,8 +507,6 @@ def do_histogram(
         # record partition as every other statistic.
         clip_coverage = coverage is not None \
             and not coverage.rows_are_disjoint
-        track_fragments = coverage is not None \
-            and coverage.tracks_fragments
         for left, right, rec in scan_region(
                 opened, chrom, start, end, score_ids,
                 alleles=alleles):
@@ -503,10 +526,9 @@ def do_histogram(
                         left, right, normalize_values(rec))
             if not owned:
                 continue
-            if track_fragments:
+            if fragments is not None:
                 # A fragment is the row as stored, at its own span.
-                assert coverage is not None
-                coverage.add_fragment(right - left + 1)
+                fragments.add_fragment(right - left + 1)
             # The kind's ONE statement of the weight rule, called per
             # record here and broadcast over a whole batch by the bulk
             # path -- the two cannot drift because there is nothing to
@@ -553,6 +575,7 @@ def do_histogram_bulk(
     end: int,
     *,
     coverage: RegionCoverage | None = None,
+    fragments: RegionFragments | None = None,
     alleles: RegionAlleles | None = None,
     score: GenomicScore | None = None,
 ) -> dict[str, Histogram]:
@@ -577,25 +600,36 @@ def do_histogram_bulk(
         result[score_id] = build_empty_histogram(hist_conf)
 
     accumulate = _accumulate_arrays
-    if coverage is not None:
+    if coverage is not None or fragments is not None:
 
-        def accumulate_with_coverage(
+        def accumulate_with_statistics(
             arrays: RecordArrays,
             result: dict[str, Histogram],
             region: tuple[str, int | None, int | None],
-            # Shadows this function's own ``score`` parameter, and must:
-            # the name is part of the accumulator type ``accumulate`` is
-            # assigned from, which ``_accumulate_arrays`` spells
-            # ``score``.  Harmless -- nothing in here reads the outer
-            # one; the ``bulk_region_scan`` call that does is below, at
-            # this function's own scope.
+            # Shadows this function's own ``score`` parameter, and must.
+            # ``accumulate``'s type is INFERRED from the
+            # ``_accumulate_arrays`` assigned to it just above -- a
+            # ``def``, whose parameter names are part of that type -- so
+            # renaming this one is an assignment error, not a style
+            # choice.  (``bulk_region_scan``'s own ``Callable[...]``
+            # annotation carries no names; this is not that type.)
+            # Harmless -- nothing in here reads the outer one; the
+            # ``bulk_region_scan`` call that does is below, at this
+            # function's own scope.
             score: GenomicScore,
         ) -> None:
             _accumulate_arrays(
                 arrays, result, region, score)
-            accumulate_coverage(arrays, coverage, region)
+            # Each statistic asks for the batch on its OWN terms: the
+            # union clips to the region, the tally rides the record
+            # partition.  Neither implies the other -- a fragment score
+            # takes this branch with no coverage at all (gain#1127).
+            if coverage is not None:
+                accumulate_coverage(arrays, coverage, region)
+            if fragments is not None:
+                accumulate_fragments(arrays, fragments, region)
 
-        accumulate = accumulate_with_coverage
+        accumulate = accumulate_with_statistics
 
     batches = None
     if alleles is not None:
@@ -951,7 +985,10 @@ def do_histogram_task(
     one extra condition on the bulk path: it needs the nucleotides,
     so a backend that will not serve them sends the region back to
     the per-record read rather than to a statistic with no class
-    data.
+    data.  A fragment score's :class:`RegionFragments` rides it too,
+    asked for independently of the coverage question: the two share a
+    scan, not a carrier, so a kind publishes either without the other
+    (gain#1127).
 
     ONE score serves the whole invocation -- the allele probe below, the
     bulk gate, and whichever scan takes the region -- where each of those
@@ -964,15 +1001,16 @@ def do_histogram_task(
     construction that refuses this resource is not attributed here -- as
     was already the case before the score was shared.
     """
-    coverage = None
     resource_type = resource.get_type()
+    coverage = None
     if resource_type in _COVERAGE_SCAN_RESOURCE_TYPES:
         coverage = RegionCoverage(
             chrom, start, end,
             rows_are_disjoint=resource_type
-            in _NON_OVERLAPPING_ROW_RESOURCE_TYPES,
-            track_fragments=resource_type
-            in _FRAGMENT_STATISTICS_RESOURCE_TYPES)
+            in _NON_OVERLAPPING_ROW_RESOURCE_TYPES)
+    fragments = None
+    if resource_type in _FRAGMENT_STATISTICS_RESOURCE_TYPES:
+        fragments = RegionFragments(chrom, start, end)
     score = build_score_from_resource(resource)
     alleles = region_alleles_for(score, chrom, start, end)
     nucleotides = True
@@ -994,12 +1032,14 @@ def do_histogram_task(
                     resource, all_hist_confs, score=score):
             histograms = do_histogram_bulk(
                 resource, all_hist_confs, chrom, start, end,
-                coverage=coverage, alleles=alleles, score=score)
+                coverage=coverage, fragments=fragments,
+                alleles=alleles, score=score)
         else:
             histograms = do_histogram(
                 resource, all_hist_confs, chrom, start, end,
-                coverage=coverage, alleles=alleles, score=score)
-        return RegionScanResult(histograms, coverage, alleles)
+                coverage=coverage, fragments=fragments,
+                alleles=alleles, score=score)
+        return RegionScanResult(histograms, coverage, fragments, alleles)
     except MalformedResourceError as err:
         report_resource_failure(
             err, "could not build the histograms of",
@@ -1148,20 +1188,23 @@ def merge_and_save_histograms(
     resource: GenomicResource,
     *results: RegionScanResult,
 ) -> dict[str, Histogram]:
-    """Fold every region's scan results together and save all three.
+    """Fold every region's scan results together and save all four.
 
-    The scan's last task.  Histograms, coverage and alleles each
-    merge across the regions and are written into the resource --
-    the one place any of the three is produced, so no SECOND
-    code path can refresh one of them and leave the others stale.
-    Within this one the three writes are sequential and there is
-    no rollback, so a raise partway does leave a mixture.
+    The scan's last task.  Histograms, coverage, fragments and alleles
+    each merge across the regions and are written into the resource --
+    the one place any of the four is produced, so no SECOND code path
+    can refresh one of them and leave the others stale.  Within this
+    one the writes are sequential and there is no rollback, so a raise
+    partway does leave a mixture.
     """
     merged_histograms = merge_histograms(
         resource, *(result.histograms for result in results))
     save_and_plot_coverage(resource, merge_region_coverage(
         resource.resource_id,
         (result.coverage for result in results)))
+    save_and_plot_fragments(resource, merge_region_fragments(
+        resource.resource_id,
+        (result.fragments for result in results)))
     save_allele_statistics(resource, merge_region_alleles(
         resource.resource_id,
         (result.alleles for result in results)))
