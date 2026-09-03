@@ -20,10 +20,13 @@ them.
    It claims that GAIn has two paths (resources, annotation), one substrate
    under the first (the protocol layer), one cross-cutting mechanism (the
    genomic context), and exactly three seams a plugin can use (the entry-point
-   groups). Anything that is not one of those boxes — the task graph, the
-   effect-annotation engine, the statistics machinery, the web API — is left
-   off deliberately, because the parent issue's *calls-its-methods* rule puts
-   them outside the declared API. If any of that is wrong, it is wrong here
+   groups). Two kinds of thing are left off deliberately. The typed resource
+   wrappers (reference genome, gene models, the scores) are omitted because
+   this is the *introductory* map and they are the resources chapter's
+   subject — a resource is drawn as one box. The task graph, the
+   effect-annotation engine, the statistics machinery and the web API are
+   omitted because the parent issue's *calls-its-methods* rule puts them
+   outside the declared API. If any of that is wrong, it is wrong here
    first and in every later chapter second. Also decide whether the front-page
    figure should point down to this map, or stay unrelated.
 
@@ -37,9 +40,7 @@ The static map
            direction TB
            Repo["GenomicResourceRepo<br/>get_resource · find_resource · search_resources"]
            Res["GenomicResource<br/>get_config · get_type · open_raw_file · open_tabix_file · …"]
-           Impl["GenomicResourceImplementation<br/>ReferenceGenome · GeneModels · PositionScore · AlleleScore · …"]
            Repo -->|"one id, one version"| Res
-           Res -->|"build_resource_implementation<br/>keyed by the resource's type"| Impl
        end
 
        subgraph protocol["Protocol layer"]
@@ -59,7 +60,7 @@ The static map
            Ann -->|"input"| Atbl
        end
        Pipe -->|"repository"| Repo
-       Ann -->|"the resources it reads"| Impl
+       Ann -->|"the resources it reads"| Res
 
        subgraph ctx["Genomic context"]
            direction TB
@@ -75,7 +76,7 @@ The static map
            EP2["gain.annotation.annotators"]
            EP3["gain.genomic_resources.plugins"]
        end
-       EP1 -.->|"register_implementation<br/>(lazy: on first lookup)"| Impl
+       EP1 -.->|"a new resource type<br/>(lazy: on first use)"| resources
        EP2 -.->|"register_annotator_factory<br/>(lazy: on first lookup)"| Ann
        EP3 -.->|"register_context_provider<br/>(eager: at import time)"| Prov
 
@@ -89,13 +90,12 @@ versioned resources addressed by id; ``get_resource`` returns one
 ``genomic_resource.yaml`` (``get_config``), its ``type`` and its files, and can
 open any of them (``open_raw_file``, ``open_tabix_file``, ``open_bigwig_file``,
 …) without the caller knowing where the bytes live. A resource does not know
-what its data *means*; that is the job of its
-:class:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation`
-— ``ReferenceGenome``, ``GeneModels``, ``PositionScore``, ``AlleleScore`` and
-the rest. ``build_resource_implementation(resource)`` picks the implementation
-class from the resource's ``type:`` field through a registry, and the
-``build_*_from_resource_id`` helpers you will already have met in
-:doc:`../python_interface` are one-call shortcuts through that same chain.
+what its data *means* — that this one is a reference genome and that one a
+position score. That knowledge lives in a typed wrapper chosen from the
+resource's ``type:`` field, which is what the ``build_*_from_resource_id``
+helpers you will already have met in :doc:`../python_interface` return. Those
+wrappers are deliberately left off this introductory map; they are the subject
+of the resources chapter.
 
 **The protocol layer** is why a repository does not care whether it is a
 directory on disk, an HTTP mirror, an S3 bucket or an in-memory fixture.
@@ -157,12 +157,12 @@ exactly the same way, so there is no privileged path.
      - What you register
      - When GAIn looks
    * - ``gain.genomic_resources.implementations``
-     - A builder ``GenomicResource → GenomicResourceImplementation``. The
-       entry-point *name* is the resource ``type:`` it handles.
+     - A builder that turns a :class:`~gain.genomic_resources.repository.GenomicResource`
+       of one ``type:`` into its typed wrapper — a new resource type, in
+       effect. The entry-point *name* is the resource ``type:`` it handles.
      - The group is scanned when ``gain.genomic_resources`` is imported, but
-       each entry point is loaded lazily, on the first
-       ``build_resource_implementation`` of that type. Programmatic
-       alternative: ``register_implementation``.
+       each entry point is loaded lazily, the first time a resource of that
+       type is used. Programmatic alternative: ``register_implementation``.
    * - ``gain.annotation.annotators``
      - A factory ``(AnnotationPipeline, AnnotatorInfo) → Annotator``. The
        entry-point *name* is the ``annotator_type`` used in pipeline YAML.
