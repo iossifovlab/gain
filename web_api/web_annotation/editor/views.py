@@ -165,9 +165,8 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                 },
                 # The annotator's own parameters (gain#1165), `string`
                 # for the reason recorded on the fragment score template
-                # below: it is the only free-text field the form renders.
-                # `allele_filter` is the analogue of `fragment_filter`;
-                # `mode` is `allele` (default) or `region`.
+                # below.  `allele_filter` is the analogue of
+                # `fragment_filter`.
                 "allele_filter": {
                     "field_type": "string",
                     "optional": True,
@@ -176,9 +175,8 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                     "field_type": "string",
                     "optional": True,
                 },
-                # The same cutoff the position score template offers; the
-                # documentation names it there only, but this annotator
-                # reads it too (gain#1165).
+                # Read by this annotator too; see the position score
+                # template (gain#1165).
                 "region_length_cutoff": {
                     "field_type": "string",
                     "optional": True,
@@ -297,10 +295,8 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                     "resource_type": "genome",
                     "optional": True,
                 },
-                # The same cutoff the position score template offers, on
-                # this annotator's own scale.  The documentation names it
-                # for the position score only; offered here all the same,
-                # since the annotator reads it (gain#1165).
+                # Read by this annotator too; see the position score
+                # template (gain#1165).
                 "region_length_cutoff": {
                     "field_type": "string",
                     "optional": True,

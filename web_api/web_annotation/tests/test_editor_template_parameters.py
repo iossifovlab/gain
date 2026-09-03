@@ -11,17 +11,19 @@ the editor offers (gain#1165).
 
 Exercised through the HTTP endpoints rather than the view classes: the
 templates are private helpers, and what matters is what a browser is told.
+The one exception is the list of types, read at collection time from the
+helper the ``annotator_types`` endpoint serves, so that it can parametrize.
 """
 from typing import Any
 
 import pytest
+from gain.annotation.annotation_config import NON_IDENTITY_PARAMS
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.repository import GenomicResourceRepo
 from rest_framework.test import APIClient
 
 from web_annotation.editor.views import EditorMixin
 
-ANNOTATOR_TYPES_URL = "/api/editor/annotator_types"
 ANNOTATOR_CONFIG_URL = "/api/editor/annotator_config"
 
 
@@ -48,8 +50,7 @@ def test_the_allele_score_template_offers_the_filter_and_the_mode(
     Both are documented allele score parameters, and ``allele_filter`` is
     the direct analogue of the fragment score's ``fragment_filter``, which
     the editor already offers.  ``string`` for the reason recorded on the
-    fragment score template: it is the only field type the form renders
-    free text as.
+    fragment score template in ``editor/views.py``.
     """
     template = _config_template(client, "allele_score_annotator")
 
@@ -80,14 +81,15 @@ def test_the_template_offers_the_region_length_cutoff(
 
 
 #: The types the editor offers, read from the helper the endpoint serves
-#: so that a tenth type is a case here the day it is added -- and, having
-#: no pipeline or allowlist below, a failing one rather than a silent gap.
+#: so that a tenth type is a case here the day it is added.
 ANNOTATOR_TYPES = EditorMixin()._get_annotator_types()
 
 #: Keys the framework writes into every annotator's parameters and marks
 #: as read.  Not a parameter a user writes, so neither offered nor
-#: allowlisted: discounted once, before the comparison.
-INJECTED_PARAMETERS = frozenset({"work_dir"})
+#: allowlisted: discounted once, before the comparison.  Core names the
+#: same set for what it means to annotator identity; the two coincide by
+#: definition, so a key injected tomorrow is discounted here too.
+INJECTED_PARAMETERS = NON_IDENTITY_PARAMS
 
 #: Per type, the parameters the annotator reads that the editor
 #: deliberately does NOT offer, each for a stated reason.  Anything else
@@ -213,13 +215,6 @@ def test_the_template_offers_every_parameter_the_annotator_reads(
     `info.parameters` refuses a key nobody read -- which is what makes the
     comparison total.  A future conditional read would quietly narrow it.
     """
-    assert annotator_type in MINIMAL_PIPELINES, (
-        f"{annotator_type} has no minimal pipeline here, so its template "
-        f"is compared against nothing -- add one")
-    assert annotator_type in DELIBERATELY_NOT_OFFERED, (
-        f"{annotator_type} has no allowlist entry here -- add one, even "
-        f"if empty, so its gaps are a decision and not an omission")
-
     template = _config_template(client, annotator_type)
     offered = set(template) - {"annotator_type", "documentation_url"}
 

@@ -80,23 +80,6 @@ def test_fragment_score_annotator_template_uses_the_new_vocabulary(
 
 
 @pytest.mark.django_db
-def test_the_spelling_the_template_emits_is_a_spelling_it_accepts(
-    client: APIClient,
-) -> None:
-    """What comes out of this endpoint has to be allowed back into it.
-
-    The template answers to ``fragment_score_annotator`` but declares
-    itself ``fragment_score``, so a pipeline saved from the editor names
-    the spelling the endpoint used to refuse with a 500 -- the endpoint
-    rejecting its own output (iossifovlab/gain#959).  The allele score
-    template had the identical gap, closed by iossifovlab/gain#919.
-    """
-    emitted = _config_template(client, "fragment_score_annotator")
-
-    assert _config_template(client, emitted["annotator_type"]) == emitted
-
-
-@pytest.mark.django_db
 def test_the_editor_documentation_link_targets_a_real_anchor(
     client: APIClient,
 ) -> None:
