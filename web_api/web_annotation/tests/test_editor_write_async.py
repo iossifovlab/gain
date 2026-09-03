@@ -113,9 +113,15 @@ async def test_async_annotator_attributes_cnv_collection() -> None:
         "source": "count",
         "type": "int",
         # Wording follows the vocabulary (gain#471); the attribute NAME is
-        # still `count`, so no pipeline requesting it is affected.
+        # still `count`, so no pipeline requesting it is affected.  gain#1124
+        # added the filter clause: with a `fragment_filter` configured the
+        # rejected fragments were never counted, which was always true and
+        # was not said.  This endpoint serves the description to the pipeline
+        # editor, which is why the string is pinned here as well as at its
+        # source.
         "description": (
-            "The number of fragments overlapping with the annotatable."
+            "The number of fragments overlapping the annotatable "
+            "and kept by the fragment filter."
         ),
         "default": True,
         "internal": False,
