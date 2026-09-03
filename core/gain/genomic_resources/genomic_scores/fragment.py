@@ -707,15 +707,17 @@ class FragmentScore(GenomicScore):
         """
         requests, aggregators = self._resolve_fragment_aggregation_queries(
             queries)
+        score_ids = request_score_ids(requests)
         segments = _CountingStream(
             self.get_fragment_scores_overlapping_region(
                 chrom, start, end,
-                scores=request_score_ids(requests),
+                scores=score_ids,
                 score_filter=score_filter,
                 min_region_overlap_fraction=min_region_overlap_fraction,
                 min_fragment_overlap_fraction=min_fragment_overlap_fraction))
         values = fold_region_segments(
-            segments, aggregators, requests, weigh=self.record_weight)
+            segments, aggregators, requests,
+            score_ids=score_ids, weigh=self.record_weight)
         return FragmentAggregate(segments.count, tuple(values))
 
     def get_fragment_score_overlapping_region_agg(

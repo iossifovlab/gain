@@ -18,7 +18,9 @@ from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_scores import (
     FragmentAggregate,
     FragmentScore,
+    aggregation,
 )
+from gain.genomic_resources.genomic_scores import fragment as fragment_module
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
 )
@@ -469,6 +471,32 @@ def test_the_folding_read_answers_the_fragments_seen_and_their_reduction(
             "1", 100, 199)
 
     assert aggregate == FragmentAggregate(count=4, values=(4.0,))
+
+
+def test_the_folding_read_derives_its_score_list_once(
+    fragments: FragmentScore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The list naming the fetched columns is derived once and handed to
+    # both the fetch and the fold (gain#1157).  Counted at every module
+    # that binds the name, so a fold that went back to deriving for
+    # itself would be seen.
+    calls: list[object] = []
+    real = aggregation.request_score_ids
+
+    def counting(requests: list[tuple[str, str]]) -> list[str]:
+        calls.append(requests)
+        return real(requests)
+
+    for module in (aggregation, fragment_module):
+        monkeypatch.setattr(module, "request_score_ids", counting)
+
+    with fragments.open() as score:
+        aggregate = score.get_fragment_scores_overlapping_region_agg(
+            "1", 100, 199)
+
+    assert aggregate == FragmentAggregate(count=4, values=(4.0,))
+    assert len(calls) == 1
 
 
 def test_one_source_asked_twice_answers_twice(

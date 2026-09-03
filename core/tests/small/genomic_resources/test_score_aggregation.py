@@ -37,6 +37,7 @@ from gain.genomic_resources.genomic_scores.aggregation import (
     build_region_aggregator,
     distinct_score_ids,
     fold_region_segments,
+    request_score_ids,
     resolve_aggregator_requests,
 )
 from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
@@ -86,20 +87,26 @@ def _fold(
     requests: list[tuple[str, str]],
     *,
     weigh: Callable[[int, int], int],
+    score_ids: list[str] | None = None,
 ) -> list[ScoreValue]:
     """Drive the fold the way its caller does.
 
     The aggregators are built here, parallel to ``requests`` and before
     the segments are read, because that is the contract the fold's
     signature states -- retyping them per test would let a caller drift
-    from it silently.
+    from it silently.  ``score_ids`` is what the caller derived ONCE to
+    name the fetched columns; left unset it is derived here as a caller
+    would, so a test that hands ``segments`` shaped for the requests
+    need not spell it out.
     """
     aggregators = [
         build_region_aggregator(score_id, aggregator, resource_id="two")
         for score_id, aggregator in requests
     ]
+    if score_ids is None:
+        score_ids = request_score_ids(requests)
     return fold_region_segments(
-        segments, aggregators, requests, weigh=weigh)
+        segments, aggregators, requests, score_ids=score_ids, weigh=weigh)
 
 
 def test_a_bare_score_id_resolves_to_the_definitions_default(
@@ -122,6 +129,49 @@ def test_one_fetch_serves_two_requests_for_the_same_score() -> None:
         [("s", "min"), ("s", "max")],
         weigh=_by_span,
     ) == [0.2, 0.8]
+
+
+def test_the_fold_indexes_the_columns_it_is_told_the_fetch_carries() -> None:
+    # The caller derives the fetched column list ONCE and hands it to the
+    # fetch and to the fold (gain#1157); the fold does not re-derive it
+    # from the requests.  Pinned with segments whose columns are in the
+    # opposite order to the requests: a fold that derived its own list
+    # would read each score's neighbour.
+    segments = [(10, 10, [1, 0.2]), (11, 11, [2, 0.8])]
+    assert _fold(
+        segments,
+        [("s", "max"), ("t", "max")],
+        score_ids=["t", "s"],
+        weigh=_by_span,
+    ) == [0.8, 2]
+
+
+def test_a_region_read_derives_its_score_list_once(
+    two: PositionScore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # One derivation per read, handed to both the fetch and the fold --
+    # not one at each end (gain#1157).  Counted at every module that
+    # binds the name, so a fold that went back to deriving for itself
+    # would be seen.
+    calls: list[list[tuple[str, str]]] = []
+    real = request_score_ids
+
+    def counting(requests: list[tuple[str, str]]) -> list[str]:
+        calls.append(requests)
+        return real(requests)
+
+    for module in (
+        gain.genomic_resources.genomic_scores.aggregation,
+        gain.genomic_resources.genomic_scores.base,
+    ):
+        monkeypatch.setattr(module, "request_score_ids", counting)
+
+    with two.open() as score:
+        assert score.aggregate_region("1", 10, 14, ["s", "t"]) == [
+            pytest.approx((0.2 * 4 + 0.8) / 5), pytest.approx(1.2)]
+
+    assert len(calls) == 1
 
 
 def test_the_fold_aggregates_the_segments_it_is_handed() -> None:
