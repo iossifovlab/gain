@@ -268,6 +268,29 @@ async def test_async_annotator_yaml_exact_format() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
+async def test_async_annotator_yaml_keeps_attribute_parameters() -> None:
+    """The returned YAML carries the attribute parameters posted (#1155)."""
+    client = AsyncClient()
+    response = await _post_json(client, YAML_POST_URL, {
+        "pipeline_id": "pipeline/test_pipeline",
+        "annotator_type": "position_score",
+        "resource_id": "scores/pos1",
+        "attributes": [
+            {"name": "pos1", "source": "pos1",
+             "value_transform": "value * 2"},
+        ],
+    })
+
+    assert response.status_code == 200, response.content
+    attributes = yaml.safe_load(response.json())[0]["position_score"][
+        "attributes"]
+    assert attributes == [
+        {"name": "pos1", "source": "pos1", "value_transform": "value * 2"},
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
 async def test_async_annotator_yaml_name_clash_400() -> None:
     client = AsyncClient()
     response = await _post_json(client, YAML_POST_URL, {

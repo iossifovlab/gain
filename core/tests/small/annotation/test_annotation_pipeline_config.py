@@ -2,13 +2,17 @@
 
 import pathlib
 import textwrap
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotationConfigurationError,
     AnnotatorInfo,
+    Attribute,
     AttributeConfig,
+    ParamsUsageMonitor,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPreamble,
@@ -862,6 +866,57 @@ def test_annotator_info_to_dict() -> None:
         },
     }
     assert annotator_info.to_dict() == expected_dict
+
+
+def test_to_dict_round_trips_attribute_parameters() -> None:
+    raw_annotator = {
+        "position_score": {
+            "resource_id": "scores",
+            "attributes": [{
+                "name": "s",
+                "source": "s",
+                "aggregator": "mean",
+                "value_transform": "value * 2",
+                "none_value_replacement": 0.0,
+            }],
+        },
+    }
+    _, configs = AnnotationConfigParser.parse_raw([raw_annotator])
+
+    assert configs[0].to_dict() == raw_annotator
+
+
+@pytest.mark.parametrize(("attribute_class", "wrap"), [
+    (AttributeConfig, dict),
+    (Attribute, ParamsUsageMonitor),
+])
+def test_attributes_differing_only_in_a_parameter_are_unequal(
+    attribute_class: type, wrap: Callable[[dict[str, Any]], Any],
+) -> None:
+    doubled = attribute_class(
+        "s", "s", parameters=wrap({"value_transform": "value * 2"}))
+    tripled = attribute_class(
+        "s", "s", parameters=wrap({"value_transform": "value * 3"}))
+
+    assert doubled != tripled
+
+
+def test_attribute_config_parameter_key_order_does_not_affect_identity(
+) -> None:
+    one_order = AttributeConfig(
+        "s", "s", parameters={"effect_type": "LGD", "description": "d"})
+    other_order = AttributeConfig(
+        "s", "s", parameters={"description": "d", "effect_type": "LGD"})
+
+    assert one_order == other_order
+    assert hash(one_order) == hash(other_order)
+
+
+def test_attribute_config_with_a_list_valued_parameter_is_hashable() -> None:
+    config = AttributeConfig(
+        "allele", "allele", parameters={"include_attributes": ["a", "b"]})
+
+    hash(config)  # must not raise
 
 
 def test_empty_pipeline_passes() -> None:

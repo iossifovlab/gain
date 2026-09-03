@@ -46,6 +46,23 @@ logger = logging.getLogger(__name__)
 NON_IDENTITY_PARAMS = frozenset({"work_dir"})
 
 
+def _hash_params(params: Any) -> int:
+    """Hash JSON-shaped parameters, insensitive to dict key order.
+
+    ``sort_keys=True`` recursively sorts nested dict keys, so ``==``-equal
+    parameters that differ only in key order hash equal; it also keeps
+    unhashable values (list/dict parameters such as the chrom_mapping
+    annotator's inline ``mapping``) hashable.  ``default=str`` lets
+    otherwise non-JSON values (e.g. ``Path``) hash without raising, at the
+    cost of acceptable collisions (#114).
+
+    The identity hashes of ``ParamsUsageMonitor``, ``AttributeConfig`` and
+    ``AnnotatorInfo`` chain through one another, so they must share one
+    normalisation -- this one.
+    """
+    return hash(json.dumps(params, sort_keys=True, default=str))
+
+
 class RawPreamble(TypedDict):
     summary: str
     description: str
@@ -117,13 +134,7 @@ class ParamsUsageMonitor(Mapping):
         self._used_keys: set[str] = set()
 
     def __hash__(self) -> int:
-        # Order-normalized JSON keeps the hash tolerant of unhashable
-        # parameter values (e.g. dict/list params such as the chrom_mapping
-        # annotator's inline ``mapping``) and consistent with the
-        # order-insensitive ``__eq__``: ``sort_keys=True`` recursively sorts
-        # nested dict keys. ``default=str`` lets otherwise non-JSON values
-        # hash without raising, at the cost of acceptable collisions (#114).
-        return hash(json.dumps(self._data, sort_keys=True, default=str))
+        return _hash_params(self._data)
 
     def __getitem__(self, key: str) -> Any:
         self._used_keys.add(key)
@@ -169,12 +180,15 @@ class AttributeConfig:
     source: str
     internal: bool | None = None
     aggregator: AggregatorSource | None = None
-    parameters: dict[str, Any] = field(
-        default_factory=dict, compare=False, hash=False)
+    parameters: dict[str, Any] = field(default_factory=dict)
 
     def __hash__(self) -> int:
-        return hash(
-            (self.name, self.source, self.internal, str(self.aggregator)))
+        # Parameters are identity (#1155): a ``value_transform`` or
+        # ``none_value_replacement`` changes what the annotator emits.
+        return hash((
+            self.name, self.source, self.internal, str(self.aggregator),
+            _hash_params(self.parameters),
+        ))
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize to a config dict, omitting fields that are unset."""
@@ -183,7 +197,7 @@ class AttributeConfig:
             d["internal"] = self.internal
         if self.aggregator is not None:
             d["aggregator"] = aggregator_name(self.aggregator)
-        return d
+        return {**self.parameters, **d}
 
 
 @dataclass(eq=True)
@@ -195,8 +209,7 @@ class Attribute:
     internal: bool | None = None
     aggregator: AggregatorSource | None = None
     parameters: ParamsUsageMonitor = field(
-        default_factory=lambda: ParamsUsageMonitor({}),
-        compare=False, hash=False)
+        default_factory=lambda: ParamsUsageMonitor({}))
     spec: AttributeSpec | None = field(
         default=None, compare=False, hash=False)
     aggregator_instance: Aggregator | None = field(
@@ -205,8 +218,10 @@ class Attribute:
         default=None, compare=False, hash=False)
 
     def __hash__(self) -> int:
-        return hash(
-            (self.name, self.source, self.internal, str(self.aggregator)))
+        return hash((
+            self.name, self.source, self.internal, str(self.aggregator),
+            self.parameters,
+        ))
 
     def get_value_type(self, *, aggregated: bool = True) -> str:
         """Value type produced by this attribute.
@@ -295,14 +310,8 @@ class AnnotatorInfo:
     def __hash__(self) -> int:
         attrs_hash = "".join(str(hash(attr)) for attr in self.attributes)
         resources_hash = "".join(str(hash(res)) for res in self.resources)
-        # Hash the same identity parameters ``__eq__`` compares, via an
-        # order-normalized JSON serialization: ``sort_keys=True`` recursively
-        # sorts nested dict keys so ``==``-equal infos that differ only in
-        # nested-dict key order still hash equal. ``default=str`` lets
-        # otherwise non-JSON values (e.g. Path) hash without raising, at the
-        # cost of acceptable collisions (#114).
-        params_hash = hash(json.dumps(
-            self._identity_params(), sort_keys=True, default=str))
+        # Hash the same identity parameters ``__eq__`` compares.
+        params_hash = _hash_params(self._identity_params())
         return hash(f"{self.type}{attrs_hash}{resources_hash}{params_hash}")
 
     def to_dict(self) -> dict[str, Any]:
