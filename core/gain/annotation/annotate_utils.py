@@ -1,12 +1,10 @@
 import argparse
 import os
 import shutil
-import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
-import numpy as np
 from pysam import TabixFile
 
 from gain import logging
@@ -45,6 +43,15 @@ from gain.utils.regions import (
     get_chromosome_length_tabix,
     split_into_regions,
 )
+
+# Re-exported: every annotation writer imports ``stringify`` from here, and
+# it moved to a leaf module only so the allele score could build its keys
+# with it (gain#1163) -- see that module's docstring.  The alias is what
+# marks a re-export for ruff; pylint reads the same alias as useless.
+# pylint: disable=unused-import,useless-import-alias
+from gain.utils.stringify import stringify as stringify
+
+# pylint: enable=unused-import,useless-import-alias
 from gain.utils.verbosity_configuration import VerbosityConfiguration
 
 PART_FILENAME = "{in_file}_annotation_{chrom}_{pos_beg}_{pos_end}"
@@ -82,31 +89,6 @@ def produce_partfile_paths(
             chrom=region.chrom, pos_beg=pos_beg, pos_end=pos_end,
         )))
     return filenames
-
-
-def stringify(value: Any, *, vcf: bool = False) -> str:
-    """Format the value to a string for human-readable output."""
-    if value is None:
-        return "." if vcf else ""
-    if isinstance(value, (float, np.floating)):
-        if 100 <= value < 100_000:
-            return f"{value:.6g}"
-        return f"{value:.3g}"
-    if isinstance(value, bool):
-        return "yes" if value else ("." if vcf else "")
-    if vcf is True and value == "":
-        return "."
-    if isinstance(value, (list, tuple)):
-        s = str(list(value))
-        return urllib.parse.quote(s, safe="") if vcf else s
-    if isinstance(value, dict):
-        if vcf:
-            return urllib.parse.quote(str(value), safe="")
-        return ";".join(
-            f"{stringify(k, vcf=vcf)}:{stringify(v, vcf=vcf)}"
-            for k, v in value.items()
-        )
-    return str(value)
 
 
 def build_cli_genomic_context(
