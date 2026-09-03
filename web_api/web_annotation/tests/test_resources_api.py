@@ -29,10 +29,11 @@ from web_annotation.resources.views import SearchResources
             {
                 "page": 0,
                 "pages": 1,
-                "total_resources": 10,
+                "total_resources": 11,
                 "incomplete": [],
                 "resources": {
                     "hg38/GRCh38-hg38/genome",
+                    "liftover/mock",
                     "scores/allele1",
                     "scores/pos1",
                     "scores/pos2",
@@ -518,7 +519,7 @@ def test_pagination(
     assert response.status_code == 200
     response_json = response.json()
     assert len(response_json["resources"]) == 2
-    assert response_json["pages"] == 5
+    assert response_json["pages"] == 6
     assert response_json["page"] == 0
 
 

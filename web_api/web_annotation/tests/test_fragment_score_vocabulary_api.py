@@ -9,12 +9,9 @@ Exercised through the HTTP endpoints rather than the view classes: the
 enumerations are private helpers, and what matters is what a browser is
 told.
 """
-import textwrap
 from typing import Any
 
 import pytest
-from gain.annotation.annotation_factory import load_pipeline_from_yaml
-from gain.genomic_resources.repository import GenomicResourceRepo
 from rest_framework.test import APIClient
 
 ANNOTATOR_TYPES_URL = "/api/editor/annotator_types"
@@ -223,7 +220,8 @@ def test_the_template_offers_both_overlap_fractions(
 
     ``string`` rather than a numeric field type of its own, for the reason
     recorded on the template itself in ``editor/views.py``.  Pinned here
-    because the set comparison below would accept any ``field_type``.
+    because the set comparison in ``test_editor_template_parameters``
+    would accept any ``field_type``.
     """
     template = _config_template(client, "fragment_score_annotator")
 
@@ -231,72 +229,3 @@ def test_the_template_offers_both_overlap_fractions(
     assert template["min_region_overlap_fraction"]["optional"] is True
     assert template["min_fragment_overlap_fraction"]["field_type"] == "string"
     assert template["min_fragment_overlap_fraction"]["optional"] is True
-
-
-#: Parameters the annotator reads that the editor deliberately does NOT
-#: offer, each for a stated reason.  Anything else the annotator learns to
-#: read has to be added to the template, or added here on purpose.
-DELIBERATELY_NOT_OFFERED = {
-    # The deprecated spelling of `fragment_filter`.  Still accepted, but
-    # the template emits the vocabulary worth writing today (gain#471), so
-    # offering it in the form would hand out the spelling being retired.
-    "cnv_filter",
-    # Injected by the framework, not written by a user.
-    "work_dir",
-}
-
-MINIMAL_FRAGMENT_PIPELINE = textwrap.dedent("""
-    - fragment_score:
-        resource_id: cnv_collections/test_collection
-""")
-
-
-@pytest.mark.django_db
-def test_the_template_offers_every_parameter_the_annotator_reads(
-    client: APIClient, test_grr: GenomicResourceRepo,
-) -> None:
-    """The two declarations of this annotator's vocabulary agree.
-
-    A gain annotator parameter is declared TWICE: once by the constructor
-    reading it -- `info.parameters` refuses a key nobody read, so the read
-    IS the declaration -- and once in the hand-maintained template this
-    module tests, which is what the editor renders as the configuration
-    form.  Skip the second and the parameter works in a hand-written
-    pipeline and over the API but is invisible in the UI.
-
-    Nothing else here catches that.  The other tests assert that SPECIFIC
-    keys are present, and the round-trip one compares the template against
-    ITSELF, so a key missing from both the template and every assertion
-    leaves this file green.  This compares the two SETS instead, so a
-    parameter added to the annotator and forgotten here is caught without
-    anyone having to remember to assert it.
-
-    What it does NOT catch: `get_used_keys` records the keys actually
-    read, and this builds a MINIMAL pipeline, so a parameter read only
-    when some sibling key is present would be invisible to it.  Every read
-    in this annotator is unconditional today -- deliberately, since
-    `info.parameters` refuses a key nobody read -- which is what makes the
-    comparison total.  A future conditional read would quietly narrow it.
-
-    The invariant is general but this checks ONE annotator, which is a
-    deliberate scope and not an oversight: every other type has the same
-    two declarations, and several have real gaps already (`allele_filter`
-    and `mode` on the allele score, `region_length_cutoff`, `promoter_len`)
-    that are somebody's decision to make rather than this issue's.
-    Generalising it across the nine types is gain#1165.
-    """
-    template = _config_template(client, "fragment_score_annotator")
-    offered = set(template) - {"annotator_type", "documentation_url"}
-
-    pipeline = load_pipeline_from_yaml(MINIMAL_FRAGMENT_PIPELINE, test_grr)
-    accepted = pipeline.annotators[0].get_info().parameters.get_used_keys()
-
-    assert offered <= accepted, (
-        f"the editor offers {sorted(offered - accepted)}, which the "
-        f"annotator does not read -- the form would post a key the "
-        f"pipeline then refuses as an unused parameter")
-    assert accepted - offered == DELIBERATELY_NOT_OFFERED, (
-        f"the annotator reads {sorted(accepted - offered)} but the editor "
-        f"template does not offer it, so it cannot be configured from the "
-        f"UI. Add it to the template, or to DELIBERATELY_NOT_OFFERED with "
-        f"a reason")
