@@ -176,6 +176,9 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                     "field_type": "string",
                     "optional": True,
                 },
+                # The same cutoff the position score template offers; the
+                # documentation names it there only, but this annotator
+                # reads it too (gain#1165).
                 "region_length_cutoff": {
                     "field_type": "string",
                     "optional": True,
@@ -294,7 +297,10 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                     "resource_type": "genome",
                     "optional": True,
                 },
-                # See the position score template (gain#1165).
+                # The same cutoff the position score template offers, on
+                # this annotator's own scale.  The documentation names it
+                # for the position score only; offered here all the same,
+                # since the annotator reads it (gain#1165).
                 "region_length_cutoff": {
                     "field_type": "string",
                     "optional": True,

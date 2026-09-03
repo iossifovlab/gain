@@ -179,6 +179,19 @@ MINIMAL_PIPELINES: dict[str, str] = {
 }
 
 
+def test_the_tables_cover_exactly_the_types_the_editor_offers() -> None:
+    """The two per-type tables and the editor's menu name the same types.
+
+    The comparison below looks each type up in both tables, which
+    catches a type ADDED to the menu without an entry -- but a type
+    REMOVED from the menu would leave its entries behind with nothing
+    complaining.  A one-way lookup goes blind in that direction; comparing
+    the sets does not.
+    """
+    assert set(MINIMAL_PIPELINES) == set(ANNOTATOR_TYPES)
+    assert set(DELIBERATELY_NOT_OFFERED) == set(ANNOTATOR_TYPES)
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize("annotator_type", ANNOTATOR_TYPES)
 def test_the_template_offers_every_parameter_the_annotator_reads(

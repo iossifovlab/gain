@@ -523,6 +523,27 @@ def test_pagination(
     assert response_json["page"] == 0
 
 
+def test_the_index_carries_the_newest_fixture_resource(
+    clients: dict[str, Client],
+) -> None:
+    """A resource added to the fixture GRR has to be indexed, not just present.
+
+    Every filtered request answers out of the committed FTS index, so a
+    resource dropped into the fixture filesystem without a rebuild is
+    visible to an unfiltered listing and invisible to a ``type`` filter --
+    the drift the `scores/allele1` cases above were added to pin.  This
+    pins the rebuild for the newest addition (gain#1165), by the filter a
+    listing without the index cannot answer.
+    """
+    response = clients["anonymous"].get(
+        "/api/resources/search", query_params={"type": "liftover_chain"})
+    assert response.status_code == 200
+
+    result = response.json()
+    assert {res["resource_id"] for res in result["resources"]} == {
+        "liftover/mock"}
+
+
 @pytest.mark.parametrize("page_size", [0, -1])
 def test_a_non_positive_page_size_is_a_bad_request(
     anonymous_client: Client,
