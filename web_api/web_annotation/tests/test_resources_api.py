@@ -29,10 +29,11 @@ from web_annotation.resources.views import SearchResources
             {
                 "page": 0,
                 "pages": 1,
-                "total_resources": 10,
+                "total_resources": 11,
                 "incomplete": [],
                 "resources": {
                     "hg38/GRCh38-hg38/genome",
+                    "liftover/mock",
                     "scores/allele1",
                     "scores/pos1",
                     "scores/pos2",
@@ -518,8 +519,38 @@ def test_pagination(
     assert response.status_code == 200
     response_json = response.json()
     assert len(response_json["resources"]) == 2
-    assert response_json["pages"] == 5
+    assert response_json["pages"] == 6
     assert response_json["page"] == 0
+
+
+def test_every_listed_resource_is_indexed(
+    clients: dict[str, Client],
+) -> None:
+    """A resource in the fixture GRR has to be indexed, not just present.
+
+    Every filtered request answers out of the committed FTS index, while
+    an unfiltered listing walks the filesystem, so a resource dropped into
+    the fixture without a rebuild is visible to the one and invisible to
+    the other -- the drift the `scores/allele1` cases above were added to
+    pin, one resource at a time.  This pins it for the whole fixture: the
+    union of every ``type`` filter has to be the unfiltered listing, so
+    the next addition without a rebuild (gain#1165 was the last) fails
+    here rather than surfacing as an empty picker somewhere.
+    """
+    client = clients["anonymous"]
+    listed = set(client.get("/api/resources").json())
+    assert listed, "an empty listing would make the union below vacuous"
+
+    indexed: set[str] = set()
+    for resource_type in client.get("/api/resources/types").json():
+        response = client.get(
+            "/api/resources/search",
+            query_params={"type": resource_type, "page_size": 100})
+        assert response.status_code == 200, response.content
+        indexed |= {
+            res["resource_id"] for res in response.json()["resources"]}
+
+    assert indexed == listed
 
 
 @pytest.mark.parametrize("page_size", [0, -1])
