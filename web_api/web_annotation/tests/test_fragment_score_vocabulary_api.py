@@ -9,9 +9,15 @@ Exercised through the HTTP endpoints rather than the view classes: the
 enumerations are private helpers, and what matters is what a browser is
 told.
 """
+import textwrap
 from typing import Any
 
 import pytest
+from gain.annotation.annotation_factory import load_pipeline_from_yaml
+from gain.genomic_resources.testing import (
+    build_inmemory_test_repository,
+    convert_to_tab_separated,
+)
 from rest_framework.test import APIClient
 
 ANNOTATOR_TYPES_URL = "/api/editor/annotator_types"
@@ -205,3 +211,101 @@ def test_resource_search_by_the_new_type_finds_legacy_typed_resources(
         f"{RESOURCES_URL}/search", {"type": "fragment_score"})
     assert response.status_code == 200, response.content
     assert legacy in str(response.json()), response.json()
+
+
+@pytest.mark.django_db
+def test_the_template_offers_both_overlap_fractions(
+    client: APIClient,
+) -> None:
+    """The editor can express the two thresholds (gain#1125).
+
+    The annotator accepting a parameter is only half of it: this template
+    is what the editor renders as the configuration form, so a key missing
+    here is a capability that works in a hand-written pipeline and over
+    the API but cannot be reached from the UI.
+
+    Typed as ``string`` rather than as a number of its own: the UI's
+    ``fieldType`` union is ``resource | string | bool | attribute`` and the
+    form template branches on exactly those, so a ``float`` field_type
+    would match no branch and render as NOTHING -- the same invisibility
+    as omitting the key, reached the long way round.  The annotator reads
+    a numeric string as the number it spells.
+    """
+    template = _config_template(client, "fragment_score_annotator")
+
+    assert template["min_region_overlap_fraction"]["field_type"] == "string"
+    assert template["min_region_overlap_fraction"]["optional"] is True
+    assert template["min_fragment_overlap_fraction"]["field_type"] == "string"
+    assert template["min_fragment_overlap_fraction"]["optional"] is True
+
+
+#: Parameters the annotator reads that the editor deliberately does NOT
+#: offer, each for a stated reason.  Anything else the annotator learns to
+#: read has to be added to the template, or added here on purpose.
+DELIBERATELY_NOT_OFFERED = {
+    # The deprecated spelling of `fragment_filter`.  Still accepted, but
+    # the template emits the vocabulary worth writing today (gain#471), so
+    # offering it in the form would hand out the spelling being retired.
+    "cnv_filter",
+    # Injected by the framework, not written by a user.
+    "work_dir",
+}
+
+FRAGMENT_GRR_CONTENT = {
+    "fragments": {
+        "genomic_resource.yaml": textwrap.dedent("""
+            type: fragment_score
+            table:
+              filename: data.mem
+            scores:
+            - id: frequency
+              name: frequency
+              type: float
+              desc: a population frequency
+        """),
+        "data.mem": convert_to_tab_separated("""
+           chrom  pos_begin  pos_end  frequency
+           1      10         20       0.02
+        """),
+    },
+}
+
+MINIMAL_FRAGMENT_PIPELINE = textwrap.dedent("""
+    - fragment_score:
+        resource_id: fragments
+""")
+
+
+@pytest.mark.django_db
+def test_the_template_offers_every_parameter_the_annotator_reads() -> None:
+    """The two declarations of this annotator's vocabulary agree.
+
+    A gain annotator parameter is declared TWICE: once by the constructor
+    reading it -- `info.parameters` refuses a key nobody read, so the read
+    IS the declaration -- and once in the hand-maintained template this
+    module tests, which is what the editor renders as the configuration
+    form.  Skip the second and the parameter works in a hand-written
+    pipeline and over the API but is invisible in the UI.
+
+    Nothing else here catches that.  The other tests assert that SPECIFIC
+    keys are present, and the round-trip one compares the template against
+    ITSELF, so a key missing from both the template and every assertion
+    leaves this file green.  This compares the two SETS, which makes the
+    drift impossible rather than caught once.
+    """
+    template = _config_template(APIClient(), "fragment_score_annotator")
+    offered = set(template) - {"annotator_type", "documentation_url"}
+
+    grr = build_inmemory_test_repository(FRAGMENT_GRR_CONTENT)
+    pipeline = load_pipeline_from_yaml(MINIMAL_FRAGMENT_PIPELINE, grr)
+    accepted = pipeline.annotators[0].get_info().parameters.get_used_keys()
+
+    assert offered <= accepted, (
+        f"the editor offers {sorted(offered - accepted)}, which the "
+        f"annotator does not read -- the form would post a key the "
+        f"pipeline then refuses as an unused parameter")
+    assert accepted - offered == DELIBERATELY_NOT_OFFERED, (
+        f"the annotator reads {sorted(accepted - offered)} but the editor "
+        f"template does not offer it, so it cannot be configured from the "
+        f"UI. Add it to the template, or to DELIBERATELY_NOT_OFFERED with "
+        f"a reason")

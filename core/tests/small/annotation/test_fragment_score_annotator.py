@@ -500,3 +500,32 @@ def test_a_non_numeric_fraction_is_refused_by_name(
                     min_region_overlap_fraction: {configured}
                 """),
             grr)
+
+
+def test_a_quoted_fraction_means_the_same_threshold(
+    grr: GenomicResourceRepo,
+) -> None:
+    """`"0.5"` selects what `0.5` selects.
+
+    The annotation editor's form controls hold text, so a fraction
+    configured through the UI reaches the annotator as a string; quoting
+    one in hand-written YAML arrives the same way.  Pinned against the
+    unquoted case above rather than merely asserting it builds -- what
+    matters is that it filters, not that it is tolerated.
+    """
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent("""
+            - fragment_score:
+                resource_id: fragments
+                min_fragment_overlap_fraction: "0.5"
+                attributes:
+                - count
+                - source: frequency
+                  aggregator: join(;)
+            """),
+        grr)
+
+    atts = pipeline.annotate(Region("1", 15, 60))
+
+    assert atts["count"] == 1
+    assert atts["frequency"] == "0.02"

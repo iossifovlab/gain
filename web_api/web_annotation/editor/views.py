@@ -231,6 +231,22 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                     "field_type": "string",
                     "optional": True,
                 },
+                # The two overlap thresholds (gain#1125), each named for
+                # the length it is denominated by.  `string` because that
+                # is what the form can render -- the UI branches on
+                # `resource | string | bool | attribute` and a numeric
+                # field_type would match none of them, leaving the field
+                # invisible.  The annotator reads the text as the number
+                # it spells, which is also what makes the value this form
+                # posts acceptable back to it.
+                "min_region_overlap_fraction": {
+                    "field_type": "string",
+                    "optional": True,
+                },
+                "min_fragment_overlap_fraction": {
+                    "field_type": "string",
+                    "optional": True,
+                },
                 "input_annotatable": {
                     "field_type": "attribute",
                     "attribute_type": "annotatable",

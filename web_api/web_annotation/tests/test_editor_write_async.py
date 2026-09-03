@@ -427,6 +427,37 @@ async def test_async_annotator_aggregators_authenticated_returns_200() -> None:
     assert result["pos1"]["default_aggregator"] == "mean"
 
 
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_async_annotator_yaml_overlap_fraction_typed_in_the_editor(
+) -> None:
+    """A fraction typed into the editor form saves (gain#1125).
+
+    This endpoint BUILDS the annotator before dumping it, so the
+    annotator's own configuration guard runs on whatever the form posted.
+    The form posts what the user typed, and an Angular `FormControl` holds
+    a STRING -- `min_region_overlap_fraction` arrives as `"0.5"`, not
+    `0.5`.  A guard admitting only `int`/`float` therefore 400s the
+    editor's own output: the parameter would be offered in the form and be
+    unsaveable, which is a worse place to be than not offering it at all.
+    """
+    client = AsyncClient()
+    response = await _post_json(client, YAML_POST_URL, {
+        "pipeline_id": "pipeline/test_pipeline",
+        "annotator_type": "fragment_score",
+        "resource_id": "cnv_collections/test_collection",
+        "min_region_overlap_fraction": "0.5",
+    })
+
+    assert response.status_code == 200, response.content
+    saved = yaml.safe_load(response.json())[0]["fragment_score"]
+    # Echoed as posted rather than as coerced -- the dump serialises the
+    # configuration the user supplied, not the annotator's reading of it.
+    # What matters is that it survives into the saved pipeline, which the
+    # annotator then accepts on the way back in.
+    assert saved["min_region_overlap_fraction"] == "0.5"
+
+
 # ---------------------------------------------------------------------------
 # Pinned exception-mapping regression (unbuildable -> 400, missing -> 404)
 # ---------------------------------------------------------------------------

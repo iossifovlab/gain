@@ -69,7 +69,27 @@ def _read_overlap_fraction(
     # `bool` before `int`, because it is a subclass of it: without this
     # `min_region_overlap_fraction: true` would be admitted as 1.0 -- a
     # threshold the user never asked for, silently applied.
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool):
+        raise AnnotationConfigurationError(
+            f"{info.type} configures {parameter}: {value!r}, which is not a "
+            f"number. An overlap fraction is a share of a length, written "
+            f"as a number between 0 and 1")
+    # A STRING that spells a number is accepted, because the annotation
+    # editor posts one: its form controls hold text, so a fraction typed
+    # there arrives as `"0.5"`.  Refusing it would 400 the editor on its
+    # own output -- the parameter offered in the form and unsaveable.
+    # Quoting a fraction in hand-written YAML lands here too and means the
+    # same thing.  `"half"` still does not parse, and `nan`/`inf` do parse
+    # but fail the range check below.
+    if isinstance(value, str):
+        try:
+            value = float(value)
+        except ValueError:
+            raise AnnotationConfigurationError(
+                f"{info.type} configures {parameter}: {value!r}, which is "
+                f"not a number. An overlap fraction is a share of a length, "
+                f"written as a number between 0 and 1") from None
+    if not isinstance(value, (int, float)):
         raise AnnotationConfigurationError(
             f"{info.type} configures {parameter}: {value!r}, which is not a "
             f"number. An overlap fraction is a share of a length, written "
