@@ -357,9 +357,11 @@ class PositionScore(GenomicScore):
     ) -> tuple[ScoreValue | None, ...]:
         """Return the score values at one position, ``None`` where uncovered.
 
-        A one-position region read, materialised: the generator is drained
-        rather than abandoned, for the reason
-        :meth:`fetch_position_scores` documents.
+        A one-position region read, materialised: the region is one or two
+        records, so materialising it costs nothing.  Draining the generator
+        rather than abandoning it is the simpler thing to write and not a
+        requirement -- abandoning has been safe since gain#1120, which moved
+        the tabix buffer prune into a ``finally``.
         """
         rows = list(self.get_scores_in_region(chrom, pos, pos, scores))
         return rows[0]
