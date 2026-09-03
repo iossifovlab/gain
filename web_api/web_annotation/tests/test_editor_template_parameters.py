@@ -52,3 +52,24 @@ def test_the_allele_score_template_offers_the_filter_and_the_mode(
     assert template["allele_filter"] == {
         "field_type": "string", "optional": True}
     assert template["mode"] == {"field_type": "string", "optional": True}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("annotator_type", [
+    "position_score_annotator",
+    "allele_score_annotator",
+    "effect_annotator",
+])
+def test_the_template_offers_the_region_length_cutoff(
+    client: APIClient, annotator_type: str,
+) -> None:
+    """Every annotator with a region length cutoff lets the form set it.
+
+    The documentation tells a user annotating large CNVs to *raise
+    ``region_length_cutoff`` on the annotator*; a form that cannot express
+    it sends that user to a hand-written pipeline.
+    """
+    template = _config_template(client, annotator_type)
+
+    assert template["region_length_cutoff"] == {
+        "field_type": "string", "optional": True}
