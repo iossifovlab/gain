@@ -212,8 +212,6 @@ class Attribute:
         default_factory=lambda: ParamsUsageMonitor({}))
     spec: AttributeSpec | None = field(
         default=None, compare=False, hash=False)
-    aggregator_instance: Aggregator | None = field(
-        default=None, compare=False, hash=False)
     _documentation: str | None = field(
         default=None, compare=False, hash=False)
 
@@ -232,9 +230,15 @@ class Attribute:
         was skipped (e.g. a scalar value that bypassed a list aggregator) so
         that the spec type is returned instead.  The raw spec type is always
         accessible via ``self.spec.value_type``.
+
+        The type is read off the aggregator's NAME -- the only thing the
+        attribute holds since gain#1133 -- through
+        :meth:`Aggregator.resolve_class`, which is class-level and builds
+        no accumulator.
         """
-        if aggregated and self.aggregator_instance is not None:
-            agg_output_type = type(self.aggregator_instance).output_value_type
+        if aggregated and self.aggregator is not None:
+            agg_output_type = \
+                Aggregator.resolve_class(self.aggregator).output_value_type
             if agg_output_type is not None:
                 return agg_output_type
         return self.spec.value_type if self.spec else ""

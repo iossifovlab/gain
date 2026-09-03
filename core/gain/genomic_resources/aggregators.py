@@ -8,7 +8,7 @@ import math
 import operator
 import re
 from collections import Counter
-from collections.abc import Callable, Generator, Iterable, Iterator
+from collections.abc import Generator, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -205,6 +205,24 @@ class Aggregator(abc.ABC):
         definition = AggregatorDefinition.coerce(source)
         aggregator_class = get_aggregator_class(definition.aggregator_type)
         return aggregator_class(*definition.parameters)
+
+    @staticmethod
+    def resolve_class(source: AggregatorSource) -> type[Aggregator]:
+        """The aggregator CLASS a definition, string, or dict names.
+
+        For the callers that want what an aggregator WOULD answer rather
+        than an accumulator to answer it with: :meth:`output_value_type`
+        and :meth:`preserves_domain` are both class-level, so an attribute
+        that only knows an aggregator's name can describe its output
+        without building one (gain#1133).  It shares
+        :func:`_class_and_parameters` with :meth:`build`, so a name
+        refused there is refused here, in the same words.
+        """
+        if isinstance(source, str):
+            aggregator_class, _parameters = _class_and_parameters(source)
+            return aggregator_class
+        definition = AggregatorDefinition.coerce(source)
+        return get_aggregator_class(definition.aggregator_type)
 
 
 class MaxAggregator(Aggregator):
@@ -616,7 +634,7 @@ def _build_aggregator_schema() -> dict[str, Any]:
 AGGREGATOR_SCHEMA = _build_aggregator_schema()
 
 
-def get_aggregator_class(aggregator: str) -> Callable[[], Aggregator]:
+def get_aggregator_class(aggregator: str) -> type[Aggregator]:
     """Return the aggregator class for the given aggregator name."""
     return AGGREGATOR_CLASS_DICT[aggregator]
 
@@ -624,7 +642,7 @@ def get_aggregator_class(aggregator: str) -> Callable[[], Aggregator]:
 @functools.lru_cache(maxsize=256)
 def _class_and_parameters(
     raw: str,
-) -> tuple[Callable[..., Aggregator], tuple[Any, ...]]:
+) -> tuple[type[Aggregator], tuple[Any, ...]]:
     """What a string spelling resolves to: the class and its parameters.
 
     The memo behind :meth:`Aggregator.build`.  It holds the RESOLUTION of

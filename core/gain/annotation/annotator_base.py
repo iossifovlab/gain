@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import abc
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +21,6 @@ from gain.annotation.annotation_pipeline import (
 )
 from gain.genomic_resources.aggregators import (
     Aggregator,
-    WeightedValues,
     validate_aggregator,
 )
 
@@ -46,9 +45,9 @@ class AggregatedValues(dict[str, Any]):  # ruff: ignore[subclass-builtin]
     exposed twice with two aggregators has two different finished values,
     which a source-keyed mapping has nowhere to put.
 
-    The legacy shape -- a source-keyed dict of raw values for the base to
-    fold -- stays live beside it while the annotators move over one at a
-    time.
+    The legacy shape -- a source-keyed dict, whose values are finished
+    too since gain#1133 -- stays live beside it until gain#1134 moves the
+    remaining annotators onto name keys and the rename goes.
 
     **Read the names when you ANSWER, never in ``__init__``.**  The one
     statement of the rule every annotator building one of these has to
@@ -62,6 +61,45 @@ class AggregatedValues(dict[str, Any]):  # ruff: ignore[subclass-builtin]
     caches, it must not cache names; ``self._attributes`` is walked again
     at annotate time and the names read off it then.
     """
+
+
+def fold_own_values(
+    attributes: Sequence[Attribute], values: Mapping[str, Any],
+) -> AggregatedValues:
+    """Fold a source-keyed dict of an annotator's OWN values, by attribute.
+
+    The one statement of what an annotator does when the values it
+    reduces are its own rather than a score's record stream -- a gene
+    list, a set intersection -- and there is therefore no folding read to
+    move the reduction into.  Each attribute takes its source's value,
+    folded by the aggregator the attribute names, keyed by the
+    attribute's NAME.
+
+    Only a ``list`` is folded.  A scalar, a ``None``, an absent source
+    pass through: an aggregator names how to reduce MANY values and there
+    is nothing to reduce here, which is what the base's own fold did
+    before gain#1133 retired it.
+
+    A fresh accumulator per attribute per call.  The name resolution is
+    memoised (:meth:`Aggregator.build`), so building anew costs about
+    what clearing a held instance did, and nothing outlives the call --
+    which is what the old reuse contract needed care to make safe.
+
+    This is a function rather than a method for the reason gain#1133
+    exists: the BASE does not aggregate.  An annotator that reduces says
+    so by calling this and answering an :class:`AggregatedValues`; the
+    base never decides to fold anything on an annotator's behalf.
+    """
+    return AggregatedValues(
+        (attr.name, _fold_one(attr, values.get(attr.source)))
+        for attr in attributes
+    )
+
+
+def _fold_one(attr: Attribute, value: Any) -> Any:
+    if attr.aggregator is None or not isinstance(value, list):
+        return value
+    return Aggregator.build(attr.aggregator).aggregate(value)
 
 
 class AnnotatorBase(Annotator):
@@ -136,7 +174,6 @@ class AnnotatorBase(Annotator):
                     aggregator,
                     self._aggregator_value_type(attr),
                 )
-                attr.aggregator_instance = Aggregator.build(aggregator)
             self._attributes.append(attr)
 
         work_dir = info.parameters.get("work_dir")
@@ -169,11 +206,15 @@ class AnnotatorBase(Annotator):
         """Annotate the annotatable.
 
         Internal abstract method used for annotation.  Either shape will
-        do, and :meth:`_apply_aggregators` tells them apart by type: a
-        source-keyed dict of values still to be reduced, one entry per
-        configured attribute, or an :class:`AggregatedValues` whose keys
-        are attribute NAMES and whose values the annotator's score has
-        already reduced.
+        do, and :meth:`_apply_aggregators` tells them apart by type: an
+        :class:`AggregatedValues`, whose keys are attribute NAMES and
+        whose values are finished, or a source-keyed dict of values that
+        are finished too and need only the rename gain#1134 removes.
+
+        Nothing here is reduced on an annotator's behalf (gain#1133): an
+        annotator that folds does it in its score's own read, or -- when
+        the values are its own rather than a record stream -- through
+        :func:`fold_own_values`.
         """
 
     def _pair_aggregated(
@@ -219,47 +260,30 @@ class AnnotatorBase(Annotator):
     def _apply_aggregators(
         self, values: dict[str, Any],
     ) -> dict[str, Any]:
-        """Reduce each attribute's raw values with its aggregator.
+        """Key what ``_do_annotate`` answered by ATTRIBUTE NAME.
 
-        A ``_do_annotate`` implementation hands over a plain list --
-        every value counting once -- or a :class:`WeightedValues`, in
-        which each value carries the number of times it counts.
+        The base reduces nothing (gain#1133).  Every annotator in gain
+        that folds a region does it in its score, which is what makes
+        folding proportional to records rather than to base pairs, and
+        says so by answering an :class:`AggregatedValues`; the two that
+        reduce something other than a record stream -- the gene score and
+        gene set annotators -- fold their own values and answer one too.
+        Such a result is already keyed by name and already finished, so
+        it is copied through: folding it again would reduce a finished
+        list a second time.
 
-        No annotator in gain builds a ``WeightedValues`` any more: the
-        position annotator was the last, and gain#1131 moved it onto its
-        score's own reduction.  The branch stays because the contract is
-        still published and retiring it is gain#1133's job, once every
-        annotator has moved; until then it is reachable only from
-        outside.
+        Everything else is the legacy shape -- a source-keyed dict of
+        values that are ALREADY final -- and all that is left to do with
+        it is the source-to-name rename.  The rename is what gain#1134
+        removes, by moving the remaining annotators onto name keys; this
+        method goes with it.
 
-        The aggregator instance is the attribute's own and is reused
-        across annotate calls; each call clears it first.  This is
-        correct single-threaded and is not thread-safe.
-
-        An :class:`AggregatedValues` is the other case: the annotator's
-        score has already reduced, and already keyed by attribute name, so
-        there is nothing left to do and doing it anyway would fold a
-        finished list a second time.  It arrives here rather than bypassing
-        this method because ``annotate`` and ``batch_annotate`` both route
-        through it, so one branch answers for both paths.
+        It answers for ``annotate`` and ``batch_annotate`` alike, both of
+        which route through it, so one statement covers both paths.
         """
         if isinstance(values, AggregatedValues):
             return dict(values)
-        result = {}
-        for attr in self._attributes:
-            value = values.get(attr.source)
-            if isinstance(value, WeightedValues):
-                result[attr.name] = (
-                    attr.aggregator_instance.aggregate_weighted(value)
-                    if attr.aggregator_instance is not None
-                    else value.expand()
-                )
-            elif attr.aggregator_instance is not None and isinstance(
-                    value, list):
-                result[attr.name] = attr.aggregator_instance.aggregate(value)
-            else:
-                result[attr.name] = value
-        return result
+        return {attr.name: values.get(attr.source) for attr in self._attributes}
 
     def annotate(
         self, annotatable: Annotatable | None, context: dict[str, Any],

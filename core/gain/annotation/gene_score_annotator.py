@@ -1,6 +1,5 @@
 """Module containing the gene score annotator."""
 
-from collections.abc import Sequence
 from typing import Any
 
 from gain import logging
@@ -15,9 +14,10 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatorBase
+from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
 from gain.gene_scores.gene_scores import build_gene_score_from_resource
 from gain.genomic_resources import GenomicResource
+from gain.genomic_resources.aggregators import Aggregator
 
 logger = logging.getLogger(__name__)
 
@@ -110,37 +110,19 @@ class GeneScoreAnnotator(AnnotatorBase):
     def _apply_gene_aggregator(
         self, attr: Attribute, value: Any,
     ) -> Any:
-        if attr.aggregator_instance is None or not isinstance(value, dict):
+        """Reduce one attribute's per-gene values with its aggregator.
+
+        A fresh accumulator per attribute per call, built from the
+        attribute's aggregator NAME.  The name resolution is memoised
+        (:meth:`Aggregator.build`), so building anew costs about what
+        clearing a held instance did, and nothing outlives the call --
+        which is what the base's reuse contract was there to make safe
+        (gain#1133).
+        """
+        if attr.aggregator is None or not isinstance(value, dict):
             return value
-        return attr.aggregator_instance.aggregate(list(value.values()))
-
-    def annotate(
-        self,
-        annotatable: Annotatable | None,
-        context: dict[str, Any],
-    ) -> dict[str, Any]:
-        if annotatable is None:
-            return {attr.name: None for attr in self.attributes}
-        source_values = self._do_annotate(annotatable, context)
-        return {
-            attr.name: self._apply_gene_aggregator(
-                attr, source_values[attr.source])
-            for attr in self.attributes
-        }
-
-    def batch_annotate(
-        self,
-        annotatables: Sequence[Annotatable | None],
-        contexts: list[dict[str, Any]],
-        batch_work_dir: str | None = None,
-    ) -> list[dict[str, Any]]:
-        inner_output = self._do_batch_annotate(
-            annotatables, contexts, batch_work_dir=batch_work_dir)
-        return [{
-            attr.name: self._apply_gene_aggregator(
-                attr, result[attr.source])
-            for attr in self.attributes
-        } for result in inner_output]
+        return Aggregator.build(attr.aggregator).aggregate(
+            list(value.values()))
 
     @property
     def used_context_attributes(self) -> tuple[str, ...]:
@@ -151,15 +133,27 @@ class GeneScoreAnnotator(AnnotatorBase):
         annotatable: Annotatable,  # ruff: ignore[unused-method-argument]
         context: dict[str, Any],
     ) -> dict[str, Any]:
+        """Answer the input gene list's scores, already reduced.
+
+        This annotator reduces for ITSELF, and its values are per-GENE
+        rather than per-record: the input gene list names the genes, the
+        score answers one value for each, and the attribute's aggregator
+        folds those into one.  Nothing the base could do for it -- which
+        is why it kept its own reduction while the base still had one,
+        and why it now answers an :class:`AggregatedValues` (gain#1133).
+
+        The names are read here, at answer time, for the reason
+        :class:`AggregatedValues` states.
+        """
         genes = context.get(self.input_gene_list)
         if genes is None:
             return self._empty_result()
-        return {
-            attr.source: {
+        return AggregatedValues(
+            (attr.name, self._apply_gene_aggregator(attr, {
                 sym: score
                 for sym in genes
                 if (score := self.score.get_gene_value(attr.source, sym))
                 is not None
-            }
+            }))
             for attr in self.attributes
-        }
+        )
