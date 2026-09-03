@@ -25,6 +25,23 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${REPO_ROOT}"
 
+# The architecture overview includes CONTEXT.md's vocabulary by two sentinel
+# comments (`.. include:: :start-after:/:end-before:`). A missing sentinel
+# makes docutils log a CRITICAL error -- and sphinx-build still exits 0, and
+# the page ships with the vocabulary silently absent. Sphinx only fails on
+# warnings under -W, which this build cannot use. So check the sentinels
+# here, before anything is deleted or built, and refuse to go on without
+# them (gain#1142).
+for sentinel in "published-on-docs-site: start" "published-on-docs-site: end"; do
+    if ! grep -q -F -- "<!-- ${sentinel} -->" CONTEXT.md; then
+        echo "build_docs.sh: CONTEXT.md is missing the sentinel" \
+             "'<!-- ${sentinel} -->' that docs/source/development/" \
+             "architecture_overview.rst slices the vocabulary by;" \
+             "refusing to build a site without its vocabulary." >&2
+        exit 1
+    fi
+done
+
 # `sphinx_last_updated_by_git` shells out to git for each page's date. In CI
 # the checkout is bind-mounted into a container whose uid does not own it, so
 # git refuses the repository outright:

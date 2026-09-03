@@ -15,8 +15,8 @@ general programming concepts. Reasoning behind decisions lives in
      on the public documentation site (docs/source/development/
      architecture_overview.rst includes it by these markers, not by heading).
      Move this section freely -- the slice follows the markers, not the
-     heading. Do not delete or rename the markers: without them the include
-     logs a CRITICAL error and publishes nothing in place of the section. -->
+     heading. Do not delete or rename the markers: docs/build_docs.sh checks
+     for both and refuses to build without them. -->
 <!-- published-on-docs-site: start -->
 
 ### Repositories

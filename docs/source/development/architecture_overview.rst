@@ -295,33 +295,9 @@ repository's ``CONTEXT.md`` — the file the project's maintainers and its
 agents use to agree on what a word means — and rendered here from that single
 source. The file is sliced at two explicit ``published-on-docs-site`` markers,
 not by heading text, so moving the section around inside the file cannot
-change what is published here.
-
-.. attention::
-
-   **Draft marker D8 — a missing marker does not fail the build.** Verified
-   on this draft: moving the whole ``## Language`` block to the end of
-   ``CONTEXT.md`` leaves this page byte-identical (good), but *deleting* a
-   marker makes the ``include`` directive log
-   ``CRITICAL: Problem with "end-before" option`` — and ``sphinx-build``
-   still exits 0, and the page ships with the vocabulary silently absent.
-   Sphinx does not turn docutils errors into a non-zero exit, and ``-W`` is
-   not an option while the build carries ~150 pre-existing warnings. The
-   deterministic fix is a two-line pre-flight in ``docs/build_docs.sh`` —
-   ``grep -q`` for each marker in ``CONTEXT.md``, ``exit 1`` if absent — but
-   that file is being edited by :issue:`1140` right now, so this draft does
-   not touch it. Add the guard when this branch rebases onto #1140.
-
-.. attention::
-
-   **Draft marker D9 — five ``myst.header`` warnings.** The included fragment
-   starts at ``###``, so myst-parser warns *Document headings start at H3,
-   not H1* once per subsection. They are harmless (the headings nest
-   correctly under this section) and the one-line fix is
-   ``suppress_warnings = ["myst.header"]`` in ``conf.py`` — again #1140's
-   file, so it is left for the rebase. If you would rather not suppress, the
-   alternative is to start the slice at ``## Language`` itself and drop this
-   page's own "The vocabulary" heading, which trades five warnings for one.
+change what is published here — and the documentation build refuses to start
+if either marker is missing, rather than publishing a page with no vocabulary
+on it.
 
 .. attention::
 
