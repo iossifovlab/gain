@@ -31,10 +31,10 @@ from gain.genomic_resources.aggregators import (
 )
 from gain.genomic_resources.genomic_scores import (
     GenomicScore,
+    allele_key,
     build_allele_score_from_resource,
     build_position_score_from_resource,
 )
-from gain.genomic_resources.genomic_scores.allele import allele_key
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_types import (
     PREFERRED_ALLELE_SCORE_TYPE,
@@ -589,9 +589,11 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 
         The SCORE reduces (gain#1163): one value per query and, when the
         virtual ``allele`` attribute is configured, the distinct allele
-        keys, off a single walk that never materialises the records --
-        which is what keeps peak memory flat however many alleles overlap
-        the annotatable (gain#834).
+        keys, off a single walk that never materialises the records.
+        That removes the per-record list this path used to hold beside
+        the aggregators (gain#834); what an aggregator itself keeps --
+        ``list``, the ``str`` default, keeps every value -- is the
+        aggregator's property and stays.
         """
         aggregate = self.allele_score.get_allele_scores_in_region_agg(
             annotatable.chrom, annotatable.position, annotatable.pos_end,

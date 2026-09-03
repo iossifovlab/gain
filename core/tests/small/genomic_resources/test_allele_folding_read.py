@@ -26,10 +26,10 @@ import pytest
 from gain.genomic_resources.aggregators import ScoreAggregationQuery
 from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_scores import (
+    AlleleAggregate,
     AlleleScore,
     build_allele_score_from_resource,
 )
-from gain.genomic_resources.genomic_scores.allele import AlleleAggregate
 from gain.genomic_resources.score_filter import ScoreFilterError
 from gain.genomic_resources.testing.builders import an_allele_score
 
@@ -353,11 +353,13 @@ def test_mem_and_tabix_answer_the_same_aggregate(
 def test_mem_and_tabix_answer_the_same_defaults_and_absence(
     tmp_path: pathlib.Path,
 ) -> None:
-    """``queries=None`` on both backends, and ``None`` on both.
+    """The string and float defaults on both backends, and ``None`` on both.
 
-    ``flag`` is a ``bool``, whose default aggregator is ``None``, so a
-    ``None`` request list is refused identically too -- pinned separately
-    below; here the string and float defaults are compared.
+    Asked by explicit query rather than ``queries=None``: ``flag`` is a
+    ``bool``, whose default aggregator is ``None``, so ``None`` -- every
+    score with its own default -- is refused on this resource, which
+    ``test_a_none_request_list_is_refused_when_a_score_has_no_default``
+    pins.
     """
     queries = [ScoreAggregationQuery("freq"), ScoreAggregationQuery("id")]
     answers = []
@@ -394,6 +396,21 @@ def test_a_query_with_no_aggregator_to_resolve_to_is_refused(
             match=r"no default aggregator .*; name one on the query"):
         opened.get_allele_scores_in_region_agg(
             "1", 10, 16, queries=[ScoreAggregationQuery("flag")])
+
+
+def test_a_none_request_list_is_refused_when_a_score_has_no_default(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``queries=None`` means every score with its own default -- and one has
+    none, so the whole request is refused, naming that score.
+
+    Refused from the call, on an EMPTY region too, so a resource carrying
+    a ``bool`` score cannot be reduced by default anywhere.
+    """
+    score = _oracle_score(tmp_path, tabix=False)
+    with score.open() as opened, pytest.raises(
+            ValueError, match=r"score 'flag' .* no default aggregator"):
+        opened.get_allele_scores_in_region_agg("1", 200, 300)
 
 
 # ---------------------------------------------------------------------------

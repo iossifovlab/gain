@@ -120,6 +120,13 @@ def resolve_aggregation_queries(
     handed a :class:`~..aggregators.PositionScoreAggregationQuery`: it
     would type-check, being a subclass, and the pair answered here has
     nowhere to put the replacement, so it would be dropped silently.
+
+    Not routed through :func:`resolve_aggregator_requests`, though that
+    returns exactly these pairs and already expands ``None``: it hardcodes
+    :data:`PAIR_AGGREGATOR_REMEDY`, and a query surface must say
+    :data:`QUERY_AGGREGATOR_REMEDY`.  Giving it a ``remedy`` parameter
+    would change a function :meth:`~.base.GenomicScore.aggregate_region`
+    also calls, for the sake of one sentence.
     """
     if queries is None:
         queries = [
@@ -265,6 +272,26 @@ def build_region_aggregator(
             f"score {score_id!r} of resource {resource_id!r} asks "
             f"for aggregator {aggregator!r}, which is not valid: "
             f"{err}") from err
+
+
+def build_region_aggregators(
+    requests: list[tuple[str, str]], *, resource_id: str,
+) -> list[Aggregator]:
+    """One FRESH aggregator per request, parallel to the request list.
+
+    :func:`build_region_aggregator` over a resolved request list -- the
+    shape every folding read hands :func:`fold_region_segments`, built
+    once per READ and never held on the score, for the reason that
+    function gives.  Fresh accumulators remove one hazard, not the class
+    of them: two concurrent region reads of one open score still share
+    the table's line iterator, which is each read's "one live region read
+    at a time" rule and not this function's promise.
+    """
+    return [
+        build_region_aggregator(
+            score_id, aggregator, resource_id=resource_id)
+        for score_id, aggregator in requests
+    ]
 
 
 def fold_region_segments(

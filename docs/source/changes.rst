@@ -2,26 +2,6 @@ Release Notes
 =============
 
 * unreleased
-    * **Behaviour change.** An ``allele_score`` attribute whose score
-      declares no default aggregator and which names none is refused
-      when the pipeline loads, rather than annotating a region with the
-      raw list of its per-record values. Only a ``bool`` score can be in
-      that position, ``bool`` being the one value type with no default
-      reduction; name an aggregator on the attribute to fix it. The
-      refusal is at load, so it applies in ``allele`` mode as well as
-      ``region`` mode -- a CNV or a region takes the region path
-      whatever the mode, and a pipeline that only ever annotated
-      substitutions carried the misconfiguration unnoticed before
-      (:issue:`1163`).
-    * An ``allele_score`` annotator's region mode now streams. The score
-      reduces the region itself, through the new
-      ``AlleleScore.get_allele_scores_in_region_agg``, holding no record,
-      so peak memory no longer grows with the number of allele lines a
-      region holds. The virtual ``allele`` attribute's keys come back
-      distinct and in first-seen order -- the resource's own genomic
-      order -- where the order was arbitrary before, and an unknown
-      ``include_attributes`` id is refused as the pipeline loads rather
-      than per record (:issue:`1132`, :issue:`834`).
     * **Behaviour change.** A ``position_score`` annotator answers a
       region no record touches per aggregator, instead of ``None`` for
       every attribute at once. A ``list`` aggregator gives ``[]``, a

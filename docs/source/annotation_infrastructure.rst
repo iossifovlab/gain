@@ -257,7 +257,7 @@ The ``allele_score_annotator`` operates in one of two modes, selected by the ``m
 
        This mode works with any annotatable type, including ``VCFAllele``, ``Region``, and other interval-based annotatables.
 
-In ``region`` mode, the ``aggregator`` attribute parameter controls how multiple matched values are combined. If no ``aggregator`` is specified in the attribute configuration, the annotator uses the score's default ``allele_aggregator`` from the resource definition (which defaults to ``max`` for numeric scores and ``list`` for string scores). A ``bool`` score has no default; an attribute over one that names no ``aggregator`` is refused when the pipeline is loaded, in either mode, because a CNV or a region takes the region path whatever the mode. The region is reduced by the score itself in one streaming pass, so its memory cost does not grow with the number of allele lines it holds.
+In ``region`` mode, the ``aggregator`` attribute parameter controls how multiple matched values are combined. If no ``aggregator`` is specified in the attribute configuration, the annotator uses the score's default ``aggregator`` from the resource definition (which defaults to ``max`` for numeric scores and ``list`` for string scores). A ``bool`` score has no default; an attribute over one that names no ``aggregator`` is refused when the pipeline is loaded, in either mode, because a CNV or a region takes the region path whatever the mode. The region is reduced by the score itself in one streaming pass, so its memory cost does not grow with the number of allele lines it holds.
 
 .. code:: yaml
 

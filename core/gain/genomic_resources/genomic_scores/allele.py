@@ -55,7 +55,7 @@ from ..aggregators import (
     ScoreAggregationQuery,
 )
 from .aggregation import (
-    build_region_aggregator,
+    build_region_aggregators,
     fold_region_segments,
     request_score_ids,
     resolve_aggregation_queries,
@@ -776,14 +776,11 @@ class AlleleScore(GenomicScore):
         resolve to, an unknown contig and a foreign filter are all refused
         before a record is read.  Aggregators are built FRESH per call,
         never held on the score, for the reason
-        :func:`~.aggregation.build_region_aggregator` gives.
+        :func:`~.aggregation.build_region_aggregators` gives.
         """
         requests = self.resolve_aggregation_queries(queries)
-        aggregators = [
-            build_region_aggregator(
-                score_id, aggregator, resource_id=self.resource_id)
-            for score_id, aggregator in requests
-        ]
+        aggregators = build_region_aggregators(
+            requests, resource_id=self.resource_id)
         collector = (
             None if allele_keys is None
             else self._allele_key_collector(allele_keys))
