@@ -108,8 +108,8 @@ class _CountingStream:
 
     Kept a class, and kept private, deliberately.  It knows nothing about
     fragments, so it looks like shared machinery -- but this package
-    promotes a helper into :mod:`.aggregation` when TWO readers must agree
-    on a derivation (see :func:`~.aggregation.request_score_ids`), and
+    promotes a helper into :mod:`.aggregation` when TWO readers need the
+    same derivation (see :func:`~.aggregation.request_score_ids`), and
     this has one.  Should a second kind come to want a per-walk tally, the
     move is to make the fold report what it folded and delete this, rather
     than to relocate it.

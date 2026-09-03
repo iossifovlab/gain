@@ -329,17 +329,26 @@ def test_a_remembered_parametrized_name_still_builds_fresh() -> None:
     assert second.get_final() == "c"
 
 
-def test_an_unknown_name_is_refused_every_time_it_is_asked() -> None:
+@pytest.mark.parametrize(("name", "complaint"), [
+    # Unknown to the registry: a KeyError, quoted.
+    ("mediann", "'mediann'"),
+    # Malformed for the parser: a ValueError, in the parser's words.
+    ("max(", "Invalid aggregator definition: 'max('"),
+])
+def test_a_bad_name_is_refused_every_time_it_is_asked(
+    name: str, complaint: str,
+) -> None:
     # A raise is not remembered as an answer: asking twice complains
     # twice, in the same words -- pinned because a memo that stored the
     # failure, or stored a None for it, would turn the second ask into a
-    # different error or none at all.
+    # different error or none at all.  Both ways a name can be bad are
+    # asked, because they raise from different places.
     expected = (
-        "score 's' of resource 'two' asks for aggregator 'mediann', "
-        "which is not valid: 'mediann'")
+        f"score 's' of resource 'two' asks for aggregator {name!r}, "
+        f"which is not valid: {complaint}")
     for _ in range(2):
         with pytest.raises(ValueError) as excinfo:
-            build_region_aggregator("s", "mediann", resource_id="two")
+            build_region_aggregator("s", name, resource_id="two")
         assert str(excinfo.value) == expected
 
 
