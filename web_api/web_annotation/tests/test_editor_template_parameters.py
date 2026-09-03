@@ -224,3 +224,36 @@ def test_the_template_offers_every_parameter_the_annotator_reads(
         f"template does not offer it, so it cannot be configured from the "
         f"UI. Add it to the template, or to DELIBERATELY_NOT_OFFERED with "
         f"a reason")
+
+
+#: The simple effect template declares itself `effect_annotator`, so a
+#: pipeline saved from its form reopens as the full effect annotator
+#: (iossifovlab/gain#1169).  Strict, so fixing it there fails here and
+#: this pin is removed with it rather than outliving the defect.
+ROUND_TRIP_CASES = [
+    pytest.param(
+        annotator_type,
+        marks=pytest.mark.xfail(
+            strict=True,
+            reason="iossifovlab/gain#1169: emits effect_annotator"),
+    ) if annotator_type == "simple_effect_annotator" else annotator_type
+    for annotator_type in ANNOTATOR_TYPES
+]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("annotator_type", ROUND_TRIP_CASES)
+def test_the_spelling_a_template_emits_resolves_to_the_same_template(
+    client: APIClient, annotator_type: str,
+) -> None:
+    """What comes out of the endpoint has to be allowed back into it.
+
+    A template answers to the editor's name for its type but declares
+    itself under the spelling a saved pipeline will carry, so the two
+    have to resolve to the same template -- or a pipeline saved from the
+    editor reopens as something else, or not at all (iossifovlab/gain#959
+    for the fragment score, #919 for the allele score).
+    """
+    emitted = _config_template(client, annotator_type)
+
+    assert _config_template(client, emitted["annotator_type"]) == emitted
