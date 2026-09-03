@@ -1,4 +1,4 @@
-# pylint: disable=C0114,C0116
+# pylint: disable=W0621,C0114,C0116
 """``AnnotatorBase`` does not aggregate anything (gain#1133).
 
 The base used to reduce: a ``_do_annotate`` handing back a source-keyed

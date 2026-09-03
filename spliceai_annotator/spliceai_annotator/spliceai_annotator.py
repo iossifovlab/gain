@@ -19,7 +19,7 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatorBase
+from gain.annotation.annotator_base import AnnotatorBase, fold_own_values
 from gain.annotation.utils import (
     find_annotator_gene_models,
     find_annotator_reference_genome,
@@ -526,10 +526,13 @@ models to predict splice site variant effects.
 
         if not results:
             return self._not_found()
-        return {
-            attr.source: results[attr.source]
-            for attr in self._attributes
-        }
+        # One entry per (gene, transcript-set) request, folded by the
+        # aggregator each attribute names -- `join(,)` over the genes,
+        # `max` over the delta scores.  The annotator folds for itself
+        # since gain#1133 retired the base's reduce step; `_ATTR_DEFAULTS`
+        # gives every attribute an aggregator, so every one of these is
+        # reduced.
+        return fold_own_values(self._attributes, results)
 
     def _ref_sequence(self, annotatable: VCFAllele) -> str:
         width = self._width

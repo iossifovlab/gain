@@ -145,9 +145,10 @@ def test_a_region_answers_aggregated_values(
     """The annotator hands the base finished values, keyed by NAME.
 
     Asked of ``_do_annotate`` directly because that is the seam the marker
-    type exists for: the base recognises an ``AggregatedValues`` and folds
-    nothing, where a plain dict would be taken for raw lists still to be
-    reduced.  A renamed attribute shows the keys are names, not sources.
+    type exists for: the base recognises an ``AggregatedValues`` and copies
+    it through, where a plain dict would be re-keyed from SOURCE to name --
+    which would drop these values, since they are keyed by name already.
+    A renamed attribute shows the keys are names, not sources.
     """
     with _pipeline(repo, """
         - source: freq

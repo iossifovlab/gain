@@ -13,12 +13,14 @@ Release Notes
       through the new ``Aggregator.resolve_class``, which builds no
       accumulator. ``Aggregator.add(value, count)`` is unchanged and is
       still what the folding reads weigh with. An annotator that reduces
-      values of its own rather than a score's record stream -- the gene
-      score, gene set and both effect annotators -- now folds them
-      itself through ``gain.annotation.annotator_base.fold_own_values``
-      and answers an ``AggregatedValues``; an out-of-tree annotator that
-      relied on the base folding its raw lists must do the same
-      (:issue:`1133`).
+      values of its own rather than a score's record stream now folds
+      them itself and answers an ``AggregatedValues``: the gene set,
+      effect, simple effect and SpliceAI annotators through the new
+      ``gain.annotation.annotator_base.fold_own_values``, and the gene
+      score annotator through its own ``_apply_gene_aggregator``, whose
+      values are a per-gene mapping rather than a list. An out-of-tree
+      annotator that relied on the base folding its raw lists must do
+      the same (:issue:`1133`).
     * An aggregator named on an ``allele_score`` annotator's virtual
       ``allele`` attribute reduces nothing in ``allele`` (exact-match)
       mode, where it previously folded the matched line's one-element

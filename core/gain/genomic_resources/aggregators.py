@@ -56,10 +56,10 @@ class Aggregator(abc.ABC):
 
         ``count`` is the number of times the value is deemed to occur --
         the number of base pairs a position-score record spans, for
-        instance; :meth:`GenomicScore.record_weight` is where each kind
-        states its own rule.  It is applied in closed form: adding a value
-        with a weight of ``n`` produces the same result as adding it ``n``
-        times, without doing ``n`` units of work, which is what makes
+        instance.  ``GenomicScore.record_weight`` is where each kind
+        states its own rule.  The weight is applied in closed form: adding
+        a value with a weight of ``n`` produces the same result as adding
+        it ``n`` times, without doing ``n`` units of work, which is what makes
         folding a region proportional to its records rather than to its
         length in base pairs.  The one exception is ``mean``, which is
         *more* accurate weighted than replicated: it rounds once per
@@ -141,7 +141,7 @@ class Aggregator(abc.ABC):
         """The aggregator CLASS a definition, string, or dict names.
 
         For the callers that want what an aggregator WOULD answer rather
-        than an accumulator to answer it with: :meth:`output_value_type`
+        than an accumulator to answer it with: :attr:`output_value_type`
         and :meth:`preserves_domain` are both class-level, so an attribute
         that only knows an aggregator's name can describe its output
         without building one (gain#1133).  It shares

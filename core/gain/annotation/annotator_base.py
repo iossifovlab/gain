@@ -265,9 +265,10 @@ class AnnotatorBase(Annotator):
         The base reduces nothing (gain#1133).  Every annotator in gain
         that folds a region does it in its score, which is what makes
         folding proportional to records rather than to base pairs, and
-        says so by answering an :class:`AggregatedValues`; the two that
-        reduce something other than a record stream -- the gene score and
-        gene set annotators -- fold their own values and answer one too.
+        says so by answering an :class:`AggregatedValues`; those that
+        reduce something other than a record stream -- the gene score,
+        gene set, effect, simple effect and SpliceAI annotators -- fold
+        their own values and answer one too.
         Such a result is already keyed by name and already finished, so
         it is copied through: folding it again would reduce a finished
         list a second time.
