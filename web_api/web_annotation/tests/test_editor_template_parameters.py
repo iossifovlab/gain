@@ -59,27 +59,6 @@ def test_the_allele_score_template_offers_the_filter_and_the_mode(
     assert template["mode"] == {"field_type": "string", "optional": True}
 
 
-@pytest.mark.django_db
-@pytest.mark.parametrize("annotator_type", [
-    "position_score_annotator",
-    "allele_score_annotator",
-    "effect_annotator",
-])
-def test_the_template_offers_the_region_length_cutoff(
-    client: APIClient, annotator_type: str,
-) -> None:
-    """Every annotator with a region length cutoff lets the form set it.
-
-    The documentation tells a user annotating large CNVs to *raise
-    ``region_length_cutoff`` on the annotator*; a form that cannot express
-    it sends that user to a hand-written pipeline.
-    """
-    template = _config_template(client, annotator_type)
-
-    assert template["region_length_cutoff"] == {
-        "field_type": "string", "optional": True}
-
-
 #: The types the editor offers, read from the helper the endpoint serves
 #: so that a tenth type is a case here the day it is added.
 ANNOTATOR_TYPES = EditorMixin()._get_annotator_types()
@@ -96,9 +75,16 @@ INJECTED_PARAMETERS = NON_IDENTITY_PARAMS
 #: an annotator learns to read has to be added to its template, or added
 #: here on purpose.  This is the inventory of what is unreachable from
 #: the UI, which is why an entry without a reason is not acceptable.
+#: Compared to a length as the number it was configured as, with no
+#: coercion -- while the form's only free-text field posts a string, and
+#: the YAML the editor saves keeps it one.  Offered today, the form would
+#: save a pipeline that fails on its first annotation (`int > str`).
+#: Offered once gain#1166 gives the annotators a numeric accessor.
+UNCOERCED_NUMBER = "region_length_cutoff"
+
 DELIBERATELY_NOT_OFFERED: dict[str, frozenset[str]] = {
-    "position_score_annotator": frozenset(),
-    "allele_score_annotator": frozenset(),
+    "position_score_annotator": frozenset({UNCOERCED_NUMBER}),
+    "allele_score_annotator": frozenset({UNCOERCED_NUMBER}),
     "gene_score_annotator": frozenset(),
     "gene_set_annotator": frozenset({
         # Read by the framework's input-annotatable decorator, which probes
@@ -116,8 +102,9 @@ DELIBERATELY_NOT_OFFERED: dict[str, frozenset[str]] = {
     "effect_annotator": frozenset({
         # Not documented in the annotation infrastructure docs; offering
         # an undocumented knob in the form is premature.  Document, then
-        # offer.
+        # offer -- and it is a number read the same uncoerced way.
         "promoter_len",
+        UNCOERCED_NUMBER,
     }),
     "simple_effect_annotator": frozenset(),
     "liftover_annotator": frozenset(),

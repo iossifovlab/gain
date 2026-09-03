@@ -133,14 +133,6 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                     "resource_type": "position_score",
                     "optional": False,
                 },
-                # The documentation tells a user annotating large CNVs to
-                # raise this on the annotator, so the form has to be able
-                # to (gain#1165).  `string` for the reason recorded on the
-                # fragment score template below.
-                "region_length_cutoff": {
-                    "field_type": "string",
-                    "optional": True,
-                },
                 "input_annotatable": {
                     "field_type": "attribute",
                     "attribute_type": "annotatable",
@@ -172,12 +164,6 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                     "optional": True,
                 },
                 "mode": {
-                    "field_type": "string",
-                    "optional": True,
-                },
-                # Read by this annotator too; see the position score
-                # template (gain#1165).
-                "region_length_cutoff": {
                     "field_type": "string",
                     "optional": True,
                 },
@@ -293,12 +279,6 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                 "genome": {
                     "field_type": "resource",
                     "resource_type": "genome",
-                    "optional": True,
-                },
-                # Read by this annotator too; see the position score
-                # template (gain#1165).
-                "region_length_cutoff": {
-                    "field_type": "string",
                     "optional": True,
                 },
                 "input_annotatable": {
