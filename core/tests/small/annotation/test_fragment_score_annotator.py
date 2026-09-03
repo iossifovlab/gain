@@ -356,3 +356,108 @@ def test_fragment_aggregators(
     assert atts["size_mode"] == 50
     assert atts["collection_join"] == \
         "AGRE;SSC;SSC;AGRE;SSC;AGRE;AGRE;SSc;AGRE;AGRE"
+
+
+# The two overlap fractions (gain#1125).
+#
+# Every case below annotates `Region("1", 15, 60)` against the `grr`
+# fixture, whose chromosome 1 carries exactly two fragments.  The
+# arithmetic that region sets up is the whole point of using it:
+#
+#     region [15, 60]         length 46
+#     fragment [10, 20]       overlap [15, 20] =  6  ->  6/46 = 0.130 of the
+#                                                        region,
+#                                                        6/11 = 0.545 of the
+#                                                        fragment
+#     fragment [50, 100]      overlap [50, 60] = 11  -> 11/46 = 0.239 of the
+#                                                        region,
+#                                                       11/51 = 0.216 of the
+#                                                        fragment
+#
+# So a fragment-denominated 0.5 keeps the FIRST fragment and a
+# region-denominated 0.2 keeps the SECOND.  The two thresholds select
+# DIFFERENT fragments here, deliberately: an implementation that passed
+# them to the score the other way round would still answer `count == 1`,
+# and only the attribute value tells the two apart.  That is why these
+# assert `frequency` and not just the count -- getting the fractions
+# backwards is a silent wrong answer rather than an error.
+
+
+@pytest.mark.parametrize("configured, count, frequency", [
+    pytest.param("", 2, "0.02;0.1", id="unset-admits-both"),
+    pytest.param(
+        "min_fragment_overlap_fraction: 0.5", 1, "0.02",
+        id="fragment-denominated-keeps-the-one-mostly-inside"),
+    pytest.param(
+        'min_fragment_overlap_fraction: "0.5"', 1, "0.02",
+        id="quoted-means-the-same-threshold"),
+    pytest.param(
+        "min_region_overlap_fraction: 0.2", 1, "0.1",
+        id="region-denominated-keeps-the-one-covering-the-region"),
+])
+def test_an_overlap_fraction_selects_by_the_length_it_is_named_for(
+    configured: str, count: int, frequency: str,
+    grr: GenomicResourceRepo,
+) -> None:
+    """Each threshold admits what the other rejects, from one region.
+
+    The `frequency` expectation is what makes these more than a count
+    check: the two denominators both answer ONE fragment here, so a
+    swapped implementation would still satisfy `count`, and only the
+    VALUE says which fragment survived.
+
+    `unset` is the baseline the other rows are measured against, and it
+    is not the same request as `0.0` -- no threshold is applied at all.
+
+    The quoted row asserts the SAME expectations as its unquoted
+    neighbour by construction rather than by a reader comparing two
+    blocks.  A fraction configured through the annotation editor reaches
+    the annotator as a string -- see `_read_overlap_fraction` -- and it
+    has to mean the same threshold.
+    """
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent(f"""
+            - fragment_score:
+                resource_id: fragments
+                {configured}
+                attributes:
+                - count
+                - source: frequency
+                  aggregator: join(;)
+            """),
+        grr)
+
+    atts = pipeline.annotate(Region("1", 15, 60))
+
+    assert atts["count"] == count
+    assert atts["frequency"] == frequency
+
+
+@pytest.mark.parametrize("configured", ["1.5", "-0.5", "half", "true"])
+@pytest.mark.parametrize("parameter", [
+    "min_region_overlap_fraction",
+    "min_fragment_overlap_fraction",
+])
+def test_a_value_that_is_no_fraction_is_refused_by_name(
+    parameter: str, configured: str, grr: GenomicResourceRepo,
+) -> None:
+    """Refused as the PIPELINE LOADS, naming the key the user wrote.
+
+    Two reasons, one refusal.  Out of range: the score guards the same
+    interval, but raises `ValueError` on the first annotated variant --
+    too late, and addressed to a caller rather than to whoever wrote the
+    YAML.  gain#477: an error naming a key absent from their config sends
+    them looking in the wrong place.
+
+    Not a number: YAML reads `true` as a bool, and `bool` subclasses
+    `int`, so a range check alone would admit it as 1.0 -- full
+    containment, a threshold nobody asked for, applied in silence.
+    """
+    with pytest.raises(AnnotationConfigurationError, match=parameter):
+        load_pipeline_from_yaml(
+            textwrap.dedent(f"""
+                - fragment_score:
+                    resource_id: fragments
+                    {parameter}: {configured}
+                """),
+            grr)

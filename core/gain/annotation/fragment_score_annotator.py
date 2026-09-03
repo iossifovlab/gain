@@ -40,6 +40,76 @@ LEGACY_ANNOTATOR_NAMES = {
 }
 
 
+def _not_a_number(
+    info: AnnotatorInfo, parameter: str, value: object,
+) -> AnnotationConfigurationError:
+    """The refusal for a fraction that is not a number, in one place.
+
+    Two readings reach it -- a value of a type no fraction can have, and
+    a string that will not parse -- and they say the same thing, so the
+    wording lives here rather than in copies of it.
+    """
+    return AnnotationConfigurationError(
+        f"{info.type} configures {parameter}: {value!r}, which is not a "
+        f"number. An overlap fraction is a share of a length, written "
+        f"as a number between 0 and 1")
+
+
+def _read_overlap_fraction(
+    info: AnnotatorInfo, parameter: str,
+) -> float | None:
+    """Read one overlap threshold, refusing what no fraction can be.
+
+    The two the annotator accepts are each named for the length they are
+    denominated by: ``min_region_overlap_fraction`` is a share of the
+    ANNOTATABLE's span and ``min_fragment_overlap_fraction`` a share of
+    the FRAGMENT's.  Both are new in gain#1125 and have one spelling
+    each, so -- unlike ``fragment_filter`` above -- they need no alias
+    machinery, and naming the constant IS naming what the user wrote.
+
+    Validated HERE as well as in the score, deliberately: the score's
+    guard raises ``ValueError`` on the first annotated variant, addressed
+    to a caller, whereas a pipeline is wrong the moment it is written and
+    the person who has to fix it is reading YAML.  So this refuses as the
+    annotator is CONSTRUCTED and names the key they typed (gain#477).
+    The score keeps its own guard -- it has callers this never sees.
+
+    Reading the parameter is what DECLARES it: ``info.parameters`` refuses
+    a key nobody read, so both fractions must be read unconditionally.
+    """
+    value = info.parameters.get(parameter)
+    if value is None:
+        return None
+    # `bool` before `int`, because it is a subclass of it: without this
+    # `min_region_overlap_fraction: true` would be admitted as 1.0 -- a
+    # threshold the user never asked for, silently applied.
+    # `bool` first, because it is a subclass of `int`: without this
+    # `min_region_overlap_fraction: true` would parse as 1.0 -- a threshold
+    # the user never asked for, silently applied.  The type guard is what
+    # keeps `float()` from accepting things a fraction cannot be spelled
+    # as, `b"0.5"` among them.
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise _not_a_number(info, parameter, value)
+    # A STRING that spells a number is accepted, because the annotation
+    # editor posts one: its form controls hold text, so a fraction typed
+    # there arrives as `"0.5"`.  Refusing it would 400 the editor on its
+    # own output -- the parameter offered in the form and unsaveable.
+    # Quoting a fraction in hand-written YAML lands here too and means the
+    # same thing.  `"half"` does not parse; `nan` and `inf` do, and fail
+    # the range check below instead.
+    try:
+        number = float(value)
+    except ValueError:
+        raise _not_a_number(info, parameter, value) from None
+    if not 0.0 <= number <= 1.0:
+        raise AnnotationConfigurationError(
+            f"{info.type} configures {parameter}: {value}. An overlap "
+            f"fraction is a share of a length, so it lies between 0 and 1; "
+            f"a threshold outside that is either vacuous or matches nothing "
+            f"whatever the data")
+    return number
+
+
 def build_fragment_score_annotator(pipeline: AnnotationPipeline,
                                    info: AnnotatorInfo) -> Annotator:
     return FragmentScoreAnnotator(pipeline, info)
@@ -128,6 +198,11 @@ class FragmentScoreAnnotator(AnnotatorBase):
                 # is handed an expression, not the parameter it came from.
                 raise AnnotationConfigurationError(
                     f"Error parsing {used_parameter}: {e}") from e
+
+        self.min_region_overlap_fraction = _read_overlap_fraction(
+            info, "min_region_overlap_fraction")
+        self.min_fragment_overlap_fraction = _read_overlap_fraction(
+            info, "min_fragment_overlap_fraction")
 
         super().__init__(pipeline, info)
 
@@ -228,6 +303,9 @@ class FragmentScoreAnnotator(AnnotatorBase):
             .get_fragment_scores_overlapping_region_agg(
                 annotatable.chrom, annotatable.pos, annotatable.pos_end,
                 queries=self._region_queries,
+                min_region_overlap_fraction=self.min_region_overlap_fraction,
+                min_fragment_overlap_fraction=(
+                    self.min_fragment_overlap_fraction),
                 score_filter=self.fragment_filter)
 
         # One value per query, so as many as there are queries.  Checked

@@ -703,6 +703,48 @@ override via ``aggregator``:
         - source: attribute.<score attribute id>
           aggregator: <aggregator>
 
+Requiring a substantial overlap
+*******************************
+
+By default every fragment that overlaps the annotatable at all is reported, however
+slight the overlap. Two optional parameters raise that bar. Each is a fraction between
+0 and 1, and **each is denominated by a different length** — they answer different
+questions, and swapping them silently changes the answer rather than raising an error:
+
+``min_region_overlap_fraction``
+    the share of **the annotatable's** span that the fragment must cover:
+    ``overlap / annotatable length``. "The fragment has to account for at least this
+    much of what I asked about." Use it to ignore fragments too small to matter for
+    the locus.
+
+``min_fragment_overlap_fraction``
+    the share of **the fragment's** own span that must fall inside the annotatable:
+    ``overlap / fragment length``. "At least this much of the fragment has to be
+    inside my region." Use it to ignore fragments that merely clip the edge.
+
+A 10 bp fragment lying inside a 1 Mb region scores about 0.00001 on the first and
+1.0 on the second, which is the clearest way to remember which is which.
+
+.. code:: yaml
+
+    - fragment_score_annotator:
+        resource_id: <resource id>
+        min_region_overlap_fraction: 0.5
+        min_fragment_overlap_fraction: 0.9
+
+Both are optional and independent. Supplying both requires *both* to hold. Omitting
+them is not the same as setting them to ``0.0``: omitted means no threshold is applied
+at all, while ``0.0`` is a threshold every fragment a region query answers happens to
+meet. A value outside ``[0, 1]``, or one that is not a number, is refused when the
+pipeline is loaded. Quoting is safe: ``min_region_overlap_fraction: "0.5"`` means the
+same threshold as ``0.5``, which is what lets the same value be typed into the
+annotation editor's form.
+
+These parameters **select** fragments; they do not reshape them. A fragment that passes
+is still reported at its own full extent, and the ``count`` attribute counts the
+fragments that were kept — so raising either threshold lowers ``count`` as well as
+changing the aggregated attribute values.
+
 gene_set_annotator
 ^^^^^^^^^^^^^^^^^^^^^
 

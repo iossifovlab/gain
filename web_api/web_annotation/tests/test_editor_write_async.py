@@ -427,6 +427,35 @@ async def test_async_annotator_aggregators_authenticated_returns_200() -> None:
     assert result["pos1"]["default_aggregator"] == "mean"
 
 
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_async_annotator_yaml_overlap_fraction_typed_in_the_editor(
+) -> None:
+    """A fraction typed into the editor form saves (gain#1125).
+
+    The seam no other test covers: this endpoint BUILDS the annotator
+    before dumping it, so the annotator's configuration guard runs on
+    whatever the form posted -- and the form posts a STRING.  Why that is
+    so, and why the template types the field `string`, is recorded where
+    that decision lives, on the config template in `editor/views.py`.
+    """
+    client = AsyncClient()
+    response = await _post_json(client, YAML_POST_URL, {
+        "pipeline_id": "pipeline/test_pipeline",
+        "annotator_type": "fragment_score",
+        "resource_id": "cnv_collections/test_collection",
+        "min_region_overlap_fraction": "0.5",
+    })
+
+    assert response.status_code == 200, response.content
+    saved = yaml.safe_load(response.json())[0]["fragment_score"]
+    # Echoed as posted rather than as coerced -- the dump serialises the
+    # configuration the user supplied, not the annotator's reading of it.
+    # What matters is that it survives into the saved pipeline, which the
+    # annotator then accepts on the way back in.
+    assert saved["min_region_overlap_fraction"] == "0.5"
+
+
 # ---------------------------------------------------------------------------
 # Pinned exception-mapping regression (unbuildable -> 400, missing -> 404)
 # ---------------------------------------------------------------------------
