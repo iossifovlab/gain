@@ -716,7 +716,8 @@ def test_allele_score_filter_digit_prefixed_score_name(
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 10))
-    assert set(result["allele"]) == {"1:10:A:C", "1:10:A:T"}
+    # Ordered since gain#1163: the keys come in first-seen order.
+    assert result["allele"] == ["1:10:A:C", "1:10:A:T"]
 
 
 def test_allele_score_region_allele_with_include_attributes(
@@ -735,13 +736,13 @@ def test_allele_score_region_allele_with_include_attributes(
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 16))
-    alleles = set(result["allele"])
-    assert "1:10:A:T:0.02" not in alleles
-    assert "1:10:A:T:0.03" not in alleles
-    assert "1:10:A:T:0.04" in alleles
-    assert "1:16:C:T:0.04" in alleles
-    assert "1:16:C:A:0.05" in alleles
-    assert not any(a.startswith("1:10:A:G") for a in alleles)
+    # Ordered since gain#1163: the keys come in first-seen order, which
+    # for the in-memory table is by position, then ref/alt.  The three
+    # alleles at or below 0.03 -- A>G, A>C and CA>G -- are filtered out.
+    assert result["allele"] == [
+        "1:10:A:T:0.04", "1:16:C:A:0.05", "1:16:C:CA:1", "1:16:C:CG:2",
+        "1:16:C:T:0.04",
+    ]
 
 
 def test_allele_score_region_with_no_lines(

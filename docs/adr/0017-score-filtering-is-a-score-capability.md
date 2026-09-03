@@ -52,6 +52,13 @@ on the *record* reads. The reads that answer values rather than records
 either threading the parameter through each, or a filtered view over the
 whole read family, and neither is settled here.
 
+> **Amendment (2026-09-03, gain#1124 and gain#1163).** A kind's *folding*
+> read takes `score_filter` by composing over its own filtered record read
+> — `FragmentScore.get_fragment_scores_overlapping_region_agg` and
+> `AlleleScore.get_allele_scores_in_region_agg` are the instances, and that
+> is the precedent for the family. The base's value reads named above still
+> take none, and threading it through them remains unsettled.
+
 **One grammar, the superset of the two it replaces.** Digits are allowed in
 identifiers and numbers may be negative — the union, so no expression that
 parsed before stops parsing.

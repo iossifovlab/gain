@@ -257,7 +257,7 @@ The ``allele_score_annotator`` operates in one of two modes, selected by the ``m
 
        This mode works with any annotatable type, including ``VCFAllele``, ``Region``, and other interval-based annotatables.
 
-In ``region`` mode, the ``aggregator`` attribute parameter controls how multiple matched values are combined. If no ``aggregator`` is specified in the attribute configuration, the annotator uses the score's default ``allele_aggregator`` from the resource definition (which defaults to ``max`` for numeric scores and ``list`` for string scores).
+In ``region`` mode, the ``aggregator`` attribute parameter controls how multiple matched values are combined. If no ``aggregator`` is specified in the attribute configuration, the annotator uses the score's default ``allele_aggregator`` from the resource definition (which defaults to ``max`` for numeric scores and ``list`` for string scores). A ``bool`` score has no default; an attribute over one that names no ``aggregator`` is refused when the pipeline is loaded, in either mode, because a CNV or a region takes the region path whatever the mode. The region is reduced by the score itself in one streaming pass, so its memory cost does not grow with the number of allele lines it holds.
 
 .. code:: yaml
 
@@ -325,7 +325,7 @@ That applies to every comparison, including ``!=``: a line carrying no ``AF`` is
 
 **allele attribute**
 
-In addition to score columns, ``source: allele`` is a virtual attribute that returns the matched allele keys as a list of ``chrom:pos:ref:alt`` strings. It is only meaningful in ``region`` mode (or for ``VCFAllele`` inputs with ``mode: region``), where multiple alleles can be matched.
+In addition to score columns, ``source: allele`` is a virtual attribute that returns the matched allele keys as a list of ``chrom:pos:ref:alt`` strings. It is only meaningful in ``region`` mode (or for ``VCFAllele`` inputs with ``mode: region``), where multiple alleles can be matched. The keys are distinct and come in the order the lines were first met -- the resource's own genomic order. A line whose reference or alternative is absent contributes a bare ``chrom:pos`` key.
 
 .. code:: yaml
 
@@ -335,7 +335,7 @@ In addition to score columns, ``source: allele`` is a virtual attribute that ret
         attributes:
         - source: allele
 
-The optional ``include_attributes`` parameter appends one or more score values to each allele key. The included attributes are joined with ``,`` and the resulting string is appended to the allele key with a ``:`` separator, producing entries of the form ``chrom:pos:ref:alt:attr1,attr2``. This is useful for returning both the allele identity and its associated scores in a single field.
+The optional ``include_attributes`` parameter appends one or more score values to each allele key. The included attributes are joined with ``,`` and the resulting string is appended to the allele key with a ``:`` separator, producing entries of the form ``chrom:pos:ref:alt:attr1,attr2``. This is useful for returning both the allele identity and its associated scores in a single field. Every id named here must be a score the resource defines; an unknown one fails the pipeline as it is built, listing the ids that would have worked.
 
 .. code:: yaml
 

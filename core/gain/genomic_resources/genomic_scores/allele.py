@@ -213,8 +213,11 @@ class AlleleScore(GenomicScore):
         ...         print(f"{record[POS_BEGIN]} "
         ...               f"{record[REF]}>{record[ALT]}: {values}")
 
-    Aggregating those values over the region is the *annotator's* job, not the
-    resource's -- see ``gain.annotation.score_annotator``.
+    Reducing those values over a region is the resource's own job:
+    :meth:`get_allele_scores_in_region_agg` folds a region in one streaming
+    walk, one value per :class:`~..aggregators.ScoreAggregationQuery`, with
+    the allele keys beside them when asked, and the allele annotator's
+    region mode reads through it (``gain.annotation.score_annotator``).
 
     Attributes:
         resource: The underlying GenomicResource object
@@ -229,6 +232,9 @@ class AlleleScore(GenomicScore):
         fetch_allele_records: Get the records of a region, filtered, telling
             a region holding no allele apart from one whose alleles were all
             rejected
+        get_allele_scores_in_region_agg: Reduce the alleles of a region to
+            one value per query -- and their keys -- in one walk, telling
+            the same two answers apart
         fetch_region_segments: Iterate over allele scores in a
             genomic region
         substitutions_mode: Check if operating in SUBSTITUTIONS mode
@@ -681,6 +687,51 @@ class AlleleScore(GenomicScore):
         return select_records(
             self, chain([first], overlapping), score_filter)
 
+    def resolve_aggregation_queries(
+        self, queries: Sequence[ScoreAggregationQuery] | None,
+    ) -> list[tuple[str, str]]:
+        """Resolve each query to its ``(score_id, aggregator NAME)`` pair.
+
+        Public, and stopping at the NAME, for the reason
+        :meth:`PositionScore.resolve_aggregation_queries()
+        <.position.PositionScore.resolve_aggregation_queries>` gives:
+        asking whether a query list is answerable is a question a caller
+        may have without wanting to read.  ``AlleleScoreAnnotator`` asks
+        it once when the pipeline loads, so an attribute naming no
+        aggregator for a ``bool`` score is refused there rather than on
+        the first region that reaches it (D6 of the allele folding-read
+        design).  Building the accumulators is the READ's business, per
+        call.
+
+        Kind-neutral queries, so the shared
+        :func:`~.aggregation.resolve_aggregation_queries` answers it
+        whole; ``None`` means every score with its own default.
+        """
+        return resolve_aggregation_queries(
+            queries,
+            score_definitions=self.score_definitions,
+            all_scores=self.get_all_scores(),
+            resource_id=self.resource_id)
+
+    def resolve_allele_key_scores(
+        self, allele_keys: Sequence[str],
+    ) -> list[GenomicScoreDef]:
+        """The definitions of the scores an allele-key request suffixes.
+
+        The other half of what :meth:`get_allele_scores_in_region_agg`
+        checks on the call, made askable without reading: an unknown id
+        is refused with the valid names listed, which is how the
+        annotator refuses a bad ``include_attributes`` as the pipeline
+        loads rather than per record.
+        """
+        return [
+            score_def_for(
+                score_id,
+                score_definitions=self.score_definitions,
+                resource_id=self.resource_id)
+            for score_id in allele_keys
+        ]
+
     def get_allele_scores_in_region_agg(
         self, chrom: str, start: int, end: int,
         *,
@@ -727,11 +778,7 @@ class AlleleScore(GenomicScore):
         never held on the score, for the reason
         :func:`~.aggregation.build_region_aggregator` gives.
         """
-        requests = resolve_aggregation_queries(
-            queries,
-            score_definitions=self.score_definitions,
-            all_scores=self.get_all_scores(),
-            resource_id=self.resource_id)
+        requests = self.resolve_aggregation_queries(queries)
         aggregators = [
             build_region_aggregator(
                 score_id, aggregator, resource_id=self.resource_id)
@@ -766,13 +813,7 @@ class AlleleScore(GenomicScore):
         -- earlier than the per-record ``KeyError`` the annotator used to
         raise, and on an empty region too.
         """
-        suffix_defs = [
-            score_def_for(
-                score_id,
-                score_definitions=self.score_definitions,
-                resource_id=self.resource_id)
-            for score_id in suffix_scores
-        ]
+        suffix_defs = self.resolve_allele_key_scores(suffix_scores)
         extract = self._extract_value
 
         def key_of(record: Record) -> str:

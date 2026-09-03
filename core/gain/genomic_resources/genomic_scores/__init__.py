@@ -42,7 +42,7 @@ What did NOT move here is the resource *implementation* --
 decomposition of the :class:`~.base.GenomicScore` class itself, which is
 gain#1027 and is deliberately sequenced after this split.
 """
-from .allele import AlleleScore
+from .allele import AlleleAggregate, AlleleScore, allele_key
 from .base import (
     DEFAULT_VALUE_ARRAYS_BATCH_SIZE,
     GenomicScore,
@@ -71,6 +71,7 @@ from .records import (
 
 __all__ = [
     "DEFAULT_VALUE_ARRAYS_BATCH_SIZE",
+    "AlleleAggregate",
     "AlleleRecordArrays",
     "AlleleScore",
     "FragmentAggregate",
@@ -78,6 +79,7 @@ __all__ = [
     "GenomicScore",
     "PositionScore",
     "RecordArrays",
+    "allele_key",
     "build_allele_score_from_resource",
     "build_allele_score_from_resource_id",
     "build_fragment_score_from_resource",

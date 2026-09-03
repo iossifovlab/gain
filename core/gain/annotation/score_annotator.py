@@ -5,11 +5,11 @@ allele_score_annotator.
 """
 import abc
 import textwrap
+from collections.abc import Iterator
 from typing import Any
 
 from gain import logging
 from gain.annotation.annotatable import Annotatable, VCFAllele
-from gain.annotation.annotate_utils import stringify
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotationConfigurationError,
@@ -26,19 +26,15 @@ from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
 from gain.genomic_resources.aggregators import (
     AggregatorSource,
     PositionScoreAggregationQuery,
+    ScoreAggregationQuery,
     aggregator_name,
-)
-from gain.genomic_resources.genomic_position_table.record import (
-    ALT,
-    CHROM,
-    POS_BEGIN,
-    REF,
 )
 from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     build_allele_score_from_resource,
     build_position_score_from_resource,
 )
+from gain.genomic_resources.genomic_scores.allele import allele_key
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_types import (
     PREFERRED_ALLELE_SCORE_TYPE,
@@ -405,11 +401,15 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
       returns the single matching line's scores.  The annotatable must be a
       ``VCFAllele``; other types receive an empty result.
 
-    - ``region``: iterates all allele lines that overlap the annotatable's span
-      and aggregates their scores.  Works with any ``Annotatable``
-      (``VCFAllele``, ``Region``, CNV, …).  An aggregator must be defined for
-      every score attribute, either in the attribute config or as the score's
-      ``allele_aggregator`` default in the resource YAML.
+    - ``region``: the score reduces all allele lines that overlap the
+      annotatable's span, in one streaming walk
+      (``AlleleScore.get_allele_scores_in_region_agg``).  Works with any
+      ``Annotatable`` (``VCFAllele``, ``Region``, CNV, …).  An aggregator
+      must be defined for every score attribute, either in the attribute
+      config or as the score's ``aggregator`` default in the resource YAML;
+      an attribute with neither -- only a ``bool`` score can be in that
+      position -- is refused when the pipeline loads, in either mode,
+      because a CNV or a region takes the region path whatever the mode.
 
     Virtual ``allele`` attribute
     ----------------------------
@@ -419,11 +419,14 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
 
     - In ``allele`` mode: returns ``["chrom:pos:ref:alt"]`` for the matched
       line.
-    - In ``region`` mode: returns the set of ``"chrom:pos:ref:alt"`` strings
-      for all lines that pass the optional ``allele_filter``.
+    - In ``region`` mode: returns the distinct ``"chrom:pos:ref:alt"``
+      strings of the lines that pass the optional ``allele_filter``, in the
+      order the lines were first met -- the resource's own genomic order.
 
     Optionally append score values to each allele string with
-    ``include_attributes``.
+    ``include_attributes``.  The string's format is the score's,
+    :func:`~gain.genomic_resources.genomic_scores.allele.allele_key`, so
+    the two modes cannot drift.
 
     ``allele_filter``
     -----------------
@@ -478,20 +481,44 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 """)  # ruff: ignore[line-too-long]
 
         self.allele_attribute = None
-        self.attrs_to_include = []
-        self.allele_score_sources: list[str] = []
+        self.attrs_to_include: list[str] = []
 
         for attr in self._attributes:
             if attr.source == "allele":
-                self.attrs_to_include = attr.parameters.get(
+                attrs_to_include = attr.parameters.get(
                     "include_attributes", [])
-                if isinstance(self.attrs_to_include, str):
-                    self.attrs_to_include = [self.attrs_to_include]
+                if isinstance(attrs_to_include, str):
+                    attrs_to_include = [attrs_to_include]
+                self.attrs_to_include = list(attrs_to_include)
                 self.allele_attribute = attr
                 continue
-            self.allele_score_sources.append(attr.source)
             self.add_score_aggregator_documentation(
                 attr, "aggregator", attr.aggregator)
+
+        # One query per SCORE attribute, in attribute order, so the tuple
+        # the read answers with pairs straight back to the attributes it
+        # was built from.  Not deduped: a source named twice under two
+        # aggregators is two queries and two answers, which is the whole
+        # reason the result is keyed by name.  The virtual `allele`
+        # attribute is not a score and asks the read for the keys instead.
+        self._region_queries = [
+            ScoreAggregationQuery(
+                attr.source,
+                aggregator_name(attr.aggregator)
+                if attr.aggregator is not None else None)
+            for attr in self._attributes
+            if attr is not self.allele_attribute
+        ]
+        # Ask the read's two questions now and throw the answers away:
+        # what is wanted is the refusal.  An attribute whose score has no
+        # default aggregator and names none -- only `bool` can be in that
+        # position -- fails HERE, as the pipeline loads, with the read's
+        # own remedy, rather than on the first region that reaches it.  In
+        # `allele` mode too: a CNV or a region takes the region path
+        # whatever the mode, so the list exists in both.  The same for an
+        # `include_attributes` id the resource does not define.
+        self.allele_score.resolve_aggregation_queries(self._region_queries)
+        self.allele_score.resolve_allele_key_scores(self.attrs_to_include)
 
     def get_attribute_defaults(
         self, spec: AttributeSpec,
@@ -544,15 +571,12 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         scores: dict[str, Any] = dict(values)
 
         if self.allele_attribute is not None:
-            allele_str = (
-                f"{annotatable.chromosome}:{annotatable.position}"
-                f":{annotatable.reference}:{annotatable.alternative}"
-            )
-            if self.attrs_to_include:
-                attrs_str = ",".join(
-                    stringify(scores.get(a)) for a in self.attrs_to_include)
-                allele_str += f":{attrs_str}"
-            scores[self.allele_attribute.source] = [allele_str]
+            # The same helper the region read builds its keys with, so
+            # the two paths spell an allele identically.
+            scores[self.allele_attribute.source] = [allele_key(
+                annotatable.chromosome, annotatable.position,
+                annotatable.reference, annotatable.alternative,
+                [scores.get(a) for a in self.attrs_to_include])]
 
         return {
             attr.source: scores.get(attr.source) for attr in self.attributes
@@ -561,49 +585,52 @@ Non-``VCFAllele`` annotatables always use region aggregation.
     def _annotate_region(
         self, annotatable: Annotatable,
     ) -> dict[str, Any]:
-        """Collect raw score lists for all allele lines overlapping the region.
+        """Answer the region already reduced, keyed by attribute name.
 
-        Aggregation is handled by AnnotatorBase._apply_aggregators.
+        The SCORE reduces (gain#1163): one value per query and, when the
+        virtual ``allele`` attribute is configured, the distinct allele
+        keys, off a single walk that never materialises the records --
+        which is what keeps peak memory flat however many alleles overlap
+        the annotatable (gain#834).
         """
-        records = self.allele_score.fetch_allele_records(
+        aggregate = self.allele_score.get_allele_scores_in_region_agg(
             annotatable.chrom, annotatable.position, annotatable.pos_end,
+            queries=self._region_queries,
+            allele_keys=(
+                self.attrs_to_include
+                if self.allele_attribute is not None else None),
             score_filter=self.allele_filter,
         )
-        # `None` is absent data and `[]` an empty selection -- the read
-        # tells them apart so this path does not have to count records
-        # before filtering them, and the filter runs inside the fetch.
-        if records is None:
+        # `None` is absent data -- no record overlaps the region -- and
+        # answers `None` for every attribute, as it always has.  An
+        # aggregate whose fold saw nothing is different: records were
+        # there and the filter rejected them all, so each aggregator has
+        # answered for an empty selection and the keys are empty.
+        if aggregate is None:
             return self._empty_result()
 
-        raw: dict[str, list] = {
-            source: [] for source in self.allele_score_sources}
-        alleles: set[str] = set()
+        # One value per query, so as many as there are queries.  Checked
+        # rather than assumed, because the pairing below is POSITIONAL and
+        # a read that answered a different number would otherwise slide
+        # every attribute onto its neighbour's value.
+        if len(aggregate.values) != len(self._region_queries):
+            raise ValueError(
+                f"{self.get_info().type} asked "
+                f"{len(self._region_queries)} queries of resource "
+                f"'{self.allele_score.resource_id}' and got "
+                f"{len(aggregate.values)} values back")
 
-        for record in records:
-            for source in self.allele_score_sources:
-                raw[source].append(
-                    self.allele_score.get_score_value_from_record(
-                        record, source))
-
-            if self.allele_attribute is not None:
-                allele_str = f"{record[CHROM]}:{record[POS_BEGIN]}"
-                if record[REF] is not None and record[ALT] is not None:
-                    allele_str += f":{record[REF]}:{record[ALT]}"
-                if self.attrs_to_include:
-                    attrs_str = ",".join(
-                        stringify(
-                            self.allele_score.get_score_value_from_record(
-                                record, a))
-                        for a in self.attrs_to_include)
-                    allele_str += f":{attrs_str}"
-                alleles.add(allele_str)
-
-        result = {
-            attr.source: raw.get(attr.source) for attr in self.attributes
-        }
-        if self.allele_attribute is not None:
-            result[self.allele_attribute.source] = list(alleles)
-        return result
+        # Paired back by ORDER, over the same attributes that built the
+        # queries, with the `allele` attribute taking the keys.  The
+        # names are read HERE rather than cached beside the queries, for
+        # the reason `AggregatedValues` states.
+        values: Iterator[Any] = iter(aggregate.values)
+        return AggregatedValues(
+            (attr.name,
+             list(aggregate.allele_keys or ())
+             if attr is self.allele_attribute
+             else next(values))
+            for attr in self._attributes)
 
     def _do_annotate(
         self, annotatable: Annotatable,
