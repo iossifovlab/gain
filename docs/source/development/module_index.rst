@@ -16,18 +16,6 @@ entries: cross-references throughout the documentation resolve to the curated
 pages, not to this tree, so a class documented in both places has exactly one
 link target.
 
-.. attention::
-
-   **Draft marker D2 — this page depends on gain#1140.** The "emitted without
-   index entries" claim is only true once :issue:`1140` lands its
-   ``SPHINX_APIDOC_OPTIONS=…,no-index`` change to ``build_docs.sh``. Until
-   then this tree registers an anchor for every object, and the first curated
-   ``autoclass`` page (:issue:`1143`) recreates the gain#1033 failure class —
-   194 duplicate anchors and "more than one target found" — at a larger scale.
-   Nothing on this page needs to change for that; it is a merge-order
-   dependency, and this draft was verified against the uncommitted #1140
-   toolchain, not against ``master``.
-
 .. toctree::
    :maxdepth: 3
 
