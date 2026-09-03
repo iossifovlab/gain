@@ -177,23 +177,22 @@ Then fetch the ``GRCh38.p14`` genome FASTA from the GENCODE FTP site:
     curl -o GRCh38.p14.genome.fa.gz \
     https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/GRCh38.p14.genome.fa.gz
 
-Use the following commands in the ``my_genome`` directory to unzip and index the FASTA file:
+GAIn can use BGZF-compressed FASTA files directly. The downloaded file is gzip-compressed, so first decompress it and then recompress it using bgzip, which produces a compressed FASTA that can be indexed by samtools.
 
+Use the following commands in the ``my_genome`` directory to recompress and index the FASTA file:
 
 .. code-block:: bash
 
-    gunzip GRCh38.p14.genome.fa.gz
-    samtools faidx GRCh38.p14.genome.fa
+    gunzip GRCh38.p14.genome.fa.gz 
+    bgzip GRCh38.p14.genome.fa
+    samtools faidx GRCh38.p14.genome.fa.gz
 
-Now that you have both the FASTA and its ``.fai`` index, add a ``genomic_resource.yaml`` file 
-in this directory with the content below. Here, filename specifies the FASTA file used for the genome sequence, 
-``chrom_prefix`` indicates that chromosome names in this assembly use the ``chr`` prefix, for example ``chr1``, and ``PARS`` 
-lists the pseudoautosomal regions on chromosomes X and Y.
+You now have the BGZF-compressed FASTA file and its ``.fai`` index. Add a ``genomic_resource.yaml`` file in this directory with the content below. Here, filename specifies the compressed FASTA file used for the genome sequence, ``chrom_prefix`` indicates that chromosome names in this assembly use the ``chr`` prefix, for example ``chr1``, and ``PARS`` lists the pseudoautosomal regions on chromosomes X and Y.
 
 .. code-block:: yaml
 
     type: genome
-    filename: GRCh38.p14.genome.fa
+    filename: GRCh38.p14.genome.fa.gz
     chrom_prefix: "chr"
 
     PARS:
@@ -220,7 +219,7 @@ composition, and a full inventory of the files that make up the resource.
   :scale: 80 %
   :align: center
 
-  Summary html page created for ``my_genome`` resource (partially displayed).
+  Partial display of summary html page created for ``my_genome`` resource (partially displayed).
 
 
 
@@ -263,7 +262,7 @@ To check it and produce an HTML summary with basic statistics, execute ``grr_man
   :scale: 80 %
   :align: center
 
-  Summary html page created for ``my_genemodel`` resource.
+  Partial display for summary html page created for ``my_genemodel`` resource.
 
 
 4: Toy position score
@@ -549,6 +548,7 @@ on the summary page.
     table:
       filename: AlphaMissense_hg38_modified.tsv.gz
       format: tabix
+      zero_based: false
 
       chrom:
         name: CHROM
@@ -625,7 +625,7 @@ file produces the updated resource page shown below, now displaying both the
 8: Toy gene score
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-Create a new folder for the resource and move into it:
+Back in the ``my_GRR`` directory, create a new folder for the resource and move into it:
 
 .. code-block:: bash
 
@@ -669,7 +669,7 @@ summary file with basic descriptions and histograms for the ``my_minigenescore``
 
 
 .. figure:: figures/example8_resource.png
-  :scale: 30 %
+  :scale: 50 %
   :align: center
 
   Summary html page created for ``my_minigenescore`` resource.
@@ -927,7 +927,7 @@ This command checks that the resource is usable for annotation and produces an H
     :scale: 50 %
     :align: center
 
-    Summary html page created for ``my_minifragmentscore`` resource.
+    Partial display of summary html page created for ``my_minifragmentscore`` resource.
 
 
 13: Fragment score (Iossifov 2021)
@@ -1044,13 +1044,13 @@ This command validates the fragment score resource for use in annotation and gen
     :scale: 50 %
     :align: center
 
-    Summary html page created for ``my_fragmentscore`` resource.
+    Partial display of summary html page created for ``my_fragmentscore`` resource.
 
 
 Browse the local GRR
 --------------------
 
-After creating the resources above, the local GRR contains 13 resources covering several GRR resource types, including genomes, gene models, position scores, allele scores, gene scores, gene sets, and fragment scores. The main local GRR directory (``my_GRR``) includes an HTML summary page, ``index.html``, that provides a convenient way to browse the repository. This page lists the resources in a searchable table, including their type, ID, version, total size, and summary.
+After creating the resources above, the local GRR contains 13 resources covering several GRR resource types, including genomes, gene models, position scores, allele scores, gene scores, gene sets, and fragment scores. When you run ``grr_manage repo-repair`` from the main local GRR directory (``my_GRR``), it will produce an HTML summary page, ``index.html``, that provides a convenient way to browse the repository. This page lists the resources in a searchable table, including their type, ID, version, total size, and summary.
 
 This summary page is a useful checkpoint before running annotation. The resource IDs shown in the table are the same IDs used in annotation pipeline files, such as ``my_genome``, ``my_genemodel``, ``my_position``, ``my_allele``, and ``my_genescore``. The **Table view** lists each resource in the GRR, showing its resource type, ID, version, total size, and summary, and also allows the resources to be searched and filtered by type.
 
