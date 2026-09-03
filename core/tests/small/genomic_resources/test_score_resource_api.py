@@ -53,6 +53,18 @@ FORBIDDEN_ON_BASE = {
     "fetch_region_segment_scores", "fetch_region_values",
     "fetch_position_scores", "fetch_allele_scores", "fetch_fragment_scores",
     "fetch_scores_agg", "get_all_chromosomes",
+    # The fragment kind's logical read plane (gain#1123, gain#1124).  Public
+    # on ``FragmentScore``, and pinned here for the same reason as the
+    # ``fetch_*`` reads above: they assume a table and a region, which a gene
+    # score has neither of.
+    "get_fragment_scores_overlapping_region",
+    "get_fragment_score_overlapping_region",
+    "get_fragment_scores_at_position",
+    "get_fragment_score_at_position",
+    "get_fragment_scores_starting_in_region",
+    "get_fragment_score_starting_in_region",
+    "get_fragment_scores_overlapping_region_agg",
+    "get_fragment_score_overlapping_region_agg",
 }
 
 

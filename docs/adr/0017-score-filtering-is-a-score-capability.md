@@ -147,6 +147,20 @@ The asymmetry is in the data, not an oversight — a region is spanned by
 fragments as a matter of course, so "none cover it" is a count of zero,
 whereas most of a genome carries no allele record at all.
 
+*Amended by gain#1122: the zero is an empty stream now, not `[]`.* The
+decision above stands unchanged — a fragment read answers no `None`, ever —
+but the shape it answers in moved. `fetch_fragment_scores` became a generator
+over `(begin, end, values)` and the fragment kind's private primitive, so a
+region no fragment overlaps is a stream that yields nothing rather than an
+empty list. The kind's public reads are the logical plane gain#1123 added
+above it; its folding read (gain#1124) answers the same zero as
+`FragmentAggregate.count == 0`, and declines the same distinction for the
+same reason — an empty region and a filter that rejected every fragment are
+both `0`, where gain#820 draws them apart for alleles.
+
+The filter itself needs no amendment. It stays on the record read, which is
+where this ADR already puts it.
+
 ## Alternatives rejected
 
 **Share the grammar, leave the compilers in the annotators.** Removes the
