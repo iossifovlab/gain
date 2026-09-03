@@ -423,11 +423,8 @@ class FragmentScore(GenomicScore):
             chrom, start, end, scores, score_filter=score_filter)
         if (min_region_overlap_fraction is None
                 and min_fragment_overlap_fraction is None):
-            # No threshold admits every fragment, and this is the shape of
-            # every annotator call: the stream goes through as it is
-            # rather than through a predicate answering "yes" per
-            # fragment (gain#1157).  Every guard above has already run, so
-            # what is refused on the call, and when, does not change.
+            # No threshold: hand the stream through rather than ask the
+            # predicate per fragment (gain#1157).  Every guard has run.
             return rows
         return (
             (beg, end_, values)

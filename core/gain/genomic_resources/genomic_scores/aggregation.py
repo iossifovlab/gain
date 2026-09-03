@@ -184,14 +184,10 @@ def distinct_score_ids(score_ids: Iterable[str]) -> list[str]:
 def request_score_ids(requests: list[tuple[str, str]]) -> list[str]:
     """:func:`distinct_score_ids` of a request list's scores.
 
-    Derived ONCE per aggregating read and then handed to both ends of it:
-    the reader names the scores to fetch with it, and passes the same
-    list to :func:`fold_region_segments` as ``score_ids`` so the fold
-    indexes the fetched values by it.  The fold used to derive the list
-    again for itself, and the two derivations had to agree; one derivation
-    handed to both sides cannot disagree with itself, and costs one call
-    rather than two on a path run once per annotated record
-    (gain#1157).  The position score's plane projects its own shape
+    Derived ONCE per aggregating read and handed to both ends of it: the
+    reader names the scores to fetch with it and passes the same list to
+    :func:`fold_region_segments` as ``score_ids``, which says why one
+    list serves both.  The position score's plane projects its own shape
     inline instead -- one reader, nothing to hand on.
     """
     return distinct_score_ids(score_id for score_id, _ in requests)
@@ -236,8 +232,10 @@ def fold_region_segments(
     ``values`` positional and parallel to ``score_ids`` -- the list the
     caller derived (:func:`request_score_ids`) to name what it fetched,
     handed on here so the fold indexes exactly the columns the fetch
-    carried.  That is how a request finds its column: two requests for
-    one score share the fetch and keep separate accumulators.  Any
+    carried; one derivation cannot disagree with itself, where two (the
+    fold once derived its own) had to be kept agreeing.  That is how a
+    request finds its column: two requests for one score share the fetch
+    and keep separate accumulators.  Any
     ``Sequence`` of values will do -- the fold only ever indexes
     ``values[column]`` -- so a kind that hands over tuples folds exactly
     as one that hands over lists.

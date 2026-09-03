@@ -43,7 +43,7 @@ from gain.genomic_resources.genomic_scores.aggregation import (
 from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
 from gain.genomic_resources.testing.builders import a_grr, a_position_score
 
-from tests.small.genomic_resources.conftest import a_flag_score
+from tests.small.genomic_resources.conftest import a_flag_score, count_calls
 
 _TWO_SCORES = """
     chrom  pos_begin  pos_end  s    t
@@ -151,21 +151,12 @@ def test_a_region_read_derives_its_score_list_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # One derivation per read, handed to both the fetch and the fold --
-    # not one at each end (gain#1157).  Counted at every module that
-    # binds the name, so a fold that went back to deriving for itself
-    # would be seen.
-    calls: list[list[tuple[str, str]]] = []
-    real = request_score_ids
-
-    def counting(requests: list[tuple[str, str]]) -> list[str]:
-        calls.append(requests)
-        return real(requests)
-
-    for module in (
+    # not one at each end (gain#1157).
+    calls = count_calls(
+        monkeypatch, "request_score_ids",
         gain.genomic_resources.genomic_scores.aggregation,
         gain.genomic_resources.genomic_scores.base,
-    ):
-        monkeypatch.setattr(module, "request_score_ids", counting)
+    )
 
     with two.open() as score:
         assert score.aggregate_region("1", 10, 14, ["s", "t"]) == [
@@ -273,22 +264,19 @@ def test_a_score_with_no_default_aggregator_says_how_to_name_one(
         "value type 'bool'; name one explicitly as (score_id, aggregator)")
 
 
-def test_an_unknown_aggregator_names_the_score_that_asked_for_it() -> None:
-    # `Aggregator.build` raises a bare KeyError('mediann') on its own,
-    # saying nothing about which score asked.
-    with pytest.raises(ValueError) as excinfo:
-        build_region_aggregator("s", "mediann", resource_id="two")
-    assert str(excinfo.value) == (
-        "score 's' of resource 'two' asks for aggregator 'mediann', "
-        "which is not valid: 'mediann'")
-
-
-def test_every_build_is_a_fresh_accumulator() -> None:
+@pytest.mark.parametrize(("name", "value"), [
+    ("max", 0.9),
+    # A parametrized form is where the resolution and the accumulator
+    # are easiest to confuse, since its parameter travels with the
+    # resolution (see test_a_name_built_before_is_not_parsed_again).
+    ("join(,)", "a"),
+])
+def test_every_build_is_a_fresh_accumulator(name: str, value: object) -> None:
     # An aggregator is mutable and not thread-safe; two calls must not
     # hand back one accumulator that has already seen a value.
-    first = build_region_aggregator("s", "max", resource_id="two")
-    first.add(0.9)
-    second = build_region_aggregator("s", "max", resource_id="two")
+    first = build_region_aggregator("s", name, resource_id="two")
+    first.add(value)
+    second = build_region_aggregator("s", name, resource_id="two")
 
     assert second.get_final() is None
 
@@ -315,22 +303,9 @@ def test_a_name_built_before_is_not_parsed_again(
     assert again.get_final() == 0.5
 
 
-def test_a_remembered_parametrized_name_still_builds_fresh() -> None:
-    # What is remembered about a name is what it resolves TO, never the
-    # accumulator: a parametrized form is the case where the two are
-    # easiest to confuse, since its parameter travels with the resolution.
-    first = build_region_aggregator("s", "join(,)", resource_id="two")
-    first.add("a")
-    first.add("b")
-    second = build_region_aggregator("s", "join(,)", resource_id="two")
-    second.add("c")
-
-    assert first.get_final() == "a,b"
-    assert second.get_final() == "c"
-
-
 @pytest.mark.parametrize(("name", "complaint"), [
-    # Unknown to the registry: a KeyError, quoted.
+    # Unknown to the registry: a bare KeyError('mediann') from
+    # `Aggregator.build`, saying nothing about which score asked.
     ("mediann", "'mediann'"),
     # Malformed for the parser: a ValueError, in the parser's words.
     ("max(", "Invalid aggregator definition: 'max('"),

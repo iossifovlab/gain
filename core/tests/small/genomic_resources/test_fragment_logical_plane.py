@@ -25,6 +25,8 @@ from gain.genomic_resources.testing.builders import (
     a_fragment_score,
 )
 
+from tests.small.genomic_resources.conftest import count_calls
+
 #: The three singular reads and the three plural ones, each with a locus its
 #: signature accepts.  Named because several tests below are ABOUT the family
 #: being complete -- the keyword-only test is exactly their concatenation, so
@@ -185,14 +187,8 @@ def test_no_threshold_means_no_per_fragment_selection_at_all(
     # call today is shaped so.  That case does not run the predicate per
     # fragment only to hear "yes" each time (gain#1157): pinned by
     # counting its calls.  A threshold given still consults it.
-    calls: list[tuple[int, int]] = []
-    real = fragment_module.overlap_fractions_admit
-
-    def counting(rec_begin: int, rec_end: int, *args: Any, **kw: Any) -> bool:
-        calls.append((rec_begin, rec_end))
-        return real(rec_begin, rec_end, *args, **kw)
-
-    monkeypatch.setattr(fragment_module, "overlap_fractions_admit", counting)
+    calls = count_calls(
+        monkeypatch, "overlap_fractions_admit", fragment_module)
 
     with fragments.open() as score:
         unfiltered = list(score.get_fragment_scores_overlapping_region(
@@ -508,18 +504,9 @@ def test_the_folding_read_derives_its_score_list_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The list naming the fetched columns is derived once and handed to
-    # both the fetch and the fold (gain#1157).  Counted at every module
-    # that binds the name, so a fold that went back to deriving for
-    # itself would be seen.
-    calls: list[object] = []
-    real = aggregation.request_score_ids
-
-    def counting(requests: list[tuple[str, str]]) -> list[str]:
-        calls.append(requests)
-        return real(requests)
-
-    for module in (aggregation, fragment_module):
-        monkeypatch.setattr(module, "request_score_ids", counting)
+    # both the fetch and the fold (gain#1157).
+    calls = count_calls(
+        monkeypatch, "request_score_ids", aggregation, fragment_module)
 
     with fragments.open() as score:
         aggregate = score.get_fragment_scores_overlapping_region_agg(
