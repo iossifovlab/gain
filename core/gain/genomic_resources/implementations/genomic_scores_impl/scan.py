@@ -146,10 +146,17 @@ _COVERAGE_SCAN_RESOURCE_TYPES = frozenset(
 # Named for the FACT rather than for one of its consequences, because it
 # has two: disjoint rows have an exact run algebra, so their segment
 # statistics are published; and they cannot double-count a position, so
-# the scan hands their coverage full unclipped spans.  Fragment rows
-# overlap, so they get neither (their counts are their own statistic --
-# gain#794), and segments for them are not wanted rather than pending:
-# ADR 0020 as amended by gain#926 closes that question.
+# the scan hands their coverage full unclipped spans.
+#
+# Equal to the coverage set above SINCE gain#1127, and deliberately not
+# merged with it: they answer different questions, and the clipping
+# machinery this gates (``clip_span``, ``RegionCoverage.add_span``) is
+# retained for a future overlapping kind that is genuinely
+# coverage-scanned.  No production scan reaches it today -- fragment
+# rows overlap but are no longer coverage-scanned at all, and their
+# counts are their own statistic (gain#794).  Segments for them are not
+# wanted rather than pending: ADR 0020 as amended by gain#926 closes
+# that question.
 _NON_OVERLAPPING_ROW_RESOURCE_TYPES = frozenset(
     equivalent_resource_types("position_score"))
 
@@ -966,6 +973,11 @@ def do_histogram_task(
     re-raised, for the reason :func:`do_min_max_task` gives.
 
     Coverage rides the same read: a kind whose rows have a span to
+    A fragment score gets a :class:`RegionFragments`, asked for
+    independently of the coverage question above: the two statistics
+    share a scan, not a carrier, so a kind publishes either without the
+    other (gain#1127).
+
     union gets a :class:`RegionCoverage` accumulated by whichever
     path serves the histograms, carried out in the task's RETURN
     value — a mutated argument would not travel under a distributed

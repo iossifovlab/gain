@@ -76,10 +76,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         super().__init__(resource)
         self.score: GenomicScore = build_score_from_resource(resource)
         self._render_repo: GenomicResourceRepo | None = None
-        # One page render asks for the stored coverage once per section
-        # -- Coverage and Fragments both -- and over an HTTP or S3
-        # repository that is a network round trip each.  Held for the
-        # life of this object, which is built per render.
+        # Held for the life of this object, which is built per render,
+        # so a page costs at most one read of the file over an HTTP or
+        # S3 repository.  It had two readers until gain#1127 gave
+        # fragments a statistic of their own; the Coverage section is
+        # the only one left, so today this saves nothing and is kept as
+        # the cheaper shape to hold rather than as a live optimisation.
         self._coverage_statistics: CoverageStatistics | None = None
         self._coverage_statistics_read = False
 

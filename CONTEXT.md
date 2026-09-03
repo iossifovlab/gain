@@ -137,9 +137,9 @@ gain#1127: it used to ride inside the covered-position one, which meant a
 fragment score could not stop publishing covered positions without losing
 its fragment counts too. Nothing publishes fragment *segments*, and nothing will:
 they would need an exact run algebra fragments do not have, and no consumer
-question survives that fragment coverage and the fragment count/length
-histogram cannot already answer between them (ADR 0020, amended by gain#848
-and closed by gain#926).
+question survives that the fragment count and length histogram cannot already
+answer (ADR 0020, amended by gain#848 and closed by gain#926; a fragment score
+has no coverage to help answer it either, since gain#1127).
 _Avoid_: row (ambiguous — every kind has table rows), interval, CNV, call,
 event
 

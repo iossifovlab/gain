@@ -44,7 +44,15 @@
 </table>
 </div>
 <h3>Fragment lengths</h3>
-{% if fragments.fragment_lengths and fragments.fragment_lengths | sum %}
+{#- Three answers, not two.  The counts and the histogram are read
+   independently: a stored histogram binned on foreign edges cannot
+   merge with this code's fixed bins, so the LENGTHS are unknown while
+   the counts above stay exact.  Collapsing that into the empty branch
+   would print "no fragments" directly beneath a table saying there are
+   several.  The allele sections draw the same three-way distinction. -#}
+{% if fragments.fragment_lengths is none %}
+<p>fragment lengths not computed</p>
+{% elif fragments.fragment_lengths | sum %}
 <img src="{{ impl.get_fragment_lengths_image_filename() }}"
     alt="global fragment-length histogram"
     class="statistics-figure"

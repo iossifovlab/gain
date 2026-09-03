@@ -85,21 +85,31 @@ def _bins(counts: dict[int, int]) -> list[int]:
     return histogram
 
 
-def test_fragment_statistics_are_stored_in_their_own_file(
+def test_an_unknown_histogram_round_trips_as_unknown_not_as_zero(
     tmp_path: pathlib.Path,
 ) -> None:
-    # The fragment tally is its OWN statistic, not a group riding inside
-    # the coverage one (gain#1127).  It has to be, because the kind is
-    # about to stop being coverage-scanned altogether: while the two
-    # shared a carrier, dropping the union dropped the tally with it.
+    # The shape ``serialize`` actually emits for a chromosome whose
+    # lengths are unknown: the key is OMITTED, not zero-filled.  Read
+    # back as an all-zero histogram it would claim the fragments were
+    # measured and had no lengths, which is a different -- and false --
+    # statement from "this file cannot say".  Written through the
+    # statistic's own serializer rather than by hand, so the reader and
+    # the writer are pinned against each other and not against a fixture
+    # that could drift from either.
     resource = _fragments(tmp_path)
-
     scan.do_noregion_histograms(resource)
+    known = _stored(resource)
+    unknown = FragmentStatistics()
+    for chrom, count in known.fragments_by_chromosome().items():
+        unknown.fold_region(RegionFragments.frozen(chrom, count, None))
 
-    stats = FragmentStatistics.deserialize(
-        resource.get_file_content(FRAGMENT_STATISTICS_FILE))
-    assert stats.fragments_by_chromosome() == {"chr1": 4, "chr2": 1}
-    assert stats.fragments_global() == 5
+    restored = FragmentStatistics.deserialize(unknown.serialize())
+
+    assert "fragment_length_histogram" not in unknown.serialize()
+    assert restored.fragments_by_chromosome() == {"chr1": 4, "chr2": 1}
+    assert restored.fragments_global() == 5
+    assert restored.fragment_lengths_by_chromosome() == {}
+    assert restored.fragment_lengths_global() is None
 
 
 @pytest.mark.legacy_vocabulary
@@ -305,9 +315,22 @@ def test_a_file_binned_on_foreign_edges_keeps_counts_and_drops_the_image(
     stats = _stored(resource)
     assert stats.fragments_by_chromosome() == {"chr1": 4, "chr2": 1}
     assert stats.fragment_lengths_global() is None
-    page = _info_page(resource)
-    assert "not computed" not in section_after(page, "<h2>Fragments</h2>")
-    assert FRAGMENT_LENGTHS_IMAGE_FILE not in page
+
+    section = section_after(_info_page(resource), "<h2>Fragments</h2>")
+
+    # The counts are exact whatever the bins were, so the table renders:
+    # the section's own "nothing at all" fallback is NOT what shows.
+    assert "<p>not computed</p>" not in section
+    assert table_after(
+        _info_page(resource), "<h2>Fragments</h2>").head[1][1].text == "5"
+    assert FRAGMENT_LENGTHS_IMAGE_FILE not in section
+    # And the subsection says the LENGTHS are unknown -- not "there are
+    # no fragments", which would contradict the table right above it.
+    # Unknown and empty are different answers, and the allele sections
+    # already distinguish them; conflating them here would put "no
+    # fragments" under a row reading 5.
+    assert "no fragments" not in section
+    assert "<p>fragment lengths not computed</p>" in section
 
 
 # Five fragments over chr1, scanned to 200.  Overlapping (10-100 and

@@ -333,9 +333,10 @@ turn on the mergeability problem:
 - No consumer question survives for a **value-aware** run. For the motivating
   ATAC-fragment resources the score columns are a cell barcode and a count, so
   a run of equal values across overlapping fragments is noise rather than
-  signal; naming a question that fragment coverage and fragment
-  counts/lengths cannot already answer between them is the burden, and nothing
-  meets it.
+  signal; naming a question that the fragment counts and lengths cannot
+  already answer is the burden, and nothing meets it. (As first written this
+  read "fragment coverage and fragment counts/lengths … between them";
+  gain#1127 removed that first carrier, and the burden is unmet without it.)
 - The info page's needs are met without it — the fragment
   count and length histogram (gain#794), and per-value custom plots via
   `plot_function`, which a resource can already configure (grr_bench's
@@ -410,7 +411,14 @@ indefinitely — which is accepted and made visible rather than hidden.
   matching argument: a fragment score is not coverage-scanned at all.
 - **The rollout is visibly incomplete for a while.** Resource pages show
   "not computed" until each resource is rebuilt; that state is intended, not
-  a defect.
+  a defect. gain#1127 adds a case that runs the other way: a fragment
+  resource built before it carries its fragment counts inside the old
+  `statistics/coverage.json`, which nothing reads any more, so its Fragments
+  section reverts to "not computed" until `resource-stats -f` rebuilds it.
+  Since `calc_statistics_hash` covers inputs and not the computing code
+  (ADR 0014), no rebuild is triggered automatically. At the time of the
+  change no published fragment resource had built either statistic, so
+  nothing regressed in practice.
 - The definitions are vocabulary now: `CONTEXT.md` carries **segment**,
   **covered position** and the five **allele classes**, and issue text and
   docstrings in the statistics area are held to them.

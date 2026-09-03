@@ -97,12 +97,22 @@
 </table>
 </div>
 
-{# FILLED by default, unlike the two blocks below -- the asymmetry is the
-   point.  Coverage applies to every kind this template serves except
-   one: position and fragment scores are both span-union scanned
-   (``_COVERAGE_SCAN_RESOURCE_TYPES``), and an allele score is not, so
-   the exception overrides this block empty rather than every other kind
-   having to fill it (gain#1118).
+{# FILLED by default, unlike the two blocks below.  Covered positions
+   are a POSITION SCORE statistic and only that: the union measures what
+   a resource covers exactly when its rows are pairwise disjoint
+   (``_COVERAGE_SCAN_RESOURCE_TYPES``).  The other two kinds each
+   override this block empty -- an allele score because its rows are
+   points, so there is no span to union (gain#1118); a fragment score
+   because its rows overlap, so the union counts nothing anyone asks for
+   (gain#1127).
+
+   So the default now carries the MINORITY -- one kind fills it, two
+   empty it -- which is a trap worth naming rather than leaving to be
+   discovered: a kind added later inherits a Coverage section whether or
+   not it is coverage-scanned, and the only symptom is a page reading
+   "not computed" forever.  gain#1116 tracks gating this block on the
+   scan's own kind set, which would delete both overrides and the
+   asymmetry with them.
 
    Keyed on the KIND, which is what choosing a template already is, and
    never on ``get_coverage_display()`` returning None: a position score

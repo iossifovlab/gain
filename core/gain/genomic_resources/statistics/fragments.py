@@ -308,8 +308,13 @@ class FragmentDisplay(NamedTuple):
     fragment_lengths: list[int] | None
     """The global fragment-length histogram, or ``None`` if unknown.
 
-    Gates the section's image exactly as the coverage twin's segment
-    histogram gates its own.
+    Unknown is a THIRD answer, distinct from a histogram that is known
+    and all zero: the counts and the histogram are read independently,
+    so a stored histogram binned on foreign edges leaves the lengths
+    unknown while the counts stay exact.  The section renders all three
+    apart -- "not computed", the image, "no fragments" -- because
+    collapsing the first into the last would deny fragments the table
+    beside it is counting.
     """
 
     @property
