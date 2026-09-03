@@ -188,8 +188,9 @@ def overlap_fractions_admit(
     """
     if min_region_fraction is None and min_record_fraction is None:
         # A fast path, not a rule -- the fall-through answers True for this
-        # case too.  It is here because the no-threshold read is the common
-        # one and runs this per record.
+        # case too.  The fragment region read no longer comes here with no
+        # threshold at all (gain#1157); this keeps the predicate cheap for
+        # any caller that does.
         return True
     span = clip_span(rec_begin, rec_end, start, end)
     overlap = 0 if span is None else span[1] - span[0] + 1

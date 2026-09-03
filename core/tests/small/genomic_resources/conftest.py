@@ -8,6 +8,7 @@ import pathlib
 import shutil
 import threading
 from collections.abc import Callable, Generator, Iterable, Iterator
+from types import ModuleType
 from typing import Any
 from unittest import mock
 
@@ -600,6 +601,34 @@ def a_resource_whose_meta_is(
         .build_repo(tmp_path)
         .get_resource("scores/broken")
     )
+
+
+def count_calls(
+    monkeypatch: pytest.MonkeyPatch, name: str, *modules: ModuleType,
+) -> list[tuple[Any, ...]]:
+    """Spy on the callable ``name`` and answer the list its calls land in.
+
+    Each call is recorded as its positional arguments and then passed
+    through, so what is counted is exactly what the production code does.
+
+    Patched in EVERY module handed over, because ``from x import name``
+    copies a binding: a spy on the defining module alone misses a caller
+    that imported the name, and one on the caller alone misses a helper
+    that still calls its own copy.  A test that pins "derived once per
+    read" is only as good as its module list, which is why the list is
+    passed rather than guessed here -- the wrapped callable is the one
+    the FIRST module binds.
+    """
+    calls: list[tuple[Any, ...]] = []
+    real = getattr(modules[0], name)
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        calls.append(args)
+        return real(*args, **kwargs)
+
+    for module in modules:
+        monkeypatch.setattr(module, name, counting)
+    return calls
 
 
 def a_flag_score(tmp_path: pathlib.Path) -> PositionScore:

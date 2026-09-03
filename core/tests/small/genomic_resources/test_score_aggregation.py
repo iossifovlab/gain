@@ -29,6 +29,7 @@ import gain.genomic_resources.genomic_scores.position
 import pytest
 from gain.genomic_resources.aggregators import (
     Aggregator,
+    AggregatorDefinition,
     PositionScoreAggregationQuery,
 )
 from gain.genomic_resources.genomic_scores import PositionScore
@@ -36,12 +37,13 @@ from gain.genomic_resources.genomic_scores.aggregation import (
     build_region_aggregator,
     distinct_score_ids,
     fold_region_segments,
+    request_score_ids,
     resolve_aggregator_requests,
 )
 from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
 from gain.genomic_resources.testing.builders import a_grr, a_position_score
 
-from tests.small.genomic_resources.conftest import a_flag_score
+from tests.small.genomic_resources.conftest import a_flag_score, count_calls
 
 _TWO_SCORES = """
     chrom  pos_begin  pos_end  s    t
@@ -85,20 +87,26 @@ def _fold(
     requests: list[tuple[str, str]],
     *,
     weigh: Callable[[int, int], int],
+    score_ids: list[str] | None = None,
 ) -> list[ScoreValue]:
     """Drive the fold the way its caller does.
 
     The aggregators are built here, parallel to ``requests`` and before
     the segments are read, because that is the contract the fold's
     signature states -- retyping them per test would let a caller drift
-    from it silently.
+    from it silently.  ``score_ids`` is what the caller derived ONCE to
+    name the fetched columns; left unset it is derived here as a caller
+    would, so a test that hands ``segments`` shaped for the requests
+    need not spell it out.
     """
     aggregators = [
         build_region_aggregator(score_id, aggregator, resource_id="two")
         for score_id, aggregator in requests
     ]
+    if score_ids is None:
+        score_ids = request_score_ids(requests)
     return fold_region_segments(
-        segments, aggregators, requests, weigh=weigh)
+        segments, aggregators, requests, score_ids=score_ids, weigh=weigh)
 
 
 def test_a_bare_score_id_resolves_to_the_definitions_default(
@@ -121,6 +129,40 @@ def test_one_fetch_serves_two_requests_for_the_same_score() -> None:
         [("s", "min"), ("s", "max")],
         weigh=_by_span,
     ) == [0.2, 0.8]
+
+
+def test_the_fold_indexes_the_columns_it_is_told_the_fetch_carries() -> None:
+    # The caller derives the fetched column list ONCE and hands it to the
+    # fetch and to the fold (gain#1157); the fold does not re-derive it
+    # from the requests.  Pinned with segments whose columns are in the
+    # opposite order to the requests: a fold that derived its own list
+    # would read each score's neighbour.
+    segments = [(10, 10, [1, 0.2]), (11, 11, [2, 0.8])]
+    assert _fold(
+        segments,
+        [("s", "max"), ("t", "max")],
+        score_ids=["t", "s"],
+        weigh=_by_span,
+    ) == [0.8, 2]
+
+
+def test_a_region_read_derives_its_score_list_once(
+    two: PositionScore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # One derivation per read, handed to both the fetch and the fold --
+    # not one at each end (gain#1157).
+    calls = count_calls(
+        monkeypatch, "request_score_ids",
+        gain.genomic_resources.genomic_scores.aggregation,
+        gain.genomic_resources.genomic_scores.base,
+    )
+
+    with two.open() as score:
+        assert score.aggregate_region("1", 10, 14, ["s", "t"]) == [
+            pytest.approx((0.2 * 4 + 0.8) / 5), pytest.approx(1.2)]
+
+    assert len(calls) == 1
 
 
 def test_the_fold_aggregates_the_segments_it_is_handed() -> None:
@@ -222,24 +264,67 @@ def test_a_score_with_no_default_aggregator_says_how_to_name_one(
         "value type 'bool'; name one explicitly as (score_id, aggregator)")
 
 
-def test_an_unknown_aggregator_names_the_score_that_asked_for_it() -> None:
-    # `Aggregator.build` raises a bare KeyError('mediann') on its own,
-    # saying nothing about which score asked.
-    with pytest.raises(ValueError) as excinfo:
-        build_region_aggregator("s", "mediann", resource_id="two")
-    assert str(excinfo.value) == (
-        "score 's' of resource 'two' asks for aggregator 'mediann', "
-        "which is not valid: 'mediann'")
-
-
-def test_every_build_is_a_fresh_accumulator() -> None:
+@pytest.mark.parametrize(("name", "value"), [
+    ("max", 0.9),
+    # A parametrized form is where the resolution and the accumulator
+    # are easiest to confuse, since its parameter travels with the
+    # resolution (see test_a_name_built_before_is_not_parsed_again).
+    ("join(,)", "a"),
+])
+def test_every_build_is_a_fresh_accumulator(name: str, value: object) -> None:
     # An aggregator is mutable and not thread-safe; two calls must not
     # hand back one accumulator that has already seen a value.
-    first = build_region_aggregator("s", "max", resource_id="two")
-    first.add(0.9)
-    second = build_region_aggregator("s", "max", resource_id="two")
+    first = build_region_aggregator("s", name, resource_id="two")
+    first.add(value)
+    second = build_region_aggregator("s", name, resource_id="two")
 
     assert second.get_final() is None
+
+
+def test_a_name_built_before_is_not_parsed_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Every aggregating read builds fresh accumulators per call, so the
+    # same handful of names are built millions of times per run -- and
+    # parsing the name was ~70% of each build (gain#1157).  Once a name
+    # has been built, building it again must not go back to the parser:
+    # pinned by taking the parser away and asking again.
+    build_region_aggregator("s", "max", resource_id="two")
+
+    def refuse(_cls: type, raw: str) -> AggregatorDefinition:
+        raise AssertionError(f"parsed {raw!r} again")
+
+    monkeypatch.setattr(
+        AggregatorDefinition, "from_string", classmethod(refuse))
+
+    again = build_region_aggregator("s", "max", resource_id="two")
+    again.add(0.5)
+
+    assert again.get_final() == 0.5
+
+
+@pytest.mark.parametrize(("name", "complaint"), [
+    # Unknown to the registry: a bare KeyError('mediann') from
+    # `Aggregator.build`, saying nothing about which score asked.
+    ("mediann", "'mediann'"),
+    # Malformed for the parser: a ValueError, in the parser's words.
+    ("max(", "Invalid aggregator definition: 'max('"),
+])
+def test_a_bad_name_is_refused_every_time_it_is_asked(
+    name: str, complaint: str,
+) -> None:
+    # A raise is not remembered as an answer: asking twice complains
+    # twice, in the same words -- pinned because a memo that stored the
+    # failure, or stored a None for it, would turn the second ask into a
+    # different error or none at all.  Both ways a name can be bad are
+    # asked, because they raise from different places.
+    expected = (
+        f"score 's' of resource 'two' asks for aggregator {name!r}, "
+        f"which is not valid: {complaint}")
+    for _ in range(2):
+        with pytest.raises(ValueError) as excinfo:
+            build_region_aggregator("s", name, resource_id="two")
+        assert str(excinfo.value) == expected
 
 
 def test_a_bad_aggregator_is_refused_before_the_region_is_read(

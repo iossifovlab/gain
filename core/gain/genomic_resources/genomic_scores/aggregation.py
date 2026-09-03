@@ -170,7 +170,8 @@ def distinct_score_ids(score_ids: Iterable[str]) -> list[str]:
     is what the derivation is about.  Each surface projects its own shape
     at its call site; the request list gets a named projection,
     :func:`request_score_ids`, because it is the one shape TWO readers
-    project.
+    (:meth:`~.base.GenomicScore.aggregate_region` and the fragment kind's
+    folding read) project, and each hands the result on to the fold.
 
     Note this is the aggregating reads' derivation, not a package-wide
     one: ``score_annotator`` dedupes its attribute sources with its own
@@ -183,11 +184,11 @@ def distinct_score_ids(score_ids: Iterable[str]) -> list[str]:
 def request_score_ids(requests: list[tuple[str, str]]) -> list[str]:
     """:func:`distinct_score_ids` of a request list's scores.
 
-    Named because TWO readers project this one list and must project it
-    identically: :meth:`~.base.GenomicScore.aggregate_region` names the
-    scores to fetch with it, and :func:`fold_region_segments` indexes the
-    fetched values with it.  The position score's plane projects its own
-    shape inline instead -- one reader, nothing to agree with.
+    Derived ONCE per aggregating read and handed to both ends of it: the
+    reader names the scores to fetch with it and passes the same list to
+    :func:`fold_region_segments` as ``score_ids``, which says why one
+    list serves both.  The position score's plane projects its own shape
+    inline instead -- one reader, nothing to hand on.
     """
     return distinct_score_ids(score_id for score_id, _ in requests)
 
@@ -221,17 +222,23 @@ def fold_region_segments(
     aggregators: list[Aggregator],
     requests: list[tuple[str, str]],
     *,
+    score_ids: Sequence[str],
     weigh: Callable[[int, int], int],
 ) -> list[ScoreValue]:
     """Fold one region read into one value per request.
 
     ``segments`` is a stream of ``(left, right, values)`` as
-    :meth:`~.base.GenomicScore.fetch_region_segments` yields it for
-    :func:`request_score_ids` of these ``requests`` -- which is how a
+    :meth:`~.base.GenomicScore.fetch_region_segments` yields it, with
+    ``values`` positional and parallel to ``score_ids`` -- the list the
+    caller derived (:func:`request_score_ids`) to name what it fetched,
+    handed on here so the fold indexes exactly the columns the fetch
+    carried; one derivation cannot disagree with itself, where two (the
+    fold once derived its own) had to be kept agreeing.  That is how a
     request finds its column: two requests for one score share the fetch
-    and keep separate accumulators.  Any ``Sequence`` of values will do --
-    the fold only ever indexes ``values[column]`` -- so a kind that hands
-    over tuples folds exactly as one that hands over lists.
+    and keep separate accumulators.  Any
+    ``Sequence`` of values will do -- the fold only ever indexes
+    ``values[column]`` -- so a kind that hands over tuples folds exactly
+    as one that hands over lists.
 
     ``aggregators`` is parallel to ``requests`` and built by the CALLER,
     which is what lets an invalid aggregator name be refused before the
@@ -247,10 +254,7 @@ def fold_region_segments(
     a record once counts it wherever the point it collapses to falls,
     window or not.
     """
-    column_of = {
-        score_id: i
-        for i, score_id in enumerate(request_score_ids(requests))
-    }
+    column_of = {score_id: i for i, score_id in enumerate(score_ids)}
     targets = [
         (aggregator, column_of[score_id])
         for aggregator, (score_id, _) in zip(

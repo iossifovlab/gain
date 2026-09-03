@@ -18,10 +18,14 @@ from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_scores import (
     FragmentAggregate,
     FragmentScore,
+    aggregation,
 )
+from gain.genomic_resources.genomic_scores import fragment as fragment_module
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
 )
+
+from tests.small.genomic_resources.conftest import count_calls
 
 #: The three singular reads and the three plural ones, each with a locus its
 #: signature accepts.  Named because several tests below are ABOUT the family
@@ -173,6 +177,30 @@ def test_min_fragment_overlap_fraction_keeps_what_falls_inside_enough(
             (100, 199, 1.0),
             (150, 159, 2.0),
         ]
+
+
+def test_no_threshold_means_no_per_fragment_selection_at_all(
+    fragments: FragmentScore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Both fractions unset admits everything, and the annotator's every
+    # call today is shaped so.  That case does not run the predicate per
+    # fragment only to hear "yes" each time (gain#1157): pinned by
+    # counting its calls.  A threshold given still consults it.
+    calls = count_calls(
+        monkeypatch, "overlap_fractions_admit", fragment_module)
+
+    with fragments.open() as score:
+        unfiltered = list(score.get_fragment_scores_overlapping_region(
+            "1", 100, 199))
+        assert [v for _, _, (v,) in unfiltered] == [3.0, 1.0, 2.0, 4.0]
+        assert calls == []
+
+        filtered = list(score.get_fragment_scores_overlapping_region(
+            "1", 100, 199, min_region_overlap_fraction=0.5))
+
+    assert [v for _, _, (v,) in filtered] == [3.0, 1.0]
+    assert len(calls) == 4
 
 
 def test_the_two_fractions_combine_with_and(
@@ -469,6 +497,23 @@ def test_the_folding_read_answers_the_fragments_seen_and_their_reduction(
             "1", 100, 199)
 
     assert aggregate == FragmentAggregate(count=4, values=(4.0,))
+
+
+def test_the_folding_read_derives_its_score_list_once(
+    fragments: FragmentScore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The list naming the fetched columns is derived once and handed to
+    # both the fetch and the fold (gain#1157).
+    calls = count_calls(
+        monkeypatch, "request_score_ids", aggregation, fragment_module)
+
+    with fragments.open() as score:
+        aggregate = score.get_fragment_scores_overlapping_region_agg(
+            "1", 100, 199)
+
+    assert aggregate == FragmentAggregate(count=4, values=(4.0,))
+    assert len(calls) == 1
 
 
 def test_one_source_asked_twice_answers_twice(

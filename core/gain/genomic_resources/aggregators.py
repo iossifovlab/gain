@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import abc
+import functools
 import math
 import operator
 import re
@@ -188,12 +189,22 @@ class Aggregator(abc.ABC):
 
     @staticmethod
     def build(source: AggregatorSource) -> Aggregator:
-        """Build an aggregator from a definition, string, or dict."""
+        """Build a FRESH aggregator from a definition, string, or dict.
+
+        A string is the hot spelling: every aggregating read builds its
+        accumulators anew per call, so the same few names arrive here
+        millions of times per run, and parsing one was ~70% of building
+        it (gain#1157).  A name is therefore resolved through
+        :func:`_class_and_parameters`, which remembers what a string
+        resolves TO -- a class and its parameters, nothing mutable -- and
+        never the accumulator built from it.
+        """
+        if isinstance(source, str):
+            aggregator_class, parameters = _class_and_parameters(source)
+            return aggregator_class(*parameters)
         definition = AggregatorDefinition.coerce(source)
         aggregator_class = get_aggregator_class(definition.aggregator_type)
-        if definition.parameters:
-            return aggregator_class(*definition.parameters)
-        return aggregator_class()
+        return aggregator_class(*definition.parameters)
 
 
 class MaxAggregator(Aggregator):
@@ -610,6 +621,30 @@ def get_aggregator_class(aggregator: str) -> Callable[[], Aggregator]:
     return AGGREGATOR_CLASS_DICT[aggregator]
 
 
+@functools.lru_cache(maxsize=256)
+def _class_and_parameters(
+    raw: str,
+) -> tuple[Callable[..., Aggregator], tuple[Any, ...]]:
+    """What a string spelling resolves to: the class and its parameters.
+
+    The memo behind :meth:`Aggregator.build`.  It holds the RESOLUTION of
+    a name, which is pure and immutable, and never an accumulator, which
+    is neither -- so every build still constructs afresh, and two builds
+    of ``join(,)`` share nothing.  An invalid name raises (a malformed one
+    as ``ValueError`` from the parser, an unknown one as ``KeyError`` from
+    the registry) and ``lru_cache`` does not remember a raise, so a bad
+    name is refused every time it is asked, in the same words.
+
+    Bounded because the key is caller-supplied text: the registered names
+    and their parametrized forms number a few dozen in any real run.
+    """
+    definition = AggregatorDefinition.from_string(raw)
+    return (
+        get_aggregator_class(definition.aggregator_type),
+        tuple(definition.parameters),
+    )
+
+
 @dataclass
 class AggregatorDefinition:
     """Parsed representation of an aggregator type string."""
@@ -647,7 +682,9 @@ class AggregatorDefinition:
         definition -- and every consumer wants the last of those.  The
         cascade that gets there is stated once here so a fourth spelling,
         or a fix to the parsing rules, is one edit rather than a hunt for
-        the copies.
+        the copies.  (:meth:`Aggregator.build` takes the string arm
+        through a memo of its own, but that memo parses with
+        :meth:`from_string` too -- a parsing fix is still one edit.)
         """
         if isinstance(source, AggregatorDefinition):
             return source

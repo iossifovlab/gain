@@ -540,11 +540,12 @@ class PositionScore(GenomicScore):
         and each query folds the column its score landed in -- so one score
         may be requested twice with different aggregators, exactly as
         ``aggregate_region`` allows.  Which scores those are, and in what
-        order, is :func:`~.aggregation.distinct_score_ids`, the same
-        derivation the fold uses: the list both names what is fetched and
-        indexes what comes back, so a second spelling of it that ordered
-        the scores differently would have every aggregator quietly reading
-        its neighbour's column.
+        order, is :func:`~.aggregation.distinct_score_ids`, the derivation
+        the aggregating reads hand to
+        :func:`~.aggregation.fold_region_segments` as its column list: the
+        list both names what is fetched and indexes what comes back, so a
+        second spelling of it that ordered the scores differently would
+        have every aggregator quietly reading its neighbour's column.
         """
         resolved = self._resolve_aggregation_queries(queries)
         score_ids = [

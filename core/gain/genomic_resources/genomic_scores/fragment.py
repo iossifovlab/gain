@@ -108,8 +108,8 @@ class _CountingStream:
 
     Kept a class, and kept private, deliberately.  It knows nothing about
     fragments, so it looks like shared machinery -- but this package
-    promotes a helper into :mod:`.aggregation` when TWO readers must agree
-    on a derivation (see :func:`~.aggregation.request_score_ids`), and
+    promotes a helper into :mod:`.aggregation` when TWO readers need the
+    same derivation (see :func:`~.aggregation.request_score_ids`), and
     this has one.  Should a second kind come to want a per-walk tally, the
     move is to make the fold report what it folded and delete this, rather
     than to relocate it.
@@ -384,8 +384,9 @@ class FragmentScore(GenomicScore):
         ``min_region_overlap_fraction`` is "the fragment must cover at
         least this much of MY region" and
         ``min_fragment_overlap_fraction`` is "at least this much of the
-        FRAGMENT must fall in my region".  Both unset filters nothing,
-        which is what this read did before the thresholds existed.
+        FRAGMENT must fall in my region".  Both unset filters nothing --
+        which is what this read did before the thresholds existed -- and
+        hands the stream through without consulting the predicate.
 
         They SELECT, they do not RESHAPE: a fragment that passes is still
         reported at its own unclipped span.  That is this plane's rule and
@@ -420,6 +421,11 @@ class FragmentScore(GenomicScore):
             "min_fragment_overlap_fraction", min_fragment_overlap_fraction)
         rows = self.fetch_fragment_scores(
             chrom, start, end, scores, score_filter=score_filter)
+        if (min_region_overlap_fraction is None
+                and min_fragment_overlap_fraction is None):
+            # No threshold: hand the stream through rather than ask the
+            # predicate per fragment (gain#1157).  Every guard has run.
+            return rows
         return (
             (beg, end_, values)
             for beg, end_, values in rows
@@ -707,15 +713,17 @@ class FragmentScore(GenomicScore):
         """
         requests, aggregators = self._resolve_fragment_aggregation_queries(
             queries)
+        score_ids = request_score_ids(requests)
         segments = _CountingStream(
             self.get_fragment_scores_overlapping_region(
                 chrom, start, end,
-                scores=request_score_ids(requests),
+                scores=score_ids,
                 score_filter=score_filter,
                 min_region_overlap_fraction=min_region_overlap_fraction,
                 min_fragment_overlap_fraction=min_fragment_overlap_fraction))
         values = fold_region_segments(
-            segments, aggregators, requests, weigh=self.record_weight)
+            segments, aggregators, requests,
+            score_ids=score_ids, weigh=self.record_weight)
         return FragmentAggregate(segments.count, tuple(values))
 
     def get_fragment_score_overlapping_region_agg(
