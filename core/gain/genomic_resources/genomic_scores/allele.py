@@ -451,7 +451,7 @@ class AlleleScore(GenomicScore):
         chrom: str,
         pos_begin: int | None = None,  # ruff: ignore[unused-method-argument]
         pos_end: int | None = None,  # ruff: ignore[unused-method-argument]
-        scores: list[str] | None = None,
+        scores: Sequence[str] | None = None,
     ) -> Generator[
             tuple[int, int, list[ScoreValue]], None, None]:
         """Read each allele record as the point it sits at.

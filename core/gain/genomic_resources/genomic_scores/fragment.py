@@ -9,7 +9,8 @@ announces it through
 from __future__ import annotations
 
 import copy
-from collections.abc import Generator, Iterable, Iterator, Sequence
+import functools
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import (
     Any,
@@ -35,6 +36,7 @@ from gain.genomic_resources.resource_types import (
     warn_deprecated_spelling,
 )
 from gain.genomic_resources.score_def import (
+    GenomicScoreDef,
     ScoreValue,
 )
 from gain.genomic_resources.score_filter import (
@@ -88,10 +90,57 @@ class FragmentAggregate:
     values: tuple[ScoreValue, ...]
 
 
-#: One fragment as this plane reports it -- its own unclipped span, then
-#: the values for the scores asked for, positionally.  Written once here
-#: rather than spelled out at each end of the pass-through below.
-_Segment = tuple[int, int, tuple[ScoreValue, ...]]
+#: One fragment as the record plane yields it -- its own unclipped span,
+#: then the values for the scores asked for, positionally, in the list
+#: :meth:`~.base.GenomicScore.region_values_from_records` built.  The
+#: folding read folds these as they are; the public reads answer them
+#: through :func:`_tupled`.
+_RawSegment = tuple[int, int, list[ScoreValue]]
+
+
+def _tupled(
+    segments: Iterable[_RawSegment],
+) -> Generator[tuple[int, int, tuple[ScoreValue, ...]], None, None]:
+    """The public reads' face of a segment stream: ``values`` as a tuple."""
+    return ((beg, end, tuple(values)) for beg, end, values in segments)
+
+
+#: A query list resolved for the fold: the ``(score_id, aggregator)``
+#: requests, and the distinct score ids they fetch.  Tuples, because it is
+#: memoised and handed out to every read that asks the same list.
+_ResolvedQueries = tuple[tuple[tuple[str, str], ...], tuple[str, ...]]
+
+
+def _query_resolver(
+    score_definitions: dict[str, GenomicScoreDef],
+    all_scores: list[str],
+    resource_id: str,
+    *,
+    maxsize: int,
+) -> Callable[[tuple[ScoreAggregationQuery, ...]], _ResolvedQueries]:
+    """A memoised resolver of query tuples for ONE score's definitions.
+
+    :func:`~.aggregation.resolve_aggregation_queries` under a
+    ``functools.lru_cache``, built per score instance rather than
+    decorating a method, for the reason
+    ``TabixGenomicPositionTable.get_file_chromosomes`` records: a
+    class-level ``lru_cache`` on a method is keyed by ``self`` and holds
+    every instance for the life of the process.  This closes over what
+    resolution reads -- the definitions, the score list, the resource id
+    -- and nothing else, so it neither references the score nor outlives
+    it.
+    """
+    @functools.lru_cache(maxsize=maxsize)
+    def resolve(
+        queries: tuple[ScoreAggregationQuery, ...],
+    ) -> _ResolvedQueries:
+        requests = resolve_aggregation_queries(
+            queries,
+            score_definitions=score_definitions,
+            all_scores=all_scores,
+            resource_id=resource_id)
+        return tuple(requests), tuple(request_score_ids(requests))
+    return resolve
 
 
 class _CountingStream:
@@ -112,11 +161,11 @@ class _CountingStream:
     than to relocate it.
     """
 
-    def __init__(self, segments: Iterable[_Segment]) -> None:
+    def __init__(self, segments: Iterable[_RawSegment]) -> None:
         self._segments = segments
         self.count = 0
 
-    def __iter__(self) -> Generator[_Segment, None, None]:
+    def __iter__(self) -> Generator[_RawSegment, None, None]:
         for segment in self._segments:
             self.count += 1
             yield segment
@@ -140,6 +189,11 @@ class FragmentScore(GenomicScore):
         "str": "join(,)",
         "bool": None,
     }
+
+    #: How many distinct query lists a score remembers resolving.  An
+    #: annotator asks one list forever; a caller that asks many (the web
+    #: api, per request) must not grow the score without limit.
+    _RESOLVED_QUERIES_BOUND: ClassVar[int] = 64
 
     def __init__(self, resource: GenomicResource):
         resource_type = resource.get_type()
@@ -169,6 +223,17 @@ class FragmentScore(GenomicScore):
                 LEGACY_FRAGMENT_SCORE_TYPE, PREFERRED_FRAGMENT_SCORE_TYPE,
                 found_in=f"Resource '{resource.get_full_id()}'")
         super().__init__(resource)
+        self._resolve_query_tuple = _query_resolver(
+            self.score_definitions, self.get_all_scores(), self.resource_id,
+            maxsize=self._RESOLVED_QUERIES_BOUND)
+
+    @functools.cached_property
+    def _default_queries(self) -> tuple[ScoreAggregationQuery, ...]:
+        """Every score the resource defines, each with its own default."""
+        return tuple(
+            ScoreAggregationQuery(score_id)
+            for score_id in self.get_all_scores()
+        )
 
     @classmethod
     def record_weight(
@@ -262,8 +327,8 @@ class FragmentScore(GenomicScore):
     ) -> Generator[tuple[int, int, tuple[ScoreValue, ...]], None, None]:
         """Stream ``(begin, end, values)`` for the fragments over a region.
 
-        **Private to the fragment plane.**  This is the primitive the plane's
-        public reads are to be built on, not a read to reach for directly; it
+        **Private to the fragment plane.**  :meth:`_fragment_segments`
+        through :func:`_tupled`, and not a read to reach for directly; it
         keeps its name because it had one, not because the name is an
         invitation.  It diverges from the internals beside it
         (``_score_segments``, ``_region_read_defs``) in spelling only.
@@ -314,13 +379,27 @@ class FragmentScore(GenomicScore):
         runs when the generator is released, so a caller holding a reference
         to a ``close()``-ed generator still holds the read open.
         """
+        return _tupled(self._fragment_segments(
+            chrom, start, stop, scores, score_filter=score_filter))
+
+    def _fragment_segments(
+        self, chrom: str,
+        start: int, stop: int,
+        scores: Sequence[str] | None = None,
+        *,
+        score_filter: ScoreFilter | None = None,
+    ) -> Generator[_RawSegment, None, None]:
+        """The record plane's stream over a region, one list per fragment.
+
+        :meth:`~.base.GenomicScore.region_values_from_records` applied to
+        :meth:`~.base.GenomicScore.fetch_records`; the eager request
+        checks and the lazy reading are :meth:`fetch_fragment_scores`'s,
+        documented there.  The fold consumes this as it is.
+        """
         records = self.fetch_records(
             chrom, start, stop, score_filter=score_filter)
-        return (
-            (beg, end, tuple(values))
-            for beg, end, values in self.region_values_from_records(
-                records, chrom, start, stop, scores)
-        )
+        return self.region_values_from_records(
+            records, chrom, start, stop, scores)
 
     # -- The logical read plane (#1123) -------------------------------------
     #
@@ -411,12 +490,35 @@ class FragmentScore(GenomicScore):
         across another query, never *resumed* across one.  Materialise
         (``list(...)``) whatever has to outlive the next read.
         """
+        return _tupled(self._segments_overlapping_region(
+            chrom, start, end,
+            scores=scores,
+            score_filter=score_filter,
+            min_region_overlap_fraction=min_region_overlap_fraction,
+            min_fragment_overlap_fraction=min_fragment_overlap_fraction))
+
+    def _segments_overlapping_region(
+        self, chrom: str, start: int, end: int,
+        *,
+        scores: Sequence[str] | None = None,
+        score_filter: ScoreFilter | None = None,
+        min_region_overlap_fraction: float | None = None,
+        min_fragment_overlap_fraction: float | None = None,
+    ) -> Generator[_RawSegment, None, None]:
+        """The overlapping-region SELECTION, over the record plane's stream.
+
+        Everything :meth:`get_fragment_scores_overlapping_region` decides
+        -- the eager guards, ``score_filter``, the two overlap fractions --
+        is decided here, once, for that read and for the folding read
+        alike; so what the public read yields is exactly what the fold
+        sees and :class:`FragmentAggregate` counts.
+        """
         self._guard_region_span(start, end)
         self._guard_overlap_fraction(
             "min_region_overlap_fraction", min_region_overlap_fraction)
         self._guard_overlap_fraction(
             "min_fragment_overlap_fraction", min_fragment_overlap_fraction)
-        rows = self.fetch_fragment_scores(
+        rows = self._fragment_segments(
             chrom, start, end, scores, score_filter=score_filter)
         if (min_region_overlap_fraction is None
                 and min_fragment_overlap_fraction is None):
@@ -579,6 +681,48 @@ class FragmentScore(GenomicScore):
     # consumer -- as ``PositionScore`` grew ``_agg`` only where something
     # needed it.  A predicate that later wants one adds it then.
 
+    def _resolve_fragment_aggregation_queries(
+        self, queries: Sequence[ScoreAggregationQuery] | None,
+    ) -> _ResolvedQueries:
+        """Resolve queries to fold requests and the columns they fetch.
+
+        :func:`~.aggregation.resolve_aggregation_queries` and
+        :func:`~.aggregation.request_score_ids`, REMEMBERED per distinct
+        query list by CONTENT: a
+        :class:`~..aggregators.ScoreAggregationQuery` is frozen, so the
+        tuple of them hashes, and both halves are pure over it and over
+        ``score_definitions``, fixed at construction.  Never by the list's
+        identity, which a caller may mutate between reads.  The memo is a
+        per-instance ``lru_cache`` (see :func:`_query_resolver`) bounded
+        by ``_RESOLVED_QUERIES_BOUND``, because the read is public and the
+        web api asks per request; it keeps only what resolved, so a
+        refused list is refused again on every call.
+
+        Private, unlike its siblings' resolvers: an attribute naming no
+        aggregator is not an error on this kind, it answers the fragment
+        count instead, so nothing asks at pipeline load.
+
+        The aggregators are no part of it.  The read builds them FRESH per
+        call (:func:`~.aggregation.build_region_aggregators`): an
+        accumulator is mutable and not thread-safe, so a reused one would
+        have two concurrent reads accumulating into each other.  That does
+        not make the read thread-safe -- the TABLE's line iterator is
+        shared too, as :meth:`get_fragment_scores_overlapping_region` says
+        under "one live region read per score at a time" -- and the worst
+        concurrent resolution can do is resolve one list twice.
+
+        The allele and position folding reads pay the same per-call
+        resolution.  Whether a resolved request should cross the seam
+        instead, which would supersede this memo, is gain#1158's
+        question; until then it stays this kind's.
+
+        ``queries`` of ``None`` means every score the resource defines,
+        each with its own default aggregator, remembered under that list
+        as if the caller had spelled it out.
+        """
+        return self._resolve_query_tuple(
+            self._default_queries if queries is None else tuple(queries))
+
     def get_fragment_scores_overlapping_region_agg(
         self, chrom: str, start: int, end: int,
         *,
@@ -595,7 +739,9 @@ class FragmentScore(GenomicScore):
         is that read's exactly -- the two overlap fractions and
         ``score_filter`` mean what they mean there, and a fragment is
         weighed by :meth:`record_weight`, which counts it once however
-        long it is.
+        long it is.  Exactly, because it is the same code: both consume
+        :meth:`_segments_overlapping_region`, and only the public read
+        tuples what comes out.
 
         Answers a :class:`FragmentAggregate`, which documents why the
         count and the values travel together and what ``count`` counts.
@@ -627,19 +773,12 @@ class FragmentScore(GenomicScore):
         beside it, which is a halving there and a flattening everywhere
         else.
         """
-        # No public resolver on this kind, unlike its siblings: an
-        # attribute naming no aggregator is not an error here, it answers
-        # the fragment count instead, so nothing asks at pipeline load.
-        requests = resolve_aggregation_queries(
-            queries,
-            score_definitions=self.score_definitions,
-            all_scores=self.get_all_scores(),
-            resource_id=self.resource_id)
+        requests, score_ids = self._resolve_fragment_aggregation_queries(
+            queries)
         aggregators = build_region_aggregators(
             requests, resource_id=self.resource_id)
-        score_ids = request_score_ids(requests)
         segments = _CountingStream(
-            self.get_fragment_scores_overlapping_region(
+            self._segments_overlapping_region(
                 chrom, start, end,
                 scores=score_ids,
                 score_filter=score_filter,
