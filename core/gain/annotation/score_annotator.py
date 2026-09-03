@@ -182,17 +182,26 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
             value_str = str(attribute_conf_agg)
         return f"**{aggregator}**: {value_str}"
 
+    @staticmethod
+    def _append_attribute_documentation(attr: Attribute, line: str) -> None:
+        """Add one markdown line to what an attribute documents about itself.
+
+        The separator and the write to the attribute's own string live here
+        so that everything documenting an attribute agrees on them without
+        each caller spelling the append out again.
+        """
+        attr._documentation = (  # ruff: ignore[private-member-access]
+            f"{attr.documentation}\n\n{line}")
+
     def add_score_aggregator_documentation(
             self, attr: Attribute,
             aggregator: str,
             attribute_conf_agg: AggregatorSource | None) -> None:
         """Collect score aggregator documentation."""
-        aggregator_doc = self._build_score_aggregator_documentation(
-            attr, aggregator, attribute_conf_agg)
-
-        attr._documentation = (  # ruff: ignore[private-member-access]
-            f"{attr.documentation}"
-            f"\n\n{aggregator_doc}")
+        self._append_attribute_documentation(
+            attr,
+            self._build_score_aggregator_documentation(
+                attr, aggregator, attribute_conf_agg))
 
     @abc.abstractmethod
     def build_score_aggregator_documentation(
@@ -245,10 +254,22 @@ class PositionScoreAnnotator(GenomicScoreAnnotatorBase):
     The position_score resource provides a set of scores (see …) that the
     position_score_annotator uses as attributes to assign to the annotatable.
 
-    The position_score_annotator recognizes one attribute level parameter
-    called aggregator that controls how the position scores are
-    aggregated for annotatables that refer to a region of the reference genome.
-    The deprecated name position_aggregator is still accepted.
+    The position_score_annotator recognizes two attribute level parameters,
+    both of which apply to annotatables that refer to a region of the
+    reference genome:
+
+    - aggregator controls how the position scores are aggregated. The
+      deprecated name position_aggregator is still accepted.
+    - none_value_replacement stands in for every null of the region's
+      per-position expansion -- a position no record covers, and a covered
+      position whose value is NA -- before the aggregator sees it. Unset,
+      nulls stay inert and every aggregator skips them, so a region's mean
+      is the mean over its covered positions alone.
+
+    Neither applies to an annotatable that never reaches the region fold: a
+    substitution, which reads a single position; one on a chromosome the
+    resource does not carry; or one longer than region_length_cutoff, which
+    is declined before it is read.
     """
 
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
@@ -271,6 +292,9 @@ phastCons, phyloP, FitCons2, etc.
         ):
             self.add_score_aggregator_documentation(
                 attr, "aggregator", attr_config.aggregator)
+            replacement_doc = self._none_value_replacement_documentation(attr)
+            if replacement_doc is not None:
+                self._append_attribute_documentation(attr, replacement_doc)
 
         # One query per attribute, in attribute order, so the tuple the
         # plane answers with indexes straight back to the names.  A source
@@ -280,7 +304,13 @@ phastCons, phyloP, FitCons2, etc.
             PositionScoreAggregationQuery(
                 attr.source,
                 aggregator_name(attr.aggregator)
-                if attr.aggregator is not None else None)
+                if attr.aggregator is not None else None,
+                # Reading the key is also what MARKS it used, which is what
+                # keeps ``check_for_unused_attribute_parameters`` from
+                # refusing the pipeline that sets it (#1135).  Absent, it
+                # reads as ``None`` -- the plane's "leave nulls inert" --
+                # which is what every attribute got before it was exposed.
+                attr.parameters.get("none_value_replacement"))
             for attr in self._attributes
         ]
         # Ask the two questions a query asks now, and throw the answers
@@ -290,6 +320,23 @@ phastCons, phyloP, FitCons2, etc.
         # plane's own remedy, rather than on the first region that reaches
         # it.  Resolution only; the read builds its aggregators per call.
         self.position_score.resolve_aggregation_queries(self._region_queries)
+
+    def _none_value_replacement_documentation(
+        self, attr: Attribute,
+    ) -> str | None:
+        """The line naming a configured replacement, or ``None`` if unset.
+
+        An attribute is documented by two routes that do not share a
+        string -- the one it carries, which the pipeline doc renders, and
+        the properties list the web help builds -- so the line is built
+        once here and handed to both.  An unset attribute documents
+        nothing rather than a ``None``, which a reader would take for a
+        configured value.
+        """
+        replacement = attr.parameters.get("none_value_replacement")
+        if replacement is None:
+            return None
+        return f"**none_value_replacement**: {replacement}"
 
     def get_attribute_defaults(
         self, spec: AttributeSpec,
@@ -305,9 +352,12 @@ phastCons, phyloP, FitCons2, etc.
         self, attr: Attribute,
     ) -> list[str]:
         """Collect score aggregator documentation."""
-        doc = self._build_score_aggregator_documentation(
-            attr, "aggregator", attr.aggregator)
-        return [doc]
+        docs = [self._build_score_aggregator_documentation(
+            attr, "aggregator", attr.aggregator)]
+        replacement = self._none_value_replacement_documentation(attr)
+        if replacement is not None:
+            docs.append(replacement)
+        return docs
 
     def _do_annotate(
         self, annotatable: Annotatable,
