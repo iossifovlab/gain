@@ -383,41 +383,43 @@ def test_fragment_aggregators(
 # backwards is a silent wrong answer rather than an error.
 
 
-def test_fragment_overlap_fraction_keeps_the_fragment_mostly_inside(
+@pytest.mark.parametrize("configured, count, frequency", [
+    pytest.param("", 2, "0.02;0.1", id="unset-admits-both"),
+    pytest.param(
+        "min_fragment_overlap_fraction: 0.5", 1, "0.02",
+        id="fragment-denominated-keeps-the-one-mostly-inside"),
+    pytest.param(
+        'min_fragment_overlap_fraction: "0.5"', 1, "0.02",
+        id="quoted-means-the-same-threshold"),
+    pytest.param(
+        "min_region_overlap_fraction: 0.2", 1, "0.1",
+        id="region-denominated-keeps-the-one-covering-the-region"),
+])
+def test_an_overlap_fraction_selects_by_the_length_it_is_named_for(
+    configured: str, count: int, frequency: str,
     grr: GenomicResourceRepo,
 ) -> None:
-    pipeline = load_pipeline_from_yaml(
-        textwrap.dedent("""
-            - fragment_score:
-                resource_id: fragments
-                min_fragment_overlap_fraction: 0.5
-                attributes:
-                - count
-                - source: frequency
-                  aggregator: join(;)
-            """),
-        grr)
+    """Each threshold admits what the other rejects, from one region.
 
-    atts = pipeline.annotate(Region("1", 15, 60))
+    The `frequency` expectation is what makes these more than a count
+    check: the two denominators both answer ONE fragment here, so a
+    swapped implementation would still satisfy `count`, and only the
+    VALUE says which fragment survived.
 
-    assert atts["count"] == 1
-    assert atts["frequency"] == "0.02"
+    `unset` is the baseline the other rows are measured against, and it
+    is not the same request as `0.0` -- no threshold is applied at all.
 
-
-def test_region_overlap_fraction_keeps_the_fragment_covering_the_region(
-    grr: GenomicResourceRepo,
-) -> None:
-    """The other denominator selects the OTHER fragment.
-
-    Paired with the test above: same region, same resource, a threshold
-    that admits only what the fragment-denominated one rejects.  Swapping
-    the two parameters anywhere between here and the score turns this red.
+    The quoted row asserts the SAME expectations as its unquoted
+    neighbour by construction rather than by a reader comparing two
+    blocks.  A fraction configured through the annotation editor reaches
+    the annotator as a string -- see `_read_overlap_fraction` -- and it
+    has to mean the same threshold.
     """
     pipeline = load_pipeline_from_yaml(
-        textwrap.dedent("""
+        textwrap.dedent(f"""
             - fragment_score:
                 resource_id: fragments
-                min_region_overlap_fraction: 0.2
+                {configured}
                 attributes:
                 - count
                 - source: frequency
@@ -427,49 +429,29 @@ def test_region_overlap_fraction_keeps_the_fragment_covering_the_region(
 
     atts = pipeline.annotate(Region("1", 15, 60))
 
-    assert atts["count"] == 1
-    assert atts["frequency"] == "0.1"
+    assert atts["count"] == count
+    assert atts["frequency"] == frequency
 
 
-def test_both_fractions_unset_admits_every_overlapping_fragment(
-    grr: GenomicResourceRepo,
-) -> None:
-    """Unset is not 0.0 -- it is no threshold at all.
-
-    The baseline the two tests above are measured against: the same
-    region, no fractions configured, both fragments answered.
-    """
-    pipeline = load_pipeline_from_yaml(
-        textwrap.dedent("""
-            - fragment_score:
-                resource_id: fragments
-                attributes:
-                - count
-                - source: frequency
-                  aggregator: join(;)
-            """),
-        grr)
-
-    atts = pipeline.annotate(Region("1", 15, 60))
-
-    assert atts["count"] == 2
-    assert atts["frequency"] == "0.02;0.1"
-
-
-@pytest.mark.parametrize("configured", ["1.5", "-0.5"])
+@pytest.mark.parametrize("configured", ["1.5", "-0.5", "half", "true"])
 @pytest.mark.parametrize("parameter", [
     "min_region_overlap_fraction",
     "min_fragment_overlap_fraction",
 ])
-def test_a_fraction_outside_the_unit_interval_is_refused_by_name(
+def test_a_value_that_is_no_fraction_is_refused_by_name(
     parameter: str, configured: str, grr: GenomicResourceRepo,
 ) -> None:
     """Refused as the PIPELINE LOADS, naming the key the user wrote.
 
-    The score guards the same range, but it raises `ValueError` on the
-    first annotated variant -- too late, and addressed to a caller rather
-    than to whoever wrote the YAML.  gain#477: an error naming a key
-    absent from their config sends them looking in the wrong place.
+    Two reasons, one refusal.  Out of range: the score guards the same
+    interval, but raises `ValueError` on the first annotated variant --
+    too late, and addressed to a caller rather than to whoever wrote the
+    YAML.  gain#477: an error naming a key absent from their config sends
+    them looking in the wrong place.
+
+    Not a number: YAML reads `true` as a bool, and `bool` subclasses
+    `int`, so a range check alone would admit it as 1.0 -- full
+    containment, a threshold nobody asked for, applied in silence.
     """
     with pytest.raises(AnnotationConfigurationError, match=parameter):
         load_pipeline_from_yaml(
@@ -479,56 +461,3 @@ def test_a_fraction_outside_the_unit_interval_is_refused_by_name(
                     {parameter}: {configured}
                 """),
             grr)
-
-
-@pytest.mark.parametrize("configured", ["half", "true"])
-@pytest.mark.parametrize("parameter", [
-    "min_region_overlap_fraction",
-    "min_fragment_overlap_fraction",
-])
-def test_a_non_numeric_fraction_is_refused_by_name(
-    parameter: str, configured: str, grr: GenomicResourceRepo,
-) -> None:
-    """A fraction has to be a number, and `true` is not one of them.
-
-    YAML reads `true` as a bool, and `bool` is a subclass of `int`, so a
-    range check alone would admit it as 1.0 -- full containment, a
-    threshold nobody asked for, applied silently.  It is refused instead.
-    """
-    with pytest.raises(AnnotationConfigurationError, match=parameter):
-        load_pipeline_from_yaml(
-            textwrap.dedent(f"""
-                - fragment_score:
-                    resource_id: fragments
-                    {parameter}: {configured}
-                """),
-            grr)
-
-
-def test_a_quoted_fraction_means_the_same_threshold(
-    grr: GenomicResourceRepo,
-) -> None:
-    """`"0.5"` selects what `0.5` selects.
-
-    The annotation editor's form controls hold text, so a fraction
-    configured through the UI reaches the annotator as a string; quoting
-    one in hand-written YAML arrives the same way.  Pinned against the
-    unquoted case above rather than merely asserting it builds -- what
-    matters is that it filters, not that it is tolerated.
-    """
-    pipeline = load_pipeline_from_yaml(
-        textwrap.dedent("""
-            - fragment_score:
-                resource_id: fragments
-                min_fragment_overlap_fraction: "0.5"
-                attributes:
-                - count
-                - source: frequency
-                  aggregator: join(;)
-            """),
-        grr)
-
-    atts = pipeline.annotate(Region("1", 15, 60))
-
-    assert atts["count"] == 1
-    assert atts["frequency"] == "0.02"

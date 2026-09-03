@@ -433,13 +433,11 @@ async def test_async_annotator_yaml_overlap_fraction_typed_in_the_editor(
 ) -> None:
     """A fraction typed into the editor form saves (gain#1125).
 
-    This endpoint BUILDS the annotator before dumping it, so the
-    annotator's own configuration guard runs on whatever the form posted.
-    The form posts what the user typed, and an Angular `FormControl` holds
-    a STRING -- `min_region_overlap_fraction` arrives as `"0.5"`, not
-    `0.5`.  A guard admitting only `int`/`float` therefore 400s the
-    editor's own output: the parameter would be offered in the form and be
-    unsaveable, which is a worse place to be than not offering it at all.
+    The seam no other test covers: this endpoint BUILDS the annotator
+    before dumping it, so the annotator's configuration guard runs on
+    whatever the form posted -- and the form posts a STRING.  Why that is
+    so, and why the template types the field `string`, is recorded where
+    that decision lives, on the config template in `editor/views.py`.
     """
     client = AsyncClient()
     response = await _post_json(client, YAML_POST_URL, {

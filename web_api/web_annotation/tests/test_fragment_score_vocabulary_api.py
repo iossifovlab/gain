@@ -14,10 +14,7 @@ from typing import Any
 
 import pytest
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
-from gain.genomic_resources.testing import (
-    build_inmemory_test_repository,
-    convert_to_tab_separated,
-)
+from gain.genomic_resources.repository import GenomicResourceRepo
 from rest_framework.test import APIClient
 
 ANNOTATOR_TYPES_URL = "/api/editor/annotator_types"
@@ -224,12 +221,9 @@ def test_the_template_offers_both_overlap_fractions(
     here is a capability that works in a hand-written pipeline and over
     the API but cannot be reached from the UI.
 
-    Typed as ``string`` rather than as a number of its own: the UI's
-    ``fieldType`` union is ``resource | string | bool | attribute`` and the
-    form template branches on exactly those, so a ``float`` field_type
-    would match no branch and render as NOTHING -- the same invisibility
-    as omitting the key, reached the long way round.  The annotator reads
-    a numeric string as the number it spells.
+    ``string`` rather than a numeric field type of its own, for the reason
+    recorded on the template itself in ``editor/views.py``.  Pinned here
+    because the set comparison below would accept any ``field_type``.
     """
     template = _config_template(client, "fragment_score_annotator")
 
@@ -251,34 +245,15 @@ DELIBERATELY_NOT_OFFERED = {
     "work_dir",
 }
 
-FRAGMENT_GRR_CONTENT = {
-    "fragments": {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: fragment_score
-            table:
-              filename: data.mem
-            scores:
-            - id: frequency
-              name: frequency
-              type: float
-              desc: a population frequency
-        """),
-        "data.mem": convert_to_tab_separated("""
-           chrom  pos_begin  pos_end  frequency
-           1      10         20       0.02
-        """),
-    },
-}
-
 MINIMAL_FRAGMENT_PIPELINE = textwrap.dedent("""
     - fragment_score:
-        resource_id: fragments
+        resource_id: cnv_collections/test_collection
 """)
 
 
 @pytest.mark.django_db
 def test_the_template_offers_every_parameter_the_annotator_reads(
-    client: APIClient,
+    client: APIClient, test_grr: GenomicResourceRepo,
 ) -> None:
     """The two declarations of this annotator's vocabulary agree.
 
@@ -302,12 +277,18 @@ def test_the_template_offers_every_parameter_the_annotator_reads(
     in this annotator is unconditional today -- deliberately, since
     `info.parameters` refuses a key nobody read -- which is what makes the
     comparison total.  A future conditional read would quietly narrow it.
+
+    The invariant is general but this checks ONE annotator, which is a
+    deliberate scope and not an oversight: every other type has the same
+    two declarations, and several have real gaps already (`allele_filter`
+    and `mode` on the allele score, `region_length_cutoff`, `promoter_len`)
+    that are somebody's decision to make rather than this issue's.
+    Generalising it across the nine types is gain#1165.
     """
     template = _config_template(client, "fragment_score_annotator")
     offered = set(template) - {"annotator_type", "documentation_url"}
 
-    grr = build_inmemory_test_repository(FRAGMENT_GRR_CONTENT)
-    pipeline = load_pipeline_from_yaml(MINIMAL_FRAGMENT_PIPELINE, grr)
+    pipeline = load_pipeline_from_yaml(MINIMAL_FRAGMENT_PIPELINE, test_grr)
     accepted = pipeline.annotators[0].get_info().parameters.get_used_keys()
 
     assert offered <= accepted, (
