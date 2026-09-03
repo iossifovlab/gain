@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 from gain.annotation.annotatable import Annotatable, Position
-from gain.annotation.annotation_config import AttributeConfig, AnnotatorInfo
+from gain.annotation.annotation_config import AnnotatorInfo, AttributeConfig
 from gain.annotation.annotation_pipeline import AttributeSpec
 from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
 

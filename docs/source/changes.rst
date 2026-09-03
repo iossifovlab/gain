@@ -2,6 +2,30 @@ Release Notes
 =============
 
 * unreleased
+    * **Internal API.** ``AnnotatorBase`` no longer aggregates.
+      ``WeightedValues``, ``Aggregator.aggregate_weighted`` and
+      ``Attribute.aggregator_instance`` are **removed**;
+      ``_apply_aggregators`` copies an ``AggregatedValues`` through and
+      renames everything else from source to attribute name, reducing
+      nothing. An attribute keeps the aggregator NAME, and anything
+      needing the class -- ``Attribute.get_value_type(aggregated=True)``,
+      the web API's single-allele attribute description -- resolves it
+      through the new ``Aggregator.resolve_class``, which builds no
+      accumulator. ``Aggregator.add(value, count)`` is unchanged and is
+      still what the folding reads weigh with. An annotator that reduces
+      values of its own rather than a score's record stream -- the gene
+      score, gene set and both effect annotators -- now folds them
+      itself through ``gain.annotation.annotator_base.fold_own_values``
+      and answers an ``AggregatedValues``; an out-of-tree annotator that
+      relied on the base folding its raw lists must do the same
+      (:issue:`1133`).
+    * An aggregator named on an ``allele_score`` annotator's virtual
+      ``allele`` attribute reduces nothing in ``allele`` (exact-match)
+      mode, where it previously folded the matched line's one-element
+      list of keys -- a ``join`` there answered a bare string. ``region``
+      mode has never folded it, so the two modes now agree. The default
+      configuration names no aggregator on that attribute and is
+      unaffected (:issue:`1133`).
     * **Behaviour change.** A ``position_score`` annotator answers a
       region no record touches per aggregator, instead of ``None`` for
       every attribute at once. A ``list`` aggregator gives ``[]``, a

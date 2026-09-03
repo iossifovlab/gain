@@ -1,7 +1,14 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""Weighted aggregation: ``add(value, count)`` weights the value (#260)."""
+"""Weighted aggregation: ``add(value, count)`` weights the value (#260).
+
+``add`` is the whole of the weighting primitive since gain#1133 retired
+the pair-stream entry point that used to stand between a score and an
+aggregator.  The folding reads call ``add`` directly, so what these pin
+is what still runs.
+"""
 
 from fractions import Fraction
+from typing import Any
 
 import pytest
 from gain.genomic_resources.aggregators import (
@@ -158,6 +165,14 @@ _RECORDS = [(0.1, 3), (0.25, 5), (0.1, 2)]
 _REPLICATED = [value for value, weight in _RECORDS for _ in range(weight)]
 
 
+def _fold_weighted(aggregator: str, records: list[tuple[Any, int]]) -> Any:
+    """Fold ``(value, weight)`` records the way a folding read does."""
+    agg = Aggregator.build(aggregator)
+    for value, weight in records:
+        agg.add(value, weight)
+    return agg.get_final()
+
+
 @pytest.mark.parametrize("aggregator", [
     "min", "max", "count", "median", "mode", "value_count",
     "list", "join(;)", "concatenate", "bool",
@@ -165,7 +180,7 @@ _REPLICATED = [value for value, weight in _RECORDS for _ in range(weight)]
 def test_weighted_aggregation_is_bit_identical_to_replication(
     aggregator: str,
 ) -> None:
-    weighted = Aggregator.build(aggregator).aggregate_weighted(_RECORDS)
+    weighted = _fold_weighted(aggregator, _RECORDS)
     replicated = Aggregator.build(aggregator).aggregate(_REPLICATED)
 
     assert weighted == replicated
@@ -183,7 +198,7 @@ def test_weighted_mean_is_closer_to_the_exact_mean_than_replication() -> None:
         Fraction(value) * weight for value, weight in _LARGE_REGION_RECORDS
     ) / total_weight
 
-    weighted = MeanAggregator().aggregate_weighted(_LARGE_REGION_RECORDS)
+    weighted = _fold_weighted("mean", _LARGE_REGION_RECORDS)
     replicated = MeanAggregator().aggregate([
         value
         for value, weight in _LARGE_REGION_RECORDS

@@ -4,7 +4,8 @@
 The aggregating counterpart of ``fetch_region_segments``.  What these
 pin is mostly its agreement with things that already exist -- the annotators,
 and
-the per-type weighting rule ``WeightedValues`` documents -- because a helper
+the per-type weighting rule ``GenomicScore.record_weight`` states -- because a
+helper
 that answers a region differently from the annotator would be worse than no
 helper at all.
 
@@ -190,9 +191,9 @@ def test_an_allele_score_counts_each_line_once(
 ) -> None:
     """An allele line counts once, whatever the position span.
 
-    The rule ``WeightedValues`` states per type, and the reason
-    ``record_weight`` is a class hook rather than ``right - left + 1`` in
-    the base: two alleles at one position must average as two values.
+    The rule ``record_weight`` states per type, and the reason it is a
+    class hook rather than ``right - left + 1`` in the base: two alleles
+    at one position must average as two values.
     """
     res = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """

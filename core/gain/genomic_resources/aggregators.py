@@ -8,7 +8,7 @@ import math
 import operator
 import re
 from collections import Counter
-from collections.abc import Generator, Iterable, Iterator
+from collections.abc import Generator, Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -16,75 +16,19 @@ if TYPE_CHECKING:
     from gain.genomic_resources.score_def import ScoreValue
 
 
-class WeightedValues:
-    """A run-length encoded sequence of values: ``(value, weight)`` pairs.
-
-    The contract between a score and an aggregator.  A score knows how
-    many times each of its records counts -- a position-score record
-    counts once per base pair of the queried region it covers, an allele
-    line counts once, a fragment counts once however long it is -- and says so
-    with a weight, rather than by handing over one copy of the value per
-    occurrence.  The aggregator applies the weight in closed form.
-
-    Holding a region as pairs is what makes aggregating it proportional
-    to the number of records rather than to its length in base pairs.
-    """
-
-    __slots__ = ("pairs",)
-
-    def __init__(self, pairs: Iterable[tuple[Any, int]] = ()) -> None:
-        self.pairs: list[tuple[Any, int]] = list(pairs)
-
-    def add(self, value: Any, weight: int = 1) -> None:
-        """Append a value occurring ``weight`` times."""
-        self.pairs.append((value, weight))
-
-    def expand(self) -> list[Any]:
-        """Return the values one copy per unit of weight, in order.
-
-        The plain list this stands in for -- built only when something
-        really does need every copy.
-        """
-        return [
-            value
-            for value, weight in self.pairs
-            for _ in range(weight)
-        ]
-
-    def __iter__(self) -> Iterator[tuple[Any, int]]:
-        return iter(self.pairs)
-
-    def __len__(self) -> int:
-        """Return the number of records, not the total weight."""
-        return len(self.pairs)
-
-    def __bool__(self) -> bool:
-        return bool(self.pairs)
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, WeightedValues):
-            return self.pairs == other.pairs
-        return NotImplemented
-
-    __hash__ = None  # type: ignore[assignment]  # mutable, like a list
-
-    def __repr__(self) -> str:
-        return f"WeightedValues({self.pairs!r})"
-
-
 class Aggregator(abc.ABC):
     """Base class for score aggregators.
 
-    **Reuse contract.** An aggregator is a mutable accumulator, and an
-    annotator builds exactly one instance per configured attribute and
-    reuses it for every annotated variant: :meth:`aggregate` and
-    :meth:`aggregate_weighted` clear the state at the start of each call
-    rather than the caller building a fresh instance.  That is correct
-    single-threaded and is **not** thread-safe -- two threads annotating
-    through the same annotator would interleave their values into one
-    accumulator.  Annotators are single-threaded by construction (a
-    pipeline is used by one worker at a time); a caller that wants
-    concurrency must give each thread its own pipeline.
+    **An accumulator is not shared.** An aggregator is mutable state, and
+    every caller in gain builds a fresh one per fold: the folding reads
+    build one per query per call, and the annotators that reduce their own
+    values build one per attribute per call.  Nothing outlives the fold it
+    was built for, and :meth:`build` is cheap enough for that to be the
+    default -- a name resolves through a memo (gain#1157).
+
+    :meth:`aggregate` still clears its state first, so an instance CAN be
+    reused single-threaded.  It is not thread-safe either way: two threads
+    folding through one accumulator would interleave their values.
     """
 
     def __init__(self) -> None:
@@ -112,11 +56,14 @@ class Aggregator(abc.ABC):
 
         ``count`` is the number of times the value is deemed to occur --
         the number of base pairs a position-score record spans, for
-        instance.  It is applied in closed form: adding a value with a
-        weight of ``n`` produces the same result as adding it ``n`` times,
-        without doing ``n`` units of work.  The one exception is ``mean``,
-        which is *more* accurate weighted than replicated: it rounds once
-        per record rather than once per base.  See :meth:`_add_internal`.
+        instance; :meth:`GenomicScore.record_weight` is where each kind
+        states its own rule.  It is applied in closed form: adding a value
+        with a weight of ``n`` produces the same result as adding it ``n``
+        times, without doing ``n`` units of work, which is what makes
+        folding a region proportional to its records rather than to its
+        length in base pairs.  The one exception is ``mean``, which is
+        *more* accurate weighted than replicated: it rounds once per
+        record rather than once per base.  See :meth:`_add_internal`.
         """
         self.total_count += count
         self._add_internal(value, count)
@@ -128,23 +75,6 @@ class Aggregator(abc.ABC):
             return self.get_final()
         for value in values:
             self.add(value)
-        return self.get_final()
-
-    def aggregate_weighted(
-        self, values: Iterable[tuple[Any, int]] | None,
-    ) -> Any:
-        """Clear state, add all weighted values, return the final result.
-
-        ``values`` is a stream of ``(value, weight)`` pairs -- one pair per
-        record, the weight being how many times that record's value counts.
-        The result is what :meth:`aggregate` would return for the expanded
-        sequence, except for ``mean``, which is more accurate here.
-        """
-        self.clear()
-        if values is None:
-            return self.get_final()
-        for value, weight in values:
-            self.add(value, weight)
         return self.get_final()
 
     @abc.abstractmethod

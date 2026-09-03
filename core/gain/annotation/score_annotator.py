@@ -438,6 +438,13 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
     :func:`~gain.genomic_resources.genomic_scores.allele.allele_key`, so
     the two modes cannot drift.
 
+    An aggregator named on this attribute reduces nothing, in either
+    mode.  It is not a score: its value is the keys the annotator
+    synthesised, and ``region`` mode has always answered them beside the
+    reductions rather than as one of them.  Exact-match mode used to
+    differ -- the base folded its one-element list -- and stopped in
+    gain#1133, so the two modes now agree.
+
     ``allele_filter``
     -----------------
     An optional annotator-level boolean expression evaluated against each
