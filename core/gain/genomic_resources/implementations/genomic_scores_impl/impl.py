@@ -42,15 +42,19 @@ from gain.genomic_resources.statistics.alleles import (
     build_allele_section_display,
 )
 from gain.genomic_resources.statistics.coverage import (
-    COVERAGE_FRAGMENT_LENGTHS_IMAGE_FILE,
     COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
     COVERAGE_STATISTICS_FILE,
     CoverageDisplay,
     CoverageStatistics,
-    FragmentDisplay,
     build_coverage_display,
-    build_fragment_display,
     resolve_chrom_lengths,
+)
+from gain.genomic_resources.statistics.fragments import (
+    FRAGMENT_LENGTHS_IMAGE_FILE,
+    FRAGMENT_STATISTICS_FILE,
+    FragmentDisplay,
+    FragmentStatistics,
+    build_fragment_display,
 )
 from gain.genomic_resources.utils import read_resource_id_label
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
@@ -113,9 +117,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         return COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE
 
     @staticmethod
-    def get_coverage_fragment_lengths_image_filename() -> str:
+    def get_fragment_lengths_image_filename() -> str:
         """The info page's one statement of the fragment image's path."""
-        return COVERAGE_FRAGMENT_LENGTHS_IMAGE_FILE
+        return FRAGMENT_LENGTHS_IMAGE_FILE
 
     @staticmethod
     def get_allele_insertion_lengths_image_filename() -> str:
@@ -192,19 +196,32 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         return build_coverage_display(
             self.resource.resource_id, coverage, lengths)
 
+    def get_fragment_statistics(self) -> FragmentStatistics | None:
+        """The resource's fragment statistics, or ``None`` if not built.
+
+        Absence is an expected state for the reason
+        :meth:`get_coverage_statistics` gives: the rollout is lazy.
+        """
+        try:
+            content = self.resource.get_file_content(
+                FRAGMENT_STATISTICS_FILE)
+        except FileNotFoundError:
+            return None
+        return FragmentStatistics.deserialize(content)
+
     def get_fragment_display(self) -> FragmentDisplay | None:
         """The Fragments section's payload, or ``None`` if not computed.
 
-        ``None`` covers both ways a fragment resource can have nothing
-        to show: no statistics file at all, and a file written before
-        fragment counts existed.  Both render the section's "not
-        computed" fallback -- these statistics roll out lazily, as
-        :meth:`get_coverage_statistics` explains.
+        ``None`` means the statistic is not built -- the file is simply
+        absent, which renders the section's "not computed" fallback.
+        Since gain#1127 that is the ONE way it can be missing: the tally
+        has its own file, where as a group inside the coverage one it
+        could also be absent from a file that existed.
         """
-        coverage = self.get_coverage_statistics()
-        if coverage is None:
+        statistics = self.get_fragment_statistics()
+        if statistics is None:
             return None
-        return build_fragment_display(coverage)
+        return build_fragment_display(statistics)
 
     def _render_genome(self) -> ReferenceGenome | None:
         """The resource's labelled reference genome, at render time.

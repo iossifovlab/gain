@@ -566,34 +566,3 @@ def test_a_stitch_that_closes_a_run_also_keeps_the_wider_end() -> None:
     assert histogram[length_histogram_bin_index(96)] == 1
     assert histogram[length_histogram_bin_index(11)] == 1
     assert sum(histogram) == 2
-
-
-def test_the_batch_binning_agrees_with_the_per_length_one() -> None:
-    # Two statements of one ladder -- the per-record scan bins lengths
-    # one at a time, the bulk scan a whole array -- so they are pinned
-    # against each other across the edges, the ends and the clamp.
-    lengths = [
-        1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 96, 1000,
-        2 ** 30, 2 ** 31 - 1, 2 ** 31, 2 ** 31 + 1, 2 ** 40,
-    ]
-    per_length = RegionCoverage("chr1", 1, 10, track_fragments=True)
-    for length in lengths:
-        per_length.add_fragment(length)
-    batched = RegionCoverage("chr1", 1, 10, track_fragments=True)
-
-    batched.add_fragment_batch(np.array(lengths, dtype=np.int64))
-
-    summary = batched.fragment_summary()
-    assert summary == per_length.fragment_summary()
-    assert summary is not None
-    count, histogram = summary
-    assert count == len(lengths)
-    assert sum(histogram) == len(lengths)
-    # The clamp: 2**31, 2**31 + 1 and 2**40 all land in the last bin.
-    assert histogram[-1] == 3
-
-
-def test_the_batch_binning_refuses_a_non_positive_length() -> None:
-    region = RegionCoverage("chr1", 1, 10, track_fragments=True)
-    with pytest.raises(ValueError, match="positive"):
-        region.add_fragment_batch(np.array([5, 0], dtype=np.int64))

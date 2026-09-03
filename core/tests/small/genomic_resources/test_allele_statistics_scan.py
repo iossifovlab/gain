@@ -964,12 +964,45 @@ def test_an_unbuilt_position_score_still_offers_to_compute_coverage(
     assert "<p>not computed</p>" in section_after(page, "<h2>Coverage</h2>")
 
 
-def test_the_coverage_section_survives_on_a_fragment_score(
+def test_an_unbuilt_fragment_score_offers_no_coverage_either(
     tmp_path: pathlib.Path,
 ) -> None:
-    # A fragment score IS coverage-scanned -- it sits in
-    # ``_COVERAGE_SCAN_RESOURCE_TYPES`` beside position scores -- so
-    # emptying the block for allele scores must not empty it here.
+    # The counterpart of the position-score test above, and the reason
+    # the gating is keyed on the KIND: statistics are never built here
+    # either, but no rebuild would EVER fill Coverage for this kind, so
+    # the honest rendering is no section at all rather than the "not
+    # computed" that invites one.  Gating on the payload would collapse
+    # never applicable and not yet built into the same blank.
+    resource = (
+        a_fragment_score()
+        .with_score("score", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  score
+            chr1   10         100      0.1
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+    page = _info_page(resource)
+
+    assert "Coverage" not in page
+    # Fragments, by contrast, IS applicable and merely unbuilt -- so it
+    # says so, which is what makes the absence above a statement.
+    assert "<p>not computed</p>" in section_after(
+        page, "<h2>Fragments</h2>")
+
+
+def test_the_coverage_section_is_absent_on_a_fragment_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A fragment score is no longer coverage-scanned: its rows overlap,
+    # so the union of their spans measures nothing (gain#1127).  Nothing
+    # can ever fill the section, so it renders no heading at all rather
+    # than one permanently reading "not computed" -- the rule the
+    # Alleles section already follows on this kind, and the one the
+    # allele-score page follows for Coverage.
     resource = (
         a_fragment_score()
         .with_score("score", "float")
@@ -985,9 +1018,10 @@ def test_the_coverage_section_survives_on_a_fragment_score(
 
     page = _info_page(resource)
 
-    assert "<h2>Coverage</h2>" in page
-    assert "<p>not computed</p>" not in section_after(
-        page, "<h2>Coverage</h2>")
+    assert "Coverage" not in page
+    # The section this kind DOES fill is untouched -- otherwise "no
+    # Coverage" would also pass on a page that had lost both.
+    assert "<h2>Fragments</h2>" in page
 
 
 def test_the_alleles_section_is_absent_on_a_fragment_score(

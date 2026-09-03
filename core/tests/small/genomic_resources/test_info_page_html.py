@@ -70,7 +70,7 @@ def test_a_count_is_readable_apart_from_the_share_nested_under_it() -> None:
 _NOT_COMPUTED_PAGE = """
 <h2>Fragments</h2>
 <p>not computed</p>
-<img src="statistics/coverage_fragment_lengths.png">
+<img src="statistics/fragment_lengths.png">
 <h2 style="margin-top: 70px;">Files</h2>
 <table><tr><td>never reached</td></tr></table>
 """
@@ -83,7 +83,7 @@ def test_a_section_that_rendered_no_table_is_still_readable_as_markup() -> None:
     section = section_after(_NOT_COMPUTED_PAGE, "<h2>Fragments</h2>")
 
     assert "not computed" in section
-    assert section.count("coverage_fragment_lengths.png") == 1
+    assert section.count("fragment_lengths.png") == 1
     # Bounded at the next heading, style attribute and all: a section that
     # ran on would pick up the Files table below it.
     assert "never reached" not in section

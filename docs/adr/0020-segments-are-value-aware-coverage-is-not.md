@@ -86,15 +86,37 @@ holds only for a resource with no different-valued overlap. Nothing may
 present the sum of segment lengths as coverage; coverage has its own
 statistic.
 
-*Amended by gain#1118: an **allele score** has no covered-position count at
-all.* Its rows collapse to points, so the span union above never applied to the
-kind — it is deliberately excluded from the coverage scan — and what stood in
-its place was a DISTINCT-position count kept inside the allele statistic. That
-count is removed. An allele score's statistic answers only what its rows *are*,
-and its info page renders no Coverage section rather than one permanently
-reading "not computed". Position and fragment scores are unaffected: they are
-span-union scanned, and a position score whose statistics are not yet built
-still says "not computed", where the message is true and a rebuild acts on it.
+*Amended by gain#1118 and gain#1127: covered positions are a **position
+score** statistic, and only that.* The union is a genuine measure of what a
+resource covers exactly when its rows are **pairwise disjoint** — which is the
+same fact the segment algebra rests on, and which a position score's
+`validate_records` enforces by refusing a row beginning at or before its
+predecessor's end. The other two kinds are out, for reasons that differ in
+mechanism and agree in conclusion:
+
+- An **allele score**'s rows collapse to points, so the span union never
+  applied to the kind at all. What stood in its place was a DISTINCT-position
+  count kept inside the allele statistic; that count is removed (gain#1118).
+- A **fragment score**'s rows deliberately overlap. Its covered-position count
+  is the union of overlapping intervals, which answers nothing a reader
+  asks: it does not count fragments — that is the fragment statistic, which
+  the kind has and which is the honest one — and it does not measure
+  completeness in a way that compares across resources. This is the same
+  objection that *Fragment segments — not wanted* records below against
+  **merging** those rows, applied to **unioning** them (gain#1127).
+
+Both kinds' info pages render no Coverage section rather than one permanently
+reading "not computed". A position score whose statistics are not yet built
+still says "not computed", where the message is true and a rebuild acts on it
+— which is why the gating is keyed on the KIND and not on whether the payload
+happens to be there.
+
+*One consequence worth stating, since it is easy to reintroduce.* The fragment
+count and length histogram used to be stored **inside** the covered-position
+statistic, as one more optional group in its file. While that held, a fragment
+score could not stop publishing covered positions without losing its fragment
+counts with them. gain#1127 moved the tally into a statistic of its own, with
+its own file, before dropping the kind from the coverage scan.
 
 ### Allele classification — strict VCF anchoring
 
@@ -301,19 +323,20 @@ have an exact run algebra — and the epic's decision record named the remedy as
 turn on the mergeability problem:
 
 - The **value-blind** definition arrives pre-rejected, by the entry above and
-  more strongly for this kind. Both carriers that argument names already exist
-  for a fragment score: it is in the coverage scan, so its covered-position
-  union is published, and gain#794 shipped the fragment count and
-  fragment-length histogram — exactly the unmerged "fragment view". A
-  value-blind fragment segment would restate two statistics fragments already
-  publish.
+  more strongly for this kind. gain#794 shipped the fragment count and
+  fragment-length histogram — exactly the unmerged "fragment view" — so a
+  value-blind fragment segment would restate what fragments already publish.
+  *(As first written this reason also named the kind's covered-position union
+  as a second such carrier. gain#1127 removed that union, for the reason given
+  under **Covered position** above — the same objection, applied to unioning
+  rather than merging. The argument here does not depend on it.)*
 - No consumer question survives for a **value-aware** run. For the motivating
   ATAC-fragment resources the score columns are a cell barcode and a count, so
   a run of equal values across overlapping fragments is noise rather than
   signal; naming a question that fragment coverage and fragment
   counts/lengths cannot already answer between them is the burden, and nothing
   meets it.
-- The info page's needs are met without it — fragment coverage, the fragment
+- The info page's needs are met without it — the fragment
   count and length histogram (gain#794), and per-value custom plots via
   `plot_function`, which a resource can already configure (grr_bench's
   `atac_fragments/T23_b17_Thymus_PCW17` draws fragments-per-cell that way).
@@ -382,7 +405,9 @@ indefinitely — which is accepted and made visible rather than hidden.
   reasons recorded under *Rejected alternatives*. Value-aware segments are a
   position-score statistic. Nothing publishes a fragment segment count or
   length histogram, and a kind whose rows overlap now builds **no runs at
-  all** — the algebra is gated off, not computed and discarded.
+  all** — the algebra is gated off, not computed and discarded. Since
+  gain#1127 **covered positions are a position-score statistic too**, on the
+  matching argument: a fragment score is not coverage-scanned at all.
 - **The rollout is visibly incomplete for a while.** Resource pages show
   "not computed" until each resource is rebuilt; that state is intended, not
   a defect.

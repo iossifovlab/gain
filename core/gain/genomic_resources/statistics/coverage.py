@@ -36,7 +36,6 @@ from gain.genomic_resources.statistics.base_statistic import (
     regions_in_genomic_order,
 )
 from gain.genomic_resources.statistics.length_histogram import (
-    LENGTH_BIN_EDGES,
     LENGTH_HISTOGRAM_BIN_COUNT,
     accumulate_bins,
     has_counts_to_plot,
@@ -54,8 +53,6 @@ COVERAGE_STATISTICS_FILE = "statistics/coverage.json"
 _MERGE_FAILURE = "coverage"
 COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE = \
     "statistics/coverage_segment_lengths.png"
-COVERAGE_FRAGMENT_LENGTHS_IMAGE_FILE = \
-    "statistics/coverage_fragment_lengths.png"
 
 
 def normalize_values(values: Iterable[Any]) -> tuple:
@@ -91,7 +88,6 @@ class RegionCoverage:
         end: int | None,
         *,
         rows_are_disjoint: bool = True,
-        track_fragments: bool = False,
     ) -> None:
         self.chrom = chrom
         self.start = start
@@ -132,15 +128,6 @@ class RegionCoverage:
         # A deserialized region's segment data, frozen as read; it
         # carries no scan state.
         self._frozen_segments: tuple[int, list[int]] | None = None
-        # Fragments: a table row AS STORED, counted once however wide it
-        # is and binned by its own unclipped span.  Unlike segments this
-        # needs no run algebra and no stitching -- a row is owned whole
-        # by one region -- so overlapping and duplicate rows each count,
-        # and the global roll-up is an exact bin-wise merge.  Off unless
-        # the scanned kind is a fragment score.
-        self._track_fragments = track_fragments
-        self._fragments = 0
-        self._fragment_bins = [0] * LENGTH_HISTOGRAM_BIN_COUNT
 
     @classmethod
     def frozen(
@@ -148,85 +135,22 @@ class RegionCoverage:
         chrom: str,
         covered: int,
         segments: tuple[int, list[int]] | None,
-        fragments: tuple[int, list[int]] | None = None,
     ) -> RegionCoverage:
         """A region restored from serialized counts, with no scan state.
 
-        ``segments`` / ``fragments`` of ``None`` marks that data unknown
-        -- the file predates it, carries foreign bins, or the kind
-        publishes none.  A frozen region never accumulates a span, so
+        ``segments`` of ``None`` marks that data unknown -- the file
+        predates it, carries foreign bins, or the kind publishes none.
+        A frozen region never accumulates a span, so
         ``rows_are_disjoint`` has no clipping consequence here; it
         carries only the other one, gating the summary this region can
         answer with.
         """
         region = cls(
             chrom, None, None,
-            rows_are_disjoint=segments is not None,
-            track_fragments=fragments is not None)
+            rows_are_disjoint=segments is not None)
         region.covered = covered
         region._frozen_segments = segments
-        if fragments is not None:
-            # Straight into the accumulators: unlike segments, whose
-            # interior-bins/open-run algebra has no round-trippable
-            # state, a fragment tally IS just a count and its bins.
-            region._fragments, region._fragment_bins = (
-                fragments[0], list(fragments[1]))
         return region
-
-    def add_fragment(self, length: int) -> None:
-        """Count one fragment of that many base pairs.
-
-        The row's OWN span, never clipped to the region: a region owns
-        the rows beginning inside it and measures them whole, so a
-        fragment is counted once at its true length however the contig
-        was split.  A no-op for a kind that publishes no fragments, so
-        the scan may feed this unconditionally.
-        """
-        if not self._track_fragments:
-            return
-        self._fragments += 1
-        self._fragment_bins[length_histogram_bin_index(length)] += 1
-
-    def add_fragment_batch(self, lengths: np.ndarray) -> None:
-        """Count a whole batch of fragment lengths at once.
-
-        The vectorized statement of :meth:`add_fragment`, and it lives
-        HERE beside that rule so the binning has one home.  Vectorized
-        because a genome-scale fragment score has hundreds of thousands
-        of rows, and this is the path ADR 0001 deleted the per-row
-        object churn from.
-
-        The bin is found by INTEGER comparison against the ladder's own
-        edges, not by ``log2``: the edges are part of the stored format,
-        and a float log of a large integer can land on the wrong side of
-        a power of two.  ``searchsorted`` clamps into the open-ended
-        last bin for free.
-        """
-        if not self._track_fragments or not lengths.size:
-            return
-        indices = np.searchsorted(LENGTH_BIN_EDGES, lengths, side="right") - 1
-        # A length below 1 sorts before the first edge and lands at -1;
-        # reading that back is free, where a separate ``min()`` would be
-        # another full pass over the batch.
-        if indices.min() < 0:
-            raise ValueError(
-                f"fragment length must be positive: {lengths.min()}")
-        accumulate_bins(
-            self._fragment_bins,
-            np.bincount(
-                indices, minlength=LENGTH_HISTOGRAM_BIN_COUNT).tolist())
-        self._fragments += int(lengths.size)
-
-    def fragment_summary(self) -> tuple[int, list[int]] | None:
-        """Fragment count and length histogram, or ``None`` if unknown.
-
-        Unknown means the region publishes no fragment statistics: a
-        kind whose rows are not fragments, or a region deserialized from
-        a statistics file written before fragment counts existed.
-        """
-        if not self._track_fragments:
-            return None
-        return self._fragments, list(self._fragment_bins)
 
     @property
     def rows_are_disjoint(self) -> bool:
@@ -237,15 +161,6 @@ class RegionCoverage:
         its two consequences.
         """
         return self._rows_are_disjoint
-
-    @property
-    def tracks_fragments(self) -> bool:
-        """Whether the scanned kind's rows are fragments to be counted.
-
-        Read by the scan to decide whether the fragment feed is worth
-        computing at all; :meth:`add_fragment` is a no-op either way.
-        """
-        return self._track_fragments
 
     def segment_summary(self) -> tuple[int, list[int]] | None:
         """Segment count and length histogram, or ``None`` if unknown.
@@ -387,12 +302,6 @@ class RegionCoverage:
         self.covered += other.covered
         self._rows_are_disjoint = \
             self._rows_are_disjoint and other._rows_are_disjoint
-        # Fragments need no stitch: a row is owned whole by exactly one
-        # region, so the merged count and histogram are plain sums.
-        self._track_fragments = \
-            self._track_fragments and other._track_fragments
-        self._fragments += other._fragments
-        accumulate_bins(self._fragment_bins, other._fragment_bins)
         if other._run is None:
             self.end = other.end
             return
@@ -706,25 +615,6 @@ class CoverageStatistics(Statistic):
         """The bin-wise sum of the per-chromosome length histograms."""
         return self._lengths_global(RegionCoverage.segment_summary)
 
-    def fragments_by_chromosome(self) -> dict[str, int]:
-        return self._counts_by_chromosome(RegionCoverage.fragment_summary)
-
-    def fragments_global(self) -> int | None:
-        return self._count_global(RegionCoverage.fragment_summary)
-
-    def fragment_lengths_by_chromosome(self) -> dict[str, list[int]]:
-        """Per-chromosome fragment-length histograms, as stored."""
-        return self._lengths_by_chromosome(RegionCoverage.fragment_summary)
-
-    def fragment_lengths_global(self) -> list[int] | None:
-        """The bin-wise sum of the per-chromosome fragment histograms.
-
-        Exact rather than approximate, and that is the point of the
-        fixed bins: every chromosome's histogram is binned on the same
-        log2 ladder, so the global roll-up is a merge, not a re-scan.
-        """
-        return self._lengths_global(RegionCoverage.fragment_summary)
-
     @staticmethod
     def _binwise_sum(histograms: Iterable[list[int]]) -> list[int]:
         merged = [0] * LENGTH_HISTOGRAM_BIN_COUNT
@@ -802,8 +692,7 @@ class CoverageStatistics(Statistic):
         for chrom, counts in data["chromosomes"].items():
             result.fold_region(RegionCoverage.frozen(
                 chrom, int(counts["covered_positions"]),
-                _read_stored_summary(counts, "segment"),
-                _read_stored_summary(counts, "fragment")))
+                _read_stored_summary(counts, "segment")))
         return result
 
 
@@ -974,34 +863,6 @@ class CoverageDisplay(NamedTuple):
     @property
     def has_segments(self) -> bool:
         return self.global_segments is not None
-
-
-class FragmentRow(NamedTuple):
-    """One chromosome's fragment count, as the info page renders it."""
-
-    chrom: str
-    fragments: int
-
-
-class FragmentDisplay(NamedTuple):
-    """The Fragments section's render payload.
-
-    Counts only -- nothing to resolve: a fragment is a table row, and
-    rows have no natural total to be a fraction of.  The global count is
-    the sum of the rows, exactly as the stored statistic's global entry
-    is the merge of its per-chromosome ones.
-    """
-
-    rows: list[FragmentRow]
-    fragment_lengths: list[int] | None
-    """The global fragment-length histogram, or ``None`` if unknown.
-
-    Gates the section's image exactly as the segment one does.
-    """
-
-    @property
-    def global_fragments(self) -> int:
-        return sum(row.fragments for row in self.rows)
 
 
 def resolve_chrom_lengths(
@@ -1199,21 +1060,6 @@ def _plausible_lengths(
     return kept
 
 
-def build_fragment_display(
-    statistics: CoverageStatistics,
-) -> FragmentDisplay | None:
-    """The Fragments payload, or ``None`` when the file carries none."""
-    if statistics.fragments_global() is None:
-        return None
-    counts = statistics.fragments_by_chromosome()
-    return FragmentDisplay(
-        [
-            FragmentRow(chrom, counts[chrom])
-            for chrom in sorted(counts, key=natural_chromosome_key)
-        ],
-        statistics.fragment_lengths_global())
-
-
 def accumulate_coverage(
     arrays: RecordArrays,
     coverage: RegionCoverage,
@@ -1247,14 +1093,6 @@ def accumulate_coverage(
     """
     _chrom, start, end = region
     pos_begin, pos_end, value_cells = arrays
-    if coverage.tracks_fragments:
-        # Fragments are counted off the record partition, not the
-        # position one: the rows this region OWNS, each at its own
-        # unclipped span.
-        owned = owned_records_mask(pos_begin, start, end)
-        coverage.add_fragment_batch(
-            pos_end - pos_begin + 1 if owned.all()
-            else pos_end[owned] - pos_begin[owned] + 1)
     if coverage.rows_are_disjoint:
         keep = owned_records_mask(pos_begin, start, end)
     else:
@@ -1313,18 +1151,14 @@ def save_and_plot_coverage(
     with resource.open_raw_file(
             COVERAGE_STATISTICS_FILE, mode="wt") as outfile:
         outfile.write(statistics.serialize())
-    for item, image, lengths in (
-        ("segment", COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
-         statistics.segment_lengths_global()),
-        ("fragment", COVERAGE_FRAGMENT_LENGTHS_IMAGE_FILE,
-         statistics.fragment_lengths_global()),
-    ):
-        # A group the resource publishes nothing for writes no image;
-        # the info page's section is what says so.
-        if not has_counts_to_plot(lengths):
-            continue
-        with resource.open_raw_file(image, mode="wb") as outfile:
-            plot_length_histogram(outfile, lengths, item)
+    # A group the resource publishes nothing for writes no image; the
+    # info page's section is what says so.
+    lengths = statistics.segment_lengths_global()
+    if not has_counts_to_plot(lengths):
+        return
+    with resource.open_raw_file(
+            COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE, mode="wb") as outfile:
+        plot_length_histogram(outfile, lengths, "segment")
 
 
 # How a region answers for each optional group the statistics file
@@ -1335,7 +1169,6 @@ _SummaryOf = Callable[[RegionCoverage], "tuple[int, list[int]] | None"]
 
 _STORED_SUMMARIES: tuple[tuple[str, _SummaryOf], ...] = (
     ("segment", RegionCoverage.segment_summary),
-    ("fragment", RegionCoverage.fragment_summary),
 )
 
 
