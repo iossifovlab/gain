@@ -44,10 +44,11 @@ from gain.utils.regions import (
     split_into_regions,
 )
 
-# Re-exported: every annotation writer imports ``stringify`` from here, and
-# it moved to a leaf module only so the allele score could build its keys
-# with it (gain#1163) -- see that module's docstring.  The alias is what
-# marks a re-export for ruff; pylint reads the same alias as useless.
+# Re-exported: the annotation writers and gpf (``gpf.parquet.schema2``)
+# import ``stringify`` from here, and it moved to a leaf module only so
+# the allele score could build its keys with it (gain#1163) -- see that
+# module's docstring.  The alias is what marks a re-export for ruff;
+# pylint reads the same alias as useless.
 # pylint: disable=unused-import,useless-import-alias
 from gain.utils.stringify import stringify as stringify
 

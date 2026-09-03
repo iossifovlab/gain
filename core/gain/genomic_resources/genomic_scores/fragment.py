@@ -627,12 +627,9 @@ class FragmentScore(GenomicScore):
         beside it, which is a halving there and a flattening everywhere
         else.
         """
-        # Resolved and built per call, never held on the score -- see
-        # `build_region_aggregators` for what fresh accumulators do and
-        # do not buy.  The fragment kind has no public resolver: an
-        # attribute naming no aggregator is not an error on this kind,
-        # it answers the fragment count instead, so nothing asks at
-        # pipeline load.
+        # No public resolver on this kind, unlike its siblings: an
+        # attribute naming no aggregator is not an error here, it answers
+        # the fragment count instead, so nothing asks at pipeline load.
         requests = resolve_aggregation_queries(
             queries,
             score_definitions=self.score_definitions,

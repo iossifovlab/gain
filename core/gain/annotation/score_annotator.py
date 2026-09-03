@@ -5,7 +5,6 @@ allele_score_annotator.
 """
 import abc
 import textwrap
-from collections.abc import Iterator
 from typing import Any
 
 from gain import logging
@@ -127,6 +126,18 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
 
     def _collect_score_queries(self) -> list:
         return []
+
+    @staticmethod
+    def _query_aggregator(attr: Attribute) -> str | None:
+        """The aggregator NAME an attribute puts on its region query.
+
+        ``None`` when the attribute names none, passed through to be
+        refused by the score's resolver as the pipeline loads -- only a
+        ``bool`` score, which has no default, can be in that position.
+        """
+        return (
+            aggregator_name(attr.aggregator)
+            if attr.aggregator is not None else None)
 
     def close(self) -> None:
         self.score.close()
@@ -299,8 +310,7 @@ phastCons, phyloP, FitCons2, etc.
         self._region_queries = [
             PositionScoreAggregationQuery(
                 attr.source,
-                aggregator_name(attr.aggregator)
-                if attr.aggregator is not None else None,
+                self._query_aggregator(attr),
                 # Reading the key is also what MARKS it used, which is what
                 # keeps ``check_for_unused_attribute_parameters`` from
                 # refusing the pipeline that sets it (#1135).  Absent, it
@@ -495,28 +505,18 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             self.add_score_aggregator_documentation(
                 attr, "aggregator", attr.aggregator)
 
-        # One query per SCORE attribute, in attribute order, so the tuple
-        # the read answers with pairs straight back to the attributes it
-        # was built from.  Not deduped: a source named twice under two
-        # aggregators is two queries and two answers, which is the whole
-        # reason the result is keyed by name.  The virtual `allele`
-        # attribute is not a score and asks the read for the keys instead.
+        # One query per SCORE attribute, as `PositionScoreAnnotator` builds
+        # its list and for the reasons its query block gives.  The virtual
+        # `allele` attribute is not a score and asks the read for the keys
+        # instead.
         self._region_queries = [
-            ScoreAggregationQuery(
-                attr.source,
-                aggregator_name(attr.aggregator)
-                if attr.aggregator is not None else None)
+            ScoreAggregationQuery(attr.source, self._query_aggregator(attr))
             for attr in self._attributes
             if attr is not self.allele_attribute
         ]
-        # Ask the read's two questions now and throw the answers away:
-        # what is wanted is the refusal.  An attribute whose score has no
-        # default aggregator and names none -- only `bool` can be in that
-        # position -- fails HERE, as the pipeline loads, with the read's
-        # own remedy, rather than on the first region that reaches it.  In
-        # `allele` mode too: a CNV or a region takes the region path
-        # whatever the mode, so the list exists in both.  The same for an
-        # `include_attributes` id the resource does not define.
+        # Resolved now for the refusal alone -- at load, in BOTH modes; see
+        # the `region` bullet of the class docstring -- and the same for the
+        # `include_attributes` ids.
         self.allele_score.resolve_aggregation_queries(self._region_queries)
         self.allele_score.resolve_allele_key_scores(self.attrs_to_include)
 
@@ -611,28 +611,13 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         if aggregate is None:
             return self._empty_result()
 
-        # One value per query, so as many as there are queries.  Checked
-        # rather than assumed, because the pairing below is POSITIONAL and
-        # a read that answered a different number would otherwise slide
-        # every attribute onto its neighbour's value.
-        if len(aggregate.values) != len(self._region_queries):
-            raise ValueError(
-                f"{self.get_info().type} asked "
-                f"{len(self._region_queries)} queries of resource "
-                f"'{self.allele_score.resource_id}' and got "
-                f"{len(aggregate.values)} values back")
-
-        # Paired back by ORDER, over the same attributes that built the
-        # queries, with the `allele` attribute taking the keys.  The
-        # names are read HERE rather than cached beside the queries, for
-        # the reason `AggregatedValues` states.
-        values: Iterator[Any] = iter(aggregate.values)
-        return AggregatedValues(
-            (attr.name,
-             list(aggregate.allele_keys or ())
-             if attr is self.allele_attribute
-             else next(values))
-            for attr in self._attributes)
+        # Paired back over the same attributes that built the queries, the
+        # `allele` attribute taking the keys.
+        return self._pair_aggregated(
+            aggregate.values, len(self._region_queries),
+            resource_id=self.allele_score.resource_id,
+            reduced=lambda attr: attr is not self.allele_attribute,
+            otherwise=lambda _attr: list(aggregate.allele_keys or ()))
 
     def _do_annotate(
         self, annotatable: Annotatable,

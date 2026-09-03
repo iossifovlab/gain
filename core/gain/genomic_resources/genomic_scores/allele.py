@@ -59,7 +59,6 @@ from .aggregation import (
     fold_region_segments,
     request_score_ids,
     resolve_aggregation_queries,
-    score_def_for,
 )
 from .base import (
     _SEGMENT_SCORES_DEPRECATION,
@@ -692,20 +691,10 @@ class AlleleScore(GenomicScore):
     ) -> list[tuple[str, str]]:
         """Resolve each query to its ``(score_id, aggregator NAME)`` pair.
 
-        Public, and stopping at the NAME, for the reason
-        :meth:`PositionScore.resolve_aggregation_queries()
-        <.position.PositionScore.resolve_aggregation_queries>` gives:
-        asking whether a query list is answerable is a question a caller
-        may have without wanting to read.  ``AlleleScoreAnnotator`` asks
-        it once when the pipeline loads, so an attribute naming no
-        aggregator for a ``bool`` score is refused there rather than on
-        the first region that reaches it (D6 of the allele folding-read
-        design).  Building the accumulators is the READ's business, per
-        call.
-
-        Kind-neutral queries, so the shared
-        :func:`~.aggregation.resolve_aggregation_queries` answers it
-        whole; ``None`` means every score with its own default.
+        The shared :func:`~.aggregation.resolve_aggregation_queries` on
+        this score, made public so ``AlleleScoreAnnotator`` can refuse a
+        bad attribute as the pipeline loads (D6 of the allele folding-read
+        design) -- see that function for why it stops at the name.
         """
         return resolve_aggregation_queries(
             queries,
@@ -719,18 +708,13 @@ class AlleleScore(GenomicScore):
         """The definitions of the scores an allele-key request suffixes.
 
         The other half of what :meth:`get_allele_scores_in_region_agg`
-        checks on the call, made askable without reading: an unknown id
-        is refused with the valid names listed, which is how the
-        annotator refuses a bad ``include_attributes`` as the pipeline
-        loads rather than per record.
+        checks on the call, made askable without reading: the same
+        refusal every allele read gives an unknown score id, with the
+        valid names listed, which is how the annotator refuses a bad
+        ``include_attributes`` as the pipeline loads rather than per
+        record.
         """
-        return [
-            score_def_for(
-                score_id,
-                score_definitions=self.score_definitions,
-                resource_id=self.resource_id)
-            for score_id in allele_keys
-        ]
+        return self._resolve_score_defs(list(allele_keys))
 
     def get_allele_scores_in_region_agg(
         self, chrom: str, start: int, end: int,
@@ -748,20 +732,15 @@ class AlleleScore(GenomicScore):
         a query's own aggregator wins over the default.  An allele line
         is weighed by :meth:`record_weight`, which counts it once.
 
-        ``None`` is a region no record overlaps -- absent data -- exactly
-        the answer :meth:`fetch_allele_records` gives for it, and judged
-        by the same peek, before ``score_filter`` is applied.  An
-        :class:`AlleleAggregate` whose fold saw nothing is different: the
-        records were there and the filter rejected every one, so each
-        aggregator answers for an empty selection (``list`` gives ``[]``,
-        ``max`` gives ``None``, ...).  That asymmetry with the fragment
-        kind's folding read is a property of the data, and ADR 0017's
-        Consequences say why.
-
-        ``score_filter`` composes over the filtered record read, as the
-        fragment kind's does -- ownership is checked first of all, so a
-        foreign filter is refused on an empty region as loudly as on a
-        populated one.
+        ``None`` is absent data, judged before ``score_filter`` and with
+        ownership checked first, exactly as :meth:`fetch_allele_records`
+        answers it -- both through :meth:`_selected_allele_records`, which
+        states the contract.  An :class:`AlleleAggregate` whose fold saw
+        nothing is the other answer: records were there and the filter
+        rejected every one, so each aggregator answers for an empty
+        selection (``list`` gives ``[]``, ``max`` gives ``None``, ...).
+        That asymmetry with the fragment kind's folding read is a property
+        of the data, and ADR 0017's Consequences say why.
 
         ``allele_keys`` of ``None`` -- the default -- builds no keys, so a
         caller that wants none pays nothing per record for them.  A
@@ -774,9 +753,8 @@ class AlleleScore(GenomicScore):
         The REQUEST is checked when this is called: an unknown score id --
         in a query or in ``allele_keys`` -- a query with no aggregator to
         resolve to, an unknown contig and a foreign filter are all refused
-        before a record is read.  Aggregators are built FRESH per call,
-        never held on the score, for the reason
-        :func:`~.aggregation.build_region_aggregators` gives.
+        before a record is read.  Aggregators are built fresh per call
+        (:func:`~.aggregation.build_region_aggregators`).
         """
         requests = self.resolve_aggregation_queries(queries)
         aggregators = build_region_aggregators(
@@ -791,9 +769,13 @@ class AlleleScore(GenomicScore):
         if collector is not None:
             records = collector(records)
         score_ids = request_score_ids(requests)
+        # The kind's streaming half directly, not `region_values_from_records`:
+        # that entry re-checks the contig, and on a tabix table the
+        # chromosome list is rebuilt per call -- a cost linear in the
+        # contig count, which `_selected_allele_records` has already paid.
         values = fold_region_segments(
-            self.region_values_from_records(
-                records, chrom, start, end, score_ids),
+            self._allele_point_values(
+                records, self._resolve_score_defs(score_ids)),
             aggregators, requests,
             score_ids=score_ids, weigh=self.record_weight)
         return AlleleAggregate(

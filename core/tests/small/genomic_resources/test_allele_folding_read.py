@@ -279,9 +279,20 @@ def test_an_unknown_allele_key_score_is_refused_from_the_call(
     region too, so the typo cannot hide behind absent data.
     """
     with alleles.open() as score, pytest.raises(
-            ValueError, match=r"not defined by resource .*\['freq', 'id'\]"):
+            ValueError,
+            match=r"does not define \['nope'\]; it has \['freq', 'id'\]"):
         score.get_allele_scores_in_region_agg(
             "1", 200, 300, allele_keys=("nope",))
+
+
+def test_an_unknown_score_is_refused_from_the_call(
+    alleles: AlleleScore,
+) -> None:
+    """The REQUEST is checked when the read is called, with the valid names."""
+    with alleles.open() as score, pytest.raises(
+            ValueError, match=r"not defined by resource .*\['freq', 'id'\]"):
+        score.get_allele_scores_in_region_agg(
+            "1", 10, 16, queries=[ScoreAggregationQuery("nope")])
 
 
 # ---------------------------------------------------------------------------
@@ -502,13 +513,3 @@ def test_peak_memory_does_not_grow_with_the_number_of_alleles(
 
     assert large < 3 * small, (
         f"peak grew from {small} to {large} bytes for 10x the alleles")
-
-
-def test_an_unknown_score_is_refused_from_the_call(
-    alleles: AlleleScore,
-) -> None:
-    """The REQUEST is checked when the read is called, with the valid names."""
-    with alleles.open() as score, pytest.raises(
-            ValueError, match=r"not defined by resource .*\['freq', 'id'\]"):
-        score.get_allele_scores_in_region_agg(
-            "1", 10, 16, queries=[ScoreAggregationQuery("nope")])
