@@ -384,8 +384,9 @@ class FragmentScore(GenomicScore):
         ``min_region_overlap_fraction`` is "the fragment must cover at
         least this much of MY region" and
         ``min_fragment_overlap_fraction`` is "at least this much of the
-        FRAGMENT must fall in my region".  Both unset filters nothing,
-        which is what this read did before the thresholds existed.
+        FRAGMENT must fall in my region".  Both unset filters nothing --
+        which is what this read did before the thresholds existed -- and
+        hands the stream through without consulting the predicate.
 
         They SELECT, they do not RESHAPE: a fragment that passes is still
         reported at its own unclipped span.  That is this plane's rule and
@@ -420,6 +421,14 @@ class FragmentScore(GenomicScore):
             "min_fragment_overlap_fraction", min_fragment_overlap_fraction)
         rows = self.fetch_fragment_scores(
             chrom, start, end, scores, score_filter=score_filter)
+        if (min_region_overlap_fraction is None
+                and min_fragment_overlap_fraction is None):
+            # No threshold admits every fragment, and this is the shape of
+            # every annotator call: the stream goes through as it is
+            # rather than through a predicate answering "yes" per
+            # fragment (gain#1157).  Every guard above has already run, so
+            # what is refused on the call, and when, does not change.
+            return rows
         return (
             (beg, end_, values)
             for beg, end_, values in rows

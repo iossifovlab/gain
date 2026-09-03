@@ -177,6 +177,36 @@ def test_min_fragment_overlap_fraction_keeps_what_falls_inside_enough(
         ]
 
 
+def test_no_threshold_means_no_per_fragment_selection_at_all(
+    fragments: FragmentScore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Both fractions unset admits everything, and the annotator's every
+    # call today is shaped so.  That case does not run the predicate per
+    # fragment only to hear "yes" each time (gain#1157): pinned by
+    # counting its calls.  A threshold given still consults it.
+    calls: list[tuple[int, int]] = []
+    real = fragment_module.overlap_fractions_admit
+
+    def counting(rec_begin: int, rec_end: int, *args: Any, **kw: Any) -> bool:
+        calls.append((rec_begin, rec_end))
+        return real(rec_begin, rec_end, *args, **kw)
+
+    monkeypatch.setattr(fragment_module, "overlap_fractions_admit", counting)
+
+    with fragments.open() as score:
+        unfiltered = list(score.get_fragment_scores_overlapping_region(
+            "1", 100, 199))
+        assert [v for _, _, (v,) in unfiltered] == [3.0, 1.0, 2.0, 4.0]
+        assert calls == []
+
+        filtered = list(score.get_fragment_scores_overlapping_region(
+            "1", 100, 199, min_region_overlap_fraction=0.5))
+
+    assert [v for _, _, (v,) in filtered] == [3.0, 1.0]
+    assert len(calls) == 4
+
+
 def test_the_two_fractions_combine_with_and(
     fragments: FragmentScore,
 ) -> None:
