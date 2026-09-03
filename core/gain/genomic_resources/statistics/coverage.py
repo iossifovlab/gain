@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -38,7 +38,9 @@ from gain.genomic_resources.statistics.base_statistic import (
 from gain.genomic_resources.statistics.length_histogram import (
     LENGTH_HISTOGRAM_BIN_COUNT,
     accumulate_bins,
+    binwise_sum,
     has_counts_to_plot,
+    histogram_on_this_ladder,
     length_histogram_bin_index,
     plot_length_histogram,
 )
@@ -555,36 +557,45 @@ class CoverageStatistics(Statistic):
     def covered_global(self) -> int:
         return sum(region.covered for region in self._regions.values())
 
-    def _summaries(
-        self, summary_of: _SummaryOf,
+    def _segment_summaries(
+        self,
     ) -> dict[str, tuple[int, list[int]]] | None:
-        """Per-chromosome summaries of one group, or ``None`` if any
+        """Per-chromosome segment summaries, or ``None`` if any
         chromosome lacks them -- a partial global would silently
-        understate."""
+        understate.
+
+        All-or-nothing, and that is the whole rule the four accessors
+        below share.  It was once parameterised over a table of optional
+        GROUPS, because fragments were a second one; they became a
+        statistic of their own in gain#1127 and segments are the only
+        group left, so the table and its ``summary_of`` callable went
+        with them.
+        """
         summaries = {}
         for chrom, region in self._regions.items():
-            summary = summary_of(region)
+            summary = region.segment_summary()
             if summary is None:
                 return None
             summaries[chrom] = summary
         return summaries
 
-    def _counts_by_chromosome(self, summary_of: _SummaryOf) -> dict[str, int]:
-        summaries = self._summaries(summary_of)
+    def segments_by_chromosome(self) -> dict[str, int]:
+        summaries = self._segment_summaries()
         if summaries is None:
             return {}
         return {chrom: count for chrom, (count, _) in summaries.items()}
 
-    def _count_global(self, summary_of: _SummaryOf) -> int | None:
-        summaries = self._summaries(summary_of)
+    def segments_global(self) -> int | None:
+        summaries = self._segment_summaries()
         if summaries is None:
             return None
         return sum(count for count, _ in summaries.values())
 
-    def _lengths_by_chromosome(
-        self, summary_of: _SummaryOf,
-    ) -> dict[str, list[int]]:
-        summaries = self._summaries(summary_of)
+    def segment_lengths_by_chromosome(self) -> dict[str, list[int]]:
+        """Per-chromosome length histograms -- the read API for the
+        per-chromosome data the statistics file stores (rendered
+        consumers use the global roll-up; gain#776 reads these)."""
+        summaries = self._segment_summaries()
         if summaries is None:
             return {}
         return {
@@ -592,35 +603,13 @@ class CoverageStatistics(Statistic):
             for chrom, (_, histogram) in summaries.items()
         }
 
-    def _lengths_global(self, summary_of: _SummaryOf) -> list[int] | None:
-        summaries = self._summaries(summary_of)
-        if summaries is None:
-            return None
-        return self._binwise_sum(
-            histogram for _, histogram in summaries.values())
-
-    def segments_by_chromosome(self) -> dict[str, int]:
-        return self._counts_by_chromosome(RegionCoverage.segment_summary)
-
-    def segments_global(self) -> int | None:
-        return self._count_global(RegionCoverage.segment_summary)
-
-    def segment_lengths_by_chromosome(self) -> dict[str, list[int]]:
-        """Per-chromosome length histograms -- the read API for the
-        per-chromosome data the statistics file stores (rendered
-        consumers use the global roll-up; gain#776 reads these)."""
-        return self._lengths_by_chromosome(RegionCoverage.segment_summary)
-
     def segment_lengths_global(self) -> list[int] | None:
         """The bin-wise sum of the per-chromosome length histograms."""
-        return self._lengths_global(RegionCoverage.segment_summary)
-
-    @staticmethod
-    def _binwise_sum(histograms: Iterable[list[int]]) -> list[int]:
-        merged = [0] * LENGTH_HISTOGRAM_BIN_COUNT
-        for histogram in histograms:
-            accumulate_bins(merged, histogram)
-        return merged
+        summaries = self._segment_summaries()
+        if summaries is None:
+            return None
+        return binwise_sum(
+            histogram for _, histogram in summaries.values())
 
     def add_value(self, value: Any) -> None:  # ruff: ignore[unused-method-argument]
         raise TypeError(
@@ -641,38 +630,28 @@ class CoverageStatistics(Statistic):
 
     def serialize(self) -> str:
         # One walk of the regions serves the per-chromosome entries and
-        # the global roll-up, for every optional group; a group's global
-        # keys are written only when EVERY chromosome has that summary
-        # (a partial global would silently understate).
+        # the global roll-up.  The segment keys are written per
+        # chromosome wherever that chromosome has them, and globally only
+        # when EVERY chromosome does -- a partial global would silently
+        # understate.
         chromosomes: dict[str, dict[str, Any]] = {}
-        rollups: dict[str, dict[str, tuple[int, list[int]]] | None] = {
-            name: {} for name, _ in _STORED_SUMMARIES}
         for chrom, region in self._regions.items():
             entry: dict[str, Any] = {
                 "covered_positions": region.covered,
             }
-            for name, summary_of in _STORED_SUMMARIES:
-                summary = summary_of(region)
-                if summary is None:
-                    rollups[name] = None
-                    continue
-                entry[f"{name}_count"] = summary[0]
-                entry[f"{name}_length_histogram"] = summary[1]
-                held = rollups[name]
-                if held is not None:
-                    held[chrom] = summary
+            summary = region.segment_summary()
+            if summary is not None:
+                entry["segment_count"] = summary[0]
+                entry["segment_length_histogram"] = summary[1]
             chromosomes[chrom] = entry
         global_entry: dict[str, Any] = {
             "covered_positions": self.covered_global(),
         }
-        for name, _ in _STORED_SUMMARIES:
-            held = rollups[name]
-            if held is None:
-                continue
-            global_entry[f"{name}_count"] = sum(
-                count for count, _ in held.values())
-            global_entry[f"{name}_length_histogram"] = self._binwise_sum(
-                histogram for _, histogram in held.values())
+        global_segments = self.segments_global()
+        if global_segments is not None:
+            global_entry["segment_count"] = global_segments
+            global_entry["segment_length_histogram"] = \
+                self.segment_lengths_global()
         return json.dumps({
             "format_version": 1,
             "chromosomes": chromosomes,
@@ -692,7 +671,7 @@ class CoverageStatistics(Statistic):
         for chrom, counts in data["chromosomes"].items():
             result.fold_region(RegionCoverage.frozen(
                 chrom, int(counts["covered_positions"]),
-                _read_stored_summary(counts, "segment")))
+                _read_stored_summary(counts)))
         return result
 
 
@@ -1161,26 +1140,14 @@ def save_and_plot_coverage(
         plot_length_histogram(outfile, lengths, "segment")
 
 
-# How a region answers for each optional group the statistics file
-# stores, keyed by the JSON key prefix.  One table, read by the
-# serializer, the reader and the all-or-nothing roll-up alike, so a
-# group cannot be written in a shape nothing reads back.
-_SummaryOf = Callable[[RegionCoverage], "tuple[int, list[int]] | None"]
-
-_STORED_SUMMARIES: tuple[tuple[str, _SummaryOf], ...] = (
-    ("segment", RegionCoverage.segment_summary),
-)
-
-
 def _read_stored_summary(
-    entry: dict[str, Any], name: str,
+    entry: dict[str, Any],
 ) -> tuple[int, list[int]] | None:
-    """One group's count and histogram out of a chromosome entry."""
-    if f"{name}_count" not in entry:
+    """The segment count and histogram out of a chromosome entry."""
+    if "segment_count" not in entry:
         return None
-    histogram = [int(count) for count in entry[f"{name}_length_histogram"]]
-    # A histogram of any other length was binned on foreign edges; it
-    # cannot merge with this code's fixed bins, so it reads as unknown.
-    if len(histogram) != LENGTH_HISTOGRAM_BIN_COUNT:
+    histogram = histogram_on_this_ladder(
+        entry.get("segment_length_histogram"))
+    if histogram is None:
         return None
-    return (int(entry[f"{name}_count"]), histogram)
+    return (int(entry["segment_count"]), histogram)

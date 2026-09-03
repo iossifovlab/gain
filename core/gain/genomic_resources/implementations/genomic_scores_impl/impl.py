@@ -76,14 +76,6 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         super().__init__(resource)
         self.score: GenomicScore = build_score_from_resource(resource)
         self._render_repo: GenomicResourceRepo | None = None
-        # Held for the life of this object, which is built per render,
-        # so a page costs at most one read of the file over an HTTP or
-        # S3 repository.  It had two readers until gain#1127 gave
-        # fragments a statistic of their own; the Coverage section is
-        # the only one left, so today this saves nothing and is kept as
-        # the cheaper shape to hold rather than as a live optimisation.
-        self._coverage_statistics: CoverageStatistics | None = None
-        self._coverage_statistics_read = False
 
     def get_config_histograms(self) -> dict[str, Any]:
         """Collect all configurations of histograms for the genomic score."""
@@ -145,19 +137,18 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         lazily as resources are rebuilt (``calc_statistics_hash`` does
         not know about this file), so a resource built before the
         statistic existed simply has nothing to show yet.
+
+        Read on each call, like its two siblings.  It was memoized while
+        the Coverage and Fragments sections both read this file; since
+        gain#1127 gave fragments a file of their own there is one
+        caller, called once per render, and the memo saved nothing.
         """
-        if self._coverage_statistics_read:
-            return self._coverage_statistics
         try:
             content = self.resource.get_file_content(
                 COVERAGE_STATISTICS_FILE)
         except FileNotFoundError:
-            statistics = None
-        else:
-            statistics = CoverageStatistics.deserialize(content)
-        self._coverage_statistics = statistics
-        self._coverage_statistics_read = True
-        return statistics
+            return None
+        return CoverageStatistics.deserialize(content)
 
     def get_allele_statistics(self) -> AlleleStatistics | None:
         """The resource's allele statistics, or ``None`` if not built.
@@ -582,6 +573,10 @@ class AlleleScoreImplementation(GenomicScoreImplementation):
 
 class FragmentScoreImplementation(GenomicScoreImplementation):
     """Assists in the management of a fragment score resource.
+
+    Its page is the genomic-score page plus one section and minus
+    another -- Fragments, which only this kind publishes, and no
+    Coverage, which since gain#1127 only a position score has.
 
     Carries no statistics behaviour of its own: a fragment's weight-1 rule
     is declared on ``FragmentScore`` (``record_weight``) and read by

@@ -95,6 +95,26 @@ def _mixed_allele_score(tmp_path: pathlib.Path) -> GenomicResource:
     )
 
 
+def _a_fragment_score(tmp_path: pathlib.Path) -> GenomicResource:
+    """One fragment row -- enough for any question about SECTIONS.
+
+    The three tests that use it ask which sections a fragment-score page
+    renders, not what any of them say, so the smallest resource of the
+    kind is the whole fixture.
+    """
+    return (
+        a_fragment_score()
+        .with_score("score", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  score
+            chr1   10         100      0.1
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
 def _built_statistics(
     tmp_path: pathlib.Path,
     resource: GenomicResource,
@@ -973,17 +993,7 @@ def test_an_unbuilt_fragment_score_offers_no_coverage_either(
     # the honest rendering is no section at all rather than the "not
     # computed" that invites one.  Gating on the payload would collapse
     # never applicable and not yet built into the same blank.
-    resource = (
-        a_fragment_score()
-        .with_score("score", "float")
-        .with_data(
-            """
-            chrom  pos_begin  pos_end  score
-            chr1   10         100      0.1
-            """)
-        .with_tabix()
-        .build_resource(tmp_path)
-    )
+    resource = _a_fragment_score(tmp_path)
 
     page = _info_page(resource)
 
@@ -1003,17 +1013,7 @@ def test_the_coverage_section_is_absent_on_a_fragment_score(
     # than one permanently reading "not computed" -- the rule the
     # Alleles section already follows on this kind, and the one the
     # allele-score page follows for Coverage.
-    resource = (
-        a_fragment_score()
-        .with_score("score", "float")
-        .with_data(
-            """
-            chrom  pos_begin  pos_end  score
-            chr1   10         100      0.1
-            """)
-        .with_tabix()
-        .build_resource(tmp_path)
-    )
+    resource = _a_fragment_score(tmp_path)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     page = _info_page(resource)
@@ -1030,17 +1030,7 @@ def test_the_alleles_section_is_absent_on_a_fragment_score(
     # The kind the section reads most misleadingly on: a fragment row
     # has no ref/alt at all, so "not computed" suggests a rebuild would
     # fill it in, and none ever would.
-    resource = (
-        a_fragment_score()
-        .with_score("score", "float")
-        .with_data(
-            """
-            chrom  pos_begin  pos_end  score
-            chr1   10         100      0.1
-            """)
-        .with_tabix()
-        .build_resource(tmp_path)
-    )
+    resource = _a_fragment_score(tmp_path)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     page = _info_page(resource)

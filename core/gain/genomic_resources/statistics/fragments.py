@@ -43,7 +43,9 @@ from gain.genomic_resources.statistics.length_histogram import (
     LENGTH_BIN_EDGES,
     LENGTH_HISTOGRAM_BIN_COUNT,
     accumulate_bins,
+    binwise_sum,
     has_counts_to_plot,
+    histogram_on_this_ladder,
     length_histogram_bin_index,
     plot_length_histogram,
 )
@@ -75,11 +77,14 @@ class RegionFragments:
         self.start = start
         self.end = end
         self._fragments = 0
-        self._bins = [0] * LENGTH_HISTOGRAM_BIN_COUNT
-        # Set only by :meth:`frozen`, for a stored histogram this code
-        # cannot merge with: it was binned on foreign edges, so the
-        # counts are still exact but the lengths read as unknown.
-        self._lengths_known = True
+        # ``None`` is the unknown state, reached only through
+        # :meth:`frozen` for a stored histogram this code cannot merge
+        # with: it was binned on foreign edges, so the counts stay exact
+        # while the lengths read as unknown.  Held as the absence of the
+        # bins rather than as a flag beside them, so the two cannot
+        # disagree and accumulating into discarded state is a TypeError
+        # rather than silent work.
+        self._bins: list[int] | None = [0] * LENGTH_HISTOGRAM_BIN_COUNT
 
     @classmethod
     def frozen(
@@ -97,10 +102,7 @@ class RegionFragments:
         """
         region = cls(chrom, None, None)
         region._fragments = fragments
-        if bins is None:
-            region._lengths_known = False
-        else:
-            region._bins = list(bins)
+        region._bins = None if bins is None else list(bins)
         return region
 
     def add_fragment(self, length: int) -> None:
@@ -111,6 +113,8 @@ class RegionFragments:
         fragment is counted once at its true length however the contig
         was split.
         """
+        assert self._bins is not None, \
+            "a frozen region does not accumulate"
         self._fragments += 1
         self._bins[length_histogram_bin_index(length)] += 1
 
@@ -131,6 +135,8 @@ class RegionFragments:
         """
         if not lengths.size:
             return
+        assert self._bins is not None, \
+            "a frozen region does not accumulate"
         indices = np.searchsorted(LENGTH_BIN_EDGES, lengths, side="right") - 1
         # A length below 1 sorts before the first edge and lands at -1;
         # reading that back is free, where a separate ``min()`` would be
@@ -151,7 +157,7 @@ class RegionFragments:
 
     def length_histogram(self) -> list[int] | None:
         """The region's fragment-length bins, or ``None`` if unknown."""
-        if not self._lengths_known:
+        if self._bins is None:
             return None
         return list(self._bins)
 
@@ -168,8 +174,10 @@ class RegionFragments:
         refuse_unmergeable(_MERGE_FAILURE, self, other)
 
         self._fragments += other._fragments
-        self._lengths_known = self._lengths_known and other._lengths_known
-        accumulate_bins(self._bins, other._bins)
+        if self._bins is None or other._bins is None:
+            self._bins = None
+        else:
+            accumulate_bins(self._bins, other._bins)
         self.end = other.end
 
 
@@ -224,18 +232,15 @@ class FragmentStatistics(Statistic):
         would silently understate, the same all-or-nothing rule the
         coverage twin applies to its own optional groups.
         """
-        histograms = [
-            region.length_histogram()
-            for region in self._regions.values()
-        ]
-        if not histograms or any(
-                histogram is None for histogram in histograms):
+        histograms = []
+        for region in self._regions.values():
+            histogram = region.length_histogram()
+            if histogram is None:
+                return None
+            histograms.append(histogram)
+        if not histograms:
             return None
-        total = [0] * LENGTH_HISTOGRAM_BIN_COUNT
-        for histogram in histograms:
-            assert histogram is not None
-            accumulate_bins(total, histogram)
-        return total
+        return binwise_sum(histograms)
 
     def add_value(self, value: Any) -> None:  # ruff: ignore[unused-method-argument]
         raise TypeError(
@@ -408,11 +413,4 @@ def save_and_plot_fragments(
 
 def _read_stored_histogram(entry: dict[str, Any]) -> list[int] | None:
     """One chromosome's length histogram, or ``None`` if unusable."""
-    if "fragment_length_histogram" not in entry:
-        return None
-    histogram = [int(count) for count in entry["fragment_length_histogram"]]
-    # A histogram of any other length was binned on foreign edges; it
-    # cannot merge with this code's fixed bins, so it reads as unknown.
-    if len(histogram) != LENGTH_HISTOGRAM_BIN_COUNT:
-        return None
-    return histogram
+    return histogram_on_this_ladder(entry.get("fragment_length_histogram"))

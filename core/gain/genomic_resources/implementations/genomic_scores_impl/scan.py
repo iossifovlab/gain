@@ -606,12 +606,16 @@ def do_histogram_bulk(
             arrays: RecordArrays,
             result: dict[str, Histogram],
             region: tuple[str, int | None, int | None],
-            # Shadows this function's own ``score`` parameter, and must:
-            # the name is part of the accumulator type ``accumulate`` is
-            # assigned from, which ``_accumulate_arrays`` spells
-            # ``score``.  Harmless -- nothing in here reads the outer
-            # one; the ``bulk_region_scan`` call that does is below, at
-            # this function's own scope.
+            # Shadows this function's own ``score`` parameter, and must.
+            # ``accumulate``'s type is INFERRED from the
+            # ``_accumulate_arrays`` assigned to it just above -- a
+            # ``def``, whose parameter names are part of that type -- so
+            # renaming this one is an assignment error, not a style
+            # choice.  (``bulk_region_scan``'s own ``Callable[...]``
+            # annotation carries no names; this is not that type.)
+            # Harmless -- nothing in here reads the outer one; the
+            # ``bulk_region_scan`` call that does is below, at this
+            # function's own scope.
             score: GenomicScore,
         ) -> None:
             _accumulate_arrays(
@@ -973,11 +977,6 @@ def do_histogram_task(
     re-raised, for the reason :func:`do_min_max_task` gives.
 
     Coverage rides the same read: a kind whose rows have a span to
-    A fragment score gets a :class:`RegionFragments`, asked for
-    independently of the coverage question above: the two statistics
-    share a scan, not a carrier, so a kind publishes either without the
-    other (gain#1127).
-
     union gets a :class:`RegionCoverage` accumulated by whichever
     path serves the histograms, carried out in the task's RETURN
     value — a mutated argument would not travel under a distributed
@@ -986,7 +985,10 @@ def do_histogram_task(
     one extra condition on the bulk path: it needs the nucleotides,
     so a backend that will not serve them sends the region back to
     the per-record read rather than to a statistic with no class
-    data.
+    data.  A fragment score's :class:`RegionFragments` rides it too,
+    asked for independently of the coverage question: the two share a
+    scan, not a carrier, so a kind publishes either without the other
+    (gain#1127).
 
     ONE score serves the whole invocation -- the allele probe below, the
     bulk gate, and whichever scan takes the region -- where each of those
@@ -1006,9 +1008,6 @@ def do_histogram_task(
             chrom, start, end,
             rows_are_disjoint=resource_type
             in _NON_OVERLAPPING_ROW_RESOURCE_TYPES)
-    # Asked INDEPENDENTLY of the coverage question, which is the whole
-    # point of the split: the two statistics share a scan, not a
-    # carrier, so a kind can publish either without the other.
     fragments = None
     if resource_type in _FRAGMENT_STATISTICS_RESOURCE_TYPES:
         fragments = RegionFragments(chrom, start, end)
