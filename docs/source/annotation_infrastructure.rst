@@ -185,6 +185,44 @@ The example below uses an ``aggregator`` and also renames the output attribute t
           name: <renamed_score_attribute>
           aggregator: <aggregator>
 
+A region may also contain positions the score resource does not cover, and
+positions it covers with an NA value. By default these contribute nothing:
+every aggregator skips them, so the ``mean`` of a CNV is the mean over its
+covered positions alone. Set ``none_value_replacement`` on the attribute to
+make them count instead — each such position contributes the replacement,
+weighted like any other position, so a CNV's ``mean`` phastCons treats every
+uncovered base as the replacement value.
+
+.. code:: yaml
+
+    - position_score_annotator:
+        resource_id: <position score resource ID>
+        attributes:
+        - source: <source_score_attribute>
+          aggregator: mean
+          none_value_replacement: 0.0
+
+The replacement must be of a type the score can mean — an integer for an
+``int`` score, an integer or a float for a ``float`` score, a string for a
+``str`` score, a boolean for a ``bool`` score, with ``true``/``false``
+deliberately *not* accepted as numbers. A replacement of the wrong type is
+refused when the pipeline is loaded, not when the first region reaches it. A
+score resource may declare the parameter in its ``default_annotation``, in
+which case a pipeline attribute that names its own value overrides it, and an
+explicit ``none_value_replacement: null`` turns it off.
+
+Like ``aggregator``, ``none_value_replacement`` applies only where values are
+actually aggregated over a region. Three kinds of annotatable never reach that
+fold and are unaffected by it, answering as they would with no replacement
+configured:
+
+* a substitution, which reads a single position;
+* an annotatable on a chromosome the score resource does not carry;
+* an annotatable longer than the annotator's ``region_length_cutoff``
+  (500 000 bp by default), which is declined before it is read. Note that
+  this is the case for large CNVs — raise ``region_length_cutoff`` on the
+  annotator if such a CNV is to be annotated at all.
+
 
 allele_score_annotator
 ************************
