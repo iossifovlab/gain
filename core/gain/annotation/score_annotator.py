@@ -333,13 +333,10 @@ phastCons, phyloP, FitCons2, etc.
         values = self.position_score.get_scores_in_region_agg(
             annotatable.chrom, annotatable.pos, annotatable.pos_end,
             self._region_queries)
-        # The names are read HERE and not cached beside the queries: a
-        # pipeline with the same attribute name twice renames the later
-        # ones (``resolve_repeated_attributes``) after every annotator has
-        # been constructed, so a tuple built in ``__init__`` would key the
-        # answers by names the pipeline has since moved away from.  The
-        # sources and aggregators the queries hold are not rewritten, so
-        # those stay cached.
+        # The names are read HERE and not cached beside the queries, for
+        # the reason ``AggregatedValues`` states.  The sources and
+        # aggregators the queries hold are not rewritten, so those stay
+        # cached.
         return AggregatedValues(zip(
             (attr.name for attr in self._attributes), values, strict=True))
 

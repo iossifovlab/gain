@@ -9,7 +9,8 @@ announces it through
 from __future__ import annotations
 
 import copy
-from collections.abc import Generator, Iterator, Sequence
+from collections.abc import Generator, Iterable, Iterator, Sequence
+from dataclasses import dataclass
 from typing import (
     Any,
     ClassVar,
@@ -42,6 +43,16 @@ from gain.genomic_resources.score_filter import (
 
 from ..aggregators import (
     AGGREGATOR_SCHEMA,
+    Aggregator,
+    ScoreAggregationQuery,
+)
+from .aggregation import (
+    QUERY_AGGREGATOR_REMEDY,
+    build_region_aggregator,
+    fold_region_segments,
+    request_score_ids,
+    resolve_aggregator_name,
+    score_def_for,
 )
 from .base import GenomicScore
 from .records import (
@@ -51,6 +62,67 @@ from .records import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class FragmentAggregate:
+    """What one folding read saw, and what it reduced to.
+
+    Both halves come off ONE walk of the region, which is the reason they
+    are answered together rather than by two reads a caller would have to
+    trust to agree: nothing a caller can do makes ``count`` disagree with
+    the fragments ``values`` was folded from.
+
+    ``values`` is parallel to the QUERIES asked, not keyed by score id.
+    One score requested twice with two aggregators -- a source exposed as
+    both a min and a max -- is two queries and therefore two values, which
+    a mapping keyed by score id would silently collapse to one.
+
+    ``count`` is the number of fragments the walk SAW: those overlapping
+    the region, that the overlap fractions admitted, and that
+    ``score_filter`` kept.  An empty region and a filter that rejected
+    every fragment are both ``0`` -- the distinction gain#820 built for
+    alleles is deliberately not drawn here, keeping ADR 0017's reasoning
+    that a region is spanned by fragments as a matter of course, so "none
+    cover it" is a count of zero rather than an absence.
+    """
+
+    count: int
+    values: tuple[ScoreValue, ...]
+
+
+#: One fragment as this plane reports it -- its own unclipped span, then
+#: the values for the scores asked for, positionally.  Written once here
+#: rather than spelled out at each end of the pass-through below.
+_Segment = tuple[int, int, tuple[ScoreValue, ...]]
+
+
+class _CountingStream:
+    """A pass-through over segments that tallies them as they flow.
+
+    The whole reason the folding read can answer a count at all without a
+    second walk.  :func:`~.aggregation.fold_region_segments` consumes the
+    stream itself, so the tally cannot be a local the caller increments --
+    it lives here and is read once the fold has RETURNED.  Reading it
+    before then answers however far the fold happened to have got.
+
+    Kept a class, and kept private, deliberately.  It knows nothing about
+    fragments, so it looks like shared machinery -- but this package
+    promotes a helper into :mod:`.aggregation` when TWO readers must agree
+    on a derivation (see :func:`~.aggregation.request_score_ids`), and
+    this has one.  Should a second kind come to want a per-walk tally, the
+    move is to make the fold report what it folded and delete this, rather
+    than to relocate it.
+    """
+
+    def __init__(self, segments: Iterable[_Segment]) -> None:
+        self._segments = segments
+        self.count = 0
+
+    def __iter__(self) -> Generator[_Segment, None, None]:
+        for segment in self._segments:
+            self.count += 1
+            yield segment
 
 
 class FragmentScore(GenomicScore):
@@ -497,3 +569,182 @@ class FragmentScore(GenomicScore):
             scores=[self._resolve_single_score(score)],
             score_filter=score_filter)
         return ((beg, end_, values[0]) for beg, end_, values in rows)
+
+    # -- The folding read ---------------------------------------------------
+    #
+    # ``_agg`` is on the overlapping-region predicate ALONE, the one with a
+    # consumer -- as ``PositionScore`` grew ``_agg`` only where something
+    # needed it.  A predicate that later wants one adds it then.
+
+    def _resolve_fragment_aggregation_queries(
+        self, queries: Sequence[ScoreAggregationQuery] | None,
+    ) -> tuple[list[tuple[str, str]], list[Aggregator]]:
+        """Resolve queries to fold requests, each with a fresh aggregator.
+
+        Built from the kind-neutral :func:`~.aggregation.score_def_for` and
+        :func:`~.aggregation.resolve_aggregator_name` rather than routed
+        through :func:`~.aggregation.resolve_aggregator_requests`, which
+        serves :meth:`~.base.GenomicScore.aggregate_region` alone.  The
+        temptation is real: that function returns exactly the
+        ``(score_id, aggregator)`` pairs wanted here, and already expands a
+        ``None`` request list to every score.
+
+        Two routes to it, and the distinction matters.  PROJECTING at the
+        call site -- handing it ``[(q.score, q.aggregator) for q in
+        queries]`` -- is type-safe and would work; what it needs is a
+        ``remedy`` parameter, since that function hardcodes
+        :data:`~.aggregation.PAIR_AGGREGATOR_REMEDY` and a query surface
+        must say :data:`~.aggregation.QUERY_AGGREGATOR_REMEDY`.  That is a
+        change to a function :meth:`~.base.GenomicScore.aggregate_region`
+        also calls, and it is not made here.
+
+        WIDENING it to :class:`~..aggregators.ScoreAggregationQuery` is the
+        route that must not be taken, and it is the one that looks
+        tidier.  Since gain#1121 made the position query a SUBCLASS of
+        that, a widened signature would accept a
+        :class:`~..aggregators.PositionScoreAggregationQuery` too, and its
+        pair return has nowhere to put ``none_value_replacement``: a type
+        error today would become a silent drop.
+
+        Private, unlike :meth:`~.position.PositionScore
+        .resolve_aggregation_queries`, which gain#1131 made public so the
+        position annotator could refuse a bad attribute as the pipeline
+        LOADS.  A fragment annotator has nothing to refuse there: an
+        attribute naming no aggregator is not an error on this kind, it is
+        one that answers the fragment count instead.
+
+        Aggregators are built FRESH per call, never held on the score: an
+        aggregator is a mutable accumulator and explicitly not thread-safe,
+        so a reused one would have two concurrent reads accumulating into
+        each other.  That is a deliberate trade against the annotator's
+        build-once-and-clear reuse, and it costs an
+        :meth:`~..aggregators.Aggregator.build` per query per call.
+
+        It removes ONE hazard, not the class of them: it does not make the
+        read thread-safe, and this is deliberately not claimed.  The
+        TABLE's line iterator is shared too, so two concurrent region reads
+        of one open score still collide -- on a tabix-backed table with a
+        ``generator already executing`` -- exactly as
+        :meth:`get_fragment_scores_overlapping_region` says under "one live
+        region read per score at a time".  Fresh aggregators mean a caller
+        that serialises its reads needs no further care; they do not
+        license concurrent ones.
+
+        ``queries`` of ``None`` means every score the resource defines,
+        each with its own default aggregator.
+        """
+        if queries is None:
+            queries = [
+                ScoreAggregationQuery(score_id)
+                for score_id in self.get_all_scores()
+            ]
+        requests = []
+        for query in queries:
+            score_def = score_def_for(
+                query.score,
+                score_definitions=self.score_definitions,
+                resource_id=self.resource_id)
+            requests.append((
+                query.score,
+                resolve_aggregator_name(
+                    query.aggregator, score_def,
+                    resource_id=self.resource_id,
+                    remedy=QUERY_AGGREGATOR_REMEDY)))
+        aggregators = [
+            build_region_aggregator(
+                score_id, aggregator, resource_id=self.resource_id)
+            for score_id, aggregator in requests
+        ]
+        return requests, aggregators
+
+    def get_fragment_scores_overlapping_region_agg(
+        self, chrom: str, start: int, end: int,
+        *,
+        queries: Sequence[ScoreAggregationQuery] | None = None,
+        min_region_overlap_fraction: float | None = None,
+        min_fragment_overlap_fraction: float | None = None,
+        score_filter: ScoreFilter | None = None,
+    ) -> FragmentAggregate:
+        """Reduce the fragments overlapping a region to one value per query.
+
+        The plane's folding read: what
+        :meth:`get_fragment_scores_overlapping_region` yields, already
+        reduced, in ONE pass that also counts what it saw.  The selection
+        is that read's exactly -- the two overlap fractions and
+        ``score_filter`` mean what they mean there, and a fragment is
+        weighed by :meth:`record_weight`, which counts it once however
+        long it is.
+
+        Answers a :class:`FragmentAggregate`, which documents why the
+        count and the values travel together and what ``count`` counts.
+
+        Deliberately NOT built on
+        :meth:`~.base.GenomicScore.aggregate_region`, despite reducing the
+        same way: that surface takes no ``score_filter``, and its
+        ``CountAggregator`` has the wrong count semantics here -- it skips
+        ``None`` values, so it counts non-null VALUES rather than
+        fragments, and answers ``None`` rather than ``0`` for a region no
+        fragment overlaps.
+
+        THIS READ holds nothing per fragment: the stream is folded as it
+        arrives and never materialised.  Whether the CALL is constant in
+        the number of fragments is then the AGGREGATORS' business, and
+        they divide three ways:
+
+        - constant -- ``max``, ``min``, ``mean``, ``count``, ``bool``;
+        - one entry per DISTINCT value -- ``mode``, ``value_count``, so
+          bounded by how many values a resource has rather than by how
+          many fragments a region holds;
+        - one entry per FRAGMENT -- ``list``, ``median``, ``concatenate``
+          and ``join``.  ``join(,)`` is the DEFAULT for a ``str`` score,
+          which makes this the ordinary case for a CNV collection rather
+          than an exotic one.
+
+        Under the last group the fold still allocates per fragment.  What
+        this read removes is the SECOND copy the annotator used to build
+        beside it, which is a halving there and a flattening everywhere
+        else.
+        """
+        requests, aggregators = self._resolve_fragment_aggregation_queries(
+            queries)
+        segments = _CountingStream(
+            self.get_fragment_scores_overlapping_region(
+                chrom, start, end,
+                scores=request_score_ids(requests),
+                score_filter=score_filter,
+                min_region_overlap_fraction=min_region_overlap_fraction,
+                min_fragment_overlap_fraction=min_fragment_overlap_fraction))
+        values = fold_region_segments(
+            segments, aggregators, requests, weigh=self.record_weight)
+        return FragmentAggregate(segments.count, tuple(values))
+
+    def get_fragment_score_overlapping_region_agg(
+        self, chrom: str, start: int, end: int,
+        *,
+        score: str | None = None,
+        aggregator: str | None = None,
+        min_region_overlap_fraction: float | None = None,
+        min_fragment_overlap_fraction: float | None = None,
+        score_filter: ScoreFilter | None = None,
+    ) -> FragmentAggregate:
+        """Reduce the fragments overlapping a region for ONE score.
+
+        The singular form of
+        :meth:`get_fragment_scores_overlapping_region_agg`, which documents
+        the selection and the reduction; ``score`` of ``None`` is honoured
+        only when the resource declares exactly one.
+
+        Alone among this plane's singular reads it does NOT unwrap: it
+        answers the same :class:`FragmentAggregate`, whose ``values`` is a
+        one-element tuple.  The others have a bare value to answer with;
+        this one's answer is a count and a reduction together, and the
+        count is a property of the QUERY rather than of the score named --
+        so there is nothing for a bare value to be.
+        """
+        return self.get_fragment_scores_overlapping_region_agg(
+            chrom, start, end,
+            queries=[ScoreAggregationQuery(
+                self._resolve_single_score(score), aggregator)],
+            min_region_overlap_fraction=min_region_overlap_fraction,
+            min_fragment_overlap_fraction=min_fragment_overlap_fraction,
+            score_filter=score_filter)

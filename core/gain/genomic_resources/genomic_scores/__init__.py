@@ -57,7 +57,7 @@ from .builders import (
     build_score_from_resource,
     build_score_from_resource_id,
 )
-from .fragment import FragmentScore
+from .fragment import FragmentAggregate, FragmentScore
 from .position import PositionScore
 from .records import (
     AlleleRecordArrays,
@@ -73,6 +73,7 @@ __all__ = [
     "DEFAULT_VALUE_ARRAYS_BATCH_SIZE",
     "AlleleRecordArrays",
     "AlleleScore",
+    "FragmentAggregate",
     "FragmentScore",
     "GenomicScore",
     "PositionScore",

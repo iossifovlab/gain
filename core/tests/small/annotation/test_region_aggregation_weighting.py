@@ -14,10 +14,12 @@ longer such an aggregator to watch: what would once have been a silent
 change of weighting is now a disagreement between the annotator and the
 score, which is the sharper thing to assert anyway.
 
-An allele line and a fragment each count exactly once, however long they are.
-Those two still reduce through the base, so they are still pinned by
-watching the calls -- and they are what the weighted seam must *not*
-change.
+An allele line and a fragment each count exactly once, however long they
+are.  gain#1124 moved the FRAGMENT the same way the position score moved,
+so it is pinned the same way: against the score's own answer, with an
+aggregator that can tell the two weighting rules apart.  The allele line
+still reduces through the base, so it is still pinned by watching the
+calls -- and it is what the weighted seam must *not* change.
 """
 
 import pathlib
@@ -29,6 +31,7 @@ from gain.annotation.annotatable import Region
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.genomic_resources.genomic_scores import (
+    build_fragment_score_from_resource,
     build_position_score_from_resource,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -177,22 +180,47 @@ def test_an_allele_line_counts_once_however_wide_the_region(
     assert result["freq"] == 0.3
 
 
+def _fragment_score_answer(
+    fixture_repo: GenomicResourceRepo, pos: int, pos_end: int,
+) -> Any:
+    """What the fragment score itself reduces that region to."""
+    score = build_fragment_score_from_resource(
+        fixture_repo.get_resource("fragments"))
+    with score.open() as opened:
+        return opened.get_fragment_score_overlapping_region_agg(
+            "chr1", pos, pos_end, score="frequency", aggregator="mean",
+        ).values[0]
+
+
 def test_a_fragment_counts_once_however_long_it_is(
     fixture_repo: GenomicResourceRepo,
 ) -> None:
-    calls: list[tuple[Any, int]] = []
+    """Two fragments of wildly different length average to their midpoint.
+
+    Ten bases of 0.1 and a hundred and eighty-one of 0.2.  Counting each
+    fragment once gives 0.15; weighing them by the span they cover, as a
+    position-score record is weighed, would give about 0.195.  ``mean`` is
+    what tells the two apart -- under ``max`` both rules answer 0.2.
+
+    Pinned against the SCORE's own answer rather than by watching values
+    arrive at an annotator-owned aggregator, for the reason the module
+    docstring gives: since gain#1124 the fragment score reduces for
+    itself, so there is no such aggregator left to watch.
+    """
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - fragment_score:
             resource_id: fragments
             attributes:
             - source: frequency
               name: frequency
-              aggregator: max
+              aggregator: mean
         """), fixture_repo)
 
     with pipeline:
-        _record_aggregator_calls(pipeline, calls)
         result = pipeline.annotate(Region("chr1", 10, 200))
 
-    assert calls == [(0.1, 1), (0.2, 1)]
-    assert result["frequency"] == 0.2
+    assert result["frequency"] == pytest.approx((0.1 + 0.2) / 2)
+    assert result["frequency"] != pytest.approx(
+        (0.1 * 10 + 0.2 * 181) / 191)
+    assert result["frequency"] == _fragment_score_answer(
+        fixture_repo, 10, 200)

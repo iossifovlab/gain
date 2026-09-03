@@ -13,8 +13,10 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
+from gain.genomic_resources.aggregators import ScoreAggregationQuery
 from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_scores import (
+    FragmentAggregate,
     FragmentScore,
 )
 from gain.genomic_resources.testing.builders import (
@@ -442,3 +444,137 @@ def test_an_unknown_score_id_is_refused_before_the_first_record(
     with fragments.open() as score, \
             pytest.raises(ValueError, match="does not define"):
         getattr(score, method)(*locus, scores=["nope"])
+
+
+# ---------------------------------------------------------------------------
+# The FOLDING read (gain#1124): the plane's one aggregating surface.
+#
+# ``_agg`` exists only on the overlapping-region predicate, the one with a
+# consumer -- as ``PositionScore`` grew ``_agg`` only where something needed
+# it.  What these pin is that the count and the values come off ONE walk, so
+# no fixture can make them disagree.
+# ---------------------------------------------------------------------------
+
+
+def test_the_folding_read_answers_the_fragments_seen_and_their_reduction(
+    fragments: FragmentScore,
+) -> None:
+    """One walk, two answers: how many fragments, and what they reduce to.
+
+    ``v`` is a float, whose default aggregator is ``max``, so the four
+    overlapping fragments reduce to the largest of them.
+    """
+    with fragments.open() as score:
+        aggregate = score.get_fragment_scores_overlapping_region_agg(
+            "1", 100, 199)
+
+    assert aggregate == FragmentAggregate(count=4, values=(4.0,))
+
+
+def test_one_source_asked_twice_answers_twice(
+    fragments: FragmentScore,
+) -> None:
+    """``values`` is parallel to the QUERIES, not keyed by score id.
+
+    A source exposed as both a min and a max is the case a mapping keyed
+    by score id would silently drop; one fetch serves both, and each query
+    keeps its own accumulator over the same column.
+    """
+    with fragments.open() as score:
+        aggregate = score.get_fragment_scores_overlapping_region_agg(
+            "1", 100, 199,
+            queries=[
+                ScoreAggregationQuery("v", "min"),
+                ScoreAggregationQuery("v", "max"),
+            ])
+
+    assert aggregate == FragmentAggregate(count=4, values=(1.0, 4.0))
+
+
+def test_a_region_no_fragment_overlaps_counts_zero(
+    fragments: FragmentScore,
+) -> None:
+    """``0``, not ``None`` -- and the aggregator's own empty answer.
+
+    A contig the resource HAS, so what is being pinned is the empty
+    region rather than an unknown chromosome.
+    """
+    with fragments.open() as score:
+        aggregate = score.get_fragment_scores_overlapping_region_agg(
+            "1", 500, 600)
+
+    assert aggregate == FragmentAggregate(count=0, values=(None,))
+
+
+def test_the_count_and_the_values_come_off_the_same_selected_walk(
+    fragments: FragmentScore,
+) -> None:
+    """What the fractions admit is what is counted AND what is folded.
+
+    Of the four fragments over ``[100, 199]`` only two cover half the
+    region -- ``(50, 149)`` at exactly ``0.5`` and ``(100, 199)`` at
+    ``1.0``.  So the count is ``2`` and the max is ``3.0``.
+
+    This is the one-pass claim made observable: a count taken before the
+    fractions were applied would say ``4``, and a fold over the unselected
+    stream would say ``4.0``.  Neither can happen while both come off one
+    walk.
+    """
+    with fragments.open() as score:
+        aggregate = score.get_fragment_scores_overlapping_region_agg(
+            "1", 100, 199, min_region_overlap_fraction=0.5)
+
+    assert aggregate == FragmentAggregate(count=2, values=(3.0,))
+
+
+def test_a_filter_that_keeps_nothing_also_counts_zero(
+    fragments: FragmentScore,
+) -> None:
+    """The same ``0`` as an empty region, deliberately indistinguishable.
+
+    ``count`` is the fragments the walk KEPT, so a filter rejecting every
+    one of them lands exactly where a region no fragment overlaps lands.
+    gain#820 drew that distinction for alleles; ADR 0017's reasoning says
+    not to draw it here, a region being spanned by fragments as a matter
+    of course.
+    """
+    with fragments.open() as score:
+        aggregate = score.get_fragment_scores_overlapping_region_agg(
+            "1", 100, 199,
+            score_filter=score.compile_filter("v > 100"))
+
+    assert aggregate == FragmentAggregate(count=0, values=(None,))
+
+
+def test_the_singular_folding_read_keeps_its_value_in_a_one_tuple(
+    two_score_fragments: FragmentScore,
+) -> None:
+    """The one singular read on this plane that does NOT unwrap.
+
+    Every other singular form answers the bare value its plural wraps, and
+    :meth:`PositionScore.get_score_in_region_agg` unwraps too.  This one
+    keeps the one-element tuple, because what it answers is not a value
+    but a :class:`FragmentAggregate`: the count belongs to the QUERY, not
+    to any one score, so there is nothing to unwrap it to.
+    """
+    with two_score_fragments.open() as score:
+        aggregate = score.get_fragment_score_overlapping_region_agg(
+            "1", 100, 199, score="freq")
+
+    assert aggregate == FragmentAggregate(count=1, values=(0.25,))
+
+
+def test_no_queries_means_every_score_with_its_own_default(
+    two_score_fragments: FragmentScore,
+) -> None:
+    """``queries=None`` reduces every score the resource defines, in order.
+
+    Each by its own default aggregator, which differ by value type here:
+    ``freq`` is a float and takes ``max``, ``collection`` is a string and
+    takes ``join(,)``.
+    """
+    with two_score_fragments.open() as score:
+        aggregate = score.get_fragment_scores_overlapping_region_agg(
+            "1", 100, 199)
+
+    assert aggregate == FragmentAggregate(count=1, values=(0.25, "SSC"))
