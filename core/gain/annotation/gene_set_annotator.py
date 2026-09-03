@@ -151,9 +151,6 @@ class GeneSetAnnotator(AnnotatorBase):
         This annotator reduces for ITSELF (gain#1133): what it holds is
         an intersection rather than a stream of records, so there is no
         score-side fold to move it onto, and the base no longer has one.
-        A fresh accumulator per attribute per call, built from the
-        attribute's aggregator NAME -- the name resolution is memoised,
-        so nothing outlives the call.
         """
         genes = context.get(self.input_gene_list)
         if genes is None:
@@ -173,6 +170,4 @@ class GeneSetAnnotator(AnnotatorBase):
             if intersecting:
                 in_sets.append(gs.name)
 
-        # Names read HERE, at answer time, for the reason
-        # ``AggregatedValues`` states.
         return fold_own_values(self._attributes, intersections)

@@ -129,12 +129,8 @@ class Aggregator(abc.ABC):
         resolves TO -- a class and its parameters, nothing mutable -- and
         never the accumulator built from it.
         """
-        if isinstance(source, str):
-            aggregator_class, parameters = _class_and_parameters(source)
-            return aggregator_class(*parameters)
-        definition = AggregatorDefinition.coerce(source)
-        aggregator_class = get_aggregator_class(definition.aggregator_type)
-        return aggregator_class(*definition.parameters)
+        aggregator_class, parameters = _resolve(source)
+        return aggregator_class(*parameters)
 
     @staticmethod
     def resolve_class(source: AggregatorSource) -> type[Aggregator]:
@@ -144,15 +140,14 @@ class Aggregator(abc.ABC):
         than an accumulator to answer it with: :attr:`output_value_type`
         and :meth:`preserves_domain` are both class-level, so an attribute
         that only knows an aggregator's name can describe its output
-        without building one (gain#1133).  It shares
-        :func:`_class_and_parameters` with :meth:`build`, so a name
-        refused there is refused here, in the same words.
+        without building one (gain#1133).
+
+        It resolves through the same :func:`_resolve` as :meth:`build`,
+        for every spelling and not just the memoised one, so the two
+        cannot disagree about what a source names and a source refused
+        there is refused here, in the same words.
         """
-        if isinstance(source, str):
-            aggregator_class, _parameters = _class_and_parameters(source)
-            return aggregator_class
-        definition = AggregatorDefinition.coerce(source)
-        return get_aggregator_class(definition.aggregator_type)
+        return _resolve(source)[0]
 
 
 class MaxAggregator(Aggregator):
@@ -567,6 +562,25 @@ AGGREGATOR_SCHEMA = _build_aggregator_schema()
 def get_aggregator_class(aggregator: str) -> type[Aggregator]:
     """Return the aggregator class for the given aggregator name."""
     return AGGREGATOR_CLASS_DICT[aggregator]
+
+
+def _resolve(
+    source: AggregatorSource,
+) -> tuple[type[Aggregator], tuple[Any, ...]]:
+    """What an aggregator source names: the class and its parameters.
+
+    The one place the accepted spellings are told apart, so a fourth one
+    -- or a fix to how an existing one parses -- is a single edit.  A
+    string takes the memoised path; anything else goes through
+    :meth:`AggregatorDefinition.coerce`, which holds that cascade.
+    """
+    if isinstance(source, str):
+        return _class_and_parameters(source)
+    definition = AggregatorDefinition.coerce(source)
+    return (
+        get_aggregator_class(definition.aggregator_type),
+        tuple(definition.parameters),
+    )
 
 
 @functools.lru_cache(maxsize=256)

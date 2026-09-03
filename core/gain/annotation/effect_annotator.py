@@ -244,7 +244,7 @@ Annotator to identify the effect of the variant on protein coding.
 
     def _do_annotate(
         self, annotatable: Annotatable,
-        context: dict[str, Any],
+        context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
         """Answer the allele's effects, gene lists already folded.
 
@@ -255,13 +255,9 @@ Annotator to identify the effect of the variant on protein coding.
         annotator does it for itself since gain#1133, like every other
         annotator that reduces (:func:`fold_own_values`).
         """
-        return fold_own_values(
-            self._attributes, self._effects(annotatable, context))
+        return fold_own_values(self._attributes, self._effects(annotatable))
 
-    def _effects(
-        self, annotatable: Annotatable,
-        context: dict[str, Any],  # ruff: ignore[unused-method-argument]
-    ) -> dict[str, Any]:
+    def _effects(self, annotatable: Annotatable) -> dict[str, Any]:
         """Effect values for one annotatable, keyed by SOURCE, unfolded."""
         result: dict = {}
 

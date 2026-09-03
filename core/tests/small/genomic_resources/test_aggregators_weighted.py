@@ -166,7 +166,12 @@ _REPLICATED = [value for value, weight in _RECORDS for _ in range(weight)]
 
 
 def _fold_weighted(aggregator: str, records: list[tuple[Any, int]]) -> Any:
-    """Fold ``(value, weight)`` records the way a folding read does."""
+    """Add ``(value, weight)`` records to one accumulator, then finalise.
+
+    ``add`` exercised directly, which is the unit under test here.  The
+    production folding reads weigh their own segments and call the same
+    ``add``; this is deliberately not a copy of one of them.
+    """
     agg = Aggregator.build(aggregator)
     for value, weight in records:
         agg.add(value, weight)

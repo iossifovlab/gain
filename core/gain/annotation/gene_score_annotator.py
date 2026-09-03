@@ -17,7 +17,6 @@ from gain.annotation.annotation_pipeline import (
 from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
 from gain.gene_scores.gene_scores import build_gene_score_from_resource
 from gain.genomic_resources import GenomicResource
-from gain.genomic_resources.aggregators import Aggregator
 
 logger = logging.getLogger(__name__)
 
@@ -112,17 +111,15 @@ class GeneScoreAnnotator(AnnotatorBase):
     ) -> Any:
         """Reduce one attribute's per-gene values with its aggregator.
 
-        A fresh accumulator per attribute per call, built from the
-        attribute's aggregator NAME.  The name resolution is memoised
-        (:meth:`Aggregator.build`), so building anew costs about what
-        clearing a held instance did, and nothing outlives the call --
-        which is what the base's reuse contract was there to make safe
-        (gain#1133).
+        Its own rather than :func:`fold_own_values` because the values
+        are a MAPPING -- one score per gene symbol -- and folding them
+        means folding the mapping's values.  How the fold itself happens
+        is :meth:`Attribute.fold`'s statement, shared with every other
+        annotator that reduces (gain#1133).
         """
         if attr.aggregator is None or not isinstance(value, dict):
             return value
-        return Aggregator.build(attr.aggregator).aggregate(
-            list(value.values()))
+        return attr.fold(list(value.values()))
 
     @property
     def used_context_attributes(self) -> tuple[str, ...]:

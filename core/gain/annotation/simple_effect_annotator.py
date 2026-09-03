@@ -162,14 +162,6 @@ Simple effect annotator.
         one reduces it, and since gain#1133 the base does none of that
         (:func:`fold_own_values`).
         """
-        return fold_own_values(
-            self._attributes, self._simple_effects(annotatable))
-
-    def _simple_effects(
-        self,
-        annotatable: Annotatable,
-    ) -> dict[str, Any]:
-        """Simple-effect values for one annotatable, keyed by SOURCE."""
         assert annotatable is not None
 
         annotation = self.run_annotate(
@@ -205,7 +197,7 @@ Simple effect annotator.
         result["gene_effects"] = "|".join(
             f"{gene}:{effect}" for gene, effect in gene_effects)
         result["effect_details"] = "|".join(details)
-        return result
+        return fold_own_values(self._attributes, result)
 
     def cds_intron_regions(
         self,

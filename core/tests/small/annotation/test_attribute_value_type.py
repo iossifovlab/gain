@@ -14,9 +14,7 @@ from gain.annotation.annotation_config import Attribute
 from gain.annotation.annotation_pipeline import AttributeSpec
 
 
-def _an_attribute(
-    aggregator: str | None = None, value_type: str = "float",
-) -> Attribute:
+def _an_attribute(aggregator: str | None, value_type: str) -> Attribute:
     return Attribute(
         name="score",
         source="score_id",

@@ -26,16 +26,22 @@ from gain.annotation.annotation_pipeline import AttributeSpec
 from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
 
 
-class _LegacyShapedAnnotator(AnnotatorBase):
-    """Answers the legacy shape: source-keyed, values not yet reduced."""
+class _StubAnnotator(AnnotatorBase):
+    """Answers a canned result, AS HANDED.
+
+    One stub for both shapes on purpose: which shape is under test is
+    then visible at the call site -- a plain dict or an
+    ``AggregatedValues`` -- rather than hidden behind a class name, and
+    that distinction is the subject here.
+    """
 
     def __init__(
-        self, work_dir: pathlib.Path, values: dict[str, Any],
+        self, work_dir: pathlib.Path, result: dict[str, Any],
         *, aggregator: str | None = "list",
     ) -> None:
-        self._values = values
+        self._result = result
         super().__init__(None, AnnotatorInfo(
-            "legacy_shaped",
+            "stub",
             attributes=[AttributeConfig(
                 name="renamed", source="score_id", aggregator=aggregator,
             )],
@@ -52,33 +58,7 @@ class _LegacyShapedAnnotator(AnnotatorBase):
         annotatable: Annotatable | None,
         context: dict[str, Any],
     ) -> dict[str, Any]:
-        return dict(self._values)
-
-
-class _AlreadyReducedAnnotator(AnnotatorBase):
-    """Answers an ``AggregatedValues``: keyed by NAME, already folded."""
-
-    def __init__(self, work_dir: pathlib.Path, value: Any) -> None:
-        self._value = value
-        super().__init__(None, AnnotatorInfo(
-            "already_reduced",
-            attributes=[AttributeConfig(
-                name="renamed", source="score_id", aggregator="list",
-            )],
-            parameters={"work_dir": str(work_dir)},
-        ))
-
-    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
-        return {"score_id": AttributeSpec(
-            source="score_id", value_type="float", description="",
-        )}
-
-    def _do_annotate(
-        self,
-        annotatable: Annotatable | None,
-        context: dict[str, Any],
-    ) -> dict[str, Any]:
-        return AggregatedValues([("renamed", self._value)])
+        return self._result
 
 
 @pytest.fixture
@@ -90,7 +70,7 @@ def test_a_legacy_shaped_list_is_renamed_and_left_unreduced(
     tmp_path: pathlib.Path, annotatable: Annotatable,
 ) -> None:
     """A ``mode`` aggregator would have collapsed this to ``1.0``."""
-    annotator = _LegacyShapedAnnotator(
+    annotator = _StubAnnotator(
         tmp_path, {"score_id": [1.0, 1.0, 2.0]}, aggregator="mode")
 
     assert annotator.annotate(annotatable, {}) == {"renamed": [1.0, 1.0, 2.0]}
@@ -99,7 +79,7 @@ def test_a_legacy_shaped_list_is_renamed_and_left_unreduced(
 def test_a_legacy_shaped_scalar_is_renamed(
     tmp_path: pathlib.Path, annotatable: Annotatable,
 ) -> None:
-    annotator = _LegacyShapedAnnotator(
+    annotator = _StubAnnotator(
         tmp_path, {"score_id": 0.5}, aggregator=None)
 
     assert annotator.annotate(annotatable, {}) == {"renamed": 0.5}
@@ -108,7 +88,7 @@ def test_a_legacy_shaped_scalar_is_renamed(
 def test_a_source_the_annotator_did_not_answer_comes_back_none(
     tmp_path: pathlib.Path, annotatable: Annotatable,
 ) -> None:
-    annotator = _LegacyShapedAnnotator(tmp_path, {}, aggregator=None)
+    annotator = _StubAnnotator(tmp_path, {}, aggregator=None)
 
     assert annotator.annotate(annotatable, {}) == {"renamed": None}
 
@@ -117,7 +97,8 @@ def test_an_aggregated_values_passes_through_untouched(
     tmp_path: pathlib.Path, annotatable: Annotatable,
 ) -> None:
     """Already keyed by name and already folded: nothing left to do."""
-    annotator = _AlreadyReducedAnnotator(tmp_path, [1.0, 2.0])
+    annotator = _StubAnnotator(
+        tmp_path, AggregatedValues([("renamed", [1.0, 2.0])]))
 
     assert annotator.annotate(annotatable, {}) == {"renamed": [1.0, 2.0]}
 
@@ -126,7 +107,7 @@ def test_batch_annotate_renames_without_reducing_too(
     tmp_path: pathlib.Path, annotatable: Annotatable,
 ) -> None:
     """``annotate`` and ``batch_annotate`` answer through the same seam."""
-    annotator = _LegacyShapedAnnotator(
+    annotator = _StubAnnotator(
         tmp_path, {"score_id": [1.0, 1.0, 2.0]}, aggregator="mode")
 
     results = annotator.batch_annotate([annotatable, annotatable], [{}, {}])
@@ -140,6 +121,6 @@ def test_batch_annotate_renames_without_reducing_too(
 def test_a_none_annotatable_answers_none_per_attribute(
     tmp_path: pathlib.Path,
 ) -> None:
-    annotator = _LegacyShapedAnnotator(tmp_path, {"score_id": [1.0]})
+    annotator = _StubAnnotator(tmp_path, {"score_id": [1.0]})
 
     assert annotator.annotate(None, {}) == {"renamed": None}

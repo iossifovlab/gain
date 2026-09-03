@@ -529,9 +529,9 @@ models to predict splice site variant effects.
         # One entry per (gene, transcript-set) request, folded by the
         # aggregator each attribute names -- `join(,)` over the genes,
         # `max` over the delta scores.  The annotator folds for itself
-        # since gain#1133 retired the base's reduce step; `_ATTR_DEFAULTS`
-        # gives every attribute an aggregator, so every one of these is
-        # reduced.
+        # since gain#1133 retired the base's reduce step, and
+        # `_ATTR_DEFAULTS` gives every attribute an aggregator, so every
+        # one of these is reduced.
         return fold_own_values(self._attributes, results)
 
     def _ref_sequence(self, annotatable: VCFAllele) -> str:

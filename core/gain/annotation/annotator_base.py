@@ -19,10 +19,7 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.genomic_resources.aggregators import (
-    Aggregator,
-    validate_aggregator,
-)
+from gain.genomic_resources.aggregators import validate_aggregator
 
 
 # A real ``dict`` subclass, not a ``UserDict``: ``_do_annotate`` promises
@@ -66,40 +63,33 @@ class AggregatedValues(dict[str, Any]):  # ruff: ignore[subclass-builtin]
 def fold_own_values(
     attributes: Sequence[Attribute], values: Mapping[str, Any],
 ) -> AggregatedValues:
-    """Fold a source-keyed dict of an annotator's OWN values, by attribute.
+    """Answer an annotator's OWN values by attribute, each one folded.
 
-    The one statement of what an annotator does when the values it
-    reduces are its own rather than a score's record stream -- a gene
-    list, a set intersection -- and there is therefore no folding read to
-    move the reduction into.  Each attribute takes its source's value,
-    folded by the aggregator the attribute names, keyed by the
+    For the annotators whose values are their own rather than a score's
+    record stream -- a gene list, a set intersection, one entry per
+    prediction request -- so there is no folding read to move the
+    reduction into.  Each attribute takes its source's value, reduced by
+    the aggregator it names (:meth:`Attribute.fold`), under the
     attribute's NAME.
 
     Only a ``list`` is folded.  A scalar, a ``None``, an absent source
-    pass through: an aggregator names how to reduce MANY values and there
-    is nothing to reduce here, which is what the base's own fold did
-    before gain#1133 retired it.
-
-    A fresh accumulator per attribute per call.  The name resolution is
-    memoised (:meth:`Aggregator.build`), so building anew costs about
-    what clearing a held instance did, and nothing outlives the call --
-    which is what the old reuse contract needed care to make safe.
+    pass through, as does any attribute naming no aggregator: an
+    aggregator says how to reduce MANY values and there is nothing to
+    reduce.  That is what the base's own fold did before gain#1133
+    retired it.
 
     This is a function rather than a method for the reason gain#1133
     exists: the BASE does not aggregate.  An annotator that reduces says
     so by calling this and answering an :class:`AggregatedValues`; the
     base never decides to fold anything on an annotator's behalf.
     """
-    return AggregatedValues(
-        (attr.name, _fold_one(attr, values.get(attr.source)))
-        for attr in attributes
-    )
-
-
-def _fold_one(attr: Attribute, value: Any) -> Any:
-    if attr.aggregator is None or not isinstance(value, list):
-        return value
-    return Aggregator.build(attr.aggregator).aggregate(value)
+    result = AggregatedValues()
+    for attr in attributes:
+        value = values.get(attr.source)
+        if attr.aggregator is not None and isinstance(value, list):
+            value = attr.fold(value)
+        result[attr.name] = value
+    return result
 
 
 class AnnotatorBase(Annotator):
@@ -262,22 +252,21 @@ class AnnotatorBase(Annotator):
     ) -> dict[str, Any]:
         """Key what ``_do_annotate`` answered by ATTRIBUTE NAME.
 
-        The base reduces nothing (gain#1133).  Every annotator in gain
-        that folds a region does it in its score, which is what makes
-        folding proportional to records rather than to base pairs, and
-        says so by answering an :class:`AggregatedValues`; those that
-        reduce something other than a record stream -- the gene score,
-        gene set, effect, simple effect and SpliceAI annotators -- fold
-        their own values and answer one too.
-        Such a result is already keyed by name and already finished, so
-        it is copied through: folding it again would reduce a finished
-        list a second time.
+        The base reduces nothing (gain#1133).  :meth:`_do_annotate`
+        states the two shapes an annotator may answer and
+        :class:`AggregatedValues` states why a marker type is needed to
+        tell them apart; this is where they are told apart.  A finished
+        result is copied through -- folding it again would reduce a
+        finished list a second time -- and the legacy shape, whose values
+        are final too, wants only its source keys turned into names.
 
-        Everything else is the legacy shape -- a source-keyed dict of
-        values that are ALREADY final -- and all that is left to do with
-        it is the source-to-name rename.  The rename is what gain#1134
-        removes, by moving the remaining annotators onto name keys; this
-        method goes with it.
+        That rename is the whole of what is left, and the reason this
+        method still exists.  gain#1134 moves the remaining annotators
+        onto name keys, after which every result arrives as an
+        :class:`AggregatedValues` and this method goes; the annotators
+        that already answer one reach their names through
+        :func:`fold_own_values` or :meth:`_pair_aggregated` instead, and
+        keep doing so.
 
         It answers for ``annotate`` and ``batch_annotate`` alike, both of
         which route through it, so one statement covers both paths.
