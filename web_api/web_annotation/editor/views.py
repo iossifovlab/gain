@@ -155,6 +155,19 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                     "resource_type": "allele_score",
                     "optional": False,
                 },
+                # The annotator's own parameters (gain#1165), `string`
+                # for the reason recorded on the fragment score template
+                # below: it is the only free-text field the form renders.
+                # `allele_filter` is the analogue of `fragment_filter`;
+                # `mode` is `allele` (default) or `region`.
+                "allele_filter": {
+                    "field_type": "string",
+                    "optional": True,
+                },
+                "mode": {
+                    "field_type": "string",
+                    "optional": True,
+                },
                 "input_annotatable": {
                     "field_type": "attribute",
                     "attribute_type": "annotatable",
