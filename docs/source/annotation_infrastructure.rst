@@ -1375,7 +1375,7 @@ Across the two annotation runners (annotate_tabular, annotate_vcf), the same bas
 
 * **Parallel execution**: tools parallelize their workload when possible and will attempt to do so by default. Parallel runs create task status flags/logs and may create a work directory for intermediate outputs. If a re-run appears to skip tasks due to existing task state, remove the task-status directory (and any tool-specific work directory) so tasks can be executed again.
 
-* **Re-annotation**: use ``--reannotate`` when you want to update or recompute only part of an already annotated dataset, and ``--full-reannotation`` to ignore prior results and recompute everything.
+* **Re-annotation**: use ``--reannotate`` when you want to update or recompute only part of an already annotated dataset, and ``--full-reannotation`` to ignore prior results and recompute everything. An annotator is recomputed when its configuration changed, including an attribute-level parameter such as ``value_transform`` or ``none_value_replacement``; an annotator whose configuration is unchanged keeps its values unless it consumes an attribute that was recomputed.
 
 * **Repeated attributes**: use ``--allow-repeated-attributes`` (short form -ar) to allow duplicate attribute names. Repeated fields are disambiguated by appending the annotator ID (e.g., ``_A0``, ``_A1``) to the attribute name.
 
