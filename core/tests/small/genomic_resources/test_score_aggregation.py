@@ -29,6 +29,7 @@ import gain.genomic_resources.genomic_scores.position
 import pytest
 from gain.genomic_resources.aggregators import (
     Aggregator,
+    AggregatorDefinition,
     PositionScoreAggregationQuery,
 )
 from gain.genomic_resources.genomic_scores import PositionScore
@@ -240,6 +241,56 @@ def test_every_build_is_a_fresh_accumulator() -> None:
     second = build_region_aggregator("s", "max", resource_id="two")
 
     assert second.get_final() is None
+
+
+def test_a_name_built_before_is_not_parsed_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Every aggregating read builds fresh accumulators per call, so the
+    # same handful of names are built millions of times per run -- and
+    # parsing the name was ~70% of each build (gain#1157).  Once a name
+    # has been built, building it again must not go back to the parser:
+    # pinned by taking the parser away and asking again.
+    build_region_aggregator("s", "max", resource_id="two")
+
+    def refuse(_cls: type, raw: str) -> AggregatorDefinition:
+        raise AssertionError(f"parsed {raw!r} again")
+
+    monkeypatch.setattr(
+        AggregatorDefinition, "from_string", classmethod(refuse))
+
+    again = build_region_aggregator("s", "max", resource_id="two")
+    again.add(0.5)
+
+    assert again.get_final() == 0.5
+
+
+def test_a_remembered_parametrized_name_still_builds_fresh() -> None:
+    # What is remembered about a name is what it resolves TO, never the
+    # accumulator: a parametrized form is the case where the two are
+    # easiest to confuse, since its parameter travels with the resolution.
+    first = build_region_aggregator("s", "join(,)", resource_id="two")
+    first.add("a")
+    first.add("b")
+    second = build_region_aggregator("s", "join(,)", resource_id="two")
+    second.add("c")
+
+    assert first.get_final() == "a,b"
+    assert second.get_final() == "c"
+
+
+def test_an_unknown_name_is_refused_every_time_it_is_asked() -> None:
+    # A raise is not remembered as an answer: asking twice complains
+    # twice, in the same words -- pinned because a memo that stored the
+    # failure, or stored a None for it, would turn the second ask into a
+    # different error or none at all.
+    expected = (
+        "score 's' of resource 'two' asks for aggregator 'mediann', "
+        "which is not valid: 'mediann'")
+    for _ in range(2):
+        with pytest.raises(ValueError) as excinfo:
+            build_region_aggregator("s", "mediann", resource_id="two")
+        assert str(excinfo.value) == expected
 
 
 def test_a_bad_aggregator_is_refused_before_the_region_is_read(
