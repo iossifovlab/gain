@@ -406,6 +406,46 @@ def test_allele_score_exact_match_allele_attribute(
     assert result["allele"] == ["1:10:A:G"]
 
 
+def test_the_allele_attribute_is_not_folded_in_either_mode(
+    allele_score_repository: GenomicResourceRepo,
+) -> None:
+    """An aggregator on the virtual ``allele`` attribute reduces nothing.
+
+    The attribute is not a score and its value is the allele KEYS, which
+    the annotator synthesises rather than reads.  ``region`` mode has
+    never folded them -- they come back beside the reductions, not as one
+    of them -- and since gain#1133 ``allele`` mode does not either, so
+    the two modes agree.  Before that, the base folded the exact-match
+    branch's one-element list, and a ``join`` here answered a bare
+    string in one mode and a list in the other.
+    """
+    def annotate(mode: str) -> object:
+        pipeline = load_pipeline_from_yaml(
+            textwrap.dedent(f"""
+                - allele_score:
+                    resource_id: allele_score
+                    mode: {mode}
+                    attributes:
+                    - source: freq
+                      name: allele_freq
+                      aggregator: max
+                    - source: allele
+                      aggregator: join(;)
+            """),
+            allele_score_repository,
+        )
+        with pipeline.open() as work_pipeline:
+            return work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
+
+    # The two modes select different lines -- exact match takes one,
+    # region takes every line overlapping the position -- but neither
+    # joins what it selected into a string.
+    assert annotate("allele")["allele"] == ["1:10:A:G"]  # type: ignore[index]
+    assert sorted(annotate("region")["allele"]) == [  # type: ignore[index]
+        "1:10:A:C", "1:10:A:G", "1:10:A:T",
+    ]
+
+
 def test_allele_score_exact_match_allele_attribute_renamed(
     allele_score_repository: GenomicResourceRepo,
 ) -> None:

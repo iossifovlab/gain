@@ -9,7 +9,6 @@ from django.test import Client
 from django.utils import timezone
 from gain.annotation.annotation_config import Attribute
 from gain.annotation.annotation_pipeline import Annotator, AttributeSpec
-from gain.genomic_resources.aggregators import CountAggregator, MaxAggregator
 from gain.genomic_resources.repository import GenomicResourceRepo
 from pytest_mock import MockerFixture
 
@@ -107,9 +106,14 @@ def test_build_attribute_description_with_histogram(
 
 
 def _make_attribute_info(
-    aggregator_instance: Any = None,
+    aggregator: str | None = None,
     value_type: str = "float",
 ) -> Any:
+    """A stand-in attribute carrying only the aggregator's NAME.
+
+    Which is all a real ``Attribute`` carries since gain#1133: the view
+    resolves the class it needs from the name.
+    """
     spec = SimpleNamespace(
         value_type=value_type,
         attribute_type="attribute",
@@ -119,8 +123,7 @@ def _make_attribute_info(
         name="score",
         source="score_id",
         description="",
-        aggregator_instance=aggregator_instance,
-        aggregator=None,
+        aggregator=aggregator,
         spec=spec,
         get_value_type=lambda **_kw: value_type,
     )
@@ -137,7 +140,7 @@ def test_preserves_domain_is_true_without_aggregation(
     )
     mocker.patch.object(view, "generate_annotator_help", return_value=None)
 
-    attr = _make_attribute_info(aggregator_instance=None)
+    attr = _make_attribute_info(aggregator=None)
     annotator = SimpleNamespace(resource_ids=set())
 
     result = view._build_attribute_description(
@@ -157,7 +160,7 @@ def test_preserves_domain_is_true_with_domain_preserving_aggregator(
     )
     mocker.patch.object(view, "generate_annotator_help", return_value=None)
 
-    attr = _make_attribute_info(aggregator_instance=MaxAggregator())
+    attr = _make_attribute_info(aggregator="max")
     annotator = SimpleNamespace(resource_ids=set())
 
     result = view._build_attribute_description(
@@ -177,7 +180,7 @@ def test_preserves_domain_is_false_with_non_preserving_aggregator(
     )
     mocker.patch.object(view, "generate_annotator_help", return_value=None)
 
-    attr = _make_attribute_info(aggregator_instance=CountAggregator())
+    attr = _make_attribute_info(aggregator="count")
     annotator = SimpleNamespace(resource_ids=set())
 
     result = view._build_attribute_description(

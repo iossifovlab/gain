@@ -212,8 +212,6 @@ class Attribute:
         default_factory=lambda: ParamsUsageMonitor({}))
     spec: AttributeSpec | None = field(
         default=None, compare=False, hash=False)
-    aggregator_instance: Aggregator | None = field(
-        default=None, compare=False, hash=False)
     _documentation: str | None = field(
         default=None, compare=False, hash=False)
 
@@ -222,6 +220,26 @@ class Attribute:
             self.name, self.source, self.internal, str(self.aggregator),
             self.parameters,
         ))
+
+    def fold(self, values: list[Any]) -> Any:
+        """Reduce ``values`` with the aggregator this attribute NAMES.
+
+        The one statement of HOW an attribute reduces, kept beside the
+        name it reduces by.  The caller decides WHETHER there is anything
+        to reduce, because the container differs by annotator -- a list of
+        a score's values, a mapping of per-gene values -- and must hold an
+        aggregator before asking.
+
+        A fresh accumulator per call, never a held one: an aggregator is
+        mutable state, and one built here cannot outlive the fold it was
+        built for.  Building costs ~0.26 us against the ~0.06 us of
+        clearing a held instance (measured, gain#1133) -- a fifth of a
+        microsecond per folded attribute per variant, paid only where a
+        fold actually happens.  The name resolution itself is memoised
+        (gain#1157), so what is left is the object, not the parsing.
+        """
+        assert self.aggregator is not None
+        return Aggregator.build(self.aggregator).aggregate(values)
 
     def get_value_type(self, *, aggregated: bool = True) -> str:
         """Value type produced by this attribute.
@@ -232,9 +250,15 @@ class Attribute:
         was skipped (e.g. a scalar value that bypassed a list aggregator) so
         that the spec type is returned instead.  The raw spec type is always
         accessible via ``self.spec.value_type``.
+
+        The type is read off the aggregator's NAME -- the only thing the
+        attribute holds since gain#1133 -- through
+        :meth:`Aggregator.resolve_class`, which is class-level and builds
+        no accumulator.
         """
-        if aggregated and self.aggregator_instance is not None:
-            agg_output_type = type(self.aggregator_instance).output_value_type
+        if aggregated and self.aggregator is not None:
+            agg_output_type = \
+                Aggregator.resolve_class(self.aggregator).output_value_type
             if agg_output_type is not None:
                 return agg_output_type
         return self.spec.value_type if self.spec else ""

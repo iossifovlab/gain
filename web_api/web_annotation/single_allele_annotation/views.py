@@ -17,6 +17,7 @@ from gain.gene_scores.gene_scores import (
     _build_gene_score_help,
     build_gene_score_from_resource,
 )
+from gain.genomic_resources.aggregators import Aggregator
 from gain.genomic_resources.genomic_scores import build_score_from_resource
 from gain.genomic_resources.histogram import (
     Histogram,
@@ -342,15 +343,22 @@ class SingleAnnotation(AsyncAnnotationBaseView):
                     attribute_info,
                 )
 
-        agg_instance = attribute_info.aggregator_instance
+        aggregator = attribute_info.aggregator
+        # The CLASS, not an accumulator: both things read off it below are
+        # class-level, and an attribute carries only the aggregator's name
+        # since gain#1133.
+        agg_class = (
+            Aggregator.resolve_class(aggregator)
+            if aggregator is not None else None
+        )
         agg_output_type = (
-            type(agg_instance).output_value_type if agg_instance else None
+            agg_class.output_value_type if agg_class is not None else None
         )
         # Aggregation ran when the value is a list (list aggregator applied),
         # or when the aggregator declares a fixed non-list output type and a
         # non-None value was produced (e.g. max/min collapsing to a float).
         aggregated = isinstance(value, list) or (
-            agg_instance is not None
+            agg_class is not None
             and agg_output_type != "list"
             and value is not None
         )
@@ -363,12 +371,11 @@ class SingleAnnotation(AsyncAnnotationBaseView):
             value = str(value)
         assert attribute_info.spec is not None
         preserves_domain = (
-            agg_instance.preserves_domain(
+            agg_class.preserves_domain(
                 value_type=attribute_info.spec.value_type,
             )
-            if agg_instance is not None else True
+            if agg_class is not None else True
         )
-        aggregator = attribute_info.aggregator
         return {
             "name": attribute_info.name,
             "description": attribute_info.description,

@@ -14,7 +14,7 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatorBase
+from gain.annotation.annotator_base import AnnotatorBase, fold_own_values
 from gain.annotation.utils import find_annotator_gene_models
 from gain.genomic_resources.gene_models import (
     TranscriptModel,
@@ -155,6 +155,13 @@ Simple effect annotator.
         annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
+        """Answer the region's simple effects, gene lists already folded.
+
+        Folds for itself for the reason :meth:`EffectAnnotator._do_annotate`
+        gives: a gene-list attribute holds a list, an aggregator named on
+        one reduces it, and since gain#1133 the base does none of that
+        (:func:`fold_own_values`).
+        """
         assert annotatable is not None
 
         annotation = self.run_annotate(
@@ -190,7 +197,7 @@ Simple effect annotator.
         result["gene_effects"] = "|".join(
             f"{gene}:{effect}" for gene, effect in gene_effects)
         result["effect_details"] = "|".join(details)
-        return result
+        return fold_own_values(self._attributes, result)
 
     def cds_intron_regions(
         self,

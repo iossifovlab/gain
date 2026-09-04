@@ -10,7 +10,7 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatorBase
+from gain.annotation.annotator_base import AnnotatorBase, fold_own_values
 from gain.gene_sets.gene_set import (
     GeneSet,
     build_gene_set_collection_from_resource,
@@ -139,21 +139,35 @@ class GeneSetAnnotator(AnnotatorBase):
         annotatable: Annotatable | None,  # ruff: ignore[unused-method-argument]
         context: dict[str, Any],
     ) -> dict[str, Any]:
+        """Answer the gene sets the input gene list meets, already reduced.
+
+        Every gene set in the collection is intersected, because
+        ``in_sets`` names the ones that matched and is not restricted to
+        the configured attributes.  Each configured per-set attribute
+        then takes its own intersection folded by its own aggregator --
+        ``list`` by default -- and ``in_sets``, which names none, passes
+        through as it is.
+
+        This annotator reduces for ITSELF (gain#1133): what it holds is
+        an intersection rather than a stream of records, so there is no
+        score-side fold to move it onto, and the base no longer has one.
+        """
         genes = context.get(self.input_gene_list)
         if genes is None:
             return self._empty_result()
         genes_set = set(genes)
 
-        in_sets: list[str] = []
-        source_output: dict[str, Any] = {"in_sets": in_sets}
         if self.gene_sets is None:
             raise ValueError(
                 f"The GeneSetAnnotator {self.gene_set_resource} "
                 f"is not open.")
+
+        in_sets: list[str] = []
+        intersections: dict[str, Any] = {"in_sets": in_sets}
         for gs in self.gene_sets:
             intersecting = list(genes_set.intersection(set(gs.syms)))
-            source_output[gs.name] = intersecting
+            intersections[gs.name] = intersecting
             if intersecting:
                 in_sets.append(gs.name)
 
-        return source_output
+        return fold_own_values(self._attributes, intersections)

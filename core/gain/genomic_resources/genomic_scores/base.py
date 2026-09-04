@@ -1153,11 +1153,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     def record_weight(cls, left: int, right: int) -> int:
         """How many times one record's value counts when aggregating.
 
-        The rule is a property of the resource TYPE, and ``WeightedValues``
-        already states it: "a position-score record counts once per base
-        pair of the queried region it covers, an allele line counts once, a
-        fragment counts once however long it is".  One record, one count,
-        is the answer for everything except a position score.
+        The rule is a property of the resource TYPE: a position-score
+        record counts once per base pair of the queried region it covers,
+        an allele line counts once, a fragment counts once however long it
+        is.  One record, one count, is the answer for everything except a
+        position score.
 
         **The kind's single statement of that rule**, and every reader that
         weighs a RECORD goes through it: :meth:`aggregate_region` folds

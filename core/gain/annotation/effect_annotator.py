@@ -11,7 +11,7 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatorBase
+from gain.annotation.annotator_base import AnnotatorBase, fold_own_values
 from gain.annotation.utils import (
     find_annotator_gene_models,
     find_annotator_reference_genome,
@@ -246,6 +246,19 @@ Annotator to identify the effect of the variant on protein coding.
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
+        """Answer the allele's effects, gene lists already folded.
+
+        A gene-list attribute holds a LIST, and naming an aggregator on
+        one -- ``join(|)`` is the documented spelling, also reached
+        through the deprecated ``gene_list_aggregator`` -- reduces it to a
+        single value.  That fold used to happen in the base; this
+        annotator does it for itself since gain#1133, like every other
+        annotator that reduces (:func:`fold_own_values`).
+        """
+        return fold_own_values(self._attributes, self._effects(annotatable))
+
+    def _effects(self, annotatable: Annotatable) -> dict[str, Any]:
+        """Effect values for one annotatable, keyed by SOURCE, unfolded."""
         result: dict = {}
 
         length = len(annotatable)
