@@ -223,6 +223,25 @@ configured:
   this is the case for large CNVs — raise ``region_length_cutoff`` on the
   annotator if such a CNV is to be annotated at all.
 
+**region_length_cutoff**
+
+The optional ``region_length_cutoff`` parameter caps how long an annotatable may be
+before the annotator declines to read it, which keeps a single very long annotatable
+from turning into a very expensive region query. An annotatable longer than the
+cutoff is answered with empty values for every attribute, without the score file
+being read at all; the default is 500 000 bp.
+
+.. code:: yaml
+
+    - position_score_annotator:
+        resource_id: <position score resource ID>
+        region_length_cutoff: 1000000
+
+A value that is not a whole number, or one below zero, is refused when the pipeline
+is loaded. Quoting is safe: ``region_length_cutoff: "1000000"`` means the same cutoff
+as ``1000000``, which is what lets the value be typed into the annotation editor's
+form.
+
 
 allele_score_annotator
 ************************
@@ -347,6 +366,14 @@ The optional ``include_attributes`` parameter appends one or more score values t
           include_attributes:
           - AF
           - AC
+
+**region_length_cutoff**
+
+An ``allele_score_annotator`` takes the same optional ``region_length_cutoff`` as a
+``position_score_annotator``, with the same 500 000 bp default and the same meaning:
+an annotatable longer than the cutoff is answered with empty values rather than read.
+It bounds the annotatables that are read as a region: a VCF allele is dispatched on
+its own, in either ``mode``, and never reaches the cutoff.
 
 
 gene_score_annotator
@@ -504,6 +531,25 @@ The example also renames ``worst_effect`` to ``MANE_1.5_worst_effect``.
         attributes:
         - source: worst_effect
           name: MANE_1.5_worst_effect
+
+**region_length_cutoff**
+
+The ``effect_annotator`` takes the same optional ``region_length_cutoff``, but with a
+default of 15 000 000 bp rather than the score annotators' 500 000 — a CNV too long to
+resolve gene by gene still has an effect worth reporting, where a score has no value
+worth aggregating. An annotatable longer than the cutoff is not resolved against the
+gene models at all. It is reported as ``CNV-`` or ``CNV+`` if it is a large deletion or
+duplication and ``unknown`` otherwise, with its length and an empty gene list, so the
+answer says the annotatable was too long rather than that it hit nothing.
+
+.. code:: yaml
+
+    - effect_annotator:
+        gene_models: hg38/gene_models/MANE/1.5
+        region_length_cutoff: 20000000
+
+A value that is not a whole number, or one below zero, is refused when the pipeline is
+loaded, and quoting is safe, exactly as for the score annotators.
 
 
 simple_effect_annotator

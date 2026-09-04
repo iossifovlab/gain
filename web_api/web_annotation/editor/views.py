@@ -134,10 +134,12 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                     "optional": False,
                 },
                 # Read by `GenomicScoreAnnotatorBase`, so a parameter of
-                # both genomic score annotators and of the effect
-                # annotator alike (gain#1184).  `string` for the reason
-                # recorded on the fragment score template below: the form
-                # renders no numeric field.  What makes the text safe is
+                # both genomic score annotators.  The effect annotator
+                # offers it too, but reads it for itself rather than off
+                # that base, and with a much higher default of its own
+                # (gain#1184).  `string` for the reason recorded on the
+                # fragment score template below: the form renders no
+                # numeric field.  What makes the text safe is
                 # gain#1166, which gave the annotators
                 # `ParamsUsageMonitor.get_integer` -- a cutoff this form
                 # posts quoted means the number it spells.  Offered

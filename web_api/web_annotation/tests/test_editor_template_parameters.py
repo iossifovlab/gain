@@ -74,7 +74,8 @@ def test_the_templates_offer_the_region_length_cutoff(
     it belongs to all three of these types.  Asserted positively as well
     as through the set comparison below, which compares the template
     against what the annotator reads and would therefore go quiet if the
-    key were dropped from the template and the allowlist together.
+    key were dropped from a template and allowlisted again in the same
+    commit -- the move this one reverses.
 
     ``string`` for the reason recorded on the templates in
     ``editor/views.py``: the form renders no numeric field.  What makes
@@ -126,10 +127,7 @@ DELIBERATELY_NOT_OFFERED: dict[str, frozenset[str]] = {
     "effect_annotator": frozenset({
         # Not documented in the annotation infrastructure docs; offering
         # an undocumented knob in the form is premature.  Document, then
-        # offer -- gain#1209.  The coercion half of this reason went with
-        # gain#1166, which is what let `region_length_cutoff` be offered
-        # (gain#1184); the documentation half is what still holds this
-        # one back.
+        # offer -- gain#1209.
         "promoter_len",
     }),
     "simple_effect_annotator": frozenset(),

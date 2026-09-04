@@ -456,6 +456,76 @@ async def test_async_annotator_yaml_overlap_fraction_typed_in_the_editor(
     assert saved["min_region_overlap_fraction"] == "0.5"
 
 
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("annotator_type,resources", [
+    pytest.param(
+        "position_score", {"resource_id": "scores/pos1"},
+        id="position_score"),
+    pytest.param(
+        "allele_score", {"resource_id": "scores/allele1"},
+        id="allele_score"),
+    pytest.param(
+        "effect_annotator",
+        {"gene_models": "t4c8/t4c8_genes", "genome": "t4c8/t4c8_genome"},
+        id="effect_annotator"),
+])
+async def test_async_annotator_yaml_region_length_cutoff_typed_in_the_editor(
+    annotator_type: str, resources: dict[str, str],
+) -> None:
+    """A cutoff typed into the editor form saves (gain#1184).
+
+    The same seam as the overlap fraction above, for the three types that
+    offer ``region_length_cutoff``: this endpoint BUILDS the annotator
+    before dumping it, so the annotator's configuration guard runs on
+    whatever the form posted -- and the form posts a STRING.  Why the
+    template types the field `string` is recorded where that decision
+    lives, on the config templates in `editor/views.py`.
+    """
+    client = AsyncClient()
+    response = await _post_json(client, YAML_POST_URL, {
+        "pipeline_id": "pipeline/test_pipeline",
+        "annotator_type": annotator_type,
+        **resources,
+        "region_length_cutoff": "5",
+    })
+
+    assert response.status_code == 200, response.content
+    saved = yaml.safe_load(response.json())[0][annotator_type]
+    # Echoed as posted rather than as coerced, for the reason recorded on
+    # the overlap fraction above.
+    assert saved["region_length_cutoff"] == "5"
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_async_annotator_yaml_region_length_cutoff_not_a_number_400(
+) -> None:
+    """A cutoff that spells no number is refused before it is saved.
+
+    What makes offering the field safe is not that the form's text
+    reaches the annotator, but that the annotator reads it as a number
+    (gain#1166) and refuses what is not one.  Pinned at the endpoint
+    because that is where a form's mistake is caught: without the read,
+    the text was accepted here and failed per-variant on the first
+    annotation instead (gain#1179).
+    """
+    client = AsyncClient()
+    response = await _post_json(client, YAML_POST_URL, {
+        "pipeline_id": "pipeline/test_pipeline",
+        "annotator_type": "position_score",
+        "resource_id": "scores/pos1",
+        "region_length_cutoff": "big",
+    })
+
+    assert response.status_code == 400, response.content
+    assert response.json()["error"] == (
+        "Invalid annotator configuration: "
+        "position_score configures region_length_cutoff: 'big', "
+        "which is not a number."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Pinned exception-mapping regression (unbuildable -> 400, missing -> 404)
 # ---------------------------------------------------------------------------
