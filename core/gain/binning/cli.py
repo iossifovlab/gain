@@ -91,6 +91,14 @@ def cli(argv: list[str] | None = None) -> None:
         argv = sys.argv[1:]
     args = vars(_build_argument_parser().parse_args(argv))
     VerbosityConfiguration.set(args)
+    # Before the context is built and before the tasks run inside the work
+    # directory: a GRR or a run definition named relative to where the
+    # user typed the command must still be found from there.
+    for key in ("run_definition", "output", "work_dir", "task_status_dir",
+                "task_log_dir", "dask_cluster_config_file",
+                "grr_filename", "grr_directory"):
+        if args.get(key):
+            args[key] = os.path.abspath(args[key])
 
     with open(args["run_definition"]) as infile:
         config = yaml.safe_load(infile)
@@ -154,10 +162,8 @@ def _print_plan(run: RunDefinition) -> None:
 
 def _handle_default_args(args: dict[str, Any]) -> None:
     """Fill the work and task-status directories the annotate tools' way."""
-    args["output"] = os.path.abspath(args["output"])
     if args.get("work_dir") is None:
         args["work_dir"] = f"{os.path.splitext(args['output'])[0]}_work"
-    args["work_dir"] = os.path.abspath(args["work_dir"])
     args["work_dir_created"] = not os.path.exists(args["work_dir"])
     os.makedirs(args["work_dir"], exist_ok=True)
     if args.get("task_status_dir") is None:
@@ -165,10 +171,6 @@ def _handle_default_args(args: dict[str, Any]) -> None:
             args["work_dir"], ".task-status")
     if args.get("task_log_dir") is None:
         args["task_log_dir"] = os.path.join(args["work_dir"], ".task-log")
-    for key in ("run_definition", "task_status_dir", "task_log_dir",
-                "dask_cluster_config_file", "grr_filename", "grr_directory"):
-        if args.get(key):
-            args[key] = os.path.abspath(args[key])
 
 
 def _maybe_remove_work_dir(args: dict[str, Any], *, result: bool) -> None:
@@ -197,30 +199,43 @@ def _build_task_graph(
     chunk_paths: list[list[str]] = []
     for region in run.regions:
         region_paths = []
-        for index, track in enumerate(run.tracks):
-            path = os.path.join(
-                chunk_dir, f"{_chunk_stem(index, track, region)}.npy")
+        for track in run.tracks:
+            stem = _chunk_stem(track, region, run.bin_size)
+            path = os.path.join(chunk_dir, f"{stem}.npy")
             chunk_tasks.append(graph.create_task(
-                f"bin_{_chunk_stem(index, track, region)}",
-                _bin_chunk,
+                f"bin_{stem}", _bin_chunk,
                 args=[track, region, run.bin_size, grr.definition, path],
                 output_files=[path],
             ))
             region_paths.append(path)
         chunk_paths.append(region_paths)
 
+    # The chunks are the writer's inputs: a chunk computed after the
+    # output was written -- another run definition sharing the work dir --
+    # makes the writer run again instead of leaving a stale file behind.
     graph.create_task(
         "write_hdf5", _write_hdf5,
         args=[args["output"], run, chunk_paths],
         deps=chunk_tasks,
+        input_files=[path for paths in chunk_paths for path in paths],
         output_files=[args["output"]],
     )
     return graph
 
 
-def _chunk_stem(index: int, track: Track, region: BedRegion) -> str:
+def _chunk_stem(track: Track, region: BedRegion, bin_size: int) -> str:
+    """Name a chunk by everything that decides its values.
+
+    Two run definitions sharing a work directory then share exactly the
+    chunks they compute identically, and nothing else: a different bin
+    size, aggregator or replacement is a different chunk, not a stale one.
+    """
     resource = track.resource_id.replace("/", "_")
-    return f"t{index}_{resource}_{region.chrom}_{region.start}_{region.stop}"
+    replacement = track.none_value_replacement
+    return (
+        f"{resource}_{track.score_id}_{track.aggregator}"
+        f"_{'none' if replacement is None else replacement!r}"
+        f"_bs{bin_size}_{region.chrom}_{region.start}_{region.stop}")
 
 
 def _bin_chunk(
@@ -228,7 +243,7 @@ def _bin_chunk(
     grr_definition: dict[str, Any], path: str,
 ) -> None:
     grr = build_genomic_resource_repository(grr_definition)
-    binner = discover_binner_kinds()["position_score_binner"]
+    binner = discover_binner_kinds()[track.binner]
     np.save(path, binner.bin_track(track, region, bin_size, grr))
 
 

@@ -1,7 +1,10 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+from typing import Any
+
 import pytest
 from gain.binning.binners import Track
 from gain.binning.run_definition import (
+    RunDefinition,
     RunDefinitionError,
     parse_run_definition,
 )
@@ -27,7 +30,8 @@ def test_an_exact_id_entry_becomes_one_track_named_by_the_resource(
     assert run.tracks == [
         Track(
             name="scores/one", resource_id="scores/one", score_id="s",
-            aggregator="max", none_value_replacement=None),
+            aggregator="max", none_value_replacement=None,
+            binner="position_score_binner"),
     ]
 
 
@@ -174,3 +178,80 @@ def test_a_resource_matched_by_two_entries_is_refused_as_not_yet_supported(
 
     assert "scores/one" in str(excinfo.value)
     assert "not yet supported" in str(excinfo.value)
+
+
+def parse_one_entry(
+    entry: dict[str, Any], repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> RunDefinition:
+    return parse_run_definition({
+        "bins": {"bin_size": 10},
+        "binners": [{"position_score_binner": entry}],
+    }, repo, genome)
+
+
+@pytest.mark.parametrize("entry,fragment", [
+    # search_term is the validation slice's; dropping it silently would
+    # widen the matrix past what the user asked for.
+    ({"resource_query": "scores/*", "search_term": "conservation"},
+     "search_term"),
+    # A typo must not silently bin with the default.
+    ({"resource_query": "scores/*", "aggregtor": "min"}, "aggregtor"),
+    ({}, "resource_query"),
+    ({"resource_query": "[abc"}, "[abc"),
+    ({"resource_query": "scores/one", "aggregator": "mediann"}, "mediann"),
+    ({"resource_query": "scores/one", "none_value_replacement": "zero"},
+     "none_value_replacement"),
+    # Two scores on one resource, and a string-typed score, are refused
+    # until gain#1201 decides what to do with them.
+    ({"resource_query": "other/pair"}, "other/pair"),
+    ({"resource_query": "other/label"}, "other/label"),
+])
+def test_a_malformed_entry_is_a_parse_error_naming_what_is_wrong(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+    entry: dict[str, Any], fragment: str,
+) -> None:
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_one_entry(entry, repo, genome)
+
+    assert "binners[0]" in str(excinfo.value)
+    assert fragment in str(excinfo.value)
+
+
+@pytest.mark.parametrize("bins,fragment", [
+    ({"bin_size": 0}, "bin_size"),
+    ({"bin_size": "10"}, "bin_size"),
+    ({}, "bin_size"),
+    ({"bin_size": 10, "regions": []}, "regions"),
+    ({"bin_size": 10, "bin_sise": 10}, "bin_sise"),
+])
+def test_a_malformed_bins_block_is_a_parse_error_naming_the_key(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+    bins: dict[str, Any], fragment: str,
+) -> None:
+    config = {
+        "bins": bins,
+        "binners": [
+            {"position_score_binner": {"resource_query": "scores/one"}},
+        ],
+    }
+
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_run_definition(config, repo, genome)
+
+    assert fragment in str(excinfo.value)
+
+
+def test_an_unknown_top_level_key_is_a_parse_error(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    config = {
+        "bins": {"bin_size": 10},
+        "binner": [
+            {"position_score_binner": {"resource_query": "scores/one"}},
+        ],
+    }
+
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_run_definition(config, repo, genome)
+
+    assert "binner" in str(excinfo.value)

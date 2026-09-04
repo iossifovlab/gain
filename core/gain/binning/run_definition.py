@@ -4,14 +4,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from gain.binning.binners import Track, discover_binner_kinds
+from gain.binning.binners import (
+    RunDefinitionError,
+    Track,
+    _check_keys,
+    discover_binner_kinds,
+)
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.utils.regions import BedRegion, Region
 
+__all__ = ["RunDefinition", "RunDefinitionError", "parse_run_definition"]
 
-class RunDefinitionError(ValueError):
-    """A run definition that cannot be resolved into a run."""
+TOP_LEVEL_KEYS = frozenset({"input_reference_genome", "bins", "binners"})
+BINS_KEYS = frozenset({"bin_size", "regions"})
+NO_KEYS: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -29,17 +36,34 @@ def parse_run_definition(
     grr: GenomicResourceRepo,
     genome: ReferenceGenome,
 ) -> RunDefinition:
-    """Resolve ``config`` against ``grr`` and ``genome``."""
+    """Resolve ``config`` against ``grr`` and ``genome``.
+
+    Every key is checked: a mistyped key is an error, never a silently
+    applied default.  Raises :class:`RunDefinitionError` naming the
+    offending entry.
+    """
+    _check_keys("run definition", config, TOP_LEVEL_KEYS, NO_KEYS)
+    bins = config.get("bins")
+    _check_keys("bins", bins, BINS_KEYS, NO_KEYS)
+    assert isinstance(bins, dict)
     return RunDefinition(
         input_reference_genome=genome.resource_id,
-        bin_size=config["bins"]["bin_size"],
-        regions=_resolve_regions(config["bins"].get("regions"), genome),
-        tracks=_resolve_tracks(config["binners"], grr),
+        bin_size=_resolve_bin_size(bins.get("bin_size")),
+        regions=_resolve_regions(bins.get("regions"), genome),
+        tracks=_resolve_tracks(config.get("binners"), grr),
     )
 
 
+def _resolve_bin_size(bin_size: Any) -> int:
+    if isinstance(bin_size, bool) or not isinstance(bin_size, int) \
+            or bin_size < 1:
+        raise RunDefinitionError(
+            f"bins.bin_size must be a positive integer, not {bin_size!r}")
+    return int(bin_size)
+
+
 def _resolve_regions(
-    regions: list[str] | None, genome: ReferenceGenome,
+    regions: Any, genome: ReferenceGenome,
 ) -> list[BedRegion]:
     """Expand region notation against the genome, in the listed order.
 
@@ -49,9 +73,17 @@ def _resolve_regions(
     """
     if regions is None:
         regions = list(genome.chromosomes)
+    if not isinstance(regions, list) or not regions:
+        raise RunDefinitionError(
+            "bins.regions must be a non-empty list of regions, or omitted "
+            "for every chromosome of the genome")
     resolved = []
     for index, notation in enumerate(regions):
-        region = Region.from_str(notation)
+        try:
+            region = Region.from_str(str(notation))
+        except ValueError as err:
+            raise RunDefinitionError(
+                f"bins.regions[{index}]: {err}") from err
         if region.chrom not in genome.chromosomes:
             raise RunDefinitionError(
                 f"bins.regions[{index}]: {notation!r} names chromosome "
@@ -64,22 +96,28 @@ def _resolve_regions(
     return resolved
 
 
-def _resolve_tracks(
-    binners: list[dict[str, Any]], grr: GenomicResourceRepo,
-) -> list[Track]:
+def _resolve_tracks(binners: Any, grr: GenomicResourceRepo) -> list[Track]:
+    if not isinstance(binners, list) or not binners:
+        raise RunDefinitionError(
+            "binners must be a non-empty list of binner entries")
     kinds = discover_binner_kinds()
     tracks: list[Track] = []
     for index, entry in enumerate(binners):
+        label = f"binners[{index}]"
+        if not isinstance(entry, dict) or len(entry) != 1:
+            raise RunDefinitionError(
+                f"{label}: an entry is a one-key mapping of binner kind to "
+                f"its configuration")
         (kind, entry_config), = entry.items()
         if kind not in kinds:
             raise RunDefinitionError(
-                f"binners[{index}]: unknown binner kind {kind!r}; "
+                f"{label}: unknown binner kind {kind!r}; "
                 f"registered kinds: {', '.join(sorted(kinds))}")
-        entry_tracks = kinds[kind].parse_entry(entry_config, grr)
+        entry_tracks = kinds[kind].parse_entry(label, entry_config, grr)
         if not entry_tracks:
             raise RunDefinitionError(
-                f"binners[{index}]: resource_query "
-                f"{entry_config['resource_query']!r} matches no "
+                f"{label}: resource_query "
+                f"{entry_config.get('resource_query')!r} matches no "
                 f"position_score resource")
         tracks.extend(entry_tracks)
     _refuse_repeated_names(tracks)

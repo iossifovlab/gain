@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pathlib
+from collections.abc import Iterator
 
 import pytest
 from gain.genomic_resources.reference_genome import (
@@ -62,11 +63,28 @@ def repo(grr_dir: pathlib.Path) -> GenomicResourceRepo:
                            chrom  pos_begin  pos_end  u
                            chr2   1          40       8.0
                        """))
+        .with_resource("other/pair", a_position_score()
+                       .with_score("p", "float")
+                       .with_score("q", "float")
+                       .with_tabix()
+                       .with_data("""
+                           chrom  pos_begin  pos_end  p    q
+                           chr1   1          10       1.0  2.0
+                       """))
+        .with_resource("other/label", a_position_score()
+                       .with_score("v", "str")
+                       .with_tabix()
+                       .with_data("""
+                           chrom  pos_begin  pos_end  v
+                           chr1   1          10       lo
+                       """))
     )
     return grr.build_repo(grr_dir)
 
 
 @pytest.fixture
-def genome(repo: GenomicResourceRepo) -> ReferenceGenome:
-    return build_reference_genome_from_resource(
+def genome(repo: GenomicResourceRepo) -> Iterator[ReferenceGenome]:
+    genome = build_reference_genome_from_resource(
         repo.get_resource("genome")).open()
+    yield genome
+    genome.close()

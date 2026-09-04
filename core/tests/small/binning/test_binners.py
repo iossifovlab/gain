@@ -26,7 +26,8 @@ def test_a_track_bins_to_one_float64_value_per_grid_bin_nan_where_uncovered(
     # NaN, and 31-40 reads 2.0 from its covered half.
     track = Track(
         name="scores/one", resource_id="scores/one", score_id="s",
-        aggregator="max", none_value_replacement=None)
+        aggregator="max", none_value_replacement=None,
+        binner="position_score_binner")
 
     values = PositionScoreBinner.bin_track(
         track, BedRegion("chr1", 1, 40), BIN_SIZE, repo)
@@ -42,7 +43,8 @@ def test_a_replacement_stands_in_for_every_uncovered_position(
     # (2.0 * 5 + 0.0 * 5) / 10; the wholly uncovered 21-30 becomes 0.0.
     track = Track(
         name="scores/one", resource_id="scores/one", score_id="s",
-        aggregator="mean", none_value_replacement=0.0)
+        aggregator="mean", none_value_replacement=0.0,
+        binner="position_score_binner")
 
     values = PositionScoreBinner.bin_track(
         track, BedRegion("chr1", 21, 40), BIN_SIZE, repo)
@@ -58,7 +60,8 @@ def test_a_chromosome_the_score_never_mentions_is_wholly_uncovered(
     # chromosome's bins are NaN like any other uncovered bin.
     track = Track(
         name="scores/one", resource_id="scores/one", score_id="s",
-        aggregator="max", none_value_replacement=None)
+        aggregator="max", none_value_replacement=None,
+        binner="position_score_binner")
 
     values = PositionScoreBinner.bin_track(
         track, BedRegion("chr2", 1, 25), BIN_SIZE, repo)
@@ -71,7 +74,8 @@ def test_a_replacement_covers_a_chromosome_the_score_never_mentions(
 ) -> None:
     track = Track(
         name="scores/one", resource_id="scores/one", score_id="s",
-        aggregator="mean", none_value_replacement=0.0)
+        aggregator="mean", none_value_replacement=0.0,
+        binner="position_score_binner")
 
     values = PositionScoreBinner.bin_track(
         track, BedRegion("chr2", 1, 25), BIN_SIZE, repo)
