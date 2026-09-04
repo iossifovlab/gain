@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, overload
 
 import yaml
 
@@ -129,9 +130,15 @@ class AnnotationConfigurationError(Exception):
 class ParamsUsageMonitor(Mapping):
     """Class to monitor usage of annotator parameters."""
 
-    def __init__(self, data: dict[str, Any]):
+    def __init__(self, data: dict[str, Any], owner: str | None = None):
         self._data = dict(data)
         self._used_keys: set[str] = set()
+        #: Whose parameters these are -- the annotator type, set by the
+        #: ``AnnotatorInfo`` that holds them.  It names the annotator in
+        #: a refusal and does nothing else: parameters are compared and
+        #: hashed by their data alone, so two monitors holding the same
+        #: parameters stay equal whatever their owners are.
+        self.owner = owner
 
     def __hash__(self) -> int:
         return _hash_params(self._data)
@@ -153,6 +160,232 @@ class ParamsUsageMonitor(Mapping):
         if not isinstance(other, ParamsUsageMonitor):
             return False
         return self._data == other._data
+
+    # A parameter WITH a default always answers a number; only one
+    # without can answer `None`, and a caller of that kind (an optional
+    # threshold) has to handle the absence anyway.
+    @overload
+    def get_number(
+        self, key: str, *, default: float,
+        minimum: float | None = None, maximum: float | None = None,
+        not_a_number_explanation: str | None = None,
+        out_of_range_explanation: str | None = None,
+    ) -> float: ...
+
+    @overload
+    def get_number(
+        self, key: str, *, default: None = None,
+        minimum: float | None = None, maximum: float | None = None,
+        not_a_number_explanation: str | None = None,
+        out_of_range_explanation: str | None = None,
+    ) -> float | None: ...
+
+    def get_number(
+        self, key: str, *,
+        default: float | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
+        not_a_number_explanation: str | None = None,
+        out_of_range_explanation: str | None = None,
+    ) -> float | None:
+        """Read a parameter that has to be a number.
+
+        Absent -- unwritten, or written with no value -- means
+        ``default``, and reading is what DECLARES the key: the lookup
+        goes through item access, so a parameter read here is not an
+        unused one.  Everything a number cannot be is refused with an
+        ``AnnotationConfigurationError`` naming the key as the user
+        spelled it, because a pipeline is wrong the moment it is written
+        and whoever has to fix it is reading YAML (gain#477).
+
+        The answer is a number, not necessarily a ``float``: a whole one
+        stays an ``int``, so a caller needing that type can ask for it
+        with :meth:`get_integer` and be sure of it.
+
+        The two explanations say what THIS parameter is, in the caller's
+        own words, and are appended to the refusal they are named for.
+        A generic sentence stating the bounds stands in for a missing
+        ``out_of_range_explanation``.
+        """
+        value = self._lookup(key)
+        if value is None:
+            return default
+        # NOT widened to `float`: a whole number stays whole, and the
+        # conversion would raise `OverflowError` on an integer too large
+        # for one -- out of the accessor whose contract is that what it
+        # refuses, it refuses by naming the key.
+        return self._to_number(
+            key, value, minimum=minimum, maximum=maximum,
+            not_a_number_explanation=not_a_number_explanation,
+            out_of_range_explanation=out_of_range_explanation)
+
+    @overload
+    def get_integer(
+        self, key: str, *, default: int,
+        minimum: float | None = None, maximum: float | None = None,
+        not_a_number_explanation: str | None = None,
+        out_of_range_explanation: str | None = None,
+    ) -> int: ...
+
+    @overload
+    def get_integer(
+        self, key: str, *, default: None = None,
+        minimum: float | None = None, maximum: float | None = None,
+        not_a_number_explanation: str | None = None,
+        out_of_range_explanation: str | None = None,
+    ) -> int | None: ...
+
+    def get_integer(
+        self, key: str, *,
+        default: int | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
+        not_a_number_explanation: str | None = None,
+        out_of_range_explanation: str | None = None,
+    ) -> int | None:
+        """Read a parameter that has to be a whole number.
+
+        A length counted in bases is one: the effect annotator does index
+        arithmetic with what it reads here, so a fractional value is a
+        typo to refuse rather than something to truncate.  Otherwise as
+        :meth:`get_number`.
+        """
+        value = self._lookup(key)
+        if value is None:
+            return default
+        number = self._to_number(
+            key, value, minimum=minimum, maximum=maximum,
+            not_a_number_explanation=not_a_number_explanation,
+            out_of_range_explanation=out_of_range_explanation)
+        if isinstance(number, int):
+            return number
+        if not number.is_integer():
+            raise self._refuse(
+                key,
+                f"{value!r}, which is not a whole number.",
+                not_a_number_explanation)
+        return int(number)
+
+    def _lookup(self, key: str) -> Any:
+        """Read one parameter, DECLARING it, absent or not.
+
+        ``None`` comes back for a key nobody wrote and for one written
+        with nothing after it -- ``promoter_len:`` is YAML for ``None``
+        -- because a key with no value says as little as no key at all.
+        """
+        try:
+            return self[key]
+        except KeyError:
+            return None
+
+    def _to_number(
+        self, key: str, value: Any, *,
+        minimum: float | None, maximum: float | None,
+        not_a_number_explanation: str | None,
+        out_of_range_explanation: str | None,
+    ) -> int | float:
+        """Coerce and range-check one looked-up parameter value.
+
+        An ``int`` stays an ``int``: past 2**53 a round trip through
+        ``float`` answers a different number than the one configured.
+        """
+        # The three types a configuration spells a number as, and only
+        # those: `bool` is named first because it subclasses `int`, so
+        # without this `min_overlap: true` would parse as 1.0 -- a value
+        # the user never asked for, applied in silence.  Anything else
+        # `float()` happens to accept, `b"0.5"` among them, is refused
+        # here rather than admitted for being convertible.
+        if isinstance(value, bool) or not isinstance(value, int | float | str):
+            raise self._not_a_number(key, value, not_a_number_explanation)
+        number = (
+            self._parse_number(key, value, not_a_number_explanation)
+            if isinstance(value, str) else value
+        )
+        # `nan` and `inf` survive `float()` and are no length and no
+        # share of one, so they are refused for what they are rather
+        # than left to a bound -- the accessor is shared, and a caller
+        # that asks for no range would otherwise admit them.  An `int`
+        # is finite by construction, and asking `math.isfinite` would
+        # itself overflow on a large one.
+        if isinstance(number, float) and not math.isfinite(number):
+            raise self._not_a_number(key, value, not_a_number_explanation)
+        if ((minimum is not None and number < minimum)
+                or (maximum is not None and number > maximum)):
+            raise self._out_of_range(
+                key, value, minimum, maximum, out_of_range_explanation)
+        return number
+
+    def _parse_number(
+        self, key: str, text: str, explanation: str | None,
+    ) -> int | float:
+        """Parse a configured string, keeping a whole number whole.
+
+        A string is what the annotation editor posts -- its form controls
+        hold text, so a number typed there arrives as ``"100"``.  Quoting
+        the value in hand-written YAML lands here too and means the same
+        thing.  ``int`` is tried first so that a length spelled as a
+        string is as exact as one spelled as a number.
+
+        Whatever Python reads as a number is one, which is a slightly
+        wider door than the editor posts through: ``"1_000"`` and
+        ``" 5 "`` are numbers here.  Being liberal about a spelling
+        nobody is likely to type is not the same as being liberal about
+        the value, which is still bounded and still has to be finite.
+        """
+        try:
+            return int(text)
+        except ValueError:
+            pass
+        try:
+            return float(text)
+        except ValueError:
+            raise self._not_a_number(key, text, explanation) from None
+
+    def _not_a_number(
+        self, key: str, value: object, explanation: str | None,
+    ) -> AnnotationConfigurationError:
+        """The refusal for a value no number can be spelled as."""
+        return self._refuse(
+            key, f"{value!r}, which is not a number.", explanation)
+
+    def _out_of_range(
+        self, key: str, value: object,
+        minimum: float | None, maximum: float | None,
+        explanation: str | None,
+    ) -> AnnotationConfigurationError:
+        """The refusal for a number outside the bounds asked for."""
+        if minimum is not None and maximum is not None:
+            bounds = f"between {minimum} and {maximum}"
+        elif minimum is not None:
+            bounds = f"no smaller than {minimum}"
+        else:
+            bounds = f"no larger than {maximum}"
+        return self._refuse(
+            key, f"{value}.",
+            explanation or f"It has to be a number {bounds}.")
+
+    def _refuse(
+        self, key: str, problem: str, explanation: str | None,
+    ) -> AnnotationConfigurationError:
+        """One refusal: who configured what, what is wrong, what it means.
+
+        The owner is named first when there is one, because a pipeline
+        holds many annotators and the key alone does not say which of
+        them the value was written under.
+
+        Both it and the value are caller text reaching a logged message,
+        so both are escaped to one line (gain#642, gain#655): ``float()``
+        accepts the whitespace around a number, so a configured ``"2\\n"``
+        parses, fails the range check and would otherwise emit a second,
+        fully-formed-looking record.  The key is ours -- the annotator
+        passes a literal -- and escaping it is a no-op that costs nothing
+        to keep uniform.
+        """
+        prefix = f"{self.owner} configures " if self.owner else ""
+        message = escape_unsafe_characters(f"{prefix}{key}: {problem}")
+        if explanation is not None:
+            message = f"{message} {explanation}"
+        return AnnotationConfigurationError(message)
 
     def get_used_keys(self) -> set[str]:
         """Return the set of keys that have been accessed."""
@@ -271,6 +504,12 @@ class AnnotatorInfo:
             self.parameters = parameters
         else:
             self.parameters = ParamsUsageMonitor(parameters)
+        # These parameters belong to THIS annotator, whichever way they
+        # arrived, and a refusal out of them says so.  One monitor to one
+        # info: they already share `used_keys`, so a monitor handed to a
+        # second info would mark keys used across both -- an owner that
+        # names the later one is the smaller half of that problem.
+        self.parameters.owner = _type
         if resources is None:
             self.resources = []
         else:

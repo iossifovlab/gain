@@ -40,21 +40,6 @@ LEGACY_ANNOTATOR_NAMES = {
 }
 
 
-def _not_a_number(
-    info: AnnotatorInfo, parameter: str, value: object,
-) -> AnnotationConfigurationError:
-    """The refusal for a fraction that is not a number, in one place.
-
-    Two readings reach it -- a value of a type no fraction can have, and
-    a string that will not parse -- and they say the same thing, so the
-    wording lives here rather than in copies of it.
-    """
-    return AnnotationConfigurationError(
-        f"{info.type} configures {parameter}: {value!r}, which is not a "
-        f"number. An overlap fraction is a share of a length, written "
-        f"as a number between 0 and 1")
-
-
 def _read_overlap_fraction(
     info: AnnotatorInfo, parameter: str,
 ) -> float | None:
@@ -74,40 +59,27 @@ def _read_overlap_fraction(
     annotator is CONSTRUCTED and names the key they typed (gain#477).
     The score keeps its own guard -- it has callers this never sees.
 
+    What a number IS -- `bool` refused ahead of `int`, a string that
+    spells one accepted, `nan` and `inf` refused for being neither --
+    is :meth:`ParamsUsageMonitor.get_number`'s, shared with every other
+    numeric annotator parameter (gain#1166).  What stays here is what
+    only a fraction can say: the range, and the sentence a reader needs
+    to know what to write instead.
+
     Reading the parameter is what DECLARES it: ``info.parameters`` refuses
-    a key nobody read, so both fractions must be read unconditionally.
+    a key nobody read, and ``get_number`` reads through item access, so
+    both fractions are declared by being read unconditionally.
     """
-    value = info.parameters.get(parameter)
-    if value is None:
-        return None
-    # `bool` before `int`, because it is a subclass of it: without this
-    # `min_region_overlap_fraction: true` would be admitted as 1.0 -- a
-    # threshold the user never asked for, silently applied.
-    # `bool` first, because it is a subclass of `int`: without this
-    # `min_region_overlap_fraction: true` would parse as 1.0 -- a threshold
-    # the user never asked for, silently applied.  The type guard is what
-    # keeps `float()` from accepting things a fraction cannot be spelled
-    # as, `b"0.5"` among them.
-    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-        raise _not_a_number(info, parameter, value)
-    # A STRING that spells a number is accepted, because the annotation
-    # editor posts one: its form controls hold text, so a fraction typed
-    # there arrives as `"0.5"`.  Refusing it would 400 the editor on its
-    # own output -- the parameter offered in the form and unsaveable.
-    # Quoting a fraction in hand-written YAML lands here too and means the
-    # same thing.  `"half"` does not parse; `nan` and `inf` do, and fail
-    # the range check below instead.
-    try:
-        number = float(value)
-    except ValueError:
-        raise _not_a_number(info, parameter, value) from None
-    if not 0.0 <= number <= 1.0:
-        raise AnnotationConfigurationError(
-            f"{info.type} configures {parameter}: {value}. An overlap "
-            f"fraction is a share of a length, so it lies between 0 and 1; "
-            f"a threshold outside that is either vacuous or matches nothing "
-            f"whatever the data")
-    return number
+    return info.parameters.get_number(
+        parameter, minimum=0.0, maximum=1.0,
+        not_a_number_explanation=(
+            "An overlap fraction is a share of a length, written as a "
+            "number between 0 and 1"),
+        out_of_range_explanation=(
+            "An overlap fraction is a share of a length, so it lies "
+            "between 0 and 1; a threshold outside that is either vacuous "
+            "or matches nothing whatever the data"),
+    )
 
 
 def build_fragment_score_annotator(pipeline: AnnotationPipeline,

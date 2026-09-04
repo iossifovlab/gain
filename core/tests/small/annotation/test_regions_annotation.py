@@ -4,6 +4,7 @@ import textwrap
 
 import pytest
 from gain.annotation.annotatable import Region
+from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing import build_inmemory_test_repository
@@ -161,6 +162,12 @@ def test_allele_score_region_annotator(
     assert result["test"] == expected, annotatable
 
 
+@pytest.mark.parametrize("configured", [
+    pytest.param("3", id="number"),
+    # The annotation editor's form controls hold text, so a cutoff saved
+    # from there arrives quoted; it has to mean the same cutoff.
+    pytest.param('"3"', id="quoted"),
+])
 @pytest.mark.parametrize("region,aggregator,expected", [
     (("chr1", 10, 12), "max", 0.004),
     (("chr1", 10, 13), "max", None),
@@ -169,6 +176,7 @@ def test_allele_score_region_annotator(
 def test_allele_score_region_length_cutoff(
         region: tuple,
         aggregator: str, expected: float,
+        configured: str,
         fixture_repo: GenomicResourceRepo) -> None:
 
     annotatable = Region(*region)
@@ -176,7 +184,7 @@ def test_allele_score_region_length_cutoff(
     pipeline_config = textwrap.dedent(f"""
         - allele_score:
             resource_id: allele_score_raw
-            region_length_cutoff: 3
+            region_length_cutoff: {configured}
             attributes:
             - source: test_raw
               name: test
@@ -224,3 +232,29 @@ def test_allele_score_annotator(
     print(annotatable, result)
     assert result is not None
     assert result.get("test") == expected, annotatable
+
+
+@pytest.mark.parametrize("configured", [
+    pytest.param("true", id="a-bool"),
+    pytest.param("big", id="spells-no-number"),
+    pytest.param("-1", id="negative"),
+    pytest.param("1.5", id="fractional"),
+])
+def test_a_score_region_length_cutoff_that_is_no_length_is_refused(
+    configured: str, fixture_repo: GenomicResourceRepo,
+) -> None:
+    """Refused as the pipeline LOADS, naming the key the user wrote.
+
+    Every score annotator shares this cutoff and compares an
+    annotatable's length against it, so an uncoerced value used to raise
+    ``TypeError`` on the first annotated variant instead (gain#1166).
+    """
+    pipeline_config = textwrap.dedent(f"""
+        - position_score:
+            resource_id: position_score1
+            region_length_cutoff: {configured}
+        """)
+
+    with pytest.raises(
+            AnnotationConfigurationError, match="region_length_cutoff"):
+        load_pipeline_from_yaml(pipeline_config, fixture_repo)

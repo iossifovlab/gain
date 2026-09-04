@@ -75,16 +75,17 @@ INJECTED_PARAMETERS = NON_IDENTITY_PARAMS
 #: an annotator learns to read has to be added to its template, or added
 #: here on purpose.  This is the inventory of what is unreachable from
 #: the UI, which is why an entry without a reason is not acceptable.
-#: Compared to a length as the number it was configured as, with no
-#: coercion -- while the form's only free-text field posts a string, and
-#: the YAML the editor saves keeps it one.  Offered today, the form would
-#: save a pipeline that fails on its first annotation (`int > str`).
-#: Offered once gain#1166 gives the annotators a numeric accessor.
-UNCOERCED_NUMBER = "region_length_cutoff"
+#: Nothing left to stop this being offered: gain#1166 gave the
+#: annotators `ParamsUsageMonitor.get_integer`, so the string the form's
+#: free-text field posts now means the cutoff it spells instead of
+#: failing on the first annotation (`int > str`).  Offering it is
+#: gain#1184 -- a template change, which this test fails on the moment
+#: it lands unless the key is dropped from here in the same commit.
+NOT_YET_IN_THE_TEMPLATES = "region_length_cutoff"
 
 DELIBERATELY_NOT_OFFERED: dict[str, frozenset[str]] = {
-    "position_score_annotator": frozenset({UNCOERCED_NUMBER}),
-    "allele_score_annotator": frozenset({UNCOERCED_NUMBER}),
+    "position_score_annotator": frozenset({NOT_YET_IN_THE_TEMPLATES}),
+    "allele_score_annotator": frozenset({NOT_YET_IN_THE_TEMPLATES}),
     "gene_score_annotator": frozenset(),
     "gene_set_annotator": frozenset({
         # Read by the framework's input-annotatable decorator, which probes
@@ -102,9 +103,10 @@ DELIBERATELY_NOT_OFFERED: dict[str, frozenset[str]] = {
     "effect_annotator": frozenset({
         # Not documented in the annotation infrastructure docs; offering
         # an undocumented knob in the form is premature.  Document, then
-        # offer -- and it is a number read the same uncoerced way.
+        # offer.  The coercion half of that reason is gone (gain#1166);
+        # this is the half that remains.
         "promoter_len",
-        UNCOERCED_NUMBER,
+        NOT_YET_IN_THE_TEMPLATES,
     }),
     "simple_effect_annotator": frozenset(),
     "liftover_annotator": frozenset(),
