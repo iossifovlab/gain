@@ -239,3 +239,37 @@ def test_a_walk_of_point_reads_leaves_the_tabix_buffer_pruned(
     for pos in range(1, 201):
         assert score.fetch_position_scores("chr1", pos) == [0.1]
         assert table.buffered_record_count() <= 64
+
+
+def test_a_score_asked_for_twice_is_answered_twice(
+    tmp_path: pathlib.Path,
+) -> None:
+    """One value per REQUESTED id, in the order asked, duplicates included.
+
+    The point read does not dedupe what it is asked for: it resolves a
+    definition per id and reads each off the record.  The position
+    annotator leans on exactly that -- it asks one source per attribute
+    and pairs the answers with the attribute names by position, so a read
+    that collapsed ``["s", "t", "s"]`` to two answers would have the third
+    attribute fall off the end (gain#1111).  Distinct values under ``s``
+    and ``t``, so an answer in the wrong slot is visible.
+    """
+    resource = (
+        a_grr()
+        .with_resource(
+            "scores",
+            a_position_score()
+            .with_score("s", "float")
+            .with_score("t", "float")
+            .with_data("""
+                chrom  pos_begin  s    t
+                chr1   10         1.0  2.0
+            """))
+        .build_repo(tmp_path)
+        .get_resource("scores")
+    )
+    score = PositionScore(resource)
+    score.open()
+
+    assert score.fetch_position_scores(
+        "chr1", 10, ["s", "t", "s"]) == [1.0, 2.0, 1.0]

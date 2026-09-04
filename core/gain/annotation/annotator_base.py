@@ -299,16 +299,47 @@ class AnnotatorBase(Annotator):
         ``zip(strict=True)``: the strict zip needs a second list of names
         to zip against, and building one costs about three times what the
         whole annotate call costs (measured, gain#1124).
+
+        A read that answers one value per attribute and nothing else
+        pairs through :meth:`_pair_all` instead.
         """
-        if len(values) != query_count:
-            raise ValueError(
-                f"{self.get_info().type} asked {query_count} queries of "
-                f"resource '{resource_id}' and got {len(values)} values "
-                f"back")
+        self._refuse_count_mismatch(values, query_count, resource_id)
         answers = iter(values)
         return AggregatedValues(
             (attr.name, next(answers) if reduced(attr) else otherwise(attr))
             for attr in self._attributes)
+
+    def _pair_all(
+        self, values: Sequence[Any], *, resource_id: str,
+    ) -> AggregatedValues:
+        """Pair one value per attribute back onto the attributes, by ORDER.
+
+        The all-reduced case of :meth:`_pair_aggregated`: for a read that
+        answers exactly one value per attribute, in attribute order, and
+        nothing beside them.  Same count check, for the same reason; the
+        pairing itself is one zip over the two lists.
+        """
+        self._refuse_count_mismatch(values, len(self._attributes), resource_id)
+        # ``strict`` cannot fire after the check; it is the linter's
+        # spelling of a plain zip.
+        return AggregatedValues({
+            attr.name: value
+            for attr, value in zip(self._attributes, values, strict=True)})
+
+    def _refuse_count_mismatch(
+        self, values: Sequence[Any], expected: int, resource_id: str,
+    ) -> None:
+        """Refuse a read that answered other than ``expected`` values.
+
+        The pairings are POSITIONAL, so a read that answered a different
+        number would otherwise slide every attribute onto its neighbour's
+        value.
+        """
+        if len(values) != expected:
+            raise ValueError(
+                f"{self.get_info().type} asked {expected} queries of "
+                f"resource '{resource_id}' and got {len(values)} values "
+                f"back")
 
     def annotate(
         self, annotatable: Annotatable | None, context: dict[str, Any],

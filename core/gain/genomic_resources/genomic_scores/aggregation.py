@@ -231,9 +231,10 @@ def distinct_score_ids(score_ids: Iterable[str]) -> list[str]:
     folding read) project, and each hands the result on to the fold.
 
     Note this is the aggregating reads' derivation, not a package-wide
-    one: ``score_annotator`` dedupes its attribute sources with its own
-    ``dict.fromkeys`` over a different input, and converging that is
-    gain#1111.
+    one: nothing else in the package fetches one list and indexes it
+    twice.  The position annotator's point read asks one score per
+    attribute, a score named twice included, and pairs the answers back
+    by position, so it has nothing to dedupe.
     """
     return list(dict.fromkeys(score_ids))
 
