@@ -11,6 +11,14 @@ general programming concepts. Reasoning behind decisions lives in
 
 ## Language
 
+<!-- Everything between the two `published-on-docs-site` markers is rendered
+     on the public documentation site (docs/source/development/
+     architecture_overview.rst includes it by these markers, not by heading).
+     Move this section freely -- the slice follows the markers, not the
+     heading. Do not delete or rename the markers: docs/build_docs.sh checks
+     for both and refuses to build without them. -->
+<!-- published-on-docs-site: start -->
+
 ### Repositories
 
 **Genomic Resource Repository (GRR)**:
@@ -98,8 +106,9 @@ equal, NA equal to NA, floats exactly as stored (ADR 0020). Scanned means
 the columns the statistics scan fetches: every declared score except those
 with a null histogram. Value-aware and per-resource: a touching row that
 differs in any scanned score column starts a new segment, and a run of NA
-rows is a segment. Not a table row as stored — an unmerged row is a
-*fragment*, deliberately the opposite view.
+rows is a segment. Not a table row as stored, and not a **fragment**: a
+fragment is a stored observation with its own extent, a segment is computed
+from rows — deliberately the opposite view.
 Defined for **position scores only**: a kind whose rows can overlap has no
 segments, by decision rather than by deferral (ADR 0020, amended by
 gain#926), and builds no runs at all.
@@ -127,21 +136,29 @@ _Avoid_: covered base, coverage depth (nothing here counts how many rows
 span a position), breadth
 
 **Fragment**:
-A table row of a tabular score **as stored** — unmerged and value-blind, the
-deliberate opposite of a **segment**. Overlapping, nested and duplicate rows
-are each their own fragment, and a fragment's length is its own span,
-`pos_end - pos_begin + 1`. Only a fragment score publishes fragment
-statistics — a count and a length histogram, on the same fixed log2 bins as
-segment lengths, in a file of their own. Its **own** statistic since
-gain#1127: it used to ride inside the covered-position one, which meant a
-fragment score could not stop publishing covered positions without losing
-its fragment counts too. Nothing publishes fragment *segments*, and nothing will:
-they would need an exact run algebra fragments do not have, and no consumer
-question survives that the fragment count and length histogram cannot already
-answer (ADR 0020, amended by gain#848 and closed by gain#926; a fragment score
-has no coverage to help answer it either, since gain#1127).
-_Avoid_: row (ambiguous — every kind has table rows), interval, CNV, call,
-event
+A stretch of DNA mapped onto the reference genome — `(chrom, pos_begin,
+pos_end)` — carrying its own characteristics: the scores a **fragment score**
+attaches to it. An ATAC-seq fragment and a copy-number call are both
+fragments; copy-number variants are the most common thing stored this way,
+not the only thing (ADR 0003). A fragment score's table stores one fragment
+per row, and that is the whole of the row's role — the fragment is the thing,
+the row is how it is written down. Fragments are observations, not derived
+runs, so they overlap, nest and duplicate freely: each is its own fragment,
+and its length is its own span, `pos_end - pos_begin + 1`. That is the
+deliberate opposite of a **segment**, which is *computed* by merging
+equal-valued rows. Only a fragment score publishes fragment statistics — a
+count and a length histogram, on the same fixed log2 bins as segment lengths,
+in a file of their own. Its **own** statistic since gain#1127: it used to ride
+inside the covered-position one, which meant a fragment score could not stop
+publishing covered positions without losing its fragment counts too. Nothing
+publishes fragment *segments*, and nothing will: they would need an exact run
+algebra fragments do not have, and no consumer question survives that the
+fragment count and length histogram cannot already answer (ADR 0020, amended
+by gain#848 and closed by gain#926; a fragment score has no coverage to help
+answer it either, since gain#1127).
+_Avoid_: row (how a fragment is stored, not what it is — and every kind has
+table rows), interval (the coordinates without the attached scores), CNV,
+call, event (each narrower than the thing)
 
 **Allele class**:
 What an allele-score row's ref/alt pair is, classified VCF-anchored as one of
@@ -248,6 +265,8 @@ gene id and the probe id are two different things and a read reports both.
 refuses the other kind rather than reading it (ADR 0014).
 _Avoid_: calling either "the 10x h5 format" — the distinction is the whole
 reason a read of one is not a read of the other
+
+<!-- published-on-docs-site: end -->
 
 ## Relationships
 

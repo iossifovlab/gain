@@ -59,6 +59,15 @@ extlinks = {
 # they render.
 git_untracked_show_sourcelink = True
 
+# ``development/architecture_overview.rst`` includes a slice of the repo-root
+# ``CONTEXT.md`` through the myst parser, and that slice starts at a ``###``
+# heading -- it is a fragment of a document, nested under the page's own
+# sections.  myst-parser sees a document whose first heading is not H1 and
+# warns "Document headings start at H3, not H1" once per ``###`` in the slice.
+# The headings nest correctly in the rendered page, so the warning is noise
+# for this use of ``include``; silence that one check (gain#1142).
+suppress_warnings = ["myst.header"]
+
 # ``sphinx-apidoc`` emits one ``automodule`` per submodule plus a "Module
 # contents" one for the package itself.  Where a package ``__init__``
 # re-exports its submodules' names through ``__all__``, autodoc honours
