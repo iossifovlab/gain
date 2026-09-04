@@ -148,7 +148,7 @@ def test_a_none_annotatable_and_an_empty_region_are_different_answers(
 
     Reached through different entry points, which is why both are asserted
     here rather than one standing in for the other.  ``None`` never gets
-    as far as the score: ``Annotator.annotate`` short-circuits to
+    as far as the score: ``AnnotatorBase.annotate`` short-circuits to
     ``_empty_result``, whose values are ``None`` for every attribute.  An
     empty region is a real walk that saw no fragments, so its count comes
     off ``FragmentAggregate.count`` and is ``0``.

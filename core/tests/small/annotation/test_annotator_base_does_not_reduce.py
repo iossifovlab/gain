@@ -95,6 +95,23 @@ def test_batch_annotate_hands_each_answer_through_too(
     ]
 
 
+def test_an_attribute_the_annotator_did_not_answer_stays_absent(
+    tmp_path: pathlib.Path, annotatable: Annotatable,
+) -> None:
+    """The base fills nothing in.
+
+    The rename used to walk the attributes and write ``None`` under any
+    the annotator had not answered; that walk is gone with the rename,
+    so an answer comes back EXACTLY as handed -- here, with the one
+    configured attribute missing, rather than as ``{"renamed": None}``.
+    Answering every attribute is the annotator's job, and
+    ``_empty_result`` is how it does so for the cases with no value.
+    """
+    annotator = _StubAnnotator(tmp_path, AggregatedValues())
+
+    assert annotator.annotate(annotatable, {}) == {}
+
+
 def test_a_none_annotatable_answers_none_under_the_attribute_name(
     tmp_path: pathlib.Path,
 ) -> None:

@@ -287,6 +287,10 @@ class AnnotatorBase(Annotator):
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
     ) -> list[dict[str, Any]]:
+        # Not a defensive copy: ``list`` is invariant, so a
+        # ``list[AggregatedValues]`` is not a ``list[dict[str, Any]]`` to
+        # mypy and cannot be returned as one directly.  One shallow copy
+        # per batch, not per annotatable.
         return list(self._do_batch_annotate(
             annotatables, contexts, batch_work_dir=batch_work_dir,
         ))
