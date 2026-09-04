@@ -22,9 +22,10 @@
 //     spliceai_annotator/** changes (see the 'Trigger spliceai integration'
 //     stage in the root Jenkinsfile), re-run nightly from Jenkinsfile.nightly,
 //     and safe to run manually.
-//   - Agent env GRR_ROOT must point at the grr-sync LVM root (seqpipe/infra#71
-//     provisioned this on the piglet agent); this pipeline mounts
-//     ${GRR_ROOT}/grr:/grr:ro.
+//   - Runs on any `builder` agent. Every kowalski build agent carries the
+//     node-local grr-sync tree (seqpipe/infra#71, atomic-publish mode); the
+//     environment{} block below resolves its root as GRR_ROOT and this
+//     pipeline mounts ${GRR_ROOT}/grr:/grr:ro.
 
 // Zulip failure alert (seqpipe/infra#105). Builds that pass say nothing.
 //
@@ -64,12 +65,18 @@ def zulipAlert(String status, String emoji) {
 }
 
 pipeline {
-    // Pinned to `piglet`: it carries the node-local grr-sync tree (GRR_ROOT)
-    // that the #321 real tier reads, and has the compute to run real SpliceAI
-    // TensorFlow inference over the corpus. The #320 fixture tier runs here
-    // too. No persistent cache is needed — the fixture + baselines are
+    // Any `builder` agent. This used to be pinned to `piglet` because, when
+    // the #321 real tier landed (2026-07-23), piglet was the only agent
+    // with the node-local grr-sync tree (GRR_ROOT). That is no longer so:
+    // every kowalski build agent runs grr-sync in atomic-publish mode
+    // (gain-infra `grr_sync_agents`), the GRR_ROOT resolver below handles
+    // the per-node path, and the pre-flight aborts loudly if the tree is
+    // missing. The CI image is CPU-only and the harness runs at -n 5, so
+    // no agent is special on compute either. A pin only costs
+    // availability: with piglet offline the job queued indefinitely
+    // (#1199). No persistent cache is needed -- the fixture + baselines are
     // committed and the real resources come from the mounted /grr.
-    agent { label 'piglet' }
+    agent { label 'builder' }
 
     options {
         timeout(time: 2, unit: 'HOURS')
@@ -97,7 +104,7 @@ pipeline {
         // GRR_ROOT is the node-local grr-sync root; the real tier
         // bind-mounts ${GRR_ROOT}/grr:/grr:ro. It is provisioned per
         // agent by seqpipe/infra#71 -- NOT as a uniform path: /tank/grr
-        // on some nodes, /data/grr on piglet + eyoree. The first #321
+        // on pooh, /data/grr on dory, piglet, eyoree and totoro. The first #321
         // real-tier build failed here because the job hard-required the
         // agent's node environment to carry GRR_ROOT and the piglet agent
         // had no such env var, so the `${GRR_ROOT:?...}` guard aborted
@@ -286,8 +293,8 @@ pipeline {
         failure {
             // Wrapped in an explicit node block: a pipeline-init failure can
             // tear down the outer agent before post runs, leaving zulipSend
-            // without a FilePath context. `builder` rather than this job's
-            // own `piglet` pin — posting a message needs no GRR tree or GPU.
+            // without a FilePath context. Any `builder` will do -- posting a
+            // message needs no GRR tree.
             node('builder') {
                 zulipSend(
                     topic: "${env.JOB_NAME}",
