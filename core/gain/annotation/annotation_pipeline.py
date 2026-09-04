@@ -262,7 +262,15 @@ class AttributeSpec:
 
 
 class Annotator(abc.ABC):
-    """Annotator provides a set of attrubutes for a given Annotatable."""
+    """An annotator produces a set of attributes for a given annotatable.
+
+    The pipeline drives the lifecycle: :meth:`open` before the first
+    :meth:`annotate`, :meth:`close` once at the end.  An annotator may
+    assume it is open when asked to annotate, and does not open itself
+    on demand.  Implementations extend :class:`AnnotatorBase`, which
+    handles configuration and the ``None`` annotatable, rather than
+    this class directly.
+    """
 
     BASE_DOC_URL = "https://iossifovlab.com/gaindocs/annotation_infrastructure.html"
 
@@ -273,53 +281,116 @@ class Annotator(abc.ABC):
         self._is_open = False
 
     def get_info(self) -> AnnotatorInfo:
+        """The :class:`AnnotatorInfo` this annotator was built from.
+
+        Its type, id, configured attributes, parameters and resources.
+        """
         return self._info
 
     @abc.abstractmethod
     def annotate(
         self, annotatable: Annotatable | None, context: dict[str, Any],
     ) -> dict[str, Any]:
-        """Produce annotation attributes for an annotatable."""
+        """Produce this annotator's attributes for one annotatable.
+
+        Returns a mapping from attribute *name* (not source) to value,
+        with every attribute in :attr:`attributes` present.
+        ``annotatable`` is ``None`` when the input row has none -- an
+        unparsable variant, a liftover that found nothing -- and the
+        answer is then every attribute set to ``None``, never an
+        exception.  ``context`` holds the attributes of the annotators
+        before this one: read what :attr:`used_context_attributes`
+        declares and do not write to it -- the pipeline merges the
+        returned mapping into it.  May assume :meth:`open` has run.
+        An annotator that only works in batches raises
+        ``NotImplementedError`` here and overrides :meth:`batch_annotate`.
+        """
 
     def batch_annotate(
         self, annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,  # ruff: ignore[unused-method-argument]
     ) -> Iterable[dict[str, Any]]:
+        """Annotate many annotatables: one result per input, in order.
+
+        The default calls :meth:`annotate` once per pair, lazily, and is
+        correct for every annotator.  Override it only when the backend
+        has a genuinely batched path -- an external tool run once over a
+        file, say -- and keep the same contract: exactly one result per
+        annotatable, in input order; the empty result for a ``None``
+        annotatable; ``contexts`` read, not written.  ``batch_work_dir``
+        is a scratch directory the caller may offer, ``None`` when it
+        does not; the default ignores it.
+        """
         return itertools.starmap(
             self.annotate, zip(annotatables, contexts, strict=True),
         )
 
     def close(self) -> None:
+        """Release what :meth:`open` acquired and mark the annotator closed.
+
+        Safe on an annotator never opened, and safe twice; overrides
+        keep it so and call the base.  The pipeline calls it once per
+        annotator and logs, rather than propagates, what it raises.
+        """
         self._is_open = False
 
     def open(self) -> Annotator:
+        """Acquire resources and mark the annotator open; returns ``self``.
+
+        The base only flips the flag.  Overrides open the resources
+        they query, call the base and return ``self``.  Opening an
+        already-open annotator must be harmless.
+        """
         self._is_open = True
         return self
 
     def is_open(self) -> bool:
+        """Whether :meth:`open` has run and :meth:`close` has not since."""
         return self._is_open
 
     @property
     def resources(self) -> list[GenomicResource]:
+        """The genomic resources this annotator was configured with."""
         return self._info.resources
 
     @property
     def resource_ids(self) -> set[str]:
+        """The ids of :attr:`resources`, as a set."""
         return {resource.get_id() for resource in self._info.resources}
 
     @property
     @abc.abstractmethod
     def attributes(self) -> list[Attribute]:
-        """Return the list of attributes this annotator produces."""
+        """The attributes this annotator produces, in output order.
+
+        Configured attributes: names, sources, aggregators and
+        parameters already resolved against :meth:`get_attribute_specs`.
+        """
 
     @property
     def used_context_attributes(self) -> tuple[str, ...]:
+        """Names of upstream attributes this annotator reads from ``context``.
+
+        Empty by default.  An annotator that reads an attribute another
+        annotator produced -- a gene list, say -- names it here: the
+        pipeline builds its dependency graph from this tuple, and a
+        reannotation reruns this annotator when a named attribute's
+        producer changes.  Every name must be an attribute of an
+        earlier annotator in the same pipeline.
+        """
         return ()
 
     @abc.abstractmethod
     def get_attribute_specs(self) -> dict[str, AttributeSpec]:
-        """Get specs of all attributes the annotator can produce."""
+        """Every attribute this annotator *can* produce, keyed by source.
+
+        The catalogue the configuration is checked against: a
+        configured attribute whose source is not a key here is refused.
+        Independent of the configuration and of :meth:`open`.
+        :class:`AnnotatorBase` calls it from its constructor, so it may
+        use only what the subclass set before delegating there.
+        """
 
 
 class AnnotationPipeline:
@@ -333,14 +404,21 @@ class AnnotationPipeline:
         self._is_open = False
 
     def get_info(self) -> list[AnnotatorInfo]:
+        """The :class:`AnnotatorInfo` of every annotator, in pipeline order."""
         return [annotator.get_info() for annotator in self.annotators]
 
     def get_attributes(self) -> list[Attribute]:
+        """Every attribute every annotator produces, in pipeline order."""
         return [attribute_info for annotator in self.annotators for
                 attribute_info in annotator.attributes]
 
     def get_attribute_info(
             self, attribute_name: str) -> Attribute | None:
+        """The attribute named ``attribute_name``, or ``None``.
+
+        The first match in pipeline order, so a later annotator that
+        reuses a name is shadowed here.
+        """
         for annotator in self.annotators:
             for attribute_info in annotator.attributes:
                 if attribute_info.name == attribute_name:
@@ -348,18 +426,29 @@ class AnnotationPipeline:
         return None
 
     def get_resource_ids(self) -> set[str]:
+        """The ids of every resource any annotator uses, as one set."""
         return {r_id for annotator in self.annotators
                 for r_id in annotator.resource_ids}
 
     def get_annotator_by_attribute_info(
         self, attribute_info: Attribute,
     ) -> Annotator | None:
+        """The annotator producing ``attribute_info``, or ``None``.
+
+        Matched by attribute equality, so pass an attribute obtained
+        from this pipeline -- :meth:`get_attribute_info`'s answer, say.
+        """
         for annotator in self.annotators:
             if attribute_info in annotator.attributes:
                 return annotator
         return None
 
     def add_annotator(self, annotator: Annotator) -> None:
+        """Append an annotator; it runs after every annotator already added.
+
+        Adding to an open pipeline does not open the annotator: the
+        pipeline opens its annotators only in :meth:`open`.
+        """
         assert isinstance(annotator, Annotator)
         self.annotators.append(annotator)
 
@@ -383,6 +472,10 @@ class AnnotationPipeline:
     def get_attributes_by_type(
         self, attribute_type: str,
     ) -> list[Attribute]:
+        """The attributes of one ``attribute_type``, in pipeline order.
+
+        Attributes without a spec are skipped.
+        """
         return [
             attribute_info for attribute_info in self.get_attributes()
             if attribute_info.spec is not None

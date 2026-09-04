@@ -255,6 +255,7 @@ class FragmentScore(GenomicScore):
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
+        """The :class:`GenomicScore` schema plus a per-score ``aggregator``."""
         schema = copy.deepcopy(GenomicScore.get_schema())
         scores_schema = schema["scores"]["schema"]["schema"]
         scores_schema["aggregator"] = AGGREGATOR_SCHEMA

@@ -330,6 +330,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         return finish_scoredefs(scoredefs, self.DEFAULT_AGGREGATORS)
 
     def get_config(self) -> dict[str, Any]:
+        """The configuration, validated and normalized at construction."""
         return self.config
 
     def get_default_annotation_attributes(self) -> list[Any]:
@@ -367,10 +368,15 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         return None
 
     def close(self) -> None:
+        """Close the underlying table and mark the score not open.
+
+        :meth:`open` may be called again afterwards.
+        """
         self.table.close()
         self.table_loaded = False
 
     def is_open(self) -> bool:
+        """Whether :meth:`open` has run and :meth:`close` has not since."""
         return self.table_loaded
 
     def open(self) -> Self:
@@ -887,6 +893,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         }
 
     def get_all_chromosomes(self) -> list[str]:
+        """The chromosome names the score's table holds, in table order.
+
+        Raises ``ValueError`` on a score that is not open.
+        """
         if not self.is_open():
             raise ValueError(f"genomic score <{self.resource_id}> is not open")
 

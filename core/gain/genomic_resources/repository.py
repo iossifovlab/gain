@@ -1258,6 +1258,12 @@ class GenomicResource:
         return manifest
 
     def get_file_url(self, filename: str) -> str:
+        """The URL of ``filename`` in this resource, per its protocol.
+
+        A filesystem path for a directory repository, an ``http(s)://``
+        or ``s3://`` URL otherwise.  The name is validated; the file
+        need not exist.
+        """
         return self.proto.get_resource_file_url(self, filename)
 
     def get_file_content(
