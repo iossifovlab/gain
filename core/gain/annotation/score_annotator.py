@@ -381,16 +381,19 @@ phastCons, phyloP, FitCons2, etc.
 
         if annotatable.type == Annotatable.Type.SUBSTITUTION:
             assert isinstance(annotatable, VCFAllele)
-            sources = list(dict.fromkeys(
-                attr.source for attr in self._attributes))
+            # One source per attribute, in attribute order: the read
+            # answers one value per id asked, a source named twice
+            # included, so the answers pair back by position.  The base's
+            # list is every attribute's source here -- a position score's
+            # attribute specs ARE its score definitions, so the filter
+            # that builds it drops nothing.
             point_scores = self.position_score.fetch_position_scores(
-                annotatable.chromosome, annotatable.position, sources)
+                annotatable.chromosome, annotatable.position,
+                self.simple_score_queries)
             if not point_scores:
                 return self._empty_result()
-            # One value per DISTINCT source, in the order asked; every
-            # attribute on a source takes it.
-            return self._from_sources(
-                dict(zip(sources, point_scores, strict=True)))
+            return self._pair_all(
+                point_scores, resource_id=self.position_score.resource_id)
 
         if len(annotatable) > self._region_length_cutoff:
             return self._empty_result()
@@ -398,12 +401,8 @@ phastCons, phyloP, FitCons2, etc.
         values = self.position_score.get_scores_in_region_agg(
             annotatable.chrom, annotatable.pos, annotatable.pos_end,
             self._region_queries)
-        # The names are read HERE and not cached beside the queries, for
-        # the reason ``AggregatedValues`` states.  The sources and
-        # aggregators the queries hold are not rewritten, so those stay
-        # cached.
-        return AggregatedValues(zip(
-            (attr.name for attr in self._attributes), values, strict=True))
+        return self._pair_all(
+            values, resource_id=self.position_score.resource_id)
 
 
 def build_allele_score_annotator(pipeline: AnnotationPipeline,

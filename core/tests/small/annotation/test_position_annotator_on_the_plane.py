@@ -177,29 +177,48 @@ def test_one_source_twice_with_two_aggregators_is_two_answers(
     assert result == {"highest": 2.0, "lowest": 1.0}
 
 
-def test_a_substitution_pairs_each_attribute_with_its_source_by_name(
-    repo: GenomicResourceRepo,
+def test_a_substitution_answers_a_source_named_twice_under_both_names(
+    tmp_path: pathlib.Path,
 ) -> None:
-    """The point read answers once per DISTINCT source; every attribute
-    on that source takes its value, under the attribute's own name.
+    """The point read answers once per ATTRIBUTE, under the attribute's
+    own name -- a source named twice is asked twice and answered twice.
 
-    Three attributes over two sources, so a pairing done by POSITION --
-    third attribute onto a second value that is not there -- would fail
-    where one done by source does not, and the two names on ``s`` both
-    have to come back with what ``s`` holds at the position (gain#1134).
+    Three attributes over two sources, with the doubled one first and
+    last, so the pairing is visible: a read that collapsed the sources
+    to two would leave the third attribute with nothing to pair with,
+    and a pairing that reordered them would put ``t``'s value under a
+    name on ``s``.  The two names on ``s`` both have to come back with
+    what ``s`` holds at the position (gain#1134, gain#1111).
+
+    Its own resource, with two float scores: the shared fixture's
+    ``s == 1.0`` and ``flag == True`` compare equal in Python, so a swap
+    there would hide (and its ``False`` record reads ``True``, gain#1192).
     """
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores",
+            a_position_score()
+            .with_score("s", "float")
+            .with_score("t", "float")
+            .with_data("""
+                chrom  pos_begin  s    t
+                chr1   12         1.0  10.0
+            """),
+        )
+        .build_repo(tmp_path)
+    )
     with _pipeline(repo, """
         - source: s
           name: first
-        - source: flag
-          name: flagged
-          aggregator: bool
+        - source: t
+          name: tee
         - source: s
           name: second
     """) as pipeline:
         result = pipeline.annotate(VCFAllele("chr1", 12, "A", "C"))
 
-    assert result == {"first": 1.0, "flagged": True, "second": 1.0}
+    assert result == {"first": 1.0, "tee": 10.0, "second": 1.0}
 
 
 def test_a_bool_attribute_naming_no_aggregator_is_refused_at_load(
