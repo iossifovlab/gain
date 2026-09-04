@@ -46,6 +46,10 @@ def test_annotator_types(
                 "resource_type": "position_score",
                 "optional": False,
             },
+            "region_length_cutoff": {
+                "field_type": "string",
+                "optional": True,
+            },
             "input_annotatable": {
                 "field_type": "attribute",
                 "attribute_type": "annotatable",
@@ -114,6 +118,10 @@ def test_annotator_creation_workflow(
             "field_type": "resource",
             "resource_type": "position_score",
             "optional": False,
+        },
+        "region_length_cutoff": {
+            "field_type": "string",
+            "optional": True,
         },
         "input_annotatable": {
             "field_type": "attribute",

@@ -59,6 +59,37 @@ def test_the_allele_score_template_offers_the_filter_and_the_mode(
     assert template["mode"] == {"field_type": "string", "optional": True}
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize("annotator_type", [
+    "position_score_annotator",
+    "allele_score_annotator",
+    "effect_annotator",
+])
+def test_the_templates_offer_the_region_length_cutoff(
+    client: APIClient, annotator_type: str,
+) -> None:
+    """``region_length_cutoff`` is reachable from the form (gain#1184).
+
+    Read by ``GenomicScoreAnnotatorBase`` and by the effect annotator, so
+    it belongs to all three of these types.  Asserted positively as well
+    as through the set comparison below, which compares the template
+    against what the annotator reads and would therefore go quiet if the
+    key were dropped from the template and the allowlist together.
+
+    ``string`` for the reason recorded on the templates in
+    ``editor/views.py``: the form renders no numeric field.  What makes
+    the text safe is gain#1166 -- the annotators read the cutoff through
+    ``ParamsUsageMonitor.get_integer``, so the value this form posts is
+    the number it spells.  Offered without that, a saved pipeline failed
+    on its first annotation (``int > str``), which is why gain#1179
+    withdrew the same offer.
+    """
+    template = _config_template(client, annotator_type)
+
+    assert template["region_length_cutoff"] == {
+        "field_type": "string", "optional": True}
+
+
 #: The types the editor offers, read from the helper the endpoint serves
 #: so that a tenth type is a case here the day it is added.
 ANNOTATOR_TYPES = EditorMixin()._get_annotator_types()
@@ -75,17 +106,9 @@ INJECTED_PARAMETERS = NON_IDENTITY_PARAMS
 #: an annotator learns to read has to be added to its template, or added
 #: here on purpose.  This is the inventory of what is unreachable from
 #: the UI, which is why an entry without a reason is not acceptable.
-#: Nothing left to stop this being offered: gain#1166 gave the
-#: annotators `ParamsUsageMonitor.get_integer`, so the string the form's
-#: free-text field posts now means the cutoff it spells instead of
-#: failing on the first annotation (`int > str`).  Offering it is
-#: gain#1184 -- a template change, which this test fails on the moment
-#: it lands unless the key is dropped from here in the same commit.
-NOT_YET_IN_THE_TEMPLATES = "region_length_cutoff"
-
 DELIBERATELY_NOT_OFFERED: dict[str, frozenset[str]] = {
-    "position_score_annotator": frozenset({NOT_YET_IN_THE_TEMPLATES}),
-    "allele_score_annotator": frozenset({NOT_YET_IN_THE_TEMPLATES}),
+    "position_score_annotator": frozenset(),
+    "allele_score_annotator": frozenset(),
     "gene_score_annotator": frozenset(),
     "gene_set_annotator": frozenset({
         # Read by the framework's input-annotatable decorator, which probes
@@ -103,10 +126,11 @@ DELIBERATELY_NOT_OFFERED: dict[str, frozenset[str]] = {
     "effect_annotator": frozenset({
         # Not documented in the annotation infrastructure docs; offering
         # an undocumented knob in the form is premature.  Document, then
-        # offer.  The coercion half of that reason is gone (gain#1166);
-        # this is the half that remains.
+        # offer -- gain#1209.  The coercion half of this reason went with
+        # gain#1166, which is what let `region_length_cutoff` be offered
+        # (gain#1184); the documentation half is what still holds this
+        # one back.
         "promoter_len",
-        NOT_YET_IN_THE_TEMPLATES,
     }),
     "simple_effect_annotator": frozenset(),
     "liftover_annotator": frozenset(),
