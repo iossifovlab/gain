@@ -135,6 +135,32 @@ def test_onnx_sessions_carry_the_measured_performance_settings(
         assert options.intra_op_num_threads == 4
 
 
+def test_onnx_intra_op_threads_honour_the_env_override(
+    onnx_backend: ModuleType, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`SPLICEAI_ONNX_INTRA_OP_THREADS` sizes every session's intra-op pool.
+
+    A single-threaded session is what makes ONNX Runtime's answers
+    reproducible under load, so the override has to reach the session
+    options a session is opened with, not merely a module constant.
+    """
+    monkeypatch.setenv(onnx_backend.ONNX_INTRA_OP_THREADS_ENV, "1")
+    assert onnx_backend.spliceai_session_options().intra_op_num_threads == 1
+
+    monkeypatch.delenv(onnx_backend.ONNX_INTRA_OP_THREADS_ENV)
+    assert onnx_backend.spliceai_session_options().intra_op_num_threads == (
+        onnx_backend.DEFAULT_ONNX_INTRA_OP_THREADS)
+
+
+@pytest.mark.parametrize("value", ["0", "-2", "four", "1.5", ""])
+def test_onnx_intra_op_threads_refuse_a_non_positive_override(
+    onnx_backend: ModuleType, monkeypatch: pytest.MonkeyPatch, value: str,
+) -> None:
+    monkeypatch.setenv(onnx_backend.ONNX_INTRA_OP_THREADS_ENV, value)
+    with pytest.raises(ValueError, match="SPLICEAI_ONNX_INTRA_OP_THREADS"):
+        onnx_backend.spliceai_session_options()
+
+
 @pytest.mark.parametrize(
     ("width", "batch"),
     [

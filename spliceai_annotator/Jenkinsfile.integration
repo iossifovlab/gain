@@ -71,8 +71,9 @@ pipeline {
     // every kowalski build agent runs grr-sync in atomic-publish mode
     // (gain-infra `grr_sync_agents`), the GRR_ROOT resolver below handles
     // the per-node path, and the pre-flight aborts loudly if the tree is
-    // missing. The CI image is CPU-only and the harness runs at -n 5, so
-    // no agent is special on compute either. A pin only costs
+    // missing. The CI image is CPU-only and the ONNX tier sizes its workers
+    // to the agent (see the test stage), so no agent is special on compute
+    // either. A pin only costs
     // availability: with piglet offline the job queued indefinitely
     // (#1199). No persistent cache is needed -- the fixture + baselines are
     // committed and the real resources come from the mounted /grr.
@@ -250,15 +251,29 @@ pipeline {
                         '
                     tensorflow_exit=$?
 
+                    # ONNX tier: ONE intra-op thread per session, and one
+                    # xdist worker per core (capped at 12). With the backend's
+                    # default 4-thread pool, 5 workers x 5 sessions x 4
+                    # threads oversubscribe a 12-vCPU agent ~8x, and under
+                    # that contention ONNX Runtime's answers drift by up to
+                    # 3e-4 in a probability -- enough to fail the 1e-5
+                    # batch-vs-sequential and baseline pins on some runs and
+                    # not others (#1206; first seen the day the job left the
+                    # 32-vCPU piglet pin). Single-threaded sessions are
+                    # bitwise reproducible under any load; the extra workers
+                    # buy the wall clock back (~20 min on 12 vCPUs).
                     docker run --rm \
                         -e SPLICEAI_INTEGRATION_REQUIRE_GRR=1 \
                         -e SPLICEAI_BACKEND=onnx \
+                        -e SPLICEAI_ONNX_INTRA_OP_THREADS=1 \
                         -v "$GRR_ROOT/grr:/grr:ro" \
                         -v "$PWD/reports/integration:/reports" \
                         ${IMAGE_TAG} \
                         sh -c '
                             set +e
-                            pytest -n 5 -m integration tests/ \
+                            workers=$(nproc)
+                            [ "$workers" -gt 12 ] && workers=12
+                            pytest -n "$workers" -m integration tests/ \
                                 --junitprefix=onnx \
                                 --junitxml=/reports/pytest-onnx.xml
                             pytest_exit=$?
