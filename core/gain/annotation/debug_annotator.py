@@ -8,7 +8,7 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatorBase
+from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
 
 
 class HelloWorldAnnotator(AnnotatorBase):
@@ -27,8 +27,9 @@ class HelloWorldAnnotator(AnnotatorBase):
     def _do_annotate(
         self, annotatable: Annotatable,  # ruff: ignore[unused-method-argument]
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
-    ) -> dict[str, Any]:
-        return {attr.source: "hello world" for attr in self._attributes}
+    ) -> AggregatedValues:
+        return AggregatedValues(
+            (attr.name, "hello world") for attr in self._attributes)
 
 
 def build_annotator(pipeline: AnnotationPipeline,

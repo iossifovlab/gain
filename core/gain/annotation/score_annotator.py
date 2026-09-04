@@ -368,7 +368,7 @@ phastCons, phyloP, FitCons2, etc.
     def _do_annotate(
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
-    ) -> dict[str, Any]:
+    ) -> AggregatedValues:
 
         if annotatable.chromosome not in self.score.get_all_chromosomes():
             return self._empty_result()
@@ -381,7 +381,13 @@ phastCons, phyloP, FitCons2, etc.
                 annotatable.chromosome, annotatable.position, sources)
             if not point_scores:
                 return self._empty_result()
-            return dict(zip(sources, point_scores, strict=True))
+            # The read answers one value per DISTINCT source, in the order
+            # asked; every attribute on a source takes that source's
+            # value, so two attributes exposing one source both get it.
+            by_source = dict(zip(sources, point_scores, strict=True))
+            return AggregatedValues(
+                (attr.name, by_source[attr.source])
+                for attr in self._attributes)
 
         if len(annotatable) > self._region_length_cutoff:
             return self._empty_result()
@@ -561,7 +567,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 
     def _annotate_allele(
         self, annotatable: VCFAllele,
-    ) -> dict[str, Any]:
+    ) -> AggregatedValues:
         """Return scores for an exact chrom/pos/ref/alt match."""
         values = self.allele_score.fetch_allele_scores(
             annotatable.chrom,
@@ -585,13 +591,16 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                 annotatable.reference, annotatable.alternative,
                 [scores.get(a) for a in self.attrs_to_include])]
 
-        return {
-            attr.source: scores.get(attr.source) for attr in self.attributes
-        }
+        # Keyed by name straight off the attributes, and NOT through
+        # ``fold_own_values``: an aggregator named on the virtual
+        # ``allele`` attribute reduces nothing in either mode, and the
+        # one-element key list here would be exactly what it folded.
+        return AggregatedValues(
+            (attr.name, scores.get(attr.source)) for attr in self.attributes)
 
     def _annotate_region(
         self, annotatable: Annotatable,
-    ) -> dict[str, Any]:
+    ) -> AggregatedValues:
         """Answer the region already reduced, keyed by attribute name.
 
         The SCORE reduces (gain#1163): one value per query and, when the
@@ -629,7 +638,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
     def _do_annotate(
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
-    ) -> dict[str, Any]:
+    ) -> AggregatedValues:
         """Dispatch annotation based on annotatable type and mode.
 
         For VCFAllele: mode selects between exact-match and region aggregation.

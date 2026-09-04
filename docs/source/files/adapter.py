@@ -10,7 +10,7 @@ from gain.annotation.annotation_pipeline import (
     AnnotatorInfo,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatorBase
+from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
 
 from experimental_followup_annotator.annotator import (
     annotate_experimental_followup,
@@ -45,29 +45,27 @@ class ExperimentalFollowupAnnotator(AnnotatorBase):
         self,
         annotatable: Annotatable | None,
         context: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> AggregatedValues:
         followup = annotate_experimental_followup(
             annotatable,
             context,
         )
-
-        return {
-            "experimental_followup": followup,
-        }
+        # Keyed by each attribute's NAME, read off ``self._attributes``
+        # here rather than spelled out: a pipeline may expose this
+        # attribute under another name, and the values are final --
+        # GAIn neither renames nor reduces what an annotator answers.
+        return AggregatedValues(
+            (attr.name, followup) for attr in self._attributes
+        )
 
     def _do_batch_annotate(
         self,
         annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[AggregatedValues]:
         return [
-            {
-                "experimental_followup": annotate_experimental_followup(
-                    annotatable,
-                    context,
-                ),
-            }
+            self._do_annotate(annotatable, context)
             for annotatable, context in zip(annotatables, contexts)
         ]
 

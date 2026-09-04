@@ -317,9 +317,6 @@ class Annotator(abc.ABC):
     def used_context_attributes(self) -> tuple[str, ...]:
         return ()
 
-    def _empty_result(self) -> dict[str, Any]:
-        return {attr.source: None for attr in self.attributes}
-
     @abc.abstractmethod
     def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         """Get specs of all attributes the annotator can produce."""

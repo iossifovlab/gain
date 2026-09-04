@@ -129,7 +129,7 @@ class GeneScoreAnnotator(AnnotatorBase):
         self,
         annotatable: Annotatable,  # ruff: ignore[unused-method-argument]
         context: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> AggregatedValues:
         """Answer the input gene list's scores, already reduced.
 
         This annotator reduces for ITSELF, and its values are per-GENE

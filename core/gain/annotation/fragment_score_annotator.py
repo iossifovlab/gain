@@ -11,7 +11,7 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatorBase
+from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
 from gain.genomic_resources.aggregators import (
     ScoreAggregationQuery,
     aggregator_name,
@@ -294,7 +294,7 @@ class FragmentScoreAnnotator(AnnotatorBase):
     def _do_annotate(
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
-    ) -> dict[str, Any]:
+    ) -> AggregatedValues:
         # The SCORE reduces (gain#1124).  What comes back is one value per
         # query and the number of fragments the walk saw, off a single pass
         # that never materialises the fragments -- which is what keeps peak
