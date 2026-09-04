@@ -74,11 +74,11 @@ class CLIAnnotationContextProvider(GenomicContextProvider):
             " an error.")
 
     def init(self, **kwargs: Any) -> GenomicContext | None:
-        """Materialise a genomic context containing an annotation pipeline.
+        r"""Materialise a genomic context containing an annotation pipeline.
 
         Parameters
         ----------
-        **kwargs
+        \*\*kwargs
             Keyword arguments parsed from the command line.  The provider
             looks at ``pipeline``, ``allow_repeated_attributes``, and
             ``work_dir``.

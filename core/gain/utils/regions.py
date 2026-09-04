@@ -48,29 +48,29 @@ def regions2bedfile(regions: list[BedRegion], bed_filename: str) -> None:
 
 
 def calc_bin_begin(bin_len: int, bin_idx: int) -> int:
-    """
+    r"""
     Calculates the 1-based start position of the <bin_idx>-th bin
-    of length <bin_len>.
+    of length <bin_len>::
 
-    n       2n      3n      4n
-    |_______|_______|_______|
-     bin_len \
-              \
-               bin_begin
+        n       2n      3n      4n
+        |_______|_______|_______|
+         bin_len \
+                  \
+                   bin_begin
     """
     return (bin_len * bin_idx) + 1
 
 
 def calc_bin_end(bin_len: int, bin_idx: int) -> int:
-    """
+    r"""
     Calculates the 1-based end position of the <bin_idx>-th bin
-    of length <bin_len>.
+    of length <bin_len>::
 
-    n       2n      3n      4n
-    |_______|_______|_______|
-     bin_len        \
-                     \
-                      bin_end
+        n       2n      3n      4n
+        |_______|_______|_______|
+         bin_len        \
+                         \
+                          bin_end
     """
     return bin_len * (bin_idx + 1)
 
@@ -78,11 +78,11 @@ def calc_bin_end(bin_len: int, bin_idx: int) -> int:
 def calc_bin_index(bin_len: int, pos: int) -> int:
     """
     Calculates the index of the <bin_len>-long bin the given 1-based
-    position <pos> falls into.
+    position <pos> falls into::
 
-    n       2n      3n      4n
-    |_______|_______|_______|
-     (bin 0) (bin 1) (bin 2)
+        n       2n      3n      4n
+        |_______|_______|_______|
+         (bin 0) (bin 1) (bin 2)
     """
     return (pos - 1) // bin_len
 

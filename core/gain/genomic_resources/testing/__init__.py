@@ -478,24 +478,25 @@ def build_inmemory_test_resource(
     """Create a test resource based on content passed.
 
     The passed content should appropriate for a single resource.
-    Example content:
-    {
-        "genomic_resource.yaml": textwrap.dedent('''
-            type: position_score
-            table:
-                filename: data.txt
-            scores:
-                - id: aaaa
-                    type: float
-                    desc: ""
-                    name: sc
-        '''),
-        "data.txt": convert_to_tab_separated('''
-            #chrom start end sc
-            1      10    12  1.1
-            2      13    14  1.2
-        ''')
-    }
+    Example content::
+
+        {
+            "genomic_resource.yaml": textwrap.dedent('''
+                type: position_score
+                table:
+                    filename: data.txt
+                scores:
+                    - id: aaaa
+                        type: float
+                        desc: ""
+                        name: sc
+            '''),
+            "data.txt": convert_to_tab_separated('''
+                #chrom start end sc
+                1      10    12  1.1
+                2      13    14  1.2
+            ''')
+        }
     """
     proto = build_inmemory_test_protocol(content)
     return proto.get_resource("")

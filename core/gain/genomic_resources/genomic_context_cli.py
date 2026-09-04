@@ -85,11 +85,11 @@ class CLIGenomicContextProvider(GenomicContextProvider):
                  "context will be used.")
 
     def init(self, **kwargs: Any) -> GenomicContext | None:
-        """Create a :class:`SimpleGenomicContext` based on CLI arguments.
+        r"""Create a :class:`SimpleGenomicContext` based on CLI arguments.
 
         Parameters
         ----------
-        **kwargs
+        \*\*kwargs
             Arguments produced from the command-line parser.  The provider
             recognises ``grr_filename``, ``grr_directory``,
             ``reference_genome_resource_id``, and ``gene_models_resource_id``.

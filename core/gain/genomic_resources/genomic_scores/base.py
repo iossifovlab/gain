@@ -163,6 +163,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
     Score Definition:
         Each score in the resource is defined with:
+
         - **id**: Unique identifier for the score
         - **type**: Data type (int, float, str, bool)
         - **name/index**: Column name or index in the data file
@@ -196,6 +197,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
     Statistics and Histograms:
         GenomicScore supports automatic statistics generation including:
+
         - Value distribution histograms
         - Min/max ranges for numeric scores
         - Category frequencies for categorical scores
@@ -203,11 +205,16 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
     Attributes:
         resource (GenomicResource): The underlying genomic resource object
+
         resource_id (str): Unique identifier for the resource
+
         config (dict): Validated and normalized configuration dictionary
+
         table (GenomicPositionTable): Data access abstraction layer
+
         score_definitions (dict[str, GenomicScoreDef]): Mapping of score IDs to
             their internal definitions including parsers and metadata
+
         table_loaded (bool): Flag indicating if the table is currently open
 
     Key Methods:
@@ -223,6 +230,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     Per-kind Methods:
         A kind whose records read as something other than the span they
         cover states that ONCE, by overriding:
+
         - region_values_from_records(): what a region's raw records mean for
           this kind.  ``fetch_region_segments`` is it applied to
           ``fetch_records``, and the statistics scan is it applied to

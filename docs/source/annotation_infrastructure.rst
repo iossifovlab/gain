@@ -537,8 +537,8 @@ location-focused scheme. Gene list attributes support aggregation via ``aggregat
 the same way as ``effect_annotator``.
 
 
-Transforming annotators 
-^^^^^^^^^^^^^^^^^^^^^
+Transforming annotators
+^^^^^^^^^^^^^^^^^^^^^^^
 
 Transforming annotators produce a new annotatable derived from the input, rather than  
 adding annotation attributes. They take an annotatable, 
@@ -578,12 +578,12 @@ the annotator attempts to infer them from the liftover chain resource configurat
 
 
 normalize_allele_annotator
-************************
+**************************
 
 The ``normalize_allele_annotator`` converts a variant annotatable to a canonical allele representation using 
 the normalization algorithm described `here <https://genome.sph.umich.edu/wiki/Variant_Normalization>`_. 
 It produces a new annotatable named ``normalized_allele``, which can be passed downstream via 
-``input_annotatable``. This is commonly used before running ``allele_score_annotator``s, to ensure lookups match the allele representation used by the underlying resources.
+``input_annotatable``. This is commonly used before running ``allele_score_annotator``\ s, to ensure lookups match the allele representation used by the underlying resources.
 
 As with liftover, the attributes section is used to rename the produced annotatable 
 (and optionally mark it as ``internal``). A typical configuration is shown below:
@@ -1496,7 +1496,7 @@ For a full list of options run ``annotate_tabular --help``
 annotate_vcf
 ^^^^^^^^^^^^^^^^^^^^^
 
-``annotate_vcf`` annotates variants in VCF (or bgzip-compressed *.vcf.gz) files. 
+``annotate_vcf`` annotates variants in VCF (or bgzip-compressed ``*.vcf.gz``) files.
 It reads each VCF record as the input annotatable, runs the specified annotation pipeline, 
 and writes an annotated VCF as output.
 
@@ -1649,7 +1649,7 @@ two additional columns showing the genes affected by each variant and the corres
 
 
 2: Position score annotation
-^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 In our next example, let's use a minimal annotation pipeline that consists of a single position score annotator using `phyloP7way <https://grr.iossifovlab.com/hg38/scores/phyloP7way/index.html>`_. 
 Position scores are allele-independent and do not require allele normalization; they simply look up values at the input coordinates. 
 It is up to the user to ensure that the input annotatables and the position score resource are on the same assembly (for example, ``hg38``).
@@ -1816,7 +1816,7 @@ Gene score outputs are dictionaries mapping each matched gene to its score
 
 
 5: Liftover annotation
-^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^
 
 Sometimes the resources you want to use are available only for a different reference genome build. 
 In that case, you can use ``liftover_annotator`` to convert the input annotatable to a different genome 
@@ -1866,7 +1866,7 @@ This produces ``annotation_6.txt`` with the lifted-over annotatable plus the hg1
 
 
 6. Fragment score annotation (CNVs)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 A `fragment_score_annotator` reports copy-number variant (CNV) events whose intervals overlap each 
 input locus. If you do not specify any attributes, the annotator reports the number of overlapping 

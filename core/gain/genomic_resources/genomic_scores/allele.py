@@ -229,24 +229,25 @@ class AlleleScore(GenomicScore):
     Key Methods:
         fetch_allele_scores: Get score values for a specific variant
         fetch_allele_records: Get the records of a region, filtered, telling
-            a region holding no allele apart from one whose alleles were all
-            rejected
+        a region holding no allele apart from one whose alleles were all
+        rejected
         get_allele_scores_in_region_agg: Reduce the alleles of a region to
-            one value per query -- and their keys -- in one walk, telling
-            the same two answers apart
+        one value per query -- and their keys -- in one walk, telling
+        the same two answers apart
         fetch_region_segments: Iterate over allele scores in a
-            genomic region
+        genomic region
         substitutions_mode: Check if operating in SUBSTITUTIONS mode
         alleles_mode: Check if operating in ALLELES mode
 
     Configuration:
         The resource configuration should specify:
+
         - table.filename: Path to the data file (usually VCF)
         - table.reference: Column/field containing reference alleles
         - table.alternative: Column/field containing alternative alleles
         - allele_score_mode: Either "substitutions" or "alleles" (optional)
         - scores: List of score definitions with an optional
-                 aggregator specification
+          aggregator specification
     """
 
     # The alleles at a position reduce by ``max``, not ``mean``: a variant's

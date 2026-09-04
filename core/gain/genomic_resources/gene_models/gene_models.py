@@ -49,10 +49,14 @@ class GeneModels(
 
     Attributes:
         resource (GenomicResource): The genomic resource containing gene models.
+
         config (dict): Validated configuration from the resource.
+
         reference_genome_id (str | None): ID of the reference genome.
+
         gene_models (dict[str, list[TranscriptModel]]): Gene name to
             transcript models mapping.
+
         transcript_models (dict[str, TranscriptModel]): Transcript ID to
             transcript model mapping.
 
@@ -195,14 +199,16 @@ class GeneModels(
 
         Args:
             chrom (str): The chromosome name (e.g., "chr1", "17").
+
             pos_begin (int): The start position (1-based, inclusive).
+
             pos_end (int | None): The end position (1-based, inclusive).
                 If None, queries a single position.
 
         Returns:
             list[TranscriptModel]: List of TranscriptModel objects whose
-                transcript regions overlap the query position/region.
-                Returns empty list if no overlaps found.
+            transcript regions overlap the query position/region.
+            Returns empty list if no overlaps found.
 
         Example:
             >>> # Query single position
@@ -317,13 +323,14 @@ class GeneModels(
 
     @staticmethod
     def join_gene_models(*gene_models: GeneModels) -> GeneModels:
-        """Merge multiple gene models into a single GeneModels object.
+        r"""Merge multiple gene models into a single GeneModels object.
 
         This combines transcript models from multiple sources into one
         unified gene models object.
 
         Args:
-            *gene_models (GeneModels): Two or more GeneModels objects to merge.
+            \*gene_models (GeneModels): Two or more GeneModels objects to
+            merge.
 
         Returns:
             GeneModels: New GeneModels object containing all transcripts.

@@ -19,7 +19,9 @@ class Exon:
 
     Attributes:
         start (int): Genomic start position (1-based, inclusive).
+
         stop (int): Genomic end position (1-based, inclusive).
+
         frame (int | None): Codon reading frame (0, 1, or 2) for coding
             exons, and -1 for a non-coding one -- see `calc_frames`.
             None means the frame has not been computed yet, not that
@@ -100,16 +102,24 @@ class TranscriptModel:
 
     Attributes:
         gene (str): Gene name/symbol (e.g., "TP53").
+
         tr_id (str): Transcript identifier, unique within the gene models.
+
         tr_name (str): Original transcript name from source annotation.
+
         chrom (str): Chromosome name (e.g., "chr17", "17").
+
         strand (str): Strand orientation ("+" or "-").
+
         tx (tuple[int, int]): Transcript start and end positions
             (1-based, closed interval).
+
         cds (tuple[int, int]): Coding sequence start and end positions
             (1-based, closed interval). For non-coding transcripts,
             cds[0] >= cds[1].
+
         exons (list[Exon]): List of Exon objects in genomic order.
+
         attributes (dict[str, Any]): Additional annotation attributes
             (e.g., gene_biotype, gene_version).
 

@@ -28,10 +28,16 @@ cd "${REPO_ROOT}"
 # The architecture overview includes CONTEXT.md's vocabulary by two sentinel
 # comments (`.. include:: :start-after:/:end-before:`). A missing sentinel
 # makes docutils log a CRITICAL error -- and sphinx-build still exits 0, and
-# the page ships with the vocabulary silently absent. Sphinx only fails on
-# warnings under -W, which this build cannot use. So check the sentinels
+# the page ships with the vocabulary silently absent. So check the sentinels
 # here, before anything is deleted or built, and refuse to go on without
 # them (gain#1142).
+#
+# This check was written when the build carried 173 warnings and errors and so
+# could not use -W. gain#1183 took that to zero, and `sphinx-build -W` now
+# passes -- but -W is deliberately NOT enabled here yet; that is its own
+# decision, with its own CI failure mode, and it is filed separately. Keep
+# this check either way: it names the missing sentinel and the page that
+# needs it, which -W alone would not.
 for sentinel in "published-on-docs-site: start" "published-on-docs-site: end"; do
     if ! grep -q -F -- "<!-- ${sentinel} -->" CONTEXT.md; then
         echo "build_docs.sh: CONTEXT.md is missing the sentinel" \
@@ -84,8 +90,14 @@ rm -rf docs/source/development/gain
 #
 # Spelling note: `no-index` is the modern name (Sphinx renamed `:noindex:` in
 # 7.2); verified against the Sphinx 9.1.0 pinned in uv.lock.
+#
+# `--no-toc` suppresses the one-entry `modules.rst` apidoc would otherwise
+# write: `development/module_index.rst` toctrees `gain/modules/gain` directly,
+# so nothing includes it and it was the build's `document isn't included in
+# any toctree` warning. Not generating it beats generating it and then
+# listing it in `exclude_patterns` (gain#1183).
 SPHINX_APIDOC_OPTIONS="members,undoc-members,show-inheritance,no-index" \
-    sphinx-apidoc -o docs/source/development/gain/modules/ core/gain
+    sphinx-apidoc --no-toc -o docs/source/development/gain/modules/ core/gain
 
 # Build HTML.
 rm -rf docs/build
