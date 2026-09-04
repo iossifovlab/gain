@@ -6,6 +6,7 @@ and pinned to it by ``tests/test_onnx_equivalence.py``. Selected with
 ``SPLICEAI_BACKEND=onnx`` -- see ``spliceai_annotator_impl``.
 """
 import gc
+import os
 from collections.abc import Iterator
 from importlib.resources import as_file, files
 from typing import cast
@@ -48,6 +49,40 @@ import onnxruntime as ort
 #: sense that matters, not an asymptote.
 ONNX_POSITION_BUDGET = 65536
 
+#: Environment variable sizing the intra-op thread pool of every session this
+#: backend opens: a positive integer, `DEFAULT_ONNX_INTRA_OP_THREADS` when
+#: unset. See `onnx_intra_op_threads` for when to set it to 1.
+ONNX_INTRA_OP_THREADS_ENV = "SPLICEAI_ONNX_INTRA_OP_THREADS"
+DEFAULT_ONNX_INTRA_OP_THREADS = 4
+
+
+def onnx_intra_op_threads() -> int:
+    """Intra-op threads per session: the environment override, else 4.
+
+    Set ``SPLICEAI_ONNX_INTRA_OP_THREADS=1`` where answers must reproduce
+    bit for bit from run to run. With a multi-threaded intra-op pool the
+    ONNX Runtime CPU provider's output depends on how contended the cores
+    are: bitwise stable on a quiet box, off by up to ~3e-4 in a probability
+    (and ~5e-5 in a ``DS_*`` score) once several processes oversubscribe
+    the cores several times over. A single-threaded session is
+    deterministic under any load. The default keeps the throughput
+    measured in `spliceai_session_options`.
+
+    Refuses anything but a positive integer, naming the variable.
+    """
+    raw = os.environ.get(ONNX_INTRA_OP_THREADS_ENV)
+    if raw is None:
+        return DEFAULT_ONNX_INTRA_OP_THREADS
+    try:
+        threads = int(raw)
+    except ValueError:
+        threads = 0
+    if threads < 1:
+        raise ValueError(
+            f"{ONNX_INTRA_OP_THREADS_ENV}={raw!r}: expected a positive "
+            f"integer")
+    return threads
+
 
 def spliceai_session_options() -> ort.SessionOptions:
     """Session settings without which this backend is far slower.
@@ -83,8 +118,10 @@ def spliceai_session_options() -> ort.SessionOptions:
     # oversubscribing the cores. Measured best of {4, 8, 16, ORT default} at
     # the widest window on a 32-core box (969 / 1010 / 1667 / 1167 ms), so the
     # win is not just "more threads is worse" -- ORT's own default is worse
-    # than both 4 and 8 here.
-    options.intra_op_num_threads = 4
+    # than both 4 and 8 here. Overridable per process: a pool of more than
+    # one thread is not reproducible under contention (see
+    # `onnx_intra_op_threads`).
+    options.intra_op_num_threads = onnx_intra_op_threads()
 
     return options
 
