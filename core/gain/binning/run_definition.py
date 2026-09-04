@@ -18,6 +18,7 @@ class RunDefinitionError(ValueError):
 class RunDefinition:
     """A parsed run definition with every query resolved."""
 
+    input_reference_genome: str
     bin_size: int
     regions: list[BedRegion]
     tracks: list[Track]
@@ -30,6 +31,7 @@ def parse_run_definition(
 ) -> RunDefinition:
     """Resolve ``config`` against ``grr`` and ``genome``."""
     return RunDefinition(
+        input_reference_genome=genome.resource_id,
         bin_size=config["bins"]["bin_size"],
         regions=_resolve_regions(config["bins"].get("regions"), genome),
         tracks=_resolve_tracks(config["binners"], grr),

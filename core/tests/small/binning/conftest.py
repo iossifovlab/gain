@@ -18,7 +18,12 @@ CHR2_LENGTH = 40
 
 
 @pytest.fixture
-def repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
+def grr_dir(tmp_path: pathlib.Path) -> pathlib.Path:
+    return tmp_path / "grr"
+
+
+@pytest.fixture
+def repo(grr_dir: pathlib.Path) -> GenomicResourceRepo:
     """A tabix-backed toy GRR: one genome, two position scores.
 
     ``scores/one`` covers 1-20 of chr1 with the value 1.0 and 31-35 with
@@ -58,7 +63,7 @@ def repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
                            chr2   1          40       8.0
                        """))
     )
-    return grr.build_repo(tmp_path / "grr")
+    return grr.build_repo(grr_dir)
 
 
 @pytest.fixture
