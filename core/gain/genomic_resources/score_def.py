@@ -61,22 +61,94 @@ logger = logging.getLogger(__name__)
 
 ScoreValue = str | int | float | bool | None
 
-SCORE_TYPE_PARSERS = {
+#: The text a ``bool`` score's cell may spell, and what each spelling means.
+#: A CLOSED set: anything else is a parse failure, which
+#: :meth:`GenomicScoreDef.parse_value` logs and turns into a non-value, the
+#: same as it does for a malformed number.
+_BOOL_TEXT_VALUES = {
+    "True": True, "true": True, "TRUE": True, "1": True,
+    "False": False, "false": False, "FALSE": False, "0": False,
+}
+
+
+def parse_bool(value: Any) -> bool:
+    """Read a ``bool`` score's raw value, by its TEXT when it is text.
+
+    Python's ``bool`` was the parser here until gain#1192, and it is a
+    truthiness test rather than a parse: ``bool("False")`` is ``True``, as is
+    ``bool("0")`` and ``bool("yes")``.  So a bool column read back ``True``
+    for every non-empty cell, and the literal ``False`` in a table could not
+    be expressed at all.
+
+    **A value that is already a ``bool`` is handed straight back**, and that
+    is not a convenience -- it is the VCF path.  A ``Flag`` INFO field is
+    typed ``bool``, pysam decodes its presence to a real ``True``, and a VCF
+    resource whose ``scores:`` block declares ``type: bool`` (dbSNP, for its
+    35 flags) runs THIS parser over that value, because the config-override
+    branch of ``parse_vcf_scoredefs`` takes ``value_parser`` from the
+    config-derived definition.  A table lookup alone would refuse it --
+    ``True`` is not the string ``"1"`` -- and turn every dbSNP flag into a
+    logged non-value.
+
+    Everything else is refused, including a bare ``0``/``1`` **number**: a
+    number is not a bool, and the only way one reaches here is a resource
+    that declared ``type: bool`` over a numeric field, which is a
+    misconfiguration worth a report rather than a guess.  The refusal is a
+    ``ValueError``, which :meth:`GenomicScoreDef.parse_value` logs and turns
+    into a non-value -- one bad cell does not abort a scan.
+
+    The accepted spellings are deliberately few (:data:`_BOOL_TEXT_VALUES`).
+    A table is machine-written and a resource author who means false has a
+    way to say so; widening this to ``yes``/``no``/``T``/``F`` would buy a
+    handful of resources at the cost of a vocabulary nobody can state, and
+    the point of the fix is that the text is READ rather than guessed at.
+    """
+    if isinstance(value, bool):
+        return value
+    # Not ``_BOOL_TEXT_VALUES.get(value)``: an unhashable raw value (a tuple
+    # from a multi-valued INFO field) raises TypeError there, which is a
+    # confusing way to say "not a bool".
+    if isinstance(value, str) and value in _BOOL_TEXT_VALUES:
+        return _BOOL_TEXT_VALUES[value]
+    raise ValueError(
+        f"{value!r} is not a bool; expected a bool or one of "
+        f"{sorted(_BOOL_TEXT_VALUES)}")
+
+
+#: How each value type turns a raw cell into a value.  Annotated rather than
+#: inferred: three entries are builtin TYPES and ``bool``'s is a function, so
+#: an inferred value type joins to ``object``, which is not callable as far as
+#: a type checker is concerned.
+SCORE_TYPE_PARSERS: dict[str, Callable[[Any], Any]] = {
     "str": str,
     "float": float,
     "int": int,
-    "bool": bool,
+    "bool": parse_bool,
 }
 
 _DEFAULT_NA_VALUES: dict[str, tuple[str, ...]] = {
     "str": (),
     "float": ("", "nan", ".", "NA"),
     "int": ("", "nan", ".", "NA"),
-    "bool": (),
+    # Same sentinels as the numeric types, since gain#1192.  A ``bool`` score
+    # had none, which was survivable only while its parser accepted anything:
+    # ``bool("")`` answered ``False``, so an ABSENT flag read as a present
+    # false one.  With the parser reading the text, a missing cell would
+    # otherwise be a parse failure logged once per row.  ``str`` keeps its
+    # empty set for the reason it always had -- "" is a string.
+    "bool": ("", "nan", ".", "NA"),
 }
 
 # Value types whose text sentinels are also coerced to the parsed representation
 # so a numeric raw payload (e.g. a bigWig ``float``) matches by value, not text.
+#
+# ``bool`` is deliberately NOT here, though it now has default sentinels.
+# Coercion adds each sentinel's PARSED form to the set, and a sentinel that
+# parses to ``False`` would make ``False`` itself an NA value -- every false
+# datum in every bool column would read as no value at all.  Nothing needs it
+# either: the sentinels are text and a bool score's raw payload is text (a
+# table cell) or an actual ``bool`` (a VCF flag), never a number wearing a
+# sentinel's value.
 _NA_COERCIBLE_TYPES = ("int", "float")
 
 #: Value types :meth:`GenomicScoreDef.parse_array` defines a column parse for,
