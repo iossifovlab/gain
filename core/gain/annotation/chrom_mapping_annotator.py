@@ -70,8 +70,7 @@ Annotator that maps chromsomes from one naming convention to another.
         if new_chrom is None:
             return self._empty_result()
         new_annotatable._chrom = new_chrom  # ruff: ignore[private-member-access]
-        return AggregatedValues(
-            (attr.name, new_annotatable) for attr in self._attributes)
+        return self._every(new_annotatable)
 
 
 def build_chrom_mapping_annotator(

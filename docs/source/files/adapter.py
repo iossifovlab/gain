@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any
 
 from gain.annotation.annotatable import Annotatable
@@ -50,24 +49,9 @@ class ExperimentalFollowupAnnotator(AnnotatorBase):
             annotatable,
             context,
         )
-        # Keyed by each attribute's NAME, read off ``self._attributes``
-        # here rather than spelled out: a pipeline may expose this
-        # attribute under another name, and the values are final --
-        # GAIn neither renames nor reduces what an annotator answers.
-        return AggregatedValues(
-            (attr.name, followup) for attr in self._attributes
-        )
-
-    def _do_batch_annotate(
-        self,
-        annotatables: Sequence[Annotatable | None],
-        contexts: list[dict[str, Any]],
-        batch_work_dir: str | None = None,
-    ) -> list[AggregatedValues]:
-        return [
-            self._do_annotate(annotatable, context)
-            for annotatable, context in zip(annotatables, contexts)
-        ]
+        # The value under every configured attribute's name; see
+        # ``AggregatedValues`` for the contract.
+        return self._every(followup)
 
 
 def build_experimental_followup_annotator(

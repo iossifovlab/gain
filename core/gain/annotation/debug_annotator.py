@@ -28,8 +28,7 @@ class HelloWorldAnnotator(AnnotatorBase):
         self, annotatable: Annotatable,  # ruff: ignore[unused-method-argument]
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> AggregatedValues:
-        return AggregatedValues(
-            (attr.name, "hello world") for attr in self._attributes)
+        return self._every("hello world")
 
 
 def build_annotator(pipeline: AnnotationPipeline,

@@ -1,4 +1,4 @@
-# pylint: disable=W0621,C0114,C0116,W0212
+# pylint: disable=W0621,C0114,C0116
 """``AnnotatorBase`` hands through what ``_do_annotate`` answers.
 
 The base used to do two things to a ``_do_annotate`` result: fold each
@@ -29,18 +29,19 @@ class _StubAnnotator(AnnotatorBase):
 
     One attribute whose name differs from its source, so a result keyed
     the wrong way is visible in the assertion rather than coinciding
-    with the right one.
+    with the right one; and naming ``mode``, an aggregator that would
+    collapse a list to one value, so a list coming back whole is the
+    proof that nothing folded it.
     """
 
     def __init__(
         self, work_dir: pathlib.Path, result: AggregatedValues,
-        *, aggregator: str | None = "list",
     ) -> None:
         self._result = result
         super().__init__(None, AnnotatorInfo(
             "stub",
             attributes=[AttributeConfig(
-                name="renamed", source="score_id", aggregator=aggregator,
+                name="renamed", source="score_id", aggregator="mode",
             )],
             parameters={"work_dir": str(work_dir)},
         ))
@@ -66,15 +67,8 @@ def annotatable() -> Annotatable:
 def test_what_do_annotate_answers_is_what_annotate_answers(
     tmp_path: pathlib.Path, annotatable: Annotatable,
 ) -> None:
-    """Already keyed by name and already folded: nothing left to do.
-
-    A ``mode`` aggregator would have collapsed the list to ``1.0`` had
-    the base still been folding, so the list coming back whole is the
-    proof that it does not.
-    """
     annotator = _StubAnnotator(
-        tmp_path, AggregatedValues([("renamed", [1.0, 1.0, 2.0])]),
-        aggregator="mode")
+        tmp_path, AggregatedValues([("renamed", [1.0, 1.0, 2.0])]))
 
     assert annotator.annotate(annotatable, {}) == {"renamed": [1.0, 1.0, 2.0]}
 
@@ -82,31 +76,23 @@ def test_what_do_annotate_answers_is_what_annotate_answers(
 def test_batch_annotate_hands_each_answer_through_too(
     tmp_path: pathlib.Path, annotatable: Annotatable,
 ) -> None:
-    """``annotate`` and ``batch_annotate`` answer through the same seam."""
+    """The same seam for a batch, the ``None`` short-circuit included."""
     annotator = _StubAnnotator(
-        tmp_path, AggregatedValues([("renamed", [1.0, 1.0, 2.0])]),
-        aggregator="mode")
+        tmp_path, AggregatedValues([("renamed", [1.0, 1.0, 2.0])]))
 
-    results = annotator.batch_annotate([annotatable, annotatable], [{}, {}])
+    results = annotator.batch_annotate([annotatable, None], [{}, {}])
 
-    assert results == [
+    assert list(results) == [
         {"renamed": [1.0, 1.0, 2.0]},
-        {"renamed": [1.0, 1.0, 2.0]},
+        {"renamed": None},
     ]
 
 
 def test_an_attribute_the_annotator_did_not_answer_stays_absent(
     tmp_path: pathlib.Path, annotatable: Annotatable,
 ) -> None:
-    """The base fills nothing in.
-
-    The rename used to walk the attributes and write ``None`` under any
-    the annotator had not answered; that walk is gone with the rename,
-    so an answer comes back EXACTLY as handed -- here, with the one
-    configured attribute missing, rather than as ``{"renamed": None}``.
-    Answering every attribute is the annotator's job, and
-    ``_empty_result`` is how it does so for the cases with no value.
-    """
+    """The base fills nothing in: answering every attribute is the
+    annotator's job, with ``_empty_result`` for the no-value case."""
     annotator = _StubAnnotator(tmp_path, AggregatedValues())
 
     assert annotator.annotate(annotatable, {}) == {}
@@ -119,33 +105,3 @@ def test_a_none_annotatable_answers_none_under_the_attribute_name(
         tmp_path, AggregatedValues([("renamed", [1.0])]))
 
     assert annotator.annotate(None, {}) == {"renamed": None}
-
-
-def test_a_none_in_a_batch_answers_none_under_the_attribute_name(
-    tmp_path: pathlib.Path, annotatable: Annotatable,
-) -> None:
-    annotator = _StubAnnotator(
-        tmp_path, AggregatedValues([("renamed", [1.0])]))
-
-    results = annotator.batch_annotate([annotatable, None], [{}, {}])
-
-    assert results == [{"renamed": [1.0]}, {"renamed": None}]
-
-
-def test_the_empty_result_is_an_aggregated_values_keyed_by_name(
-    tmp_path: pathlib.Path,
-) -> None:
-    """The one result the base builds itself has the seam's one shape.
-
-    Keyed by attribute NAME like every answer an annotator hands back,
-    and typed as one, so an annotator returning it from ``_do_annotate``
-    -- the chromosome-not-covered guard, the region-too-long guard --
-    is answering the same contract as its real results.
-    """
-    annotator = _StubAnnotator(
-        tmp_path, AggregatedValues([("renamed", [1.0])]))
-
-    empty = annotator._empty_result()
-
-    assert isinstance(empty, AggregatedValues)
-    assert empty == {"renamed": None}

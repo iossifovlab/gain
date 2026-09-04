@@ -42,7 +42,10 @@ class AggregatedValues(dict[str, Any]):  # ruff: ignore[subclass-builtin]
     one an annotator is answering.  And the keys are attribute names
     rather than sources because a source exposed twice with two
     aggregators has two different finished values, which a source-keyed
-    mapping has nowhere to put.
+    mapping has nowhere to put.  Nothing checks the type at run time any
+    more -- the base's branch that told the two shapes apart went with
+    the second shape -- so it is a contract stated on ``_do_annotate``'s
+    signature and held by the type checker, not a discriminator.
 
     **Read the names when you ANSWER, never in ``__init__``.**  The one
     statement of the rule every annotator building one of these has to
@@ -188,33 +191,53 @@ class AnnotatorBase(Annotator):
         os.makedirs(self.work_dir, exist_ok=True)
         return self
 
-    def _empty_result(self) -> AggregatedValues:
-        """``None`` for every attribute, keyed like every other answer.
+    def _every(self, value: Any) -> AggregatedValues:
+        """``value`` under every attribute's name.
 
-        The one result the base builds for itself -- the answer for a
-        ``None`` annotatable -- and the one annotators reach for when
-        their guards fire: a chromosome the resource does not have, a
-        region past the length cutoff.  Keyed by attribute NAME, read off
-        ``self._attributes`` now rather than cached, for the reason
-        :class:`AggregatedValues` states.
+        For the annotators with one thing to say -- a lifted-over
+        annotatable, a renamed chromosome -- however many attributes
+        expose it.  The names are read here, at answer time, for the
+        reason :class:`AggregatedValues` states.
         """
-        return AggregatedValues((attr.name, None) for attr in self._attributes)
+        return AggregatedValues({attr.name: value for attr in self._attributes})
+
+    def _from_sources(self, values: Mapping[str, Any]) -> AggregatedValues:
+        """Source-keyed ``values`` answered by attribute name, nothing folded.
+
+        The rename the base used to do to every result, kept as something
+        an annotator asks for.  The non-folding twin of
+        :func:`fold_own_values`: for values that are final as they stand
+        -- a point read's one value per score, a tool's output row, the
+        allele keys an exact match synthesises -- where a ``list`` is the
+        answer and must not be reduced.  An attribute whose source is
+        absent answers ``None``.
+        """
+        return AggregatedValues({
+            attr.name: values.get(attr.source) for attr in self._attributes})
+
+    def _empty_result(self) -> AggregatedValues:
+        """``None`` under every attribute name.
+
+        The answer for a ``None`` annotatable, and what annotators return
+        when a guard fires -- a chromosome the resource does not have, a
+        region past the length cutoff.
+        """
+        return self._every(None)
 
     @abc.abstractmethod
     def _do_annotate(self, annotatable: Annotatable, context: dict[str, Any]) \
             -> AggregatedValues:
         """Annotate the annotatable.
 
-        Internal abstract method used for annotation.  Answers an
-        :class:`AggregatedValues`: keyed by attribute NAME, every value
-        finished.  The base hands it back as-is (gain#1134); nothing is
-        reduced or renamed on an annotator's behalf.
+        Answers an :class:`AggregatedValues`: keyed by attribute NAME,
+        every value finished.  The base hands it back as-is (gain#1134);
+        nothing is reduced or renamed on an annotator's behalf.
 
         An annotator that folds does it in its score's own read and
         pairs the answers back with :meth:`_pair_aggregated`, or -- when
         the values are its own rather than a record stream -- through
-        :func:`fold_own_values`.  One with nothing to fold builds the
-        mapping itself, walking ``self._attributes`` for the names.
+        :func:`fold_own_values`.  One with nothing to fold answers through
+        :meth:`_from_sources` or :meth:`_every`.
         """
 
     def _pair_aggregated(
@@ -286,11 +309,7 @@ class AnnotatorBase(Annotator):
         annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
-    ) -> list[dict[str, Any]]:
-        # Not a defensive copy: ``list`` is invariant, so a
-        # ``list[AggregatedValues]`` is not a ``list[dict[str, Any]]`` to
-        # mypy and cannot be returned as one directly.  One shallow copy
-        # per batch, not per annotatable.
-        return list(self._do_batch_annotate(
+    ) -> Sequence[dict[str, Any]]:
+        return self._do_batch_annotate(
             annotatables, contexts, batch_work_dir=batch_work_dir,
-        ))
+        )

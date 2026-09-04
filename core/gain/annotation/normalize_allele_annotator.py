@@ -77,16 +77,9 @@ class NormalizeAlleleAnnotator(AnnotatorBase):
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> AggregatedValues:
-        if not isinstance(annotatable, VCFAllele):
-            return self._answer(annotatable)
-
-        assert isinstance(annotatable, VCFAllele), annotatable
-
-        return self._answer(normalize_allele(annotatable, self.genome))
-
-    def _answer(self, annotatable: Annotatable) -> AggregatedValues:
-        return AggregatedValues(
-            (attr.name, annotatable) for attr in self._attributes)
+        if isinstance(annotatable, VCFAllele):
+            annotatable = normalize_allele(annotatable, self.genome)
+        return self._every(annotatable)
 
 
 def normalize_allele(allele: VCFAllele, genome: ReferenceGenome) -> VCFAllele:
