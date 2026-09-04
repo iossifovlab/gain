@@ -27,25 +27,15 @@ from gain.genomic_resources.aggregators import validate_aggregator
 # to BE a dict to travel that contract.  What is added is the type itself
 # -- there is no behaviour here to get wrong, which is the hazard the rule
 # guards against.
-class AggregatedValues(dict[str, Any]):  # ruff: ignore[subclass-builtin]
-    """Values a ``_do_annotate`` has already reduced, keyed by ATTRIBUTE NAME.
+class AnnotatedValues(dict[str, Any]):  # ruff: ignore[subclass-builtin]
+    """The finished answer of a ``_do_annotate``, keyed by ATTRIBUTE NAME.
 
-    The seam's one shape (gain#1130, gain#1134).  A ``_do_annotate`` that
-    returns this has already applied every aggregator its attributes
-    name and already keyed its answers by the attributes' names, and the
-    base hands it through untouched -- reducing nothing, re-keying
-    nothing.
-
-    Both halves of that are why this is a type and not a convention.  A
-    finished ``list`` aggregation is indistinguishable BY VALUE from a raw
-    list of values still to be reduced, so the type is what says which
-    one an annotator is answering.  And the keys are attribute names
-    rather than sources because a source exposed twice with two
+    The seam's one shape (gain#1130, gain#1134).  The keys are attribute
+    names rather than sources because a source exposed twice with two
     aggregators has two different finished values, which a source-keyed
-    mapping has nowhere to put.  Nothing checks the type at run time any
-    more -- the base's branch that told the two shapes apart went with
-    the second shape -- so it is a contract stated on ``_do_annotate``'s
-    signature and held by the type checker, not a discriminator.
+    mapping has nowhere to put.  Nothing checks the type at run time; it
+    is a contract stated on ``_do_annotate``'s signature and held by the
+    type checker.
 
     **Read the names when you ANSWER, never in ``__init__``.**  The one
     statement of the rule every annotator building one of these has to
@@ -63,7 +53,7 @@ class AggregatedValues(dict[str, Any]):  # ruff: ignore[subclass-builtin]
 
 def fold_own_values(
     attributes: Sequence[Attribute], values: Mapping[str, Any],
-) -> AggregatedValues:
+) -> AnnotatedValues:
     """Answer an annotator's OWN values by attribute, each one folded.
 
     For the annotators whose values are their own rather than a score's
@@ -80,11 +70,10 @@ def fold_own_values(
     retired it.
 
     This is a function rather than a method for the reason gain#1133
-    exists: the BASE does not aggregate.  An annotator that reduces says
-    so by calling this and answering an :class:`AggregatedValues`; the
-    base never decides to fold anything on an annotator's behalf.
+    exists: the BASE does not aggregate; an annotator that reduces calls
+    this itself before it answers.
     """
-    result = AggregatedValues()
+    result = AnnotatedValues()
     for attr in attributes:
         value = values.get(attr.source)
         if attr.aggregator is not None and isinstance(value, list):
@@ -221,17 +210,17 @@ class AnnotatorBase(Annotator):
         os.makedirs(self.work_dir, exist_ok=True)
         return self
 
-    def _every(self, value: Any) -> AggregatedValues:
+    def _every(self, value: Any) -> AnnotatedValues:
         """``value`` under every attribute's name.
 
         For the annotators with one thing to say -- a lifted-over
         annotatable, a renamed chromosome -- however many attributes
         expose it.  The names are read here, at answer time, for the
-        reason :class:`AggregatedValues` states.
+        reason :class:`AnnotatedValues` states.
         """
-        return AggregatedValues({attr.name: value for attr in self._attributes})
+        return AnnotatedValues({attr.name: value for attr in self._attributes})
 
-    def _from_sources(self, values: Mapping[str, Any]) -> AggregatedValues:
+    def _from_sources(self, values: Mapping[str, Any]) -> AnnotatedValues:
         """Source-keyed ``values`` answered by attribute name, nothing folded.
 
         The rename the base used to do to every result, kept as something
@@ -242,10 +231,10 @@ class AnnotatorBase(Annotator):
         answer and must not be reduced.  An attribute whose source is
         absent answers ``None``.
         """
-        return AggregatedValues({
+        return AnnotatedValues({
             attr.name: values.get(attr.source) for attr in self._attributes})
 
-    def _empty_result(self) -> AggregatedValues:
+    def _empty_result(self) -> AnnotatedValues:
         """``None`` under every attribute name.
 
         The answer for a ``None`` annotatable, and what annotators return
@@ -256,10 +245,10 @@ class AnnotatorBase(Annotator):
 
     @abc.abstractmethod
     def _do_annotate(self, annotatable: Annotatable, context: dict[str, Any]) \
-            -> AggregatedValues:
+            -> AnnotatedValues:
         """Annotate the annotatable.
 
-        Answers an :class:`AggregatedValues`: keyed by attribute NAME,
+        Answers an :class:`AnnotatedValues`: keyed by attribute NAME,
         every value finished.  The base hands it back as-is (gain#1134);
         nothing is reduced or renamed on an annotator's behalf.
 
@@ -278,18 +267,18 @@ class AnnotatorBase(Annotator):
         resource_id: str,
         reduced: Callable[[Attribute], bool],
         otherwise: Callable[[Attribute], Any],
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
         """Pair a score's reduced ``values`` back onto the attributes, by ORDER.
 
         The one statement of how an annotator turns what its score's
-        folding read answered into an :class:`AggregatedValues`.  The
+        folding read answered into an :class:`AnnotatedValues`.  The
         read's tuple is parallel to the queries the annotator built over
         ``self._attributes`` in attribute order, so the attributes are
         walked again here and each one for which ``reduced`` holds takes
         the next value; every other attribute takes ``otherwise(attr)`` --
         the fragment count, the allele keys -- whatever that kind answers
         beside its reductions.  The names are read HERE, never cached
-        beside the queries, for the reason :class:`AggregatedValues`
+        beside the queries, for the reason :class:`AnnotatedValues`
         states.
 
         One value per query, so as many as there are queries: checked
@@ -305,13 +294,13 @@ class AnnotatorBase(Annotator):
         """
         self._refuse_count_mismatch(values, query_count, resource_id)
         answers = iter(values)
-        return AggregatedValues(
+        return AnnotatedValues(
             (attr.name, next(answers) if reduced(attr) else otherwise(attr))
             for attr in self._attributes)
 
     def _pair_all(
         self, values: Sequence[Any], *, resource_id: str,
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
         """Pair one value per attribute back onto the attributes, by ORDER.
 
         The all-reduced case of :meth:`_pair_aggregated`: for a read that
@@ -322,7 +311,7 @@ class AnnotatorBase(Annotator):
         self._refuse_count_mismatch(values, len(self._attributes), resource_id)
         # ``strict`` cannot fire after the check; it is the linter's
         # spelling of a plain zip.
-        return AggregatedValues({
+        return AnnotatedValues({
             attr.name: value
             for attr, value in zip(self._attributes, values, strict=True)})
 
@@ -360,10 +349,10 @@ class AnnotatorBase(Annotator):
         annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,  # ruff: ignore[unused-method-argument]
-    ) -> list[AggregatedValues]:
+    ) -> list[AnnotatedValues]:
         """Annotate a batch of annotatables.
 
-        One :class:`AggregatedValues` per annotatable, in order, on the
+        One :class:`AnnotatedValues` per annotatable, in order, on the
         same contract as :meth:`_do_annotate`.
         """
         return [

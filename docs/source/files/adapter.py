@@ -9,7 +9,7 @@ from gain.annotation.annotation_pipeline import (
     AnnotatorInfo,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
+from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
 
 from experimental_followup_annotator.annotator import (
     annotate_experimental_followup,
@@ -44,13 +44,13 @@ class ExperimentalFollowupAnnotator(AnnotatorBase):
         self,
         annotatable: Annotatable | None,
         context: dict[str, Any],
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
         followup = annotate_experimental_followup(
             annotatable,
             context,
         )
         # The value under every configured attribute's name; see
-        # ``AggregatedValues`` for the contract.
+        # ``AnnotatedValues`` for the contract.
         return self._every(followup)
 
 

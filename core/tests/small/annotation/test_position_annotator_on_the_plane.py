@@ -4,7 +4,7 @@
 The annotator no longer collects a region's records and hands them to the
 base to fold.  It asks the logical plane for the region already reduced --
 one ``PositionScoreAggregationQuery`` per attribute, built when the
-pipeline loads -- and hands the base an ``AggregatedValues``, keyed by
+pipeline loads -- and hands the base an ``AnnotatedValues``, keyed by
 attribute NAME, which the base passes through untouched.
 
 Five things follow that were not true of the old path, and they are what

@@ -18,7 +18,7 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AggregatedValues
+from gain.annotation.annotator_base import AnnotatedValues
 from gain.annotation.docker_annotator import DockerAnnotator
 
 # ruff: file-ignore[start-process-with-partial-path]
@@ -52,7 +52,7 @@ class DemoAnnotatorAdapter(DockerAnnotator):
         self,
         annotatable: Annotatable | None,
         context: dict[str, Any],
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
         raise NotImplementedError(
             "External annotator supports only batch mode",
         )
@@ -89,7 +89,7 @@ class DemoAnnotatorAdapter(DockerAnnotator):
         annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
-    ) -> list[AggregatedValues]:
+    ) -> list[AnnotatedValues]:
         if batch_work_dir is None:
             work_dir = self.work_dir
         else:
@@ -136,7 +136,7 @@ class DemoAnnotatorStreamAdapter(DemoAnnotatorAdapter):
         annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],  # ruff: ignore[unused-method-argument]
         batch_work_dir: str | None = None,  # ruff: ignore[unused-method-argument]
-    ) -> list[AggregatedValues]:
+    ) -> list[AnnotatedValues]:
         results: list[int] = []
         with subprocess.Popen(
             ["annotate_length"],

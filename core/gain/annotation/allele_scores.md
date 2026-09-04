@@ -146,5 +146,5 @@ precedence and character rules. The user-facing syntax is documented in
 |---|---|---|
 | `AlleleScoreAnnotator.get_all_attribute_descriptions` | override | Extends the parent implementation to add the virtual `"allele"` attribute with `default=False`. |
 | `AlleleScoreAnnotator._annotate_allele` | private | Exact chrom/pos/ref/alt lookup; used in `allele` mode. |
-| `AlleleScoreAnnotator._annotate_region` | private | Asks the score's folding read for the region already reduced and answers an `AggregatedValues` keyed by attribute name; used in `region` mode. |
+| `AlleleScoreAnnotator._annotate_region` | private | Asks the score's folding read for the region already reduced and answers an `AnnotatedValues` keyed by attribute name; used in `region` mode. |
 | `AlleleScoreAnnotator.annotate` | public | Dispatches to `_annotate_allele` or `_annotate_region` based on `self.mode`. |

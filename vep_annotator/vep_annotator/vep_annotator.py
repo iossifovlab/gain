@@ -19,7 +19,7 @@ from gain.annotation.annotation_pipeline import (
     AnnotatorInfo,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AggregatedValues
+from gain.annotation.annotator_base import AnnotatedValues
 from gain.annotation.docker_annotator import DockerAnnotator
 from gain.annotation.utils import (
     find_annotator_gene_models,
@@ -158,7 +158,7 @@ class VEPAnnotatorBase(DockerAnnotator):
     def _do_annotate(
         self, annotatable: Annotatable | None,
         context: dict[str, Any],
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
         raise NotImplementedError(
             "External annotator supports only batch mode",
         )
@@ -324,7 +324,7 @@ class VEPCacheAnnotator(VEPAnnotatorBase):
         annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
-    ) -> list[AggregatedValues]:
+    ) -> list[AnnotatedValues]:
         assert self.work_dir is not None
         if batch_work_dir is None:
             work_dir = self.work_dir
@@ -446,7 +446,7 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
         annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
-    ) -> list[AggregatedValues]:
+    ) -> list[AnnotatedValues]:
 
         assert self.genome_resource is not None
         assert self.genome_filename is not None

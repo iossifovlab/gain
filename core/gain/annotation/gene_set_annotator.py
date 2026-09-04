@@ -11,7 +11,7 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import (
-    AggregatedValues,
+    AnnotatedValues,
     AnnotatorBase,
     fold_own_values,
 )
@@ -142,7 +142,7 @@ class GeneSetAnnotator(AnnotatorBase):
         self,
         annotatable: Annotatable | None,  # ruff: ignore[unused-method-argument]
         context: dict[str, Any],
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
         """Answer the gene sets the input gene list meets, already reduced.
 
         Every gene set in the collection is intersected, because

@@ -21,7 +21,7 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
+from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
 from gain.genomic_resources.aggregators import (
     AggregatorSource,
     PositionScoreAggregationQuery,
@@ -374,7 +374,7 @@ phastCons, phyloP, FitCons2, etc.
     def _do_annotate(
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
 
         if annotatable.chromosome not in self.score.get_all_chromosomes():
             return self._empty_result()
@@ -569,7 +569,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 
     def _annotate_allele(
         self, annotatable: VCFAllele,
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
         """Return scores for an exact chrom/pos/ref/alt match."""
         values = self.allele_score.fetch_allele_scores(
             annotatable.chrom,
@@ -599,7 +599,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 
     def _annotate_region(
         self, annotatable: Annotatable,
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
         """Answer the region already reduced, keyed by attribute name.
 
         The SCORE reduces (gain#1163): one value per query and, when the
@@ -637,7 +637,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
     def _do_annotate(
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
         """Dispatch annotation based on annotatable type and mode.
 
         For VCFAllele: mode selects between exact-match and region aggregation.
