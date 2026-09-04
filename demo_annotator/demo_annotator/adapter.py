@@ -110,9 +110,7 @@ class DemoAnnotatorAdapter(DockerAnnotator):
         with (work_dir / "output.tsv").open("r") as out_file:
             self.read_output(out_file, contexts)
         return [
-            AggregatedValues(
-                (attr.name, context[attr.source])
-                for attr in self._attributes)
+            self._from_sources(context)
             for context in contexts
         ]
 
@@ -184,8 +182,7 @@ class DemoAnnotatorStreamAdapter(DemoAnnotatorAdapter):
             proc.wait()
 
         return [
-            AggregatedValues(
-                (attr.name, value) for attr in self._attributes)
+            self._every(value)
             for value in results
         ]
 

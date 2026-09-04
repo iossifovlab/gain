@@ -381,13 +381,10 @@ phastCons, phyloP, FitCons2, etc.
                 annotatable.chromosome, annotatable.position, sources)
             if not point_scores:
                 return self._empty_result()
-            # The read answers one value per DISTINCT source, in the order
-            # asked; every attribute on a source takes that source's
-            # value, so two attributes exposing one source both get it.
-            by_source = dict(zip(sources, point_scores, strict=True))
-            return AggregatedValues(
-                (attr.name, by_source[attr.source])
-                for attr in self._attributes)
+            # One value per DISTINCT source, in the order asked; every
+            # attribute on a source takes it.
+            return self._from_sources(
+                dict(zip(sources, point_scores, strict=True)))
 
         if len(annotatable) > self._region_length_cutoff:
             return self._empty_result()
@@ -591,12 +588,9 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                 annotatable.reference, annotatable.alternative,
                 [scores.get(a) for a in self.attrs_to_include])]
 
-        # Keyed by name straight off the attributes, and NOT through
-        # ``fold_own_values``: an aggregator named on the virtual
-        # ``allele`` attribute reduces nothing in either mode, and the
-        # one-element key list here would be exactly what it folded.
-        return AggregatedValues(
-            (attr.name, scores.get(attr.source)) for attr in self.attributes)
+        # Not ``fold_own_values``: the virtual ``allele`` attribute's
+        # key list is the answer, not something to reduce.
+        return self._from_sources(scores)
 
     def _annotate_region(
         self, annotatable: Annotatable,

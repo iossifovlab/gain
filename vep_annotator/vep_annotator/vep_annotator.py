@@ -352,9 +352,7 @@ class VEPCacheAnnotator(VEPAnnotatorBase):
         self.aggregate_attributes(contexts)
 
         return [
-            AggregatedValues(
-                (attr.name, context[attr.source])
-                for attr in self._attributes)
+            self._from_sources(context)
             for context in contexts
         ]
 
@@ -492,9 +490,7 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
         self.aggregate_attributes(contexts)
 
         return [
-            AggregatedValues(
-                (attr.name, context[attr.source])
-                for attr in self._attributes)
+            self._from_sources(context)
             for context in contexts
         ]
 

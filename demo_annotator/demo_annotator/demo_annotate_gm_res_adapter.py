@@ -120,9 +120,7 @@ class DemoAnnotateGeneModelsAdapter(AnnotatorBase):
             out_file.flush()
             self.read_output(out_file, contexts)
         return [
-            AggregatedValues(
-                (attr.name, context[attr.source])
-                for attr in self._attributes)
+            self._from_sources(context)
             for context in contexts
         ]
 
