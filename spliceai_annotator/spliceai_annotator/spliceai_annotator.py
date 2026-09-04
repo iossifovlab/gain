@@ -20,7 +20,7 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import (
-    AggregatedValues,
+    AnnotatedValues,
     AnnotatorBase,
     fold_own_values,
 )
@@ -447,7 +447,7 @@ models to predict splice site variant effects.
     def _do_annotate(
         self, annotatable: Annotatable,
         context: dict[str, Any],
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
         assert isinstance(annotatable, VCFAllele)
         requests = self._annotation_requests(
             annotatable, context, batch_index=-1,
@@ -470,7 +470,7 @@ models to predict splice site variant effects.
     def _format_results(
         self,
         annotation_results: list[_AnnotationResult],
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
         results: dict[str, list[Any]] = defaultdict(list)
         for res in annotation_results:
             y = res.y
@@ -730,7 +730,7 @@ models to predict splice site variant effects.
         annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,  # ruff: ignore[unused-method-argument]
-    ) -> list[AggregatedValues]:
+    ) -> list[AnnotatedValues]:
         annotations: dict[int, list[_AnnotationResult]] = defaultdict(list)
 
         batches = defaultdict(list)

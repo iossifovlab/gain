@@ -5,7 +5,7 @@ The annotator no longer collects a region's fragments into a list per
 source and hands them to the base to fold.  It asks the logical plane for
 the region already reduced -- one ``ScoreAggregationQuery`` per aggregated
 attribute, built when the pipeline loads -- and hands the base an
-``AggregatedValues``, keyed by attribute NAME, which the base passes
+``AnnotatedValues``, keyed by attribute NAME, which the base passes
 through untouched.
 
 The point of the move is memory: a region's fragments are folded as they

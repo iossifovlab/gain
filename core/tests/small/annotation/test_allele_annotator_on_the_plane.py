@@ -7,7 +7,7 @@ per-source lists to the base to fold.  It asks
 ``AlleleScore.get_allele_scores_in_region_agg`` for the region already
 reduced -- one ``ScoreAggregationQuery`` per score attribute, built and
 resolved when the pipeline loads -- and hands the base an
-``AggregatedValues`` keyed by attribute NAME, which the base passes
+``AnnotatedValues`` keyed by attribute NAME, which the base passes
 through untouched.  The virtual ``allele`` attribute rides the same read:
 the keys come back beside the values, off one walk.
 
@@ -29,7 +29,7 @@ from gain.annotation.annotatable import Region, VCFAllele
 from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
-from gain.annotation.annotator_base import AggregatedValues
+from gain.annotation.annotator_base import AnnotatedValues
 from gain.genomic_resources.genomic_scores import AlleleScore
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import (
@@ -145,7 +145,7 @@ def test_a_region_answers_aggregated_values(
     """The annotator hands the base finished values, keyed by NAME.
 
     Asked of ``_do_annotate`` directly because that is the seam the marker
-    type exists for: the base recognises an ``AggregatedValues`` and copies
+    type exists for: the base recognises an ``AnnotatedValues`` and copies
     it through, where a plain dict would be re-keyed from SOURCE to name --
     which would drop these values, since they are keyed by name already.
     A renamed attribute shows the keys are names, not sources.
@@ -162,7 +162,7 @@ def test_a_region_answers_aggregated_values(
         annotator = pipeline.annotators[0]
         result = annotator._do_annotate(Region("chr1", 10, 16), {})
 
-    assert isinstance(result, AggregatedValues)
+    assert isinstance(result, AnnotatedValues)
     assert result == {
         "as_max": 0.3, "keys": ["chr1:10:A:C", "chr1:10:A:G", "chr1:16:C:T"]}
 

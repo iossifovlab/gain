@@ -25,7 +25,7 @@ from gain.utils.variant_utils import reverse_complement
 
 from .annotatable import Annotatable, CNVAllele, Position, Region, VCFAllele
 from .annotation_pipeline import AttributeSpec
-from .annotator_base import AggregatedValues, AnnotatorBase
+from .annotator_base import AnnotatedValues, AnnotatorBase
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ Annotator to lift over a variant from one reference genome to another.
     def _do_annotate(
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
         assert annotatable is not None
 
         if annotatable.type == Annotatable.Type.POSITION:

@@ -15,7 +15,7 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import (
-    AggregatedValues,
+    AnnotatedValues,
     AnnotatorBase,
     fold_own_values,
 )
@@ -158,7 +158,7 @@ Simple effect annotator.
         self,
         annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
         """Answer the region's simple effects, gene lists already folded.
 
         Folds for itself for the reason :meth:`EffectAnnotator._do_annotate`

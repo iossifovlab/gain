@@ -12,7 +12,7 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import (
-    AggregatedValues,
+    AnnotatedValues,
     AnnotatorBase,
     fold_own_values,
 )
@@ -255,7 +255,7 @@ Annotator to identify the effect of the variant on protein coding.
     def _do_annotate(
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
         """Answer the allele's effects, gene lists already folded.
 
         A gene-list attribute holds a LIST, and naming an aggregator on

@@ -14,7 +14,7 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
+from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
 from gain.gene_scores.gene_scores import build_gene_score_from_resource
 from gain.genomic_resources import GenomicResource
 
@@ -129,7 +129,7 @@ class GeneScoreAnnotator(AnnotatorBase):
         self,
         annotatable: Annotatable,  # ruff: ignore[unused-method-argument]
         context: dict[str, Any],
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
         """Answer the input gene list's scores, already reduced.
 
         This annotator reduces for ITSELF, and its values are per-GENE
@@ -137,15 +137,15 @@ class GeneScoreAnnotator(AnnotatorBase):
         score answers one value for each, and the attribute's aggregator
         folds those into one.  Nothing the base could do for it -- which
         is why it kept its own reduction while the base still had one,
-        and why it now answers an :class:`AggregatedValues` (gain#1133).
+        and why it now answers an :class:`AnnotatedValues` (gain#1133).
 
         The names are read here, at answer time, for the reason
-        :class:`AggregatedValues` states.
+        :class:`AnnotatedValues` states.
         """
         genes = context.get(self.input_gene_list)
         if genes is None:
             return self._empty_result()
-        return AggregatedValues(
+        return AnnotatedValues(
             (attr.name, self._apply_gene_aggregator(attr, {
                 sym: score
                 for sym in genes

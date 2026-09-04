@@ -9,7 +9,7 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
+from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
 from gain.genomic_resources.utils import build_chrom_mapping
 
 
@@ -62,7 +62,7 @@ Annotator that maps chromsomes from one naming convention to another.
         self,
         annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
-    ) -> AggregatedValues:
+    ) -> AnnotatedValues:
         new_annotatable = deepcopy(annotatable)
         assert self.chrom_mapping is not None
 

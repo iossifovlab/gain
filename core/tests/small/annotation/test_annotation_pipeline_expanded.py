@@ -21,7 +21,7 @@ from gain.annotation.annotation_pipeline import (
     _get_dependencies_for,
     _get_rerun_annotators,
 )
-from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
+from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing import build_inmemory_test_repository
 
@@ -713,8 +713,8 @@ def test_value_transform_decorator_annotate(tmp_path: pathlib.Path) -> None:
             self,
             annotatable: Annotatable | None,
             context: dict[str, Any],
-        ) -> AggregatedValues:
-            return AggregatedValues({"doubled": 5, "normal": 10})
+        ) -> AnnotatedValues:
+            return AnnotatedValues({"doubled": 5, "normal": 10})
 
     annotator = TestAnnotator(tmp_path)
     decorator = ValueTransformAnnotatorDecorator.decorate(annotator)
