@@ -96,3 +96,9 @@ web_api/data/db.sqlite3
 /docs/build/
 /docs/gaindocs-html.tar.gz
 /docs/.tmp/
+
+# Running the spliceai tests opens this fixture directory as a GRR, which
+# writes a compressed contents index beside the authored `.CONTENTS.json`.
+# Only this one path: `web_api`'s fixture GRR tracks its `.CONTENTS.*.gz`
+# on purpose, so this must not be a repo-wide pattern.
+/spliceai_annotator/tests/fixtures/.CONTENTS.json.gz
