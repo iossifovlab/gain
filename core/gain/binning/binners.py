@@ -13,7 +13,11 @@ from typing import Any, ClassVar, Protocol
 import numpy as np
 import numpy.typing as npt
 
-from gain.genomic_resources.aggregators import Aggregator, validate_aggregator
+from gain.genomic_resources.aggregators import (
+    Aggregator,
+    PositionScoreAggregationQuery,
+    validate_aggregator,
+)
 from gain.genomic_resources.genomic_scores.position import PositionScore
 from gain.genomic_resources.repository import (
     GenomicResource,
@@ -41,8 +45,8 @@ class RunDefinitionError(ValueError):
 class Track:
     """One column of the output: a score of a resource, reduced one way.
 
-    ``binner`` names the kind that produces the column; it is how a chunk
-    task finds its way back to the binner and is not written to the file.
+    ``binner`` names the kind that produces the column; it is how the
+    task graph finds the binner and is not written to the file.
     """
 
     name: str
@@ -66,7 +70,7 @@ class Binner(Protocol):
 
         ``label`` names the entry in error messages (``binners[2]``).
         Raises :class:`RunDefinitionError` for an entry that cannot be
-        resolved; an entry matching nothing returns no tracks.
+        resolved, an entry matching nothing included.
         """
 
     @staticmethod
@@ -77,6 +81,28 @@ class Binner(Protocol):
         """Reduce ``track`` to one float64 per grid bin of ``region``."""
 
 
+def check_keys(
+    label: str, config: Any, known: frozenset[str],
+    deferred: frozenset[str] = frozenset(),
+) -> None:
+    """Refuse a mapping with keys outside ``known``.
+
+    A key in ``deferred`` is one the design accepts but a later slice
+    builds; it is refused as not yet supported rather than dropped, so
+    what the user wrote never silently changes what the run does.
+    """
+    if not isinstance(config, dict):
+        raise RunDefinitionError(f"{label}: expected a mapping")
+    for key in config:
+        if key in deferred:
+            raise RunDefinitionError(
+                f"{label}: {key!r} is not yet supported")
+        if key not in known:
+            raise RunDefinitionError(
+                f"{label}: unknown key {key!r}; known keys: "
+                f"{', '.join(sorted(known))}")
+
+
 def grid_bins(region: BedRegion, bin_size: int) -> list[tuple[int, int]]:
     """The ``(start, end)`` of every grid bin ``region`` touches.
 
@@ -85,8 +111,6 @@ def grid_bins(region: BedRegion, bin_size: int) -> list[tuple[int, int]]:
     runs tile; the edge bins are clipped to the region, so the bounds name
     exactly what was aggregated.
     """
-    assert region.start is not None
-    assert region.stop is not None
     first = calc_bin_index(bin_size, region.start)
     last = calc_bin_index(bin_size, region.stop)
     return [
@@ -103,9 +127,8 @@ class PositionScoreBinner:
 
     ENTRY_KEYS: ClassVar[frozenset[str]] = frozenset({
         "resource_query", "aggregator", "none_value_replacement"})
-    # Accepted by the design (D7) but built by the validation slice
-    # (gain#1201); refused rather than dropped, so a filter the user wrote
-    # never silently widens the matrix.
+    # Accepted by the design (D7), built by the validation slice
+    # (gain#1201).
     DEFERRED_KEYS: ClassVar[frozenset[str]] = frozenset({"search_term"})
 
     @classmethod
@@ -117,25 +140,15 @@ class PositionScoreBinner:
         The query is always a repository search -- an exact id is the
         search that matches one resource -- restricted to position scores
         and ordered by resource id, so the track order is deterministic
-        whatever the repository yields.
-
-        The type restriction is applied here rather than through the
-        search's ``resource_type`` filter: that filter is answered by the
-        full-text index, and a ``resource_query`` on its own works on a
-        repository that has no index at all.
+        whatever the repository yields.  The type restriction is applied
+        here because the search's own ``resource_type`` filter is answered
+        by the full-text index, which a repository need not have.
         """
-        _check_keys(label, config, cls.ENTRY_KEYS, cls.DEFERRED_KEYS)
+        check_keys(label, config, cls.ENTRY_KEYS, cls.DEFERRED_KEYS)
         query = config.get("resource_query")
         if not isinstance(query, str) or not query:
             raise RunDefinitionError(
                 f"{label}: resource_query is required and must be a string")
-        replacement = config.get("none_value_replacement")
-        if replacement is not None and (
-                isinstance(replacement, bool)
-                or not isinstance(replacement, int | float)):
-            raise RunDefinitionError(
-                f"{label}: none_value_replacement must be a number, "
-                f"not {replacement!r}")
         try:
             found = grr.search_resources(resource_query=query)
         except ResourceQueryParseError as err:
@@ -143,11 +156,17 @@ class PositionScoreBinner:
         matches = sorted(
             (r for r in found if r.get_type() == "position_score"),
             key=lambda resource: resource.resource_id)
+        if not matches:
+            # The one deliberate departure from the prototype, which
+            # silently produced no column for a query matching nothing.
+            raise RunDefinitionError(
+                f"{label}: resource_query {query!r} matches no "
+                f"position_score resource")
         return [
             cls._track_of(
                 label, resource,
                 aggregator=config.get("aggregator"),
-                none_value_replacement=replacement,
+                none_value_replacement=config.get("none_value_replacement"),
             )
             for resource in matches
         ]
@@ -165,8 +184,6 @@ class PositionScoreBinner:
         is stored as NaN, unless the track's replacement made it count.
         """
         score = PositionScore(grr.get_resource(track.resource_id))
-        assert region.start is not None
-        assert region.stop is not None
         with score.open():
             if region.chrom not in score.get_all_chromosomes():
                 values = _uncovered_bins(track, region, bin_size)
@@ -187,8 +204,16 @@ class PositionScoreBinner:
     def _track_of(
         cls, label: str, resource: GenomicResource, *,
         aggregator: str | None,
-        none_value_replacement: float | None,
+        none_value_replacement: Any,
     ) -> Track:
+        """One track per matched resource, validated the score's own way.
+
+        The score resolves the aggregator default and judges the
+        replacement against its value type; the resolver stops at the
+        aggregator's NAME, so that the name builds is asked separately.
+        Only the two rules that are this slice's own -- exactly one score,
+        numeric only -- are checked here.
+        """
         score = PositionScore(resource)
         if len(score.score_definitions) != 1:
             raise RunDefinitionError(
@@ -201,39 +226,26 @@ class PositionScoreBinner:
                 f"{label}: resource {resource.resource_id!r} score "
                 f"{score_id!r} is of type {score_def.value_type!r}; "
                 f"binning a non-numeric score is not yet supported")
-        if aggregator is None:
-            aggregator = score_def.aggregator
-        assert aggregator is not None
         try:
-            validate_aggregator(aggregator, score_def.value_type)
+            resolved = score.resolve_aggregation_queries([
+                PositionScoreAggregationQuery(
+                    score_id, aggregator, none_value_replacement),
+            ])
+            _, aggregator_name, replacement = resolved[0]
+            validate_aggregator(aggregator_name, score_def.value_type)
         except ValueError as err:
             raise RunDefinitionError(
-                f"{label}: aggregator {aggregator!r} for resource "
-                f"{resource.resource_id!r}: {err.args[0]}") from err
+                f"{label}: resource {resource.resource_id!r}: "
+                f"{err.args[0]}") from err
+        assert replacement is None or isinstance(replacement, int | float)
         return Track(
             name=resource.resource_id,
             resource_id=resource.resource_id,
             score_id=score_id,
-            aggregator=aggregator,
-            none_value_replacement=none_value_replacement,
+            aggregator=aggregator_name,
+            none_value_replacement=replacement,
             binner=cls.kind,
         )
-
-
-def _check_keys(
-    label: str, config: Any, known: frozenset[str], deferred: frozenset[str],
-) -> None:
-    """Refuse a mapping with keys outside ``known``; name the deferred ones."""
-    if not isinstance(config, dict):
-        raise RunDefinitionError(f"{label}: expected a mapping")
-    for key in config:
-        if key in deferred:
-            raise RunDefinitionError(
-                f"{label}: {key!r} is not yet supported")
-        if key not in known:
-            raise RunDefinitionError(
-                f"{label}: unknown key {key!r}; known keys: "
-                f"{', '.join(sorted(known))}")
 
 
 def _uncovered_bins(
@@ -246,6 +258,10 @@ def _uncovered_bins(
     is what ``get_score_in_bins`` would yield for a run of uncovered
     positions: the replacement folded through the aggregator over the
     bin's width, or ``None`` when there is no replacement.
+
+    A stand-in: the binned reads of ``PositionScore`` are the one home of
+    this fold, and once they treat an absent contig as a single uncovered
+    run this function and the guard that calls it go away.
     """
     if track.none_value_replacement is None:
         return [None] * len(grid_bins(region, bin_size))
@@ -259,8 +275,9 @@ def _uncovered_bins(
 
 
 def discover_binner_kinds() -> dict[str, type[Binner]]:
-    """Map every registered binner kind to its class."""
-    return {
-        entry.name: entry.load()
-        for entry in entry_points(group=BINNERS_ENTRY_POINT_GROUP)
-    }
+    """Map every registered binner kind to its class, by the class's kind."""
+    kinds: dict[str, type[Binner]] = {}
+    for entry in entry_points(group=BINNERS_ENTRY_POINT_GROUP):
+        binner = entry.load()
+        kinds[binner.kind] = binner
+    return kinds

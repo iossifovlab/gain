@@ -7,7 +7,7 @@ from typing import Any
 from gain.binning.binners import (
     RunDefinitionError,
     Track,
-    _check_keys,
+    check_keys,
     discover_binner_kinds,
 )
 from gain.genomic_resources.reference_genome import ReferenceGenome
@@ -18,7 +18,6 @@ __all__ = ["RunDefinition", "RunDefinitionError", "parse_run_definition"]
 
 TOP_LEVEL_KEYS = frozenset({"input_reference_genome", "bins", "binners"})
 BINS_KEYS = frozenset({"bin_size", "regions"})
-NO_KEYS: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -42,9 +41,9 @@ def parse_run_definition(
     applied default.  Raises :class:`RunDefinitionError` naming the
     offending entry.
     """
-    _check_keys("run definition", config, TOP_LEVEL_KEYS, NO_KEYS)
+    check_keys("run definition", config, TOP_LEVEL_KEYS)
     bins = config.get("bins")
-    _check_keys("bins", bins, BINS_KEYS, NO_KEYS)
+    check_keys("bins", bins, BINS_KEYS)
     assert isinstance(bins, dict)
     return RunDefinition(
         input_reference_genome=genome.resource_id,
@@ -89,10 +88,9 @@ def _resolve_regions(
                 f"bins.regions[{index}]: {notation!r} names chromosome "
                 f"{region.chrom!r}, which the genome "
                 f"<{genome.resource_id}> does not have")
-        if region.start is None:
-            region = BedRegion(
-                region.chrom, 1, genome.get_chrom_length(region.chrom))
-        resolved.append(region.to_bed_region())
+        resolved.append(
+            BedRegion(region.chrom, 1, genome.get_chrom_length(region.chrom))
+            if region.start is None else region.to_bed_region())
     return resolved
 
 
@@ -113,13 +111,7 @@ def _resolve_tracks(binners: Any, grr: GenomicResourceRepo) -> list[Track]:
             raise RunDefinitionError(
                 f"{label}: unknown binner kind {kind!r}; "
                 f"registered kinds: {', '.join(sorted(kinds))}")
-        entry_tracks = kinds[kind].parse_entry(label, entry_config, grr)
-        if not entry_tracks:
-            raise RunDefinitionError(
-                f"{label}: resource_query "
-                f"{entry_config.get('resource_query')!r} matches no "
-                f"position_score resource")
-        tracks.extend(entry_tracks)
+        tracks.extend(kinds[kind].parse_entry(label, entry_config, grr))
     _refuse_repeated_names(tracks)
     return tracks
 
@@ -137,7 +129,7 @@ def _refuse_repeated_names(tracks: list[Track]) -> None:
     for track in tracks:
         if track.name in seen:
             raise RunDefinitionError(
-                f"resource {track.resource_id!r} is matched by more than "
-                f"one binner entry; binning one resource under several "
-                f"entries is not yet supported")
+                f"track {track.name!r} is produced by more than one binner "
+                f"entry; binning one resource under several entries is "
+                f"not yet supported")
         seen.add(track.name)

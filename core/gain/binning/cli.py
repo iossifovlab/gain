@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import logging
+import functools
+import json
 import os
-import shutil
 import sys
 from contextlib import chdir
 from typing import Any
@@ -23,7 +23,12 @@ import numpy.typing as npt
 import yaml
 
 from gain import __version__
-from gain.binning.binners import Track, discover_binner_kinds, grid_bins
+from gain.annotation.annotate_utils import (
+    build_cli_genomic_context,
+    get_grr_from_context,
+    maybe_remove_work_dir,
+)
+from gain.binning.binners import Binner, Track, discover_binner_kinds
 from gain.binning.run_definition import (
     RunDefinition,
     RunDefinitionError,
@@ -31,13 +36,11 @@ from gain.binning.run_definition import (
 )
 from gain.genomic_resources.genomic_context import (
     context_providers_add_argparser_arguments,
-    context_providers_init,
-    get_genomic_context,
 )
 from gain.genomic_resources.genomic_context_base import GenomicContext
 from gain.genomic_resources.reference_genome import (
     ReferenceGenome,
-    build_reference_genome_from_resource,
+    build_reference_genome_from_resource_id,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
@@ -45,15 +48,19 @@ from gain.genomic_resources.repository_factory import (
 )
 from gain.task_graph.cli_tools import TaskGraphCli
 from gain.task_graph.graph import TaskGraph
-from gain.utils.regions import BedRegion
+from gain.utils.regions import BedRegion, calc_bin_index
 from gain.utils.verbosity_configuration import VerbosityConfiguration
-
-logger = logging.getLogger(__name__)
 
 COORDINATES = "1-based-inclusive"
 # Rows per HDF5 chunk of ``/values``: "every track for one chromosome" is
 # then a contiguous read, and gzip collapses the NaN- and zero-heavy runs.
 ROW_BLOCK = 8192
+# Paths the user may have named relative to where the command was typed;
+# the tasks run inside the work directory, so they are resolved first.
+PATH_ARGS = (
+    "run_definition", "output", "work_dir", "task_status_dir",
+    "task_log_dir", "dask_cluster_config_file", "grr_filename",
+    "grr_directory")
 
 
 def _build_argument_parser() -> argparse.ArgumentParser:
@@ -91,23 +98,15 @@ def cli(argv: list[str] | None = None) -> None:
         argv = sys.argv[1:]
     args = vars(_build_argument_parser().parse_args(argv))
     VerbosityConfiguration.set(args)
-    # Before the context is built and before the tasks run inside the work
-    # directory: a GRR or a run definition named relative to where the
-    # user typed the command must still be found from there.
-    for key in ("run_definition", "output", "work_dir", "task_status_dir",
-                "task_log_dir", "dask_cluster_config_file",
-                "grr_filename", "grr_directory"):
+    for key in PATH_ARGS:
         if args.get(key):
             args[key] = os.path.abspath(args[key])
 
     with open(args["run_definition"]) as infile:
         config = yaml.safe_load(infile)
 
-    context_providers_init(**args)
-    context = get_genomic_context()
-    grr = context.get_genomic_resources_repository()
-    if grr is None:
-        raise ValueError("no valid GRR configured")
+    context = build_cli_genomic_context(args)
+    grr = get_grr_from_context(context)
     genome = _resolve_genome(config, args, context, grr)
     try:
         with genome:
@@ -121,10 +120,13 @@ def cli(argv: list[str] | None = None) -> None:
         return
 
     _handle_default_args(args)
+    # Inside the work dir, as the annotate tools run: an index a worker
+    # fetches for a remote resource then lands there, not in the launch
+    # directory.
     with chdir(args["work_dir"]):
         task_graph = _build_task_graph(run, args, grr)
         result = TaskGraphCli.process_graph(task_graph, **args)
-    _maybe_remove_work_dir(args, result=result)
+    maybe_remove_work_dir(args, result=result)
 
 
 def _resolve_genome(
@@ -140,7 +142,7 @@ def _resolve_genome(
     """
     named = config.get("input_reference_genome")
     if args.get("reference_genome_resource_id") is None and named:
-        return build_reference_genome_from_resource(grr.get_resource(named))
+        return build_reference_genome_from_resource_id(named, grr)
     genome = context.get_reference_genome()
     if genome is None:
         raise ValueError(
@@ -150,14 +152,18 @@ def _resolve_genome(
 
 
 def _print_plan(run: RunDefinition) -> None:
-    n_bins = sum(len(grid_bins(region, run.bin_size)) for region in run.regions)
     print("tracks:")
     for track in run.tracks:
         print(
             f"  {track.name}\t{track.resource_id}\t{track.score_id}\t"
             f"{track.aggregator}")
     print(f"regions: {len(run.regions)}")
-    print(f"bins: {n_bins}")
+    print(f"bins: {sum(_bin_count(r, run.bin_size) for r in run.regions)}")
+
+
+def _bin_count(region: BedRegion, bin_size: int) -> int:
+    return calc_bin_index(bin_size, region.stop) \
+        - calc_bin_index(bin_size, region.start) + 1
 
 
 def _handle_default_args(args: dict[str, Any]) -> None:
@@ -173,23 +179,12 @@ def _handle_default_args(args: dict[str, Any]) -> None:
         args["task_log_dir"] = os.path.join(args["work_dir"], ".task-log")
 
 
-def _maybe_remove_work_dir(args: dict[str, Any], *, result: bool) -> None:
-    """Remove a work directory the tool made, after a clean run."""
-    if not args["work_dir_created"] or not result or args["keep_work_dir"]:
-        return
-    try:
-        shutil.rmtree(args["work_dir"])
-    except OSError as err:
-        logger.warning(
-            "could not remove working directory %s: %s",
-            args["work_dir"], err)
-
-
 def _build_task_graph(
     run: RunDefinition, args: dict[str, Any], grr: GenomicResourceRepo,
 ) -> TaskGraph:
     """One task per (track, region) chunk, then one serial writer."""
     assert grr.definition is not None
+    kinds = discover_binner_kinds()
     graph = TaskGraph()
     graph.input_files.append(args["run_definition"])
     chunk_dir = os.path.join(args["work_dir"], "chunks")
@@ -204,20 +199,23 @@ def _build_task_graph(
             path = os.path.join(chunk_dir, f"{stem}.npy")
             chunk_tasks.append(graph.create_task(
                 f"bin_{stem}", _bin_chunk,
-                args=[track, region, run.bin_size, grr.definition, path],
+                args=[kinds[track.binner], track, region, run.bin_size,
+                      grr.definition, path],
                 output_files=[path],
             ))
             region_paths.append(path)
         chunk_paths.append(region_paths)
 
-    # The chunks are the writer's inputs: a chunk computed after the
-    # output was written -- another run definition sharing the work dir --
-    # makes the writer run again instead of leaving a stale file behind.
+    # The chunk directory is the writer's one input: its mtime moves
+    # whenever a chunk is created, so another run definition sharing the
+    # work dir makes the writer run again instead of leaving a stale file
+    # behind -- at the cost of one stat, where naming every chunk would
+    # have the executor walk the graph once per chunk.
     graph.create_task(
         "write_hdf5", _write_hdf5,
         args=[args["output"], run, chunk_paths],
         deps=chunk_tasks,
-        input_files=[path for paths in chunk_paths for path in paths],
+        input_files=[chunk_dir],
         output_files=[args["output"]],
     )
     return graph
@@ -238,12 +236,17 @@ def _chunk_stem(track: Track, region: BedRegion, bin_size: int) -> str:
         f"_bs{bin_size}_{region.chrom}_{region.start}_{region.stop}")
 
 
+@functools.lru_cache(maxsize=4)
+def _repository(definition: str) -> GenomicResourceRepo:
+    """The GRR a worker binds to, built once per process, not per task."""
+    return build_genomic_resource_repository(json.loads(definition))
+
+
 def _bin_chunk(
-    track: Track, region: BedRegion, bin_size: int,
+    binner: type[Binner], track: Track, region: BedRegion, bin_size: int,
     grr_definition: dict[str, Any], path: str,
 ) -> None:
-    grr = build_genomic_resource_repository(grr_definition)
-    binner = discover_binner_kinds()[track.binner]
+    grr = _repository(json.dumps(grr_definition, sort_keys=True))
     np.save(path, binner.bin_track(track, region, bin_size, grr))
 
 
@@ -251,20 +254,25 @@ def _write_hdf5(
     output: str, run: RunDefinition, chunk_paths: list[list[str]],
 ) -> None:
     """Assemble the file: ``/values`` region by region, then the tables."""
-    region_bins = [grid_bins(region, run.bin_size) for region in run.regions]
-    n_bins = sum(len(bins) for bins in region_bins)
+    counts = [_bin_count(region, run.bin_size) for region in run.regions]
+    n_bins = sum(counts)
     n_tracks = len(run.tracks)
-    with h5py.File(output, "w") as h5:
+    row_block = min(ROW_BLOCK, n_bins)
+    # A chunk cache of a few row blocks, so that the region slabs, which
+    # start and end mid-block, are recompressed once each, not per slab.
+    with h5py.File(
+            output, "w",
+            rdcc_nbytes=4 * row_block * n_tracks * 8) as h5:
         values = h5.create_dataset(
             "values", shape=(n_bins, n_tracks), dtype=np.float64,
-            chunks=(min(ROW_BLOCK, max(n_bins, 1)), n_tracks),
+            chunks=(row_block, n_tracks),
             compression="gzip", fillvalue=np.nan)
         row = 0
-        for bins, paths in zip(region_bins, chunk_paths, strict=True):
-            block = np.column_stack([np.load(path) for path in paths])
-            values[row:row + len(bins), :] = block
-            row += len(bins)
-        h5.create_dataset("bins", data=_bins_table(run, region_bins))
+        for count, paths in zip(counts, chunk_paths, strict=True):
+            values[row:row + count, :] = np.column_stack(
+                [np.load(path) for path in paths])
+            row += count
+        h5.create_dataset("bins", data=_bins_table(run, counts))
         h5.create_dataset("tracks", data=_tracks_table(run.tracks))
         h5.attrs["input_reference_genome"] = run.input_reference_genome
         h5.attrs["bin_size"] = run.bin_size
@@ -277,29 +285,40 @@ def _write_hdf5(
             datetime.UTC).isoformat(timespec="seconds")
 
 
-def _bins_table(
-    run: RunDefinition, region_bins: list[list[tuple[int, int]]],
-) -> npt.NDArray[Any]:
+def _bins_table(run: RunDefinition, counts: list[int]) -> npt.NDArray[Any]:
+    """The ``/bins`` table, one row per grid bin, region by region.
+
+    Vectorised per region: the bounds are ``calc_bin_begin`` and
+    ``calc_bin_end`` over an index range, with the edge bins clipped to
+    the region, exactly as :func:`~gain.binning.binners.grid_bins` has
+    them one bin at a time.
+    """
     chrom_width = max(len(region.chrom.encode()) for region in run.regions)
-    table = np.empty(
-        sum(len(bins) for bins in region_bins),
-        dtype=[("chrom", f"S{chrom_width}"), ("start", "<i8"), ("end", "<i8")])
+    table = np.empty(sum(counts), dtype=[
+        ("chrom", f"S{chrom_width}"), ("start", "<i8"), ("end", "<i8")])
     row = 0
-    for region, bins in zip(run.regions, region_bins, strict=True):
-        for start, end in bins:
-            table[row] = (region.chrom.encode(), start, end)
-            row += 1
+    for region, count in zip(run.regions, counts, strict=True):
+        first = calc_bin_index(run.bin_size, region.start)
+        indexes = np.arange(first, first + count, dtype=np.int64)
+        block = table[row:row + count]
+        block["chrom"] = region.chrom.encode()
+        block["start"] = np.maximum(
+            indexes * run.bin_size + 1, region.start)
+        block["end"] = np.minimum(
+            (indexes + 1) * run.bin_size, region.stop)
+        row += count
     return table
 
 
 def _tracks_table(tracks: list[Track]) -> npt.NDArray[Any]:
     text = h5py.string_dtype(encoding="utf-8")
-    table = np.empty(len(tracks), dtype=[
-        ("name", text), ("resource_id", text), ("score_id", text),
-        ("aggregator", text), ("none_value_replacement", "<f8")])
-    for row, track in enumerate(tracks):
-        replacement = track.none_value_replacement
-        table[row] = (
-            track.name, track.resource_id, track.score_id, track.aggregator,
-            np.nan if replacement is None else replacement)
-    return table
+    return np.array(
+        [
+            (t.name, t.resource_id, t.score_id, t.aggregator,
+             np.nan if t.none_value_replacement is None
+             else t.none_value_replacement)
+            for t in tracks
+        ],
+        dtype=[
+            ("name", text), ("resource_id", text), ("score_id", text),
+            ("aggregator", text), ("none_value_replacement", "<f8")])

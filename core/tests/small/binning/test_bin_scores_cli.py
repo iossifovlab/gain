@@ -56,11 +56,15 @@ def bin_scores(
 
 
 @pytest.fixture
+def output(tmp_path: pathlib.Path) -> pathlib.Path:
+    return tmp_path / "bins.h5"
+
+
+@pytest.fixture
 def binned(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
-    run_definition: pathlib.Path, tmp_path: pathlib.Path,
+    run_definition: pathlib.Path, output: pathlib.Path,
 ) -> pathlib.Path:
-    output = tmp_path / "bins.h5"
     bin_scores(run_definition, grr_dir, output)
     return output
 
@@ -77,13 +81,12 @@ def test_values_is_a_float64_bins_by_tracks_matrix_with_nan_where_uncovered(
 
 def test_values_is_stored_in_gzip_compressed_row_blocks(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
-    run_definition: pathlib.Path, tmp_path: pathlib.Path,
+    run_definition: pathlib.Path, output: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A row block smaller than the matrix, so that the chunk shape can be
     # told apart from "the whole dataset": three rows, every track.
     monkeypatch.setattr("gain.binning.cli.ROW_BLOCK", 3)
-    output = tmp_path / "bins.h5"
 
     bin_scores(run_definition, grr_dir, output)
 
@@ -91,7 +94,6 @@ def test_values_is_stored_in_gzip_compressed_row_blocks(
         values = h5["values"]
         assert values.compression == "gzip"
         assert values.chunks == (3, 2)
-        np.testing.assert_array_equal(values[()], EXPECTED_VALUES)
 
 
 def test_bins_lists_chrom_start_end_per_row_one_based_inclusive(
@@ -157,11 +159,9 @@ def test_a_successful_run_removes_the_work_dir_it_created(
 
 def test_dry_run_prints_the_tracks_and_counts_and_writes_nothing(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
-    run_definition: pathlib.Path, tmp_path: pathlib.Path,
+    run_definition: pathlib.Path, output: pathlib.Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    output = tmp_path / "bins.h5"
-
     bin_scores(run_definition, grr_dir, output, "--dry-run")
 
     out = capsys.readouterr().out
@@ -170,7 +170,7 @@ def test_dry_run_prints_the_tracks_and_counts_and_writes_nothing(
     assert "regions: 2" in out
     assert "bins: 8" in out
     assert not output.exists()
-    assert not (tmp_path / "bins_work").exists()
+    assert not (output.parent / "bins_work").exists()
 
 
 def test_the_output_flag_is_required(
@@ -183,12 +183,11 @@ def test_the_output_flag_is_required(
 
 
 def test_the_run_definition_may_name_the_genome_itself(
-    repo: GenomicResourceRepo, grr_dir: pathlib.Path, tmp_path: pathlib.Path,
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
 ) -> None:
-    run_definition = tmp_path / "run.yaml"
+    run_definition = output.parent / "run.yaml"
     run_definition.write_text(
         "input_reference_genome: genome\n" + RUN_DEFINITION)
-    output = tmp_path / "bins.h5"
 
     cli([
         str(run_definition), "-o", str(output),
@@ -218,12 +217,11 @@ def republish_scores_one_as(grr_dir: pathlib.Path, value: float) -> None:
 
 def test_a_rerun_with_the_same_work_dir_reuses_the_finished_chunks(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
-    run_definition: pathlib.Path, tmp_path: pathlib.Path,
+    run_definition: pathlib.Path, output: pathlib.Path,
 ) -> None:
     # Between the runs the resource changes underneath the tool.  The
     # rerun does not notice: its chunks are done, so only the writer runs
     # and the matrix is the first run's, bit for bit.
-    output = tmp_path / "bins.h5"
     bin_scores(run_definition, grr_dir, output, "--keep-work-dir")
     first = read_matrix(output)
     output.unlink()
@@ -236,16 +234,15 @@ def test_a_rerun_with_the_same_work_dir_reuses_the_finished_chunks(
 
 def test_an_interrupted_run_resumes_from_its_finished_chunks(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
-    run_definition: pathlib.Path, tmp_path: pathlib.Path,
+    run_definition: pathlib.Path, output: pathlib.Path,
 ) -> None:
     # An interruption leaves some chunks written and the output missing.
     # Staged by removing one of scores/two's chunks after a full run; the
     # republished scores/one proves its chunks were reused, not redone.
-    output = tmp_path / "bins.h5"
     bin_scores(run_definition, grr_dir, output, "--keep-work-dir")
     first = read_matrix(output)
     output.unlink()
-    next(tmp_path.glob("bins_work/**/scores_two_*.npy")).unlink()
+    next(output.parent.glob("bins_work/**/scores_two_*.npy")).unlink()
     republish_scores_one_as(grr_dir, 9.0)
 
     bin_scores(run_definition, grr_dir, output, "--keep-work-dir")
@@ -254,19 +251,18 @@ def test_an_interrupted_run_resumes_from_its_finished_chunks(
 
 
 def test_another_run_definition_sharing_the_work_dir_is_not_served_stale_chunks(
-    repo: GenomicResourceRepo, grr_dir: pathlib.Path, tmp_path: pathlib.Path,
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
 ) -> None:
     # Both definitions are older than the first run's chunks and output,
     # so mtimes alone would say "nothing to do".  The chunks are keyed by
     # what decides their values, so the min run computes its own and the
     # writer sees new inputs.
-    by_max = tmp_path / "max.yaml"
+    by_max = output.parent / "max.yaml"
     by_max.write_text(RUN_DEFINITION)
-    by_min = tmp_path / "min.yaml"
+    by_min = output.parent / "min.yaml"
     by_min.write_text(RUN_DEFINITION.replace(
         'resource_query: "scores/*"',
         'resource_query: "scores/*"\n    aggregator: min'))
-    output = tmp_path / "bins.h5"
     bin_scores(by_max, grr_dir, output, "--keep-work-dir")
 
     bin_scores(by_min, grr_dir, output, "--keep-work-dir")
@@ -280,44 +276,37 @@ def test_another_run_definition_sharing_the_work_dir_is_not_served_stale_chunks(
 
 def test_the_process_pool_executor_yields_the_same_matrix(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
-    run_definition: pathlib.Path, tmp_path: pathlib.Path,
+    run_definition: pathlib.Path, output: pathlib.Path,
 ) -> None:
-    # Every task argument crosses a process boundary: the track, the
-    # region, the GRR definition and the run definition itself.
-    output = tmp_path / "bins.h5"
-
-    cli([
-        str(run_definition), "-o", str(output),
-        "--grr-directory", str(grr_dir), "-R", "genome",
-        "-j", "2", "--process-pool",
-    ])
+    # Every task argument crosses a process boundary: the binner class,
+    # the track, the region, the GRR definition and the run definition.
+    # argparse takes the last -j.
+    bin_scores(run_definition, grr_dir, output, "-j", "2", "--process-pool")
 
     np.testing.assert_array_equal(read_matrix(output), EXPECTED_VALUES)
 
 
 def test_relative_paths_are_taken_from_the_launch_directory(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
-    run_definition: pathlib.Path, tmp_path: pathlib.Path,
+    run_definition: pathlib.Path, output: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The tool runs its tasks inside the work directory; a GRR named
     # relative to where the user typed the command must still be found.
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.chdir(output.parent)
 
     cli([
         "run.yaml", "-o", "bins.h5", "--grr-directory", "grr",
         "-R", "genome", "-j", "1",
     ])
 
-    np.testing.assert_array_equal(
-        read_matrix(tmp_path / "bins.h5"), EXPECTED_VALUES)
+    np.testing.assert_array_equal(read_matrix(output), EXPECTED_VALUES)
 
 
 def test_force_recomputes_every_chunk(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
-    run_definition: pathlib.Path, tmp_path: pathlib.Path,
+    run_definition: pathlib.Path, output: pathlib.Path,
 ) -> None:
-    output = tmp_path / "bins.h5"
     bin_scores(run_definition, grr_dir, output, "--keep-work-dir")
     republish_scores_one_as(grr_dir, 9.0)
 

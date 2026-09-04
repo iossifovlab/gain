@@ -15,17 +15,19 @@ from gain.utils.regions import BedRegion
 from .conftest import CHR1_LENGTH, CHR2_LENGTH
 
 
+def parse_one_entry(
+    entry: dict[str, Any], repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> RunDefinition:
+    return parse_run_definition({
+        "bins": {"bin_size": 10},
+        "binners": [{"position_score_binner": entry}],
+    }, repo, genome)
+
+
 def test_an_exact_id_entry_becomes_one_track_named_by_the_resource(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
-    config = {
-        "bins": {"bin_size": 10},
-        "binners": [
-            {"position_score_binner": {"resource_query": "scores/one"}},
-        ],
-    }
-
-    run = parse_run_definition(config, repo, genome)
+    run = parse_one_entry({"resource_query": "scores/one"}, repo, genome)
 
     assert run.tracks == [
         Track(
@@ -41,14 +43,7 @@ def test_a_glob_entry_expands_to_its_matches_sorted_by_resource_id(
     # The glob is a repository search: it must not reach the genome or the
     # score outside the ``scores/`` prefix, and the order is by id, not
     # whatever the repository yields.
-    config = {
-        "bins": {"bin_size": 10},
-        "binners": [
-            {"position_score_binner": {"resource_query": "scores/*"}},
-        ],
-    }
-
-    run = parse_run_definition(config, repo, genome)
+    run = parse_one_entry({"resource_query": "scores/*"}, repo, genome)
 
     assert [(t.name, t.score_id, t.aggregator) for t in run.tracks] == [
         ("scores/one", "s", "max"),
@@ -79,18 +74,11 @@ def test_an_entry_matching_nothing_is_a_parse_error_naming_the_entry(
 def test_an_entry_overrides_the_aggregator_and_replacement_for_every_match(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
-    config = {
-        "bins": {"bin_size": 10},
-        "binners": [
-            {"position_score_binner": {
-                "resource_query": "scores/*",
-                "aggregator": "min",
-                "none_value_replacement": 0.0,
-            }},
-        ],
-    }
-
-    run = parse_run_definition(config, repo, genome)
+    run = parse_one_entry({
+        "resource_query": "scores/*",
+        "aggregator": "min",
+        "none_value_replacement": 0.0,
+    }, repo, genome)
 
     assert [
         (t.name, t.aggregator, t.none_value_replacement) for t in run.tracks
@@ -103,14 +91,7 @@ def test_an_entry_overrides_the_aggregator_and_replacement_for_every_match(
 def test_omitted_regions_mean_every_chromosome_in_genome_order(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
-    config = {
-        "bins": {"bin_size": 10},
-        "binners": [
-            {"position_score_binner": {"resource_query": "scores/one"}},
-        ],
-    }
-
-    run = parse_run_definition(config, repo, genome)
+    run = parse_one_entry({"resource_query": "scores/one"}, repo, genome)
 
     assert run.regions == [
         BedRegion("chr1", 1, CHR1_LENGTH),
@@ -178,15 +159,6 @@ def test_a_resource_matched_by_two_entries_is_refused_as_not_yet_supported(
 
     assert "scores/one" in str(excinfo.value)
     assert "not yet supported" in str(excinfo.value)
-
-
-def parse_one_entry(
-    entry: dict[str, Any], repo: GenomicResourceRepo, genome: ReferenceGenome,
-) -> RunDefinition:
-    return parse_run_definition({
-        "bins": {"bin_size": 10},
-        "binners": [{"position_score_binner": entry}],
-    }, repo, genome)
 
 
 @pytest.mark.parametrize("entry,fragment", [
