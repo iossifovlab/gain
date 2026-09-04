@@ -327,6 +327,12 @@ class AlleleScore(GenomicScore):
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
+        """The :class:`GenomicScore` schema plus the allele-specific keys.
+
+        ``allele_score_mode``, ``merge_vcf_scores``, and the table's
+        ``reference``, ``alternative`` and ``variant`` column
+        definitions.
+        """
         schema = copy.deepcopy(GenomicScore.get_schema())
 
         schema["allele_score_mode"] = {

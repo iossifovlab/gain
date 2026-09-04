@@ -194,6 +194,7 @@ class ReferenceGenome(
 
     @property
     def resource_id(self) -> str:
+        """The id of the genome resource this object wraps."""
         return self.resource.resource_id
 
     @staticmethod
@@ -282,6 +283,7 @@ class ReferenceGenome(
         return self
 
     def is_open(self) -> bool:
+        """Whether :meth:`open` has run and :meth:`close` has not since."""
         return self._backend.is_open()
 
     def __enter__(self) -> ReferenceGenome:
@@ -391,6 +393,11 @@ class ReferenceGenome(
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
+        """The schema a ``genome`` resource's config is checked against.
+
+        The base resource schema plus ``filename``, ``index_file``,
+        ``chrom_prefix`` and ``PARS``.
+        """
         return {
             **get_base_resource_schema(),
             "filename": {"type": "string", "required": True},

@@ -254,9 +254,16 @@ class GenomicResourceImplementation(ABC):
 
     @property
     def resource_id(self) -> str:
+        """The id of the resource this implementation wraps."""
         return self.resource.resource_id
 
     def get_config(self) -> dict:
+        """The resource's configuration.
+
+        As read from the resource at construction; an implementation
+        that validates its configuration replaces it with the validated
+        form, and answers that here.
+        """
         return self.config
 
     @property
@@ -373,6 +380,12 @@ class GenomicResourceImplementation(ABC):
         return None
 
     def reload_statistics(self) -> ResourceStatistics | None:
+        """Drop the cached statistics and reload via :meth:`get_statistics`.
+
+        For after the statistics were rebuilt on disk.  Answers what
+        :meth:`get_statistics` answers: ``None`` unless the
+        implementation overrides it.
+        """
         self._statistics = None
         return self.get_statistics()
 

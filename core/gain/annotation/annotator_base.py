@@ -94,7 +94,19 @@ def fold_own_values(
 
 
 class AnnotatorBase(Annotator):
-    """Base implementation of the `Annotator` class."""
+    """Base implementation of the `Annotator` class.
+
+    The class every in-tree annotator extends.  Its constructor checks
+    the configured attributes against :meth:`get_attribute_specs`,
+    resolves each one's name, aggregator and parameters (consulting
+    :meth:`get_attribute_defaults`), and requires a ``work_dir``
+    parameter.  A subclass implements :meth:`get_attribute_specs` and
+    ``_do_annotate``; overrides ``_do_batch_annotate`` when it has a
+    batched path; and overrides :meth:`get_attribute_defaults`,
+    :meth:`open` and :meth:`close` when it has defaults or resources.
+    :meth:`annotate` and :meth:`batch_annotate` are left alone, except
+    by a batch-only annotator, which makes :meth:`annotate` refuse.
+    """
 
     def __init__(
         self, pipeline: AnnotationPipeline | None,
@@ -176,6 +188,11 @@ class AnnotatorBase(Annotator):
 
     @property
     def attributes(self) -> list[Attribute]:
+        """The configured attributes, in configuration order.
+
+        With no attributes configured, every spec marked ``is_default``
+        stands in, under its source name.
+        """
         return self._attributes
 
     def _aggregator_value_type(self, attr: Attribute) -> str | None:
@@ -184,9 +201,22 @@ class AnnotatorBase(Annotator):
     def get_attribute_defaults(
         self, spec: AttributeSpec,  # ruff: ignore[unused-method-argument]
     ) -> dict[str, Any]:
+        """Defaults for ``spec``: an ``aggregator`` and parameters.
+
+        Empty by default.  The constructor consults it for every
+        attribute: the ``aggregator`` key becomes the aggregator when
+        the configuration names none, and every other key becomes a
+        parameter that the configuration's own parameters override.
+        Override it when defaults live somewhere other than the spec --
+        a score resource declares its own, for instance.
+        """
         return {}
 
     def open(self) -> Annotator:
+        """Create ``work_dir`` and mark the annotator open; returns ``self``.
+
+        Overrides that open resources call this and return ``self``.
+        """
         super().open()
         os.makedirs(self.work_dir, exist_ok=True)
         return self
@@ -283,6 +313,13 @@ class AnnotatorBase(Annotator):
     def annotate(
         self, annotatable: Annotatable | None, context: dict[str, Any],
     ) -> dict[str, Any]:
+        """Answer through ``_do_annotate``; the empty result for ``None``.
+
+        Subclasses implement ``_do_annotate`` instead of overriding
+        this: the ``None`` annotatable is handled here, so
+        ``_do_annotate`` never sees one.  A batch-only annotator
+        overrides it to raise ``NotImplementedError``.
+        """
         if annotatable is None:
             return self._empty_result()
         return self._do_annotate(annotatable, context)
@@ -310,6 +347,12 @@ class AnnotatorBase(Annotator):
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
     ) -> Sequence[dict[str, Any]]:
+        """Answer through ``_do_batch_annotate``: one result per annotatable.
+
+        Subclasses with a batched backend override ``_do_batch_annotate``
+        instead, whose default loops ``_do_annotate`` and handles the
+        ``None`` annotatables itself.
+        """
         return self._do_batch_annotate(
             annotatables, contexts, batch_work_dir=batch_work_dir,
         )

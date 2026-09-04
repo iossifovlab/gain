@@ -93,10 +93,14 @@ class GeneModels(
 
     @property
     def resource_id(self) -> str:
+        """The id of the gene models resource this object wraps."""
         return self.resource.resource_id
 
     def close(self) -> None:
-        pass
+        """Do nothing: gene models hold no open file and stay loaded.
+
+        Here so a gene models resource closes like every other.
+        """
 
     def _reset(self) -> None:
         """Reset gene models."""
@@ -228,6 +232,11 @@ class GeneModels(
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
+        """The schema a ``gene_models`` resource's config is checked against.
+
+        The base resource schema plus ``filename``, ``format``,
+        ``gene_mapping`` and ``chrom_mapping``.
+        """
         return {
             **get_base_resource_schema(),
             "filename": {"type": "string"},
