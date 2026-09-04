@@ -71,9 +71,15 @@ Annotator to identify the effect of the variant on protein coding.
         }
         self.genome = genome
         self.gene_models = gene_models
-        self._promoter_len = info.parameters.get("promoter_len", 0)
-        self._region_length_cutoff = info.parameters.get(
-            "region_length_cutoff", 15_000_000)
+        # Both are counts of bases, read through the accessor that says
+        # so: each is compared against a length, and anything that is not
+        # a whole non-negative number is refused here, as the pipeline
+        # loads.  Read with a bare `.get()` it reached the comparison
+        # instead and raised per annotated variant (gain#1166).
+        self._promoter_len = info.parameters.get_integer(
+            "promoter_len", default=0, minimum=0)
+        self._region_length_cutoff = info.parameters.get_integer(
+            "region_length_cutoff", default=15_000_000, minimum=0)
 
         self.effect_annotator = EffectAnnotator(
             self.genome,

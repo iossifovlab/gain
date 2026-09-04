@@ -433,6 +433,45 @@ def test_an_overlap_fraction_selects_by_the_length_it_is_named_for(
     assert atts["frequency"] == frequency
 
 
+@pytest.mark.parametrize("configured, expected", [
+    pytest.param(
+        "true",
+        "fragment_score configures min_region_overlap_fraction: True, "
+        "which is not a number. An overlap fraction is a share of a "
+        "length, written as a number between 0 and 1",
+        id="not-a-number"),
+    pytest.param(
+        "1.5",
+        "fragment_score configures min_region_overlap_fraction: 1.5. "
+        "An overlap fraction is a share of a length, so it lies between "
+        "0 and 1; a threshold outside that is either vacuous or matches "
+        "nothing whatever the data",
+        id="out-of-range"),
+])
+def test_a_refused_fraction_says_what_a_fraction_IS(
+    configured: str, expected: str, grr: GenomicResourceRepo,
+) -> None:
+    """The two refusals in full, because the wording is the point.
+
+    Whoever has to fix the pipeline is reading YAML, so the message
+    names the annotator, the key as they spelled it, the value they
+    gave -- and then what an overlap fraction is, which is the part
+    that tells them what to write instead.  Pinned here so that reading
+    the parameter through a shared numeric accessor cannot quietly
+    replace the explanation with a generic one (gain#1166).
+    """
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        load_pipeline_from_yaml(
+            textwrap.dedent(f"""
+                - fragment_score:
+                    resource_id: fragments
+                    min_region_overlap_fraction: {configured}
+                """),
+            grr)
+
+    assert str(excinfo.value) == expected
+
+
 @pytest.mark.parametrize("configured", ["1.5", "-0.5", "half", "true"])
 @pytest.mark.parametrize("parameter", [
     "min_region_overlap_fraction",

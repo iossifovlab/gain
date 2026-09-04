@@ -109,8 +109,14 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
                     ))
 
         super().__init__(pipeline, info)
-        self._region_length_cutoff = info.parameters.get(
-            "region_length_cutoff", 500_000)
+        # A count of bases, read through the accessor that says so: it is
+        # compared against an annotatable's length, and anything that is
+        # not a whole non-negative number is refused here, as the
+        # pipeline loads.  Read with a bare `.get()` it reached the
+        # comparison instead and raised per annotated variant
+        # (gain#1166).
+        self._region_length_cutoff = info.parameters.get_integer(
+            "region_length_cutoff", default=500_000, minimum=0)
 
         self.simple_score_queries: list[str] = [
             attr.source for attr in self._attributes
