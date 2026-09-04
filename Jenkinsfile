@@ -973,7 +973,26 @@ pipeline {
                 }
 
                 stage('Deploy docs') {
-                    when { branch 'master' }
+                    when {
+                        // beforeOptions: decide the branch gate before
+                        // taking the lock, so branch and PR builds never
+                        // contend for it (they skip the stage anyway).
+                        beforeOptions true
+                        branch 'master'
+                    }
+                    options {
+                        // Serialise the deploy across concurrent master
+                        // builds. The play below is rm → mkdir → unarchive
+                        // on ONE shared directory; two master builds
+                        // reaching this stage at the same time (a
+                        // docs-only build overtaking a full one — #1047
+                        // and #1048 on 2026-09-04) interleave those
+                        // steps and one of them fails with "dest must be
+                        // an existing dir" (gain#1188). Ephemeral
+                        // resource: created on first use, nothing to
+                        // configure on the controller.
+                        lock(resource: 'gain-docs-deploy')
+                    }
                     // Master-only ansible push to iossifovlab.com, on
                     // EVERY master build. Still skipped on every branch
                     // and PR build, so only master ever publishes; the
