@@ -133,6 +133,21 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                     "resource_type": "position_score",
                     "optional": False,
                 },
+                # Read by `GenomicScoreAnnotatorBase`, so a parameter of
+                # both genomic score annotators and of the effect
+                # annotator alike (gain#1184).  `string` for the reason
+                # recorded on the fragment score template below: the form
+                # renders no numeric field.  What makes the text safe is
+                # gain#1166, which gave the annotators
+                # `ParamsUsageMonitor.get_integer` -- a cutoff this form
+                # posts quoted means the number it spells.  Offered
+                # before that, it reached the annotator as a string and a
+                # saved pipeline failed on its first annotation
+                # (`int > str`), which is why gain#1179 withdrew it.
+                "region_length_cutoff": {
+                    "field_type": "string",
+                    "optional": True,
+                },
                 "input_annotatable": {
                     "field_type": "attribute",
                     "attribute_type": "annotatable",
@@ -164,6 +179,12 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                     "optional": True,
                 },
                 "mode": {
+                    "field_type": "string",
+                    "optional": True,
+                },
+                # The same cutoff, for the reason recorded on the
+                # position score template above.
+                "region_length_cutoff": {
                     "field_type": "string",
                     "optional": True,
                 },
@@ -279,6 +300,14 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                 "genome": {
                     "field_type": "resource",
                     "resource_type": "genome",
+                    "optional": True,
+                },
+                # The same cutoff, for the reason recorded on the
+                # position score template above.  The effect annotator
+                # reads it with a default of its own, but the form offers
+                # the key, not the default.
+                "region_length_cutoff": {
+                    "field_type": "string",
                     "optional": True,
                 },
                 "input_annotatable": {
