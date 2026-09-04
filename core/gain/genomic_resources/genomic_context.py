@@ -102,11 +102,11 @@ class DefaultRepositoryContextProvider(GenomicContextProvider):
         self,
         **kwargs: Any,  # ruff: ignore[unused-method-argument]
     ) -> GenomicContext:
-        """Instantiate a context backed by the default GRR.
+        r"""Instantiate a context backed by the default GRR.
 
         Parameters
         ----------
-        **kwargs
+        \*\*kwargs
             Accepted for interface compatibility; the provider ignores runtime
             keyword arguments because everything is derived from the global
             configuration.
@@ -154,7 +154,7 @@ def register_context_provider(
 
 
 def context_providers_init(**kwargs: Any) -> None:
-    """Materialize contexts from every registered provider.
+    r"""Materialize contexts from every registered provider.
 
     The function walks all registered providers in priority order and asks
     each of them to initialise a :class:`GenomicContext`.  The resulting
@@ -168,7 +168,7 @@ def context_providers_init(**kwargs: Any) -> None:
 
     Parameters
     ----------
-    **kwargs
+    \*\*kwargs
         Keyword arguments forwarded to every provider's ``init`` method.
     """
     if _REGISTERED_CONTEXTS:

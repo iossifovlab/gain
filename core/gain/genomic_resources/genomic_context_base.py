@@ -269,11 +269,11 @@ class GenomicContextProvider(ABC):
 
     @abstractmethod
     def init(self, **kwargs: Any) -> GenomicContext | None:
-        """Build a genomic context using the provided configuration.
+        r"""Build a genomic context using the provided configuration.
 
         Parameters
         ----------
-        **kwargs
+        \*\*kwargs
             Keyword arguments typically derived from command-line parsing,
             environment variables, or configuration files.  The exact keys
             depend on what the provider declared in

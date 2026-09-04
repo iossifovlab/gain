@@ -2,9 +2,9 @@
 
 The Matrix Market triple and the 10x-Genomics HDF5, both built on
 ``anndata`` + ``pandas`` + ``h5py`` + ``scipy``, which gain already depends
-on.  See :doc:`ADR 0014 </adr/0014-gain-owns-the-10x-readers>` for why the
-work is here rather than delegated to scanpy, and for the parameter surface
-these readers define.
+on.  See ``docs/adr/0014-gain-owns-the-10x-readers.md`` in the repository for
+why the work is here rather than delegated to scanpy, and for the parameter
+surface these readers define.
 """
 from __future__ import annotations
 

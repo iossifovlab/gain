@@ -21,7 +21,7 @@ extensions = [
     "sphinx.ext.extlinks",
     "sphinx.ext.imgmath",
     "sphinx.ext.viewcode",
-    "sphinx.ext.autosectionlabel",
+    # NOT ``sphinx.ext.autosectionlabel`` -- see the note below the list.
     "sphinx_copybutton",
     "sphinxcontrib.httpdomain",
     "sphinx_autorun",
@@ -38,6 +38,21 @@ extensions = [
     # are a cheap partial mitigation for docs staleness.
     "sphinx_last_updated_by_git",
 ]
+
+# Why ``sphinx.ext.autosectionlabel`` is absent (gain#1183).  It promotes every
+# section title to a cross-reference label.  Numpy-style docstring headings
+# become sections on every page ``sphinx-apidoc`` generates, and apidoc's own
+# skeleton repeats "Submodules" / "Module contents" per package, so the same
+# handful of labels was defined hundreds of times -- 96 of the build's
+# warnings.  Nothing referenced them: no ``:ref:`` role under docs/source or in
+# a core/gain docstring, no myst ``](#anchor)`` link, and no ``intersphinx`` in
+# gain or gpf, so no other project could reach gain's inventory either.
+#
+# Neither knob rescues it, measured on the pre-fix tree: the 93 duplicates in
+# the apidoc subtree are 48 from docstring headings and 45 from apidoc's own
+# skeleton, and both ``autosectionlabel_maxdepth = 2`` and
+# ``autosectionlabel_prefix_document = True`` still leave those 45.  Re-run the
+# census before adding the extension back for any reason.
 
 extlinks = {
     "issue": ("https://github.com/iossifovlab/gain/issues/%s", "#%s"),
@@ -111,7 +126,15 @@ exclude_patterns = [
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = 'sphinx_rtd_theme'
-html_static_path = ['_static']
+
+# No ``html_static_path``.  The setting resolves relative to THIS file's
+# directory, so ``['_static']`` meant ``docs/source/_static`` -- but the
+# directory the gpf_documentation import (b5656c83e) actually carried was
+# ``docs/_static``, one level too high.  Sphinx warned on every build and no
+# asset was ever served from either place.  Removed along with the stray
+# ``docs/_static/.keep``, which existed only to keep that empty directory in
+# git.  Whoever adds the first real static asset should add the setting back
+# beside it -- and put the directory next to this file (gain#1183).
 
 
 html_theme_options = {

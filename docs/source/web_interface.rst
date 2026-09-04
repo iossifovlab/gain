@@ -9,7 +9,7 @@ pipelines, annotation history, and user quotas.
 
 
 Create annotation pipelines
-**************************
+***************************
 
 In the GAIn web interface (https://gain.iossifovlab.com/), the left side of the page contains the annotation 
 pipeline editor. Saved annotation pipelines are displayed there and can be selected for immediate use. 
@@ -109,7 +109,7 @@ The completed pipeline is shown below. It contains 4 annotators and produces 8 a
 
 
 Registration and user accounts
-************************
+******************************
 
 The examples above show how a new annotation pipeline can be created directly in the GAIn web interface 
 and used immediately for annotation. However, if the user leaves the page without saving, the newly 

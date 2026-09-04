@@ -105,9 +105,9 @@ class PositionScore(GenomicScore):
     Key Methods:
         fetch_position_scores: Get score values at a specific position
         fetch_region_segments: Iterate over score segments in a
-            genomic region, each at its record's own extent
+        genomic region, each at its record's own extent
         get_scores_in_region_agg: Reduce a genomic region to one value per
-            aggregation query, weighing each record by the bases it covers
+        aggregation query, weighing each record by the bases it covers
     """
 
     # A region of positions reduces by ``mean``: each position's value counts

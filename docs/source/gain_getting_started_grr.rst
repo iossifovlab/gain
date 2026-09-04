@@ -224,7 +224,7 @@ composition, and a full inventory of the files that make up the resource.
 
 
 3: Gene models (MANE v1.4)
-^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^
 Next, we will create a gene model resource based on the MANE (Matched Annotation from NCBI and EBI) gene set, which offers a standardized transcript set for consistent use across genomic resources.
 From inside ``my_GRR``, create a directory named ``my_genemodel`` and change into it:
 
@@ -329,7 +329,7 @@ execute ``grr_manage resource-repair`` in this directory.
 
 
 5: Position score (PhyloP7)
-^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Let's now create a real position score resource. In your ``my_GRR`` directory, create a directory called ``my_position``:
 
@@ -459,7 +459,7 @@ The resource is ready for use by GAIn. To check it and produce an HTML summary w
 
 
 7: Allele score (AlphaMissense)
-^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Next, let's create a real allele score resource. In your ``my_GRR`` directory, create a directory called ``my_allele``:
 
 .. code-block:: bash
@@ -506,6 +506,7 @@ write the processed content to a new file, and delete the original file to minim
 A second look at the resource file confirms that the column names are on line 1.
 
 .. code-block:: bash
+
     bgzip -dc AlphaMissense_hg38_modified.tsv.gz | head -5
 
 
@@ -1122,7 +1123,7 @@ This command creates a file named ``variants_local_annotated.csv`` with the foll
 
 
 mini-GRR: a template GRR
------------------------
+------------------------
 
 Defining new genomic resources can feel abstract at first: different resource types expect different file formats, coordinate conventions, and configuration options in ``genomic_resource.yaml``. To make these patterns easier to inspect, we provide ``mini-GRR``, a small, self-contained Genomic Resource Repository that can be used as a template or reference.
 

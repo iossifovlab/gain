@@ -5,7 +5,8 @@ This module defines the core architecture for managing genomic resources
 through a flexible repository system. It supports different storage backends
 (local files, HTTP, S3) and provides both read-only and read-write access.
 
-Class Hierarchy:
+Class Hierarchy::
+
        +---------------------+                    +-----------------+
  +-----| GenomicResourceRepo |--------------------| GenomicResource |
  |     +---------------------+                    +-----------------+
@@ -21,26 +22,30 @@ Class Hierarchy:
       +--------------------------+            +-----------------------------+
 
 Key Concepts:
-    - GenomicResource: Represents a single genomic resource (e.g., a reference
-      genome, score set, or gene model) with metadata and file access methods.
 
-    - GenomicResourceRepo: Abstract base for repositories that manage
-      collections of genomic resources.
+- GenomicResource: Represents a single genomic resource (e.g., a reference
+  genome, score set, or gene model) with metadata and file access methods.
 
-    - RepositoryProtocol: Defines the storage backend interface (file system,
-      HTTP, S3, etc.) for accessing resource files.
+- GenomicResourceRepo: Abstract base for repositories that manage
+  collections of genomic resources.
 
-    - Manifest: Tracks files and their checksums within a resource to ensure
-      data integrity and enable caching.
+- RepositoryProtocol: Defines the storage backend interface (file system,
+  HTTP, S3, etc.) for accessing resource files.
+
+- Manifest: Tracks files and their checksums within a resource to ensure
+  data integrity and enable caching.
 
 Resource Identifiers:
-    Resources are identified by an ID and optional version suffix:
-    - Simple: "hg19/gene_models/refseq"
-    - Versioned: "hg19/gene_models/refseq(1.2.3)"
+
+Resources are identified by an ID and optional version suffix:
+
+- Simple: "hg19/gene_models/refseq"
+- Versioned: "hg19/gene_models/refseq(1.2.3)"
 
 Configuration Files:
-    Each resource contains a genomic_resource.yaml configuration file with
-    metadata including type, description, and resource-specific settings.
+
+Each resource contains a genomic_resource.yaml configuration file with
+metadata including type, description, and resource-specific settings.
 
 """
 # pylint: disable=too-many-lines
@@ -570,7 +575,8 @@ def is_version_constraint_satisfied(
 
     Args:
         version_constraint: Constraint string like ">=1.2.0" or "=1.2.3".
-                          None or empty string matches any version.
+            None or empty string matches any version.
+
         version: Version tuple to check like (1, 2, 3)
 
     Returns:
@@ -646,9 +652,13 @@ class ResourceFileState:
 
     Attributes:
         filename: Relative path to the file within the resource
+
         size: File size in bytes
+
         timestamp: Last modification time as Unix timestamp
+
         md5: MD5 checksum of file content
+
         change_token: Opaque token the store supplies for the stored
             object, or None where the store has none. It changes whenever
             the object changes, and nothing else about it is defined --
@@ -1550,7 +1560,9 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
 
     Attributes:
         proto_id: Unique identifier for this protocol instance
+
         url: Base URL or path to the repository root
+
         CHUNK_SIZE: Default read-buffer size for chunked file operations
             (1 MiB). This is the application-level read size for the download
             and md5 loops, not the network transfer unit -- fsspec does its
@@ -1935,11 +1947,14 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
 
         Args:
             resource_id: Resource identifier like "hg19/gene_models/refseq"
+
             version: Version tuple like (1, 2, 3)
+
             config: Optional pre-loaded configuration dict. If None, will
-                   load from genomic_resource.yaml
+                load from genomic_resource.yaml
+
             manifest: Optional pre-loaded manifest. If None, will load
-                     when first accessed
+                when first accessed
 
         Returns:
             GenomicResource instance configured with this protocol
@@ -2693,8 +2708,8 @@ def collect_dvc_entries(
     hashes every DVC-managed byte the sidecar already describes (#721).
 
     Raises:
-        UnsupportedDvcDirectoryOutputError: the resource has a ``dvc add
-            <dir>`` output.
+        UnsupportedDvcDirectoryOutputError: the resource has a
+            ``dvc add <dir>`` output.
     """
     result = {}
     manifest = proto.collect_resource_entries(res)

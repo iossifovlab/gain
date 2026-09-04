@@ -55,6 +55,7 @@ def parse_dvc_pointer_out(
         content: raw content of the ``.dvc`` file; bytes are safe to pass -
             ``yaml`` decodes them itself, so a binary file cannot raise a
             ``UnicodeDecodeError`` past this function.
+
         basename: the base name of the data file the pointer must describe.
 
     Returns:

@@ -177,9 +177,12 @@ def build_record_to_annotatable(
         Mapping from expected internal column identifiers (e.g. "col_<field>")
         to the actual column names present in the input source.
         A column can be excluded from usage if an identifier is mapped to "-".
-        Example rename:
+        Example rename::
+
             "col_<field>": "<input source column name for the field>"
-        Example exclude:
+
+        Example exclude::
+
             "col_<field>": "-"
     available_columns : set[str]
         The set of column names available in the input records.

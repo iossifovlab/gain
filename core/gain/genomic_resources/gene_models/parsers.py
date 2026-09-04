@@ -578,6 +578,9 @@ def parse_ucscgenepred_models_format(
 
     table genePred
     "A gene prediction."
+
+    ::
+
         (
         string  name;               "Name of gene"
         string  chrom;              "Chromosome name"
@@ -593,6 +596,9 @@ def parse_ucscgenepred_models_format(
 
     table genePredExt
     "A gene prediction with some additional info."
+
+    ::
+
         (
         string name;        	"Name of gene (usually transcript_id from
                                     GTF)"
