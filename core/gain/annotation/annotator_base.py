@@ -22,29 +22,27 @@ from gain.annotation.annotation_pipeline import (
 from gain.genomic_resources.aggregators import validate_aggregator
 
 
-# A real ``dict`` subclass, not a ``UserDict``: ``_do_annotate`` promises
-# ``dict[str, Any]`` to every caller and every other annotator still returns
-# a plain one, so the marker has to BE a dict to travel that contract.  What
-# is added is the type itself -- there is no behaviour here to get wrong,
-# which is the hazard the rule guards against.
+# A real ``dict`` subclass, not a ``UserDict``: ``annotate`` promises
+# ``dict[str, Any]`` to the pipeline and hands this back as-is, so it has
+# to BE a dict to travel that contract.  What is added is the type itself
+# -- there is no behaviour here to get wrong, which is the hazard the rule
+# guards against.
 class AggregatedValues(dict[str, Any]):  # ruff: ignore[subclass-builtin]
     """Values a ``_do_annotate`` has already reduced, keyed by ATTRIBUTE NAME.
 
-    The contract an annotator uses to say "these are finished".
-    :meth:`AnnotatorBase._apply_aggregators` recognises it by type and
-    passes it through untouched, reducing nothing and re-keying nothing.
+    The seam's one shape (gain#1130, gain#1134).  A ``_do_annotate`` that
+    returns this has already applied every aggregator its attributes
+    name and already keyed its answers by the attributes' names, and the
+    base hands it through untouched -- reducing nothing, re-keying
+    nothing.
 
-    Both parts of that matter, and both are why a marker type is needed
-    rather than a convention (gain#1130).  A finished ``list`` aggregation
-    is indistinguishable BY VALUE from a raw list of values still to be
-    reduced, so the type is what tells the base which it is holding.  And
-    the keys are attribute names rather than sources because a source
-    exposed twice with two aggregators has two different finished values,
-    which a source-keyed mapping has nowhere to put.
-
-    The legacy shape -- a source-keyed dict, whose values are finished
-    too since gain#1133 -- stays live beside it until gain#1134 moves the
-    remaining annotators onto name keys and the rename goes.
+    Both halves of that are why this is a type and not a convention.  A
+    finished ``list`` aggregation is indistinguishable BY VALUE from a raw
+    list of values still to be reduced, so the type is what says which
+    one an annotator is answering.  And the keys are attribute names
+    rather than sources because a source exposed twice with two
+    aggregators has two different finished values, which a source-keyed
+    mapping has nowhere to put.
 
     **Read the names when you ANSWER, never in ``__init__``.**  The one
     statement of the rule every annotator building one of these has to
@@ -190,21 +188,33 @@ class AnnotatorBase(Annotator):
         os.makedirs(self.work_dir, exist_ok=True)
         return self
 
+    def _empty_result(self) -> AggregatedValues:
+        """``None`` for every attribute, keyed like every other answer.
+
+        The one result the base builds for itself -- the answer for a
+        ``None`` annotatable -- and the one annotators reach for when
+        their guards fire: a chromosome the resource does not have, a
+        region past the length cutoff.  Keyed by attribute NAME, read off
+        ``self._attributes`` now rather than cached, for the reason
+        :class:`AggregatedValues` states.
+        """
+        return AggregatedValues((attr.name, None) for attr in self._attributes)
+
     @abc.abstractmethod
     def _do_annotate(self, annotatable: Annotatable, context: dict[str, Any]) \
-            -> dict[str, Any]:
+            -> AggregatedValues:
         """Annotate the annotatable.
 
-        Internal abstract method used for annotation.  Either shape will
-        do, and :meth:`_apply_aggregators` tells them apart by type: an
-        :class:`AggregatedValues`, whose keys are attribute NAMES and
-        whose values are finished, or a source-keyed dict of values that
-        are finished too and need only the rename gain#1134 removes.
+        Internal abstract method used for annotation.  Answers an
+        :class:`AggregatedValues`: keyed by attribute NAME, every value
+        finished.  The base hands it back as-is (gain#1134); nothing is
+        reduced or renamed on an annotator's behalf.
 
-        Nothing here is reduced on an annotator's behalf (gain#1133): an
-        annotator that folds does it in its score's own read, or -- when
+        An annotator that folds does it in its score's own read and
+        pairs the answers back with :meth:`_pair_aggregated`, or -- when
         the values are its own rather than a record stream -- through
-        :func:`fold_own_values`.
+        :func:`fold_own_values`.  One with nothing to fold builds the
+        mapping itself, walking ``self._attributes`` for the names.
         """
 
     def _pair_aggregated(
@@ -247,50 +257,24 @@ class AnnotatorBase(Annotator):
             (attr.name, next(answers) if reduced(attr) else otherwise(attr))
             for attr in self._attributes)
 
-    def _apply_aggregators(
-        self, values: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Key what ``_do_annotate`` answered by ATTRIBUTE NAME.
-
-        The base reduces nothing (gain#1133).  :meth:`_do_annotate`
-        states the two shapes an annotator may answer and
-        :class:`AggregatedValues` states why a marker type is needed to
-        tell them apart; this is where they are told apart.  A finished
-        result is copied through -- folding it again would reduce a
-        finished list a second time -- and the legacy shape, whose values
-        are final too, wants only its source keys turned into names.
-
-        That rename is the whole of what is left, and the reason this
-        method still exists.  gain#1134 moves the remaining annotators
-        onto name keys, after which every result arrives as an
-        :class:`AggregatedValues` and this method goes; the annotators
-        that already answer one reach their names through
-        :func:`fold_own_values` or :meth:`_pair_aggregated` instead, and
-        keep doing so.
-
-        It answers for ``annotate`` and ``batch_annotate`` alike, both of
-        which route through it, so one statement covers both paths.
-        """
-        if isinstance(values, AggregatedValues):
-            return dict(values)
-        return {attr.name: values.get(attr.source) for attr in self._attributes}
-
     def annotate(
         self, annotatable: Annotatable | None, context: dict[str, Any],
     ) -> dict[str, Any]:
         if annotatable is None:
-            values = self._empty_result()
-        else:
-            values = self._do_annotate(annotatable, context)
-        return self._apply_aggregators(values)
+            return self._empty_result()
+        return self._do_annotate(annotatable, context)
 
     def _do_batch_annotate(
         self,
         annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,  # ruff: ignore[unused-method-argument]
-    ) -> list[dict[str, Any]]:
-        """Annotate a batch of annotatables."""
+    ) -> list[AggregatedValues]:
+        """Annotate a batch of annotatables.
+
+        One :class:`AggregatedValues` per annotatable, in order, on the
+        same contract as :meth:`_do_annotate`.
+        """
         return [
             self._empty_result() if annotatable is None
             else self._do_annotate(annotatable, context)
@@ -303,7 +287,6 @@ class AnnotatorBase(Annotator):
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
     ) -> list[dict[str, Any]]:
-        inner_output = self._do_batch_annotate(
+        return list(self._do_batch_annotate(
             annotatables, contexts, batch_work_dir=batch_work_dir,
-        )
-        return [self._apply_aggregators(result) for result in inner_output]
+        ))

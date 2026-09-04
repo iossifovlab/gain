@@ -19,6 +19,7 @@ from gain.annotation.annotation_pipeline import (
     AnnotatorInfo,
     AttributeSpec,
 )
+from gain.annotation.annotator_base import AggregatedValues
 from gain.annotation.docker_annotator import DockerAnnotator
 from gain.annotation.utils import (
     find_annotator_gene_models,
@@ -157,7 +158,7 @@ class VEPAnnotatorBase(DockerAnnotator):
     def _do_annotate(
         self, annotatable: Annotatable | None,
         context: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> AggregatedValues:
         raise NotImplementedError(
             "External annotator supports only batch mode",
         )
@@ -323,7 +324,7 @@ class VEPCacheAnnotator(VEPAnnotatorBase):
         annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[AggregatedValues]:
         assert self.work_dir is not None
         if batch_work_dir is None:
             work_dir = self.work_dir
@@ -351,7 +352,9 @@ class VEPCacheAnnotator(VEPAnnotatorBase):
         self.aggregate_attributes(contexts)
 
         return [
-            {attr.source: context[attr.source] for attr in self._attributes}
+            AggregatedValues(
+                (attr.name, context[attr.source])
+                for attr in self._attributes)
             for context in contexts
         ]
 
@@ -445,7 +448,7 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
         annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[AggregatedValues]:
 
         assert self.genome_resource is not None
         assert self.genome_filename is not None
@@ -489,7 +492,9 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
         self.aggregate_attributes(contexts)
 
         return [
-            {attr.source: context[attr.source] for attr in self._attributes}
+            AggregatedValues(
+                (attr.name, context[attr.source])
+                for attr in self._attributes)
             for context in contexts
         ]
 

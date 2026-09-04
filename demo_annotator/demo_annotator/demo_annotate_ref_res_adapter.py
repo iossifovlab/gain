@@ -14,7 +14,7 @@ from gain.annotation.annotation_pipeline import (
     AnnotatorInfo,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatorBase
+from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
 from gain.genomic_resources.cached_repository import GenomicResourceCachedRepo
 
 
@@ -53,7 +53,7 @@ class DemoAnnotateGenomeAdapter(AnnotatorBase):
     def _do_annotate(
         self, annotatable: Annotatable | None,
         context: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> AggregatedValues:
         raise NotImplementedError(
             "External annotator supports only batch mode",
         )
@@ -88,7 +88,7 @@ class DemoAnnotateGenomeAdapter(AnnotatorBase):
         self, annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[AggregatedValues]:
         if batch_work_dir is None:
             work_dir = self.work_dir
         else:
@@ -111,7 +111,9 @@ class DemoAnnotateGenomeAdapter(AnnotatorBase):
             out_file.flush()
             self.read_output(out_file, contexts)
         return [
-            {attr.source: context[attr.source] for attr in self._attributes}
+            AggregatedValues(
+                (attr.name, context[attr.source])
+                for attr in self._attributes)
             for context in contexts
         ]
 

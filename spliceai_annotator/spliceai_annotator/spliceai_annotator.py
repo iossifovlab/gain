@@ -19,7 +19,11 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatorBase, fold_own_values
+from gain.annotation.annotator_base import (
+    AggregatedValues,
+    AnnotatorBase,
+    fold_own_values,
+)
 from gain.annotation.utils import (
     find_annotator_gene_models,
     find_annotator_reference_genome,
@@ -285,9 +289,6 @@ models to predict splice site variant effects.
         self._models = impl.SPLICEAI_MODELS
         return super().open()
 
-    def _not_found(self) -> dict[str, Any]:
-        return {attr.source: None for attr in self._attributes}
-
     @cached_property
     def _width(self) -> int:
         return 10000 + 2 * self._distance + 1
@@ -446,13 +447,13 @@ models to predict splice site variant effects.
     def _do_annotate(
         self, annotatable: Annotatable,
         context: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> AggregatedValues:
         assert isinstance(annotatable, VCFAllele)
         requests = self._annotation_requests(
             annotatable, context, batch_index=-1,
         )
         if requests is None:
-            return self._not_found()
+            return self._empty_result()
         assert requests is not None
 
         annotation_results = [
@@ -469,7 +470,7 @@ models to predict splice site variant effects.
     def _format_results(
         self,
         annotation_results: list[_AnnotationResult],
-    ) -> dict[str, Any]:
+    ) -> AggregatedValues:
         results: dict[str, list[Any]] = defaultdict(list)
         for res in annotation_results:
             y = res.y
@@ -525,7 +526,7 @@ models to predict splice site variant effects.
                 )
 
         if not results:
-            return self._not_found()
+            return self._empty_result()
         # One entry per (gene, transcript-set) request, folded by the
         # aggregator each attribute names -- `join(,)` over the genes,
         # `max` over the delta scores.  The annotator folds for itself
@@ -729,7 +730,7 @@ models to predict splice site variant effects.
         annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,  # ruff: ignore[unused-method-argument]
-    ) -> list[dict[str, Any]]:
+    ) -> list[AggregatedValues]:
         annotations: dict[int, list[_AnnotationResult]] = defaultdict(list)
 
         batches = defaultdict(list)
@@ -766,7 +767,7 @@ models to predict splice site variant effects.
         results = []
         for _batch_index, res in sorted(annotations.items()):
             if len(res) == 0:
-                results.append(self._not_found())
+                results.append(self._empty_result())
                 continue
 
             results.append(self._format_results(res))

@@ -18,6 +18,7 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
+from gain.annotation.annotator_base import AggregatedValues
 from gain.annotation.docker_annotator import DockerAnnotator
 
 # ruff: file-ignore[start-process-with-partial-path]
@@ -51,7 +52,7 @@ class DemoAnnotatorAdapter(DockerAnnotator):
         self,
         annotatable: Annotatable | None,
         context: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> AggregatedValues:
         raise NotImplementedError(
             "External annotator supports only batch mode",
         )
@@ -88,7 +89,7 @@ class DemoAnnotatorAdapter(DockerAnnotator):
         annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[AggregatedValues]:
         if batch_work_dir is None:
             work_dir = self.work_dir
         else:
@@ -109,7 +110,9 @@ class DemoAnnotatorAdapter(DockerAnnotator):
         with (work_dir / "output.tsv").open("r") as out_file:
             self.read_output(out_file, contexts)
         return [
-            {attr.source: context[attr.source] for attr in self._attributes}
+            AggregatedValues(
+                (attr.name, context[attr.source])
+                for attr in self._attributes)
             for context in contexts
         ]
 
@@ -135,7 +138,7 @@ class DemoAnnotatorStreamAdapter(DemoAnnotatorAdapter):
         annotatables: Sequence[Annotatable | None],
         contexts: list[dict[str, Any]],  # ruff: ignore[unused-method-argument]
         batch_work_dir: str | None = None,  # ruff: ignore[unused-method-argument]
-    ) -> list[dict[str, Any]]:
+    ) -> list[AggregatedValues]:
         results: list[int] = []
         with subprocess.Popen(
             ["annotate_length"],
@@ -181,7 +184,8 @@ class DemoAnnotatorStreamAdapter(DemoAnnotatorAdapter):
             proc.wait()
 
         return [
-            {attr.source: value for attr in self._attributes}
+            AggregatedValues(
+                (attr.name, value) for attr in self._attributes)
             for value in results
         ]
 

@@ -30,7 +30,7 @@ import pathlib
 import textwrap
 
 import pytest
-from gain.annotation.annotatable import Region
+from gain.annotation.annotatable import Region, VCFAllele
 from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -175,6 +175,31 @@ def test_one_source_twice_with_two_aggregators_is_two_answers(
         result = pipeline.annotate(Region("chr1", 10, 29))
 
     assert result == {"highest": 2.0, "lowest": 1.0}
+
+
+def test_a_substitution_pairs_each_attribute_with_its_source_by_name(
+    repo: GenomicResourceRepo,
+) -> None:
+    """The point read answers once per DISTINCT source; every attribute
+    on that source takes its value, under the attribute's own name.
+
+    Three attributes over two sources, so a pairing done by POSITION --
+    third attribute onto a second value that is not there -- would fail
+    where one done by source does not, and the two names on ``s`` both
+    have to come back with what ``s`` holds at the position (gain#1134).
+    """
+    with _pipeline(repo, """
+        - source: s
+          name: first
+        - source: flag
+          name: flagged
+          aggregator: bool
+        - source: s
+          name: second
+    """) as pipeline:
+        result = pipeline.annotate(VCFAllele("chr1", 12, "A", "C"))
+
+    assert result == {"first": 1.0, "flagged": True, "second": 1.0}
 
 
 def test_a_bool_attribute_naming_no_aggregator_is_refused_at_load(

@@ -14,7 +14,11 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatorBase, fold_own_values
+from gain.annotation.annotator_base import (
+    AggregatedValues,
+    AnnotatorBase,
+    fold_own_values,
+)
 from gain.annotation.utils import find_annotator_gene_models
 from gain.genomic_resources.gene_models import (
     TranscriptModel,
@@ -154,7 +158,7 @@ Simple effect annotator.
         self,
         annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
-    ) -> dict[str, Any]:
+    ) -> AggregatedValues:
         """Answer the region's simple effects, gene lists already folded.
 
         Folds for itself for the reason :meth:`EffectAnnotator._do_annotate`

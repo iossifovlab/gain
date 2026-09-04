@@ -9,7 +9,7 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatorBase
+from gain.annotation.annotator_base import AggregatedValues, AnnotatorBase
 from gain.genomic_resources.genomic_context import get_genomic_context
 from gain.genomic_resources.reference_genome import (
     ReferenceGenome,
@@ -76,14 +76,17 @@ class NormalizeAlleleAnnotator(AnnotatorBase):
     def _do_annotate(
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
-    ) -> dict[str, Any]:
+    ) -> AggregatedValues:
         if not isinstance(annotatable, VCFAllele):
-            return {"normalized_allele": annotatable}
+            return self._answer(annotatable)
 
         assert isinstance(annotatable, VCFAllele), annotatable
 
-        normalized_allele = normalize_allele(annotatable, self.genome)
-        return {"normalized_allele": normalized_allele}
+        return self._answer(normalize_allele(annotatable, self.genome))
+
+    def _answer(self, annotatable: Annotatable) -> AggregatedValues:
+        return AggregatedValues(
+            (attr.name, annotatable) for attr in self._attributes)
 
 
 def normalize_allele(allele: VCFAllele, genome: ReferenceGenome) -> VCFAllele:
