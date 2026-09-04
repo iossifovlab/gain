@@ -2,128 +2,68 @@ Release Notes
 =============
 
 * 2026.9.0
-    * **Annotators answer reduced values keyed by attribute name.** The
-      base annotator no longer aggregates or renames: every
-      ``_do_annotate`` / ``_do_batch_annotate`` returns an
-      ``AnnotatedValues`` (``gain.annotation.annotator_base``), a dict
-      keyed by attribute name. ``WeightedValues``,
-      ``Aggregator.aggregate_weighted``,
-      ``Attribute.aggregator_instance`` and the base's
-      ``_apply_aggregators`` are removed; an attribute keeps the
-      aggregator name and resolves its class through
-      ``Aggregator.resolve_class``. An annotator that reduces values of
-      its own folds them through ``fold_own_values``; an out-of-tree
-      annotator that relied on the base folding its raw lists must do
-      the same (:issue:`1130`, :issue:`1133`, :issue:`1134`,
-      :issue:`1196`).
-    * **Behaviour change.** A ``position_score`` annotator reduces
-      through the ``get_scores_in_region_agg`` read: a region no record
-      touches answers per aggregator (``[]`` for ``list``, ``{}`` for
-      ``value_count``, ``False`` for ``bool``, ``None`` for the rest);
-      an attribute naming no aggregator on a score that declares no
-      default is refused at load; a region starting below position 1
-      raises ``ValueError`` instead of being clipped; overlapping
-      records count each position once.
-      ``PositionScore.fetch_region_weighted_values`` is removed and
-      ``resolve_aggregation_queries`` added (:issue:`1131`).
-    * Allele region mode streams through the new
-      ``AlleleScore.get_allele_scores_in_region_agg`` folding read
-      instead of materialising the region; a ``bool`` attribute naming
-      no aggregator, or an unknown ``include_attributes`` id, is refused
-      at load in both modes, and allele keys arrive in first-seen order
-      (:issue:`834`, :issue:`1132`, :issue:`1163`).
-    * ``FragmentScore`` gains a logical read plane --
-      ``get_fragment_score[s]_at_position``, ``..._overlapping_region``
-      and ``..._starting_in_region``, with
-      ``min_region_overlap_fraction`` /
-      ``min_fragment_overlap_fraction`` predicates -- and the folding
-      read ``get_fragment_scores_overlapping_region_agg``.
-      ``fetch_fragment_scores`` becomes a streaming generator of
-      ``(begin, end, values)`` with unclipped spans, and a malformed
-      region is refused (:issue:`1119`, :issue:`1121`, :issue:`1122`,
+    * Annotators return values keyed by attribute name and the base
+      annotator no longer aggregates; ``WeightedValues``,
+      ``Aggregator.aggregate_weighted`` and
+      ``Attribute.aggregator_instance`` are removed (:issue:`1130`,
+      :issue:`1133`, :issue:`1134`, :issue:`1196`).
+    * A ``position_score`` annotator answers an empty region per
+      aggregator, refuses an attribute without an aggregator at pipeline
+      load, and refuses a region starting below position 1;
+      ``PositionScore.fetch_region_weighted_values`` is removed
+      (:issue:`1131`).
+    * ``AlleleScore`` gains the folding read
+      ``get_allele_scores_in_region_agg``, and the annotator's region
+      mode streams (:issue:`834`, :issue:`1132`, :issue:`1163`).
+    * ``FragmentScore`` gains a logical read plane and a folding read;
+      ``fetch_fragment_scores`` streams ``(begin, end, values)``
+      (:issue:`1119`, :issue:`1120`, :issue:`1121`, :issue:`1122`,
       :issue:`1123`, :issue:`1124`, :issue:`1126`).
-    * The ``fragment_score`` annotator runs in constant memory and
-      accepts ``min_region_overlap_fraction`` and
-      ``min_fragment_overlap_fraction``, validated at pipeline load; the
-      editor template offers both (:issue:`1124`, :issue:`1125`,
-      :issue:`1165`).
-    * A tabix region read prunes its buffer on close, so a lookup
-      abandoned mid-stream no longer retains records;
-      ``GenomicPositionTable.buffered_record_count`` reports what is
-      held (:issue:`1120`).
-    * Aggregating reads memoise the aggregator-name parse, and the
-      fragment folding read its query list: 15-39% less time per
-      annotatable on a fragment pipeline (:issue:`1157`, :issue:`1161`).
+    * The ``fragment_score`` annotator accepts
+      ``min_region_overlap_fraction`` and
+      ``min_fragment_overlap_fraction`` (:issue:`1125`, :issue:`1165`).
     * ``none_value_replacement`` is a ``position_score`` attribute
-      parameter, declarable in a resource's ``default_annotation`` and
-      overridable per attribute (:issue:`1135`).
-    * Attribute parameters -- ``value_transform``,
-      ``none_value_replacement``, ``effect_type``,
-      ``include_attributes`` -- count for ``--reannotate`` identity and
-      appear in ``AttributeConfig.as_dict()``, so the editor's
-      ``annotator_yaml`` returns what was written (:issue:`1155`).
-    * Numeric annotator parameters (``promoter_len``,
-      ``region_length_cutoff``, the overlap fractions) are validated at
-      load through ``ParamsUsageMonitor.get_number``: a quoted number is
-      accepted, ``bool``, ``nan`` and ``inf`` are refused
+      parameter (:issue:`1135`).
+    * Attribute parameters count for ``--reannotate`` and
+      ``AttributeConfig.as_dict()`` (:issue:`1155`).
+    * Numeric annotator parameters are validated at pipeline load
       (:issue:`1166`).
-    * The info page's **Alleles** section is rebuilt around composition
-      -- per-class shares per chromosome, exact indel statistics, ts/tv
-      as a key figure, pinned totals -- and renders only on an allele
-      score, which no longer counts covered positions. **Stored-format
-      change:** indel groups store an exact ``{length: count}`` map in
-      place of the log2 histograms; an allele score built before this
-      reports its indel groups as not computed until rebuilt with
-      ``repo-stats --force`` (:issue:`982`, :issue:`1105`,
-      :issue:`1118`).
-    * Fragment scores publish ``statistics/fragments.json`` and a length
-      histogram instead of covered positions; a fragment resource built
-      before this shows its fragments as not computed until rebuilt
+    * Aggregating reads are 15-39% faster per annotatable
+      (:issue:`1157`, :issue:`1161`).
+    * The info page's Alleles section is redesigned and renders only on
+      an allele score; an allele score built before this reports its
+      indel groups as not computed until rebuilt with ``repo-stats
+      --force`` (:issue:`982`, :issue:`1105`, :issue:`1118`).
+    * Fragment scores publish fragment statistics instead of covered
+      positions; a fragment resource built before this needs a rebuild
       (:issue:`926`, :issue:`1127`).
-    * The coverage fraction measures the whole reference genome,
-      untouched contigs rolling up into one row, and the Coverage and
-      Alleles tables share the ``<0.01%`` floor and ``>99.99%`` ceiling
+    * The coverage fraction measures the whole reference genome, and the
+      Coverage and Alleles tables share one percentage format
       (:issue:`990`, :issue:`1041`, :issue:`1057`).
-    * ``RegionCoverage.segment_count`` and
-      ``segment_length_histogram()`` raise on a region that publishes no
-      segments instead of answering zero (:issue:`1043`).
-    * Every read of an ``open_raw_file`` handle redacts the
-      credential-bearing fetch url on failure, as do
-      ``get_file_content`` and the local-copy paths; the download-path
-      redaction a bad merge had reverted is restored (ADR 0023;
-      :issue:`1017`, :issue:`1052`, :issue:`1058`, :issue:`1078`).
-    * ``type: genome`` configurations are validated on construction, the
-      schema gains ``index_file`` and ``chrom_prefix``, and
-      ``index_file`` reaches the bgzipped FASTA backend (:issue:`1029`,
-      :issue:`1067`).
-    * A non-string or empty ``reference_genome`` / ``source_genome`` /
-      ``target_genome`` label reads as absent with a warning instead of
-      aborting the repository walk; an absent ``input_reference_genome``
-      falls through to the genomic context, and ``grr_manage repo-info``
-      no longer fails on such a pipeline (:issue:`1021`, :issue:`1050`,
-      :issue:`1053`, :issue:`1055`).
-    * ``render_pipeline_doc``'s address policy is one object:
-      ``PipelineDocAddresses``, with ``PublicMirrorAddresses`` and
-      ``RepositoryRelativeAddresses`` (:issue:`970`).
+    * ``RegionCoverage``'s segment accessors raise on a region without
+      segments (:issue:`1043`).
+    * The credential-bearing fetch url is redacted on every failed read
+      (:issue:`1017`, :issue:`1052`, :issue:`1058`, :issue:`1078`).
+    * ``type: genome`` configurations are validated, and ``index_file``
+      reaches the bgzipped FASTA backend (:issue:`1029`, :issue:`1067`).
+    * A malformed genome label reads as absent, and an absent
+      ``input_reference_genome`` falls through to the genomic context
+      (:issue:`1021`, :issue:`1050`, :issue:`1053`, :issue:`1055`).
+    * ``render_pipeline_doc`` takes a ``PipelineDocAddresses`` policy
+      (:issue:`970`).
     * ``save_as_default_gene_models`` refuses an unwritable model before
-      the output file is opened (:issue:`978`).
-    * The normalized resource config is memoised
-      (``build_score_from_resource`` 6.65 -> 0.38 ms on a 100-score
-      resource), statistics-scan tasks build the score once
-      (``repo-repair`` 37% faster), and downloads create directories
-      without probing first (3 fewer S3 requests per file)
-      (:issue:`1038`, :issue:`1039`, :issue:`1042`, :issue:`1059`).
-    * A third-party score kind implements ``record_weight`` in place of
-      the ``RECORD_WEIGHT_IS_SPAN`` class variable (:issue:`1095`).
+      opening the output (:issue:`978`).
+    * Score construction, the statistics scan and s3 downloads make
+      fewer round trips (:issue:`1038`, :issue:`1039`, :issue:`1042`,
+      :issue:`1059`).
+    * A score kind implements ``record_weight`` in place of
+      ``RECORD_WEIGHT_IS_SPAN`` (:issue:`1095`).
     * The test-data builders express a ``public_url`` and a group
-      repository: ``a_grr().with_public_url()``,
-      ``a_grr_group().with_child()`` (:issue:`953`).
-    * The annotation editor highlights every string field on a
-      configuration error (:issue:`1164`).
-    * Docs: a new GAIn Development section with an architecture
-      overview, docstrings for the declared API set, and a toolchain
-      gaining myst, mermaid and last-updated-by-git; docs build on every
-      CI build and deploy from master only (:issue:`1033`,
+      repository (:issue:`953`).
+    * The annotation editor highlights every invalid string field
+      (:issue:`1164`).
+    * New GAIn Development docs section, docstrings for the declared
+      API, and docs built on every CI build (:issue:`1033`,
       :issue:`1139`, :issue:`1140`, :issue:`1141`, :issue:`1142`,
       :issue:`1147`, :issue:`1188`).
     * **Fixed:** `the bug issues closed in this release
