@@ -208,6 +208,7 @@ def test_the_entry_point_of_each_score_type_resolves_to_its_kind(
     """
     resolved = get_resource_implementation_builder(resource_type)
     assert resolved is expected
+    assert isinstance(resolved, type)
     assert issubclass(resolved, GenomicScoreImplementation)
     assert resolved is not GenomicScoreImplementation
 
@@ -242,6 +243,8 @@ def test_the_factory_picks_the_same_kind_the_entry_point_does(
 
     implementation = build_score_implementation_from_resource(resource)
 
+    # The exact class, on purpose: isinstance would accept the base.
+    # pylint: disable=unidiomatic-typecheck
     assert type(implementation) is expected
 
 
@@ -307,7 +310,7 @@ def _template_source(template_name: str) -> str:
 
 @pytest.mark.parametrize("kind", KIND_CLASSES, ids=lambda kind: kind.__name__)
 def test_each_kind_template_fills_one_section_with_its_own_accessors(
-    kind: type,
+    kind: type[GenomicScoreImplementation],
 ) -> None:
     """A kind's template is its section, and calls its class for it.
 
@@ -340,7 +343,9 @@ def test_the_shared_template_renders_no_section_body_itself() -> None:
     whether or not it was coverage-scanned, and the only symptom was a
     page reading "not computed" forever (gain#1116).  With every block
     empty here, the kind -> section relation is which template a class
-    names -- and the shared page calls nothing the base class lacks.
+    names -- and no accessor the shared page calls directly is one the
+    base class lacks.  (Its reads through ``impl.score`` are the score's
+    own surface, not an accessor, and are not what this pins.)
     """
     source = _template_source("genomic_score.jinja")
 
