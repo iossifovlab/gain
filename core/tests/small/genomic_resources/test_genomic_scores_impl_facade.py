@@ -9,11 +9,10 @@ only ever drift too small -- a function added to ``scan`` and forgotten
 here fails nothing -- which is the opposite of what these tests are for.
 """
 import pathlib
-import re
 import types
 from collections.abc import Callable
+from typing import Protocol
 
-import gain.templates
 import pytest
 from gain.genomic_resources import get_resource_implementation_builder
 from gain.genomic_resources.implementations import genomic_scores_impl
@@ -31,11 +30,17 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     scan,
 )
 from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.testing import (
+    build_filesystem_test_repository,
+    setup_directories,
+)
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
     a_position_score,
     an_allele_score,
 )
+from gain.templates import get_jinja_env
+from jinja2 import nodes
 
 #: Each published name and the module that defines it: one module per
 #: kind, the kind-neutral base, and the factory that picks a kind.  The
@@ -55,45 +60,21 @@ KIND_CLASSES = (
     FragmentScoreImplementation,
 )
 
+
+class _Builds(Protocol):
+    def build_resource(self, tmp_path: pathlib.Path) -> GenomicResource: ...
+
+
 #: Every resource-type spelling ``core/pyproject.toml`` routes to this
-#: package, the kind each names, and a builder for a resource of it.
-#: ``cnv_collection`` is the legacy spelling of a fragment score, kept
-#: registered until 2027.1.0 (ADR 0011).
-SCORE_TYPES: list[tuple[str, type, Callable[
-    [pathlib.Path], GenomicResource]]] = [
-    ("position_score", PositionScoreImplementation, lambda tmp_path: (
-        a_position_score()
-        .with_score("score", "float")
-        .with_data("""
-            chrom  pos_begin  pos_end  score
-            chr1   10         20       0.1
-        """)
-        .build_resource(tmp_path))),
-    ("allele_score", AlleleScoreImplementation, lambda tmp_path: (
-        an_allele_score()
-        .with_score("score", "float")
-        .with_data("""
-            chrom  pos_begin  reference  alternative  score
-            chr1   10         A          G            0.1
-        """)
-        .build_resource(tmp_path))),
-    ("fragment_score", FragmentScoreImplementation, lambda tmp_path: (
-        a_fragment_score()
-        .with_score("score", "float")
-        .with_data("""
-            chrom  pos_begin  pos_end  score
-            chr1   10         20       0.1
-        """)
-        .build_resource(tmp_path))),
-    ("cnv_collection", FragmentScoreImplementation, lambda tmp_path: (
-        a_fragment_score()
-        .with_resource_type("cnv_collection")
-        .with_score("score", "float")
-        .with_data("""
-            chrom  pos_begin  pos_end  score
-            chr1   10         20       0.1
-        """)
-        .build_resource(tmp_path))),
+#: package, the kind each names, and a builder for a resource of it.  No
+#: row names the base.  ``cnv_collection`` is the legacy spelling of a
+#: fragment score, kept registered until 2027.1.0 (ADR 0011).
+SCORE_TYPES: list[tuple[str, type, Callable[[], _Builds]]] = [
+    ("position_score", PositionScoreImplementation, a_position_score),
+    ("allele_score", AlleleScoreImplementation, an_allele_score),
+    ("fragment_score", FragmentScoreImplementation, a_fragment_score),
+    ("cnv_collection", FragmentScoreImplementation,
+     lambda: a_fragment_score().with_resource_type("cnv_collection")),
 ]
 
 #: Each render accessor a kind's template calls, and the ONE class that
@@ -124,6 +105,10 @@ SHARED_PROTOCOL = (
     "files",
 )
 
+#: The sections of a genomic-score page: the blocks of the shared
+#: template that are slots, each filled by exactly one kind.
+SECTIONS = frozenset({"coverage", "alleles", "fragments"})
+
 
 def _public_names_defined_in(module: types.ModuleType) -> set[str]:
     """The public names ``module`` DEFINES -- not the ones it imports."""
@@ -136,6 +121,47 @@ def _public_names_defined_in(module: types.ModuleType) -> set[str]:
 
 def _module_stem(module: types.ModuleType) -> str:
     return module.__name__.rsplit(".", maxsplit=1)[1]
+
+
+def _template_ast(template_name: str) -> nodes.Template:
+    """The template, found and parsed by the environment that renders it.
+
+    Through the environment's loader rather than a path of this test's
+    own, so a template served the way a provider's would be is found
+    the same way the page is.
+    """
+    env = get_jinja_env()
+    assert env.loader is not None
+    source, _, _ = env.loader.get_source(env, template_name)
+    return env.parse(source, template_name)
+
+
+def _extended(ast: nodes.Template) -> set[str]:
+    return {
+        node.template.value
+        for node in ast.find_all(nodes.Extends)
+        if isinstance(node.template, nodes.Const)
+    }
+
+
+def _blocks(ast: nodes.Template) -> dict[str, bool]:
+    """Each block the template defines, and whether it has a body."""
+    return {block.name: bool(block.body) for block in ast.find_all(nodes.Block)}
+
+
+def _accessor_calls(ast: nodes.Template) -> set[str]:
+    """The ``impl.<name>(...)`` calls: the accessors a template reads.
+
+    A read through ``impl.score`` is the score's own surface and is not
+    one of these.
+    """
+    return {
+        call.node.attr
+        for call in ast.find_all(nodes.Call)
+        if isinstance(call.node, nodes.Getattr)
+        and isinstance(call.node.node, nodes.Name)
+        and call.node.node.name == "impl"
+    }
 
 
 def test_the_package_is_laid_out_one_module_per_kind() -> None:
@@ -228,17 +254,16 @@ def test_the_entry_point_of_each_score_type_resolves_to_its_kind(
 )
 def test_the_factory_picks_the_same_kind_the_entry_point_does(
     resource_type: str, expected: type,
-    build: Callable[[pathlib.Path], GenomicResource],
+    build: Callable[[], _Builds],
     tmp_path: pathlib.Path,
 ) -> None:
     """A caller holding a resource gets the kind its type name gets.
 
     Asserted as the exact class, which is stronger than the strict
-    subclass the entry point row settles for: the factory has a default
-    branch, and a spelling that falls through it would still be SOME
-    kind -- just not the one whose page the resource should render.
+    subclass the entry point row settles for: a kind is a subclass of
+    the base, and a wrong kind would pass ``isinstance``.
     """
-    resource = build(tmp_path)
+    resource = build().build_resource(tmp_path)
     assert resource.get_type() == resource_type
 
     implementation = build_score_implementation_from_resource(resource)
@@ -246,6 +271,24 @@ def test_the_factory_picks_the_same_kind_the_entry_point_does(
     # The exact class, on purpose: isinstance would accept the base.
     # pylint: disable=unidiomatic-typecheck
     assert type(implementation) is expected
+
+
+def test_the_factory_refuses_a_type_that_is_no_kind(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A spelling that names no kind is refused, not defaulted.
+
+    The ladder ends in a refusal, as ``build_score_from_resource``'s
+    does, so a new kind must be added to the factory rather than falling
+    through to whichever branch is last.
+    """
+    # Off a bare directory: every score builder validates its spelling.
+    setup_directories(
+        tmp_path, {"res": {"genomic_resource.yaml": "type: not_a_score\n"}})
+    resource = build_filesystem_test_repository(tmp_path).get_resource("res")
+
+    with pytest.raises(ValueError, match="not_a_score"):
+        build_score_implementation_from_resource(resource)
 
 
 def test_scan_publishes_the_machinery_it_declares() -> None:
@@ -292,45 +335,29 @@ def test_each_render_accessor_is_defined_on_exactly_its_kind(
     assert owners == [ACCESSOR_OWNERS[name]]
 
 
-_TEMPLATE_DIR = pathlib.Path(gain.templates.__file__).parent / "template_files"
-
-#: An ``impl.<name>(`` call in a template: the accessor a section reads.
-_ACCESSOR_CALL = re.compile(r"\bimpl\.(\w+)\(")
-
-#: A block header, and a block that opens and closes on one line with
-#: nothing between -- the shape of an override that BLANKS a section.
-_BLOCK = re.compile(r"{%-?\s*block\s+(\w+)\s*-?%}")
-_EMPTY_BLOCK = re.compile(
-    r"{%-?\s*block\s+(\w+)\s*-?%}\s*{%-?\s*endblock\s*-?%}")
-
-
-def _template_source(template_name: str) -> str:
-    return (_TEMPLATE_DIR / template_name).read_text()
-
-
 @pytest.mark.parametrize("kind", KIND_CLASSES, ids=lambda kind: kind.__name__)
 def test_each_kind_template_fills_one_section_with_its_own_accessors(
     kind: type[GenomicScoreImplementation],
 ) -> None:
     """A kind's template is its section, and calls its class for it.
 
-    Three claims off the template source.  It extends the shared page.
-    It defines exactly one block, and that block is not empty -- an
-    empty override is how a kind used to BLANK a section the shared
-    template rendered for everyone (gain#1118, gain#1127), and with the
-    shared template rendering none there is nothing left to blank.  And
-    every ``impl.<name>()`` it calls is defined on the kind itself: the
+    Three claims off the parsed template.  It extends the shared page.
+    It defines exactly one block, and that block has a body -- an empty
+    override is how a kind used to BLANK a section the shared template
+    rendered for everyone (gain#1118, gain#1127), and with the shared
+    template rendering none there is nothing left to blank.  And every
+    ``impl.<name>()`` it calls is defined on the kind itself: the
     section a template fills exists on this kind's page and no other,
     so its accessors have no reason to be anywhere else (gain#1210).
     """
-    source = _template_source(kind.template_name)
+    ast = _template_ast(kind.template_name)
 
-    assert '{% extends "genomic_score.jinja" %}' in source
-    blocks = _BLOCK.findall(source)
+    assert _extended(ast) == {"genomic_score.jinja"}
+    blocks = _blocks(ast)
     assert len(blocks) == 1, blocks
-    assert _EMPTY_BLOCK.findall(source) == []
+    assert all(blocks.values()), blocks
 
-    called = set(_ACCESSOR_CALL.findall(source))
+    called = _accessor_calls(ast)
     assert called, "a section that reads nothing off its class"
     assert called <= set(vars(kind)), called - set(vars(kind))
 
@@ -341,29 +368,24 @@ def test_the_shared_template_renders_no_section_body_itself() -> None:
     The shared page used to fill Coverage by default and leave the
     other two empty, so a kind added later inherited a Coverage section
     whether or not it was coverage-scanned, and the only symptom was a
-    page reading "not computed" forever (gain#1116).  With every block
+    page reading "not computed" forever (gain#1116).  With every section
     empty here, the kind -> section relation is which template a class
-    names -- and no accessor the shared page calls directly is one the
-    base class lacks.  (Its reads through ``impl.score`` are the score's
-    own surface, not an accessor, and are not what this pins.)
+    names -- and no accessor the shared page calls is one the base
+    class lacks.
     """
-    source = _template_source("genomic_score.jinja")
+    blocks = _blocks(_template_ast("genomic_score.jinja"))
+    assert set(blocks) >= SECTIONS
+    assert {name for name in SECTIONS if blocks[name]} == set()
 
-    # The page's other blocks -- the layout ones it fills for every
-    # kind, histograms included -- are not sections and stay filled.
-    sections = {"coverage", "alleles", "fragments"}
-    assert sections <= set(_BLOCK.findall(source))
-    assert sections <= set(_EMPTY_BLOCK.findall(source))
-
-    called = set(_ACCESSOR_CALL.findall(source))
+    called = _accessor_calls(_template_ast("genomic_score.jinja"))
     assert called <= set(vars(GenomicScoreImplementation)), called
 
     filled = {
-        block
+        name
         for kind in KIND_CLASSES
-        for block in _BLOCK.findall(_template_source(kind.template_name))
+        for name in _blocks(_template_ast(kind.template_name))
     }
-    assert filled == sections
+    assert filled == SECTIONS
 
 
 @pytest.mark.parametrize("name", SHARED_PROTOCOL)

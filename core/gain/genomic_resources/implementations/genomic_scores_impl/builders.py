@@ -26,11 +26,18 @@ def build_score_implementation_from_resource(
     """Builds score implementation based on resource type.
 
     Each kind gets the class that renders its page; the base is never
-    what a real resource gets, since it names no kind's template.
+    what a real resource gets, since it names no kind's template.  The
+    ladder is the one ``build_score_from_resource`` climbs, and a type
+    that is no kind is refused here as it is there, rather than handed
+    the position class to fail one step later.
     """
     resource_type = resource.get_type()
-    if resource_type in FRAGMENT_SCORE_TYPES:
-        return FragmentScoreImplementation(resource)
+    if resource_type == "position_score":
+        return PositionScoreImplementation(resource)
     if resource_type == PREFERRED_ALLELE_SCORE_TYPE:
         return AlleleScoreImplementation(resource)
-    return PositionScoreImplementation(resource)
+    if resource_type in FRAGMENT_SCORE_TYPES:
+        return FragmentScoreImplementation(resource)
+    raise ValueError(
+        f"Resource {resource.get_id()} is not of score type; "
+        f"unexpected resource type {resource_type}")
