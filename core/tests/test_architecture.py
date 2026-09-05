@@ -227,16 +227,21 @@ def test_the_grr_does_not_import_the_annotation_layer(
 
 def test_the_statistics_scan_does_not_import_the_implementation_classes(
 ) -> None:
-    """``genomic_scores_impl.scan`` sits below ``impl`` and stays there.
+    """``genomic_scores_impl.scan`` sits below the classes and stays there.
 
     The split in gain#1007 is only acyclic because the machinery stopped
     needing an implementation object: every one of its uses of
     ``build_score_implementation_from_resource`` was reaching for the
-    ``.score`` that both classes build with ``build_score_from_resource``,
-    so ``scan`` asks for that directly.  ``impl`` imports ``scan`` to
+    ``.score`` that every class builds with ``build_score_from_resource``,
+    so ``scan`` asks for that directly.  The base imports ``scan`` to
     schedule its task bodies; an import the other way would close the
     package into a cycle and put the task bodies back above the classes
     they were lifted out of.
+
+    The classes are one module per kind since gain#1210 -- the base, the
+    kinds, and the factory -- so the rule is read off the package
+    directory: ``scan`` imports nothing from any sibling module, nor the
+    facade, and a kind added later is covered without coming here.
 
     Read from the AST rather than off the module object, because the
     import that would reintroduce the cycle is most likely a
@@ -247,9 +252,14 @@ def test_the_statistics_scan_does_not_import_the_implementation_classes(
     pkg = "gain.genomic_resources.implementations.genomic_scores_impl"
     scan_py = (pathlib.Path(GAIN_SRC) / "genomic_resources"
                / "implementations" / "genomic_scores_impl" / "scan.py")
+    siblings = {
+        path.stem for path in scan_py.parent.glob("*.py")
+    } - {"scan", "__init__"}
+    assert siblings >= {"base", "allele", "fragment", "builders"}
+    forbidden = {pkg, *(f"{pkg}.{sibling}" for sibling in siblings)}
     offenders = sorted(
         imported for imported in _imported_modules(scan_py)
-        if imported in (f"{pkg}.impl", pkg)
+        if imported in forbidden
     )
     assert offenders == [], (
         f"genomic_scores_impl.scan imports {offenders}, which closes the "

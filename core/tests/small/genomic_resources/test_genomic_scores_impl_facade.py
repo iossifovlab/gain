@@ -1,6 +1,6 @@
 """What the ``genomic_scores_impl`` package promises its importers.
 
-The package's own docstring says what the split is for; these pin the
+The package's own docstring says what the layout is for; these pin the
 parts of it that other code depends on and that nothing else would catch.
 
 Every name list here is DERIVED from the modules and compared against a
@@ -8,6 +8,7 @@ declaration, never transcribed. A hand-written list of the machinery would
 only ever drift too small -- a function added to ``scan`` and forgotten
 here fails nothing -- which is the opposite of what these tests are for.
 """
+import pathlib
 import types
 
 import pytest
@@ -15,18 +16,53 @@ from gain.genomic_resources import get_resource_implementation_builder
 from gain.genomic_resources.implementations import genomic_scores_impl
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     AlleleScoreImplementation,
+    FragmentScoreImplementation,
     GenomicScoreImplementation,
-    impl,
+    allele,
+    base,
+    builders,
+    fragment,
     scan,
 )
 
-#: The accessors the info-page templates call. ``genomic_score.jinja``
-#: reaches these by name, so they are a published surface too -- and the
-#: half of the class gain#1007 deliberately did NOT move (gain#1037).
-RENDER_ACCESSORS = (
+#: Each published name and the module that defines it: one module per
+#: kind, the kind-neutral base, and the factory that picks a kind.  The
+#: layout mirrors ``genomic_resources/genomic_scores/`` (gain#1210).
+DEFINING_MODULES: dict[str, types.ModuleType] = {
+    "GenomicScoreImplementation": base,
+    "AlleleScoreImplementation": allele,
+    "FragmentScoreImplementation": fragment,
+    "build_score_implementation_from_resource": builders,
+}
+
+#: The concrete classes, one per kind.
+KIND_CLASSES = (
+    AlleleScoreImplementation,
+    FragmentScoreImplementation,
+)
+
+#: Each render accessor a kind's template calls, and the ONE class that
+#: defines it.  A template reaches these by name, so they are a published
+#: surface -- and each belongs to exactly one kind: the section it fills
+#: exists on that kind's page and no other (gain#1210).
+ACCESSOR_OWNERS: dict[str, type] = {
+    "get_allele_statistics": AlleleScoreImplementation,
+    "get_allele_display": AlleleScoreImplementation,
+    "get_allele_insertion_lengths_image_filename": AlleleScoreImplementation,
+    "get_allele_deletion_lengths_image_filename": AlleleScoreImplementation,
+    "get_allele_complex_grid_image_filename": AlleleScoreImplementation,
+    "get_fragment_statistics": FragmentScoreImplementation,
+    "get_fragment_display": FragmentScoreImplementation,
+    "get_fragment_lengths_image_filename": FragmentScoreImplementation,
+}
+
+#: What every kind answers identically, so it is defined once, on the
+#: base, and no kind repeats it -- not even as a delegation to ``super``.
+SHARED_PROTOCOL = (
     "get_info", "get_statistics_info",
-    "get_allele_display", "get_coverage_display", "get_fragment_display",
-    "get_coverage_statistics", "get_allele_statistics",
+    "create_statistics_build_tasks",
+    "calc_info_hash", "calc_statistics_hash",
+    "files",
 )
 
 
@@ -39,32 +75,51 @@ def _public_names_defined_in(module: types.ModuleType) -> set[str]:
     }
 
 
+def _module_stem(module: types.ModuleType) -> str:
+    return module.__name__.rsplit(".", maxsplit=1)[1]
+
+
+def test_the_package_is_laid_out_one_module_per_kind() -> None:
+    """The file layout is the defining modules, the scan, and the facade.
+
+    Derived from ``DEFINING_MODULES`` so that a module added to the
+    package without a published name -- or ``impl.py`` coming back --
+    fails here.
+    """
+    package_dir = pathlib.Path(genomic_scores_impl.__file__).parent
+    assert {path.stem for path in package_dir.glob("*.py")} == {
+        *(_module_stem(module) for module in DEFINING_MODULES.values()),
+        "scan",
+        "__init__",
+    }
+
+
 def test_the_facade_publishes_exactly_the_documented_names() -> None:
     """The acceptance criterion of gain#1007, and not a circular one.
 
-    Compares ``__all__`` against what the package actually re-exports, so
-    a name added to one and not the other fails here -- rather than
+    Compares ``__all__`` against what the modules actually define, so a
+    name added to one and not the other fails here -- rather than
     comparing the literal to itself.
     """
-    assert _public_names_defined_in(impl) == set(genomic_scores_impl.__all__)
-    assert sorted(genomic_scores_impl.__all__) == [
-        "AlleleScoreImplementation",
-        "FragmentScoreImplementation",
-        "GenomicScoreImplementation",
-        "build_score_implementation_from_resource",
-    ]
+    defined = set().union(*(
+        _public_names_defined_in(module)
+        for module in DEFINING_MODULES.values()
+    ))
+    assert defined == set(genomic_scores_impl.__all__)
+    assert set(genomic_scores_impl.__all__) == set(DEFINING_MODULES)
 
 
-@pytest.mark.parametrize("name", sorted(genomic_scores_impl.__all__))
-def test_each_exported_name_is_the_one_impl_defines(name: str) -> None:
+@pytest.mark.parametrize("name", sorted(DEFINING_MODULES))
+def test_each_exported_name_is_the_one_its_module_defines(name: str) -> None:
     """The facade re-exports; it does not redefine.
 
     ``__module__`` is pinned because that is what pickle and the task
     graph write down when they name a class.
     """
     exported = getattr(genomic_scores_impl, name)
-    assert exported is getattr(impl, name)
-    assert exported.__module__ == impl.__name__
+    module = DEFINING_MODULES[name]
+    assert exported is getattr(module, name)
+    assert exported.__module__ == module.__name__
 
 
 @pytest.mark.parametrize(
@@ -121,12 +176,31 @@ def test_the_machinery_is_module_level_and_off_the_class(name: str) -> None:
     assert not hasattr(GenomicScoreImplementation, f"_{name}")
 
 
-@pytest.mark.parametrize("name", RENDER_ACCESSORS)
-def test_the_render_accessors_stayed_on_the_class(name: str) -> None:
-    """The other half of the split did not move (gain#1037).
+@pytest.mark.parametrize("name", sorted(ACCESSOR_OWNERS))
+def test_each_render_accessor_is_defined_on_exactly_its_kind(
+    name: str,
+) -> None:
+    """A kind's section accessors live on that kind, and nowhere else.
 
-    ``in vars(...)`` rather than ``getattr``: these names all exist on
-    bases too, so an inherited lookup would keep passing after the class
-    stopped defining its own.
+    ``in vars(...)`` rather than ``getattr``: an inherited lookup would
+    keep passing after an accessor drifted back onto the base, which is
+    the one place it must not be -- a base that answers for one kind's
+    section hands every kind that section (gain#1210).
+    """
+    owners = [
+        cls for cls in (GenomicScoreImplementation, *KIND_CLASSES)
+        if name in vars(cls)
+    ]
+    assert owners == [ACCESSOR_OWNERS[name]]
+
+
+@pytest.mark.parametrize("name", SHARED_PROTOCOL)
+def test_the_shared_protocol_is_defined_once_on_the_base(name: str) -> None:
+    """What every kind answers alike is written once.
+
+    The kinds used to repeat five of these as ``super()`` delegations,
+    which said nothing and hid, under a pylint disable, the question of
+    whether a kind overrides anything at all.  It does not.
     """
     assert name in vars(GenomicScoreImplementation)
+    assert [cls for cls in KIND_CLASSES if name in vars(cls)] == []
