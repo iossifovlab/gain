@@ -174,9 +174,9 @@
             <tr>
                 <th>Labels</th>
                 <td>
-                {% if resource.get_labels() %}
+                {% if data.labels %}
                     <ul>
-                    {% for label, value in resource.get_labels().items() %}
+                    {% for label, value in data.labels %}
                         <li>{{ label }}: {{ value }}</li>
                     {% endfor %}
                     </ul>
