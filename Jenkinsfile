@@ -1001,6 +1001,18 @@ pipeline {
                         // the controller.
                         lock(resource: 'gain-docs-deploy')
                     }
+                    environment {
+                        // Names the release directory the play unpacks
+                        // into and flips the published symlink onto, so
+                        // what is live on the docs host is traceable to
+                        // the build that put it there (gain#1191).
+                        // Derived here rather than in the shell below:
+                        // `sh` is /bin/sh, where ${VAR:0:8} is not
+                        // available, and this matches how the Docker
+                        // images stage builds its GIT_SHORT.
+                        DOCS_STAMP = "${env.BUILD_NUMBER}-" +
+                            "${env.GIT_COMMIT?.take(8) ?: 'unknown'}"
+                    }
                     // Master-only ansible push to iossifovlab.com, on
                     // EVERY master build. Still skipped on every branch
                     // and PR build, so only master ever publishes; the
@@ -1028,17 +1040,6 @@ pipeline {
                             usernameVariable: 'SSH_USER',
                         )]) {
                             sh '''
-                                # Names the release directory the play
-                                # unpacks into and flips the published
-                                # symlink onto, so what is live on the
-                                # docs host is traceable to the build
-                                # that put it there (gain#1191). Exported
-                                # because `docker run -e DOCS_STAMP`
-                                # forwards it from the environment.
-                                export DOCS_STAMP="${BUILD_NUMBER}-$(
-                                    echo "${GIT_COMMIT:-unknown}" | cut -c1-8
-                                )"
-
                                 docker run --rm \
                                     --name gain-docs-deploy-${CI_TAG} \
                                     --label ci-tag=${CI_TAG} \
