@@ -1,21 +1,5 @@
 {% extends "genomic_score.jinja" %}
-{# An allele score's page IS the genomic-score page, plus one section and
-   minus another. #}
-
-{# An allele row collapses to the point it sits at, so there is no span
-   to union and the coverage scan deliberately skips this kind.  Nothing
-   would ever fill the section, so it renders no heading at all rather
-   than one permanently reading "not computed" (gain#1118).
-
-   A fragment score empties it too, for its own reason -- its rows
-   overlap, so the union measures nothing (gain#1127) -- which leaves
-   the POSITION score as the only kind the shared template's default
-   still serves.  A default that carries the minority is a trap worth
-   naming: a kind added later inherits a Coverage section whether or
-   not it is coverage-scanned, and the way to notice is a page reading
-   "not computed" forever.  gain#1116 tracks gating the block on the
-   scan's own kind set instead, which would delete both overrides. #}
-{% block coverage %}{% endblock %}
+{# An allele score's page IS the genomic-score page, plus one section. #}
 
 {% block alleles %}
 <h2>Alleles</h2>

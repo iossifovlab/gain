@@ -97,156 +97,17 @@
 </table>
 </div>
 
-{# FILLED by default, unlike the two blocks below.  Covered positions
-   are a POSITION SCORE statistic and only that: the union measures what
-   a resource covers exactly when its rows are pairwise disjoint
-   (``_COVERAGE_SCAN_RESOURCE_TYPES``).  The other two kinds each
-   override this block empty -- an allele score because its rows are
-   points, so there is no span to union (gain#1118); a fragment score
-   because its rows overlap, so the union counts nothing anyone asks for
-   (gain#1127).
+{# Empty by default, as the two blocks below are.  Covered positions are
+   a POSITION SCORE statistic and only that: the union measures what a
+   resource covers exactly when its rows are pairwise disjoint.  An
+   allele score's rows are points, so there is no span to union
+   (gain#1118); a fragment score's rows overlap, so the union counts
+   nothing anyone asks for (gain#1127).  Filled by position_score.jinja.
 
-   So the default now carries the MINORITY -- one kind fills it, two
-   empty it -- which is a trap worth naming rather than leaving to be
-   discovered: a kind added later inherits a Coverage section whether or
-   not it is coverage-scanned, and the only symptom is a page reading
-   "not computed" forever.  gain#1116 tracks gating this block on the
-   scan's own kind set, which would delete both overrides and the
-   asymmetry with them.
-
-   Keyed on the KIND, which is what choosing a template already is, and
-   never on ``get_coverage_display()`` returning None: a position score
-   whose statistics are not built yet must keep reading "not computed",
-   where the message is true and a rebuild acts on it.  Gating on the
-   payload would collapse *never applicable* and *not yet built* into
-   one silent blank. #}
-{% block coverage %}
-<h2>Coverage</h2>
-{% set coverage = impl.get_coverage_display() %}
-{% if coverage != None %}
-{% set has_fractions = coverage.has_fractions %}
-{% set has_segments = coverage.has_segments %}
-<div class="scrollable-table-container">
-<table>
-    <thead>
-        <tr>
-            <th data-sort="text">Chromosome</th>
-            <th data-sort="number">Covered positions</th>
-            {%- if has_fractions %}
-            <th data-sort="number">Covered %</th>
-            {%- endif %}
-            {%- if has_segments %}
-            <th data-sort="number">Segments</th>
-            {%- endif %}
-        </tr>
-        {#- The total is pinned as a SECOND head row so it stays in view
-           down a few hundred contigs: the scrollable container already
-           makes `thead` sticky, and this inherits it for nothing.
-
-           It is as safe from the sorter here as it was in <tfoot>, and
-           for a structural reason rather than a promise: the script
-           reads its headers from `tHead.rows[0]` and reorders only
-           `tBodies[0].rows`, so this row is outside both.
-
-           <td>, never <th>: a <th> here would be announced as a column
-           header for the data below, and would match the
-           `thead th[aria-sort]` query the sorter clears the previous
-           column's marker with. -#}
-        <tr>
-            <td>all chromosomes</td>
-            <td>{{ coverage.global_covered }}</td>
-            {%- if has_fractions %}
-            {#- Guarded on the fraction, exactly as the per-chromosome
-               cell above is: "did a denominator resolve" is one
-               question, and the two cells must not read it off two
-               different fields. -#}
-            <td>{% if coverage.global_fraction != None -%}
-                {{ coverage.global_percent }}
-            {%- endif %}</td>
-            {%- endif %}
-            {%- if has_segments %}
-            <td>{{ coverage.global_segments }}</td>
-            {%- endif %}
-        </tr>
-    </thead>
-    <tbody>
-    {%- for row in coverage.rows -%}
-        <tr>
-            <td data-sort-value="{{ natural_chromosome_key(row.chrom) }}">{{ row.chrom }}</td>
-            <td data-sort-value="{{ row.covered }}">{{ row.covered }}</td>
-            {#- The cell shows a percentage and sorts on the fraction.
-               Both come off the row rather than being formatted here:
-               the share is written by the one rule the Alleles tables
-               below use too, and a "%.2f%%" here would be a second
-               copy of that rule -- which is exactly what this page
-               carried, and what gain#1057 removed.
-               A row with no denominator renders empty and carries no
-               attribute at all rather than an empty one.  The sorter
-               treats both as "no value", so this is about the markup
-               saying what it means: a cell with nothing to sort on
-               carries no key, instead of a key that happens to be
-               blank. -#}
-            {%- if has_fractions -%}
-            {%- if row.fraction != None %}
-            <td data-sort-value="{{ row.fraction }}">{{ row.percent }}</td>
-            {%- else %}
-            <td></td>
-            {%- endif %}
-            {%- endif %}
-            {%- if has_segments %}
-            <td data-sort-value="{{ row.segments }}">{{ row.segments }}</td>
-            {%- endif %}
-        </tr>
-    {%- endfor %}
-    </tbody>
-    {#- The untouched part of the reference (see UncoveredContigs for why
-       it is one row) stays in <tfoot>, and is now the only thing in it.
-
-       It did not follow the total into the sticky header, because it is
-       not a total: it describes what is NOT in the table.  Pinning it
-       would also make the sticky header three rows deep and eat the
-       500px the data scrolls in.  Out of <tbody> for the same reason as
-       ever -- the sorter reorders tbody > tr only, so no comparator can
-       float a summary into the middle of the data.
-
-       The element itself is conditional now that the total has left it:
-       most resources have no uncovered contigs, and an always-emitted
-       <tfoot></tfoot> would be an empty element on every one of them. -#}
-    {%- if coverage.uncovered != None %}
-    {%- set uncovered = coverage.uncovered %}
-    <tfoot>
-    <tr>
-        <td>{{ uncovered.contigs }} {{ "contig" if uncovered.contigs == 1 else "contigs" }} with no values ({{ uncovered.length }} bp)</td>
-        <td>0</td>
-        {%- if has_fractions %}
-        <td>{{ uncovered.percent }}</td>
-        {%- endif %}
-        {%- if has_segments %}
-        <td>0</td>
-        {%- endif %}
-    </tr>
-    </tfoot>
-    {%- endif %}
-</table>
-</div>
-{%- if has_segments %}
-<h3>Segment lengths</h3>
-{# Known-and-empty states itself, as the indel groups do: with
-   no positive count there is nothing to draw and no image is written,
-   so linking one would dangle. #}
-{% if coverage.segment_lengths and coverage.segment_lengths | sum %}
-<img src="{{ impl.get_coverage_segment_lengths_image_filename() }}"
-    alt="global segment-length histogram"
-    class="statistics-figure"
-    title="Segment lengths across all chromosomes, fixed log2 bins">
-{% else %}
-<p>no segments</p>
-{% endif %}
-{%- endif %}
-{% else %}
-<p>not computed</p>
-{% endif %}
-{% endblock %}
+   Every section is a slot here, so a kind added later inherits no
+   section it cannot fill -- the kind -> section relation is which
+   template a class names, and nothing else (gain#1210). #}
+{% block coverage %}{% endblock %}
 
 {# Empty by default, for the reason the fragments block below is:
    a kind whose rows carry no ref/alt pair can never fill this

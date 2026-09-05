@@ -9,9 +9,11 @@ only ever drift too small -- a function added to ``scan`` and forgotten
 here fails nothing -- which is the opposite of what these tests are for.
 """
 import pathlib
+import re
 import types
 from collections.abc import Callable
 
+import gain.templates
 import pytest
 from gain.genomic_resources import get_resource_implementation_builder
 from gain.genomic_resources.implementations import genomic_scores_impl
@@ -99,6 +101,10 @@ SCORE_TYPES: list[tuple[str, type, Callable[
 #: surface -- and each belongs to exactly one kind: the section it fills
 #: exists on that kind's page and no other (gain#1210).
 ACCESSOR_OWNERS: dict[str, type] = {
+    "get_coverage_statistics": PositionScoreImplementation,
+    "get_coverage_display": PositionScoreImplementation,
+    "get_coverage_segment_lengths_image_filename": PositionScoreImplementation,
+    "_render_genome": PositionScoreImplementation,
     "get_allele_statistics": AlleleScoreImplementation,
     "get_allele_display": AlleleScoreImplementation,
     "get_allele_insertion_lengths_image_filename": AlleleScoreImplementation,
@@ -281,6 +287,78 @@ def test_each_render_accessor_is_defined_on_exactly_its_kind(
         if name in vars(cls)
     ]
     assert owners == [ACCESSOR_OWNERS[name]]
+
+
+_TEMPLATE_DIR = pathlib.Path(gain.templates.__file__).parent / "template_files"
+
+#: An ``impl.<name>(`` call in a template: the accessor a section reads.
+_ACCESSOR_CALL = re.compile(r"\bimpl\.(\w+)\(")
+
+#: A block header, and a block that opens and closes on one line with
+#: nothing between -- the shape of an override that BLANKS a section.
+_BLOCK = re.compile(r"{%-?\s*block\s+(\w+)\s*-?%}")
+_EMPTY_BLOCK = re.compile(
+    r"{%-?\s*block\s+(\w+)\s*-?%}\s*{%-?\s*endblock\s*-?%}")
+
+
+def _template_source(template_name: str) -> str:
+    return (_TEMPLATE_DIR / template_name).read_text()
+
+
+@pytest.mark.parametrize("kind", KIND_CLASSES, ids=lambda kind: kind.__name__)
+def test_each_kind_template_fills_one_section_with_its_own_accessors(
+    kind: type,
+) -> None:
+    """A kind's template is its section, and calls its class for it.
+
+    Three claims off the template source.  It extends the shared page.
+    It defines exactly one block, and that block is not empty -- an
+    empty override is how a kind used to BLANK a section the shared
+    template rendered for everyone (gain#1118, gain#1127), and with the
+    shared template rendering none there is nothing left to blank.  And
+    every ``impl.<name>()`` it calls is defined on the kind itself: the
+    section a template fills exists on this kind's page and no other,
+    so its accessors have no reason to be anywhere else (gain#1210).
+    """
+    source = _template_source(kind.template_name)
+
+    assert '{% extends "genomic_score.jinja" %}' in source
+    blocks = _BLOCK.findall(source)
+    assert len(blocks) == 1, blocks
+    assert _EMPTY_BLOCK.findall(source) == []
+
+    called = set(_ACCESSOR_CALL.findall(source))
+    assert called, "a section that reads nothing off its class"
+    assert called <= set(vars(kind)), called - set(vars(kind))
+
+
+def test_the_shared_template_renders_no_section_body_itself() -> None:
+    """Every section is a slot, filled by exactly one kind's template.
+
+    The shared page used to fill Coverage by default and leave the
+    other two empty, so a kind added later inherited a Coverage section
+    whether or not it was coverage-scanned, and the only symptom was a
+    page reading "not computed" forever (gain#1116).  With every block
+    empty here, the kind -> section relation is which template a class
+    names -- and the shared page calls nothing the base class lacks.
+    """
+    source = _template_source("genomic_score.jinja")
+
+    # The page's other blocks -- the layout ones it fills for every
+    # kind, histograms included -- are not sections and stay filled.
+    sections = {"coverage", "alleles", "fragments"}
+    assert sections <= set(_BLOCK.findall(source))
+    assert sections <= set(_EMPTY_BLOCK.findall(source))
+
+    called = set(_ACCESSOR_CALL.findall(source))
+    assert called <= set(vars(GenomicScoreImplementation)), called
+
+    filled = {
+        block
+        for kind in KIND_CLASSES
+        for block in _BLOCK.findall(_template_source(kind.template_name))
+    }
+    assert filled == sections
 
 
 @pytest.mark.parametrize("name", SHARED_PROTOCOL)
