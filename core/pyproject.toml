@@ -67,7 +67,11 @@ prepare_tabular = "gain.annotation.prepare_tabular:cli"
 annotate_vcf = "gain.annotation.annotate_vcf:cli"
 annotate_doc = "gain.annotation.annotate_doc:cli"
 draw_score_histograms = "gain.genomic_resources.draw_score_histograms:main"
+binning_tool = "gain.binning.cli:cli"
 to_gpf_gene_models_format = "gain.genomic_resources.gene_models.to_gpf_gene_models_format:main"
+
+[project.entry-points."gain.binning.binners"]
+position_score_binner = "gain.binning.binners:PositionScoreBinner"
 
 [project.entry-points."gain.genomic_resources.plugins"]
 default_grr = "gain.genomic_resources.genomic_context:DefaultRepositoryContextProvider"
