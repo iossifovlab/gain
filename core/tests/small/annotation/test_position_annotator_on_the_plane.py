@@ -192,7 +192,7 @@ def test_a_substitution_answers_a_source_named_twice_under_both_names(
 
     Its own resource, with two float scores: the shared fixture's
     ``s == 1.0`` and ``flag == True`` compare equal in Python, so a swap
-    there would hide (and its ``False`` record reads ``True``, gain#1192).
+    between those two sources would answer identically and hide.
     """
     repo = (
         a_grr()
@@ -219,6 +219,34 @@ def test_a_substitution_answers_a_source_named_twice_under_both_names(
         result = pipeline.annotate(VCFAllele("chr1", 12, "A", "C"))
 
     assert result == {"first": 1.0, "tee": 10.0, "second": 1.0}
+
+
+def test_the_bool_fixtures_false_record_answers_false(
+    repo: GenomicResourceRepo,
+) -> None:
+    """The fixture has carried a ``False`` row all along; now it is asserted.
+
+    Four files in the suite write ``False`` into a bool column and not one
+    of them asked what came back, which is exactly why gain#1192 -- a
+    ``bool`` score parsing its cell with Python's ``bool``, so that every
+    non-empty text answered ``True`` -- survived a green suite.  The datum
+    was always here; only the assertion was missing.
+
+    ``list`` rather than ``bool`` as the aggregator: ``BoolAggregator``
+    answers whether ANY non-null value was accumulated, so it answers
+    ``True`` for a region holding nothing but ``False`` and cannot see the
+    regression this test exists for.
+    """
+    with _pipeline(repo, """
+        - source: flag
+          name: flags
+          aggregator: list
+    """) as pipeline:
+        covered_true = pipeline.annotate(Region("chr1", 10, 19))
+        covered_false = pipeline.annotate(Region("chr1", 20, 29))
+
+    assert covered_true == {"flags": [True] * 10}
+    assert covered_false == {"flags": [False] * 10}
 
 
 def test_a_bool_attribute_naming_no_aggregator_is_refused_at_load(

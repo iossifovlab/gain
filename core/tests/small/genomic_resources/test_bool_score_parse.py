@@ -25,6 +25,11 @@ from gain.genomic_resources.genomic_scores import (
     PositionScore,
     build_score_from_resource,
 )
+from gain.genomic_resources.histogram import (
+    CategoricalHistogram,
+    CategoricalHistogramConfig,
+)
+from gain.genomic_resources.implementations.genomic_scores_impl import scan
 from gain.genomic_resources.testing import setup_directories, setup_vcf
 from gain.genomic_resources.testing.builders import a_position_score
 
@@ -100,18 +105,23 @@ def test_an_unreadable_bool_cell_is_a_logged_non_value(
     assert "yes" in caplog.text
 
 
-def test_a_missing_bool_cell_is_a_SILENT_non_value(
+def test_a_missing_bool_cell_is_a_non_value_and_says_so(
     tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """``.`` means "no value here", and saying so is not a defect to report.
+    """``.`` reads as no value -- by being refused, not by being a sentinel.
 
-    A ``bool`` score had NO default NA sentinels, where every numeric type
-    has ``""``/``nan``/``.``/``NA``.  With the parser now refusing what it
-    cannot read, that absence would turn each missing cell into a logged
-    parse failure -- a table with a sparse flag column would report one
-    error per row and drown the real ones.  So ``bool`` takes the same
-    default sentinel set the numeric types have, and a missing cell is a
-    non-value in the same silence.
+    A ``bool`` score has no default ``na_values`` where every numeric type
+    has ``""``/``nan``/``.``/``NA``, so the missing-value tokens reach the
+    parser and are refused like any other unreadable text.  The VALUE is
+    the same either way; what differs is the log line per missing cell.
+
+    Left that way on purpose: ``na_values`` is part of a resource's
+    statistics hash, so giving ``bool`` the numeric defaults would move the
+    hash of every deployed bool score -- dbSNP's 35 flags, in two GRRs --
+    and force a genome-wide recompute that arrives at byte-identical
+    numbers, a VCF flag being a ``bool`` and never one of these tokens.  A
+    text resource with a sparse flag column can declare ``na_values``
+    itself; see test_a_configured_na_value_silences_a_missing_bool_cell.
 
     (Before gain#1192 this cell answered ``True`` -- ``bool(".")`` is
     ``True``, like every other non-empty text.  A genuinely empty cell was
@@ -123,12 +133,73 @@ def test_a_missing_bool_cell_is_a_SILENT_non_value(
         chr1   10         19       EMPTY
         """)
 
-    with caplog.at_level("DEBUG"):
+    with caplog.at_level("ERROR"):
         assert score.fetch_position_scores("chr1", 12, ["flag"]) == [None]
 
-    # Not "no logging at all" -- the table itself warns about an unstated
-    # ``zero_based``, which is a different fixture's business.
+    assert "unable to parse" in caplog.text
+
+
+def test_a_configured_na_value_silences_a_missing_bool_cell(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The way out for a resource whose bool column is sparse.
+
+    ``na_values`` is tested BEFORE the parser is called, so a declared
+    sentinel is a non-value rather than a refusal, and the per-row log
+    line goes.  This is what keeps the empty default above a defensible
+    choice instead of a papered-over gap: the behaviour is configurable
+    per resource, at the cost of a statistics hash that resource is
+    changing anyway by declaring it.
+    """
+    resource = (
+        a_position_score()
+        .with_score("flag", "bool")
+        .with_na_values(".")
+        .with_data("""
+            chrom  pos_begin  pos_end  flag
+            chr1   10         19       EMPTY
+            """)
+        .build_resource(tmp_path)
+    )
+    score = PositionScore(resource)
+    score.open()
+
+    with caplog.at_level("ERROR"):
+        assert score.fetch_position_scores("chr1", 12, ["flag"]) == [None]
+
     assert "unable to parse" not in caplog.text
+
+
+def test_a_bool_score_declares_no_default_na_values(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Guard on the choice, not just on the behaviour it produces.
+
+    Giving ``bool`` the numeric types' default sentinels is the obvious
+    tidy-up of the test above, and it is a deployment decision rather than
+    a code one: ``na_values`` is serialized into a resource's statistics
+    hash, so the edit alone invalidates the statistics of every bool score
+    published anywhere and schedules a genome-wide recompute for numbers
+    that do not change.
+
+    Asserted here rather than left to the log-line assertion because that
+    one would still pass if some other layer started swallowing the
+    warning, and because the empty set is the thing a future reader will
+    want a reason for.
+    """
+    resource = (
+        a_position_score()
+        .with_score("flag", "bool")
+        .with_data("""
+            chrom  pos_begin  pos_end  flag
+            chr1   10         19       True
+            """)
+        .build_resource(tmp_path)
+    )
+
+    score_def = PositionScore(resource).score_definitions["flag"]
+
+    assert score_def.na_values == set()
 
 
 def _dbsnp_shaped_flag_score(tmp_path: pathlib.Path) -> AlleleScore:
@@ -206,3 +277,38 @@ def test_an_absent_vcf_flag_reads_false(tmp_path: pathlib.Path) -> None:
 
     assert score.fetch_allele_scores("chr1", 6, "A", "T", ["RV"]) == \
         {"RV": False}
+
+
+def test_a_bool_columns_categorical_histogram_counts_both_values(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The defect reached the built STATISTICS, not only the reads.
+
+    A bool score's histogram is categorical, so it bins the parsed value --
+    which meant every row of a text bool column landed in the ``True`` bin
+    and the histogram published with the resource said the flag was always
+    set.  A resource's statistics are what its info page shows, so this was
+    the more visible half of the bug and the one a reader had no way to
+    distrust.
+
+    Weighted by covered bases (a position score's records reduce by extent),
+    so the counts follow the record widths rather than the row count.
+    """
+    resource = (
+        a_position_score()
+        .with_score("flag", "bool")
+        .with_histogram({"type": "categorical"})
+        .with_data("""
+            chrom  pos_begin  pos_end  flag
+            chr1   1          10       True
+            chr1   11         30       False
+            """)
+        .build_resource(tmp_path)
+    )
+
+    hists = scan.do_histogram(
+        resource, {"flag": CategoricalHistogramConfig()}, "chr1", 1, 30)
+
+    hist = hists["flag"]
+    assert isinstance(hist, CategoricalHistogram)
+    assert hist.display_values == {True: 10, False: 20}

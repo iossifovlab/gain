@@ -130,25 +130,27 @@ _DEFAULT_NA_VALUES: dict[str, tuple[str, ...]] = {
     "str": (),
     "float": ("", "nan", ".", "NA"),
     "int": ("", "nan", ".", "NA"),
-    # Same sentinels as the numeric types, since gain#1192.  A ``bool`` score
-    # had none, which was survivable only while its parser accepted anything:
-    # ``bool("")`` answered ``False``, so an ABSENT flag read as a present
-    # false one.  With the parser reading the text, a missing cell would
-    # otherwise be a parse failure logged once per row.  ``str`` keeps its
-    # empty set for the reason it always had -- "" is a string.
-    "bool": ("", "nan", ".", "NA"),
+    # Deliberately EMPTY, though a missing cell in a bool column would read
+    # more cleanly as a sentinel than as the parse failure it currently is
+    # (:func:`parse_bool` refuses "." and "", and ``parse_value`` logs one
+    # line per such cell).  ``na_values`` is part of a resource's statistics
+    # hash, so populating this recomputes the statistics of every deployed
+    # bool score -- dbSNP's 35 flags, in two GRRs -- to arrive at byte-identical
+    # numbers, since a VCF flag reaches the parser as a ``bool`` and never as
+    # one of these tokens.  A resource that wants them can still say so; what
+    # is refused here is spending a genome-wide rescan on a default.
+    "bool": (),
 }
 
 # Value types whose text sentinels are also coerced to the parsed representation
 # so a numeric raw payload (e.g. a bigWig ``float``) matches by value, not text.
 #
-# ``bool`` is deliberately NOT here, though it now has default sentinels.
-# Coercion adds each sentinel's PARSED form to the set, and a sentinel that
+# ``bool`` must never join them, whatever sentinels a resource configures:
+# coercion adds each sentinel's PARSED form to the set, and a sentinel that
 # parses to ``False`` would make ``False`` itself an NA value -- every false
 # datum in every bool column would read as no value at all.  Nothing needs it
-# either: the sentinels are text and a bool score's raw payload is text (a
-# table cell) or an actual ``bool`` (a VCF flag), never a number wearing a
-# sentinel's value.
+# either, since a bool score's raw payload is text (a table cell) or an actual
+# ``bool`` (a VCF flag), never a number wearing a sentinel's value.
 _NA_COERCIBLE_TYPES = ("int", "float")
 
 #: Value types :meth:`GenomicScoreDef.parse_array` defines a column parse for,
