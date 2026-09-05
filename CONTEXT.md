@@ -45,7 +45,9 @@ _Avoid_: dataset, asset, entry
 **Label**:
 One free-form key/value pair under a resource's `meta.labels`, authored by
 whoever curates the resource. Values are whatever YAML made of them, so a label
-is compared in its rendered form.
+is compared in its rendered form. A list value is a set of **alternatives**: a
+clause holds if it holds for any element, and the resource is found by a term
+search for any of them.
 _Avoid_: tag, attribute, annotation (which means variant annotation here), metadata
 
 **Search index**:
