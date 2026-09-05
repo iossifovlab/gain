@@ -1,14 +1,27 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import argparse
 import pathlib
 import shutil
 import textwrap
+from typing import Any
 
 import h5py
 import numpy as np
 import numpy.typing as npt
 import pytest
+import pytest_mock
 from gain import __version__
 from gain.binning.cli import cli
+from gain.genomic_resources import genomic_context as gc_mod
+from gain.genomic_resources.genomic_context_base import (
+    GC_REFERENCE_GENOME_KEY,
+    GenomicContext,
+    GenomicContextProvider,
+    SimpleGenomicContext,
+)
+from gain.genomic_resources.reference_genome import (
+    build_reference_genome_from_resource,
+)
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import a_position_score
 
@@ -289,6 +302,110 @@ def test_the_run_definition_may_name_the_genome_itself(
     with h5py.File(output, "r") as h5:
         assert h5.attrs["input_reference_genome"] == "genome"
         assert h5["values"].shape == (8, 2)
+
+
+class _FallbackGenomeProvider(GenomicContextProvider):
+    """A context carrying only a genome, the way a site config might.
+
+    Registered above the CLI provider's priority so the CLI's context is
+    consulted first and this one answers only what the CLI left unset.
+    """
+
+    def __init__(self, repo: GenomicResourceRepo, resource_id: str) -> None:
+        super().__init__("FallbackGenomeProvider", 2000)
+        self._repo = repo
+        self._resource_id = resource_id
+
+    def add_argparser_arguments(
+        self, parser: argparse.ArgumentParser, **kwargs: Any,
+    ) -> None:
+        pass
+
+    def init(self, **kwargs: Any) -> GenomicContext | None:
+        return SimpleGenomicContext(
+            {GC_REFERENCE_GENOME_KEY: build_reference_genome_from_resource(
+                self._repo.get_resource(self._resource_id))},
+            source="FallbackGenomeProvider")
+
+
+@pytest.fixture
+def context_genome(
+    repo: GenomicResourceRepo, mocker: pytest_mock.MockerFixture,
+) -> str:
+    """Put ``genomes/short`` into the genomic context; return its id."""
+    providers = [
+        *gc_mod._REGISTERED_CONTEXT_PROVIDERS,
+        _FallbackGenomeProvider(repo, "genomes/short"),
+    ]
+    mocker.patch.object(gc_mod, "_REGISTERED_CONTEXT_PROVIDERS", providers)
+    return "genomes/short"
+
+
+def read_genome_and_shape(output: pathlib.Path) -> tuple[str, tuple[int, ...]]:
+    with h5py.File(output, "r") as h5:
+        return str(h5.attrs["input_reference_genome"]), h5["values"].shape
+
+
+def test_the_reference_genome_flag_overrides_the_run_definition(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+) -> None:
+    # genomes/short has no chr2, which the run definition bins: had the
+    # named genome won, the run would have been refused.
+    run_definition = output.parent / "run.yaml"
+    run_definition.write_text(
+        "input_reference_genome: genomes/short\n" + RUN_DEFINITION)
+
+    binning_tool(run_definition, grr_dir, output)
+
+    assert read_genome_and_shape(output) == ("genome", (8, 2))
+
+
+def test_the_run_definition_genome_beats_the_context_genome(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+    context_genome: str,
+) -> None:
+    run_definition = output.parent / "run.yaml"
+    run_definition.write_text(
+        "input_reference_genome: genome\n" + RUN_DEFINITION)
+
+    cli([
+        str(run_definition), "-o", str(output),
+        "--grr-directory", str(grr_dir), "-j", "1",
+    ])
+
+    assert read_genome_and_shape(output) == ("genome", (8, 2))
+
+
+def test_the_reference_genome_flag_beats_the_context_genome(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+    run_definition: pathlib.Path, context_genome: str,
+) -> None:
+    binning_tool(run_definition, grr_dir, output)
+
+    assert read_genome_and_shape(output) == ("genome", (8, 2))
+
+
+def test_the_context_genome_is_the_fallback(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+    context_genome: str,
+) -> None:
+    # Neither the run definition nor the command line names a genome.
+    run_definition = output.parent / "run.yaml"
+    run_definition.write_text(textwrap.dedent("""
+        bins:
+          bin_size: 10
+          regions: ["chr1:1-40"]
+        binners:
+        - position_score_binner:
+            resource_query: "scores/*"
+    """))
+
+    cli([
+        str(run_definition), "-o", str(output),
+        "--grr-directory", str(grr_dir), "-j", "1",
+    ])
+
+    assert read_genome_and_shape(output) == (context_genome, (4, 2))
 
 
 def read_matrix(path: pathlib.Path) -> npt.NDArray[np.float64]:

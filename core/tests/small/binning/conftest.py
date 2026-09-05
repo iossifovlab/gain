@@ -17,6 +17,7 @@ from gain.genomic_resources.testing.builders import (
 
 CHR1_LENGTH = 100
 CHR2_LENGTH = 40
+SHORT_CHR1_LENGTH = 50
 
 
 @pytest.fixture
@@ -40,6 +41,10 @@ def repo(grr_dir: pathlib.Path) -> GenomicResourceRepo:
         .with_resource("genome", a_reference_genome()
                        .with_chromosome("chr1", "A" * CHR1_LENGTH)
                        .with_chromosome("chr2", "C" * CHR2_LENGTH))
+        # A second genome, with chr1 only and shorter, so which genome a
+        # run resolved is visible in what it accepts and produces.
+        .with_resource("genomes/short", a_reference_genome()
+                       .with_chromosome("chr1", "G" * SHORT_CHR1_LENGTH))
         .with_resource("scores/one", a_position_score()
                        .with_score("s", "float")
                        .with_aggregator("max")
