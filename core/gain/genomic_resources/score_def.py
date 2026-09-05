@@ -105,9 +105,10 @@ def parse_bool(value: Any) -> bool:
     """
     if isinstance(value, bool):
         return value
-    # Not ``_BOOL_TEXT_VALUES.get(value)``: an unhashable raw value (a tuple
-    # from a multi-valued INFO field) raises TypeError there, which is a
-    # confusing way to say "not a bool".
+    # Membership test then subscript, NOT ``_BOOL_TEXT_VALUES.get(value)``:
+    # half this mapping's values ARE ``False``, so a ``.get()`` result cannot
+    # be told from a miss without repeating the very falsy-vs-absent confusion
+    # this whole function exists to end.
     if isinstance(value, str) and value in _BOOL_TEXT_VALUES:
         return _BOOL_TEXT_VALUES[value]
     raise ValueError(
@@ -131,14 +132,18 @@ _DEFAULT_NA_VALUES: dict[str, tuple[str, ...]] = {
     "float": ("", "nan", ".", "NA"),
     "int": ("", "nan", ".", "NA"),
     # Deliberately EMPTY, though a missing cell in a bool column would read
-    # more cleanly as a sentinel than as the parse failure it currently is
-    # (:func:`parse_bool` refuses "." and "", and ``parse_value`` logs one
-    # line per such cell).  ``na_values`` is part of a resource's statistics
-    # hash, so populating this recomputes the statistics of every deployed
-    # bool score -- dbSNP's 35 flags, in two GRRs -- to arrive at byte-identical
-    # numbers, since a VCF flag reaches the parser as a ``bool`` and never as
-    # one of these tokens.  A resource that wants them can still say so; what
-    # is refused here is spending a genome-wide rescan on a default.
+    # more cleanly as a sentinel than as the parse failure it currently is:
+    # :func:`parse_bool` refuses "." and "", and ``parse_value`` reports each
+    # one with ``logger.exception``, so a sparse text bool column costs a
+    # TRACEBACK per missing cell, not a line.
+    #
+    # ``na_values`` is nonetheless part of a resource's statistics hash, so
+    # populating this invalidates the statistics of every deployed bool score
+    # -- dbSNP's 35 flags, in two GRRs -- and schedules a genome-wide
+    # recompute to arrive at byte-identical numbers, a VCF flag reaching the
+    # parser as a ``bool`` and never as one of these tokens.  A text resource
+    # with a sparse column can declare ``na_values`` itself; what is refused
+    # here is spending that rescan on a default.
     "bool": (),
 }
 

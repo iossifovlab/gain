@@ -1172,6 +1172,31 @@ The optional ``meta`` field is omitted for conciseness.
         name: my_positionscore2                  # name of the annotation field
 
 
+.. _score-value-types:
+
+Score value types
+^^^^^^^^^^^^^^^^^
+
+A score's ``type`` is one of ``float``, ``int``, ``str`` or ``bool``, and it
+decides how each cell of the score's column is read.
+
+``bool`` accepts a **closed set of eight spellings** — ``True``, ``true``,
+``TRUE`` and ``1`` for true; ``False``, ``false``, ``FALSE`` and ``0`` for
+false. Any other text is not a boolean: the cell is reported in the log and
+read as no value, so a column spelled ``yes``/``no`` or ``T``/``F`` annotates
+as empty rather than being guessed at. A VCF ``Flag`` INFO field is typed
+``bool`` too, and there presence is what means true.
+
+Unlike the numeric types, a ``bool`` score declares **no** ``na_values`` by
+default, so a missing cell (``.``, or an empty one) is reported the same way
+rather than being silently skipped. A resource whose boolean column is sparse
+should say so explicitly::
+
+    scores:
+      - id: my_flag
+        type: bool
+        name: flag_column
+        na_values: ["", "."]
 
 
 

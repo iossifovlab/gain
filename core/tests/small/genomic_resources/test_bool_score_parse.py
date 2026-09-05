@@ -145,11 +145,16 @@ def test_a_configured_na_value_silences_a_missing_bool_cell(
     """The way out for a resource whose bool column is sparse.
 
     ``na_values`` is tested BEFORE the parser is called, so a declared
-    sentinel is a non-value rather than a refusal, and the per-row log
-    line goes.  This is what keeps the empty default above a defensible
-    choice instead of a papered-over gap: the behaviour is configurable
-    per resource, at the cost of a statistics hash that resource is
-    changing anyway by declaring it.
+    sentinel is a non-value rather than a refusal, and the per-cell
+    traceback goes.  This is what keeps the empty default above a
+    defensible choice instead of a papered-over gap: the behaviour is
+    configurable per resource, at the cost of a statistics hash that
+    resource is changing anyway by declaring it.
+
+    Pins PRE-EXISTING behaviour, not gain#1192 -- the NA check has always
+    come first, and this passes on either side of the fix.  It is here
+    because the empty default is only defensible if this escape hatch
+    works, so the two belong in one file.
     """
     resource = (
         a_position_score()
