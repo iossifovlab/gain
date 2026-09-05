@@ -239,9 +239,9 @@ def test_the_statistics_scan_does_not_import_the_implementation_classes(
     they were lifted out of.
 
     The classes are one module per kind since gain#1210 -- the base, the
-    kinds, and the factory -- so the rule is read off the package
-    directory: ``scan`` imports nothing from any sibling module, nor the
-    facade, and a kind added later is covered without coming here.
+    kinds, and the factory -- so the rule is the package prefix: ``scan``
+    imports nothing from its own package, sibling or facade, and a kind
+    added later is covered without coming here.
 
     Read from the AST rather than off the module object, because the
     import that would reintroduce the cycle is most likely a
@@ -252,14 +252,9 @@ def test_the_statistics_scan_does_not_import_the_implementation_classes(
     pkg = "gain.genomic_resources.implementations.genomic_scores_impl"
     scan_py = (pathlib.Path(GAIN_SRC) / "genomic_resources"
                / "implementations" / "genomic_scores_impl" / "scan.py")
-    siblings = {
-        path.stem for path in scan_py.parent.glob("*.py")
-    } - {"scan", "__init__"}
-    assert siblings >= {"base", "allele", "fragment", "builders"}
-    forbidden = {pkg, *(f"{pkg}.{sibling}" for sibling in siblings)}
     offenders = sorted(
         imported for imported in _imported_modules(scan_py)
-        if imported in forbidden
+        if imported == pkg or imported.startswith(f"{pkg}.")
     )
     assert offenders == [], (
         f"genomic_scores_impl.scan imports {offenders}, which closes the "

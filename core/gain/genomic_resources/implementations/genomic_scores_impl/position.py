@@ -31,11 +31,9 @@ logger = logging.getLogger(__name__)
 class PositionScoreImplementation(GenomicScoreImplementation):
     """Assists in the management of a position score resource.
 
-    It carries its own info page, which is the genomic-score page plus a
-    Coverage section.  The section lives in a template that FILLS a block
-    the shared template leaves empty, as the other two kinds' sections
-    do, so a kind whose rows cannot be unioned into a coverage renders
-    no section at all.
+    Its page is the genomic-score page plus a Coverage section, which
+    ``position_score.jinja`` fills as the other kinds' templates fill
+    theirs.
     """
 
     template_name: ClassVar[str] = "position_score.jinja"

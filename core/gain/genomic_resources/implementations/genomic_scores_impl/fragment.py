@@ -43,10 +43,9 @@ class FragmentScoreImplementation(GenomicScoreImplementation):
     def get_fragment_statistics(self) -> FragmentStatistics | None:
         """The resource's fragment statistics, or ``None`` if not built.
 
-        Absence is an expected state, not an error: statistics roll out
-        lazily as resources are rebuilt (``calc_statistics_hash`` does
-        not know about this file), so a resource built before the
-        statistic existed simply has nothing to show yet.
+        Absence is an expected state, for the reason
+        :meth:`~.position.PositionScoreImplementation.get_coverage_statistics`
+        gives: the rollout is lazy.
         """
         try:
             content = self.resource.get_file_content(

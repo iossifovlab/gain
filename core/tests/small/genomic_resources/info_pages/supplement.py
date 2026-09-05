@@ -53,7 +53,7 @@ SUPPLEMENT_RESOURCE_IDS = {
 }
 
 #: Resource ids for the supplements carrying an annulled histogram, keyed by
-#: the template whose null-histogram branch each one reaches.  Keyed by
+#: the template each page renders through.  Keyed by
 #: template rather than by resource type because the type is incidental here:
 #: what distinguishes these fixtures is which page renders them, and both
 #: types below are ones mini-GRR already covers with ordinary histograms.
