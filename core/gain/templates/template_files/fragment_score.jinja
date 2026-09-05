@@ -1,16 +1,5 @@
 {% extends "genomic_score.jinja" %}
-{# A fragment score's page IS the genomic-score page, plus one section
-   and minus another. #}
-
-{# A fragment score's rows deliberately OVERLAP, so the union of their
-   spans measures nothing a reader wants: not fragments -- that is the
-   section below, and it is the honest one -- and not completeness in a
-   way that compares across resources.  The kind is therefore not
-   coverage-scanned at all, so nothing would ever fill the section and
-   it renders no heading rather than one permanently reading "not
-   computed" (gain#1127).  ADR 0020 records the adjacent half: no
-   segments either, for the same reason. #}
-{% block coverage %}{% endblock %}
+{# A fragment score's page IS the genomic-score page, plus one section. #}
 
 {% block fragments %}
 <h2>Fragments</h2>

@@ -25,36 +25,8 @@ from gain.genomic_resources.repository import (
 from gain.genomic_resources.resource_implementation import (
     InfoImplementationMixin,
 )
-from gain.genomic_resources.resource_types import (
-    FRAGMENT_SCORE_TYPES,
-    PREFERRED_ALLELE_SCORE_TYPE,
-)
 from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
-)
-from gain.genomic_resources.statistics.alleles import (
-    ALLELE_COMPLEX_GRID_IMAGE_FILE,
-    ALLELE_DELETION_LENGTHS_IMAGE_FILE,
-    ALLELE_INSERTION_LENGTHS_IMAGE_FILE,
-    ALLELE_STATISTICS_FILE,
-    AlleleSectionDisplay,
-    AlleleStatistics,
-    build_allele_section_display,
-)
-from gain.genomic_resources.statistics.coverage import (
-    COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
-    COVERAGE_STATISTICS_FILE,
-    CoverageDisplay,
-    CoverageStatistics,
-    build_coverage_display,
-    resolve_chrom_lengths,
-)
-from gain.genomic_resources.statistics.fragments import (
-    FRAGMENT_LENGTHS_IMAGE_FILE,
-    FRAGMENT_STATISTICS_FILE,
-    FragmentDisplay,
-    FragmentStatistics,
-    build_fragment_display,
 )
 from gain.genomic_resources.utils import read_resource_id_label
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
@@ -69,8 +41,17 @@ logger = logging.getLogger(__name__)
 
 
 class GenomicScoreImplementation(ScoreImplementationBase):
-    # pylint: disable=too-many-public-methods
-    """Genomic scores base class."""
+    """What every genomic-score kind answers alike.
+
+    The resource protocol -- the statistics build tasks, the file set,
+    the hashes -- and the page protocol: ``get_info`` and
+    ``get_statistics_info`` hand the repository the page builder passes
+    to whichever kind renders, through ``_render_repo``.  It names no
+    kind's template and no kind's section accessors; each kind is a
+    subclass that does both, and the factory in :mod:`.builders` and
+    the entry points hand out only those.  Nothing instantiates this
+    class for a real resource.
+    """
 
     def __init__(self, resource: GenomicResource):
         super().__init__(resource)
@@ -85,7 +66,6 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
         return result
 
-    template_name: ClassVar[str] = "genomic_score.jinja"
     styles_template_name: ClassVar[str] = "genomic_score_styles.jinja"
 
     def _get_template_data(self) -> dict[str, Any]:
@@ -104,144 +84,6 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             return InfoImplementationMixin.get_statistics_info(self)
         finally:
             self._render_repo = None
-
-    @staticmethod
-    def get_coverage_segment_lengths_image_filename() -> str:
-        """The info page's one statement of the global histogram's path."""
-        return COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE
-
-    @staticmethod
-    def get_fragment_lengths_image_filename() -> str:
-        """The info page's one statement of the fragment image's path."""
-        return FRAGMENT_LENGTHS_IMAGE_FILE
-
-    @staticmethod
-    def get_allele_insertion_lengths_image_filename() -> str:
-        """The info page's one statement of the insertion image's path."""
-        return ALLELE_INSERTION_LENGTHS_IMAGE_FILE
-
-    @staticmethod
-    def get_allele_deletion_lengths_image_filename() -> str:
-        """The info page's one statement of the deletion image's path."""
-        return ALLELE_DELETION_LENGTHS_IMAGE_FILE
-
-    @staticmethod
-    def get_allele_complex_grid_image_filename() -> str:
-        """The info page's one statement of the complex grid's path."""
-        return ALLELE_COMPLEX_GRID_IMAGE_FILE
-
-    def get_coverage_statistics(self) -> CoverageStatistics | None:
-        """The resource's coverage statistics, or ``None`` if not built.
-
-        Absence is an expected state, not an error: statistics roll out
-        lazily as resources are rebuilt (``calc_statistics_hash`` does
-        not know about this file), so a resource built before the
-        statistic existed simply has nothing to show yet.
-
-        Read on each call, like its two siblings.  It was memoized while
-        the Coverage and Fragments sections both read this file; since
-        gain#1127 gave fragments a file of their own there is one
-        caller, called once per render, and the memo saved nothing.
-        """
-        try:
-            content = self.resource.get_file_content(
-                COVERAGE_STATISTICS_FILE)
-        except FileNotFoundError:
-            return None
-        return CoverageStatistics.deserialize(content)
-
-    def get_allele_statistics(self) -> AlleleStatistics | None:
-        """The resource's allele statistics, or ``None`` if not built.
-
-        Absence is an expected state for the reason
-        :meth:`get_coverage_statistics` gives: the rollout is lazy.
-        """
-        try:
-            content = self.resource.get_file_content(ALLELE_STATISTICS_FILE)
-        except FileNotFoundError:
-            return None
-        return AlleleStatistics.deserialize(content)
-
-    def get_allele_display(self) -> AlleleSectionDisplay | None:
-        """The Alleles section's payload, or ``None`` if not built."""
-        statistics = self.get_allele_statistics()
-        if statistics is None:
-            return None
-        return build_allele_section_display(statistics)
-
-    def get_coverage_display(self) -> CoverageDisplay | None:
-        """The Coverage section's payload: raw counts plus fractions.
-
-        ``None`` when the statistic is not built.  This frame's whole
-        job is the genome rung of the denominator ladder -- it needs the
-        repository handed to the enclosing :meth:`get_info` /
-        :meth:`get_statistics_info` call, and the cache it goes through
-        is shared with the scan's contig splitting.  Invoked outside a
-        page build no repository is available and that rung resolves
-        nothing, which degrades to raw counts rather than failing.
-        """
-        coverage = self.get_coverage_statistics()
-        if coverage is None:
-            return None
-        lengths = resolve_chrom_lengths(
-            self.resource, self.score, self._render_genome(),
-            coverage.covered_by_chromosome())
-        return build_coverage_display(
-            self.resource.resource_id, coverage, lengths)
-
-    def get_fragment_statistics(self) -> FragmentStatistics | None:
-        """The resource's fragment statistics, or ``None`` if not built.
-
-        Absence is an expected state for the reason
-        :meth:`get_coverage_statistics` gives: the rollout is lazy.
-        """
-        try:
-            content = self.resource.get_file_content(
-                FRAGMENT_STATISTICS_FILE)
-        except FileNotFoundError:
-            return None
-        return FragmentStatistics.deserialize(content)
-
-    def get_fragment_display(self) -> FragmentDisplay | None:
-        """The Fragments section's payload, or ``None`` if not computed.
-
-        ``None`` means the statistic is not built -- the file is simply
-        absent, which renders the section's "not computed" fallback.
-        Since gain#1127 that is the ONE way it can be missing: the tally
-        has its own file, where as a group inside the coverage one it
-        could also be absent from a file that existed.
-        """
-        statistics = self.get_fragment_statistics()
-        if statistics is None:
-            return None
-        return build_fragment_display(statistics)
-
-    def _render_genome(self) -> ReferenceGenome | None:
-        """The resource's labelled reference genome, at render time.
-
-        A label naming something that is not a genome is a reason to
-        degrade to raw counts, not to fail the page build.
-
-        Two ways it can fail to name one, and the guard below only ever
-        covered the second.  A value that is not a resource id at all --
-        the int, list or dict a free-form ``meta.labels`` allows -- used
-        to reach resolution as itself and raise ``TypeError`` past the
-        ``except ValueError``, failing the page build this comment says
-        must not fail; it is now read as absent and reported by the
-        narrowing (gain#1053).  A value that IS an id but names no
-        genome still reaches resolution and is caught here.
-        """
-        genome_id = read_resource_id_label(
-            self.resource, "reference_genome")
-        try:
-            return self._get_reference_genome_cached(
-                self._render_repo, genome_id)
-        except ValueError:
-            logger.warning(
-                "reference_genome label %r of %s does not name a genome "
-                "resource; ignoring it for coverage fractions",
-                genome_id, self.resource.resource_id)
-            return None
 
     def create_statistics_build_tasks(
         self, **kwargs: Any,
@@ -532,98 +374,3 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 }
                 for score_def in self.score.score_definitions.values()],
         }, indent=2).encode()
-
-
-class AlleleScoreImplementation(GenomicScoreImplementation):
-    """Assists in the management of an allele score resource.
-
-    Carries no statistics behaviour of its own: whether a statistic reads
-    alleles is decided on the built score class, by
-    :func:`~gain.genomic_resources.statistics.alleles.region_alleles_for`,
-    and both scan paths read it from there.
-
-    It carries its own info page, which is the genomic-score page plus an
-    Alleles section.  The section lives in a template that FILLS a block
-    the shared template leaves empty, as the Fragments section does, so a
-    kind whose rows carry no ref/alt pair renders no section at all --
-    rather than a heading permanently reading "not computed", which is
-    what one shared template rendering every section produced.
-    """
-    # pylint: disable=useless-parent-delegation
-
-    template_name: ClassVar[str] = "allele_score.jinja"
-
-    def create_statistics_build_tasks(
-        self, **kwargs: Any,
-    ) -> list[TaskDesc]:
-        return super().create_statistics_build_tasks(**kwargs)
-
-    def calc_info_hash(self) -> bytes:
-        return super().calc_info_hash()
-
-    def calc_statistics_hash(self) -> bytes:
-        return super().calc_statistics_hash()
-
-    def get_info(self, **kwargs: Any) -> str:
-        return super().get_info(**kwargs)
-
-    def get_statistics_info(self, **kwargs: Any) -> str:
-        return super().get_statistics_info(**kwargs)
-
-
-class FragmentScoreImplementation(GenomicScoreImplementation):
-    """Assists in the management of a fragment score resource.
-
-    Its page is the genomic-score page plus one section and minus
-    another -- Fragments, which only this kind publishes, and no
-    Coverage, which since gain#1127 only a position score has.
-
-    Carries no statistics behaviour of its own: a fragment's weight-1 rule
-    is declared on ``FragmentScore`` (``record_weight``) and read by
-    both scan paths from there.
-
-    It does carry its own info page, which is the genomic-score page plus
-    a Fragments section.  The section lives in a template that FILLS a
-    block the shared template leaves empty, so a kind with no fragments
-    renders no section at all -- rather than a heading permanently
-    reading "not computed", which is what gating one shared template on
-    a boolean produced for Coverage on allele scores.
-    """
-    # pylint: disable=useless-parent-delegation
-
-    template_name: ClassVar[str] = "fragment_score.jinja"
-
-    def create_statistics_build_tasks(
-        self, **kwargs: Any,
-    ) -> list[TaskDesc]:
-        return super().create_statistics_build_tasks(**kwargs)
-
-    def calc_info_hash(self) -> bytes:
-        return super().calc_info_hash()
-
-    def calc_statistics_hash(self) -> bytes:
-        return super().calc_statistics_hash()
-
-    def get_info(self, **kwargs: Any) -> str:
-        return super().get_info(**kwargs)
-
-    def get_statistics_info(self, **kwargs: Any) -> str:
-        return super().get_statistics_info(**kwargs)
-
-
-def build_score_implementation_from_resource(
-    resource: GenomicResource,
-) -> GenomicScoreImplementation:
-    """Builds score implementation based on resource type.
-
-    The same dispatch the ``gain.genomic_resources.implementations``
-    entry points make by type name, for a caller holding a resource
-    rather than a type: a kind whose page carries an extra section gets
-    the subclass that renders it.
-    """
-    resource_type = resource.get_type()
-    if resource_type in FRAGMENT_SCORE_TYPES:
-        return FragmentScoreImplementation(resource)
-    if resource_type == PREFERRED_ALLELE_SCORE_TYPE:
-        return AlleleScoreImplementation(resource)
-    return GenomicScoreImplementation(resource)

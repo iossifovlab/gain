@@ -912,7 +912,7 @@ def test_a_position_score_writes_no_allele_statistics(
 
     assert not resource.file_exists(ALLELE_STATISTICS_FILE)
     implementation = build_score_implementation_from_resource(resource)
-    assert implementation.get_allele_statistics() is None
+    assert not hasattr(implementation, "get_allele_statistics")
 
 
 def test_the_alleles_section_is_absent_on_a_position_score(

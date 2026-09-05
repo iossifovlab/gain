@@ -79,7 +79,7 @@ cli_genomic_context = "gain.genomic_resources.genomic_context_cli:CLIGenomicCont
 cli_annotation_context = "gain.annotation.annotation_genomic_context_cli:CLIAnnotationContextProvider"
 
 [project.entry-points."gain.genomic_resources.implementations"]
-position_score = "gain.genomic_resources.implementations.genomic_scores_impl:GenomicScoreImplementation"
+position_score = "gain.genomic_resources.implementations.genomic_scores_impl:PositionScoreImplementation"
 allele_score = "gain.genomic_resources.implementations.genomic_scores_impl:AlleleScoreImplementation"
 liftover_chain = "gain.genomic_resources.implementations.liftover_chain_impl:LiftoverChainImplementation"
 genome = "gain.genomic_resources.implementations.reference_genome_impl:ReferenceGenomeImplementation"

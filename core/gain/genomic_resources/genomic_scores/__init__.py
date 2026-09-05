@@ -38,9 +38,10 @@ intention, and an AST scan of gain, gpf and ``grr_bench`` (2026-08-31)
 found no caller that did.  Import them from the module that defines them.
 
 What did NOT move here is the resource *implementation* --
-``genomic_scores_impl`` -- whose own split is gain#1007, nor the
-decomposition of the :class:`~.base.GenomicScore` class itself, which is
-gain#1027 and is deliberately sequenced after this split.
+``genomic_scores_impl``, which gain#1007 split into scan and classes and
+gain#1210 then laid out as this package is, one module per kind -- nor
+the decomposition of the :class:`~.base.GenomicScore` class itself, which
+is gain#1027 and is deliberately sequenced after this split.
 """
 from .allele import AlleleAggregate, AlleleScore, allele_key
 from .base import (
