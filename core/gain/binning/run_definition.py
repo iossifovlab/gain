@@ -1,7 +1,9 @@
 """The ``binning_tool`` run definition: parsing and resolution."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import Counter, defaultdict
+from dataclasses import dataclass, replace
+from itertools import combinations
 from typing import Any
 
 from gain.binning.binners import (
@@ -83,15 +85,53 @@ def _resolve_regions(
         except ValueError as err:
             raise RunDefinitionError(
                 f"bins.regions[{index}]: {err}") from err
+        except AssertionError as err:
+            # A stand-in: a window whose end precedes its start is the
+            # one malformation the shared parser asserts rather than
+            # reports.  Once ``BedRegion`` raises ValueError for it, the
+            # clause above covers it and this one goes.
+            raise RunDefinitionError(
+                f"bins.regions[{index}]: {notation!r} ends before it "
+                f"starts") from err
         if region.chrom not in genome.chromosomes:
             raise RunDefinitionError(
                 f"bins.regions[{index}]: {notation!r} names chromosome "
                 f"{region.chrom!r}, which the genome "
                 f"<{genome.resource_id}> does not have")
-        resolved.append(
-            BedRegion(region.chrom, 1, genome.get_chrom_length(region.chrom))
-            if region.start is None else region.to_bed_region())
+        length = genome.get_chrom_length(region.chrom)
+        if region.start is None:
+            resolved.append(BedRegion(region.chrom, 1, length))
+            continue
+        bed = region.to_bed_region()
+        if bed.start < 1 or bed.stop > length:
+            raise RunDefinitionError(
+                f"bins.regions[{index}]: {notation!r} lies outside "
+                f"{region.chrom}:1-{length}, the whole of chromosome "
+                f"{region.chrom!r} in genome <{genome.resource_id}>")
+        resolved.append(bed)
+    _refuse_overlapping_regions(regions, resolved)
     return resolved
+
+
+def _refuse_overlapping_regions(
+    notations: list[Any], resolved: list[BedRegion],
+) -> None:
+    """Two regions sharing a position would bin it twice (D4).
+
+    Named by the notation the user wrote, since that is what they will
+    look for; regions are neither sorted nor merged on their behalf.
+    Compared within a chromosome only: the common genome-wide run lists
+    every contig once, and pays nothing here.
+    """
+    by_chrom: dict[str, list[int]] = defaultdict(list)
+    for index, region in enumerate(resolved):
+        by_chrom[region.chrom].append(index)
+    for indices in by_chrom.values():
+        for earlier, later in combinations(indices, 2):
+            if resolved[earlier].intersects(resolved[later]):
+                raise RunDefinitionError(
+                    f"bins.regions[{earlier}] {notations[earlier]!r} and "
+                    f"bins.regions[{later}] {notations[later]!r} overlap")
 
 
 def _resolve_tracks(binners: Any, grr: GenomicResourceRepo) -> list[Track]:
@@ -99,7 +139,7 @@ def _resolve_tracks(binners: Any, grr: GenomicResourceRepo) -> list[Track]:
         raise RunDefinitionError(
             "binners must be a non-empty list of binner entries")
     kinds = discover_binner_kinds()
-    tracks: list[Track] = []
+    tracks: list[tuple[str, Track]] = []
     for index, entry in enumerate(binners):
         label = f"binners[{index}]"
         if not isinstance(entry, dict) or len(entry) != 1:
@@ -111,25 +151,35 @@ def _resolve_tracks(binners: Any, grr: GenomicResourceRepo) -> list[Track]:
             raise RunDefinitionError(
                 f"{label}: unknown binner kind {kind!r}; "
                 f"registered kinds: {', '.join(sorted(kinds))}")
-        tracks.extend(kinds[kind].parse_entry(label, entry_config, grr))
-    _refuse_repeated_names(tracks)
-    return tracks
+        tracks.extend(
+            (label, track)
+            for track in kinds[kind].parse_entry(label, entry_config, grr))
+    return _name_tracks(tracks)
 
 
-def _refuse_repeated_names(tracks: list[Track]) -> None:
-    """Refuse a track name that would occur twice.
+def _name_tracks(tracks: list[tuple[str, Track]]) -> list[Track]:
+    """Give every track a unique name (D10).
 
-    A track is named by its resource id (D10), so one resource matched by
-    two entries -- two aggregators of one track, side by side -- needs the
-    ``:<aggregator>`` suffixing of the validation slice (gain#1201).
-    Until it lands, such a run is refused here rather than written with
-    two columns that cannot be told apart.
+    A track is named by its resource id.  When one resource occurs more
+    than once in the expanded list -- two aggregators of one track, side
+    by side -- every member of that group carries ``:<aggregator>``,
+    whichever entry came first.  Two tracks that still share a name (same
+    resource and aggregator, differing at most in their replacement) are
+    refused, naming both entries: nothing in the ``/tracks`` table would
+    tell the columns apart.
     """
-    seen: set[str] = set()
-    for track in tracks:
-        if track.name in seen:
+    occurrences = Counter(track.resource_id for _, track in tracks)
+    named: list[Track] = []
+    producers: dict[str, str] = {}
+    for label, track in tracks:
+        named_track = (
+            replace(track, name=f"{track.resource_id}:{track.aggregator}")
+            if occurrences[track.resource_id] > 1 else track)
+        if named_track.name in producers:
             raise RunDefinitionError(
-                f"track {track.name!r} is produced by more than one binner "
-                f"entry; binning one resource under several entries is "
-                f"not yet supported")
-        seen.add(track.name)
+                f"{producers[named_track.name]} and {label} both produce "
+                f"the track {named_track.name!r}; a resource may be binned "
+                f"once per aggregator")
+        producers[named_track.name] = label
+        named.append(named_track)
+    return named

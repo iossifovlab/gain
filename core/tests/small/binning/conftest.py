@@ -3,6 +3,7 @@ import pathlib
 from collections.abc import Iterator
 
 import pytest
+from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.reference_genome import (
     ReferenceGenome,
     build_reference_genome_from_resource,
@@ -16,6 +17,7 @@ from gain.genomic_resources.testing.builders import (
 
 CHR1_LENGTH = 100
 CHR2_LENGTH = 40
+SHORT_CHR1_LENGTH = 50
 
 
 @pytest.fixture
@@ -39,6 +41,10 @@ def repo(grr_dir: pathlib.Path) -> GenomicResourceRepo:
         .with_resource("genome", a_reference_genome()
                        .with_chromosome("chr1", "A" * CHR1_LENGTH)
                        .with_chromosome("chr2", "C" * CHR2_LENGTH))
+        # A second genome, with chr1 only and shorter, so which genome a
+        # run resolved is visible in what it accepts and produces.
+        .with_resource("genomes/short", a_reference_genome()
+                       .with_chromosome("chr1", "G" * SHORT_CHR1_LENGTH))
         .with_resource("scores/one", a_position_score()
                        .with_score("s", "float")
                        .with_aggregator("max")
@@ -80,6 +86,21 @@ def repo(grr_dir: pathlib.Path) -> GenomicResourceRepo:
                        """))
     )
     return grr.build_repo(grr_dir)
+
+
+@pytest.fixture
+def indexed_repo(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+) -> GenomicResourceRepo:
+    """The toy GRR with its full-text index published.
+
+    The index is what answers a ``search_term``; the test repository
+    comes with manifests but no index, so it is published the way an
+    operator would, through ``grr_manage``.  The repository reads the
+    index from disk on every search, so ``repo`` itself sees it.
+    """
+    cli_manage(["repo-index", "-R", str(grr_dir)])
+    return repo
 
 
 @pytest.fixture

@@ -24,6 +24,16 @@ def parse_one_entry(
     }, repo, genome)
 
 
+def parse_regions(
+    regions: list[Any], repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> RunDefinition:
+    return parse_run_definition({
+        "bins": {"bin_size": 10, "regions": regions},
+        "binners": [
+            {"position_score_binner": {"resource_query": "scores/one"}}],
+    }, repo, genome)
+
+
 def test_an_exact_id_entry_becomes_one_track_named_by_the_resource(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
@@ -88,6 +98,62 @@ def test_an_entry_overrides_the_aggregator_and_replacement_for_every_match(
     ]
 
 
+def test_search_term_narrows_the_query_on_an_indexed_repository(
+    indexed_repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    # The full-text index holds the resource id among its fields, so a
+    # term naming one id narrows the glob to that resource.
+    run = parse_one_entry(
+        {"resource_query": "scores/*", "search_term": "one"},
+        indexed_repo, genome)
+
+    assert [track.resource_id for track in run.tracks] == ["scores/one"]
+
+
+def test_a_search_term_that_eliminates_every_match_names_the_term(
+    indexed_repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    # The id matches; the term is what left nothing, and the message
+    # must say so rather than blame the query.
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_one_entry(
+            {"resource_query": "scores/one", "search_term": "zzzz"},
+            indexed_repo, genome)
+
+    message = str(excinfo.value)
+    assert "binners[0]" in message
+    assert "'zzzz'" in message
+    assert "'scores/one'" in message
+
+
+def test_a_malformed_search_term_is_a_parse_error_naming_the_entry(
+    indexed_repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    # A term the full-text engine cannot parse is rejected on the first
+    # draw of the search, like the missing index; both belong to the
+    # entry, not to a traceback.
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_one_entry(
+            {"resource_query": "scores/*", "search_term": "one AND"},
+            indexed_repo, genome)
+
+    message = str(excinfo.value)
+    assert "binners[0]" in message
+    assert "one AND" in message
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_a_blank_search_term_is_no_search_term(
+    repo: GenomicResourceRepo, genome: ReferenceGenome, blank: str,
+) -> None:
+    # What a shell substitutes for an unset variable; the repository
+    # treats it as unset, so no index is demanded for it.
+    run = parse_one_entry(
+        {"resource_query": "scores/*", "search_term": blank}, repo, genome)
+
+    assert [t.resource_id for t in run.tracks] == ["scores/one", "scores/two"]
+
+
 def test_omitted_regions_mean_every_chromosome_in_genome_order(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
@@ -119,6 +185,62 @@ def test_regions_are_parsed_in_gain_notation_and_kept_in_listed_order(
     ]
 
 
+@pytest.mark.parametrize("notation", [
+    "chr1:90-101",   # runs past the chromosome
+    "chr1:101-110",  # lies wholly beyond it
+    "chr2:0-10",     # starts before position 1
+])
+def test_a_region_outside_its_chromosome_is_a_parse_error_naming_it(
+    repo: GenomicResourceRepo, genome: ReferenceGenome, notation: str,
+) -> None:
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_regions(["chr1:1-10", notation], repo, genome)
+
+    message = str(excinfo.value)
+    assert "bins.regions[1]" in message
+    assert notation in message
+    assert str(genome.get_chrom_length(notation.split(":")[0])) in message
+
+
+def test_a_window_ending_before_it_starts_is_a_parse_error_naming_it(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_regions(["chr1:1-10", "chr2:20-10"], repo, genome)
+
+    message = str(excinfo.value)
+    assert "bins.regions[1]" in message
+    assert "chr2:20-10" in message
+
+
+@pytest.mark.parametrize("regions", [
+    ["chr1:1-20", "chr2", "chr1:20-30"],   # windows sharing position 20
+    ["chr1:1-20", "chr2", "chr1"],          # the bare chromosome covers it
+    ["chr1:5-10", "chr2", "chr1:1-20"],     # one inside the other
+])
+def test_overlapping_regions_are_a_parse_error_naming_both(
+    repo: GenomicResourceRepo, genome: ReferenceGenome, regions: list[str],
+) -> None:
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_regions(regions, repo, genome)
+
+    message = str(excinfo.value)
+    assert "bins.regions[0]" in message
+    assert "bins.regions[2]" in message
+    # The quoted form: a bare 'chr1' is a substring of 'chr1:1-20', so
+    # only the repr tells the two notations apart in the message.
+    assert repr(regions[0]) in message
+    assert repr(regions[2]) in message
+
+
+def test_adjacent_regions_do_not_overlap(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    run = parse_regions(["chr1:11-20", "chr1:1-10"], repo, genome)
+
+    assert run.regions == [BedRegion("chr1", 11, 20), BedRegion("chr1", 1, 10)]
+
+
 def test_an_unknown_binner_kind_is_a_parse_error_listing_the_known_kinds(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
@@ -139,12 +261,12 @@ def test_an_unknown_binner_kind_is_a_parse_error_listing_the_known_kinds(
     assert "position_score_binner" in str(excinfo.value)
 
 
-def test_a_resource_matched_by_two_entries_is_refused_as_not_yet_supported(
+def test_a_resource_matched_by_two_entries_names_both_tracks_by_aggregator(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
-    # Two aggregators of one resource need the ``:<aggregator>`` name
-    # suffixing of the validation slice (gain#1201).  Until then the run
-    # is refused, never written with two columns of the same name.
+    # Two aggregators of one resource side by side (D10): every member of
+    # the repeated group carries its aggregator, whichever entry came
+    # first, while a resource matched once keeps its bare id.
     config = {
         "bins": {"bin_size": 10},
         "binners": [
@@ -154,18 +276,58 @@ def test_a_resource_matched_by_two_entries_is_refused_as_not_yet_supported(
         ],
     }
 
+    run = parse_run_definition(config, repo, genome)
+
+    assert [(t.name, t.resource_id, t.aggregator) for t in run.tracks] == [
+        ("scores/one:max", "scores/one", "max"),
+        ("scores/two", "scores/two", "mean"),
+        ("scores/one:min", "scores/one", "min"),
+    ]
+
+
+def test_two_entries_producing_one_track_are_a_parse_error_naming_both(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    # Same resource, same aggregator: the suffix cannot tell them apart,
+    # and neither could a reader of the ``/tracks`` table.
+    config = {
+        "bins": {"bin_size": 10},
+        "binners": [
+            {"position_score_binner": {"resource_query": "scores/*"}},
+            {"position_score_binner": {
+                "resource_query": "scores/two", "aggregator": "mean",
+                "none_value_replacement": 0.0}},
+        ],
+    }
+
     with pytest.raises(RunDefinitionError) as excinfo:
         parse_run_definition(config, repo, genome)
 
-    assert "scores/one" in str(excinfo.value)
-    assert "not yet supported" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "scores/two:mean" in message
+    assert "binners[0]" in message
+    assert "binners[1]" in message
+
+
+def test_search_term_on_a_repository_without_an_index_is_a_parse_error(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    # Only the index can answer a term; the toy GRR has none until it is
+    # published.  Refused at parse time, naming the entry and the cause,
+    # rather than surfacing the repository's own error mid-run.
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_one_entry(
+            {"resource_query": "scores/*", "search_term": "one"},
+            repo, genome)
+
+    message = str(excinfo.value)
+    assert "binners[0]" in message
+    assert "search_term" in message
+    assert "index" in message
 
 
 @pytest.mark.parametrize("entry,fragment", [
-    # search_term is the validation slice's; dropping it silently would
-    # widen the matrix past what the user asked for.
-    ({"resource_query": "scores/*", "search_term": "conservation"},
-     "search_term"),
+    ({"resource_query": "scores/*", "search_term": ["one"]}, "search_term"),
     # A typo must not silently bin with the default.
     ({"resource_query": "scores/*", "aggregtor": "min"}, "aggregtor"),
     ({}, "resource_query"),
@@ -173,10 +335,15 @@ def test_a_resource_matched_by_two_entries_is_refused_as_not_yet_supported(
     ({"resource_query": "scores/one", "aggregator": "mediann"}, "mediann"),
     ({"resource_query": "scores/one", "none_value_replacement": "zero"},
      "none_value_replacement"),
-    # Two scores on one resource, and a string-typed score, are refused
-    # until gain#1201 decides what to do with them.
-    ({"resource_query": "other/pair"}, "other/pair"),
-    ({"resource_query": "other/label"}, "other/label"),
+    # A track is one score of one resource; which of several the user
+    # meant is not the tool's to guess, so the scores are listed.
+    ({"resource_query": "other/pair"}, "['p', 'q']"),
+    # /values is one float64 matrix (D11): a string-typed score, or an
+    # aggregator that builds a string or a list, has no cell to go in.
+    ({"resource_query": "other/label"}, "'str'"),
+    ({"resource_query": "scores/one", "aggregator": "join(,)"}, "join"),
+    ({"resource_query": "scores/one", "aggregator": "list"}, "list"),
+    ({"resource_query": "scores/one", "aggregator": "concat"}, "concat"),
 ])
 def test_a_malformed_entry_is_a_parse_error_naming_what_is_wrong(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
