@@ -1172,8 +1172,6 @@ The optional ``meta`` field is omitted for conciseness.
         name: my_positionscore2                  # name of the annotation field
 
 
-.. _score-value-types:
-
 Score value types
 ^^^^^^^^^^^^^^^^^
 
@@ -1197,8 +1195,6 @@ should say so explicitly::
         type: bool
         name: flag_column
         na_values: ["", "."]
-
-
 
 
 Allele scores

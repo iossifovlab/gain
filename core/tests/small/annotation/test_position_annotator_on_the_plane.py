@@ -192,7 +192,7 @@ def test_a_substitution_answers_a_source_named_twice_under_both_names(
 
     Its own resource, with two float scores: the shared fixture's
     ``s == 1.0`` and ``flag == True`` compare equal in Python, so a swap
-    between those two sources would answer identically and hide.
+    between those two sources would go unnoticed.
     """
     repo = (
         a_grr()

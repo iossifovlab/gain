@@ -1,25 +1,22 @@
-"""What a ``bool`` score reads out of a text cell (gain#1192).
+"""What a ``bool`` score reads out of a cell (gain#1192).
 
 ``SCORE_TYPE_PARSERS["bool"]`` used to be Python's ``bool``, which is a
 TRUTHINESS test, not a parse: every non-empty cell answered ``True``, so the
-literal ``False`` in a table answered ``True`` and so did ``0`` and ``yes``.
-No deployed resource was reading wrong -- the only ``type: bool`` scores in
-the published GRRs are dbSNP's flags, and those are VCF-backed, where pysam
-decodes a ``Flag`` to a real ``True`` -- but no text-table bool column could
-be read at all.
+literal ``False`` in a table answered ``True``, and so did ``0`` and ``yes``.
 
 The two halves this file holds to each other are why the bug is easy to
-reintroduce: a ``bool`` score's parser is shared between the text tables it
-is fixed for and the VCF path, which must keep reading presence-as-true.
-That sharing is not the loose coupling it looks like -- see
-test_a_vcf_flag_declared_bool_in_config_still_reads_presence_as_true.
+reintroduce: one parser serves both the text tables it was fixed for and the
+VCF path, which must keep reading a ``Flag``'s presence as true.
+
+The reasoning behind the closed vocabulary, the empty ``na_values`` default
+and what that default costs lives in
+``docs/adr/0024-a-bool-score-reads-its-cells-text``.
 """
 # pylint: disable=C0116,W0212,W0621
 import pathlib
 import textwrap
 
 import pytest
-from gain.genomic_resources.fsspec_protocol import build_fsspec_protocol
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     PositionScore,
@@ -30,35 +27,36 @@ from gain.genomic_resources.histogram import (
     CategoricalHistogramConfig,
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import scan
-from gain.genomic_resources.testing import setup_directories, setup_vcf
-from gain.genomic_resources.testing.builders import a_position_score
+from gain.genomic_resources.testing import (
+    build_filesystem_test_resource,
+    setup_directories,
+    setup_vcf,
+)
+from gain.genomic_resources.testing.builders import (
+    PositionScoreBuilder,
+    a_position_score,
+)
 
 
-def _bool_score(tmp_path: pathlib.Path, data: str) -> PositionScore:
-    """A one-column ``bool`` position score over the authored rows."""
-    resource = (
+def _bool_builder(data: str) -> PositionScoreBuilder:
+    """A one-column ``bool`` position score over the authored rows.
+
+    Returns the BUILDER, not the resource, so a test that needs one more
+    knob (``na_values``, a histogram) adds it rather than restating the
+    chain -- the builders being immutable, that cannot drift.
+    """
+    return (
         a_position_score()
         .with_score("flag", "bool")
         .with_data(data)
-        .build_resource(tmp_path)
     )
-    score = PositionScore(resource)
+
+
+def _bool_score(tmp_path: pathlib.Path, data: str) -> PositionScore:
+    """The common case: build that resource and open it."""
+    score = PositionScore(_bool_builder(data).build_resource(tmp_path))
     score.open()
     return score
-
-
-def test_a_bool_score_reads_the_text_false_as_false(
-    tmp_path: pathlib.Path,
-) -> None:
-    """The reported defect: the literal ``False`` answered ``True``."""
-    score = _bool_score(tmp_path, """
-        chrom  pos_begin  pos_end  flag
-        chr1   10         19       True
-        chr1   20         29       False
-        """)
-
-    assert score.fetch_position_scores("chr1", 12, ["flag"]) == [True]
-    assert score.fetch_position_scores("chr1", 22, ["flag"]) == [False]
 
 
 @pytest.mark.parametrize("text,expected", [
@@ -70,9 +68,10 @@ def test_the_accepted_bool_spellings(
 ) -> None:
     """The closed set, read end to end rather than off the parser.
 
-    ``0`` and ``1`` are in it because a machine-written table spells a flag
-    that way at least as often as it spells it ``True``; every other numeric
-    text is not a bool and is refused.
+    The four false spellings are the defect: each of them answered ``True``.
+    ``0`` and ``1`` are in the set because a machine-written table spells a
+    flag that way at least as often as it spells it ``True``; every other
+    numeric text is not a bool and is refused.
     """
     score = _bool_score(tmp_path, f"""
         chrom  pos_begin  pos_end  flag
@@ -82,61 +81,33 @@ def test_the_accepted_bool_spellings(
     assert score.fetch_position_scores("chr1", 12, ["flag"]) == [expected]
 
 
+@pytest.mark.parametrize("cell", ["yes", "EMPTY"])
 def test_an_unreadable_bool_cell_is_a_logged_non_value(
-    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture, cell: str,
 ) -> None:
-    """A spelling outside the set is reported and skipped, not guessed at.
+    """Text outside the set is reported and skipped, not guessed at.
 
     No new refusal mechanism: this is the same broad guard in
-    ``parse_value`` that turns a malformed number into a logged non-value,
-    and it is deliberately what a bad bool cell gets too -- one bad row
-    should not abort a whole scan.  ``yes`` is the interesting case because
-    it is exactly what the old truthiness parser answered ``True`` for.
+    ``parse_value`` that turns a malformed number into a logged non-value.
+    ``yes`` is the interesting spelling because it is exactly what the old
+    truthiness parser answered ``True`` for.
+
+    ``EMPTY`` renders as ``.``, and it takes this path too -- a ``bool``
+    score declares no default NA sentinels, so the missing-value tokens
+    reach the parser like any other text.  Same ``None`` value either way;
+    what the empty default costs is the report.  See ADR 0024, and
+    test_a_configured_na_value_silences_a_missing_bool_cell for the way out.
     """
-    score = _bool_score(tmp_path, """
+    score = _bool_score(tmp_path, f"""
         chrom  pos_begin  pos_end  flag
-        chr1   10         19       yes
-        """)
-
-    with caplog.at_level("ERROR"):
-        assert score.fetch_position_scores("chr1", 12, ["flag"]) == [None]
-
-    assert "flag" in caplog.text
-    assert "yes" in caplog.text
-
-
-def test_a_missing_bool_cell_is_a_non_value_and_says_so(
-    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
-) -> None:
-    """``.`` reads as no value -- by being refused, not by being a sentinel.
-
-    A ``bool`` score has no default ``na_values`` where every numeric type
-    has ``""``/``nan``/``.``/``NA``, so the missing-value tokens reach the
-    parser and are refused like any other unreadable text.  The VALUE is
-    the same either way; what differs is the log line per missing cell.
-
-    Left that way on purpose: ``na_values`` is part of a resource's
-    statistics hash, so giving ``bool`` the numeric defaults would move the
-    hash of every deployed bool score -- dbSNP's 35 flags, in two GRRs --
-    and force a genome-wide recompute that arrives at byte-identical
-    numbers, a VCF flag being a ``bool`` and never one of these tokens.  A
-    text resource with a sparse flag column can declare ``na_values``
-    itself; see test_a_configured_na_value_silences_a_missing_bool_cell.
-
-    (Before gain#1192 this cell answered ``True`` -- ``bool(".")`` is
-    ``True``, like every other non-empty text.  A genuinely empty cell was
-    the other wrong answer available: ``bool("")`` is ``False``, a present
-    false datum where there was no datum.)
-    """
-    score = _bool_score(tmp_path, """
-        chrom  pos_begin  pos_end  flag
-        chr1   10         19       EMPTY
+        chr1   10         19       {cell}
         """)
 
     with caplog.at_level("ERROR"):
         assert score.fetch_position_scores("chr1", 12, ["flag"]) == [None]
 
     assert "unable to parse" in caplog.text
+    assert "flag" in caplog.text
 
 
 def test_a_configured_na_value_silences_a_missing_bool_cell(
@@ -146,10 +117,7 @@ def test_a_configured_na_value_silences_a_missing_bool_cell(
 
     ``na_values`` is tested BEFORE the parser is called, so a declared
     sentinel is a non-value rather than a refusal, and the per-cell
-    traceback goes.  This is what keeps the empty default above a
-    defensible choice instead of a papered-over gap: the behaviour is
-    configurable per resource, at the cost of a statistics hash that
-    resource is changing anyway by declaring it.
+    traceback goes.
 
     Pins PRE-EXISTING behaviour, not gain#1192 -- the NA check has always
     come first, and this passes on either side of the fix.  It is here
@@ -157,13 +125,11 @@ def test_a_configured_na_value_silences_a_missing_bool_cell(
     works, so the two belong in one file.
     """
     resource = (
-        a_position_score()
-        .with_score("flag", "bool")
-        .with_na_values(".")
-        .with_data("""
+        _bool_builder("""
             chrom  pos_begin  pos_end  flag
             chr1   10         19       EMPTY
             """)
+        .with_na_values(".")
         .build_resource(tmp_path)
     )
     score = PositionScore(resource)
@@ -178,29 +144,19 @@ def test_a_configured_na_value_silences_a_missing_bool_cell(
 def test_a_bool_score_declares_no_default_na_values(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Guard on the choice, not just on the behaviour it produces.
+    """Guard on the decision, not only on the behaviour it produces.
 
-    Giving ``bool`` the numeric types' default sentinels is the obvious
-    tidy-up of the test above, and it is a deployment decision rather than
-    a code one: ``na_values`` is serialized into a resource's statistics
-    hash, so the edit alone invalidates the statistics of every bool score
-    published anywhere and schedules a genome-wide recompute for numbers
-    that do not change.
-
-    Asserted here rather than left to the log-line assertion because that
-    one would still pass if some other layer started swallowing the
-    warning, and because the empty set is the thing a future reader will
-    want a reason for.
+    Giving ``bool`` the numeric types' sentinels is the obvious tidy-up of
+    the refusal above, and it is a deployment decision rather than a code
+    one: ``na_values`` is serialized into a resource's statistics hash, so
+    the edit alone invalidates the statistics of every bool score published
+    anywhere.  ADR 0024 carries the measurement; this asserts the state it
+    decided on, so that changing it is deliberate.
     """
-    resource = (
-        a_position_score()
-        .with_score("flag", "bool")
-        .with_data("""
-            chrom  pos_begin  pos_end  flag
-            chr1   10         19       True
-            """)
-        .build_resource(tmp_path)
-    )
+    resource = _bool_builder("""
+        chrom  pos_begin  pos_end  flag
+        chr1   10         19       True
+        """).build_resource(tmp_path)
 
     score_def = PositionScore(resource).score_definitions["flag"]
 
@@ -214,8 +170,11 @@ def _dbsnp_shaped_flag_score(tmp_path: pathlib.Path) -> AlleleScore:
     text-only: the config-override branch of ``parse_vcf_scoredefs`` takes
     ``value_parser`` from the CONFIG-derived definition, not from the
     header-derived one.  So a VCF score declared ``type: bool`` runs the
-    very parser the text tables use, over whatever pysam decoded -- for a
-    ``Flag``, a real Python ``bool``.
+    very parser the text tables use, over whatever pysam decoded.
+
+    Hand-rolled rather than built with ``a_vcf_info_score()``, which emits
+    no ``scores:`` block at all and so cannot express the override this
+    exists to exercise.
     """
     setup_directories(tmp_path, {
         "genomic_resource.yaml": textwrap.dedent("""
@@ -236,8 +195,7 @@ def _dbsnp_shaped_flag_score(tmp_path: pathlib.Path) -> AlleleScore:
 chr1   5   .  A   T   .    .       RV
 chr1   6   .  A   T   .    .       .
     """))
-    proto = build_fsspec_protocol("testing", str(tmp_path))
-    score = build_score_from_resource(proto.get_resource(""))
+    score = build_score_from_resource(build_filesystem_test_resource(tmp_path))
     assert isinstance(score, AlleleScore)
     return score
 
@@ -248,15 +206,14 @@ def test_a_vcf_flag_declared_bool_in_config_still_reads_presence_as_true(
     """The constraint the text fix must not break.
 
     A ``Flag`` says what it means by BEING THERE, and pysam decodes that to
-    a real ``True`` rather than to any text.  The parser therefore has to
-    take a value that is already a ``bool`` and hand it back, which the old
-    ``bool`` builtin did for free and a table of accepted spellings does
-    not: ``{"1": True}.get(True)`` finds nothing, because ``True`` is not
-    the string ``"1"``.
+    a real ``True`` rather than to any text.  So the parser has to hand back
+    a value that is already a ``bool``, which a table of spellings alone
+    does not: ``True`` is not the string ``"1"``.
 
-    This is the whole of the VCF exposure.  There is no separate flag
-    parser to leave alone -- protecting this path means handling a non-text
-    value inside the one parser.
+    This is the whole of the VCF exposure.  There is no separate flag parser
+    to leave alone -- protecting this path means handling an already-parsed
+    value inside the one parser, which is what every other value type's
+    parser does for free.
     """
     score = _dbsnp_shaped_flag_score(tmp_path).open()
 
@@ -271,12 +228,11 @@ def test_an_absent_vcf_flag_reads_false(tmp_path: pathlib.Path) -> None:
     assume wrong: pysam does not leave an absent ``Flag`` out of the INFO
     mapping to be defaulted, it decodes it to a real ``False`` -- so the
     value reaching the parser is a ``bool`` on BOTH branches, and the
-    passthrough above is what carries each of them.
+    passthrough carries each of them.
 
-    This behaviour predates gain#1192 and is unchanged by it (``bool(False)``
-    was also ``False``).  It is pinned here anyway: the presence test alone
-    cannot tell a passthrough from a parser that answers ``True`` for
-    anything bool-ish, and nothing else in the suite holds this end.
+    Predates gain#1192 and is unchanged by it (``bool(False)`` was also
+    ``False``).  Pinned anyway: the presence test alone cannot tell a
+    passthrough from a parser that answers ``True`` for anything bool-ish.
     """
     score = _dbsnp_shaped_flag_score(tmp_path).open()
 
@@ -300,14 +256,12 @@ def test_a_bool_columns_categorical_histogram_counts_both_values(
     so the counts follow the record widths rather than the row count.
     """
     resource = (
-        a_position_score()
-        .with_score("flag", "bool")
-        .with_histogram({"type": "categorical"})
-        .with_data("""
+        _bool_builder("""
             chrom  pos_begin  pos_end  flag
             chr1   1          10       True
             chr1   11         30       False
             """)
+        .with_histogram({"type": "categorical"})
         .build_resource(tmp_path)
     )
 

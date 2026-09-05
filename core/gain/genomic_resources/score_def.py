@@ -72,44 +72,31 @@ _BOOL_TEXT_VALUES = {
 
 
 def parse_bool(value: Any) -> bool:
-    """Read a ``bool`` score's raw value, by its TEXT when it is text.
+    """Read a ``bool`` score's raw value: its TEXT, against a closed set.
 
-    Python's ``bool`` was the parser here until gain#1192, and it is a
-    truthiness test rather than a parse: ``bool("False")`` is ``True``, as is
-    ``bool("0")`` and ``bool("yes")``.  So a bool column read back ``True``
-    for every non-empty cell, and the literal ``False`` in a table could not
-    be expressed at all.
+    A value that is ALREADY a ``bool`` is returned unchanged.  That is the
+    idempotence every parser in :data:`SCORE_TYPE_PARSERS` owes its caller --
+    ``float(1.5)`` and ``int(3)`` give it for free, and a VCF score reaches
+    the parser with a value pysam has already decoded -- so it is the shared
+    contract rather than a special case for flags.
 
-    **A value that is already a ``bool`` is handed straight back**, and that
-    is not a convenience -- it is the VCF path.  A ``Flag`` INFO field is
-    typed ``bool``, pysam decodes its presence to a real ``True``, and a VCF
-    resource whose ``scores:`` block declares ``type: bool`` (dbSNP, for its
-    35 flags) runs THIS parser over that value, because the config-override
-    branch of ``parse_vcf_scoredefs`` takes ``value_parser`` from the
-    config-derived definition.  A table lookup alone would refuse it --
-    ``True`` is not the string ``"1"`` -- and turn every dbSNP flag into a
-    logged non-value.
+    Anything else raises ``ValueError``, including a bare ``0``/``1``
+    **number**: a number is not a bool, and the only way one arrives is a
+    resource declaring ``type: bool`` over a numeric field.
+    :meth:`GenomicScoreDef.parse_value` logs the refusal and reads the cell as
+    a non-value, so one bad cell does not abort a scan.
 
-    Everything else is refused, including a bare ``0``/``1`` **number**: a
-    number is not a bool, and the only way one reaches here is a resource
-    that declared ``type: bool`` over a numeric field, which is a
-    misconfiguration worth a report rather than a guess.  The refusal is a
-    ``ValueError``, which :meth:`GenomicScoreDef.parse_value` logs and turns
-    into a non-value -- one bad cell does not abort a scan.
-
-    The accepted spellings are deliberately few (:data:`_BOOL_TEXT_VALUES`).
-    A table is machine-written and a resource author who means false has a
-    way to say so; widening this to ``yes``/``no``/``T``/``F`` would buy a
-    handful of resources at the cost of a vocabulary nobody can state, and
-    the point of the fix is that the text is READ rather than guessed at.
+    Why the vocabulary is closed, why ``bool`` alone declares no NA sentinels,
+    and what that costs: ``docs/adr/0024-a-bool-score-reads-its-cells-text``.
     """
     if isinstance(value, bool):
         return value
     # Membership test then subscript, NOT ``_BOOL_TEXT_VALUES.get(value)``:
     # half this mapping's values ARE ``False``, so a ``.get()`` result cannot
     # be told from a miss without repeating the very falsy-vs-absent confusion
-    # this whole function exists to end.
-    if isinstance(value, str) and value in _BOOL_TEXT_VALUES:
+    # this function exists to end.  The test also rejects a non-str on its own
+    # (``0 in {"0": ...}`` is ``False``), so it needs no type guard ahead of it.
+    if value in _BOOL_TEXT_VALUES:
         return _BOOL_TEXT_VALUES[value]
     raise ValueError(
         f"{value!r} is not a bool; expected a bool or one of "
@@ -131,31 +118,18 @@ _DEFAULT_NA_VALUES: dict[str, tuple[str, ...]] = {
     "str": (),
     "float": ("", "nan", ".", "NA"),
     "int": ("", "nan", ".", "NA"),
-    # Deliberately EMPTY, though a missing cell in a bool column would read
-    # more cleanly as a sentinel than as the parse failure it currently is:
-    # :func:`parse_bool` refuses "." and "", and ``parse_value`` reports each
-    # one with ``logger.exception``, so a sparse text bool column costs a
-    # TRACEBACK per missing cell, not a line.
-    #
-    # ``na_values`` is nonetheless part of a resource's statistics hash, so
-    # populating this invalidates the statistics of every deployed bool score
-    # -- dbSNP's 35 flags, in two GRRs -- and schedules a genome-wide
-    # recompute to arrive at byte-identical numbers, a VCF flag reaching the
-    # parser as a ``bool`` and never as one of these tokens.  A text resource
-    # with a sparse column can declare ``na_values`` itself; what is refused
-    # here is spending that rescan on a default.
+    # Deliberately empty, and NOT an oversight to tidy up: populating it moves
+    # the statistics hash of every deployed bool score.  ADR 0024 has the
+    # measurement and the escape hatch for a resource that needs sentinels.
     "bool": (),
 }
 
 # Value types whose text sentinels are also coerced to the parsed representation
 # so a numeric raw payload (e.g. a bigWig ``float``) matches by value, not text.
 #
-# ``bool`` must never join them, whatever sentinels a resource configures:
-# coercion adds each sentinel's PARSED form to the set, and a sentinel that
-# parses to ``False`` would make ``False`` itself an NA value -- every false
-# datum in every bool column would read as no value at all.  Nothing needs it
-# either, since a bool score's raw payload is text (a table cell) or an actual
-# ``bool`` (a VCF flag), never a number wearing a sentinel's value.
+# ``bool`` must never join them, whatever sentinels a resource configures: a
+# sentinel that parsed to ``False`` would make ``False`` itself an NA value,
+# and every false datum in every bool column would read as no value at all.
 _NA_COERCIBLE_TYPES = ("int", "float")
 
 #: Value types :meth:`GenomicScoreDef.parse_array` defines a column parse for,
