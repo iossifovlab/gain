@@ -35,9 +35,7 @@ class PositionScoreImplementation(GenomicScoreImplementation):
     Coverage section.  The section lives in a template that FILLS a block
     the shared template leaves empty, as the other two kinds' sections
     do, so a kind whose rows cannot be unioned into a coverage renders
-    no section at all -- rather than a heading permanently reading "not
-    computed", which is what one shared template rendering the section
-    for every kind produced.
+    no section at all.
     """
 
     template_name: ClassVar[str] = "position_score.jinja"
