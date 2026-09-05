@@ -1,4 +1,4 @@
-"""The ``bin_scores`` run definition: parsing and resolution."""
+"""The ``binning_tool`` run definition: parsing and resolution."""
 from __future__ import annotations
 
 from dataclasses import dataclass

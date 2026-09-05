@@ -44,7 +44,7 @@ def run_definition(tmp_path: pathlib.Path) -> pathlib.Path:
     return path
 
 
-def bin_scores(
+def binning_tool(
     run_definition: pathlib.Path, grr_dir: pathlib.Path,
     output: pathlib.Path, *extra: str,
 ) -> None:
@@ -65,7 +65,7 @@ def binned(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
     run_definition: pathlib.Path, output: pathlib.Path,
 ) -> pathlib.Path:
-    bin_scores(run_definition, grr_dir, output)
+    binning_tool(run_definition, grr_dir, output)
     return output
 
 
@@ -88,7 +88,7 @@ def test_values_is_stored_in_gzip_compressed_row_blocks(
     # told apart from "the whole dataset": three rows, every track.
     monkeypatch.setattr("gain.binning.cli.ROW_BLOCK", 3)
 
-    bin_scores(run_definition, grr_dir, output)
+    binning_tool(run_definition, grr_dir, output)
 
     with h5py.File(output, "r") as h5:
         values = h5["values"]
@@ -162,7 +162,7 @@ def test_dry_run_prints_the_tracks_and_counts_and_writes_nothing(
     run_definition: pathlib.Path, output: pathlib.Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    bin_scores(run_definition, grr_dir, output, "--dry-run")
+    binning_tool(run_definition, grr_dir, output, "--dry-run")
 
     out = capsys.readouterr().out
     assert "scores/one\tscores/one\ts\tmax" in out
@@ -222,12 +222,12 @@ def test_a_rerun_with_the_same_work_dir_reuses_the_finished_chunks(
     # Between the runs the resource changes underneath the tool.  The
     # rerun does not notice: its chunks are done, so only the writer runs
     # and the matrix is the first run's, bit for bit.
-    bin_scores(run_definition, grr_dir, output, "--keep-work-dir")
+    binning_tool(run_definition, grr_dir, output, "--keep-work-dir")
     first = read_matrix(output)
     output.unlink()
     republish_scores_one_as(grr_dir, 9.0)
 
-    bin_scores(run_definition, grr_dir, output, "--keep-work-dir")
+    binning_tool(run_definition, grr_dir, output, "--keep-work-dir")
 
     np.testing.assert_array_equal(read_matrix(output), first)
 
@@ -239,13 +239,13 @@ def test_an_interrupted_run_resumes_from_its_finished_chunks(
     # An interruption leaves some chunks written and the output missing.
     # Staged by removing one of scores/two's chunks after a full run; the
     # republished scores/one proves its chunks were reused, not redone.
-    bin_scores(run_definition, grr_dir, output, "--keep-work-dir")
+    binning_tool(run_definition, grr_dir, output, "--keep-work-dir")
     first = read_matrix(output)
     output.unlink()
     next(output.parent.glob("bins_work/**/scores_two_*.npy")).unlink()
     republish_scores_one_as(grr_dir, 9.0)
 
-    bin_scores(run_definition, grr_dir, output, "--keep-work-dir")
+    binning_tool(run_definition, grr_dir, output, "--keep-work-dir")
 
     np.testing.assert_array_equal(read_matrix(output), first)
 
@@ -263,9 +263,9 @@ def test_another_run_definition_sharing_the_work_dir_is_not_served_stale_chunks(
     by_min.write_text(RUN_DEFINITION.replace(
         'resource_query: "scores/*"',
         'resource_query: "scores/*"\n    aggregator: min'))
-    bin_scores(by_max, grr_dir, output, "--keep-work-dir")
+    binning_tool(by_max, grr_dir, output, "--keep-work-dir")
 
-    bin_scores(by_min, grr_dir, output, "--keep-work-dir")
+    binning_tool(by_min, grr_dir, output, "--keep-work-dir")
 
     with h5py.File(output, "r") as h5:
         aggregators = [row["aggregator"] for row in h5["tracks"][()]]
@@ -281,7 +281,7 @@ def test_the_process_pool_executor_yields_the_same_matrix(
     # Every task argument crosses a process boundary: the binner class,
     # the track, the region, the GRR definition and the run definition.
     # argparse takes the last -j.
-    bin_scores(run_definition, grr_dir, output, "-j", "2", "--process-pool")
+    binning_tool(run_definition, grr_dir, output, "-j", "2", "--process-pool")
 
     np.testing.assert_array_equal(read_matrix(output), EXPECTED_VALUES)
 
@@ -307,10 +307,10 @@ def test_force_recomputes_every_chunk(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
     run_definition: pathlib.Path, output: pathlib.Path,
 ) -> None:
-    bin_scores(run_definition, grr_dir, output, "--keep-work-dir")
+    binning_tool(run_definition, grr_dir, output, "--keep-work-dir")
     republish_scores_one_as(grr_dir, 9.0)
 
-    bin_scores(run_definition, grr_dir, output, "--keep-work-dir", "--force")
+    binning_tool(run_definition, grr_dir, output, "--keep-work-dir", "--force")
 
     np.testing.assert_array_equal(
         read_matrix(output)[:, 0], [9.0, 9.0, 9.0, 9.0, NAN, NAN, NAN, NAN])

@@ -1,4 +1,4 @@
-"""``bin_scores``: bin position scores into a fixed genome grid.
+"""``binning_tool``: bin position scores into a fixed genome grid.
 
 One task per (track, region) writes its column chunk as a ``.npy``
 vector in the work directory; one serial writer task assembles the HDF5
@@ -93,7 +93,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
 
 
 def cli(argv: list[str] | None = None) -> None:
-    """Entry point of the ``bin_scores`` tool."""
+    """Entry point of ``binning_tool``."""
     if argv is None:
         argv = sys.argv[1:]
     args = vars(_build_argument_parser().parse_args(argv))
