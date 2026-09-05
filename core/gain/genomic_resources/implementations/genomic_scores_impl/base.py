@@ -41,7 +41,21 @@ logger = logging.getLogger(__name__)
 
 
 class GenomicScoreImplementation(ScoreImplementationBase):
-    """Genomic scores base class."""
+    """What every genomic-score kind answers alike.
+
+    The resource protocol -- the statistics build tasks, the file set,
+    the hashes -- and the page protocol: ``get_info`` and
+    ``get_statistics_info`` hand the repository the page builder passes
+    to whichever kind renders, through ``_render_repo``.  It names no
+    kind's template and no kind's section accessors; each kind is a
+    subclass that does both, and the factory in :mod:`.builders` and
+    the entry points hand out only those.  Nothing instantiates this
+    class for a real resource.
+
+    The class still answers to two readers, the templates and the
+    resource protocol, and separating them is gain#1037, deliberately
+    not done here.
+    """
 
     def __init__(self, resource: GenomicResource):
         super().__init__(resource)
