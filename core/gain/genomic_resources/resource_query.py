@@ -5,11 +5,12 @@ bracketed query over the resource's ``meta.labels``::
 
     hg38/scores/*[phenotype="aut*" and "UCSC" in provenance]
 
-This module owns the grammar and the matching, and nothing else. It answers
-one question -- does this resource match this query -- and deliberately holds
-no policy about what a caller does with the answer: no result cap, no error
-when a query selects nothing. Those are the annotation layer's rules about
-building a pipeline, not the repository's rules about listing resources.
+This module owns the grammar, the matching, and what a label value is read
+as (:func:`label_alternatives`) -- and nothing else. It answers one question
+-- does this resource match this query -- and deliberately holds no policy
+about what a caller does with the answer: no result cap, no error when a
+query selects nothing. Those are the annotation layer's rules about building
+a pipeline, not the repository's rules about listing resources.
 
 It lives here rather than in ``annotation`` so that the pipeline config, the
 repositories and the CLIs cannot disagree about what ``*`` means.
@@ -112,6 +113,23 @@ def _get_parser() -> Lark:
     return Lark(RESOURCE_QUERY_GRAMMAR)
 
 
+def label_alternatives(value: Any) -> tuple[str, ...]:
+    """Render a ``meta.labels`` value as the strings it stands for.
+
+    A label value is whatever YAML made of it. A scalar -- a string, or the
+    bool and int the production GRRs carry in bulk -- stands for its
+    ``str()``; a nested mapping does too. A list or tuple is a set of
+    alternatives, one rendered string per element, so a resource can be
+    labelled with everything it is (``modality: [RNA, ATAC]``). An empty
+    list stands for ``""``, which is also what an absent label reads as.
+
+    Every reader of a label value renders it through here.
+    """
+    if isinstance(value, (list, tuple)):
+        return tuple(str(element) for element in value) or ("",)
+    return (str(value),)
+
+
 class LabelOperator(enum.Enum):
     """The comparisons a label clause can make."""
 
@@ -149,13 +167,22 @@ class LabelClause:
         bulk. The query language only ever spells values as text, so a
         value is compared in its rendered form; without that both ``in``
         and ``=`` raise a bare ``TypeError`` out of the predicate. A label
-        the resource does not carry is matched as ``""``.
+        the resource does not carry is matched as ``""``. A list value is
+        a set of alternatives: the clause holds if it holds for any one
+        element, each rendered exactly as a scalar is (see
+        :func:`label_alternatives`).
 
-        Both rules live here rather than at the call sites so that a
+        These rules live here rather than at the call sites so that a
         caller evaluating one clause reads a label exactly as the caller
         evaluating all of them does.
         """
-        return self.matches(str(labels.get(self.key, "")))
+        # A plain loop: this runs once per clause per resource on the
+        # unindexed search path, where a generator plus ``any()`` measured
+        # at twice the cost for the scalar every production label is.
+        for alternative in label_alternatives(labels.get(self.key, "")):
+            if self.matches(alternative):
+                return True
+        return False
 
     def matches_an_absent_label(self) -> bool:
         """Check whether this clause holds for a label that is not there.
@@ -264,9 +291,9 @@ class ResourceQuery:
     def match_labels(self, labels: Mapping[str, Any]) -> bool:
         """Check whether ``labels`` satisfies every one of the query's clauses.
 
-        A label value is compared in its rendered form and a label the
-        resource does not carry is matched as ``""`` -- see
-        :meth:`LabelClause.matches_in`, which is where both rules live.
+        How one label value is read -- its rendered form, a list as
+        alternatives, absence as ``""`` -- is :meth:`LabelClause.matches_in`'s
+        to say, and is said there.
         The FTS index cannot represent the difference between an absent
         label and an empty one -- it stores ``""`` for every label column a
         resource does not carry -- so treating absence as a distinct case

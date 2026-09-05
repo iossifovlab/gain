@@ -517,6 +517,45 @@ A search term with no field prefix is matched against *all* fields at once, labe
 
     grr_browse -g grr_definition.yaml -t position_score -s 'reference_genome : hg38'
 
+List-valued labels
+^^^^^^^^^^^^^^^^^^
+
+A label value may be a **list** as well as a scalar. A resource that carries
+more than one value for one label — a multiome ``h5ad`` measuring both gene
+expression and chromatin accessibility — is labelled by what it is, rather than
+forced into a single value:
+
+.. code-block:: yaml
+
+    meta:
+      labels:
+        protocol: 10x_Multiome
+        modality:
+          - RNA
+          - ATAC
+        file_format: h5ad
+
+The list is read as a **set of alternatives** by every reader of the label:
+
+* The full-text index stores the elements joined by a space, so
+  ``-s 'modality : RNA'`` and ``-s 'modality : ATAC'`` both find the resource.
+* A label clause of a ``-q`` resource query — ``[modality="RNA"]``,
+  ``[modality="R*"]``, ``["RNA" in modality]`` — holds if it holds for **any**
+  element. Each element is compared in its rendered form exactly as a scalar
+  value is, and a label the resource does not carry still reads as ``""``.
+  "Has both" is two clauses on the one key, since every clause of a query must
+  hold: ``-q '*[modality="RNA" and modality="ATAC"]'``. There is no operator
+  for "only ``RNA``, nothing else".
+* The resource info page lists the elements comma-separated: ``modality: RNA,
+  ATAC``.
+
+An empty list reads as ``""``, the same as an absent label. Only a list is
+split this way; a nested mapping is a single value and is compared and
+indexed as its rendered text. The labels GAIn itself reads —
+``reference_genome``, ``source_genome`` and ``target_genome`` — name one
+resource each and must stay non-empty strings (see `Genomic resource
+configuration`_ below).
+
 Limitations
 ^^^^^^^^^^^
 
@@ -716,7 +755,9 @@ description, and labels.
 Labels are not merely descriptive: every label key becomes a searchable field of the
 repository's full-text index, so ``meta.labels`` is how a resource is made discoverable
 by properties that are not part of its id or type. See `Searching resources`_ for the
-query syntax and for the naming constraints that label keys must satisfy. Some labels
+query syntax and for the naming constraints that label keys must satisfy. A value may
+be a scalar or a list of scalars; a list is read as a set of alternatives, so a
+resource that is several things at once can say so (see `List-valued labels`_). Some labels
 are also read by GAIn itself — gene models and scores use ``reference_genome`` to
 declare the assembly they are built against, and liftover chains use ``source_genome``
 and ``target_genome``.
