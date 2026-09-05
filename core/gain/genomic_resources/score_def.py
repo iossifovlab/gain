@@ -61,22 +61,75 @@ logger = logging.getLogger(__name__)
 
 ScoreValue = str | int | float | bool | None
 
-SCORE_TYPE_PARSERS = {
+#: The text a ``bool`` score's cell may spell, and what each spelling means.
+#: A CLOSED set: anything else is a parse failure, which
+#: :meth:`GenomicScoreDef.parse_value` logs and turns into a non-value, the
+#: same as it does for a malformed number.
+_BOOL_TEXT_VALUES = {
+    "True": True, "true": True, "TRUE": True, "1": True,
+    "False": False, "false": False, "FALSE": False, "0": False,
+}
+
+
+def parse_bool(value: Any) -> bool:
+    """Read a ``bool`` score's raw value: its TEXT, against a closed set.
+
+    A value that is ALREADY a ``bool`` is returned unchanged.  That is the
+    idempotence every parser in :data:`SCORE_TYPE_PARSERS` owes its caller --
+    ``float(1.5)`` and ``int(3)`` give it for free, and a VCF score reaches
+    the parser with a value pysam has already decoded -- so it is the shared
+    contract rather than a special case for flags.
+
+    Anything else raises ``ValueError``, including a bare ``0``/``1``
+    **number**: a number is not a bool, and the only way one arrives is a
+    resource declaring ``type: bool`` over a numeric field.
+    :meth:`GenomicScoreDef.parse_value` logs the refusal and reads the cell as
+    a non-value, so one bad cell does not abort a scan.
+
+    Why the vocabulary is closed, why ``bool`` alone declares no NA sentinels,
+    and what that costs: ``docs/adr/0024-a-bool-score-reads-its-cells-text``.
+    """
+    if isinstance(value, bool):
+        return value
+    # Membership test then subscript, NOT ``_BOOL_TEXT_VALUES.get(value)``:
+    # half this mapping's values ARE ``False``, so a ``.get()`` result cannot
+    # be told from a miss without repeating the very falsy-vs-absent confusion
+    # this function exists to end.  The test also rejects a non-str on its own
+    # (``0 in {"0": ...}`` is ``False``), so it needs no type guard ahead of it.
+    if value in _BOOL_TEXT_VALUES:
+        return _BOOL_TEXT_VALUES[value]
+    raise ValueError(
+        f"{value!r} is not a bool; expected a bool or one of "
+        f"{sorted(_BOOL_TEXT_VALUES)}")
+
+
+#: How each value type turns a raw cell into a value.  Annotated rather than
+#: inferred: three entries are builtin TYPES and ``bool``'s is a function, so
+#: an inferred value type joins to ``object``, which is not callable as far as
+#: a type checker is concerned.
+SCORE_TYPE_PARSERS: dict[str, Callable[[Any], Any]] = {
     "str": str,
     "float": float,
     "int": int,
-    "bool": bool,
+    "bool": parse_bool,
 }
 
 _DEFAULT_NA_VALUES: dict[str, tuple[str, ...]] = {
     "str": (),
     "float": ("", "nan", ".", "NA"),
     "int": ("", "nan", ".", "NA"),
+    # Deliberately empty, and NOT an oversight to tidy up: populating it moves
+    # the statistics hash of every deployed bool score.  ADR 0024 has the
+    # measurement and the escape hatch for a resource that needs sentinels.
     "bool": (),
 }
 
 # Value types whose text sentinels are also coerced to the parsed representation
 # so a numeric raw payload (e.g. a bigWig ``float``) matches by value, not text.
+#
+# ``bool`` must never join them, whatever sentinels a resource configures: a
+# sentinel that parsed to ``False`` would make ``False`` itself an NA value,
+# and every false datum in every bool column would read as no value at all.
 _NA_COERCIBLE_TYPES = ("int", "float")
 
 #: Value types :meth:`GenomicScoreDef.parse_array` defines a column parse for,
