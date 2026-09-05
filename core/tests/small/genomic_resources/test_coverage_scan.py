@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from gain.genomic_resources.histogram import NumberHistogramConfig
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    GenomicScoreImplementation,
+    PositionScoreImplementation,
     build_score_implementation_from_resource,
     scan,
 )
@@ -209,7 +209,7 @@ def test_info_page_shows_segment_statistics(
     resource = _multivalued_tabix(tmp_path)
     scan.do_noregion_histograms(resource)
 
-    page = GenomicScoreImplementation(resource).get_info()
+    page = PositionScoreImplementation(resource).get_info()
 
     assert "Segments" in page
     assert f">{SEGMENTS}<" in page
@@ -231,7 +231,7 @@ def test_info_page_with_an_old_coverage_file_omits_segments(
             "global": {"covered_positions": COVERED},
         }))
 
-    page = GenomicScoreImplementation(resource).get_info()
+    page = PositionScoreImplementation(resource).get_info()
 
     assert f">{COVERED}<" in page
     assert "Segments" not in page
@@ -310,7 +310,7 @@ def test_info_page_renders_the_coverage_section(
     resource = _multivalued_tabix(tmp_path)
     scan.do_noregion_histograms(resource)
 
-    page = GenomicScoreImplementation(resource).get_info()
+    page = PositionScoreImplementation(resource).get_info()
 
     assert "Coverage" in page
     assert "chr1" in page
@@ -327,7 +327,7 @@ def test_info_page_without_the_statistics_file_says_not_computed(
     resource.proto.delete_resource_file(
         resource, "statistics/coverage.json")
 
-    page = GenomicScoreImplementation(resource).get_info()
+    page = PositionScoreImplementation(resource).get_info()
 
     assert "Coverage" in page
     assert "not computed" in page
@@ -558,7 +558,7 @@ def test_info_page_says_a_resource_genuinely_has_no_segments(
     resource = _multivalued_tabix(tmp_path)
     save_and_plot_coverage(resource, _all_zero_segment_statistics())
 
-    page = GenomicScoreImplementation(resource).get_info()
+    page = PositionScoreImplementation(resource).get_info()
 
     assert "no segments" in page
     assert COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE not in page

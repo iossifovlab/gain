@@ -22,7 +22,7 @@ from collections.abc import Callable
 
 import pytest
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    GenomicScoreImplementation,
+    PositionScoreImplementation,
 )
 from gain.genomic_resources.testing.builders import a_position_score
 
@@ -100,6 +100,6 @@ def test_prose_in_a_meta_description_survives_on_the_resource_info_page(
         .with_meta(description=sentence)
         .build_resource(tmp_path))
 
-    page = GenomicScoreImplementation(resource).get_info()
+    page = PositionScoreImplementation(resource).get_info()
 
     assert sentence in page_text(page)

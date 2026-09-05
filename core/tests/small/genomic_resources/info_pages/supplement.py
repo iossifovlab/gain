@@ -63,7 +63,7 @@ SUPPLEMENT_RESOURCE_IDS = {
 #: an image exists is a question for the address policy rather than for a
 #: local statistics read (gain#1025).
 NULL_HISTOGRAM_RESOURCE_IDS = {
-    "genomic_score.jinja": "supplement_null_histogram_position_score",
+    "position_score.jinja": "supplement_null_histogram_position_score",
     "gene_score.jinja": "supplement_null_histogram_gene_score",
 }
 
@@ -110,7 +110,7 @@ def add_supplement_resources(repo_dir: pathlib.Path) -> None:
     an_ann_data().realize_into(
         repo_dir / SUPPLEMENT_RESOURCE_IDS["ann_data"])
     _add_null_histogram_position_score(
-        repo_dir / NULL_HISTOGRAM_RESOURCE_IDS["genomic_score.jinja"])
+        repo_dir / NULL_HISTOGRAM_RESOURCE_IDS["position_score.jinja"])
     _add_null_histogram_gene_score(
         repo_dir / NULL_HISTOGRAM_RESOURCE_IDS["gene_score.jinja"])
 
