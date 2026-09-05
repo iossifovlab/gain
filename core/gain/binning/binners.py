@@ -25,6 +25,7 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
     SearchIndexUnavailableError,
+    SearchTermError,
 )
 from gain.genomic_resources.resource_query import ResourceQueryParseError
 from gain.genomic_resources.score_def import ScoreValue
@@ -162,7 +163,7 @@ class PositionScoreBinner:
             matches = sorted(
                 (r for r in found if r.get_type() == "position_score"),
                 key=lambda resource: resource.resource_id)
-        except ResourceQueryParseError as err:
+        except (ResourceQueryParseError, SearchTermError) as err:
             raise RunDefinitionError(f"{label}: {err}") from err
         except SearchIndexUnavailableError as err:
             raise RunDefinitionError(
@@ -173,8 +174,11 @@ class PositionScoreBinner:
         if not matches:
             # The one deliberate departure from the prototype, which
             # silently produced no column for a query matching nothing.
+            narrowed = (
+                f" with search_term {search_term!r}"
+                if search_term and search_term.strip() else "")
             raise RunDefinitionError(
-                f"{label}: resource_query {query!r} matches no "
+                f"{label}: resource_query {query!r}{narrowed} matches no "
                 f"position_score resource")
         return [
             cls._track_of(

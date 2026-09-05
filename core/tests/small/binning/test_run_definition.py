@@ -100,6 +100,50 @@ def test_search_term_narrows_the_query_on_an_indexed_repository(
     assert [track.resource_id for track in run.tracks] == ["scores/one"]
 
 
+def test_a_search_term_that_eliminates_every_match_names_the_term(
+    indexed_repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    # The id matches; the term is what left nothing, and the message
+    # must say so rather than blame the query.
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_one_entry(
+            {"resource_query": "scores/one", "search_term": "zzzz"},
+            indexed_repo, genome)
+
+    message = str(excinfo.value)
+    assert "binners[0]" in message
+    assert "'zzzz'" in message
+    assert "'scores/one'" in message
+
+
+def test_a_malformed_search_term_is_a_parse_error_naming_the_entry(
+    indexed_repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    # A term the full-text engine cannot parse is rejected on the first
+    # draw of the search, like the missing index; both belong to the
+    # entry, not to a traceback.
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_one_entry(
+            {"resource_query": "scores/*", "search_term": "one AND"},
+            indexed_repo, genome)
+
+    message = str(excinfo.value)
+    assert "binners[0]" in message
+    assert "one AND" in message
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_a_blank_search_term_is_no_search_term(
+    repo: GenomicResourceRepo, genome: ReferenceGenome, blank: str,
+) -> None:
+    # What a shell substitutes for an unset variable; the repository
+    # treats it as unset, so no index is demanded for it.
+    run = parse_one_entry(
+        {"resource_query": "scores/*", "search_term": blank}, repo, genome)
+
+    assert [t.resource_id for t in run.tracks] == ["scores/one", "scores/two"]
+
+
 def test_omitted_regions_mean_every_chromosome_in_genome_order(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
@@ -155,6 +199,24 @@ def test_a_region_outside_its_chromosome_is_a_parse_error_naming_it(
     assert str(genome.get_chrom_length(notation.split(":")[0])) in message
 
 
+def test_a_window_ending_before_it_starts_is_a_parse_error_naming_it(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    config = {
+        "bins": {"bin_size": 10, "regions": ["chr1:1-10", "chr2:20-10"]},
+        "binners": [
+            {"position_score_binner": {"resource_query": "scores/one"}},
+        ],
+    }
+
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_run_definition(config, repo, genome)
+
+    message = str(excinfo.value)
+    assert "bins.regions[1]" in message
+    assert "chr2:20-10" in message
+
+
 @pytest.mark.parametrize("regions", [
     ["chr1:1-20", "chr2", "chr1:20-30"],   # windows sharing position 20
     ["chr1:1-20", "chr2", "chr1"],          # the bare chromosome covers it
@@ -176,8 +238,10 @@ def test_overlapping_regions_are_a_parse_error_naming_both(
     message = str(excinfo.value)
     assert "bins.regions[0]" in message
     assert "bins.regions[2]" in message
-    assert regions[0] in message
-    assert regions[2] in message
+    # The quoted form: a bare 'chr1' is a substring of 'chr1:1-20', so
+    # only the repr tells the two notations apart in the message.
+    assert repr(regions[0]) in message
+    assert repr(regions[2]) in message
 
 
 def test_adjacent_regions_do_not_overlap(

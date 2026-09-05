@@ -83,6 +83,12 @@ def _resolve_regions(
         except ValueError as err:
             raise RunDefinitionError(
                 f"bins.regions[{index}]: {err}") from err
+        except AssertionError as err:
+            # The one malformation the parser asserts rather than
+            # reports: a window whose end precedes its start.
+            raise RunDefinitionError(
+                f"bins.regions[{index}]: {notation!r} ends before it "
+                f"starts") from err
         if region.chrom not in genome.chromosomes:
             raise RunDefinitionError(
                 f"bins.regions[{index}]: {notation!r} names chromosome "
