@@ -88,10 +88,35 @@ def _resolve_regions(
                 f"bins.regions[{index}]: {notation!r} names chromosome "
                 f"{region.chrom!r}, which the genome "
                 f"<{genome.resource_id}> does not have")
-        resolved.append(
-            BedRegion(region.chrom, 1, genome.get_chrom_length(region.chrom))
-            if region.start is None else region.to_bed_region())
+        length = genome.get_chrom_length(region.chrom)
+        if region.start is None:
+            resolved.append(BedRegion(region.chrom, 1, length))
+            continue
+        bed = region.to_bed_region()
+        if bed.start < 1 or bed.stop > length:
+            raise RunDefinitionError(
+                f"bins.regions[{index}]: {notation!r} lies outside "
+                f"{region.chrom}:1-{length}, the whole of chromosome "
+                f"{region.chrom!r} in genome <{genome.resource_id}>")
+        resolved.append(bed)
+    _refuse_overlapping_regions(regions, resolved)
     return resolved
+
+
+def _refuse_overlapping_regions(
+    notations: list[Any], resolved: list[BedRegion],
+) -> None:
+    """Two regions sharing a position would bin it twice (D4).
+
+    Named by the notation the user wrote, since that is what they will
+    look for; regions are neither sorted nor merged on their behalf.
+    """
+    for later, region in enumerate(resolved):
+        for earlier in range(later):
+            if resolved[earlier].intersects(region):
+                raise RunDefinitionError(
+                    f"bins.regions[{earlier}] {notations[earlier]!r} and "
+                    f"bins.regions[{later}] {notations[later]!r} overlap")
 
 
 def _resolve_tracks(binners: Any, grr: GenomicResourceRepo) -> list[Track]:

@@ -119,6 +119,70 @@ def test_regions_are_parsed_in_gain_notation_and_kept_in_listed_order(
     ]
 
 
+@pytest.mark.parametrize("notation", [
+    "chr1:90-101",   # runs past the chromosome
+    "chr1:101-110",  # lies wholly beyond it
+    "chr2:0-10",     # starts before position 1
+])
+def test_a_region_outside_its_chromosome_is_a_parse_error_naming_it(
+    repo: GenomicResourceRepo, genome: ReferenceGenome, notation: str,
+) -> None:
+    config = {
+        "bins": {"bin_size": 10, "regions": ["chr1:1-10", notation]},
+        "binners": [
+            {"position_score_binner": {"resource_query": "scores/one"}},
+        ],
+    }
+
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_run_definition(config, repo, genome)
+
+    message = str(excinfo.value)
+    assert "bins.regions[1]" in message
+    assert notation in message
+    assert str(genome.get_chrom_length(notation.split(":")[0])) in message
+
+
+@pytest.mark.parametrize("regions", [
+    ["chr1:1-20", "chr2", "chr1:20-30"],   # windows sharing position 20
+    ["chr1:1-20", "chr2", "chr1"],          # the bare chromosome covers it
+    ["chr1:5-10", "chr2", "chr1:1-20"],     # one inside the other
+])
+def test_overlapping_regions_are_a_parse_error_naming_both(
+    repo: GenomicResourceRepo, genome: ReferenceGenome, regions: list[str],
+) -> None:
+    config = {
+        "bins": {"bin_size": 10, "regions": regions},
+        "binners": [
+            {"position_score_binner": {"resource_query": "scores/one"}},
+        ],
+    }
+
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_run_definition(config, repo, genome)
+
+    message = str(excinfo.value)
+    assert "bins.regions[0]" in message
+    assert "bins.regions[2]" in message
+    assert regions[0] in message
+    assert regions[2] in message
+
+
+def test_adjacent_regions_do_not_overlap(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    config = {
+        "bins": {"bin_size": 10, "regions": ["chr1:11-20", "chr1:1-10"]},
+        "binners": [
+            {"position_score_binner": {"resource_query": "scores/one"}},
+        ],
+    }
+
+    run = parse_run_definition(config, repo, genome)
+
+    assert run.regions == [BedRegion("chr1", 11, 20), BedRegion("chr1", 1, 10)]
+
+
 def test_an_unknown_binner_kind_is_a_parse_error_listing_the_known_kinds(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
