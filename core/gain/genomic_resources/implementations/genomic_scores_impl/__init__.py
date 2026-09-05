@@ -7,6 +7,9 @@ statistics machinery beside them in a module of its own.
 * :mod:`.base` -- :class:`~.base.GenomicScoreImplementation`, what every
   kind answers alike: the task-graph wiring that schedules :mod:`.scan`'s
   functions, the resource file set, the hashes, and the page protocol.
+  It names no template; a kind does.  The class still answers to two
+  readers -- the templates and the resource protocol -- and separating
+  those is gain#1037, deliberately not done here.
 * :mod:`.position`, :mod:`.allele` and :mod:`.fragment` -- the kinds.
   Each names the template that fills its section of the page and defines
   the accessors that section calls, and nothing else.
