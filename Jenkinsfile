@@ -1020,12 +1020,24 @@ pipeline {
                             usernameVariable: 'SSH_USER',
                         )]) {
                             sh '''
+                                # Names the release directory the play
+                                # unpacks into and flips the published
+                                # symlink onto, so what is live on the
+                                # docs host is traceable to the build
+                                # that put it there (gain#1191). Exported
+                                # because `docker run -e DOCS_STAMP`
+                                # forwards it from the environment.
+                                export DOCS_STAMP="${BUILD_NUMBER}-$(
+                                    echo "${GIT_COMMIT:-unknown}" | cut -c1-8
+                                )"
+
                                 docker run --rm \
                                     --name gain-docs-deploy-${CI_TAG} \
                                     --label ci-tag=${CI_TAG} \
                                     -v $PWD:/workspace \
                                     -v $SSH_KEY:/deploy.key:ro \
                                     -e SSH_USER \
+                                    -e DOCS_STAMP \
                                     -w /workspace \
                                     gain-core-ci:${CI_TAG} \
                                     sh -c '
