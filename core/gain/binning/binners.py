@@ -14,7 +14,9 @@ import numpy as np
 import numpy.typing as npt
 
 from gain.genomic_resources.aggregators import (
+    NUMERIC_ONLY_AGGREGATORS,
     Aggregator,
+    AggregatorDefinition,
     PositionScoreAggregationQuery,
     validate_aggregator,
 )
@@ -36,6 +38,9 @@ from gain.utils.regions import (
 BINNERS_ENTRY_POINT_GROUP = "gain.binning.binners"
 
 NUMERIC_VALUE_TYPES = {"int", "float"}
+# The aggregators whose result is a number (D11): the ones the registry
+# reserves for numeric input, plus ``count``, which counts anything.
+NUMERIC_AGGREGATORS = NUMERIC_ONLY_AGGREGATORS | {"count"}
 
 
 class RunDefinitionError(ValueError):
@@ -220,21 +225,24 @@ class PositionScoreBinner:
         The score resolves the aggregator default and judges the
         replacement against its value type; the resolver stops at the
         aggregator's NAME, so that the name builds is asked separately.
-        Only the two rules that are this slice's own -- exactly one score,
-        numeric only -- are checked here.
+        Only the rules that are the tool's own are checked here: a track
+        is exactly one score, and every cell of ``/values`` is a float64
+        (D11), so the score must be numeric and the aggregator must
+        produce a number.
         """
         score = PositionScore(resource)
         if len(score.score_definitions) != 1:
             raise RunDefinitionError(
                 f"{label}: resource {resource.resource_id!r} defines "
-                f"{sorted(score.score_definitions)}; binning a resource "
-                f"with more than one score is not yet supported")
+                f"{len(score.score_definitions)} scores, "
+                f"{sorted(score.score_definitions)}; a track is one score, "
+                f"and this binner takes a resource with exactly one")
         (score_id, score_def), = score.score_definitions.items()
         if score_def.value_type not in NUMERIC_VALUE_TYPES:
             raise RunDefinitionError(
                 f"{label}: resource {resource.resource_id!r} score "
                 f"{score_id!r} is of type {score_def.value_type!r}; "
-                f"binning a non-numeric score is not yet supported")
+                f"only a numeric score (int or float) can be binned")
         try:
             resolved = score.resolve_aggregation_queries([
                 PositionScoreAggregationQuery(
@@ -246,6 +254,13 @@ class PositionScoreBinner:
             raise RunDefinitionError(
                 f"{label}: resource {resource.resource_id!r}: "
                 f"{err.args[0]}") from err
+        aggregator_type = AggregatorDefinition.coerce(
+            aggregator_name).aggregator_type
+        if aggregator_type not in NUMERIC_AGGREGATORS:
+            raise RunDefinitionError(
+                f"{label}: resource {resource.resource_id!r}: aggregator "
+                f"{aggregator_name!r} does not produce a number; use one "
+                f"of {', '.join(sorted(NUMERIC_AGGREGATORS))}")
         assert replacement is None or isinstance(replacement, int | float)
         return Track(
             name=resource.resource_id,

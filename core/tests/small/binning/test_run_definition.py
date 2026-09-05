@@ -289,10 +289,6 @@ def test_search_term_on_a_repository_without_an_index_is_a_parse_error(
     ({"resource_query": "scores/one", "aggregator": "mediann"}, "mediann"),
     ({"resource_query": "scores/one", "none_value_replacement": "zero"},
      "none_value_replacement"),
-    # Two scores on one resource, and a string-typed score, are refused
-    # until gain#1201 decides what to do with them.
-    ({"resource_query": "other/pair"}, "other/pair"),
-    ({"resource_query": "other/label"}, "other/label"),
 ])
 def test_a_malformed_entry_is_a_parse_error_naming_what_is_wrong(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
@@ -303,6 +299,43 @@ def test_a_malformed_entry_is_a_parse_error_naming_what_is_wrong(
 
     assert "binners[0]" in str(excinfo.value)
     assert fragment in str(excinfo.value)
+
+
+def test_a_resource_with_several_scores_is_a_parse_error_listing_them(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    # A track is one score of one resource; which of several the user
+    # meant is not the tool's to guess.
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_one_entry({"resource_query": "other/pair"}, repo, genome)
+
+    message = str(excinfo.value)
+    assert "binners[0]" in message
+    assert "other/pair" in message
+    assert "'p'" in message
+    assert "'q'" in message
+    assert "not yet supported" not in message
+
+
+@pytest.mark.parametrize("entry,fragment", [
+    ({"resource_query": "other/label"}, "'str'"),
+    ({"resource_query": "scores/one", "aggregator": "join(,)"}, "join"),
+    ({"resource_query": "scores/one", "aggregator": "list"}, "list"),
+    ({"resource_query": "scores/one", "aggregator": "concat"}, "concat"),
+])
+def test_a_non_numeric_score_or_aggregator_is_a_parse_error(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+    entry: dict[str, Any], fragment: str,
+) -> None:
+    # /values is one float64 matrix (D11): a string-typed score, or an
+    # aggregator that builds a string or a list, has no cell to go in.
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_one_entry(entry, repo, genome)
+
+    message = str(excinfo.value)
+    assert "binners[0]" in message
+    assert fragment in message
+    assert "not yet supported" not in message
 
 
 @pytest.mark.parametrize("bins,fragment", [
