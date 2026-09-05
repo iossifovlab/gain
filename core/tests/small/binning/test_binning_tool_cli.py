@@ -173,13 +173,20 @@ def test_dry_run_prints_the_tracks_and_counts_and_writes_nothing(
     assert not (output.parent / "bins_work").exists()
 
 
-def test_the_output_flag_is_required(
+def test_the_output_defaults_to_the_run_definition_with_an_h5_suffix(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
     run_definition: pathlib.Path,
 ) -> None:
-    with pytest.raises(SystemExit) as excinfo:
-        cli([str(run_definition)])
+    # run.yaml -> run.h5 beside it, and the work dir beside that is
+    # gone after the run as usual.
+    cli([
+        str(run_definition), "--grr-directory", str(grr_dir),
+        "-R", "genome", "-j", "1",
+    ])
 
-    assert excinfo.value.code == 2
+    np.testing.assert_array_equal(
+        read_matrix(run_definition.with_suffix(".h5")), EXPECTED_VALUES)
+    assert not (run_definition.parent / "run_work").exists()
 
 
 def test_the_run_definition_may_name_the_genome_itself(

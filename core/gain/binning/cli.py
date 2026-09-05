@@ -71,8 +71,9 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         "run_definition",
         help="the run definition (YAML): bins and binner entries")
     parser.add_argument(
-        "-o", "--output", required=True,
-        help="the HDF5 file to write (conventionally .h5)")
+        "-o", "--output", default=None,
+        help="the HDF5 file to write; defaults to the run definition "
+        "with an .h5 suffix, beside it")
     parser.add_argument(
         "-w", "--work-dir", default=None,
         help="directory for the per-chunk intermediate files; defaults "
@@ -98,6 +99,9 @@ def cli(argv: list[str] | None = None) -> None:
         argv = sys.argv[1:]
     args = vars(_build_argument_parser().parse_args(argv))
     VerbosityConfiguration.set(args)
+    if args.get("output") is None:
+        args["output"] = \
+            f"{os.path.splitext(args['run_definition'])[0]}.h5"
     for key in PATH_ARGS:
         if args.get(key):
             args[key] = os.path.abspath(args[key])
