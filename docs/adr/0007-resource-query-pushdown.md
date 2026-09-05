@@ -83,6 +83,21 @@ must be at least one character, so `in` can never accept `""`, and the only
 `=` values `fnmatch` accepts `""` for are globs of `*` alone, which accept
 every string. Dropping it is sound however stale the index is.
 
+*Amended by gain#1225:* a label value may be a **list**, and a list is a set
+of alternatives: a clause holds if it holds for any one element, each rendered
+exactly as a scalar is. "Has both" is two clauses on the one key, which the
+flat conjunction already expresses; "only this, nothing else" would need a new
+operator and is not provided. `label_alternatives` in `resource_query` is the
+one place that says what a value is read as, and the FTS index (elements joined
+by a space) and the info page (comma-separated) render through it too, so no
+reader is left comparing against or displaying the list's Python repr. Absence
+still reads as `""`, and so does an empty list — under the any-element rule it
+would otherwise hold for nothing, not even `"*"`, which every other spelling of
+"no value" satisfies. Since #646 no label clause is answered out of a column,
+so the index needs no new shape for this: the space-joined column serves only
+`search_term`, where FTS5 tokenises it into one term per element by design
+rather than on the punctuation of a repr.
+
 ## Why this scope
 
 *Why not the guard.* It is not a near-miss; it is wrong in the direction
