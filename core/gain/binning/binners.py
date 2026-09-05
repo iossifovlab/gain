@@ -14,9 +14,8 @@ import numpy as np
 import numpy.typing as npt
 
 from gain.genomic_resources.aggregators import (
-    NUMERIC_ONLY_AGGREGATORS,
+    AGGREGATOR_CLASS_DICT,
     Aggregator,
-    AggregatorDefinition,
     PositionScoreAggregationQuery,
     validate_aggregator,
 )
@@ -39,9 +38,19 @@ from gain.utils.regions import (
 BINNERS_ENTRY_POINT_GROUP = "gain.binning.binners"
 
 NUMERIC_VALUE_TYPES = {"int", "float"}
-# The aggregators whose result is a number (D11): the ones the registry
-# reserves for numeric input, plus ``count``, which counts anything.
-NUMERIC_AGGREGATORS = NUMERIC_ONLY_AGGREGATORS | {"count"}
+
+
+def numeric_aggregators() -> list[str]:
+    """The registered aggregators whose result is a number (D11).
+
+    Read off each aggregator's declared output type, so a numeric
+    aggregator added to the registry is accepted here without a list to
+    keep in step; one that declares no output type of its own (``mode``,
+    which answers in the input's type) is not among them.
+    """
+    return sorted(
+        name for name, cls in AGGREGATOR_CLASS_DICT.items()
+        if cls.output_value_type in NUMERIC_VALUE_TYPES)
 
 
 class RunDefinitionError(ValueError):
@@ -154,9 +163,14 @@ class PositionScoreBinner:
             raise RunDefinitionError(
                 f"{label}: search_term must be a string, "
                 f"not {search_term!r}")
+        # A blank term is an unset one, as the repository reads it (what a
+        # shell substitutes for a variable never set); settled once here
+        # so the search and the messages below agree.
+        if search_term is not None and not search_term.strip():
+            search_term = None
         # The search is a generator: the query is checked when it is
-        # made, but the index is opened on the first draw, so the
-        # consumption sits inside the same try.
+        # made, but the term and the index are checked on the first
+        # draw, so the consumption sits inside the same try.
         try:
             found = grr.search_resources(
                 search_term=search_term, resource_query=query)
@@ -166,17 +180,16 @@ class PositionScoreBinner:
         except (ResourceQueryParseError, SearchTermError) as err:
             raise RunDefinitionError(f"{label}: {err}") from err
         except SearchIndexUnavailableError as err:
+            # The repository's own message carries the remedy; only
+            # which key needed the index is the entry's to add.
             raise RunDefinitionError(
-                f"{label}: search_term {search_term!r} needs a full-text "
-                f"index, and the repository has none; build one with "
-                f"grr_manage repo-index, or select by id and labels with "
-                f"resource_query alone ({err})") from err
+                f"{label}: search_term {search_term!r} needs the "
+                f"repository's full-text index: {err}") from err
         if not matches:
             # The one deliberate departure from the prototype, which
             # silently produced no column for a query matching nothing.
             narrowed = (
-                f" with search_term {search_term!r}"
-                if search_term and search_term.strip() else "")
+                f" with search_term {search_term!r}" if search_term else "")
             raise RunDefinitionError(
                 f"{label}: resource_query {query!r}{narrowed} matches no "
                 f"position_score resource")
@@ -258,13 +271,13 @@ class PositionScoreBinner:
             raise RunDefinitionError(
                 f"{label}: resource {resource.resource_id!r}: "
                 f"{err.args[0]}") from err
-        aggregator_type = AggregatorDefinition.coerce(
-            aggregator_name).aggregator_type
-        if aggregator_type not in NUMERIC_AGGREGATORS:
+        output_type = Aggregator.resolve_class(
+            aggregator_name).output_value_type
+        if output_type not in NUMERIC_VALUE_TYPES:
             raise RunDefinitionError(
                 f"{label}: resource {resource.resource_id!r}: aggregator "
                 f"{aggregator_name!r} does not produce a number; use one "
-                f"of {', '.join(sorted(NUMERIC_AGGREGATORS))}")
+                f"of {', '.join(numeric_aggregators())}")
         assert replacement is None or isinstance(replacement, int | float)
         return Track(
             name=resource.resource_id,

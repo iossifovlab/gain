@@ -94,12 +94,11 @@ def indexed_repo(
 ) -> GenomicResourceRepo:
     """The toy GRR with its full-text index published.
 
-    The index is what answers a ``search_term``; the builders realize the
-    resources only, so it is published the way an operator would, through
-    ``grr_manage``.  The repository reads the index from disk on every
-    search, so ``repo`` itself sees it.
+    The index is what answers a ``search_term``; the test repository
+    comes with manifests but no index, so it is published the way an
+    operator would, through ``grr_manage``.  The repository reads the
+    index from disk on every search, so ``repo`` itself sees it.
     """
-    cli_manage(["repo-manifest", "-R", str(grr_dir)])
     cli_manage(["repo-index", "-R", str(grr_dir)])
     return repo
 

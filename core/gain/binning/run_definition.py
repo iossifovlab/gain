@@ -1,7 +1,9 @@
 """The ``binning_tool`` run definition: parsing and resolution."""
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
+from itertools import combinations
 from typing import Any
 
 from gain.binning.binners import (
@@ -84,8 +86,10 @@ def _resolve_regions(
             raise RunDefinitionError(
                 f"bins.regions[{index}]: {err}") from err
         except AssertionError as err:
-            # The one malformation the parser asserts rather than
-            # reports: a window whose end precedes its start.
+            # A stand-in: a window whose end precedes its start is the
+            # one malformation the shared parser asserts rather than
+            # reports.  Once ``BedRegion`` raises ValueError for it, the
+            # clause above covers it and this one goes.
             raise RunDefinitionError(
                 f"bins.regions[{index}]: {notation!r} ends before it "
                 f"starts") from err
@@ -116,10 +120,15 @@ def _refuse_overlapping_regions(
 
     Named by the notation the user wrote, since that is what they will
     look for; regions are neither sorted nor merged on their behalf.
+    Compared within a chromosome only: the common genome-wide run lists
+    every contig once, and pays nothing here.
     """
-    for later, region in enumerate(resolved):
-        for earlier in range(later):
-            if resolved[earlier].intersects(region):
+    by_chrom: dict[str, list[int]] = defaultdict(list)
+    for index, region in enumerate(resolved):
+        by_chrom[region.chrom].append(index)
+    for indices in by_chrom.values():
+        for earlier, later in combinations(indices, 2):
+            if resolved[earlier].intersects(resolved[later]):
                 raise RunDefinitionError(
                     f"bins.regions[{earlier}] {notations[earlier]!r} and "
                     f"bins.regions[{later}] {notations[later]!r} overlap")
@@ -159,21 +168,18 @@ def _name_tracks(tracks: list[tuple[str, Track]]) -> list[Track]:
     refused, naming both entries: nothing in the ``/tracks`` table would
     tell the columns apart.
     """
-    repeated = {
-        track.resource_id
-        for _, track in tracks
-        if sum(t.resource_id == track.resource_id for _, t in tracks) > 1
-    }
+    occurrences = Counter(track.resource_id for _, track in tracks)
     named: list[Track] = []
     producers: dict[str, str] = {}
     for label, track in tracks:
-        name = track.resource_id
-        if name in repeated:
-            name = f"{track.resource_id}:{track.aggregator}"
-        if name in producers:
+        named_track = (
+            replace(track, name=f"{track.resource_id}:{track.aggregator}")
+            if occurrences[track.resource_id] > 1 else track)
+        if named_track.name in producers:
             raise RunDefinitionError(
-                f"{producers[name]} and {label} both produce the track "
-                f"{name!r}; a resource may be binned once per aggregator")
-        producers[name] = label
-        named.append(replace(track, name=name))
+                f"{producers[named_track.name]} and {label} both produce "
+                f"the track {named_track.name!r}; a resource may be binned "
+                f"once per aggregator")
+        producers[named_track.name] = label
+        named.append(named_track)
     return named
