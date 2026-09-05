@@ -27,6 +27,7 @@ from gain.genomic_resources.repository import (
     GR_INDEX_FILE_NAME,
     GR_SQLITE_META_FILE_NAME,
     GenomicResource,
+    GenomicResourceProtocolRepo,
     ResourceFileState,
 )
 from gain.genomic_resources.repository_factory import (
@@ -42,6 +43,7 @@ from gain.genomic_resources.testing import (
     setup_directories,
 )
 from gain.genomic_resources.testing.builders import (
+    ResourceBuilder,
     a_grr,
     a_position_score,
 )
@@ -661,8 +663,29 @@ def index_row(resource: GenomicResource) -> dict[str, str]:
     """The resource's FTS index row, keyed by the column it lands in.
 
     Shared by the files that cover what a row carries -- the shape of the
-    ``meta`` block it is collected from (gain#1004) and the values the
-    meta-derived columns end up with (gain#1008).
+    ``meta`` block it is collected from (gain#1004), the values the
+    meta-derived columns end up with (gain#1008) and what a list-valued
+    label stores (gain#1225).
     """
     header, row = build_resource_implementation(resource).collect_index_info()
     return dict(zip(header, row, strict=True))
+
+
+def indexed_repo(
+    tmp_path: pathlib.Path, resources: dict[str, ResourceBuilder],
+) -> GenomicResourceProtocolRepo:
+    """Realize ``resources`` as a GRR and build its FTS index.
+
+    Returns the repository the index can be searched through.  The index
+    build is asserted to have skipped nothing, so a test that then finds
+    no rows is reporting its own query rather than a resource that never
+    indexed at all.  Shared by the same files as :func:`index_row`.
+    """
+    grr = a_grr()
+    for resource_id, builder in resources.items():
+        grr = grr.with_resource(resource_id, builder)
+    grr.build_repo(tmp_path)
+
+    proto = build_filesystem_test_protocol(tmp_path, repair=False)
+    assert _create_contents_db(proto) == frozenset()
+    return GenomicResourceProtocolRepo(proto)

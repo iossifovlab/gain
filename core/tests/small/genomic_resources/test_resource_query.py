@@ -230,22 +230,12 @@ def test_a_non_string_label_is_compared_in_its_rendered_form(
     assert ResourceQuery.parse(query_text).match_labels(labels)
 
 
-def test_a_list_valued_label_matches_on_any_of_its_elements() -> None:
-    """A label may carry several values; a clause holds if any one does.
-
-    A multiome resource is both ``RNA`` and ``ATAC``, so ``modality`` is a
-    list. Rendering the list as a whole compares against its Python repr,
-    which no literal a user would write can equal.
-    """
-    query = ResourceQuery.parse('*[modality="RNA"]')
-
-    assert query.match_labels({"modality": ["RNA", "ATAC"]})
-    assert not query.match_labels({"modality": ["ATAC"]})
-
-
 @pytest.mark.parametrize(
     ("query_text", "matching", "rejected"),
     [
+        # A multiome resource is both RNA and ATAC, so `modality` is a
+        # list; a clause holds if it holds for any one element.
+        ('*[modality="RNA"]', ["RNA", "ATAC"], ["ATAC"]),
         # Containment and the glob apply per element, so neither can be
         # satisfied by text that only exists across two of them.
         ('*["RNA" in modality]', ["ATAC", "RNA"], ["ATAC", "Multiome"]),
@@ -260,7 +250,7 @@ def test_a_list_valued_label_matches_on_any_of_its_elements() -> None:
         ('*["Tru" in flags]', [False, True], [False]),
     ],
 )
-def test_each_element_of_a_list_valued_label_is_read_as_a_scalar_is(
+def test_a_list_valued_label_matches_on_any_of_its_elements(
     query_text: str, matching: list[object], rejected: list[object],
 ) -> None:
     query = ResourceQuery.parse(query_text)

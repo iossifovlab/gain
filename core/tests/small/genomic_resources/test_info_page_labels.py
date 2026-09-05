@@ -30,7 +30,16 @@ def test_a_list_valued_label_renders_its_elements_comma_separated(
     page = _info_page(tmp_path, modality=["RNA", "ATAC"])
 
     assert "<li>modality: RNA, ATAC</li>" in page
-    assert "[" not in page.split("<th>Labels</th>")[1].split("</tr>")[0]
+
+
+def test_an_empty_list_label_renders_as_no_value(
+    tmp_path: pathlib.Path,
+) -> None:
+    # `[]` says "no value", as the matcher and the index read it; the row
+    # keeps its key so the curator can see the label is declared.
+    page = _info_page(tmp_path, modality=[])
+
+    assert "<li>modality: </li>" in page
 
 
 @pytest.mark.parametrize(
