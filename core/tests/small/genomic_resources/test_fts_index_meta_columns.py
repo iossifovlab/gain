@@ -20,41 +20,14 @@ ADR 0012 names ``-s 'summary: foo'`` as a portable filter.
 import pathlib
 
 import pytest
-from gain.genomic_resources.cli import _create_contents_db
-from gain.genomic_resources.repository import GenomicResourceProtocolRepo
-from gain.genomic_resources.testing import build_filesystem_test_protocol
-from gain.genomic_resources.testing.builders import (
-    ResourceBuilder,
-    a_grr,
-    a_position_score,
-)
+from gain.genomic_resources.testing.builders import a_position_score
 
-from .conftest import index_row
+from .conftest import index_row, indexed_repo
 
 #: A term that appears only in the description of the description-only
 #: resource, so a search for it cannot be answered by anything else in the
 #: repository.
 DESCRIPTION_ONLY_TERM = "lonelydescription"
-
-
-def _indexed_repo(
-    tmp_path: pathlib.Path, resources: dict[str, ResourceBuilder],
-) -> GenomicResourceProtocolRepo:
-    """Realize ``resources`` as a GRR and build its FTS index.
-
-    Returns the repository the index can be searched through.  The index
-    build is asserted to have skipped nothing, so a test that then finds
-    no rows is reporting its own query rather than a resource that never
-    indexed at all.
-    """
-    grr = a_grr()
-    for resource_id, builder in resources.items():
-        grr = grr.with_resource(resource_id, builder)
-    grr.build_repo(tmp_path)
-
-    proto = build_filesystem_test_protocol(tmp_path, repair=False)
-    assert _create_contents_db(proto) == frozenset()
-    return GenomicResourceProtocolRepo(proto)
 
 
 def test_summary_search_finds_a_resource_whose_summary_is_its_description(
@@ -63,7 +36,7 @@ def test_summary_search_finds_a_resource_whose_summary_is_its_description(
     # The user-visible seam: `summary : <term>` is a documented query form,
     # and the resource's own page already answers with this description
     # when asked for its summary.
-    repo = _indexed_repo(tmp_path, {
+    repo = indexed_repo(tmp_path, {
         "desconly": a_position_score().with_meta(
             description=f"a {DESCRIPTION_ONLY_TERM} and no summary"),
         "both": a_position_score().with_meta(
@@ -170,7 +143,7 @@ def test_a_non_string_summary_does_not_abort_the_repository_index(
     rather than cosmetic, so it is pinned here -- dropping the ``str()``
     passes every other test in this file and reopens the abort.
     """
-    repo = _indexed_repo(tmp_path, {
+    repo = indexed_repo(tmp_path, {
         "listy": a_position_score().with_raw_meta({"summary": ["a", "b"]}),
         "healthy": a_position_score().with_meta(description="a description"),
     })

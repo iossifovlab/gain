@@ -1179,6 +1179,10 @@ class GenomicResource:
         :meth:`get_meta`, which every ``meta`` reader shares (gain#1004);
         this is the inner half of the two-tier narrowing described there,
         and it holds to the same never-validates, never-raises contract.
+
+        The values are returned as written.  How a value is *read* -- a
+        list as a set of alternatives, everything else as its ``str()`` --
+        is :func:`~gain.genomic_resources.resource_query.label_alternatives`.
         """
         labels = self.get_meta().get("labels")
         if labels is None:

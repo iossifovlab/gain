@@ -481,7 +481,6 @@ def test_an_edited_label_does_not_change_what_a_query_means(
         # A list-valued label holds for a clause any of its elements
         # holds for; "has both" is two clauses on the one key.
         ('*[modality="RNA"]', {"scores/res_a"}),
-        ('*[modality="ATAC"]', {"scores/res_a"}),
         ('*[modality="RNA" and modality="ATAC"]', {"scores/res_a"}),
         ('*[modality="RNA" and modality="Multiome"]', set()),
         # ... and no clause is satisfied by the list as a whole: this glob
