@@ -83,6 +83,9 @@ _RES_A_LABELS: dict[str, Any] = {
     "domain": "alpha", "note": "", "target": "TF1",
     # Free-form YAML: not every label value is a string.
     "perturbed": False, "year": 2019,
+    # ... nor a scalar. A multiome resource is both, so `modality` is a
+    # list of alternatives (gain#1225).
+    "modality": ["RNA", "ATAC"],
 }
 
 
@@ -301,6 +304,16 @@ QUERY_CORPUS = [
     '*["Fal" in perturbed]',
     '*[year="2019"]',
     '*["19" in year]',
+    # A list-valued label, in every clause shape: literal, glob,
+    # containment, and two clauses on the one key.
+    '*[modality="RNA"]',
+    '*[modality="ATAC"]',
+    '*[modality="R*"]',
+    '*[modality="*"]',
+    '*["NA" in modality]',
+    '*[modality="RNA" and modality="ATAC"]',
+    '*[modality="RNA" and modality="Multiome"]',
+    '*[modality="*RNA*ATAC*"]',
 ]
 
 
@@ -465,6 +478,15 @@ def test_an_edited_label_does_not_change_what_a_query_means(
         # A bool and an int label, compared in their rendered form.
         ('*[perturbed="False"]', {"scores/res_a"}),
         ('*[year="2019"]', {"scores/res_a"}),
+        # A list-valued label holds for a clause any of its elements
+        # holds for; "has both" is two clauses on the one key.
+        ('*[modality="RNA"]', {"scores/res_a"}),
+        ('*[modality="ATAC"]', {"scores/res_a"}),
+        ('*[modality="RNA" and modality="ATAC"]', {"scores/res_a"}),
+        ('*[modality="RNA" and modality="Multiome"]', set()),
+        # ... and no clause is satisfied by the list as a whole: this glob
+        # matches the repr `['RNA', 'ATAC']` and neither element.
+        ('*[modality="*RNA*ATAC*"]', set()),
     ],
 )
 def test_the_indexed_path_returns_the_expected_resources(

@@ -228,3 +228,58 @@ def test_a_non_string_label_is_compared_in_its_rendered_form(
     Comparing them raw raises a bare ``TypeError`` out of the predicate.
     """
     assert ResourceQuery.parse(query_text).match_labels(labels)
+
+
+def test_a_list_valued_label_matches_on_any_of_its_elements() -> None:
+    """A label may carry several values; a clause holds if any one does.
+
+    A multiome resource is both ``RNA`` and ``ATAC``, so ``modality`` is a
+    list. Rendering the list as a whole compares against its Python repr,
+    which no literal a user would write can equal.
+    """
+    query = ResourceQuery.parse('*[modality="RNA"]')
+
+    assert query.match_labels({"modality": ["RNA", "ATAC"]})
+    assert not query.match_labels({"modality": ["ATAC"]})
+
+
+@pytest.mark.parametrize(
+    ("query_text", "matching", "rejected"),
+    [
+        # Containment and the glob apply per element, so neither can be
+        # satisfied by text that only exists across two of them.
+        ('*["RNA" in modality]', ["ATAC", "RNA"], ["ATAC", "Multiome"]),
+        ('*[modality="R*"]', ["ATAC", "RNA"], ["ATAC"]),
+        ('*["NAAT" in modality]', ["RNAATAC"], ["RNA", "ATAC"]),
+        # Two clauses on one key are how "has both" is spelled: each is
+        # asked of the whole list, and all of them must hold.
+        ('*[modality="RNA" and modality="ATAC"]', ["RNA", "ATAC"], ["RNA"]),
+        # An element that YAML made an int or a bool renders as a scalar
+        # label does.
+        ('*[year="2019"]', [2018, 2019], [2018]),
+        ('*["Tru" in flags]', [False, True], [False]),
+    ],
+)
+def test_each_element_of_a_list_valued_label_is_read_as_a_scalar_is(
+    query_text: str, matching: list[object], rejected: list[object],
+) -> None:
+    query = ResourceQuery.parse(query_text)
+    key = query.label_clauses[0].key
+
+    assert query.match_labels({key: matching})
+    assert not query.match_labels({key: rejected})
+
+
+def test_an_empty_list_label_is_matched_as_the_empty_value() -> None:
+    """``modality: []`` says "no values", which is what an absent label says.
+
+    Under the any-element rule an empty list would hold for nothing at
+    all -- not even for ``"*"``, which every other spelling of "no value"
+    satisfies. Reading it as ``""`` keeps the three spellings of absence
+    one case, as the index does when it stores ``""`` for all of them.
+    """
+    wildcard = ResourceQuery.parse('*[modality="*"]')
+    literal = ResourceQuery.parse('*[modality="RNA"]')
+
+    assert wildcard.match_labels({"modality": []})
+    assert not literal.match_labels({"modality": []})

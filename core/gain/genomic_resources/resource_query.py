@@ -112,6 +112,27 @@ def _get_parser() -> Lark:
     return Lark(RESOURCE_QUERY_GRAMMAR)
 
 
+def label_alternatives(value: Any) -> tuple[str, ...]:
+    """Render a ``meta.labels`` value as the strings it stands for.
+
+    A label value is whatever YAML made of it. A scalar -- a string, or the
+    bool and int the production GRRs carry in bulk -- stands for its
+    ``str()``; a nested mapping does too. A list or tuple is a set of
+    alternatives, one rendered string per element, so a resource can be
+    labelled with everything it is (``modality: [RNA, ATAC]``). An empty
+    list stands for ``""``, which is also what an absent label reads as:
+    both say "no value".
+
+    This is the one definition of what a value is *read as*. The matcher
+    asks a clause of every alternative, the FTS index stores them joined by
+    a space, and the info page lists them; a reader that rendered the value
+    itself would compare against, index and display its Python repr.
+    """
+    if isinstance(value, (list, tuple)):
+        return tuple(str(element) for element in value) or ("",)
+    return (str(value),)
+
+
 class LabelOperator(enum.Enum):
     """The comparisons a label clause can make."""
 
@@ -149,13 +170,19 @@ class LabelClause:
         bulk. The query language only ever spells values as text, so a
         value is compared in its rendered form; without that both ``in``
         and ``=`` raise a bare ``TypeError`` out of the predicate. A label
-        the resource does not carry is matched as ``""``.
+        the resource does not carry is matched as ``""``. A list value is
+        a set of alternatives: the clause holds if it holds for any one
+        element, each rendered exactly as a scalar is (see
+        :func:`label_alternatives`).
 
-        Both rules live here rather than at the call sites so that a
+        All three rules live here rather than at the call sites so that a
         caller evaluating one clause reads a label exactly as the caller
         evaluating all of them does.
         """
-        return self.matches(str(labels.get(self.key, "")))
+        return any(
+            self.matches(alternative)
+            for alternative in label_alternatives(labels.get(self.key, ""))
+        )
 
     def matches_an_absent_label(self) -> bool:
         """Check whether this clause holds for a label that is not there.
