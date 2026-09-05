@@ -45,26 +45,47 @@
   # otherwise share this path, and one could unarchive a tarball the other
   # had already replaced or cleaned up. The #1188 lock makes that unlikely
   # rather than impossible, and this play should not depend on it.
-  - name: copy gaindocs-html.tar.gz
-    copy:
-      src: ../gaindocs-html.tar.gz
-      dest: "{{ base_path }}/gaindocs-html-{{ docs_stamp }}.tar.gz"
+  #
+  # Removed in `always`, because a per-deploy name means a failure between
+  # the copy and the unarchive would strand 25MB on the docs host under a
+  # name nothing ever looks at again -- the prune below sweeps release
+  # directories, not tarballs.
+  - name: stage and unpack the release
+    block:
 
-  - name: create the release directory for this deploy
-    file:
-      path: "{{ base_path }}/gaindocs/html-{{ docs_stamp }}"
-      state: directory
+    - name: copy gaindocs-html.tar.gz
+      copy:
+        src: ../gaindocs-html.tar.gz
+        dest: "{{ base_path }}/gaindocs-html-{{ docs_stamp }}.tar.gz"
 
-  # build_docs.sh packs the site with `tar -C docs/build/ html/`, so every
-  # member carries an `html/` prefix. Strip it, so the release directory
-  # holds the site itself rather than a nested html/.
-  - name: unarchive gaindocs-html.tar.gz into the release directory
-    unarchive:
-      src: "{{ base_path }}/gaindocs-html-{{ docs_stamp }}.tar.gz"
-      dest: "{{ base_path }}/gaindocs/html-{{ docs_stamp }}"
-      remote_src: true
-      extra_opts:
-        - --strip-components=1
+    # Mode is explicit because --strip-components=1 drops the archive's own
+    # `html/` member, and with it the mode the served directory used to
+    # inherit from the tarball; it would otherwise come from the docs
+    # host's umask. A restrictive umask there would 403 the whole site,
+    # invisibly to this play.
+    - name: create the release directory for this deploy
+      file:
+        path: "{{ base_path }}/gaindocs/html-{{ docs_stamp }}"
+        state: directory
+        mode: "0755"
+
+    # build_docs.sh packs the site with `tar -C docs/build/ html/`, so every
+    # member carries an `html/` prefix. Strip it, so the release directory
+    # holds the site itself rather than a nested html/.
+    - name: unarchive gaindocs-html.tar.gz into the release directory
+      unarchive:
+        src: "{{ base_path }}/gaindocs-html-{{ docs_stamp }}.tar.gz"
+        dest: "{{ base_path }}/gaindocs/html-{{ docs_stamp }}"
+        remote_src: true
+        extra_opts:
+          - --strip-components=1
+
+    always:
+
+    - name: clean gaindocs-html.tar.gz
+      file:
+        path: "{{ base_path }}/gaindocs-html-{{ docs_stamp }}.tar.gz"
+        state: absent
 
   - name: check what the published path is now
     stat:
@@ -80,10 +101,15 @@
   # `.../html/html-<stamp>` and fail.
   #
   # This is the one moment in the play when the published path does not
-  # resolve. It lasts a single task transition and happens once, ever, on
-  # the first deploy after gain#1191. Renaming the old tree aside instead
-  # of deleting it was measured and is not worth it: the gap is dominated
-  # by the transition to the next task, not by the delete.
+  # resolve. It lasts a single task transition and, with the #1188 stage
+  # lock held, happens once ever -- on the first deploy after gain#1191.
+  # Without that lock a second deploy could read `html` as a directory
+  # here, then delete the symlink the first one had already published, so
+  # the property is the pipeline's and not this play's alone.
+  #
+  # Renaming the old tree aside instead of deleting it was measured and is
+  # not worth it: the gap is dominated by the transition to the next task,
+  # not by the delete.
   - name: retire the pre-symlink docs directory
     file:
       path: "{{ base_path }}/gaindocs/html"
@@ -112,9 +138,14 @@
 
   # Keep the newest docs_keep releases. Every master build publishes ~40MB
   # and the nightly rebuild republishes unchanged docs, so without this the
-  # docs host fills up. The release just published is the newest by mtime
-  # and so never reaches the tail, but exclude it by name as well --
-  # deleting the live symlink target would undo the point of the swap.
+  # docs host fills up.
+  #
+  # What keeps the live tree out of the sweep is its mtime rank, not the
+  # name exclusion below: the release this run just published is the
+  # newest and so never reaches the tail, and the name check only makes
+  # that explicit. Keep docs_keep >= 2. At 1, a deploy racing this one
+  # could prune the tree the other is about to publish, leaving `html`
+  # dangling until the next deploy.
   - name: prune superseded releases
     file:
       path: "{{ item.path }}"
@@ -126,8 +157,3 @@
     when:
       - gaindocs_release_index >= docs_keep | int
       - item.path | basename != 'html-' ~ docs_stamp
-
-  - name: clean gaindocs-html.tar.gz
-    file:
-      path: "{{ base_path }}/gaindocs-html-{{ docs_stamp }}.tar.gz"
-      state: absent
