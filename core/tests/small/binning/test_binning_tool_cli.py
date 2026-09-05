@@ -219,6 +219,45 @@ def test_dry_run_lists_the_suffixed_track_names(
     assert "scores/two\tscores/two\tt\tmean" in out
 
 
+@pytest.mark.parametrize("run_definition_text,fragments", [
+    # search_term needs the index the toy GRR does not publish.
+    (textwrap.dedent("""
+        bins:
+          bin_size: 10
+        binners:
+        - position_score_binner:
+            resource_query: "scores/*"
+            search_term: one
+    """), ["binners[0]", "search_term", "index"]),
+    (textwrap.dedent("""
+        bins:
+          bin_size: 10
+          regions: ["chr1:1-20", "chr1:20-30"]
+        binners:
+        - position_score_binner:
+            resource_query: "scores/*"
+    """), ["bins.regions[0]", "bins.regions[1]", "overlap"]),
+], ids=["search_term_without_index", "overlapping_regions"])
+def test_dry_run_reports_a_run_definition_error_and_writes_nothing(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+    run_definition_text: str, fragments: list[str],
+) -> None:
+    run_definition = output.parent / "run.yaml"
+    run_definition.write_text(run_definition_text)
+
+    with pytest.raises(SystemExit) as excinfo:
+        binning_tool(run_definition, grr_dir, output, "--dry-run")
+
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert str(run_definition) in err
+    for fragment in fragments:
+        assert fragment in err
+    assert not output.exists()
+    assert not (output.parent / "bins_work").exists()
+
+
 def test_the_output_defaults_to_the_run_definition_with_an_h5_suffix(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
     run_definition: pathlib.Path,

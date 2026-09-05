@@ -88,6 +88,18 @@ def test_an_entry_overrides_the_aggregator_and_replacement_for_every_match(
     ]
 
 
+def test_search_term_narrows_the_query_on_an_indexed_repository(
+    indexed_repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    # The full-text index holds the resource id among its fields, so a
+    # term naming one id narrows the glob to that resource.
+    run = parse_one_entry(
+        {"resource_query": "scores/*", "search_term": "one"},
+        indexed_repo, genome)
+
+    assert [track.resource_id for track in run.tracks] == ["scores/one"]
+
+
 def test_omitted_regions_mean_every_chromosome_in_genome_order(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
@@ -251,11 +263,25 @@ def test_two_entries_producing_one_track_are_a_parse_error_naming_both(
     assert "binners[1]" in message
 
 
+def test_search_term_on_a_repository_without_an_index_is_a_parse_error(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    # Only the index can answer a term; the toy GRR has none until it is
+    # published.  Refused at parse time, naming the entry and the cause,
+    # rather than surfacing the repository's own error mid-run.
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_one_entry(
+            {"resource_query": "scores/*", "search_term": "one"},
+            repo, genome)
+
+    message = str(excinfo.value)
+    assert "binners[0]" in message
+    assert "search_term" in message
+    assert "index" in message
+
+
 @pytest.mark.parametrize("entry,fragment", [
-    # search_term is the validation slice's; dropping it silently would
-    # widen the matrix past what the user asked for.
-    ({"resource_query": "scores/*", "search_term": "conservation"},
-     "search_term"),
+    ({"resource_query": "scores/*", "search_term": ["one"]}, "search_term"),
     # A typo must not silently bin with the default.
     ({"resource_query": "scores/*", "aggregtor": "min"}, "aggregtor"),
     ({}, "resource_query"),
