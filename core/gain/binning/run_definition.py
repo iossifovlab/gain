@@ -1,7 +1,7 @@
 """The ``binning_tool`` run definition: parsing and resolution."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from gain.binning.binners import (
@@ -124,7 +124,7 @@ def _resolve_tracks(binners: Any, grr: GenomicResourceRepo) -> list[Track]:
         raise RunDefinitionError(
             "binners must be a non-empty list of binner entries")
     kinds = discover_binner_kinds()
-    tracks: list[Track] = []
+    tracks: list[tuple[str, Track]] = []
     for index, entry in enumerate(binners):
         label = f"binners[{index}]"
         if not isinstance(entry, dict) or len(entry) != 1:
@@ -136,25 +136,38 @@ def _resolve_tracks(binners: Any, grr: GenomicResourceRepo) -> list[Track]:
             raise RunDefinitionError(
                 f"{label}: unknown binner kind {kind!r}; "
                 f"registered kinds: {', '.join(sorted(kinds))}")
-        tracks.extend(kinds[kind].parse_entry(label, entry_config, grr))
-    _refuse_repeated_names(tracks)
-    return tracks
+        tracks.extend(
+            (label, track)
+            for track in kinds[kind].parse_entry(label, entry_config, grr))
+    return _name_tracks(tracks)
 
 
-def _refuse_repeated_names(tracks: list[Track]) -> None:
-    """Refuse a track name that would occur twice.
+def _name_tracks(tracks: list[tuple[str, Track]]) -> list[Track]:
+    """Give every track a unique name (D10).
 
-    A track is named by its resource id (D10), so one resource matched by
-    two entries -- two aggregators of one track, side by side -- needs the
-    ``:<aggregator>`` suffixing of the validation slice (gain#1201).
-    Until it lands, such a run is refused here rather than written with
-    two columns that cannot be told apart.
+    A track is named by its resource id.  When one resource occurs more
+    than once in the expanded list -- two aggregators of one track, side
+    by side -- every member of that group carries ``:<aggregator>``,
+    whichever entry came first.  Two tracks that still share a name (same
+    resource and aggregator, differing at most in their replacement) are
+    refused, naming both entries: nothing in the ``/tracks`` table would
+    tell the columns apart.
     """
-    seen: set[str] = set()
-    for track in tracks:
-        if track.name in seen:
+    repeated = {
+        track.resource_id
+        for _, track in tracks
+        if sum(t.resource_id == track.resource_id for _, t in tracks) > 1
+    }
+    named: list[Track] = []
+    producers: dict[str, str] = {}
+    for label, track in tracks:
+        name = track.resource_id
+        if name in repeated:
+            name = f"{track.resource_id}:{track.aggregator}"
+        if name in producers:
             raise RunDefinitionError(
-                f"track {track.name!r} is produced by more than one binner "
-                f"entry; binning one resource under several entries is "
-                f"not yet supported")
-        seen.add(track.name)
+                f"{producers[name]} and {label} both produce the track "
+                f"{name!r}; a resource may be binned once per aggregator")
+        producers[name] = label
+        named.append(replace(track, name=name))
+    return named

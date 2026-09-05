@@ -203,12 +203,12 @@ def test_an_unknown_binner_kind_is_a_parse_error_listing_the_known_kinds(
     assert "position_score_binner" in str(excinfo.value)
 
 
-def test_a_resource_matched_by_two_entries_is_refused_as_not_yet_supported(
+def test_a_resource_matched_by_two_entries_names_both_tracks_by_aggregator(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
-    # Two aggregators of one resource need the ``:<aggregator>`` name
-    # suffixing of the validation slice (gain#1201).  Until then the run
-    # is refused, never written with two columns of the same name.
+    # Two aggregators of one resource side by side (D10): every member of
+    # the repeated group carries its aggregator, whichever entry came
+    # first, while a resource matched once keeps its bare id.
     config = {
         "bins": {"bin_size": 10},
         "binners": [
@@ -218,11 +218,37 @@ def test_a_resource_matched_by_two_entries_is_refused_as_not_yet_supported(
         ],
     }
 
+    run = parse_run_definition(config, repo, genome)
+
+    assert [(t.name, t.resource_id, t.aggregator) for t in run.tracks] == [
+        ("scores/one:max", "scores/one", "max"),
+        ("scores/two", "scores/two", "mean"),
+        ("scores/one:min", "scores/one", "min"),
+    ]
+
+
+def test_two_entries_producing_one_track_are_a_parse_error_naming_both(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    # Same resource, same aggregator: the suffix cannot tell them apart,
+    # and neither could a reader of the ``/tracks`` table.
+    config = {
+        "bins": {"bin_size": 10},
+        "binners": [
+            {"position_score_binner": {"resource_query": "scores/*"}},
+            {"position_score_binner": {
+                "resource_query": "scores/two", "aggregator": "mean",
+                "none_value_replacement": 0.0}},
+        ],
+    }
+
     with pytest.raises(RunDefinitionError) as excinfo:
         parse_run_definition(config, repo, genome)
 
-    assert "scores/one" in str(excinfo.value)
-    assert "not yet supported" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "scores/two:mean" in message
+    assert "binners[0]" in message
+    assert "binners[1]" in message
 
 
 @pytest.mark.parametrize("entry,fragment", [

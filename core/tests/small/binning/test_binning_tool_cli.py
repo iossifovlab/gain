@@ -173,6 +173,52 @@ def test_dry_run_prints_the_tracks_and_counts_and_writes_nothing(
     assert not (output.parent / "bins_work").exists()
 
 
+# scores/one twice, under its own ``max`` and under ``min``; scores/two
+# once.  Only the repeated resource carries its aggregator in its name.
+REPEATED_RUN_DEFINITION = textwrap.dedent("""
+    bins:
+      bin_size: 10
+      regions: ["chr1:1-40"]
+    binners:
+    - position_score_binner:
+        resource_query: "scores/*"
+    - position_score_binner:
+        resource_query: "scores/one"
+        aggregator: min
+""")
+
+
+def test_a_repeated_resource_is_named_by_aggregator_in_the_tracks_table(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+) -> None:
+    run_definition = output.parent / "run.yaml"
+    run_definition.write_text(REPEATED_RUN_DEFINITION)
+
+    binning_tool(run_definition, grr_dir, output)
+
+    with h5py.File(output, "r") as h5:
+        tracks = h5["tracks"][()]
+        shape = h5["values"].shape
+    assert [row["name"] for row in tracks] == [
+        b"scores/one:max", b"scores/two", b"scores/one:min"]
+    assert shape == (4, 3)
+
+
+def test_dry_run_lists_the_suffixed_track_names(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_definition = output.parent / "run.yaml"
+    run_definition.write_text(REPEATED_RUN_DEFINITION)
+
+    binning_tool(run_definition, grr_dir, output, "--dry-run")
+
+    out = capsys.readouterr().out
+    assert "scores/one:max\tscores/one\ts\tmax" in out
+    assert "scores/one:min\tscores/one\ts\tmin" in out
+    assert "scores/two\tscores/two\tt\tmean" in out
+
+
 def test_the_output_defaults_to_the_run_definition_with_an_h5_suffix(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
     run_definition: pathlib.Path,
