@@ -7,9 +7,9 @@ statistics machinery beside them in a module of its own.
 * :mod:`.base` -- :class:`~.base.GenomicScoreImplementation`, what every
   kind answers alike: the task-graph wiring that schedules :mod:`.scan`'s
   functions, the resource file set, the hashes, and the page protocol.
-* :mod:`.allele` and :mod:`.fragment` -- the kinds.  Each names the
-  template that fills its section of the page and defines the accessors
-  that section calls, and nothing else.
+* :mod:`.position`, :mod:`.allele` and :mod:`.fragment` -- the kinds.
+  Each names the template that fills its section of the page and defines
+  the accessors that section calls, and nothing else.
 * :mod:`.builders` -- the factory that picks a kind from a resource's
   type, as the entry points do from a type name.
 * :mod:`.scan` -- the statistics machinery.  Module-level functions that
@@ -35,10 +35,12 @@ from .allele import AlleleScoreImplementation
 from .base import GenomicScoreImplementation
 from .builders import build_score_implementation_from_resource
 from .fragment import FragmentScoreImplementation
+from .position import PositionScoreImplementation
 
 __all__ = [
     "AlleleScoreImplementation",
     "FragmentScoreImplementation",
     "GenomicScoreImplementation",
+    "PositionScoreImplementation",
     "build_score_implementation_from_resource",
 ]

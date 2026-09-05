@@ -10,6 +10,7 @@ here fails nothing -- which is the opposite of what these tests are for.
 """
 import pathlib
 import types
+from collections.abc import Callable
 
 import pytest
 from gain.genomic_resources import get_resource_implementation_builder
@@ -18,11 +19,20 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     AlleleScoreImplementation,
     FragmentScoreImplementation,
     GenomicScoreImplementation,
+    PositionScoreImplementation,
     allele,
     base,
+    build_score_implementation_from_resource,
     builders,
     fragment,
+    position,
     scan,
+)
+from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.testing.builders import (
+    a_fragment_score,
+    a_position_score,
+    an_allele_score,
 )
 
 #: Each published name and the module that defines it: one module per
@@ -30,6 +40,7 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 #: layout mirrors ``genomic_resources/genomic_scores/`` (gain#1210).
 DEFINING_MODULES: dict[str, types.ModuleType] = {
     "GenomicScoreImplementation": base,
+    "PositionScoreImplementation": position,
     "AlleleScoreImplementation": allele,
     "FragmentScoreImplementation": fragment,
     "build_score_implementation_from_resource": builders,
@@ -37,9 +48,51 @@ DEFINING_MODULES: dict[str, types.ModuleType] = {
 
 #: The concrete classes, one per kind.
 KIND_CLASSES = (
+    PositionScoreImplementation,
     AlleleScoreImplementation,
     FragmentScoreImplementation,
 )
+
+#: Every resource-type spelling ``core/pyproject.toml`` routes to this
+#: package, the kind each names, and a builder for a resource of it.
+#: ``cnv_collection`` is the legacy spelling of a fragment score, kept
+#: registered until 2027.1.0 (ADR 0011).
+SCORE_TYPES: list[tuple[str, type, Callable[
+    [pathlib.Path], GenomicResource]]] = [
+    ("position_score", PositionScoreImplementation, lambda tmp_path: (
+        a_position_score()
+        .with_score("score", "float")
+        .with_data("""
+            chrom  pos_begin  pos_end  score
+            chr1   10         20       0.1
+        """)
+        .build_resource(tmp_path))),
+    ("allele_score", AlleleScoreImplementation, lambda tmp_path: (
+        an_allele_score()
+        .with_score("score", "float")
+        .with_data("""
+            chrom  pos_begin  reference  alternative  score
+            chr1   10         A          G            0.1
+        """)
+        .build_resource(tmp_path))),
+    ("fragment_score", FragmentScoreImplementation, lambda tmp_path: (
+        a_fragment_score()
+        .with_score("score", "float")
+        .with_data("""
+            chrom  pos_begin  pos_end  score
+            chr1   10         20       0.1
+        """)
+        .build_resource(tmp_path))),
+    ("cnv_collection", FragmentScoreImplementation, lambda tmp_path: (
+        a_fragment_score()
+        .with_resource_type("cnv_collection")
+        .with_score("score", "float")
+        .with_data("""
+            chrom  pos_begin  pos_end  score
+            chr1   10         20       0.1
+        """)
+        .build_resource(tmp_path))),
+]
 
 #: Each render accessor a kind's template calls, and the ONE class that
 #: defines it.  A template reaches these by name, so they are a published
@@ -124,30 +177,66 @@ def test_each_exported_name_is_the_one_its_module_defines(name: str) -> None:
 
 @pytest.mark.parametrize(
     ("resource_type", "expected"),
-    [("position_score", GenomicScoreImplementation),
-     ("allele_score", AlleleScoreImplementation)],
+    [(resource_type, expected) for resource_type, expected, _ in SCORE_TYPES],
 )
-def test_the_entry_point_of_each_score_type_still_loads(
+def test_the_entry_point_of_each_score_type_resolves_to_its_kind(
     resource_type: str, expected: type,
 ) -> None:
-    """These two entry points resolve through the facade after the move.
+    """Every score entry point resolves, through the facade, to a kind.
 
     ``get_resource_implementation_builder`` is what a repository calls the
     first time it meets a resource of the type, and it is the call that
-    performs ``EntryPoint.load()`` -- so a module path this rename left
+    performs ``EntryPoint.load()`` -- so a module path a rename left
     stale fails there, not at import.
 
-    The class each resolves to is asserted, not merely that both resolve:
-    the two types render different pages, and the page a kind gets is
-    decided here (gain#1105).
+    The class each resolves to is asserted, not merely that all resolve:
+    the kinds render different pages, and the page a kind gets is decided
+    here (gain#1105).  And it is a STRICT subclass of the base: nothing
+    instantiates the base for a real resource, since it names no
+    kind's template (gain#1210).
 
-    Only two of the four rows, because the fragment pair is already
-    pinned, and pinned harder: ``test_fragment_score_vocabulary`` and
-    ``test_fragment_score_config_surface`` assert the same resolution, and
-    the latter also parses ``core/pyproject.toml`` to catch a source
-    rename that ``importlib.metadata`` reads past until a reinstall.
+    The fragment pair is also pinned by ``test_fragment_score_vocabulary``
+    and ``test_fragment_score_config_surface``; the latter parses
+    ``core/pyproject.toml`` too, to catch a source rename that
+    ``importlib.metadata`` reads past until a reinstall.
     """
-    assert get_resource_implementation_builder(resource_type) is expected
+    resolved = get_resource_implementation_builder(resource_type)
+    assert resolved is expected
+    assert issubclass(resolved, GenomicScoreImplementation)
+    assert resolved is not GenomicScoreImplementation
+
+
+@pytest.mark.parametrize(
+    ("resource_type", "expected", "build"),
+    [
+        pytest.param(
+            *row, id=row[0],
+            # Opening a legacy-spelled resource warns, and this row is
+            # here to exercise that spelling.
+            marks=([pytest.mark.legacy_vocabulary]
+                   if row[0] == "cnv_collection" else []),
+        )
+        for row in SCORE_TYPES
+    ],
+)
+def test_the_factory_picks_the_same_kind_the_entry_point_does(
+    resource_type: str, expected: type,
+    build: Callable[[pathlib.Path], GenomicResource],
+    tmp_path: pathlib.Path,
+) -> None:
+    """A caller holding a resource gets the kind its type name gets.
+
+    Asserted as the exact class, which is stronger than the strict
+    subclass the entry point row settles for: the factory has a default
+    branch, and a spelling that falls through it would still be SOME
+    kind -- just not the one whose page the resource should render.
+    """
+    resource = build(tmp_path)
+    assert resource.get_type() == resource_type
+
+    implementation = build_score_implementation_from_resource(resource)
+
+    assert type(implementation) is expected
 
 
 def test_scan_publishes_the_machinery_it_declares() -> None:

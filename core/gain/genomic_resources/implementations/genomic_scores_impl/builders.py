@@ -17,6 +17,7 @@ from gain.genomic_resources.resource_types import (
 from .allele import AlleleScoreImplementation
 from .base import GenomicScoreImplementation
 from .fragment import FragmentScoreImplementation
+from .position import PositionScoreImplementation
 
 
 def build_score_implementation_from_resource(
@@ -24,12 +25,12 @@ def build_score_implementation_from_resource(
 ) -> GenomicScoreImplementation:
     """Builds score implementation based on resource type.
 
-    A kind whose page carries an extra section gets the subclass that
-    renders it.
+    Each kind gets the class that renders its page; the base is never
+    what a real resource gets, since it names no kind's template.
     """
     resource_type = resource.get_type()
     if resource_type in FRAGMENT_SCORE_TYPES:
         return FragmentScoreImplementation(resource)
     if resource_type == PREFERRED_ALLELE_SCORE_TYPE:
         return AlleleScoreImplementation(resource)
-    return GenomicScoreImplementation(resource)
+    return PositionScoreImplementation(resource)
