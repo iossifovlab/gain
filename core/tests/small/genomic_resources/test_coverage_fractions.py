@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    GenomicScoreImplementation,
+    PositionScoreImplementation,
     scan,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -49,10 +49,10 @@ COVERED = 9  # 5..9 and 30..33
 
 def _built_impl(
     repo: GenomicResourceRepo, resource_id: str,
-) -> GenomicScoreImplementation:
+) -> PositionScoreImplementation:
     resource = repo.get_resource(resource_id)
     scan.do_noregion_histograms(resource)
-    return GenomicScoreImplementation(repo.get_resource(resource_id))
+    return PositionScoreImplementation(repo.get_resource(resource_id))
 
 
 def _a_repo_with_genome(

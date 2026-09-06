@@ -29,7 +29,7 @@ from gain.gene_scores.implementations.gene_scores_impl import (
 )
 from gain.gene_sets.implementations.gene_sets_impl import GeneSetCollectionImpl
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    GenomicScoreImplementation,
+    PositionScoreImplementation,
     scan,
 )
 from gain.genomic_resources.repository import GenomicResource
@@ -194,7 +194,7 @@ def test_genomic_score_id_cannot_add_an_event_handler(
     resource = _build_position_score(tmp_path, score_id)
     scan.do_noregion_histograms(resource)
 
-    page = GenomicScoreImplementation(resource).get_info()
+    page = PositionScoreImplementation(resource).get_info()
 
     assert event_handler_attributes(page) == []
     # The id survives as attribute CONTENT, with the quote escaped rather

@@ -1,44 +1,49 @@
 """The genomic-score resource implementations, and the scan behind them.
 
-Two jobs used to share one 1500-line module, and they answer to different
-readers:
+Laid out the way :mod:`gain.genomic_resources.genomic_scores` is: a
+kind-neutral base, one module per kind, and a factory -- with the
+statistics machinery beside them in a module of its own.
 
+* :mod:`.base` -- :class:`~.base.GenomicScoreImplementation`, what every
+  kind answers alike: the task-graph wiring that schedules :mod:`.scan`'s
+  functions, the resource file set, the hashes, and the page protocol.
+  It names no template; a kind does.  The class still answers to two
+  readers -- the templates and the resource protocol -- and separating
+  those is gain#1037, deliberately not done here.
+* :mod:`.position`, :mod:`.allele` and :mod:`.fragment` -- the kinds.
+  Each names the template that fills its section of the page and defines
+  the accessors that section calls, and nothing else.
+* :mod:`.builders` -- the factory that picks a kind from a resource's
+  type, as the entry points do from a type name.
 * :mod:`.scan` -- the statistics machinery.  Module-level functions that
   read a region and reduce it: the per-record and vectorized scans, the
   eligibility gates that choose between them, the task bodies, and the
   merge-and-save step.  None of it needs an implementation object; it
   reads a resource and returns a result, which is what a task body should
   be.  This is the half carrying the numeric and task history (gain#794,
-  gain#857), which is why it kept the original file's blame.  Its
+  gain#857), which is why it kept the original file's blame (gain#1007);
+  the base kept the class's for the same reason (gain#1210).  Its
   ``__all__`` states the surface, in tiers.
-* :mod:`.impl` -- :class:`~.impl.GenomicScoreImplementation` and the
-  two subclasses that add a section to its page,
-  :class:`~.impl.AlleleScoreImplementation` and
-  :class:`~.impl.FragmentScoreImplementation`.  The info page's render
-  accessors, the task-graph wiring that schedules :mod:`.scan`'s
-  functions, the resource file set, and the hashes.  The class still
-  answers to two readers -- the templates and the resource protocol --
-  and separating those is gain#1037, deliberately not done here.
 
-The dependency runs one way: ``impl`` imports ``scan``, never the reverse,
-which ``tests/test_architecture.py`` pins from the AST.
+The dependency runs one way: the classes import ``scan``, never the
+reverse, which ``tests/test_architecture.py`` pins from the AST.
 
-This module is the facade, and the four names below are a published
-surface: four ``core/pyproject.toml`` entry points name this package path
-rather than :mod:`.impl` directly, so the layout stays rearrangeable and a
-later split cannot break them.  ``test_genomic_scores_impl_facade.py``
-pins what they promise.
+This module is the facade, and the names below are a published surface:
+four ``core/pyproject.toml`` entry points name this package path rather
+than a module directly, so the layout stays rearrangeable and a later
+split cannot break them.  ``test_genomic_scores_impl_facade.py`` pins
+what they promise.
 """
-from .impl import (
-    AlleleScoreImplementation,
-    FragmentScoreImplementation,
-    GenomicScoreImplementation,
-    build_score_implementation_from_resource,
-)
+from .allele import AlleleScoreImplementation
+from .base import GenomicScoreImplementation
+from .builders import build_score_implementation_from_resource
+from .fragment import FragmentScoreImplementation
+from .position import PositionScoreImplementation
 
 __all__ = [
     "AlleleScoreImplementation",
     "FragmentScoreImplementation",
     "GenomicScoreImplementation",
+    "PositionScoreImplementation",
     "build_score_implementation_from_resource",
 ]

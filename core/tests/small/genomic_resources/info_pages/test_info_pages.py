@@ -702,10 +702,11 @@ def _resolve(page: Page, target: str) -> pathlib.Path | None:
 # --------------------------------------------------------------------------
 
 #: The two score families render through different templates
-#: (``genomic_score.jinja`` and ``gene_score.jinja``) which guard their
-#: histogram images separately, so both are asserted.
+#: (``position_score.jinja``, whose histogram branch is the shared
+#: ``genomic_score.jinja`` one, and ``gene_score.jinja``) which guard
+#: their histogram images separately, so both are asserted.
 _NULL_HISTOGRAM_SCORE_PAGES = [
-    NULL_HISTOGRAM_RESOURCE_IDS["genomic_score.jinja"],
+    NULL_HISTOGRAM_RESOURCE_IDS["position_score.jinja"],
     NULL_HISTOGRAM_RESOURCE_IDS["gene_score.jinja"],
 ]
 
