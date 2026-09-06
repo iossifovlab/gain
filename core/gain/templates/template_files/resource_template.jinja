@@ -174,10 +174,14 @@
             <tr>
                 <th>Labels</th>
                 <td>
-                {% if resource.get_labels() %}
+                {# From data, not resource.get_labels(): how a label value
+                   reads -- a list is its alternatives -- is a domain rule
+                   the template must not know, so each value arrives as
+                   the strings it stands for. #}
+                {% if data.labels %}
                     <ul>
-                    {% for label, value in resource.get_labels().items() %}
-                        <li>{{ label }}: {{ value }}</li>
+                    {% for label, values in data.labels %}
+                        <li>{{ label }}: {{ values | join(", ") }}</li>
                     {% endfor %}
                     </ul>
                 {% endif %}
