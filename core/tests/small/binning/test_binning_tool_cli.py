@@ -1,14 +1,27 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import argparse
 import pathlib
 import shutil
 import textwrap
+from typing import Any
 
 import h5py
 import numpy as np
 import numpy.typing as npt
 import pytest
+import pytest_mock
 from gain import __version__
 from gain.binning.cli import cli
+from gain.genomic_resources import genomic_context as gc_mod
+from gain.genomic_resources.genomic_context_base import (
+    GC_REFERENCE_GENOME_KEY,
+    GenomicContext,
+    GenomicContextProvider,
+    SimpleGenomicContext,
+)
+from gain.genomic_resources.reference_genome import (
+    build_reference_genome_from_resource,
+)
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import a_position_score
 
@@ -46,13 +59,22 @@ def run_definition(tmp_path: pathlib.Path) -> pathlib.Path:
 
 def binning_tool(
     run_definition: pathlib.Path, grr_dir: pathlib.Path,
-    output: pathlib.Path, *extra: str,
+    output: pathlib.Path, *extra: str, genome: str | None = "genome",
 ) -> None:
+    """Run the tool on the toy GRR; ``genome=None`` passes no ``-R``."""
     cli([
         str(run_definition), "-o", str(output),
-        "--grr-directory", str(grr_dir), "-R", "genome", "-j", "1",
+        "--grr-directory", str(grr_dir), "-j", "1",
+        *(["-R", genome] if genome else []),
         *extra,
     ])
+
+
+def write_run_definition(output: pathlib.Path, text: str) -> pathlib.Path:
+    """A run definition beside ``output``, as a user would keep it."""
+    run_definition = output.parent / "run.yaml"
+    run_definition.write_text(text)
+    return run_definition
 
 
 @pytest.fixture
@@ -173,6 +195,78 @@ def test_dry_run_prints_the_tracks_and_counts_and_writes_nothing(
     assert not (output.parent / "bins_work").exists()
 
 
+# scores/one twice, under its own ``max`` and under ``min``; scores/two
+# once.  Only the repeated resource carries its aggregator in its name.
+REPEATED_RUN_DEFINITION = textwrap.dedent("""
+    bins:
+      bin_size: 10
+      regions: ["chr1:1-40"]
+    binners:
+    - position_score_binner:
+        resource_query: "scores/*"
+    - position_score_binner:
+        resource_query: "scores/one"
+        aggregator: min
+""")
+
+
+def test_a_repeated_resource_is_named_by_aggregator_in_the_tracks_table(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+) -> None:
+    run_definition = write_run_definition(output, REPEATED_RUN_DEFINITION)
+
+    binning_tool(run_definition, grr_dir, output)
+
+    with h5py.File(output, "r") as h5:
+        tracks = h5["tracks"][()]
+        shape = h5["values"].shape
+    assert [row["name"] for row in tracks] == [
+        b"scores/one:max", b"scores/two", b"scores/one:min"]
+    assert shape == (4, 3)
+
+
+def test_dry_run_lists_the_suffixed_track_names(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_definition = write_run_definition(output, REPEATED_RUN_DEFINITION)
+
+    binning_tool(run_definition, grr_dir, output, "--dry-run")
+
+    out = capsys.readouterr().out
+    assert "scores/one:max\tscores/one\ts\tmax" in out
+    assert "scores/one:min\tscores/one\ts\tmin" in out
+    assert "scores/two\tscores/two\tt\tmean" in out
+
+
+def test_dry_run_reports_a_run_definition_error_and_writes_nothing(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # One parse-time refusal stands for all: which message says what is
+    # the parser tests' business.  search_term needs the index the toy
+    # GRR does not publish.
+    run_definition = write_run_definition(output, textwrap.dedent("""
+        bins:
+          bin_size: 10
+        binners:
+        - position_score_binner:
+            resource_query: "scores/*"
+            search_term: one
+    """))
+
+    with pytest.raises(SystemExit) as excinfo:
+        binning_tool(run_definition, grr_dir, output, "--dry-run")
+
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert str(run_definition) in err
+    assert "binners[0]" in err
+    assert "search_term" in err
+    assert not output.exists()
+    assert not (output.parent / "bins_work").exists()
+
+
 def test_the_output_defaults_to_the_run_definition_with_an_h5_suffix(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
     run_definition: pathlib.Path,
@@ -189,21 +283,109 @@ def test_the_output_defaults_to_the_run_definition_with_an_h5_suffix(
     assert not (run_definition.parent / "run_work").exists()
 
 
+def read_genome_and_shape(output: pathlib.Path) -> tuple[str, tuple[int, ...]]:
+    with h5py.File(output, "r") as h5:
+        return str(h5.attrs["input_reference_genome"]), h5["values"].shape
+
+
 def test_the_run_definition_may_name_the_genome_itself(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
 ) -> None:
-    run_definition = output.parent / "run.yaml"
-    run_definition.write_text(
-        "input_reference_genome: genome\n" + RUN_DEFINITION)
+    run_definition = write_run_definition(
+        output, "input_reference_genome: genome\n" + RUN_DEFINITION)
 
-    cli([
-        str(run_definition), "-o", str(output),
-        "--grr-directory", str(grr_dir), "-j", "1",
-    ])
+    binning_tool(run_definition, grr_dir, output, genome=None)
 
-    with h5py.File(output, "r") as h5:
-        assert h5.attrs["input_reference_genome"] == "genome"
-        assert h5["values"].shape == (8, 2)
+    assert read_genome_and_shape(output) == ("genome", (8, 2))
+
+
+# The genome a test-only context provider offers: chr1 only, and shorter,
+# so a run that resolved it shows in what it accepts and produces.
+CONTEXT_GENOME = "genomes/short"
+
+
+class _FallbackGenomeProvider(GenomicContextProvider):
+    """A context carrying only a genome, the way a site config might.
+
+    Registered above the CLI provider's priority so the CLI's context is
+    consulted first and this one answers only what the CLI left unset.
+    """
+
+    def __init__(self, repo: GenomicResourceRepo) -> None:
+        super().__init__("FallbackGenomeProvider", 2000)
+        self._repo = repo
+
+    def add_argparser_arguments(
+        self, parser: argparse.ArgumentParser, **kwargs: Any,
+    ) -> None:
+        pass
+
+    def init(self, **kwargs: Any) -> GenomicContext | None:
+        return SimpleGenomicContext(
+            {GC_REFERENCE_GENOME_KEY: build_reference_genome_from_resource(
+                self._repo.get_resource(CONTEXT_GENOME))},
+            source="FallbackGenomeProvider")
+
+
+@pytest.fixture
+def context_genome(
+    repo: GenomicResourceRepo, mocker: pytest_mock.MockerFixture,
+) -> None:
+    providers = [
+        *gc_mod._REGISTERED_CONTEXT_PROVIDERS,
+        _FallbackGenomeProvider(repo),
+    ]
+    mocker.patch.object(gc_mod, "_REGISTERED_CONTEXT_PROVIDERS", providers)
+
+
+def test_the_reference_genome_flag_overrides_the_run_definition(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+) -> None:
+    # genomes/short has no chr2, which the run definition bins: had the
+    # named genome won, the run would have been refused.
+    run_definition = write_run_definition(
+        output, f"input_reference_genome: {CONTEXT_GENOME}\n" + RUN_DEFINITION)
+
+    binning_tool(run_definition, grr_dir, output)
+
+    assert read_genome_and_shape(output) == ("genome", (8, 2))
+
+
+def test_the_run_definition_genome_beats_the_context_genome(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+    context_genome: None,
+) -> None:
+    run_definition = write_run_definition(
+        output, "input_reference_genome: genome\n" + RUN_DEFINITION)
+
+    binning_tool(run_definition, grr_dir, output, genome=None)
+
+    assert read_genome_and_shape(output) == ("genome", (8, 2))
+
+
+def test_the_reference_genome_flag_beats_the_context_genome(
+    binned: pathlib.Path, context_genome: None,
+) -> None:
+    assert read_genome_and_shape(binned) == ("genome", (8, 2))
+
+
+def test_the_context_genome_is_the_fallback(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+    context_genome: None,
+) -> None:
+    # Neither the run definition nor the command line names a genome.
+    run_definition = write_run_definition(output, textwrap.dedent("""
+        bins:
+          bin_size: 10
+          regions: ["chr1:1-40"]
+        binners:
+        - position_score_binner:
+            resource_query: "scores/*"
+    """))
+
+    binning_tool(run_definition, grr_dir, output, genome=None)
+
+    assert read_genome_and_shape(output) == (CONTEXT_GENOME, (4, 2))
 
 
 def read_matrix(path: pathlib.Path) -> npt.NDArray[np.float64]:

@@ -14,6 +14,7 @@ import numpy as np
 import numpy.typing as npt
 
 from gain.genomic_resources.aggregators import (
+    AGGREGATOR_CLASS_DICT,
     Aggregator,
     PositionScoreAggregationQuery,
     validate_aggregator,
@@ -22,6 +23,8 @@ from gain.genomic_resources.genomic_scores.position import PositionScore
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
+    SearchIndexUnavailableError,
+    SearchTermError,
 )
 from gain.genomic_resources.resource_query import ResourceQueryParseError
 from gain.genomic_resources.score_def import ScoreValue
@@ -35,6 +38,19 @@ from gain.utils.regions import (
 BINNERS_ENTRY_POINT_GROUP = "gain.binning.binners"
 
 NUMERIC_VALUE_TYPES = {"int", "float"}
+
+
+def numeric_aggregators() -> list[str]:
+    """The registered aggregators whose result is a number (D11).
+
+    Read off each aggregator's declared output type, so a numeric
+    aggregator added to the registry is accepted here without a list to
+    keep in step; one that declares no output type of its own (``mode``,
+    which answers in the input's type) is not among them.
+    """
+    return sorted(
+        name for name, cls in AGGREGATOR_CLASS_DICT.items()
+        if cls.output_value_type in NUMERIC_VALUE_TYPES)
 
 
 class RunDefinitionError(ValueError):
@@ -81,22 +97,15 @@ class Binner(Protocol):
         """Reduce ``track`` to one float64 per grid bin of ``region``."""
 
 
-def check_keys(
-    label: str, config: Any, known: frozenset[str],
-    deferred: frozenset[str] = frozenset(),
-) -> None:
+def check_keys(label: str, config: Any, known: frozenset[str]) -> None:
     """Refuse a mapping with keys outside ``known``.
 
-    A key in ``deferred`` is one the design accepts but a later slice
-    builds; it is refused as not yet supported rather than dropped, so
-    what the user wrote never silently changes what the run does.
+    A mistyped key is refused rather than dropped, so what the user wrote
+    never silently changes what the run does.
     """
     if not isinstance(config, dict):
         raise RunDefinitionError(f"{label}: expected a mapping")
     for key in config:
-        if key in deferred:
-            raise RunDefinitionError(
-                f"{label}: {key!r} is not yet supported")
         if key not in known:
             raise RunDefinitionError(
                 f"{label}: unknown key {key!r}; known keys: "
@@ -126,10 +135,8 @@ class PositionScoreBinner:
     kind: ClassVar[str] = "position_score_binner"
 
     ENTRY_KEYS: ClassVar[frozenset[str]] = frozenset({
-        "resource_query", "aggregator", "none_value_replacement"})
-    # Accepted by the design (D7), built by the validation slice
-    # (gain#1201).
-    DEFERRED_KEYS: ClassVar[frozenset[str]] = frozenset({"search_term"})
+        "resource_query", "search_term", "aggregator",
+        "none_value_replacement"})
 
     @classmethod
     def parse_entry(
@@ -142,25 +149,49 @@ class PositionScoreBinner:
         and ordered by resource id, so the track order is deterministic
         whatever the repository yields.  The type restriction is applied
         here because the search's own ``resource_type`` filter is answered
-        by the full-text index, which a repository need not have.
+        by the full-text index, which a repository need not have.  A
+        ``search_term`` is that index's filter, conjoined with the query
+        (D7).
         """
-        check_keys(label, config, cls.ENTRY_KEYS, cls.DEFERRED_KEYS)
+        check_keys(label, config, cls.ENTRY_KEYS)
         query = config.get("resource_query")
         if not isinstance(query, str) or not query:
             raise RunDefinitionError(
                 f"{label}: resource_query is required and must be a string")
+        search_term = config.get("search_term")
+        if search_term is not None and not isinstance(search_term, str):
+            raise RunDefinitionError(
+                f"{label}: search_term must be a string, "
+                f"not {search_term!r}")
+        # A blank term is an unset one, as the repository reads it (what a
+        # shell substitutes for a variable never set); settled once here
+        # so the search and the messages below agree.
+        if search_term is not None and not search_term.strip():
+            search_term = None
+        # The search is a generator: the query is checked when it is
+        # made, but the term and the index are checked on the first
+        # draw, so the consumption sits inside the same try.
         try:
-            found = grr.search_resources(resource_query=query)
-        except ResourceQueryParseError as err:
+            found = grr.search_resources(
+                search_term=search_term, resource_query=query)
+            matches = sorted(
+                (r for r in found if r.get_type() == "position_score"),
+                key=lambda resource: resource.resource_id)
+        except (ResourceQueryParseError, SearchTermError) as err:
             raise RunDefinitionError(f"{label}: {err}") from err
-        matches = sorted(
-            (r for r in found if r.get_type() == "position_score"),
-            key=lambda resource: resource.resource_id)
+        except SearchIndexUnavailableError as err:
+            # The repository's own message carries the remedy; only
+            # which key needed the index is the entry's to add.
+            raise RunDefinitionError(
+                f"{label}: search_term {search_term!r} needs the "
+                f"repository's full-text index: {err}") from err
         if not matches:
             # The one deliberate departure from the prototype, which
             # silently produced no column for a query matching nothing.
+            narrowed = (
+                f" with search_term {search_term!r}" if search_term else "")
             raise RunDefinitionError(
-                f"{label}: resource_query {query!r} matches no "
+                f"{label}: resource_query {query!r}{narrowed} matches no "
                 f"position_score resource")
         return [
             cls._track_of(
@@ -211,21 +242,24 @@ class PositionScoreBinner:
         The score resolves the aggregator default and judges the
         replacement against its value type; the resolver stops at the
         aggregator's NAME, so that the name builds is asked separately.
-        Only the two rules that are this slice's own -- exactly one score,
-        numeric only -- are checked here.
+        Only the rules that are the tool's own are checked here: a track
+        is exactly one score, and every cell of ``/values`` is a float64
+        (D11), so the score must be numeric and the aggregator must
+        produce a number.
         """
         score = PositionScore(resource)
         if len(score.score_definitions) != 1:
             raise RunDefinitionError(
                 f"{label}: resource {resource.resource_id!r} defines "
-                f"{sorted(score.score_definitions)}; binning a resource "
-                f"with more than one score is not yet supported")
+                f"{len(score.score_definitions)} scores, "
+                f"{sorted(score.score_definitions)}; a track is one score, "
+                f"and this binner takes a resource with exactly one")
         (score_id, score_def), = score.score_definitions.items()
         if score_def.value_type not in NUMERIC_VALUE_TYPES:
             raise RunDefinitionError(
                 f"{label}: resource {resource.resource_id!r} score "
                 f"{score_id!r} is of type {score_def.value_type!r}; "
-                f"binning a non-numeric score is not yet supported")
+                f"only a numeric score (int or float) can be binned")
         try:
             resolved = score.resolve_aggregation_queries([
                 PositionScoreAggregationQuery(
@@ -237,6 +271,13 @@ class PositionScoreBinner:
             raise RunDefinitionError(
                 f"{label}: resource {resource.resource_id!r}: "
                 f"{err.args[0]}") from err
+        output_type = Aggregator.resolve_class(
+            aggregator_name).output_value_type
+        if output_type not in NUMERIC_VALUE_TYPES:
+            raise RunDefinitionError(
+                f"{label}: resource {resource.resource_id!r}: aggregator "
+                f"{aggregator_name!r} does not produce a number; use one "
+                f"of {', '.join(numeric_aggregators())}")
         assert replacement is None or isinstance(replacement, int | float)
         return Track(
             name=resource.resource_id,
