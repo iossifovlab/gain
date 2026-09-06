@@ -982,16 +982,36 @@ pipeline {
                     }
                     options {
                         // Serialise the deploy across concurrent master
-                        // builds. The play below is rm → mkdir → unarchive
-                        // on ONE shared directory; two master builds
-                        // reaching this stage at the same time (a
-                        // docs-only build overtaking a full one — #1047
-                        // and #1048 on 2026-09-04) interleave those
-                        // steps and one of them fails with "dest must be
-                        // an existing dir" (gain#1188). Ephemeral
-                        // resource: created on first use, nothing to
-                        // configure on the controller.
+                        // builds — a docs-only build overtaking a full one
+                        // (#1047 and #1048 on 2026-09-04) puts two of them
+                        // in this stage at once.
+                        //
+                        // This originally stopped the play failing with
+                        // "dest must be an existing dir" (gain#1188), when
+                        // it was rm → mkdir → unarchive on one shared
+                        // directory. gain#1191 rebuilt it as a per-deploy
+                        // directory plus a symlink flip, so that failure
+                        // no longer reproduces and two concurrent runs
+                        // both succeed. Keep the lock anyway: it is what
+                        // stops them interleaving the one-time migration
+                        // step, and dropping it would make gain#1190
+                        // (an older build publishing over a newer one)
+                        // easier to hit, not harder. Ephemeral resource:
+                        // created on first use, nothing to configure on
+                        // the controller.
                         lock(resource: 'gain-docs-deploy')
+                    }
+                    environment {
+                        // Names the release directory the play unpacks
+                        // into and flips the published symlink onto, so
+                        // what is live on the docs host is traceable to
+                        // the build that put it there (gain#1191).
+                        // Derived here rather than in the shell below:
+                        // `sh` is /bin/sh, where ${VAR:0:8} is not
+                        // available, and this matches how the Docker
+                        // images stage builds its GIT_SHORT.
+                        DOCS_STAMP = "${env.BUILD_NUMBER}-" +
+                            "${env.GIT_COMMIT?.take(8) ?: 'unknown'}"
                     }
                     // Master-only ansible push to iossifovlab.com, on
                     // EVERY master build. Still skipped on every branch
@@ -1026,6 +1046,7 @@ pipeline {
                                     -v $PWD:/workspace \
                                     -v $SSH_KEY:/deploy.key:ro \
                                     -e SSH_USER \
+                                    -e DOCS_STAMP \
                                     -w /workspace \
                                     gain-core-ci:${CI_TAG} \
                                     sh -c '
