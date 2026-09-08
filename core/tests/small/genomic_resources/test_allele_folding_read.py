@@ -270,6 +270,39 @@ def test_a_missing_ref_or_alt_leaves_the_key_at_chrom_pos(
     assert aggregate.allele_keys == ("1:10:0.2", "1:16:0.3")
 
 
+def test_a_false_bool_suffix_is_not_a_missing_one(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A suffixed flag spells ``yes``, ``no``, or nothing (gain#1222).
+
+    The suffix is part of the key's identity, so a false flag and a
+    missing flag must be two keys.  They were not: ``False`` rendered as
+    the empty string, so ``1:12:A:C:`` named both the false record and
+    the one with no value.
+    """
+    flagged = build_allele_score_from_resource(
+        an_allele_score()
+        .with_score("flag", "bool")
+        .with_na_values(".")
+        .with_data("""
+            chrom  pos_begin  reference  alternative  flag
+            1      10         A          C            True
+            1      12         A          C            False
+            1      14         A          C            .
+        """)
+        .build_resource(tmp_path))
+
+    with flagged.open() as score:
+        aggregate = score.get_allele_scores_in_region_agg(
+            "1", 10, 14,
+            queries=[ScoreAggregationQuery("flag", "mode")],
+            allele_keys=("flag",))
+
+    assert aggregate is not None
+    assert aggregate.allele_keys == (
+        "1:10:A:C:yes", "1:12:A:C:no", "1:14:A:C:")
+
+
 def test_an_unknown_allele_key_score_is_refused_from_the_call(
     alleles: AlleleScore,
 ) -> None:

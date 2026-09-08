@@ -974,6 +974,8 @@ def test_writer_does_not_omit_literal_zeros_from_info(
 def test_writer_does_not_write_empty_values_into_info(
     sample_vcf: pathlib.Path,
 ) -> None:
+    """An empty string is no value; a false flag is one, spelled ``no``
+    (gain#1222, ADR 0026)."""
     attributes = [
         Attribute("score_1", "source_string",
                       internal=False, parameters={}),
@@ -995,7 +997,7 @@ def test_writer_does_not_write_empty_values_into_info(
     )
 
     assert "score_1" not in variant.info
-    assert "score_2" not in variant.info
+    assert variant.info["score_2"] == ("no",)
 
 
 def test_vcf_region_boundary(

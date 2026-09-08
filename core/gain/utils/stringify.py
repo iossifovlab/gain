@@ -15,7 +15,12 @@ import numpy as np
 
 
 def stringify(value: Any, *, vcf: bool = False) -> str:
-    """Format the value to a string for human-readable output."""
+    """Format the value to a string for human-readable output.
+
+    A bool spells ``yes``/``no`` in both sinks; only ``None`` takes the
+    sink's missing-value marker (``.`` in a VCF, ``""`` in a table), so a
+    false flag never reads as an absent one.  See ADR 0026.
+    """
     if value is None:
         return "." if vcf else ""
     if isinstance(value, (float, np.floating)):
@@ -23,7 +28,7 @@ def stringify(value: Any, *, vcf: bool = False) -> str:
             return f"{value:.6g}"
         return f"{value:.3g}"
     if isinstance(value, bool):
-        return "yes" if value else ("." if vcf else "")
+        return "yes" if value else "no"
     if vcf is True and value == "":
         return "."
     if isinstance(value, (list, tuple)):
