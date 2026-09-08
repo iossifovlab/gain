@@ -37,7 +37,6 @@ from gain.binning.run_definition import (
 from gain.genomic_resources.genomic_context import (
     context_providers_add_argparser_arguments,
 )
-from gain.genomic_resources.genomic_context_base import GenomicContext
 from gain.genomic_resources.reference_genome import (
     ReferenceGenome,
     build_reference_genome_from_resource_id,
@@ -86,12 +85,14 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", default=False,
         help="resolve every query, print the track list and the region "
         "and bin counts, and write nothing")
-    # The annotation context provider would otherwise add its own
-    # ``pipeline`` positional and ``-ar`` to this parser.  This tool
-    # never builds an annotation pipeline, and the optional positional
-    # swallows a stray argument typed after the run definition.
+    # Only the GRR options are this tool's business.  It never builds an
+    # annotation pipeline (and the provider's optional ``pipeline``
+    # positional swallows a stray argument typed after the run
+    # definition), never reads gene models, and takes the reference
+    # genome from the run definition alone -- see ``_resolve_genome``.
     context_providers_add_argparser_arguments(
-        parser, skip_cli_annotation_context=True)
+        parser, skip_cli_annotation_context=True,
+        skip_cli_reference_genome=True, skip_cli_gene_models=True)
     TaskGraphCli.add_arguments(
         parser, default_task_status_dir=None, use_commands=False)
     VerbosityConfiguration.set_arguments(parser)
@@ -116,8 +117,8 @@ def cli(argv: list[str] | None = None) -> None:
 
     context = build_cli_genomic_context(args)
     grr = get_grr_from_context(context)
-    genome = _resolve_genome(config, args, context, grr)
     try:
+        genome = _resolve_genome(config, grr)
         with genome:
             run = parse_run_definition(config, grr, genome)
     except RunDefinitionError as err:
@@ -139,25 +140,22 @@ def cli(argv: list[str] | None = None) -> None:
 
 
 def _resolve_genome(
-    config: dict[str, Any], args: dict[str, Any],
-    context: GenomicContext, grr: GenomicResourceRepo,
+    config: dict[str, Any], grr: GenomicResourceRepo,
 ) -> ReferenceGenome:
-    """The run definition names it, ``-R`` overrides it, context is last.
+    """The run definition names the genome; nothing else supplies it.
 
-    ``-R`` is already folded into the context by the CLI context provider,
-    so an explicit flag simply wins; without one, the run definition's
-    ``input_reference_genome`` is looked up in the GRR the context
-    resolved, and only then does the context's own genome stand in.
+    The genome's chromosome lengths decide the grid, so one run
+    definition must always describe one matrix.  A genome taken from the
+    command line or from the ambient genomic context would let the
+    invocation, rather than the file, decide what was binned -- and the
+    output records only the resource id, not where it came from.
     """
     named = config.get("input_reference_genome")
-    if args.get("reference_genome_resource_id") is None and named:
-        return build_reference_genome_from_resource_id(named, grr)
-    genome = context.get_reference_genome()
-    if genome is None:
-        raise ValueError(
-            "no reference genome: name input_reference_genome in the run "
-            "definition, pass -R, or configure one in the genomic context")
-    return genome
+    if not named:
+        raise RunDefinitionError(
+            "input_reference_genome is required: name the reference "
+            "genome resource whose chromosomes define the grid")
+    return build_reference_genome_from_resource_id(named, grr)
 
 
 def _print_plan(run: RunDefinition) -> None:

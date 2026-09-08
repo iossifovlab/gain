@@ -54,15 +54,19 @@ class CLIGenomicContextProvider(GenomicContextProvider):
 
     def add_argparser_arguments(
         self, parser: argparse.ArgumentParser,
-        **kwargs: Any,  # ruff: ignore[unused-method-argument]
+        **kwargs: Any,
     ) -> None:
-        """Expose CLI options that control genomic resource resolution.
+        r"""Expose CLI options that control genomic resource resolution.
 
         Parameters
         ----------
         parser
             The argument parser that should receive the provider specific
             options.
+        \*\*kwargs
+            ``skip_cli_reference_genome`` and ``skip_cli_gene_models``
+            leave out ``-R`` and ``-G`` for a tool that resolves neither
+            from the command line.  The GRR options are always added.
         """
         parser.add_argument(
             "-g", "--grr-filename", "--grr", default=None,
@@ -73,16 +77,18 @@ class CLIGenomicContextProvider(GenomicContextProvider):
         parser.add_argument(
             "--grr-directory", default=None,
             help="Local GRR directory to use as repository.")
-        parser.add_argument(
-            "-R", "--reference-genome-resource-id", "--ref", default=None,
-            help="The resource id for the reference genome. If the argument "
-                 "is absent the reference genome from the current genomic "
-                 "context will be used.")
-        parser.add_argument(
-            "-G", "--gene-models-resource-id", "--genes", default=None,
-            help="The resource is of the gene models resource. If the argument"
-                 " is absent the gene models from the current genomic "
-                 "context will be used.")
+        if not kwargs.get("skip_cli_reference_genome"):
+            parser.add_argument(
+                "-R", "--reference-genome-resource-id", "--ref", default=None,
+                help="The resource id for the reference genome. If the "
+                     "argument is absent the reference genome from the "
+                     "current genomic context will be used.")
+        if not kwargs.get("skip_cli_gene_models"):
+            parser.add_argument(
+                "-G", "--gene-models-resource-id", "--genes", default=None,
+                help="The resource is of the gene models resource. If the "
+                     "argument is absent the gene models from the current "
+                     "genomic context will be used.")
 
     def init(self, **kwargs: Any) -> GenomicContext | None:
         r"""Create a :class:`SimpleGenomicContext` based on CLI arguments.
