@@ -13,7 +13,6 @@ from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     RecordArrays,
     build_score_from_resource,
-    clip_span,
     owned_records_mask,
     owns_record,
 )
@@ -133,31 +132,17 @@ _BULK_SCAN_RESOURCE_TYPES = frozenset(
 # (gain#1127).  ADR 0020 already records the adjacent half: a fragment
 # score has no segments because merging its rows is not wanted, and the
 # same objection applies to unioning them.
+#
+# So a coverage-scanned kind is, by construction, one whose rows are
+# pairwise disjoint (``validate_records`` refuses a row beginning at or
+# before its predecessor's end; adjacent rows are legal, and the segment
+# algebra depends on that).  Two consequences ride on it: disjoint rows
+# have an exact run algebra, so their segment statistics are published;
+# and they cannot double-count a position, so the scan hands
+# ``RegionCoverage`` each row at its full, unclipped span and the union
+# stays additive across parallel regions.  The clip that overlapping
+# rows once needed was retired by gain#1175 once no kind reached it.
 _COVERAGE_SCAN_RESOURCE_TYPES = frozenset(
-    equivalent_resource_types("position_score"))
-
-# The kinds whose rows are PAIRWISE DISJOINT -- no two share a position.
-# Position scores, whose ``validate_records`` refuses a row beginning at
-# or before its predecessor's end, on raw spans.  (Adjacent rows are
-# legal and common, and the segment algebra depends on it, so this is
-# deliberately not phrased as "cannot touch": ADR 0020 and
-# ``add_interval`` use touching for exactly that adjacency.)
-#
-# Named for the FACT rather than for one of its consequences, because it
-# has two: disjoint rows have an exact run algebra, so their segment
-# statistics are published; and they cannot double-count a position, so
-# the scan hands their coverage full unclipped spans.
-#
-# Equal to the coverage set above SINCE gain#1127, and deliberately not
-# merged with it: they answer different questions, and the clipping
-# machinery this gates (``clip_span``, ``RegionCoverage.add_span``) is
-# retained for a future overlapping kind that is genuinely
-# coverage-scanned.  No production scan reaches it today -- fragment
-# rows overlap but are no longer coverage-scanned at all, and their
-# counts are their own statistic (gain#794).  Segments for them are not
-# wanted rather than pending: ADR 0020 as amended by gain#926 closes
-# that question.
-_NON_OVERLAPPING_ROW_RESOURCE_TYPES = frozenset(
     equivalent_resource_types("position_score"))
 
 # The kinds whose rows ARE fragments, in both spellings, and so publish
@@ -499,33 +484,19 @@ def do_histogram(
 
     score_ids = list(result.keys())
     with _score_for(resource, score).open() as opened:
-        # Coverage unions POSITIONS, and a union is only additive
-        # across parallel regions when the spans are clipped to
-        # disjoint extents -- so a kind whose rows can overlap keeps
-        # clipping.  Rows that cannot are already pairwise disjoint,
-        # so their coverage is exact unclipped and rides the same
-        # record partition as every other statistic.
-        clip_coverage = coverage is not None \
-            and not coverage.rows_are_disjoint
         for left, right, rec in scan_region(
                 opened, chrom, start, end, score_ids,
                 alleles=alleles):
             owned = owns_record(left, start, end)
-            if coverage is not None:
-                if clip_coverage:
-                    span = clip_span(left, right, start, end)
-                    if span is not None:
-                        # No values: the same kind that has to be
-                        # clipped is the one publishing no segments
-                        # (ADR 0020, amended by gain#926), so
-                        # normalizing this row's tuple would be a
-                        # per-row cost with nothing to spend it on.
-                        coverage.add_span(span[0], span[1])
-                elif owned:
-                    coverage.add_interval(
-                        left, right, normalize_values(rec))
             if not owned:
                 continue
+            if coverage is not None:
+                # The row at its full span, on the same record
+                # partition as every other statistic: coverage-scanned
+                # rows are pairwise disjoint, so the union is exact
+                # unclipped (see ``_COVERAGE_SCAN_RESOURCE_TYPES``).
+                coverage.add_interval(
+                    left, right, normalize_values(rec))
             if fragments is not None:
                 # A fragment is the row as stored, at its own span.
                 fragments.add_fragment(right - left + 1)
@@ -620,10 +591,11 @@ def do_histogram_bulk(
         ) -> None:
             _accumulate_arrays(
                 arrays, result, region, score)
-            # Each statistic asks for the batch on its OWN terms: the
-            # union clips to the region, the tally rides the record
-            # partition.  Neither implies the other -- a fragment score
-            # takes this branch with no coverage at all (gain#1127).
+            # Both statistics ride the record partition -- the rows the
+            # region owns, at their full span -- but neither implies
+            # the other: a fragment score takes this branch with no
+            # coverage at all (gain#1127), a position score with no
+            # fragments.
             if coverage is not None:
                 accumulate_coverage(arrays, coverage, region)
             if fragments is not None:
@@ -1004,10 +976,7 @@ def do_histogram_task(
     resource_type = resource.get_type()
     coverage = None
     if resource_type in _COVERAGE_SCAN_RESOURCE_TYPES:
-        coverage = RegionCoverage(
-            chrom, start, end,
-            rows_are_disjoint=resource_type
-            in _NON_OVERLAPPING_ROW_RESOURCE_TYPES)
+        coverage = RegionCoverage(chrom, start, end)
     fragments = None
     if resource_type in _FRAGMENT_STATISTICS_RESOURCE_TYPES:
         fragments = RegionFragments(chrom, start, end)

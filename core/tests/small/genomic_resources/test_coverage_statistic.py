@@ -8,7 +8,6 @@ from gain.genomic_resources.statistics.coverage import (
     RegionCoverage,
 )
 from gain.genomic_resources.statistics.length_histogram import (
-    LENGTH_HISTOGRAM_BIN_COUNT,
     length_histogram_bin_index,
 )
 
@@ -67,108 +66,42 @@ def test_the_global_histogram_is_the_binwise_sum_of_the_chromosomes(
     assert sum(merged) == stats.segments_global() == 3
 
 
-def test_untracked_segments_have_no_summary_and_merge_stays_untracked(
-) -> None:
-    # A region whose rows overlap (fragment rows) still counts coverage
-    # but publishes no segments -- not wanted, ADR 0020 as amended by
-    # gain#926.
-    left = RegionCoverage("chr1", 1, 10, rows_are_disjoint=False)
+@pytest.mark.parametrize("feed", ["row-by-row", "batch"])
+def test_a_region_publishing_no_segments_refuses_a_span(feed: str) -> None:
+    # Since gain#1175 every scanned region publishes segments: the only
+    # non-publishing region is one restored from a statistics file that
+    # carried none, and that never accumulates.  Feeding one a span is
+    # a wiring error, refused rather than unioned into a count nobody
+    # can pair with a segmentation.
+    region = RegionCoverage.frozen("chr1", 0, None)
+    if feed == "row-by-row":
+        def feed_span() -> None:
+            region.add_interval(10, 20, (0.5,))
+    else:
+        def feed_span() -> None:
+            region.add_interval_batch(
+                np.array([10]), np.array([20]), [np.array([0.5])])
+
+    with pytest.raises(ValueError, match="publishes no segment statistics"):
+        feed_span()
+
+    assert region.covered == 0
+
+
+def test_merging_in_a_region_without_segments_loses_them() -> None:
+    # The flag survives a merge only if both sides carry it: a region
+    # that publishes no segments has no runs to stitch, so the merged
+    # region cannot answer for the whole span either.  Built empty,
+    # because a non-publishing region refuses spans.
+    left = RegionCoverage("chr1", 1, 10)
     left.add_interval(4, 10, (0.5,))
-    right = RegionCoverage("chr1", 11, 20, rows_are_disjoint=False)
-    right.add_interval(11, 16, (0.5,))
+    right = RegionCoverage("chr1", 11, 20, publishes_segments=False)
 
     left.merge(right)
 
-    assert left.covered == 13
+    assert left.covered == 7
+    assert not left.publishes_segments
     assert left.segment_summary() is None
-
-
-@pytest.mark.parametrize("feed", ["row-by-row", "batch"])
-def test_an_overlapping_kind_opens_no_run_at_all(feed: str) -> None:
-    # Segments are not wanted for an overlapping kind (ADR 0020 as
-    # amended by gain#926), so the run algebra is not merely unpublished
-    # -- it is never executed.  The rows below carry three DIFFERENT
-    # value tuples and touch nowhere on the second one, so the ungated
-    # code would close runs and open new ones; here nothing opens.
-    region = RegionCoverage("chr1", 1, 100, rows_are_disjoint=False)
-    spans = [(10, 40), (20, 30), (60, 70)]
-    values = [(0.1,), (0.2,), (0.3,)]
-
-    if feed == "row-by-row":
-        for (begin, end), value in zip(spans, values, strict=True):
-            region.add_interval(begin, end, value)
-    else:
-        region.add_interval_batch(
-            np.array([begin for begin, _ in spans]),
-            np.array([end for _, end in spans]),
-            [np.array([value for value, in values])])
-
-    # 10-40 unioned with the nested 20-30, plus 60-70.
-    assert region.covered == 31 + 11
-    assert region._run is None
-    assert region._first_run is None
-    assert region._closed_segments == 0
-    assert region._interior_bins == [0] * LENGTH_HISTOGRAM_BIN_COUNT
-    # That emptiness is readable only from the inside: the gate says
-    # unknown, and since gain#1043 the count and histogram refuse
-    # rather than reporting the zeros above as a scanned result.
-    assert region.segment_summary() is None
-
-
-class _ExplodingColumn:
-    """A value column that fails if anything so much as looks at it."""
-
-    def __getitem__(self, index: object) -> object:
-        raise AssertionError("the value columns were read")
-
-    @property
-    def dtype(self) -> object:
-        raise AssertionError("the value columns were read")
-
-
-def test_an_overlapping_kind_never_reads_the_value_columns() -> None:
-    # The batch path reads ``cells`` only for a kind that publishes
-    # segments: for one whose rows overlap the per-column equality and
-    # the per-run value gather are SKIPPED, not computed and discarded
-    # (gain#926).  A column that raises when touched is the only way to
-    # see that -- the covered count is the same union either way, so no
-    # assertion on an output can tell the two apart.
-    region = RegionCoverage("chr1", 1, 100, rows_are_disjoint=False)
-
-    region.add_interval_batch(
-        np.array([10, 20, 60]), np.array([40, 30, 70]),
-        [_ExplodingColumn()])  # type: ignore[list-item]
-
-    assert region.covered == 42
-
-
-def test_a_fragment_region_refuses_the_segment_count() -> None:
-    # Zero segments of zero length is the answer that must not come
-    # back: the region was never segmented, and gain#926 settled that
-    # it never will be.  Reported as a number it reads as a scanned,
-    # empty result; only segment_summary()'s None says "not wanted".
-    cov = RegionCoverage("chr1", 1, 100, rows_are_disjoint=False)
-    cov.add_interval(10, 12, (0.5,))
-    cov.add_interval(20, 25, (0.5,))
-    cov.add_interval(30, 33, (0.5,))
-
-    with pytest.raises(ValueError, match="publishes no segment statistics"):
-        _ = cov.segment_count
-
-
-def test_a_fragment_region_refuses_the_segment_length_histogram() -> None:
-    # The other half of the same gate.  Before gain#926 stopped the
-    # fragment path building runs, these two disagreed outright --
-    # three runs counted, two of them binned -- which is what gain#1043
-    # was filed for; the uniform zero that replaced it is quieter and
-    # no more true.
-    cov = RegionCoverage("chr1", 1, 100, rows_are_disjoint=False)
-    cov.add_interval(10, 12, (0.5,))
-    cov.add_interval(20, 25, (0.5,))
-    cov.add_interval(30, 33, (0.5,))
-
-    with pytest.raises(ValueError, match="publishes no segment statistics"):
-        cov.segment_length_histogram()
 
 
 def test_a_region_read_without_segments_refuses_both_accessors() -> None:

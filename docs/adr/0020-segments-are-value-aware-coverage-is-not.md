@@ -344,12 +344,21 @@ turn on the mergeability problem:
 
 So the exact-run-algebra question is **not open work**. Because nothing will
 consume it, the run bookkeeping is not merely left unpublished: it is not
-executed. `RegionCoverage.add_interval` opens no run for a kind whose rows
-overlap, `add_interval_batch` takes a value-blind union collapse that reads no
-value column, and the per-record scan feed hands it bare spans — the work is
-gated off at the largest tables in the stack rather than computed and
-discarded. Reopening this means reopening the *consumer* question first; a
+executed. Reopening this means reopening the *consumer* question first; a
 mergeable definition on its own is not a reason to build one.
+
+*Amended 2026-09-08, gain#1175:* the paragraph above used to describe the
+mechanism — `RegionCoverage.add_interval` opening no run for a kind whose
+rows overlap, `add_interval_batch` taking a value-blind union collapse, the
+per-record scan feed handing it spans clipped to the region. Since gain#1127
+no coverage-scanned kind has overlapping rows, so none of that was reachable
+from any scan, and gain#1175 retired it: `RegionCoverage` is an accumulator
+for pairwise-disjoint rows only, every scanned region publishes segments, and
+the one flag it keeps, `publishes_segments`, marks a region restored from a
+statistics file that carried no segment data — which never accumulates, and
+now refuses a span. The clip is gone with it: both scan feeds hand coverage
+the rows the region owns at their full extent, the same record partition
+every other statistic reads.
 
 **Per-score-column segmentation.** Each score column with its own
 segmentation — the value-aware definition a statistician might expect.
@@ -405,10 +414,11 @@ indefinitely — which is accepted and made visible rather than hidden.
   settles that there is nothing to publish either way, for the consumer
   reasons recorded under *Rejected alternatives*. Value-aware segments are a
   position-score statistic. Nothing publishes a fragment segment count or
-  length histogram, and a kind whose rows overlap now builds **no runs at
-  all** — the algebra is gated off, not computed and discarded. Since
-  gain#1127 **covered positions are a position-score statistic too**, on the
-  matching argument: a fragment score is not coverage-scanned at all.
+  length histogram. Since gain#1127 **covered positions are a position-score
+  statistic too**, on the matching argument: a fragment score is not
+  coverage-scanned at all — and so, since gain#1175, the coverage
+  accumulator no longer carries a gated-off path for overlapping rows;
+  it is fed disjoint rows only.
 - **The rollout is visibly incomplete for a while.** Resource pages show
   "not computed" until each resource is rebuilt; that state is intended, not
   a defect. gain#1127 adds a case that runs the other way: a fragment
