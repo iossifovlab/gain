@@ -51,9 +51,8 @@ Reference genome
 
 ``input_reference_genome`` (optional) names the reference genome resource
 whose chromosomes define the grid. The ``-R`` command-line flag overrides it,
-and when neither is given the genome comes from the genomic context (for
-example a genome configured in the GRR definition), so a run definition need
-not name a genome at all where one is configured. The GRR itself is never
+and when neither is given the genome comes from the genomic context, if a
+registered context provider supplies one. The GRR itself is never
 named in the run definition; it comes from ``-g``, ``--grr-directory``, or the
 default GRR definition, as for every GAIn tool (see
 :doc:`grr`). One run definition therefore runs unchanged on a laptop against
@@ -109,8 +108,8 @@ whose key is the binner kind; the only kind in this version is
     numeric (``int`` or ``float``) scores can be binned; a string-typed
     score, or an aggregator such as ``join`` or ``list`` that builds a
     string or a list, is refused at parse time. The numeric aggregators are
-    ``max``, ``min``, ``mean``, ``median`` and ``count``. To bin one resource under two aggregators,
-    list it in two entries.
+    ``max``, ``min``, ``mean``, ``median`` and ``count``. To bin one
+    resource under two aggregators, list it in two entries.
 
 ``none_value_replacement`` (optional)
     A value fed to the aggregator for every position no record covers. By
@@ -184,8 +183,10 @@ The work is split into one task per (track, region), followed by one task
 that assembles the HDF5 file. The tasks run through the same task graph as
 the annotation tools, so the same flags apply: ``-j N`` sets the number of
 workers, ``-N`` names a configured dask cluster, and ``--task-log-dir``
-keeps a log per task. See :doc:`annotation_infrastructure` for the shared
-options.
+keeps a log per task. The genomic-context flags (``-g``,
+``--grr-directory``, ``-R``) and the verbosity flags (``--verbose``,
+``--logfile``) are likewise the shared ones. Run ``binning_tool --help``
+for the full list.
 
 Work directory and reruns
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -194,19 +195,19 @@ Each task writes its column chunk into a work directory; the final task
 assembles the file from those chunks, region by region, so at no point is
 the whole matrix in memory — a genome-wide run at a small bin size is
 possible on an ordinary node. The work directory is ``-w``; by default it
-is a sibling of the output named after it (``run_work`` next to ``run.h5``).
-A work directory the tool created is removed after a successful run;
-``--keep-work-dir`` keeps it.
+is a sibling of the output named after it (``run_work`` next to ``run.h5``),
+and the task-status directory lives inside it. A work directory the tool
+created is removed after a successful run; ``--keep-work-dir`` keeps it.
 
 A run that was interrupted resumes from the chunks it had finished when it
-is started again with the same work directory: only the missing chunks and
-the final assembly are recomputed. A rerun of a finished run redoes only the
-assembly. The chunks are keyed by everything that decides their values —
-resource, score, aggregator, replacement, bin size and region — so two run
-definitions sharing a work directory share exactly the chunks they compute
-identically. A rerun does not notice that a resource has changed underneath
-it; pass ``--force`` to recompute every chunk, for example after a resource
-was updated in the GRR.
+is started again with the same work directory: only the missing chunks are
+computed, and the file is assembled if it is missing. A run whose chunks
+and output are all present does nothing. The chunks are keyed by everything
+that decides their values — resource, score, aggregator, replacement, bin
+size and region — so two run definitions sharing a work directory share
+exactly the chunks they compute identically. A rerun does not notice that a
+resource has changed underneath it; pass ``--force`` to recompute every
+chunk, for example after a resource was updated in the GRR.
 
 
 The output file
@@ -371,9 +372,9 @@ The window ``chr21:20000000-22000000`` does not start on a grid boundary, so
 the first bin is clipped to ``chr21:20000000-20008960`` and the last to
 ``chr21:21995521-22000000``, while every bin in between is a full 10240 bp.
 
-The eight scores are per-base tracks stored as bigWig files of roughly
-10 GB each, read over HTTP by range, so this two-megabase run takes well
-under a minute. A whole-genome run over the same eight tracks would fold
+The eight scores are per-base tracks stored as bigWig files of 6 to 10 GB
+each, read over HTTP by range, so this two-megabase run takes well under a
+minute. A whole-genome run over the same eight tracks would fold
 about three billion positions per track — on the order of forty minutes of
 CPU per track — which is why the example restricts ``regions``: try a
 window first, then widen it.
@@ -383,9 +384,12 @@ window first, then widen it.
     Reading a bigWig directly from a remote GRR needs a ``pyBigWig`` built
     with remote (libcurl) support. The conda package of GAIn ships one; the
     ``pyBigWig`` wheel on PyPI does not. If a run fails with
-    ``Couldn't open https://... for reading``, cache the resources first
-    (see :doc:`gain_getting_started_cli`) or point the tool at a local GRR
-    with ``--grr-directory``.
+    ``Couldn't open https://... for reading``, install GAIn from conda, or
+    point the tool at a local copy of the repository with
+    ``--grr-directory``. A GRR definition with a ``cache_dir`` (see
+    :doc:`gain_getting_started_cli`) also works, but it downloads each
+    bigWig in full before opening it — about 60 GB for the eight scores of
+    this example — whatever the size of the window.
 
 Reading the result back with the ``pandas`` snippet above gives:
 

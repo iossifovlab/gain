@@ -1,4 +1,4 @@
-# 24. `binning_tool` writes one HDF5 matrix from a fixed grid, and a query is always a search
+# 25. `binning_tool` writes one HDF5 matrix from a fixed grid, and a query is always a search
 
 **Status:** accepted
 **Date:** 2026-09-08
@@ -148,9 +148,11 @@ declared output type rather than kept as a list. Every value is stored as
 float64: `/values` is one matrix with one dtype, and HDF5 has no null for
 integers. Integer results (`count`, `max` of an int score) become floats.
 
-### One task per (resource, region), one serial writer (D13)
+### One task per (track, region), one serial writer (D13)
 
-Each (track, region) task writes its column chunk as a `.npy` float64
+The design doc says "(resource, region)"; what shipped is one task per
+*track*, so a resource binned under two aggregators is two tasks, each
+with its own chunk. Each (track, region) task writes its column chunk as a `.npy` float64
 vector in the work directory. One final writer task creates the file,
 preallocates `/values` with the known shape, and for each region in order
 loads that region's chunks for every track, stacks them into a row block and
@@ -164,13 +166,14 @@ tracks that is hundreds of full rewrites of the matrix.
 
 Chunks are named by everything that decides their values — resource,
 score, aggregator, replacement, bin size, region — so a rerun matches them:
-a rerun reuses the finished chunks and reruns only the writer, and two run
-definitions sharing a work directory share exactly the chunks they compute
-identically. The writer's one input is the chunk *directory*, whose mtime
-moves whenever a chunk is created, so a second definition in the same work
-directory makes the writer run again instead of leaving a stale file. A
-rerun does not notice a resource changed underneath it; `--force` is how to
-recompute.
+a rerun with the same work directory computes only the chunks that are
+missing and assembles the file only if it is missing (a run whose chunks
+and output are all present does nothing), and two run definitions sharing
+a work directory share exactly the chunks they compute identically. The
+writer's one input is the chunk *directory*, whose mtime moves whenever a
+chunk is created, so a second definition in the same work directory makes
+the writer run again instead of leaving a stale file. A rerun does not
+notice a resource changed underneath it; `--force` is how to recompute.
 
 ### The read path is `get_scores_in_bins`, unchanged — decided by measurement (D14)
 
@@ -182,8 +185,10 @@ doc deferred the question of adding a vectorised binned fold over
 #1198 on 2026-09-06):
 
 - The fold costs 0.54–0.59 µs per record on every backend — bigWig, tabix,
-  sparse and dense ATAC bigWigs — so its total cost is a function of record
-  count alone.
+  and a dense ATAC bigWig — so its total cost is a function of record count
+  alone. (A sparse ATAC track measures ~1.5 µs per record, because the fold
+  iterates position *runs* and a sparse region carries a gap run between
+  every record; that is the same loop, not a different cost.)
 - For the workload the tool exists to serve (the prototype's ~92 ATAC
   tracks) a whole-genome run is 0.02–5.4 CPU-hours, already split across
   the per-(resource, region) tasks. The fold is ~58% of that on bigWig, so a
