@@ -192,8 +192,11 @@ class SearchResources(ResourcesAPIView):
         # and index-skip warnings differed between fragment and
         # non-fragment filters.  The route is decided by the term alone
         # now (gain#1212), so a type-only search reads the same source for
-        # every type; keeping the predicate in the search is what keeps
-        # that decision in one place.
+        # every type; keeping the predicate in the search is what leaves
+        # the choice of route to the one place that makes it.  (`Resources`
+        # above still filters by type in Python, over a `search` parameter
+        # that is an id substring rather than an FTS term -- converting it
+        # is a change of user-visible semantics, so it is its own issue.)
         try:
             # `search_resources` parses `resource_query` eagerly, when
             # called rather than on the first row, so a malformed query is

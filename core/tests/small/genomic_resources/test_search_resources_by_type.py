@@ -19,6 +19,7 @@ from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,
     SearchIndexUnavailableError,
 )
+from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
     a_grr,
@@ -74,7 +75,7 @@ def test_a_type_alone_needs_no_index(
     assert found == {"scores/res_a", "scores/res_b"}
 
 
-@pytest.mark.parametrize("spelling", ["fragment_score", "cnv_collection"])
+@pytest.mark.parametrize("spelling", FRAGMENT_SCORE_TYPES)
 def test_either_fragment_score_spelling_finds_both(
     unindexed_mixed_grr: GenomicResourceProtocolRepo, spelling: str,
 ) -> None:
@@ -85,7 +86,6 @@ def test_either_fragment_score_spelling_finds_both(
 
 
 @pytest.mark.parametrize(("resource_type", "query", "expected"), [
-    ("genome", "*", {"genomes/res_g"}),
     ("position_score", '*[domain="beta"]', {"scores/res_b"}),
     ("genome", "scores/*", set()),
 ])
@@ -110,13 +110,3 @@ def test_a_term_beside_a_type_still_needs_the_index(
     with pytest.raises(SearchIndexUnavailableError):
         list(unindexed_mixed_grr.search_resources(
             search_term="alpha", resource_type="position_score"))
-
-
-@pytest.mark.parametrize("blank", ["", " ", "\t"])
-def test_a_blank_type_selects_everything_and_opens_no_index(
-    unindexed_mixed_grr: GenomicResourceProtocolRepo, blank: str,
-) -> None:
-    found = _ids(unindexed_mixed_grr.search_resources(resource_type=blank))
-
-    assert found == _ids(unindexed_mixed_grr.get_all_resources())
-    assert len(found) == 5

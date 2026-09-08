@@ -54,9 +54,9 @@ added it and no `grr_manage` run has rebuilt the index since. The resource
 serves the label from its `meta.labels` regardless, so "no column" does not
 imply "no resource carries the key", and settling the clause for every
 resource at once was wrong in the direction that silently loses them: since
-supplying a `search_term` or a `resource_type` is what routes the search
-through the index, adding a filter that should only narrow the result set
-emptied it instead. Such a clause is now handed back to the caller and
+supplying a `search_term` or a `resource_type` was what routed the search
+through the index (a `resource_type` no longer does — gain#1212), adding a
+filter that should only narrow the result set emptied it instead. Such a clause is now handed back to the caller and
 re-asked of each resource the statement yields, which the indexed path already
 materialises in full.
 
