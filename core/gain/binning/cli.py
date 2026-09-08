@@ -242,7 +242,7 @@ def _track_stem(track: Track, bin_size: int) -> str:
     replacement = track.none_value_replacement
     return (
         f"{resource}_{track.score_id}_{track.aggregator}"
-        f"_{'none' if replacement is None else replacement!r}"
+        f"_{'none' if replacement is None else replacement}"
         f"_bs{bin_size}")
 
 

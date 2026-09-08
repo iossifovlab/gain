@@ -598,15 +598,44 @@ def test_the_chunks_are_the_tracer_bullets_whatever_the_budget(
     run_definition: pathlib.Path, output: pathlib.Path,
     budget: tuple[str, ...],
 ) -> None:
-    # One chunk per (track, region) under the name #1200 gave it, quoted
-    # 'none' included, whether a task wrote one chunk or both.
+    # One chunk per (track, region), named by everything that decides
+    # its values, whether a task wrote one chunk or both.  An unset
+    # replacement is spelled ``none``.
     binning_tool(run_definition, grr_dir, output, "--keep-work-dir", *budget)
 
     assert work_dir_names(output, "chunks/*.npy") == [
-        "scores_one_s_max_'none'_bs10_chr1_1_40.npy",
-        "scores_one_s_max_'none'_bs10_chr2_1_40.npy",
-        "scores_two_t_mean_'none'_bs10_chr1_1_40.npy",
-        "scores_two_t_mean_'none'_bs10_chr2_1_40.npy",
+        "scores_one_s_max_none_bs10_chr1_1_40.npy",
+        "scores_one_s_max_none_bs10_chr2_1_40.npy",
+        "scores_two_t_mean_none_bs10_chr1_1_40.npy",
+        "scores_two_t_mean_none_bs10_chr2_1_40.npy",
+    ]
+
+
+def test_a_set_replacement_is_named_by_its_value(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+) -> None:
+    # The replacement is one of the things that decides a chunk's values,
+    # so it names the chunk -- as the bare value.  This is the other
+    # branch of the name from the unset one above: a change to how an
+    # unset replacement is spelled must leave a set one alone.
+    run_definition = write_run_definition(output, textwrap.dedent("""
+        input_reference_genome: genome
+        bins:
+          bin_size: 10
+          regions: ["chr1:1-40"]
+        binners:
+        - position_score_binner:
+            resource_query: "scores/one"
+            none_value_replacement: 0.0
+    """))
+
+    binning_tool(run_definition, grr_dir, output, "--keep-work-dir")
+
+    assert work_dir_names(output, "chunks/*.npy") == [
+        "scores_one_s_max_0.0_bs10_chr1_1_40.npy",
+    ]
+    assert work_dir_names(output, ".task-status/bin_*.flag") == [
+        "bin_scores_one_s_max_0.0_bs10_chr1_1_chr1_40.flag",
     ]
 
 
@@ -631,8 +660,8 @@ def test_a_bundle_of_many_regions_is_one_task_with_a_short_id(
     binning_tool(run_definition, grr_dir, output, "--keep-work-dir")
 
     assert work_dir_names(output, ".task-status/*.flag") == [
-        "bin_scores_one_s_max_'none'_bs10_chr1_1_chr2_40.flag",
-        "bin_scores_two_t_mean_'none'_bs10_chr1_1_chr2_40.flag",
+        "bin_scores_one_s_max_none_bs10_chr1_1_chr2_40.flag",
+        "bin_scores_two_t_mean_none_bs10_chr1_1_chr2_40.flag",
         "write_hdf5.flag",
     ]
     assert read_matrix(output).shape == (24, 2)
@@ -650,10 +679,10 @@ def test_a_budget_of_zero_runs_one_task_per_track_and_region(
         "--task-budget", "0")
 
     assert work_dir_names(output, ".task-status/bin_*.flag") == [
-        "bin_scores_one_s_max_'none'_bs10_chr1_1_chr1_40.flag",
-        "bin_scores_one_s_max_'none'_bs10_chr2_1_chr2_40.flag",
-        "bin_scores_two_t_mean_'none'_bs10_chr1_1_chr1_40.flag",
-        "bin_scores_two_t_mean_'none'_bs10_chr2_1_chr2_40.flag",
+        "bin_scores_one_s_max_none_bs10_chr1_1_chr1_40.flag",
+        "bin_scores_one_s_max_none_bs10_chr2_1_chr2_40.flag",
+        "bin_scores_two_t_mean_none_bs10_chr1_1_chr1_40.flag",
+        "bin_scores_two_t_mean_none_bs10_chr2_1_chr2_40.flag",
     ]
 
 
