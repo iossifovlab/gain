@@ -3,11 +3,11 @@ import pathlib
 import textwrap
 
 import pytest
+from gain.annotation.allele_score_annotator import AlleleScoreAnnotator
 from gain.annotation.annotatable import Annotatable, Region, VCFAllele
 from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
-from gain.annotation.score_annotator import AlleleScoreAnnotator
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GenomicResourceRepo,

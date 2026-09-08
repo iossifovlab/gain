@@ -2,8 +2,10 @@
 """Architecture tests for gain package using pytestarch."""
 import ast
 import functools
+import importlib
 import os
 import pathlib
+import tomllib
 
 import pytest
 from gain.annotation import pipeline_doc
@@ -264,6 +266,79 @@ def test_the_statistics_scan_does_not_import_the_implementation_classes(
     )
 
 
+#: The deprecated facade over the per-annotator score modules (gain#1152).
+#: A constant here, so the fence below exempts this module:
+#: ``_imported_names`` reports every string constant it sees.
+SCORE_ANNOTATOR_FACADE = "gain.annotation.score_annotator"
+
+
+def test_nothing_in_gain_imports_the_score_annotator_facade() -> None:
+    """The facade is for gpf; gain imports each annotator from its module.
+
+    Sweeps both trees this suite can see, ``core/gain`` and
+    ``core/tests``.  ``web_api`` is fenced by its own copy of the rule,
+    for the reason its ``test_architecture.py`` docstring gives.  The
+    exemptions are this module, which names the facade as a constant,
+    and the facade's own test, whose subject is the re-export.
+    """
+    allowed = {
+        pathlib.Path(TESTS_SRC) / "test_architecture.py",
+        pathlib.Path(TESTS_SRC) / "small" / "annotation"
+        / "test_score_annotator_facade.py",
+    }
+    roots = (
+        (pathlib.Path(GAIN_SRC), "gain"),
+        (pathlib.Path(TESTS_SRC), "tests"),
+    )
+    offenders = [
+        str(py.relative_to(root))
+        for root, top in roots
+        for py in sorted(root.rglob("*.py"))
+        if py not in allowed
+        and SCORE_ANNOTATOR_FACADE in _imported_modules(py, root, top)
+    ]
+    assert offenders == [], (
+        f"these modules import the deprecated {SCORE_ANNOTATOR_FACADE}: "
+        f"{offenders}. Import GenomicScoreAnnotatorBase from "
+        f"gain.annotation.genomic_score_annotator_base, and each annotator "
+        f"from its own module -- gain#1154 deletes the facade"
+    )
+
+
+def test_every_annotator_entry_point_names_the_module_that_defines_it(
+) -> None:
+    """No annotator is registered through a re-export.
+
+    An entry point is an import the AST sweep above cannot see: a string
+    in ``pyproject.toml``, resolved when the pipeline loads its
+    annotators.  One that names a facade rather than the factory's home
+    pins the facade -- ``score_annotator`` against gain#1154 -- and, for
+    a deprecating one, warns on every pipeline load.  Stated for the
+    whole group rather than for that one facade, so the next split does
+    not need a fence of its own.
+    """
+    with open(os.path.join(GAIN_ROOT, "pyproject.toml"), "rb") as infile:
+        project = tomllib.load(infile)
+    assert project["project"]["name"] == "gain-core", \
+        "a wrong path that still parsed would pin nothing"
+    annotators = project["project"]["entry-points"][
+        "gain.annotation.annotators"]
+    offenders = {}
+    for name, target in annotators.items():
+        module_name, _, attr = target.partition(":")
+        factory = getattr(importlib.import_module(module_name), attr, None)
+        if factory is None or factory.__module__ != module_name:
+            offenders[name] = target
+    assert not offenders, (
+        f"these annotator entry points name a module other than the one "
+        f"that defines their factory: {offenders}"
+    )
+    assert {
+        "allele_score", "allele_score_annotator",
+        "position_score", "position_score_annotator",
+    } <= set(annotators), "the score annotators are no longer registered"
+
+
 #: Names that reach markdown2's un-rescued output.  The second is the
 #: wrapper module's own re-export: it renders *through* the library, so it
 #: binds the raw function under the bare name ``markdown``, and importing
@@ -461,7 +536,11 @@ def test_the_pipeline_doc_template_is_bound_in_one_module() -> None:
 
 
 @functools.cache
-def _imported_modules(py: pathlib.Path) -> set[str]:
+def _imported_modules(
+    py: pathlib.Path,
+    root: pathlib.Path = pathlib.Path(GAIN_SRC),
+    top: str = "gain",
+) -> set[str]:
     """Absolute dotted names ``py`` imports, however it spells them.
 
     Cached per file: several rules here sweep the whole package, and the
@@ -472,10 +551,14 @@ def _imported_modules(py: pathlib.Path) -> set[str]:
     import x`` and an ``importlib.import_module("gain.annotation.x")`` are
     all seen -- a text scan for ``from gain.annotation`` catches none of
     the three, and matches a line inside a docstring that imports nothing.
+
+    ``root`` and ``top`` name the tree ``py`` sits in and its top-level
+    package; the defaults are the ``gain`` package, and a sweep over the
+    tests passes ``TESTS_SRC`` and ``"tests"``.
     """
-    # The package that contains this module, as a dotted path: `gain` plus
-    # the directories between GAIN_SRC and the file.
-    package = ["gain", *py.relative_to(GAIN_SRC).parts[:-1]]
+    # The package that contains this module, as a dotted path: `top` plus
+    # the directories between `root` and the file.
+    package = [top, *py.relative_to(root).parts[:-1]]
     return _imported_names(py.read_text(encoding="utf8"), package)
 
 

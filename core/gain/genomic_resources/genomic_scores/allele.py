@@ -216,7 +216,7 @@ class AlleleScore(GenomicScore):
     :meth:`get_allele_scores_in_region_agg` folds a region in one streaming
     walk, one value per :class:`~..aggregators.ScoreAggregationQuery`, with
     the allele keys beside them when asked, and the allele annotator's
-    region mode reads through it (``gain.annotation.score_annotator``).
+    region mode reads through it (``gain.annotation.allele_score_annotator``).
 
     Attributes:
         resource: The underlying GenomicResource object

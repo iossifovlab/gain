@@ -11,8 +11,10 @@ from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import Attribute
 from gain.annotation.annotation_pipeline import Annotator
 from gain.annotation.gene_score_annotator import GeneScoreAnnotator
+from gain.annotation.genomic_score_annotator_base import (
+    GenomicScoreAnnotatorBase,
+)
 from gain.annotation.record_to_annotatable import build_annotatable_from_dict
-from gain.annotation.score_annotator import GenomicScoreAnnotatorBase
 from gain.gene_scores.gene_scores import (
     _build_gene_score_help,
     build_gene_score_from_resource,
