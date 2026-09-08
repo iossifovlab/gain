@@ -7,7 +7,9 @@ from unittest.mock import MagicMock
 import pytest
 import pytest_mock
 from gain.annotation.annotate_utils import (
+    absolutize_path_args,
     add_common_annotation_arguments,
+    apply_work_dir_defaults,
     cache_pipeline_resources,
     check_resource_locality,
     find_nonlocal_resources,
@@ -440,6 +442,82 @@ def test_handle_default_args_marks_work_dir_not_created_when_preexisting(
     result = handle_default_args({"input": "in.vcf", "output": None})
 
     assert result["work_dir_created"] is False
+
+
+def test_absolutize_path_args_uses_the_tools_own_input_key(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # binning_tool has no ``input``; its primary input is the run
+    # definition, and the tool names the key.
+    monkeypatch.chdir(tmp_path)
+    args = {"run_definition": "run.yaml", "grr_directory": "grr"}
+
+    absolutize_path_args(args, input_key="run_definition")
+
+    assert args["run_definition"] == str(tmp_path / "run.yaml")
+    assert args["grr_directory"] == str(tmp_path / "grr")
+
+
+def test_absolutize_path_args_leaves_empty_paths_alone() -> None:
+    args = {"input": "in.vcf", "grr_filename": None, "work_dir": ""}
+
+    absolutize_path_args(args, input_key="input")
+
+    assert args["grr_filename"] is None
+    assert args["work_dir"] == ""
+
+
+def test_apply_work_dir_defaults_puts_the_task_dirs_in_an_absolute_work_dir(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A relative output, not absolutized first: the work dir it derives
+    # is still absolute, so a later chdir into it cannot lose the task
+    # status and log directories.
+    monkeypatch.chdir(tmp_path)
+    args: dict[str, object] = {"output": "bins.h5"}
+
+    apply_work_dir_defaults(args)
+
+    assert args["work_dir"] == str(tmp_path / "bins_work")
+    assert args["work_dir_created"] is True
+    assert (tmp_path / "bins_work").is_dir()
+    assert args["task_status_dir"] == str(
+        tmp_path / "bins_work" / ".task-status")
+    assert args["task_log_dir"] == str(tmp_path / "bins_work" / ".task-log")
+
+
+def test_apply_work_dir_defaults_absolutizes_explicit_relative_dirs(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Explicit relative directories, not absolutized first: the step
+    # itself resolves them, since the tool chdirs into the work dir next.
+    monkeypatch.chdir(tmp_path)
+    args: dict[str, object] = {
+        "output": "out.vcf",
+        "work_dir": "my_work",
+        "task_status_dir": "status",
+    }
+
+    apply_work_dir_defaults(args)
+
+    assert args["work_dir"] == str(tmp_path / "my_work")
+    assert args["task_status_dir"] == str(tmp_path / "status")
+    assert args["task_log_dir"] == str(tmp_path / "my_work" / ".task-log")
+
+
+def test_apply_work_dir_defaults_creates_a_nested_work_dir_with_its_parents(
+    tmp_path: pathlib.Path,
+) -> None:
+    work_dir = tmp_path / "deep" / "nested" / "work"
+    args: dict[str, object] = {
+        "output": str(tmp_path / "out.vcf"),
+        "work_dir": str(work_dir),
+    }
+
+    apply_work_dir_defaults(args)
+
+    assert work_dir.is_dir()
+    assert args["work_dir_created"] is True
 
 
 @pytest.mark.parametrize(

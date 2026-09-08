@@ -24,6 +24,8 @@ import yaml
 
 from gain import __version__
 from gain.annotation.annotate_utils import (
+    absolutize_path_args,
+    apply_work_dir_defaults,
     build_cli_genomic_context,
     get_grr_from_context,
     maybe_remove_work_dir,
@@ -54,12 +56,6 @@ COORDINATES = "1-based-inclusive"
 # Rows per HDF5 chunk of ``/values``: "every track for one chromosome" is
 # then a contiguous read, and gzip collapses the NaN- and zero-heavy runs.
 ROW_BLOCK = 8192
-# Paths the user may have named relative to where the command was typed;
-# the tasks run inside the work directory, so they are resolved first.
-PATH_ARGS = (
-    "run_definition", "output", "work_dir", "task_status_dir",
-    "task_log_dir", "dask_cluster_config_file", "grr_filename",
-    "grr_directory")
 
 
 def _build_argument_parser() -> argparse.ArgumentParser:
@@ -108,9 +104,10 @@ def cli(argv: list[str] | None = None) -> None:
     if args.get("output") is None:
         args["output"] = \
             f"{os.path.splitext(args['run_definition'])[0]}.h5"
-    for key in PATH_ARGS:
-        if args.get(key):
-            args[key] = os.path.abspath(args[key])
+    # Paths the user may have named relative to where the command was
+    # typed; the tasks run inside the work directory, so they are resolved
+    # before the GRR definition the workers rebuild is derived from them.
+    absolutize_path_args(args, input_key="run_definition")
 
     with open(args["run_definition"]) as infile:
         config = yaml.safe_load(infile)
@@ -129,7 +126,7 @@ def cli(argv: list[str] | None = None) -> None:
         _print_plan(run)
         return
 
-    _handle_default_args(args)
+    apply_work_dir_defaults(args)
     # Inside the work dir, as the annotate tools run: an index a worker
     # fetches for a remote resource then lands there, not in the launch
     # directory.
@@ -171,19 +168,6 @@ def _print_plan(run: RunDefinition) -> None:
 def _bin_count(region: BedRegion, bin_size: int) -> int:
     return calc_bin_index(bin_size, region.stop) \
         - calc_bin_index(bin_size, region.start) + 1
-
-
-def _handle_default_args(args: dict[str, Any]) -> None:
-    """Fill the work and task-status directories the annotate tools' way."""
-    if args.get("work_dir") is None:
-        args["work_dir"] = f"{os.path.splitext(args['output'])[0]}_work"
-    args["work_dir_created"] = not os.path.exists(args["work_dir"])
-    os.makedirs(args["work_dir"], exist_ok=True)
-    if args.get("task_status_dir") is None:
-        args["task_status_dir"] = os.path.join(
-            args["work_dir"], ".task-status")
-    if args.get("task_log_dir") is None:
-        args["task_log_dir"] = os.path.join(args["work_dir"], ".task-log")
 
 
 def _build_task_graph(
