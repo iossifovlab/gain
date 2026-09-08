@@ -294,9 +294,10 @@ reason a read of one is not a read of the other
 - The **regions** a contig is scanned in own the rows whose `pos_begin` falls
   inside them, and measure those rows whole. So the regions partition the
   contig's **fragments**, and every statistic that sums over rows is
-  independent of how the contig was split. **Covered positions** are the one
-  exception: a union is additive only across disjoint extents, so coverage
-  partitions *positions* — by clipping — wherever rows can overlap.
+  independent of how the contig was split. **Covered positions** ride the
+  same partition: a union is additive across regions only when no two rows
+  share a position, which is exactly the case for the one kind that is
+  coverage-scanned (gain#1127, gain#1175).
 - Every allele-score row has exactly one **allele class**, so the counts of
   **substitution**, **insertion**, **deletion**, **complex** and **other** sum
   to the row count. **Segments** and **covered positions** describe *where* a

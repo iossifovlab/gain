@@ -75,12 +75,17 @@ def normalize_values(values: Iterable[Any]) -> tuple:
 class RegionCoverage:
     """Coverage of one scanned region, accumulated row by row.
 
-    Consumes ``[begin, end]`` spans in non-decreasing ``begin`` order —
-    the order the scan validators guarantee — and counts each position
-    once however many rows span it (a running-maximum union, so nested
-    and overlapping fragment rows are handled).  Whether those spans
-    arrive clipped to the region is the scan's decision, taken from
-    :attr:`rows_are_disjoint`.
+    Consumes ``[begin, end]`` spans in non-decreasing ``begin`` order --
+    the order the scan validators guarantee -- and counts each position
+    once.  The rows it is fed are pairwise disjoint: since gain#1127
+    the only coverage-scanned kinds are position scores, whose
+    validators refuse a row beginning at or before its predecessor's
+    end (adjacent rows are legal and common, and the segment algebra
+    depends on that).  So the scan hands over each row at its FULL
+    extent, unclipped -- disjoint spans cannot double-count a position,
+    the union stays additive across parallel regions, and the segment
+    runs are measured at their true length rather than the region's
+    (gain#1175 retired the clip that overlapping rows once needed).
     """
 
     def __init__(
@@ -89,26 +94,18 @@ class RegionCoverage:
         start: int | None,
         end: int | None,
         *,
-        rows_are_disjoint: bool = True,
+        publishes_segments: bool = True,
     ) -> None:
         self.chrom = chrom
         self.start = start
         self.end = end
-        # ONE fact about the kind being scanned, with two consequences.
-        # Rows no two of which share a position (a position score, whose
-        # validators refuse a row beginning at or before its
-        # predecessor's end) have an exact run algebra, so their segment
-        # summary is published; and they cannot double-count a position,
-        # so the scan may hand this their FULL spans and the union stays
-        # additive across regions.  Rows that can overlap (fragments)
-        # publish no segment summary -- not wanted, ADR 0020 as amended
-        # by gain#926, so they build no runs either -- and must be
-        # handed spans clipped to the region -- see
-        # ``accumulate_coverage`` below.
-        #
-        # Disjoint, NOT "non-touching": adjacent rows are legal, and the
-        # stitch in ``_merge_runs`` depends on them being so.
-        self._rows_are_disjoint = rows_are_disjoint
+        # Whether this region has segment numbers to answer with.  A
+        # scanned region always does -- disjoint rows have an exact run
+        # algebra.  Only :meth:`frozen` sets this False, for a region
+        # restored from a statistics file that carried no segment data,
+        # and such a region never accumulates a span:
+        # :meth:`add_interval` refuses one.
+        self._publishes_segments = publishes_segments
         self.covered = 0
         # The rightmost covered position so far; union means only the part
         # of a row past this mark adds new covered positions.
@@ -141,40 +138,36 @@ class RegionCoverage:
         """A region restored from serialized counts, with no scan state.
 
         ``segments`` of ``None`` marks that data unknown -- the file
-        predates it, carries foreign bins, or the kind publishes none.
-        A frozen region never accumulates a span, so
-        ``rows_are_disjoint`` has no clipping consequence here; it
-        carries only the other one, gating the summary this region can
-        answer with.
+        predates it, or carries foreign bins -- and is the one way a
+        region comes to publish no segments.
         """
         region = cls(
             chrom, None, None,
-            rows_are_disjoint=segments is not None)
+            publishes_segments=segments is not None)
         region.covered = covered
         region._frozen_segments = segments
         return region
 
     @property
-    def rows_are_disjoint(self) -> bool:
-        """Whether no two of the scanned kind's rows share a position.
+    def publishes_segments(self) -> bool:
+        """Whether this region has segment numbers to answer with.
 
-        Read by the scan to decide whether to clip the spans it hands
-        :meth:`add_interval` -- see the constructor for the one fact and
-        its two consequences.
+        The one predicate behind both :meth:`segment_summary`'s
+        ``None`` and the accessors' refusal, so the two gates cannot
+        drift apart.  False only for a region :meth:`frozen` from a
+        statistics file that carried no segment data.
         """
-        return self._rows_are_disjoint
+        return self._publishes_segments
 
     def segment_summary(self) -> tuple[int, list[int]] | None:
         """Segment count and length histogram, or ``None`` if unknown.
 
-        Unknown means the region does not track segments: rows that
-        overlap, for which segments are not wanted (ADR 0020, amended
-        by gain#926), or a region deserialized from a statistics file
-        that predates segment-length histograms.  This is the ASKING
-        form of the gate the count and histogram accessors refuse
-        through -- ``None`` here, an exception there, because a caller
-        that asks may not know and one that reaches straight for a
-        number has asserted it does.
+        Unknown means the region was deserialized from a statistics
+        file that predates segment-length histograms.  This is the
+        ASKING form of the gate the count and histogram accessors
+        refuse through -- ``None`` here, an exception there, because a
+        caller that asks may not know and one that reaches straight for
+        a number has asserted it does.
         """
         if not self._publishes_segments:
             return None
@@ -188,7 +181,7 @@ class RegionCoverage:
         totals exactly ``segment_count``.  Refuses a region that
         publishes none -- see :meth:`_refuse_without_segments`.
         """
-        self._refuse_without_segments()
+        self._refuse_without_segments("answer a segment length histogram")
         if self._frozen_segments is not None:
             return list(self._frozen_segments[1])
         histogram = list(self._interior_bins)
@@ -214,10 +207,6 @@ class RegionCoverage:
         The caller still advances ``_closed_segments`` itself -- a
         stitched merge records the combined run here but counts it
         through the other region's tally.
-
-        Reached only for a disjoint kind -- :meth:`add_interval` opens
-        no run for one whose rows overlap -- so every run arriving here
-        belongs to a segmentation that will be published.
         """
         if not self._closed_segments:
             self._first_run = run
@@ -231,60 +220,29 @@ class RegionCoverage:
         Refuses a region that publishes none -- see
         :meth:`_refuse_without_segments`.
         """
-        self._refuse_without_segments()
+        self._refuse_without_segments("answer a segment count")
         if self._frozen_segments is not None:
             return self._frozen_segments[0]
         return self._closed_segments + (1 if self._run is not None else 0)
 
-    @property
-    def _publishes_segments(self) -> bool:
-        """Whether this region has segment numbers to answer with.
+    def _refuse_without_segments(self, doing: str) -> None:
+        """Refuse ``doing`` on a region that publishes no segments.
 
-        The one predicate behind both the summary's ``None`` and the
-        accessors' refusal, so the two gates cannot drift apart.  It
-        reads ``_rows_are_disjoint``, which carries this second meaning
-        alongside its clipping one -- a scanned region publishes
-        segments exactly when its rows have an exact run algebra, and
-        :meth:`frozen` reuses the flag to mark a deserialized region
-        whose file carried no segment data.  Deliberately reads the
-        FIELD rather than the public :attr:`rows_are_disjoint`, which
-        is the clipping view: the two are siblings over one flag, not
-        one built on the other, and if the flag is ever split this gate
-        must follow the publishing meaning, not the clipping one.
-        """
-        return self._rows_are_disjoint
-
-    def _refuse_without_segments(self) -> None:
-        """Guard both segment accessors on a region that has none.
-
-        Both kinds of region that land here hold the same wrong
-        answer, zero segments of zero length: a SCANNED region of
-        overlapping rows opens no run at all (gain#926), and a
-        DESERIALIZED region whose file carried no segment data never
-        had one.  Their numbers agree, and agree on a lie -- zero
-        reads as scanned-and-empty rather than as not-wanted or
-        never-scanned, and only :meth:`segment_summary`'s ``None``
-        tells those apart.
-
-        Before gain#926 the scanned case was worse: the run
-        bookkeeping ran but ``_record_closed`` binned no interior run,
-        so a count answered here outran its own histogram and broke
-        the contract :meth:`segment_length_histogram` states.  That
-        inconsistency is what gain#1043 was filed for; gating off the
-        bookkeeping replaced it with a uniform zero, which is quieter
-        and no more true.  Either way the numbers must not escape, and
-        fragments have no exact run algebra that could make them mean
-        anything.
-
-        Ask through :meth:`segment_summary` instead, which answers
-        ``None`` -- a caller that asks may not know, one that reaches
-        straight for a number has asserted it does.
+        The one gate behind both segment accessors and both span feeds,
+        so they cannot drift apart.  A region deserialized from a file
+        that carried no segment data holds zero segments of zero
+        length, and that number is a lie: zero reads as
+        scanned-and-empty rather than never-scanned, and only
+        :meth:`segment_summary`'s ``None`` tells those apart (gain#1043
+        was filed for a count that escaped this way).  Nor may such a
+        region accumulate: it holds counts, not scan state, and a span
+        reaching it is a wiring error (gain#1175).
         """
         if not self._publishes_segments:
             raise ValueError(
                 f"region {self.chrom} publishes no segment statistics: "
-                "its rows overlap, or it was read from a statistics "
-                "file carrying none; ask segment_summary()")
+                "it was read from a statistics file carrying none, "
+                f"and cannot {doing}")
 
     def _first(self) -> tuple[int, int, tuple] | None:
         """The leftmost run -- frozen if closed, the open run otherwise."""
@@ -302,8 +260,8 @@ class RegionCoverage:
         refuse_unmergeable(_MERGE_FAILURE, self, other)
 
         self.covered += other.covered
-        self._rows_are_disjoint = \
-            self._rows_are_disjoint and other._rows_are_disjoint
+        self._publishes_segments = \
+            self._publishes_segments and other._publishes_segments
         if other._run is None:
             self.end = other.end
             return
@@ -320,9 +278,6 @@ class RegionCoverage:
     def _merge_runs(self, other: RegionCoverage) -> None:
         """Combine the run bookkeeping of two non-empty regions.
 
-        Both are of a disjoint kind: an overlapping one holds no open
-        run, so :meth:`merge` never reaches here with one.
-
         The one stitch decision: this region's open run and the other's
         first run are one segment exactly when they touch or overlap and
         carry equal values -- the very test :meth:`add_interval` applies
@@ -331,10 +286,10 @@ class RegionCoverage:
         It is deliberately NOT "both runs abut the shared boundary".
         That was the same test in a world where every span arrived
         clipped to its region, which made abutting the boundary the only
-        way two runs could touch.  A region handed FULL spans (an
-        unclipped, disjoint kind -- see :attr:`rows_are_disjoint`) has
-        runs that reach past its own extent, and abutting would refuse
-        to stitch a segment that plainly continues.
+        way two runs could touch.  A region is handed FULL spans (see
+        the class docstring), so its runs reach past its own extent,
+        and abutting would refuse to stitch a segment that plainly
+        continues.
         """
         assert self._run is not None
         assert other._run is not None
@@ -375,21 +330,6 @@ class RegionCoverage:
                 1 + other._closed_segments
         self._run = other._run
 
-    def add_span(self, begin: int, end: int) -> None:
-        """Union one row span into the covered count, values ignored.
-
-        The whole of what a kind publishing no segments needs, and the
-        first half of :meth:`add_interval` for one that does.  Clipped
-        to the region or not, as :attr:`rows_are_disjoint` decides at
-        the scan; this only unions what it is handed.
-        """
-        if self._covered_through is None or begin > self._covered_through:
-            self.covered += end - begin + 1
-            self._covered_through = end
-        elif end > self._covered_through:
-            self.covered += end - self._covered_through
-            self._covered_through = end
-
     def add_interval(
         self,
         begin: int,
@@ -398,20 +338,20 @@ class RegionCoverage:
     ) -> None:
         """Fold one row span into the coverage and its run bookkeeping.
 
-        The union first, then the runs -- and the runs ONLY for a kind
-        whose rows are disjoint.  A kind whose rows overlap publishes
-        no segments (ADR 0020, amended by gain#926: not merely deferred
-        -- not wanted), so building runs for it would be work whose
-        only product is discarded, on exactly the kind with the largest
-        tables.  Gating here rather than at each feed is what makes the
-        invariant hold however the region is fed: **a region whose rows
-        overlap never opens a run**, which is what leaves the disjoint
-        branches of :meth:`_record_closed` and :meth:`_merge_runs`
-        unreachable.
+        The union first -- a running maximum over the right edge, so a
+        row is counted once whatever it overlaps -- then the runs: the
+        row joins the open run while it touches or overlaps it and
+        carries equal values, and closes it otherwise.  Refuses a
+        region that publishes no segments -- see
+        :meth:`_refuse_without_segments`.
         """
-        self.add_span(begin, end)
-        if not self._rows_are_disjoint:
-            return
+        self._refuse_without_segments("accumulate a span")
+        if self._covered_through is None or begin > self._covered_through:
+            self.covered += end - begin + 1
+            self._covered_through = end
+        elif end > self._covered_through:
+            self.covered += end - self._covered_through
+            self._covered_through = end
 
         if self._run is not None:
             run_begin, run_end, run_values = self._run
@@ -439,25 +379,15 @@ class RegionCoverage:
 
         The touching test reads the running maximum end, which is exact
         for a position score (whose validators refuse overlap, so the
-        previous row IS the running maximum).  A kind whose rows can
-        overlap publishes no segments at all (ADR 0020, amended by
-        gain#926 — not wanted, not merely deferred), so it takes the
-        value-blind collapse below: the per-column equality and the
-        per-run value gather are skipped entirely, and only the union
-        the covered count needs is done.  That union is exact whatever
-        run shapes arrive, which is why it may be taken value-blind.
+        previous row IS the running maximum).
 
-        ``left``/``right`` are the spans as the scan decided to hand
-        them over -- clipped to the region for an overlapping kind, the
-        rows' own full extents for a disjoint one -- and ``cells`` is
-        one kept column per scanned score, all equally long.  ``cells``
-        is read only for a disjoint kind: nothing else compares values.
+        ``left``/``right`` are the rows' own full extents (see the
+        class docstring) and ``cells`` is one kept column per scanned
+        score, all equally long.
         """
+        self._refuse_without_segments("accumulate a span")
         count = left.shape[0]
         if not count:
-            return
-        if not self._rows_are_disjoint:
-            self._add_span_batch(left, right)
             return
         boundary = np.ones(count, dtype=bool)
         if count > 1:
@@ -495,32 +425,6 @@ class RegionCoverage:
         for begin, end, values in zip(
                 run_begins, run_ends, run_values, strict=True):
             self.add_interval(begin, end, values)
-
-    def _add_span_batch(
-        self,
-        left: np.ndarray,
-        right: np.ndarray,
-    ) -> None:
-        """Union a batch of spans, value-blind -- the overlapping kind.
-
-        The same collapse :meth:`add_interval_batch` does, minus the
-        equality: spans join a run while they touch or overlap the
-        positions covered so far, whatever they carry.  It reaches the
-        same covered count because :meth:`add_span` unions whatever run
-        shapes arrive, and it hands the loop the shapes that make the
-        loop shortest -- heavily overlapping fragment rows collapse to
-        one span per contiguous stretch.
-        """
-        count = left.shape[0]
-        boundary = np.ones(count, dtype=bool)
-        if count > 1:
-            boundary[1:] = \
-                left[1:] > np.maximum.accumulate(right)[:-1] + 1
-        starts = np.flatnonzero(boundary)
-        for begin, end in zip(
-                left[starts].tolist(),
-                np.maximum.reduceat(right, starts).tolist(), strict=True):
-            self.add_span(begin, end)
 
 
 class CoverageStatistics(Statistic):
@@ -1046,40 +950,28 @@ def accumulate_coverage(
 ) -> None:
     """Fold one batch of column arrays into the region's coverage.
 
-    Coverage partitions POSITIONS, not records: a union is only
-    additive across parallel regions when the spans are clipped to
-    disjoint extents.  Two fragments 8-14 and 12-18 over regions
-    [1-10] and [11-20] cover 11 positions between them; measured whole
-    they would report 7 + 7, and :meth:`RegionCoverage.merge` holds
-    only counts, so nothing downstream can repair it.
-
-    So a kind whose rows can overlap is clipped on both edges -- a
-    record beginning past the region's end covers nothing, the gain#636
-    verdict.  A kind whose rows cannot (see
-    :attr:`RegionCoverage.rows_are_disjoint`) is spared the clip
-    entirely and rides
+    Rides
     :func:`~gain.genomic_resources.genomic_scores.records.owned_records_mask`,
-    the record partition every other statistic reads: disjoint spans
-    cannot double-count, so the union is exact at full span, and the
-    segment runs the same feed builds are measured at their true length
-    rather than the region's.
+    the record partition every other statistic reads: a region owns
+    the rows whose ``pos_begin`` falls inside it and measures them
+    whole.  That is exact for coverage because the rows are pairwise
+    disjoint (see :class:`RegionCoverage`): they cannot double-count a
+    position, so the union is additive across parallel regions at full
+    span, and the segment runs the same feed builds are measured at
+    their true length rather than the region's.  A record beginning
+    past the region's end is not owned and covers nothing -- the
+    gain#636 verdict, reached here by the partition rather than by a
+    clip.
 
-    Either way the spans reach :meth:`RegionCoverage.add_interval_batch`,
-    which owns the run-collapse algebra; nothing here knows what "equal
+    The spans reach :meth:`RegionCoverage.add_interval_batch`, which
+    owns the run-collapse algebra; nothing here knows what "equal
     values" means.  The batches the backends return rarely carry a row
     outside the queried region, so the all-kept batch skips the mask
     copies entirely.
     """
     _chrom, start, end = region
     pos_begin, pos_end, value_cells = arrays
-    if coverage.rows_are_disjoint:
-        keep = owned_records_mask(pos_begin, start, end)
-    else:
-        keep = np.ones(pos_begin.shape[0], dtype=bool)
-        if start is not None:
-            keep &= pos_end >= start
-        if end is not None:
-            keep &= pos_begin <= end
+    keep = owned_records_mask(pos_begin, start, end)
     if not keep.any():
         return
     if keep.all():
@@ -1088,11 +980,6 @@ def accumulate_coverage(
     else:
         left, right = pos_begin[keep], pos_end[keep]
         cells = [column[keep] for column in value_cells.values()]
-    if not coverage.rows_are_disjoint:
-        if start is not None:
-            left = np.maximum(left, start)
-        if end is not None:
-            right = np.minimum(right, end)
     coverage.add_interval_batch(left, right, cells)
 
 

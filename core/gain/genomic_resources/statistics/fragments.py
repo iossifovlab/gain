@@ -354,12 +354,11 @@ def accumulate_fragments(
 ) -> None:
     """Fold one batch of column arrays into the region's fragment tally.
 
-    Fragments partition RECORDS, not positions: the rows this region
-    OWNS, each measured at its own unclipped span.  So this rides
+    Fragments partition RECORDS: the rows this region OWNS, each
+    measured at its own unclipped span.  So this rides
     :func:`~gain.genomic_resources.genomic_scores.records.owned_records_mask`,
-    the record partition every statistic but coverage reads, and needs
-    none of the clipping its coverage twin has to do -- a row is owned
-    whole by exactly one region however the contig was split.
+    the record partition every statistic reads -- a row is owned whole
+    by exactly one region however the contig was split.
     """
     _chrom, start, end = region
     pos_begin, pos_end, _value_cells = arrays
