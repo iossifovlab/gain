@@ -58,6 +58,18 @@ index too: `_search_resources` short-circuits to `get_all_resources()` only when
 `search_term` and `resource_type` are *both* unset. So `grr_browse -t
 position_score` against a group with one index-less child is the same bug.
 
+*Amended by gain#1212:* the paragraph above no longer holds. A type is one
+token every resource carries, and only FTS5 tokenization is irreproducible in
+Python — so `resource_type` is now answered from the resources themselves,
+expanded through `equivalent_resource_types`, whenever no `search_term` is
+beside it. `_search_resources` short-circuits to `get_all_resources()` when the
+*term* alone is unset, and a type-only search opens no index. The skip rule
+below therefore applies to a search carrying a `search_term`; `grr_browse -t
+position_score` against a group with an index-less child now answers from every
+child, indexed or not, and reports no skip. What `-t` used to route through the
+index was never a property of the type — it was the shape of the short-circuit
+condition.
+
 ## Decision
 
 **A child that cannot answer a filter is skipped with a warning; the search

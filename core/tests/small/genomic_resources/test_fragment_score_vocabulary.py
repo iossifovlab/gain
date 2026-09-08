@@ -308,9 +308,14 @@ def test_search_resources_finds_a_fragment_score_under_either_spelling(
     carries no ``legacy_vocabulary`` marker -- and the guard in
     ``core/tests/conftest.py`` would fail it if the query path ever started
     warning.
+
+    Searched with a term, because only a term routes through the index --
+    a type alone is answered from the resources, where the expansion is
+    pinned by its own tests (gain#1212).
     """
     resources = list(
-        indexed_grr.search_resources(resource_type=requested_type))
+        indexed_grr.search_resources(
+            search_term="fragments", resource_type=requested_type))
 
     assert [r.get_id() for r in resources] == ["fragments/indexed"]
 

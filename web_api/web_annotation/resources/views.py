@@ -184,12 +184,16 @@ class SearchResources(ResourcesAPIView):
             )
 
         # `resource_type` is passed straight down: `search_resources`
-        # expands equivalent spellings itself, in SQL.  An earlier revision
-        # dropped the predicate here and post-filtered instead, which
-        # quietly changed the data source -- with no search term left, the
-        # query short-circuits to `get_all_resources()` and never opens the
-        # FTS index, so paging and index-skip warnings differed between
-        # fragment and non-fragment filters.
+        # expands equivalent spellings itself, on whichever route the
+        # search takes.  An earlier revision dropped the predicate here and
+        # post-filtered instead, which quietly changed the data source --
+        # with no search term left, the query short-circuited to
+        # `get_all_resources()` and never opened the FTS index, so paging
+        # and index-skip warnings differed between fragment and
+        # non-fragment filters.  The route is decided by the term alone
+        # now (gain#1212), so a type-only search reads the same source for
+        # every type; keeping the predicate in the search is what keeps
+        # that decision in one place.
         try:
             # `search_resources` parses `resource_query` eagerly, when
             # called rather than on the first row, so a malformed query is

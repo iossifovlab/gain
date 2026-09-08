@@ -920,8 +920,8 @@ class SearchIndexUnavailableError(ValueError):
         super().__init__(
             f"repository <{repo_id}> cannot be searched: {reason}. "
             f"Build a search index with `grr_manage repo-repair`, or "
-            f"select by id and labels with a resource query, which needs "
-            f"none",
+            f"select by type, id and labels with a type filter and a "
+            f"resource query, which need none",
         )
 
 
@@ -1660,16 +1660,18 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
         """Search for resources using SQLite full-text search.
 
         The three filters conjoin: a resource must satisfy every one that is
-        supplied. ``search_term`` and ``resource_type`` are matched against
-        the FTS index; ``resource_query`` is the annotator wildcard language
-        -- an id glob plus an optional label query -- whose id glob joins
-        them in the same statement, so the index narrows once rather than
-        handing rows to a filter.
+        supplied. A ``search_term`` is matched against the FTS index, and
+        when one is supplied the ``resource_type`` and the id glob of the
+        ``resource_query`` -- the annotator wildcard language, an id glob
+        plus an optional label query -- join it in the same statement, so
+        the index narrows once rather than handing rows to a filter.
 
-        A ``resource_query`` on its own never opens the index, and is
-        matched in Python instead. That is what makes it work on a
-        repository with no ``.CONTENTS.sqlite3.gz`` at all, where opening
-        the metadata db raises.
+        Without a ``search_term`` the index is never opened: the type and
+        the query are matched in Python, over every resource. That is what
+        makes them work on a repository with no ``.CONTENTS.sqlite3.gz`` at
+        all, where opening the metadata db raises. Only the term genuinely
+        needs the index -- FTS5 tokenisation is not reproducible in Python,
+        while a type is one token every resource carries (gain#1212).
 
         Both routes evaluate the same parsed query, and every label clause
         is answered against the resource's own ``meta.labels`` rather than
@@ -1730,8 +1732,19 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
             resource_type: str | None,
             parsed_query: ResourceQuery | None,
     ) -> Generator[GenomicResource, None, None]:
-        if search_term is None and resource_type is None:
+        if search_term is None:
+            # Only a term needs the index: FTS5 tokenisation is not
+            # reproducible in Python. A type is one token every resource
+            # carries, so it is asked of the resource here -- expanded the
+            # way the SQL route expands it, for the reason
+            # ``equivalent_resource_types`` gives (gain#1212).
+            accepted = (
+                None if resource_type is None
+                else equivalent_resource_types(resource_type)
+            )
             for res in self.get_all_resources():
+                if accepted is not None and res.get_type() not in accepted:
+                    continue
                 if parsed_query is None or parsed_query.match(res):
                     yield res
             return

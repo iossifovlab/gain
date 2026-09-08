@@ -52,9 +52,11 @@ def _search(
     The failures that do reach here are about the arguments or about every
     repository at once, and none deserves a traceback: a query the grammar
     cannot parse, a term FTS5 cannot read as a search expression, and a
-    `-s`/`-t` filter that no repository has an index to apply. The last is
-    the normal shape of a checked-out GRR -- `.CONTENTS.json.gz` and no
-    `.CONTENTS.sqlite3.gz` -- and its own message names the way out.
+    `-s` term that no repository has an index to apply. The last is the
+    normal shape of a checked-out GRR -- `.CONTENTS.json.gz` and no
+    `.CONTENTS.sqlite3.gz` -- and its own message names the way out. Only
+    the term needs the index: `-t` and `-q` are answered from the resources
+    themselves (gain#1212).
     """
     try:
         # Iterated inside the guard, not merely started: the query is

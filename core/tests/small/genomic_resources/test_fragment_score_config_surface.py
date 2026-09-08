@@ -633,9 +633,14 @@ def test_searching_finds_a_legacy_typed_resource_under_either_spelling(
     a current GAIn asks for ``fragment_score``.  An exact ``type = ?``
     answers "none" rather than failing, which is a wrong answer rather than
     an error -- and stays wrong until the last legacy resource is gone.
+
+    Searched with a term, because only a term routes through the index --
+    a type alone is answered from the resources (gain#1212) -- and the
+    index is where the expansion under test happens.
     """
     resources = list(
-        indexed_legacy_grr.search_resources(resource_type=requested_type))
+        indexed_legacy_grr.search_resources(
+            search_term="fragments", resource_type=requested_type))
 
     assert [r.get_id() for r in resources] == ["fragments/legacy"]
 

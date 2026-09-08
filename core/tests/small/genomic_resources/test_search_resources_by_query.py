@@ -160,6 +160,31 @@ def index_predating_a_label(
         {**_RES_A_LABELS, "newlabel": "fresh"}).build_repo(root)
 
 
+# The term that routes a search through the index here. Only a term opens
+# the index -- a ``resource_type`` beside a query used to, and is answered
+# from the resources now (gain#1212) -- so the differential tests below
+# carry one that selects every resource: ``res`` is a token of each id the
+# fixtures above build (``scores/res_a``, ..., ``genomes/res_g``), and
+# ``test_the_lever_term_selects_every_resource`` keeps that honest.
+_EVERY_RESOURCE = "res"
+
+
+def test_the_lever_term_selects_every_resource(
+    labelled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    """Guards the differentials: a lever that selected a subset would
+    compare the query over that subset only, silently."""
+    everything = {r.resource_id for r in labelled_grr.get_all_resources()}
+
+    through_index = {
+        r.resource_id
+        for r in labelled_grr.search_resources(search_term=_EVERY_RESOURCE)
+    }
+
+    assert through_index == everything
+    assert len(everything) == 4
+
+
 def test_a_label_added_after_the_index_means_the_same_on_both_routes(
     index_predating_a_label: GenomicResourceProtocolRepo,
 ) -> None:
@@ -180,6 +205,7 @@ def test_a_label_added_after_the_index_means_the_same_on_both_routes(
     through_index = {
         r.resource_id
         for r in index_predating_a_label.search_resources(
+            search_term=_EVERY_RESOURCE,
             resource_query='scores/*[newlabel="fresh"]',
             resource_type="position_score")
     }
@@ -248,6 +274,7 @@ def test_a_label_edited_after_the_index_is_matched_on_its_live_value(
     through_index = {
         r.resource_id
         for r in index_predating_a_label_edit.search_resources(
+            search_term=_EVERY_RESOURCE,
             resource_query=query, resource_type="position_score")
     }
 
@@ -326,10 +353,11 @@ def test_the_query_means_the_same_with_and_without_the_index(
     """One query, two evaluation paths, one answer.
 
     ``resource_query`` on its own never opens the index; adding a
-    ``resource_type`` routes the search through it. Holding the type fixed
-    on both sides leaves the query evaluation as the only thing that can
-    differ, so any difference between the two sets is the query meaning two
-    different things depending on how it was asked.
+    ``search_term`` routes the search through it. Holding the type fixed
+    on both sides -- the same type, asked of the resources on one route
+    and of the index on the other -- leaves the query evaluation as the
+    only thing that can differ, so any difference between the two sets is
+    the query meaning two different things depending on how it was asked.
 
     Run for both families in the repository: a clause naming a score field
     has to mean the same thing for a resource that contributes one and for
@@ -347,6 +375,7 @@ def test_the_query_means_the_same_with_and_without_the_index(
     through_index = {
         r.resource_id
         for r in labelled_grr.search_resources(
+            search_term=_EVERY_RESOURCE,
             resource_query=query, resource_type=resource_type)
     }
 
@@ -391,6 +420,7 @@ def test_a_stale_index_does_not_change_what_a_query_means(
     through_index = {
         r.resource_id
         for r in index_predating_a_label.search_resources(
+            search_term=_EVERY_RESOURCE,
             resource_query=query, resource_type=resource_type)
     }
 
@@ -439,6 +469,7 @@ def test_an_edited_label_does_not_change_what_a_query_means(
     through_index = {
         r.resource_id
         for r in index_predating_a_label_edit.search_resources(
+            search_term=_EVERY_RESOURCE,
             resource_query=query, resource_type=resource_type)
     }
 
@@ -495,6 +526,7 @@ def test_the_indexed_path_returns_the_expected_resources(
     found = {
         r.resource_id
         for r in labelled_grr.search_resources(
+            search_term=_EVERY_RESOURCE,
             resource_query=query, resource_type="position_score")
     }
 
@@ -526,6 +558,7 @@ def test_the_indexed_path_answers_a_score_clause_for_a_non_score_resource(
     found = {
         r.resource_id
         for r in labelled_grr.search_resources(
+            search_term=_EVERY_RESOURCE,
             resource_query=query, resource_type="genome")
     }
 
@@ -589,6 +622,7 @@ def test_a_crafted_index_column_name_cannot_break_out_of_the_query(
         ])
 
     found = list(repo.search_resources(
+        search_term=_EVERY_RESOURCE,
         resource_query='scores/*[id)or(1="never-matches-anything"]',
         resource_type="position_score"))
 
@@ -605,9 +639,11 @@ def test_a_label_key_no_resource_carries_is_not_an_error(
     not happen is the search failing because the column is missing.
     """
     assert len(list(labelled_grr.search_resources(
+        search_term=_EVERY_RESOURCE,
         resource_query='*[nosuchlabel="*"]',
         resource_type="position_score"))) == 3
     assert list(labelled_grr.search_resources(
+        search_term=_EVERY_RESOURCE,
         resource_query='*[nosuchlabel="value"]',
         resource_type="position_score")) == []
 
@@ -780,8 +816,12 @@ def test_the_indexed_route_survives_a_non_mapping_labels(
     index column, so it reaches the same read the query-only route does
     and must survive the same malformed value.
     """
+    # ``scores`` is a token of all three ids, the broken one included: the
+    # term must put the malformed resource in front of the deferred
+    # clauses, or this proves nothing.
     resources = list(
         index_predating_a_non_mapping_labels.search_resources(
+            search_term="scores",
             resource_query='*[domain="alpha"]',
             resource_type="position_score"),
     )

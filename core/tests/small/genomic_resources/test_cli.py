@@ -330,20 +330,36 @@ def test_cli_list_with_an_empty_search_term_lists_everything(
     assert "manage sub/two" in out
 
 
-def test_cli_list_by_type_without_an_index_says_so(
+def test_cli_list_by_type_without_an_index_lists_that_type(
     repo_fixture: tuple[pathlib.Path, GenomicResourceProtocolRepo],
-    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture,
 ) -> None:
-    """``-s``/``-t`` need an FTS index; say that instead of dying.
+    """``-t`` needs no FTS index: a type is asked of the resources.
 
     A checked-out GRR has a `.CONTENTS.json.gz` and no
     `.CONTENTS.sqlite3.gz`, which is exactly the repository
-    `grr_manage` is usually pointed at.
+    `grr_manage` is usually pointed at -- and ``-t`` used to refuse it
+    the way ``-s`` still must (gain#1212).
     """
     path, _repo = repo_fixture
 
+    cli_manage(["list", "-R", str(path), "-t", "basic"])
+    out, err = capsys.readouterr()
+
+    assert err == ""
+    assert "manage one" in out
+    assert "sub/two" not in out
+
+
+def test_cli_list_by_term_without_an_index_says_so(
+    repo_fixture: tuple[pathlib.Path, GenomicResourceProtocolRepo],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``-s`` needs an FTS index; say that instead of dying."""
+    path, _repo = repo_fixture
+
     with pytest.raises(SystemExit) as excinfo:
-        cli_manage(["list", "-R", str(path), "-t", "basic"])
+        cli_manage(["list", "-R", str(path), "-s", "alabala"])
 
     assert excinfo.value.code == 1
     assert "index" in caplog.text.lower()
