@@ -206,7 +206,10 @@ git branch -r --merged origin/master \
 
 The Sphinx user docs (rendered at
 <https://iossifovlab.com/gaindocs/>) live in `docs/`. The
-build pulls an auto-generated module tree from `core/gain`.
+build pulls an auto-generated module tree from `core/gain`,
+and it runs `sphinx-build -W`: any Sphinx warning or docutils
+error — including one from a docstring under `core/gain` —
+fails `build_docs.sh` and turns the branch red in CI (#1220).
 
 ```bash
 # Install Sphinx toolchain

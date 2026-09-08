@@ -9,6 +9,10 @@
 #     docs/build/html/           rendered site
 #     docs/gaindocs-html.tar.gz  tarball consumed by docs/deploy/
 #
+# Fails on any Sphinx warning or docutils error (`sphinx-build -W`,
+# gain#1220), so a docstring that breaks reStructuredText turns the
+# branch red before merge.
+#
 # In CI, the Build docs Jenkinsfile stage is unconditional: it runs
 # on every build, so an edit anywhere — including a docstring under
 # core/gain, which sphinx-apidoc renders into the development
@@ -27,17 +31,11 @@ cd "${REPO_ROOT}"
 
 # The architecture overview includes CONTEXT.md's vocabulary by two sentinel
 # comments (`.. include:: :start-after:/:end-before:`). A missing sentinel
-# makes docutils log a CRITICAL error -- and sphinx-build still exits 0, and
-# the page ships with the vocabulary silently absent. So check the sentinels
-# here, before anything is deleted or built, and refuse to go on without
-# them (gain#1142).
-#
-# This check was written when the build carried 173 warnings and errors and so
-# could not use -W. gain#1183 took that to zero, and `sphinx-build -W` now
-# passes -- but -W is deliberately NOT enabled here yet; that is its own
-# decision, with its own CI failure mode, and it is filed separately. Keep
-# this check either way: it names the missing sentinel and the page that
-# needs it, which -W alone would not.
+# makes docutils log a CRITICAL error, which `-W` below now fails the build
+# on -- but check the sentinels here anyway, before anything is deleted or
+# built: this names the missing sentinel and the page that needs it, which
+# -W alone would not, and it refuses before the apidoc tree is deleted
+# (gain#1142; the check predates -W, gain#1220).
 for sentinel in "published-on-docs-site: start" "published-on-docs-site: end"; do
     if ! grep -q -F -- "<!-- ${sentinel} -->" CONTEXT.md; then
         echo "build_docs.sh: CONTEXT.md is missing the sentinel" \
@@ -99,9 +97,30 @@ rm -rf docs/source/development/gain
 SPHINX_APIDOC_OPTIONS="members,undoc-members,show-inheritance,no-index" \
     sphinx-apidoc --no-toc -o docs/source/development/gain/modules/ core/gain
 
-# Build HTML.
-rm -rf docs/build
-sphinx-build -M html docs/source docs/build
+# Build HTML. `-W` fails the build on any warning or docutils error:
+# gain#1183 took the build from 173 problems to zero, and this is what keeps
+# it there (gain#1220).
+#
+# `-W` alone is enough: since Sphinx 8.1 it no longer stops at the first
+# warning but finishes the build and then exits non-zero, so one run reports
+# every problem. `--keep-going` is a hidden no-op in the pinned Sphinx 9.1.0
+# and is deliberately not passed. The deliberate suppression in conf.py
+# (`suppress_warnings = ["myst.header"]`, gain#1142) is honoured by -W --
+# suppressed warnings are never raised.
+#
+# The previous run's tarball goes too, so a failed build leaves nothing
+# behind for a later step to mistake for this run's output.
+rm -rf docs/build docs/gaindocs-html.tar.gz
+rc=0
+sphinx-build -M html docs/source docs/build -W || rc=$?
+if [ "${rc}" -ne 0 ]; then
+    echo "build_docs.sh: the docs build treats every Sphinx warning and" \
+         "docutils error as fatal (sphinx-build -W, gain#1220). If Sphinx" \
+         "reported 'build finished with problems' above, it ran to" \
+         "completion and the WARNING/ERROR lines are the complete list;" \
+         "a traceback instead means it stopped early." >&2
+    exit "${rc}"
+fi
 
 # Tarball for ansible deploy.
 tar -czf docs/gaindocs-html.tar.gz -C docs/build/ html/
