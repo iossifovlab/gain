@@ -70,6 +70,38 @@ def test_cli_genomic_context_reference_genome(
     assert genome.resource.resource_id == "t4c8_genome"
 
 
+@pytest.mark.parametrize("skip,dropped,kept", [
+    ({"skip_cli_reference_genome": True}, ["-R", "--ref"], ["-G", "-g"]),
+    ({"skip_cli_gene_models": True}, ["-G", "--genes"], ["-R", "-g"]),
+    ({"skip_cli_reference_genome": True, "skip_cli_gene_models": True},
+     ["-R", "-G"], ["-g", "--grr-directory"]),
+])
+def test_cli_genomic_context_provider_options_can_be_skipped(
+    skip: dict[str, bool], dropped: list[str], kept: list[str],
+) -> None:
+    # A tool that resolves neither from the command line -- binning_tool
+    # takes its genome from the run definition -- leaves them out; the
+    # GRR options are never skippable.
+    register_context_provider(CLIGenomicContextProvider())
+    parser = argparse.ArgumentParser()
+    context_providers_add_argparser_arguments(parser, **skip)
+
+    usage = parser.format_usage()
+
+    assert all(flag not in usage for flag in dropped)
+    assert all(flag in usage for flag in kept)
+
+
+def test_cli_genomic_context_provider_offers_every_option_by_default() -> None:
+    register_context_provider(CLIGenomicContextProvider())
+    parser = argparse.ArgumentParser()
+    context_providers_add_argparser_arguments(parser)
+
+    usage = parser.format_usage()
+
+    assert all(flag in usage for flag in ["-g", "--grr-directory", "-R", "-G"])
+
+
 def test_cli_genomic_context_provider_reference_genome(
     grr_dirname: str,
 ) -> None:

@@ -49,14 +49,17 @@ applied default.
 Reference genome
 ^^^^^^^^^^^^^^^^
 
-``input_reference_genome`` (optional) names the reference genome resource
-whose chromosomes define the grid. The ``-R`` command-line flag overrides it,
-and when neither is given the genome comes from the genomic context, if a
-registered context provider supplies one. The GRR itself is never
-named in the run definition; it comes from ``-g``, ``--grr-directory``, or the
-default GRR definition, as for every GAIn tool (see
-:doc:`grr`). One run definition therefore runs unchanged on a laptop against
-a cached GRR and on a cluster node against a node-local one.
+``input_reference_genome`` (required) names the reference genome resource
+whose chromosomes define the grid. It is the run definition's business alone:
+there is no command-line flag for it, and a genome offered by the genomic
+context is not consulted. The chromosome lengths decide how many bins there
+are and what each one spans, so one run definition always describes one
+matrix — whoever runs it, and wherever.
+
+The GRR itself is never named in the run definition; it comes from ``-g``,
+``--grr-directory``, or the default GRR definition, as for every GAIn tool
+(see :doc:`grr`). One run definition therefore runs unchanged on a laptop
+against a cached GRR and on a cluster node against a node-local one.
 
 Bins
 ^^^^
@@ -160,11 +163,15 @@ Running the tool
 .. code-block:: bash
 
     binning_tool RUN_DEFINITION [-o OUTPUT] [-w WORK_DIR] [--keep-work-dir] [--dry-run]
-                 [-R GENOME] [-g GRR] [-j N] [--force] ...
+                 [-g GRR] [-j N] [--force] ...
 
 The only positional argument is the run definition. ``-o`` names the HDF5
 file to write; by default it is the run definition's path with an ``.h5``
 suffix, beside it, so ``binning_tool run.yaml`` writes ``run.h5``.
+
+What the run describes — the genome, the grid and the tracks — is the run
+definition's business; the command line only says where to find the GRR, where
+to put the output, and how to run the work.
 
 Dry run
 ^^^^^^^

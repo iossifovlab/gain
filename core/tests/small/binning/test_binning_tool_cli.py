@@ -26,6 +26,7 @@ from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import a_position_score
 
 RUN_DEFINITION = textwrap.dedent("""
+    input_reference_genome: genome
     bins:
       bin_size: 10
       regions: ["chr1:1-40", chr2]
@@ -59,13 +60,16 @@ def run_definition(tmp_path: pathlib.Path) -> pathlib.Path:
 
 def binning_tool(
     run_definition: pathlib.Path, grr_dir: pathlib.Path,
-    output: pathlib.Path, *extra: str, genome: str | None = "genome",
+    output: pathlib.Path, *extra: str,
 ) -> None:
-    """Run the tool on the toy GRR; ``genome=None`` passes no ``-R``."""
+    """Run the tool on the toy GRR.
+
+    The genome is not a command-line argument: every run definition
+    here names it, as the tool requires.
+    """
     cli([
         str(run_definition), "-o", str(output),
         "--grr-directory", str(grr_dir), "-j", "1",
-        *(["-R", genome] if genome else []),
         *extra,
     ])
 
@@ -198,6 +202,7 @@ def test_dry_run_prints_the_tracks_and_counts_and_writes_nothing(
 # scores/one twice, under its own ``max`` and under ``min``; scores/two
 # once.  Only the repeated resource carries its aggregator in its name.
 REPEATED_RUN_DEFINITION = textwrap.dedent("""
+    input_reference_genome: genome
     bins:
       bin_size: 10
       regions: ["chr1:1-40"]
@@ -247,6 +252,7 @@ def test_dry_run_reports_a_run_definition_error_and_writes_nothing(
     # the parser tests' business.  search_term needs the index the toy
     # GRR does not publish.
     run_definition = write_run_definition(output, textwrap.dedent("""
+        input_reference_genome: genome
         bins:
           bin_size: 10
         binners:
@@ -280,7 +286,7 @@ def test_a_stray_second_positional_argument_is_refused(
     with pytest.raises(SystemExit) as excinfo:
         cli([
             str(run_definition), "stray.yaml", "-o", str(output),
-            "--grr-directory", str(grr_dir), "-R", "genome", "-j", "1",
+            "--grr-directory", str(grr_dir), "-j", "1",
         ])
 
     assert excinfo.value.code == 2
@@ -294,8 +300,7 @@ def test_the_output_defaults_to_the_run_definition_with_an_h5_suffix(
     # run.yaml -> run.h5 beside it, and the work dir beside that is
     # gone after the run as usual.
     cli([
-        str(run_definition), "--grr-directory", str(grr_dir),
-        "-R", "genome", "-j", "1",
+        str(run_definition), "--grr-directory", str(grr_dir), "-j", "1",
     ])
 
     np.testing.assert_array_equal(
@@ -308,20 +313,68 @@ def read_genome_and_shape(output: pathlib.Path) -> tuple[str, tuple[int, ...]]:
         return str(h5.attrs["input_reference_genome"]), h5["values"].shape
 
 
-def test_the_run_definition_may_name_the_genome_itself(
+# The toy GRR's second genome: chr1 only, and shorter, so a run that
+# resolved it shows in what it accepts and produces.  It is also what
+# the test-only context provider below offers.
+CONTEXT_GENOME = "genomes/short"
+
+
+def test_the_genome_named_in_the_run_definition_defines_the_grid(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
 ) -> None:
-    run_definition = write_run_definition(
-        output, "input_reference_genome: genome\n" + RUN_DEFINITION)
+    # genomes/short is chr1 only and shorter, so which genome the run
+    # resolved is visible in the shape as well as in the recorded id.
+    run_definition = write_run_definition(output, textwrap.dedent(f"""
+        input_reference_genome: {CONTEXT_GENOME}
+        bins:
+          bin_size: 10
+        binners:
+        - position_score_binner:
+            resource_query: "scores/*"
+    """))
 
-    binning_tool(run_definition, grr_dir, output, genome=None)
+    binning_tool(run_definition, grr_dir, output)
 
-    assert read_genome_and_shape(output) == ("genome", (8, 2))
+    assert read_genome_and_shape(output) == (CONTEXT_GENOME, (5, 2))
 
 
-# The genome a test-only context provider offers: chr1 only, and shorter,
-# so a run that resolved it shows in what it accepts and produces.
-CONTEXT_GENOME = "genomes/short"
+def test_a_run_definition_without_a_genome_is_a_parse_error(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_definition = write_run_definition(output, textwrap.dedent("""
+        bins:
+          bin_size: 10
+          regions: ["chr1:1-40"]
+        binners:
+        - position_score_binner:
+            resource_query: "scores/*"
+    """))
+
+    with pytest.raises(SystemExit) as excinfo:
+        binning_tool(run_definition, grr_dir, output)
+
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert str(run_definition) in err
+    assert "input_reference_genome is required" in err
+    assert not output.exists()
+
+
+def test_the_genome_is_not_a_command_line_argument(
+    run_definition: pathlib.Path, grr_dir: pathlib.Path,
+    output: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The grid follows the genome's chromosome lengths, so one run
+    # definition must describe one matrix: neither -R nor -G (which this
+    # tool never reads at all) is offered.
+    for flag, value in (("-R", "genome"), ("-G", "gene_models")):
+        with pytest.raises(SystemExit) as excinfo:
+            binning_tool(run_definition, grr_dir, output, flag, value)
+
+        assert excinfo.value.code == 2
+        assert "unrecognized arguments" in capsys.readouterr().err
 
 
 class _FallbackGenomeProvider(GenomicContextProvider):
@@ -358,42 +411,26 @@ def context_genome(
     mocker.patch.object(gc_mod, "_REGISTERED_CONTEXT_PROVIDERS", providers)
 
 
-def test_the_reference_genome_flag_overrides_the_run_definition(
-    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+def test_the_run_definition_genome_wins_over_the_context_genome(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    run_definition: pathlib.Path, output: pathlib.Path,
+    context_genome: None,
 ) -> None:
-    # genomes/short has no chr2, which the run definition bins: had the
-    # named genome won, the run would have been refused.
-    run_definition = write_run_definition(
-        output, f"input_reference_genome: {CONTEXT_GENOME}\n" + RUN_DEFINITION)
-
+    # A site config offering genomes/short does not change what this run
+    # definition bins: it names its own genome, and chr2 -- which
+    # genomes/short does not have -- is binned as usual.
     binning_tool(run_definition, grr_dir, output)
 
     assert read_genome_and_shape(output) == ("genome", (8, 2))
 
 
-def test_the_run_definition_genome_beats_the_context_genome(
+def test_the_context_genome_is_not_a_fallback(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
     context_genome: None,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    run_definition = write_run_definition(
-        output, "input_reference_genome: genome\n" + RUN_DEFINITION)
-
-    binning_tool(run_definition, grr_dir, output, genome=None)
-
-    assert read_genome_and_shape(output) == ("genome", (8, 2))
-
-
-def test_the_reference_genome_flag_beats_the_context_genome(
-    binned: pathlib.Path, context_genome: None,
-) -> None:
-    assert read_genome_and_shape(binned) == ("genome", (8, 2))
-
-
-def test_the_context_genome_is_the_fallback(
-    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
-    context_genome: None,
-) -> None:
-    # Neither the run definition nor the command line names a genome.
+    # A genome the run definition did not name cannot decide the grid,
+    # however the ambient context came by it.
     run_definition = write_run_definition(output, textwrap.dedent("""
         bins:
           bin_size: 10
@@ -403,9 +440,12 @@ def test_the_context_genome_is_the_fallback(
             resource_query: "scores/*"
     """))
 
-    binning_tool(run_definition, grr_dir, output, genome=None)
+    with pytest.raises(SystemExit) as excinfo:
+        binning_tool(run_definition, grr_dir, output)
 
-    assert read_genome_and_shape(output) == (CONTEXT_GENOME, (4, 2))
+    assert excinfo.value.code == 1
+    assert "input_reference_genome is required" in capsys.readouterr().err
+    assert not output.exists()
 
 
 def read_matrix(path: pathlib.Path) -> npt.NDArray[np.float64]:
@@ -505,8 +545,7 @@ def test_relative_paths_are_taken_from_the_launch_directory(
     monkeypatch.chdir(output.parent)
 
     cli([
-        "run.yaml", "-o", "bins.h5", "--grr-directory", "grr",
-        "-R", "genome", "-j", "1",
+        "run.yaml", "-o", "bins.h5", "--grr-directory", "grr", "-j", "1",
     ])
 
     np.testing.assert_array_equal(read_matrix(output), EXPECTED_VALUES)
