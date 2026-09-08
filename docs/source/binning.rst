@@ -221,28 +221,24 @@ The output file
 ---------------
 
 The output is one HDF5 file in a plain layout that any HDF5 reader
-understands without a library beyond ``h5py``:
+understands without a library beyond ``h5py``. It holds three datasets:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 18 82
+``/values``
+    ``float64``, shape ``(n_bins, n_tracks)``. ``NaN`` where a bin has no
+    data. Stored in row blocks and gzip-compressed, so reading every track
+    for one chromosome is one contiguous read and the ``NaN``- and
+    zero-heavy tracks compress well.
 
-   * - Dataset
-     - Content
-   * - ``/values``
-     - ``float64``, shape ``(n_bins, n_tracks)``. ``NaN`` where a bin has no
-       data. Stored in row blocks and gzip-compressed, so reading every
-       track for one chromosome is one contiguous read and the ``NaN``- and
-       zero-heavy tracks compress well.
-   * - ``/bins``
-     - A compound (structured) dataset of shape ``(n_bins,)`` with fields
-       ``chrom`` (fixed-length bytes, sized to the longest chromosome name in
-       the run), ``start`` and ``end`` (``int64``, 1-based inclusive).
-   * - ``/tracks``
-     - A compound dataset of shape ``(n_tracks,)`` with fields ``name``,
-       ``resource_id``, ``score_id`` and ``aggregator`` (variable-length
-       UTF-8 strings) and ``none_value_replacement`` (``float64``, ``NaN``
-       when the entry set none).
+``/bins``
+    A compound (structured) dataset of shape ``(n_bins,)`` with fields
+    ``chrom`` (fixed-length bytes, sized to the longest chromosome name in
+    the run), ``start`` and ``end`` (``int64``, 1-based inclusive).
+
+``/tracks``
+    A compound dataset of shape ``(n_tracks,)`` with fields ``name``,
+    ``resource_id``, ``score_id`` and ``aggregator`` (variable-length
+    UTF-8 strings) and ``none_value_replacement`` (``float64``, ``NaN``
+    when the entry set none).
 
 Row *i* of ``/bins`` describes row *i* of ``/values``, and row *j* of
 ``/tracks`` describes column *j*. The root attributes record what the run
