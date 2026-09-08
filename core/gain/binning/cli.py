@@ -86,7 +86,12 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", default=False,
         help="resolve every query, print the track list and the region "
         "and bin counts, and write nothing")
-    context_providers_add_argparser_arguments(parser)
+    # The annotation context provider would otherwise add its own
+    # ``pipeline`` positional and ``-ar`` to this parser.  This tool
+    # never builds an annotation pipeline, and the optional positional
+    # swallows a stray argument typed after the run definition.
+    context_providers_add_argparser_arguments(
+        parser, skip_cli_annotation_context=True)
     TaskGraphCli.add_arguments(
         parser, default_task_status_dir=None, use_commands=False)
     VerbosityConfiguration.set_arguments(parser)
