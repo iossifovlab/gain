@@ -186,13 +186,16 @@ the per-record fold whatever their size. Consecutive regions are now
 packed, in order, into bundles of at most `--task-budget` bases (default
 50 Mb; a region is never split, so a chromosome longer than the budget —
 on hg38 every primary one but chr21 and chrM — stays a task of its own;
-0 restores one task per region), and a task writes one chunk
+0 or less restores one task per region), and a task writes one chunk
 per region of its bundle **under the same name as before**. The chunks,
 the writer, the file and the chunk sharing between run definitions are
 unchanged; only the task count and the rerun granularity move — a task
-missing any of its chunks is recomputed in full, and its id spans its
-bundle (first region, last region, count) rather than listing it, so it
-stays a file name in the task-status directory. Splitting a chromosome
+missing any of its chunks is recomputed in full (the executor's check of
+a task's output files), and its id names its bundle by its first and
+last region rather than listing it, so it stays a file name in the
+task-status directory. The packing itself is `bundle_regions` in
+`gain.utils.regions`, beside `split_into_regions`, which cuts the other
+way. Splitting a chromosome
 across tasks was considered and dropped: the writer assembles one slab per
 user region and the chunk name encodes the region bounds, and the tail it
 would shorten is one chromosome-sized task.

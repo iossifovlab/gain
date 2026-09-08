@@ -490,6 +490,32 @@ def total_length(regions: list[BedRegion]) -> int:
     return sum(len(x) for x in regions)
 
 
+def bundle_regions(
+    regions: list[BedRegion], budget: int,
+) -> list[list[BedRegion]]:
+    """Pack consecutive regions into bundles of at most ``budget`` bases.
+
+    The other way round from :func:`split_into_regions`: many small
+    regions become one unit of work.  Order is kept, so a bundle is a run
+    of the input; a region is never split, so one longer than the budget
+    is a bundle on its own; a budget of zero or less is one region per
+    bundle.
+    """
+    bundles: list[list[BedRegion]] = []
+    current: list[BedRegion] = []
+    current_length = 0
+    for region in regions:
+        length = len(region)
+        if current and current_length + length > budget:
+            bundles.append(current)
+            current, current_length = [], 0
+        current.append(region)
+        current_length += length
+    if current:
+        bundles.append(current)
+    return bundles
+
+
 def intersection(
     regions1: list[Region], regions2: list[Region],
 ) -> list[Region]:

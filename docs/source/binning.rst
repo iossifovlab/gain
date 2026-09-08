@@ -194,7 +194,7 @@ chromosome longer than the budget is a task of its own, while the hundreds
 of alternate and unplaced contigs of a human genome — under two percent of
 its bases — pack into a handful of tasks instead of one each. The budget
 only decides how many tasks there are: the file is the same whatever its
-value, and ``--task-budget 0`` restores one task per region. The tasks run
+value, and a budget of 0 or less restores one task per region. The tasks run
 through the same task graph as the annotation tools, so the same flags
 apply: ``-j N`` sets the number of
 workers, ``-N`` names a configured dask cluster, and ``--task-log-dir``

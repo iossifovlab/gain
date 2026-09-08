@@ -50,17 +50,16 @@ from gain.genomic_resources.repository_factory import (
 )
 from gain.task_graph.cli_tools import TaskGraphCli
 from gain.task_graph.graph import TaskGraph
-from gain.utils.regions import BedRegion, calc_bin_index
+from gain.utils.regions import BedRegion, bundle_regions, calc_bin_index
 from gain.utils.verbosity_configuration import VerbosityConfiguration
 
 COORDINATES = "1-based-inclusive"
 # Rows per HDF5 chunk of ``/values``: "every track for one chromosome" is
 # then a contiguous read, and gzip collapses the NaN- and zero-heavy runs.
 ROW_BLOCK = 8192
-# Bases of consecutive regions one task bins.  A chromosome longer than
-# this stays a task of its own -- on a human genome every primary one but
-# chr21 and chrM -- while the hundreds of alternates and unplaced contigs,
-# under 2% of the bases, pack into a handful of tasks instead of one each.
+# Bases of consecutive regions one task bins: chromosome-sized, so the
+# hundreds of small contigs of a human genome pack into a few tasks while
+# a chromosome stays one (ADR 0025, the D13 amendment, has the numbers).
 TASK_BUDGET = 50_000_000
 
 
@@ -88,11 +87,11 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         help="resolve every query, print the track list and the region, "
         "bin and task counts, and write nothing")
     parser.add_argument(
-        "--task-budget", type=_bases, default=TASK_BUDGET, metavar="BP",
+        "--task-budget", type=int, default=TASK_BUDGET, metavar="BP",
         help="how many bases of consecutive regions one task bins; a "
         "region is never split, so a chromosome longer than the budget "
-        "is a task of its own; 0 makes every region its own task "
-        f"(default: {TASK_BUDGET:_})")
+        "is a task of its own; 0 or less makes every region its own "
+        f"task (default: {TASK_BUDGET:_})")
     # Only the GRR options are this tool's business.  It never builds an
     # annotation pipeline (and the provider's optional ``pipeline``
     # positional swallows a stray argument typed after the run
@@ -105,15 +104,6 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         parser, default_task_status_dir=None, use_commands=False)
     VerbosityConfiguration.set_arguments(parser)
     return parser
-
-
-def _bases(text: str) -> int:
-    """A base count for argparse: an integer that is not negative."""
-    bases = int(text)
-    if bases < 0:
-        raise argparse.ArgumentTypeError(
-            f"{text} is negative; 0 makes every region its own task")
-    return bases
 
 
 def cli(argv: list[str] | None = None) -> None:
@@ -193,29 +183,6 @@ def _bin_count(region: BedRegion, bin_size: int) -> int:
         - calc_bin_index(bin_size, region.start) + 1
 
 
-def bundle_regions(
-    regions: list[BedRegion], budget: int,
-) -> list[list[BedRegion]]:
-    """Pack consecutive regions into bundles of at most ``budget`` bases.
-
-    Order is kept, so a bundle is a run of the output's rows; a region is
-    never split, so one longer than the budget is a bundle on its own.
-    """
-    bundles: list[list[BedRegion]] = []
-    current: list[BedRegion] = []
-    current_length = 0
-    for region in regions:
-        length = region.stop - region.start + 1
-        if current and current_length + length > budget:
-            bundles.append(current)
-            current, current_length = [], 0
-        current.append(region)
-        current_length += length
-    if current:
-        bundles.append(current)
-    return bundles
-
-
 def _build_task_graph(
     run: RunDefinition, args: dict[str, Any], grr: GenomicResourceRepo,
 ) -> TaskGraph:
@@ -232,28 +199,27 @@ def _build_task_graph(
     chunk_dir = os.path.join(args["work_dir"], "chunks")
     os.makedirs(chunk_dir, exist_ok=True)
 
-    # chunk_paths[region][track], the writer's map of the work directory.
-    chunk_paths = [
-        [
-            os.path.join(
-                chunk_dir, f"{_chunk_stem(track, region, run.bin_size)}.npy")
-            for track in run.tracks
-        ]
-        for region in run.regions
-    ]
     chunk_tasks = []
-    first = 0
     for bundle in bundle_regions(run.regions, args["task_budget"]):
-        rows = range(first, first + len(bundle))
-        for column, track in enumerate(run.tracks):
-            paths = [chunk_paths[row][column] for row in rows]
+        for track in run.tracks:
+            paths = [
+                _chunk_path(chunk_dir, track, region, run.bin_size)
+                for region in bundle
+            ]
             chunk_tasks.append(graph.create_task(
                 _task_id(track, bundle, run.bin_size), _bin_chunks,
                 args=[kinds[track.binner], track, bundle, run.bin_size,
                       grr.definition, paths],
                 output_files=paths,
             ))
-        first += len(bundle)
+    # chunk_paths[region][track], the writer's map of the work directory.
+    chunk_paths = [
+        [
+            _chunk_path(chunk_dir, track, region, run.bin_size)
+            for track in run.tracks
+        ]
+        for region in run.regions
+    ]
 
     # The chunk directory is the writer's one input: its mtime moves
     # whenever a chunk is created, so another run definition sharing the
@@ -280,32 +246,35 @@ def _track_stem(track: Track, bin_size: int) -> str:
         f"_bs{bin_size}")
 
 
-def _chunk_stem(track: Track, region: BedRegion, bin_size: int) -> str:
+def _chunk_path(
+    chunk_dir: str, track: Track, region: BedRegion, bin_size: int,
+) -> str:
     """Name a chunk by everything that decides its values.
 
     Two run definitions sharing a work directory then share exactly the
     chunks they compute identically, and nothing else: a different bin
     size, aggregator or replacement is a different chunk, not a stale one.
     """
-    return (
+    return os.path.join(
+        chunk_dir,
         f"{_track_stem(track, bin_size)}"
-        f"_{region.chrom}_{region.start}_{region.stop}")
+        f"_{region.chrom}_{region.start}_{region.stop}.npy")
 
 
 def _task_id(track: Track, bundle: list[BedRegion], bin_size: int) -> str:
     """Name a task by its track and the span of its bundle.
 
-    The first and last region bound the bundle and the count tells it
-    from any other packing of the same span, so a rerun with the same
-    definition and budget finds its tasks, while the id stays one line
+    A bundle is a run of the definition's regions, which never overlap,
+    so its first and last region name it; a rerun with the same
+    definition and budget finds its tasks, and the id stays one line
     however many regions the bundle holds -- it names a file in the
-    task-status directory.
+    task-status directory.  Whether a task's chunks are all present is
+    the executor's check of its output files, not the id's business.
     """
     first, last = bundle[0], bundle[-1]
     return (
         f"bin_{_track_stem(track, bin_size)}"
-        f"_{first.chrom}_{first.start}_{last.chrom}_{last.stop}"
-        f"_n{len(bundle)}")
+        f"_{first.chrom}_{first.start}_{last.chrom}_{last.stop}")
 
 
 @functools.lru_cache(maxsize=4)

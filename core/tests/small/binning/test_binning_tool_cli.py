@@ -199,19 +199,21 @@ def test_dry_run_prints_the_tracks_and_counts_and_writes_nothing(
     assert not (output.parent / "bins_work").exists()
 
 
+# Both toy regions fit one bundle under the default budget: one task per
+# track.  A budget of 0 is one task per (track, region).
+@pytest.mark.parametrize("budget, tasks", [
+    ((), "tasks: 2"),
+    (("--task-budget", "0"), "tasks: 4"),
+])
 def test_dry_run_reports_the_task_count_under_the_budget(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
     run_definition: pathlib.Path, output: pathlib.Path,
     capsys: pytest.CaptureFixture[str],
+    budget: tuple[str, ...], tasks: str,
 ) -> None:
-    # Both toy regions fit one bundle under the default budget: one task
-    # per track.  A budget of 0 is one task per (track, region).
-    binning_tool(run_definition, grr_dir, output, "--dry-run")
-    assert "tasks: 2" in capsys.readouterr().out
+    binning_tool(run_definition, grr_dir, output, "--dry-run", *budget)
 
-    binning_tool(
-        run_definition, grr_dir, output, "--dry-run", "--task-budget", "0")
-    assert "tasks: 4" in capsys.readouterr().out
+    assert tasks in capsys.readouterr().out
 
 
 # scores/one twice, under its own ``max`` and under ``min``; scores/two
@@ -468,15 +470,22 @@ def read_matrix(path: pathlib.Path) -> npt.NDArray[np.float64]:
         return np.asarray(h5["values"][()], dtype=np.float64)
 
 
-def republish_scores_one_as(grr_dir: pathlib.Path, value: float) -> None:
-    """Replace ``scores/one`` with one value over chr1:1-40."""
-    resource_dir = grr_dir / "scores" / "one"
+def republish_score_as(
+    grr_dir: pathlib.Path, resource: str, score: str, aggregator: str,
+    value: float,
+) -> None:
+    """Replace a toy score with one value over chr1:1-40."""
+    resource_dir = grr_dir / resource
     shutil.rmtree(resource_dir)
-    a_position_score().with_score("s", "float").with_aggregator("max") \
-        .with_tabix().with_data(f"""
-            chrom  pos_begin  pos_end  s
+    a_position_score().with_score(score, "float") \
+        .with_aggregator(aggregator).with_tabix().with_data(f"""
+            chrom  pos_begin  pos_end  {score}
             chr1   1          40       {value}
         """).realize_into(resource_dir)
+
+
+def republish_scores_one_as(grr_dir: pathlib.Path, value: float) -> None:
+    republish_score_as(grr_dir, "scores/one", "s", "max", value)
 
 
 def test_a_rerun_with_the_same_work_dir_reuses_the_finished_chunks(
@@ -514,17 +523,6 @@ def test_an_interrupted_run_resumes_from_its_finished_chunks(
     np.testing.assert_array_equal(read_matrix(output), first)
 
 
-def republish_scores_two_as(grr_dir: pathlib.Path, value: float) -> None:
-    """Replace ``scores/two`` with one value over chr1:1-40."""
-    resource_dir = grr_dir / "scores" / "two"
-    shutil.rmtree(resource_dir)
-    a_position_score().with_score("t", "float").with_aggregator("mean") \
-        .with_tabix().with_data(f"""
-            chrom  pos_begin  pos_end  t
-            chr1   1          40       {value}
-        """).realize_into(resource_dir)
-
-
 def test_a_missing_chunk_recomputes_its_whole_bundle(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
     run_definition: pathlib.Path, output: pathlib.Path,
@@ -536,7 +534,7 @@ def test_a_missing_chunk_recomputes_its_whole_bundle(
     binning_tool(run_definition, grr_dir, output, "--keep-work-dir")
     output.unlink()
     next(output.parent.glob("bins_work/**/scores_two_*_chr2_*.npy")).unlink()
-    republish_scores_two_as(grr_dir, 7.0)
+    republish_score_as(grr_dir, "scores/two", "t", "mean", 7.0)
     republish_scores_one_as(grr_dir, 9.0)
 
     binning_tool(run_definition, grr_dir, output, "--keep-work-dir")
@@ -562,6 +560,11 @@ def read_everything_but_created(path: pathlib.Path) -> dict[str, Any]:
         }
 
 
+def work_dir_names(output: pathlib.Path, pattern: str) -> list[str]:
+    """The file names under the kept work directory matching ``pattern``."""
+    return sorted(p.name for p in (output.parent / "bins_work").glob(pattern))
+
+
 def test_the_budget_changes_the_tasks_and_nothing_in_the_file(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
     run_definition: pathlib.Path, output: pathlib.Path,
@@ -569,18 +572,12 @@ def test_the_budget_changes_the_tasks_and_nothing_in_the_file(
     # The budget is how the work is cut, not what is computed: the file
     # written with every region its own task is the file written with
     # both regions in one, dataset for dataset and attribute for
-    # attribute, and the chunks in the work directory are the same files
-    # under the same names.
-    binning_tool(run_definition, grr_dir, output, "--keep-work-dir")
+    # attribute.
+    binning_tool(run_definition, grr_dir, output)
     bundled = read_everything_but_created(output)
-    bundled_chunks = sorted(
-        p.name for p in output.parent.glob("bins_work/chunks/*.npy"))
-    shutil.rmtree(output.parent / "bins_work")
     output.unlink()
 
-    binning_tool(
-        run_definition, grr_dir, output, "--keep-work-dir",
-        "--task-budget", "0")
+    binning_tool(run_definition, grr_dir, output, "--task-budget", "0")
 
     unbundled = read_everything_but_created(output)
     np.testing.assert_array_equal(unbundled["values"], bundled["values"])
@@ -593,10 +590,19 @@ def test_the_budget_changes_the_tasks_and_nothing_in_the_file(
     assert list(unbundled["attrs"]) == list(bundled["attrs"])
     for key, value in bundled["attrs"].items():
         np.testing.assert_array_equal(unbundled["attrs"][key], value)
-    assert bundled_chunks == sorted(
-        p.name for p in output.parent.glob("bins_work/chunks/*.npy"))
-    # The names are the tracer bullet's, quoted 'none' included.
-    assert bundled_chunks == [
+
+
+@pytest.mark.parametrize("budget", [(), ("--task-budget", "0")])
+def test_the_chunks_are_the_tracer_bullets_whatever_the_budget(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    run_definition: pathlib.Path, output: pathlib.Path,
+    budget: tuple[str, ...],
+) -> None:
+    # One chunk per (track, region) under the name #1200 gave it, quoted
+    # 'none' included, whether a task wrote one chunk or both.
+    binning_tool(run_definition, grr_dir, output, "--keep-work-dir", *budget)
+
+    assert work_dir_names(output, "chunks/*.npy") == [
         "scores_one_s_max_'none'_bs10_chr1_1_40.npy",
         "scores_one_s_max_'none'_bs10_chr2_1_40.npy",
         "scores_two_t_mean_'none'_bs10_chr1_1_40.npy",
@@ -624,12 +630,9 @@ def test_a_bundle_of_many_regions_is_one_task_with_a_short_id(
 
     binning_tool(run_definition, grr_dir, output, "--keep-work-dir")
 
-    flags = sorted(
-        p.name for p in (output.parent / "bins_work" / ".task-status")
-        .glob("*.flag"))
-    assert flags == [
-        "bin_scores_one_s_max_'none'_bs10_chr1_1_chr2_40_n21.flag",
-        "bin_scores_two_t_mean_'none'_bs10_chr1_1_chr2_40_n21.flag",
+    assert work_dir_names(output, ".task-status/*.flag") == [
+        "bin_scores_one_s_max_'none'_bs10_chr1_1_chr2_40.flag",
+        "bin_scores_two_t_mean_'none'_bs10_chr1_1_chr2_40.flag",
         "write_hdf5.flag",
     ]
     assert read_matrix(output).shape == (24, 2)
@@ -646,28 +649,12 @@ def test_a_budget_of_zero_runs_one_task_per_track_and_region(
         run_definition, grr_dir, output, "--keep-work-dir",
         "--task-budget", "0")
 
-    flags = sorted(
-        p.name for p in (output.parent / "bins_work" / ".task-status")
-        .glob("bin_*.flag"))
-    assert flags == [
-        "bin_scores_one_s_max_'none'_bs10_chr1_1_chr1_40_n1.flag",
-        "bin_scores_one_s_max_'none'_bs10_chr2_1_chr2_40_n1.flag",
-        "bin_scores_two_t_mean_'none'_bs10_chr1_1_chr1_40_n1.flag",
-        "bin_scores_two_t_mean_'none'_bs10_chr2_1_chr2_40_n1.flag",
+    assert work_dir_names(output, ".task-status/bin_*.flag") == [
+        "bin_scores_one_s_max_'none'_bs10_chr1_1_chr1_40.flag",
+        "bin_scores_one_s_max_'none'_bs10_chr2_1_chr2_40.flag",
+        "bin_scores_two_t_mean_'none'_bs10_chr1_1_chr1_40.flag",
+        "bin_scores_two_t_mean_'none'_bs10_chr2_1_chr2_40.flag",
     ]
-
-
-def test_a_negative_budget_is_refused(
-    repo: GenomicResourceRepo, run_definition: pathlib.Path,
-    grr_dir: pathlib.Path, output: pathlib.Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # 0 is the one special value; below it there is nothing to mean.
-    with pytest.raises(SystemExit) as excinfo:
-        binning_tool(run_definition, grr_dir, output, "--task-budget", "-1")
-
-    assert excinfo.value.code == 2
-    assert "--task-budget" in capsys.readouterr().err
 
 
 def test_another_run_definition_sharing_the_work_dir_is_not_served_stale_chunks(
