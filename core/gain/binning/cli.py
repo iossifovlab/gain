@@ -24,13 +24,6 @@ import numpy.typing as npt
 import yaml
 
 from gain import __version__
-from gain.annotation.annotate_utils import (
-    absolutize_path_args,
-    apply_work_dir_defaults,
-    build_cli_genomic_context,
-    get_grr_from_context,
-    maybe_remove_work_dir,
-)
 from gain.binning.binners import Binner, Track, discover_binner_kinds
 from gain.binning.run_definition import (
     RunDefinition,
@@ -38,7 +31,9 @@ from gain.binning.run_definition import (
     parse_run_definition,
 )
 from gain.genomic_resources.genomic_context import (
+    build_cli_genomic_context,
     context_providers_add_argparser_arguments,
+    get_grr_from_context,
 )
 from gain.genomic_resources.genomic_context_cli import (
     GENOMIC_CONTEXT_PATH_KEYS,
@@ -53,6 +48,11 @@ from gain.genomic_resources.repository_factory import (
 )
 from gain.task_graph.cli_tools import TaskGraphCli
 from gain.task_graph.graph import TaskGraph
+from gain.task_graph.work_dir import (
+    absolutize_path_args,
+    apply_work_dir_defaults,
+    maybe_remove_work_dir,
+)
 from gain.utils.regions import BedRegion, bundle_regions, calc_bin_index
 from gain.utils.verbosity_configuration import VerbosityConfiguration
 

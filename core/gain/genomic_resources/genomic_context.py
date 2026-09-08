@@ -57,6 +57,7 @@ import sys
 from typing import Any
 
 from gain import logging
+from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
@@ -266,6 +267,22 @@ def get_genomic_context() -> GenomicContext:
     """
     contexts = _REGISTERED_CONTEXTS[:]
     return PriorityGenomicContext(contexts)
+
+
+def build_cli_genomic_context(
+    cli_args: dict[str, Any],
+) -> GenomicContext:
+    """Helper method to collect necessary objects from the genomic context."""
+    context_providers_init(**cli_args)
+    return get_genomic_context()
+
+
+def get_grr_from_context(context: GenomicContext) -> GenomicResourceRepo:
+    """Get the genomic resource repository from the genomic context."""
+    grr = context.get_genomic_resources_repository()
+    if grr is None:
+        raise ValueError("no valid GRR configured")
+    return grr
 
 
 def _load_genomic_context_provider_plugins() -> None:

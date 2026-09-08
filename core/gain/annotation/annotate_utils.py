@@ -22,11 +22,22 @@ from gain.genomic_resources.cached_repository import (
     CachingProtocol,
     cache_resources,
 )
+
+# Re-exported: the two steps from parsed arguments to a GRR moved down
+# to the genomic-resources layer (gain#1234); gpf's schema2 annotator
+# and the annotate tools keep importing them from here.
+# pylint: disable=unused-import,useless-import-alias
+from gain.genomic_resources.genomic_context import (
+    build_cli_genomic_context as build_cli_genomic_context,
+)
 from gain.genomic_resources.genomic_context import (
     context_providers_add_argparser_arguments,
-    context_providers_init,
-    get_genomic_context,
 )
+from gain.genomic_resources.genomic_context import (
+    get_grr_from_context as get_grr_from_context,
+)
+
+# pylint: enable=unused-import,useless-import-alias
 from gain.genomic_resources.genomic_context_base import (
     GenomicContext,
 )
@@ -111,28 +122,12 @@ def produce_partfile_paths(
     return filenames
 
 
-def build_cli_genomic_context(
-    cli_args: dict[str, Any],
-) -> GenomicContext:
-    """Helper method to collect necessary objects from the genomic context."""
-    context_providers_init(**cli_args)
-    return get_genomic_context()
-
-
 def get_pipeline_from_context(context: GenomicContext) -> AnnotationPipeline:
     """Get the annotation pipeline from the genomic context."""
     pipeline = get_context_pipeline(context)
     if pipeline is None:
         raise ValueError("no valid annotation pipeline configured")
     return pipeline
-
-
-def get_grr_from_context(context: GenomicContext) -> GenomicResourceRepo:
-    """Get the genomic resource repository from the genomic context."""
-    grr = context.get_genomic_resources_repository()
-    if grr is None:
-        raise ValueError("no valid GRR configured")
-    return grr
 
 
 def add_input_files_to_task_graph(args: dict, task_graph: TaskGraph) -> None:
