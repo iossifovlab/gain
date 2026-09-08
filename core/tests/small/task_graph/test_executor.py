@@ -3,8 +3,10 @@ import operator
 import time
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import pytest
+from gain.task_graph import base_executor
 from gain.task_graph.cache import FileTaskCache
 from gain.task_graph.cli_tools import (
     task_graph_run_with_results,
@@ -418,3 +420,162 @@ def test_output_files_deleted_by_later_task(tmp_path: Path) -> None:
 
     assert count_a[0] == 1  # not called again
     assert count_b[0] == 1  # not called again
+
+
+@pytest.fixture
+def cache_dir(tmp_path: Path) -> Path:
+    result = tmp_path / "cache"
+    result.mkdir()
+    return result
+
+
+def _run_with_file_cache(graph: TaskGraph, cache_dir: Path) -> None:
+    executor = SequentialExecutor(FileTaskCache(cache_dir=str(cache_dir)))
+    list(executor.execute(graph))
+
+
+def _completed_task_ids(graph: TaskGraph, cache_dir: Path) -> set[str]:
+    executor = SequentialExecutor(FileTaskCache(cache_dir=str(cache_dir)))
+    return {
+        task.task_id for task, _ in executor.get_completed_tasks(graph)
+    }
+
+
+def _chunked_writer_graph(
+    tmp_path: Path, count: int, *, input_files: list[str] | None = None,
+) -> tuple[TaskGraph, list[str]]:
+    """Build ``count`` chunk producers feeding one writer.
+
+    Each producer declares its chunk as an intermediate output; the writer
+    depends on every producer and, unless ``input_files`` overrides it,
+    declares every chunk file as an input.
+    """
+    chunk_dir = tmp_path / "chunks"
+    chunk_dir.mkdir(exist_ok=True)
+    chunk_files = [str(chunk_dir / f"chunk_{i}") for i in range(count)]
+    graph = TaskGraph()
+    producers = [
+        graph.create_task(
+            f"chunk_{i}", _touch, args=[chunk_files[i]],
+            intermediate_output_files=[chunk_files[i]],
+        )
+        for i in range(count)
+    ]
+    out_fn = str(tmp_path / "out.txt")
+    graph.create_task(
+        "writer", _touch, args=[out_fn], deps=producers,
+        input_files=chunk_files if input_files is None else input_files,
+        output_files=[out_fn],
+    )
+    return graph, chunk_files
+
+
+def _unlink_all(filenames: list[str]) -> None:
+    for filename in filenames:
+        Path(filename).unlink()
+
+
+def test_missing_input_invalidates_every_producing_ancestor(
+    tmp_path: Path, cache_dir: Path,
+) -> None:
+    graph, chunk_files = _chunked_writer_graph(tmp_path, 5)
+    _run_with_file_cache(graph, cache_dir)
+    _unlink_all(chunk_files)
+
+    graph2, _ = _chunked_writer_graph(tmp_path, 5)
+    completed = _completed_task_ids(graph2, cache_dir)
+
+    assert completed == set()
+
+
+@pytest.mark.parametrize("count", [20, 80])
+def test_cache_reconciliation_walks_ancestors_once_per_consumer(
+    tmp_path: Path, cache_dir: Path, count: int,
+) -> None:
+    """A consumer with T missing produced inputs costs one ancestor walk."""
+    graph, chunk_files = _chunked_writer_graph(tmp_path, count)
+    _run_with_file_cache(graph, cache_dir)
+    _unlink_all(chunk_files)
+    graph2, _ = _chunked_writer_graph(tmp_path, count)
+
+    with (
+        mock.patch.object(
+            base_executor.networkx, "ancestors",
+            wraps=base_executor.networkx.ancestors,
+        ) as walks,
+        mock.patch.object(
+            graph2, "get_task_desc", wraps=graph2.get_task_desc,
+        ) as descs,
+    ):
+        _completed_task_ids(graph2, cache_dir)
+
+    assert walks.call_count == 1
+    assert descs.call_count <= count + 1
+
+
+def test_missing_input_nobody_produces_keeps_the_cache(
+    tmp_path: Path, cache_dir: Path,
+) -> None:
+    external_fn = str(tmp_path / "external.txt")
+    _touch(external_fn)
+    graph, _ = _chunked_writer_graph(tmp_path, 3, input_files=[external_fn])
+    _run_with_file_cache(graph, cache_dir)
+    Path(external_fn).unlink()
+
+    graph2, _ = _chunked_writer_graph(tmp_path, 3, input_files=[external_fn])
+    completed = _completed_task_ids(graph2, cache_dir)
+
+    assert completed == {"chunk_0", "chunk_1", "chunk_2"}
+
+
+def _shared_file_graph(
+    tmp_path: Path, producer_names: list[str], *, consumer_depends: bool,
+) -> TaskGraph:
+    """Every producer declares one file; a consumer names it as its input."""
+    shared_fn = str(tmp_path / "shared.txt")
+    graph = TaskGraph()
+    producers = [
+        graph.create_task(
+            name, _touch, args=[shared_fn],
+            intermediate_output_files=[shared_fn],
+        )
+        for name in producer_names
+    ]
+    out_fn = str(tmp_path / "out.txt")
+    graph.create_task(
+        "consumer", _touch, args=[out_fn],
+        deps=producers if consumer_depends else None,
+        input_files=[shared_fn], output_files=[out_fn],
+    )
+    return graph
+
+
+def test_missing_input_does_not_invalidate_a_producer_it_does_not_depend_on(
+    tmp_path: Path, cache_dir: Path,
+) -> None:
+    _run_with_file_cache(
+        _shared_file_graph(tmp_path, ["producer"], consumer_depends=False),
+        cache_dir)
+    (tmp_path / "shared.txt").unlink()
+
+    completed = _completed_task_ids(
+        _shared_file_graph(tmp_path, ["producer"], consumer_depends=False),
+        cache_dir)
+
+    assert completed == {"producer"}
+
+
+def test_missing_input_invalidates_every_ancestor_that_declares_it(
+    tmp_path: Path, cache_dir: Path,
+) -> None:
+    names = ["first", "second"]
+    _run_with_file_cache(
+        _shared_file_graph(tmp_path, names, consumer_depends=True),
+        cache_dir)
+    (tmp_path / "shared.txt").unlink()
+
+    completed = _completed_task_ids(
+        _shared_file_graph(tmp_path, names, consumer_depends=True),
+        cache_dir)
+
+    assert completed == set()
