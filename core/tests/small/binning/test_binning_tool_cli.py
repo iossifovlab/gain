@@ -635,6 +635,41 @@ def test_a_bundle_of_many_regions_is_one_task_with_a_short_id(
     assert read_matrix(output).shape == (24, 2)
 
 
+def test_a_budget_of_zero_runs_one_task_per_track_and_region(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    run_definition: pathlib.Path, output: pathlib.Path,
+) -> None:
+    # The budget the command line names is the one the graph is cut by:
+    # under 0 each of the two regions is its own task per track, four
+    # single-region bundles where the default makes two.
+    binning_tool(
+        run_definition, grr_dir, output, "--keep-work-dir",
+        "--task-budget", "0")
+
+    flags = sorted(
+        p.name for p in (output.parent / "bins_work" / ".task-status")
+        .glob("bin_*.flag"))
+    assert flags == [
+        "bin_scores_one_s_max_'none'_bs10_chr1_1_chr1_40_n1.flag",
+        "bin_scores_one_s_max_'none'_bs10_chr2_1_chr2_40_n1.flag",
+        "bin_scores_two_t_mean_'none'_bs10_chr1_1_chr1_40_n1.flag",
+        "bin_scores_two_t_mean_'none'_bs10_chr2_1_chr2_40_n1.flag",
+    ]
+
+
+def test_a_negative_budget_is_refused(
+    repo: GenomicResourceRepo, run_definition: pathlib.Path,
+    grr_dir: pathlib.Path, output: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # 0 is the one special value; below it there is nothing to mean.
+    with pytest.raises(SystemExit) as excinfo:
+        binning_tool(run_definition, grr_dir, output, "--task-budget", "-1")
+
+    assert excinfo.value.code == 2
+    assert "--task-budget" in capsys.readouterr().err
+
+
 def test_another_run_definition_sharing_the_work_dir_is_not_served_stale_chunks(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
 ) -> None:

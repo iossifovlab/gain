@@ -184,8 +184,9 @@ few hundred tracks, three files each in the work directory, for no CPU
 gain: the per-task setup measured under 1 ms, and the tasks are bound by
 the per-record fold whatever their size. Consecutive regions are now
 packed, in order, into bundles of at most `--task-budget` bases (default
-50 Mb; a region is never split, so every primary chromosome stays a task
-of its own; 0 restores one task per region), and a task writes one chunk
+50 Mb; a region is never split, so a chromosome longer than the budget —
+on hg38 every primary one but chr21 and chrM — stays a task of its own;
+0 restores one task per region), and a task writes one chunk
 per region of its bundle **under the same name as before**. The chunks,
 the writer, the file and the chunk sharing between run definitions are
 unchanged; only the task count and the rerun granularity move — a task

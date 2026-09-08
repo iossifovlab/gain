@@ -163,7 +163,7 @@ Running the tool
 .. code-block:: bash
 
     binning_tool RUN_DEFINITION [-o OUTPUT] [-w WORK_DIR] [--keep-work-dir] [--dry-run]
-                 [-g GRR] [-j N] [--force] ...
+                 [--task-budget BP] [-g GRR] [-j N] [--force] ...
 
 The only positional argument is the run definition. ``-o`` names the HDF5
 file to write; by default it is the run definition's path with an ``.h5``

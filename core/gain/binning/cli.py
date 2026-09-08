@@ -57,10 +57,10 @@ COORDINATES = "1-based-inclusive"
 # Rows per HDF5 chunk of ``/values``: "every track for one chromosome" is
 # then a contiguous read, and gzip collapses the NaN- and zero-heavy runs.
 ROW_BLOCK = 8192
-# Bases of consecutive regions one task bins.  Every primary chromosome
-# of a human genome is longer, so each stays a task of its own, while the
-# hundreds of alternates and unplaced contigs -- under 2% of the bases --
-# pack into a handful of tasks instead of one each.
+# Bases of consecutive regions one task bins.  A chromosome longer than
+# this stays a task of its own -- on a human genome every primary one but
+# chr21 and chrM -- while the hundreds of alternates and unplaced contigs,
+# under 2% of the bases, pack into a handful of tasks instead of one each.
 TASK_BUDGET = 50_000_000
 
 
@@ -88,7 +88,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         help="resolve every query, print the track list and the region, "
         "bin and task counts, and write nothing")
     parser.add_argument(
-        "--task-budget", type=int, default=TASK_BUDGET, metavar="BP",
+        "--task-budget", type=_bases, default=TASK_BUDGET, metavar="BP",
         help="how many bases of consecutive regions one task bins; a "
         "region is never split, so a chromosome longer than the budget "
         "is a task of its own; 0 makes every region its own task "
@@ -105,6 +105,15 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         parser, default_task_status_dir=None, use_commands=False)
     VerbosityConfiguration.set_arguments(parser)
     return parser
+
+
+def _bases(text: str) -> int:
+    """A base count for argparse: an integer that is not negative."""
+    bases = int(text)
+    if bases < 0:
+        raise argparse.ArgumentTypeError(
+            f"{text} is negative; 0 makes every region its own task")
+    return bases
 
 
 def cli(argv: list[str] | None = None) -> None:
