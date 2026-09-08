@@ -90,10 +90,10 @@ class PositionScore(GenomicScore):
 
     Aggregating those values over the region is the *resource's* job since
     gain#1131: ``get_scores_in_region_agg`` reduces a region to one value
-    per query, and ``gain.annotation.score_annotator`` asks for that rather
-    than folding records of its own.  What the kind contributes to the
-    reduction is ``record_weight`` -- how many queried bases a record
-    covers, and so how many times its value counts.
+    per query, and ``gain.annotation.position_score_annotator`` asks for
+    that rather than folding records of its own.  What the kind
+    contributes to the reduction is ``record_weight`` -- how many queried
+    bases a record covers, and so how many times its value counts.
 
     Attributes:
         resource: The underlying GenomicResource object

@@ -4,6 +4,7 @@ import ast
 import functools
 import os
 import pathlib
+import tomllib
 
 import pytest
 from gain.annotation import pipeline_doc
@@ -262,6 +263,91 @@ def test_the_statistics_scan_does_not_import_the_implementation_classes(
         f"implementation -- use build_score_from_resource, as the rest of "
         f"scan does"
     )
+
+
+#: The deprecated facade over the split score annotator modules (gain#1152).
+#: Spelled here as a constant, which is why the fence below exempts this
+#: module: ``_imported_names`` reports every string constant it sees.
+SCORE_ANNOTATOR_FACADE = "gain.annotation.score_annotator"
+
+
+def _imports_the_score_annotator_facade(dotted: str) -> bool:
+    """Is ``dotted`` the facade, or a name imported from it?"""
+    return (
+        dotted == SCORE_ANNOTATOR_FACADE
+        or dotted.startswith(f"{SCORE_ANNOTATOR_FACADE}.")
+    )
+
+
+def test_nothing_in_gain_imports_the_score_annotator_facade() -> None:
+    """``gain.annotation.score_annotator`` has one consumer left: gpf.
+
+    The base and the two annotators it used to hold live one per module
+    since gain#1152; the facade re-exports them so gpf builds against
+    gain's master wheel while it retargets its own imports.  A gain
+    module importing it would either pin the facade past gpf's move or
+    -- if a new module imported it while the facade imported the new
+    module back -- close a circular import that fails on first use.
+    Both trees this suite can see are swept, ``core/gain`` and
+    ``core/tests``; ``web_api`` is fenced by its own copy of this rule
+    in ``web_api/web_annotation/tests/test_architecture.py``.
+
+    Two exemptions: this module, which names the facade as a constant,
+    and the facade's own test, whose subject is the re-export.
+    """
+    allowed = {
+        pathlib.Path(TESTS_SRC) / "test_architecture.py",
+        pathlib.Path(TESTS_SRC) / "small" / "annotation"
+        / "test_score_annotator_facade.py",
+    }
+    roots = (
+        (pathlib.Path(GAIN_SRC), "gain"),
+        (pathlib.Path(TESTS_SRC), "tests"),
+    )
+    offenders = [
+        f"{py.relative_to(root)}: {imported}"
+        for root, top in roots
+        for py in sorted(root.rglob("*.py"))
+        if py not in allowed
+        for imported in sorted(_imported_names(
+            py.read_text(encoding="utf8"),
+            [top, *py.relative_to(root).parts[:-1]]))
+        if _imports_the_score_annotator_facade(imported)
+    ]
+    assert offenders == [], (
+        f"these modules import the deprecated {SCORE_ANNOTATOR_FACADE}: "
+        f"{offenders}. Import GenomicScoreAnnotatorBase from "
+        f"gain.annotation.genomic_score_annotator_base, and each annotator "
+        f"from its own module -- the facade exists for gpf alone and "
+        f"gain#1154 deletes it"
+    )
+
+
+def test_no_annotator_entry_point_targets_the_score_annotator_facade(
+) -> None:
+    """The registered factories are reached through the new modules.
+
+    An entry point is an import the AST sweep above cannot see: it is a
+    string in ``pyproject.toml``, resolved by ``importlib.metadata`` when
+    the pipeline loads its annotators.  Left on the facade, the four
+    score entry points would keep every pipeline load warning and pin
+    the facade against gain#1154.
+    """
+    with open(os.path.join(GAIN_ROOT, "pyproject.toml"), "rb") as infile:
+        project = tomllib.load(infile)
+    entry_points = project["project"]["entry-points"]
+    annotators = entry_points["gain.annotation.annotators"]
+    offenders = {
+        name: target for name, target in annotators.items()
+        if _imports_the_score_annotator_facade(target.partition(":")[0])
+    }
+    assert offenders == {}, (
+        f"these annotator entry points target the deprecated "
+        f"{SCORE_ANNOTATOR_FACADE}: {offenders}. Point each at the module "
+        f"that defines its factory"
+    )
+    assert {"allele_score_annotator", "position_score_annotator"} <= set(
+        annotators), "the score annotators are no longer registered at all"
 
 
 #: Names that reach markdown2's un-rescued output.  The second is the

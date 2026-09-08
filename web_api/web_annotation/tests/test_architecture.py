@@ -280,6 +280,50 @@ def _dynamically_imported_names(call: ast.Call) -> set[str]:
     return set()
 
 
+#: The deprecated facade over the split score annotator modules
+#: (gain#1152).  Named as a constant, which the sweep does not read as an
+#: import -- see ``_imported_modules``.
+SCORE_ANNOTATOR_FACADE = "gain.annotation.score_annotator"
+
+
+def _imports_the_score_annotator_facade(dotted: str) -> bool:
+    """Is ``dotted`` the facade, or a name imported from it?"""
+    return (
+        dotted == SCORE_ANNOTATOR_FACADE
+        or dotted.startswith(f"{SCORE_ANNOTATOR_FACADE}.")
+    )
+
+
+def test_no_web_api_module_imports_the_score_annotator_facade() -> None:
+    """``gain.annotation.score_annotator`` has one consumer left: gpf.
+
+    The base and the two annotators it used to hold live one per module
+    since gain#1152; the facade re-exports them so gpf builds against
+    gain's master wheel while it retargets its own imports.  This
+    project's ``isinstance`` check against ``GenomicScoreAnnotatorBase``
+    imports it from ``gain.annotation.genomic_score_annotator_base``,
+    not through the facade, which gain#1154 deletes.
+
+    ``core``'s fence sweeps ``core/gain`` and ``core/tests`` and cannot
+    see this tree -- the same split as the Markdown rule above.
+    ``test_the_fence_can_see_the_project_it_polices`` is what stops this
+    sweep passing by finding nothing.
+    """
+    offenders = [
+        f"{py.relative_to(WEB_API_SRC)}: {imported}"
+        for py in sorted(WEB_API_SRC.rglob("*.py"))
+        for imported in sorted(_imported_modules(py))
+        if _imports_the_score_annotator_facade(imported)
+    ]
+
+    assert offenders == [], (
+        f"these web_api modules import the deprecated "
+        f"{SCORE_ANNOTATOR_FACADE}: {offenders}. Import "
+        f"GenomicScoreAnnotatorBase from "
+        f"gain.annotation.genomic_score_annotator_base instead"
+    )
+
+
 #: The pipeline documentation template, spelled out rather than imported
 #: from ``gain``.  A fence that scans for a name its own subject supplies
 #: goes blind the moment the subject renames it.  Kept honest by
