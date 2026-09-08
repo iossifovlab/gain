@@ -323,13 +323,13 @@ class GeneModels(
 
     @staticmethod
     def join_gene_models(*gene_models: GeneModels) -> GeneModels:
-        r"""Merge multiple gene models into a single GeneModels object.
+        """Merge multiple gene models into a single GeneModels object.
 
         This combines transcript models from multiple sources into one
         unified gene models object.
 
         Args:
-            \*gene_models (GeneModels): Two or more GeneModels objects to
+            *gene_models (GeneModels): Two or more GeneModels objects to
             merge.
 
         Returns:

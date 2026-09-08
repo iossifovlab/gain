@@ -56,14 +56,14 @@ class CLIGenomicContextProvider(GenomicContextProvider):
         self, parser: argparse.ArgumentParser,
         **kwargs: Any,
     ) -> None:
-        r"""Expose CLI options that control genomic resource resolution.
+        """Expose CLI options that control genomic resource resolution.
 
         Parameters
         ----------
         parser
             The argument parser that should receive the provider specific
             options.
-        \*\*kwargs
+        **kwargs
             ``skip_cli_reference_genome`` and ``skip_cli_gene_models``
             leave out ``-R`` and ``-G`` for a tool that resolves neither
             from the command line.  The GRR options are always added.
@@ -91,11 +91,11 @@ class CLIGenomicContextProvider(GenomicContextProvider):
                      "genomic context will be used.")
 
     def init(self, **kwargs: Any) -> GenomicContext | None:
-        r"""Create a :class:`SimpleGenomicContext` based on CLI arguments.
+        """Create a :class:`SimpleGenomicContext` based on CLI arguments.
 
         Parameters
         ----------
-        \*\*kwargs
+        **kwargs
             Arguments produced from the command-line parser.  The provider
             recognises ``grr_filename``, ``grr_directory``,
             ``reference_genome_resource_id``, and ``gene_models_resource_id``.

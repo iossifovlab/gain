@@ -15,6 +15,13 @@ author = 'iossifovlab.com'
 
 extensions = [
     "sphinx.ext.autodoc",
+    # Google-style (``Args:``, ``Attributes:``, ``Returns:``, ``Raises:``) and
+    # numpy-style (``Parameters`` over a dashed rule) docstring sections.
+    # Without napoleon, autodoc hands them to docutils as raw reStructuredText:
+    # the headers render as literal text and an ordinary indented continuation
+    # line is a markup error -- the root cause of most of the defects gain#1183
+    # repaired by hand.  See ``napoleon_use_ivar`` below (gain#1219).
+    "sphinx.ext.napoleon",
     "sphinx.ext.doctest",
     "sphinx.ext.todo",
     "sphinx.ext.coverage",
@@ -53,6 +60,26 @@ extensions = [
 # skeleton, and both ``autosectionlabel_maxdepth = 2`` and
 # ``autosectionlabel_prefix_document = True`` still leave those 45.  Re-run the
 # census before adding the extension back for any reason.
+
+# Napoleon renders an ``Attributes:`` section as one ``.. attribute::``
+# directive per entry by default.  Where autodoc already documents the same
+# member through ``undoc-members`` -- dataclass fields, enum values, class
+# constants -- that puts the attribute on the page TWICE.  The build cannot
+# tell: the apidoc tree is generated with ``no-index``, so the second
+# definition registers no object and Sphinx emits no duplicate-object
+# warning.  Measured for gain#1219 with the defaults: 61 new attribute
+# blocks, 16 of them duplicating an autodoc member, at zero warnings.
+#
+# ``napoleon_use_ivar`` renders the section as a ``Variables`` field list in
+# the class docstring instead, which adds no directive and so nothing to
+# duplicate; the per-page set of attribute blocks is then identical to the
+# build before napoleon.  Nothing is given up: under ``no-index`` the
+# directives would carry no cross-reference anchor anyway.
+#
+# Every other ``napoleon_*`` setting is at its default.  Verify a change to
+# any of them by diffing the rendered member lists per page against the
+# previous build, not by the warning count.
+napoleon_use_ivar = True
 
 extlinks = {
     "issue": ("https://github.com/iossifovlab/gain/issues/%s", "#%s"),
