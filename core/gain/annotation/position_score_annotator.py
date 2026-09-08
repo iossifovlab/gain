@@ -6,7 +6,6 @@ FitCons2 and the like -- read from a ``position_score`` resource.
 import textwrap
 from typing import Any
 
-from gain import logging
 from gain.annotation.annotatable import Annotatable, VCFAllele
 from gain.annotation.annotation_config import (
     AnnotatorInfo,
@@ -28,8 +27,6 @@ from gain.genomic_resources.aggregators import (
 from gain.genomic_resources.genomic_scores import (
     build_position_score_from_resource,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def build_position_score_annotator(pipeline: AnnotationPipeline,

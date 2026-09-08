@@ -7,14 +7,12 @@ defaults, help text -- from the score's own definitions.  The kinds,
 ``position_score_annotator`` and ``allele_score_annotator``, live one
 per module beside this one and add the read.
 
-``get_genomic_resource`` is the shared helper both kinds resolve their
-``resource_id`` through; it is public because two sibling modules import
-it.
+``get_genomic_resource`` resolves an annotator's ``resource_id`` to a
+resource of an accepted type; both kinds call it.
 """
 import abc
 from typing import Any
 
-from gain import logging
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotatorInfo,
@@ -35,8 +33,6 @@ from gain.genomic_resources.genomic_scores import GenomicScore
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_types import reject_retired_resource
 from gain.templates import get_template
-
-logger = logging.getLogger(__name__)
 
 
 def get_genomic_resource(

@@ -1,16 +1,10 @@
-"""Deprecated: the score annotators live one per module (gain#1152).
+"""Deprecated re-exports of the score annotators (gain#1152).
 
-This module used to define the shared base and both genomic score
-annotators.  They are now
-
-* :mod:`gain.annotation.genomic_score_annotator_base`
-* :mod:`gain.annotation.position_score_annotator`
-* :mod:`gain.annotation.allele_score_annotator`
-
-and this facade only re-exports them, so that a consumer built against
-the old path keeps importing while it moves.  It imports *from* the new
-modules and nothing imports it back, which is what keeps the split free
-of a circular import.  It is scheduled for removal by gain#1154.
+Import each from its own module instead:
+:mod:`gain.annotation.genomic_score_annotator_base`,
+:mod:`gain.annotation.position_score_annotator` and
+:mod:`gain.annotation.allele_score_annotator`.  Kept for gpf
+(iossifovlab/gpf#1012) until gain#1154 removes it.
 """
 import warnings
 

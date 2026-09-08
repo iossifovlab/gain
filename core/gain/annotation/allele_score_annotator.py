@@ -7,7 +7,6 @@ exact allele match or reduced over a region.
 import textwrap
 from typing import Any
 
-from gain import logging
 from gain.annotation.annotatable import Annotatable, VCFAllele
 from gain.annotation.annotation_config import (
     AnnotationConfigurationError,
@@ -35,8 +34,6 @@ from gain.genomic_resources.resource_types import (
     PREFERRED_ALLELE_SCORE_TYPE,
 )
 from gain.genomic_resources.score_filter import ScoreFilterError
-
-logger = logging.getLogger(__name__)
 
 
 def build_allele_score_annotator(pipeline: AnnotationPipeline,
