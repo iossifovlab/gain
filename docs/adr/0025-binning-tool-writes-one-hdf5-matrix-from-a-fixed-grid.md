@@ -6,7 +6,8 @@
 [#1200](https://github.com/iossifovlab/gain/issues/1200) (tracer bullet),
 [#1201](https://github.com/iossifovlab/gain/issues/1201) (validation),
 [#1202](https://github.com/iossifovlab/gain/issues/1202) (docs and this record),
-[grr_bench#3](https://github.com/iossifovlab/grr_bench/issues/3) (the D14 timing)
+[grr_bench#3](https://github.com/iossifovlab/grr_bench/issues/3) (the D14 timing),
+[#1214](https://github.com/iossifovlab/gain/issues/1214) (the D13 amendment: region bundles)
 
 Design doc of record: `seqpipe/genomics-toolbox`
 `docs/2026-09-04-gain-score-binning-design.md`, whose decisions are numbered
@@ -174,6 +175,30 @@ writer's one input is the chunk *directory*, whose mtime moves whenever a
 chunk is created, so a second definition in the same work directory makes
 the writer run again instead of leaving a stale file. A rerun does not
 notice a resource changed underneath it; `--force` is how to recompute.
+
+**Amended by #1214 (2026-09-08): one task per (track, bundle of regions).**
+With `regions` omitted, a region is a whole chromosome, and a UCSC-style
+hg38 has 455 sequences, 408 of them under 1 Mb and together under 2 % of
+the genome — so one task per (track, region) made over 100k tasks for a
+few hundred tracks, three files each in the work directory, for no CPU
+gain: the per-task setup measured under 1 ms, and the tasks are bound by
+the per-record fold whatever their size. Consecutive regions are now
+packed, in order, into bundles of at most `--task-budget` bases (default
+50 Mb; a region is never split, so a chromosome longer than the budget —
+on hg38 every primary one but chr21 and chrM — stays a task of its own;
+0 or less restores one task per region), and a task writes one chunk
+per region of its bundle **under the same name as before**. The chunks,
+the writer, the file and the chunk sharing between run definitions are
+unchanged; only the task count and the rerun granularity move — a task
+missing any of its chunks is recomputed in full (the executor's check of
+a task's output files), and its id names its bundle by its first and
+last region rather than listing it, so it stays a file name in the
+task-status directory. The packing itself is `bundle_regions` in
+`gain.utils.regions`, beside `split_into_regions`, which cuts the other
+way. Splitting a chromosome
+across tasks was considered and dropped: the writer assembles one slab per
+user region and the chunk name encodes the region bounds, and the tail it
+would shorten is one chromosome-sized task.
 
 ### The read path is `get_scores_in_bins`, unchanged — decided by measurement (D14)
 

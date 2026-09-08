@@ -380,6 +380,25 @@ def test_a_malformed_bins_block_is_a_parse_error_naming_the_key(
     assert fragment in str(excinfo.value)
 
 
+def test_the_task_budget_is_not_a_run_definition_key(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    # How the work is cut into tasks is the command line's business; a
+    # run definition describes the matrix, so the key is a stray one.
+    config = {
+        "bins": {"bin_size": 10, "task_budget": 50},
+        "binners": [
+            {"position_score_binner": {"resource_query": "scores/one"}},
+        ],
+    }
+
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_run_definition(config, repo, genome)
+
+    assert "bins" in str(excinfo.value)
+    assert "task_budget" in str(excinfo.value)
+
+
 def test_an_unknown_top_level_key_is_a_parse_error(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
