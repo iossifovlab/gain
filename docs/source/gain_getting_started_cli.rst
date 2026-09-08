@@ -413,6 +413,8 @@ This produces :download:`regions.annotated.tsv <files/regions.annotated.tsv>` sh
 
 This output shows how the same pipeline summarizes annotations over genomic intervals. The ``simple_effect_annotator`` reports the broad genomic context of each region and any overlapping genes. For ``phyloP7way``, the ``max`` and ``mean`` columns summarize conservation scores across the positions spanned by each region, while the ``list`` column reports the individual position-level values. For ``AlphaMissense``, GAIn aggregates across both the positions in the region and the possible allelic changes at those positions, producing summary ``am_pathogenicity`` values and listing the contributing alleles when available.
 
+To reduce many position-score tracks over a fixed genome-wide grid of bins, rather than over a list of regions, use ``binning_tool`` — see :doc:`binning`.
+
 
 
 Adding public GRRs
