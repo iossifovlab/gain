@@ -6,6 +6,7 @@ import os
 import pickle  # ruff: ignore[suspicious-pickle-import]
 import time
 from abc import abstractmethod
+from collections import defaultdict
 from collections.abc import Generator
 from copy import copy
 from typing import Any
@@ -170,37 +171,49 @@ class TaskGraphExecutorBase(TaskGraphExecutor):
             return
         cached_tasks: dict[Task, CacheRecord] = {}
         uncomputed_tasks: set[Task] = set()
+        # {file: every task declaring it as an output}, built once so a
+        # consumer with many missing inputs looks each one up instead of
+        # walking its ancestors per file (gain#1213). A list, because two
+        # tasks may declare the same file and both must be invalidated.
+        producers: dict[str, list[Task]] = defaultdict(list)
 
         with graph as tasks:
             di_graph = graph.as_directed_graph()
-            for task in tasks:
-                task_desc = graph.get_task_desc(task)
+            task_descs = {task: graph.get_task_desc(task) for task in tasks}
+            for task, task_desc in task_descs.items():
                 record = self._task_cache.get_record(task_desc)
                 if record.type != CacheRecordType.COMPUTED:
                     uncomputed_tasks.add(task)
                 cached_tasks[task] = record
+                for output_file in (
+                    task_desc.output_files
+                    + task_desc.intermediate_output_files
+                ):
+                    producers[output_file].append(task)
 
-            intermediates_needing_recompute = set()
+            intermediates_needing_recompute: set[Task] = set()
             for task in uncomputed_tasks:
-                task_desc = graph.get_task_desc(task)
-                for input_file in task_desc.input_files:
-                    if os.path.exists(input_file):
-                        continue
-                    for ancestor_task in networkx.ancestors(di_graph, task):
-                        ancestor_desc = graph.get_task_desc(ancestor_task)
-                        if (
-                            input_file in ancestor_desc.output_files or
-                            input_file in
-                            ancestor_desc.intermediate_output_files
-                        ):
-                            cached_tasks[ancestor_task] = \
-                                cached_tasks[ancestor_task].invalidate()
-                            intermediates_needing_recompute.add(ancestor_task)
+                candidates = [
+                    producer
+                    for input_file in task_descs[task].input_files
+                    if not os.path.exists(input_file)
+                    for producer in producers.get(input_file, ())
+                    if producer not in uncomputed_tasks
+                    and producer not in intermediates_needing_recompute
+                ]
+                if not candidates:
+                    continue
+                # Only a producer the consumer depends on is invalidated.
+                ancestors = networkx.ancestors(di_graph, task)
+                for producer in candidates:
+                    if producer in ancestors:
+                        cached_tasks[producer] = \
+                            cached_tasks[producer].invalidate()
+                        intermediates_needing_recompute.add(producer)
 
             uncomputed_tasks.update(intermediates_needing_recompute)
 
             for task in uncomputed_tasks:
-                task_desc = graph.get_task_desc(task)
                 descendants = networkx.descendants(di_graph, task)
                 for descendant_task in descendants:
                     cached_tasks[descendant_task] = \
