@@ -553,6 +553,88 @@ def test_a_missing_chunk_recomputes_its_whole_bundle(
     ])
 
 
+def read_everything_but_created(path: pathlib.Path) -> dict[str, Any]:
+    with h5py.File(path, "r") as h5:
+        attrs = {k: v for k, v in h5.attrs.items() if k != "created"}
+        return {
+            "values": h5["values"][()], "bins": h5["bins"][()],
+            "tracks": h5["tracks"][()], "attrs": attrs,
+        }
+
+
+def test_the_budget_changes_the_tasks_and_nothing_in_the_file(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    run_definition: pathlib.Path, output: pathlib.Path,
+) -> None:
+    # The budget is how the work is cut, not what is computed: the file
+    # written with every region its own task is the file written with
+    # both regions in one, dataset for dataset and attribute for
+    # attribute, and the chunks in the work directory are the same files
+    # under the same names.
+    binning_tool(run_definition, grr_dir, output, "--keep-work-dir")
+    bundled = read_everything_but_created(output)
+    bundled_chunks = sorted(
+        p.name for p in output.parent.glob("bins_work/chunks/*.npy"))
+    shutil.rmtree(output.parent / "bins_work")
+    output.unlink()
+
+    binning_tool(
+        run_definition, grr_dir, output, "--keep-work-dir",
+        "--task-budget", "0")
+
+    unbundled = read_everything_but_created(output)
+    np.testing.assert_array_equal(unbundled["values"], bundled["values"])
+    np.testing.assert_array_equal(unbundled["bins"], bundled["bins"])
+    # Field by field: a NaN replacement is unequal to itself as a row.
+    assert unbundled["tracks"].dtype == bundled["tracks"].dtype
+    for field in bundled["tracks"].dtype.names:
+        np.testing.assert_array_equal(
+            unbundled["tracks"][field], bundled["tracks"][field])
+    assert list(unbundled["attrs"]) == list(bundled["attrs"])
+    for key, value in bundled["attrs"].items():
+        np.testing.assert_array_equal(unbundled["attrs"][key], value)
+    assert bundled_chunks == sorted(
+        p.name for p in output.parent.glob("bins_work/chunks/*.npy"))
+    # The names are the tracer bullet's, quoted 'none' included.
+    assert bundled_chunks == [
+        "scores_one_s_max_'none'_bs10_chr1_1_40.npy",
+        "scores_one_s_max_'none'_bs10_chr2_1_40.npy",
+        "scores_two_t_mean_'none'_bs10_chr1_1_40.npy",
+        "scores_two_t_mean_'none'_bs10_chr2_1_40.npy",
+    ]
+
+
+def test_a_bundle_of_many_regions_is_one_task_with_a_short_id(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+) -> None:
+    # Twenty windows of chr1 and chr2 fit one bundle: one task per track
+    # plus the writer, each leaving one status file named by its id --
+    # an id that spans the bundle rather than listing its regions, so it
+    # stays a file name however many regions there are.
+    windows = ", ".join(f'"chr1:{s}-{s + 4}"' for s in range(1, 100, 5))
+    run_definition = write_run_definition(output, textwrap.dedent(f"""
+        input_reference_genome: genome
+        bins:
+          bin_size: 10
+          regions: [{windows}, chr2]
+        binners:
+        - position_score_binner:
+            resource_query: "scores/*"
+    """))
+
+    binning_tool(run_definition, grr_dir, output, "--keep-work-dir")
+
+    flags = sorted(
+        p.name for p in (output.parent / "bins_work" / ".task-status")
+        .glob("*.flag"))
+    assert flags == [
+        "bin_scores_one_s_max_'none'_bs10_chr1_1_chr2_40_n21.flag",
+        "bin_scores_two_t_mean_'none'_bs10_chr1_1_chr2_40_n21.flag",
+        "write_hdf5.flag",
+    ]
+    assert read_matrix(output).shape == (24, 2)
+
+
 def test_another_run_definition_sharing_the_work_dir_is_not_served_stale_chunks(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
 ) -> None:

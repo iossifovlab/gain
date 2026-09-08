@@ -179,16 +179,24 @@ Dry run
 ``--dry-run`` reads the run definition, resolves every query against the
 GRR, checks every rule described above, prints the list of tracks the run
 would produce — name, resource id, score id and aggregator — together with
-the number of regions and bins, and exits without writing anything. Use it
-to see what a query matched and how large the matrix will be before
-committing cluster time.
+the number of regions, bins and tasks, and exits without writing anything.
+Use it to see what a query matched, how large the matrix will be and how
+the work will be cut before committing cluster time.
 
 Parallelism
 ^^^^^^^^^^^
 
-The work is split into one task per (track, region), followed by one task
-that assembles the HDF5 file. The tasks run through the same task graph as
-the annotation tools, so the same flags apply: ``-j N`` sets the number of
+The work is split into one task per track and *bundle* of regions,
+followed by one task that assembles the HDF5 file. Consecutive regions of
+the run definition are packed, in order, into bundles of at most
+``--task-budget`` bases (default 50,000,000); a region is never split, so a
+chromosome longer than the budget is a task of its own, while the hundreds
+of alternate and unplaced contigs of a human genome — under two percent of
+its bases — pack into a handful of tasks instead of one each. The budget
+only decides how many tasks there are: the file is the same whatever its
+value, and ``--task-budget 0`` restores one task per region. The tasks run
+through the same task graph as the annotation tools, so the same flags
+apply: ``-j N`` sets the number of
 workers, ``-N`` names a configured dask cluster, and ``--task-log-dir``
 keeps a log per task. The genomic-context flags (``-g``,
 ``--grr-directory``, ``-R``) and the verbosity flags (``--verbose``,
@@ -198,17 +206,20 @@ for the full list.
 Work directory and reruns
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Each task writes its column chunk into a work directory; the final task
-assembles the file from those chunks, region by region, so at no point is
-the whole matrix in memory — a genome-wide run at a small bin size is
-possible on an ordinary node. The work directory is ``-w``; by default it
-is a sibling of the output named after it (``run_work`` next to ``run.h5``),
-and the task-status directory lives inside it. A work directory the tool
-created is removed after a successful run; ``--keep-work-dir`` keeps it.
+Each task writes one column chunk per region of its bundle into a work
+directory; the final task assembles the file from those chunks, region by
+region, so at no point is the whole matrix in memory — a genome-wide run at
+a small bin size is possible on an ordinary node. The work directory is
+``-w``; by default it is a sibling of the output named after it
+(``run_work`` next to ``run.h5``), and the task-status directory lives
+inside it. A work directory the tool created is removed after a successful
+run; ``--keep-work-dir`` keeps it.
 
-A run that was interrupted resumes from the chunks it had finished when it
-is started again with the same work directory: only the missing chunks are
-computed, and the file is assembled if it is missing. A run whose chunks
+A run that was interrupted resumes from the tasks it had finished when it
+is started again with the same work directory and budget: a task whose
+chunks are all present is skipped, a task missing any of its chunks is
+computed again in full, and the file is assembled if it is missing. A run
+whose chunks
 and output are all present does nothing. The chunks are keyed by everything
 that decides their values — resource, score, aggregator, replacement, bin
 size and region — so two run definitions sharing a work directory share
