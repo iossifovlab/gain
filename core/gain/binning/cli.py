@@ -40,6 +40,9 @@ from gain.binning.run_definition import (
 from gain.genomic_resources.genomic_context import (
     context_providers_add_argparser_arguments,
 )
+from gain.genomic_resources.genomic_context_cli import (
+    GENOMIC_CONTEXT_PATH_KEYS,
+)
 from gain.genomic_resources.reference_genome import (
     ReferenceGenome,
     build_reference_genome_from_resource_id,
@@ -118,7 +121,9 @@ def cli(argv: list[str] | None = None) -> None:
     # Paths the user may have named relative to where the command was
     # typed; the tasks run inside the work directory, so they are resolved
     # before the GRR definition the workers rebuild is derived from them.
-    absolutize_path_args(args, input_key="run_definition")
+    absolutize_path_args(
+        args, input_key="run_definition",
+        extra_keys=GENOMIC_CONTEXT_PATH_KEYS)
 
     with open(args["run_definition"]) as infile:
         config = yaml.safe_load(infile)
