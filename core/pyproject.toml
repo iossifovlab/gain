@@ -98,10 +98,10 @@ data_frame = "gain.genomic_resources.implementations.data_frame_resource_impl:Da
 ann_data = "gain.genomic_resources.implementations.ann_data_resource_impl:AnnDataResourceImplementation"
 
 [project.entry-points."gain.annotation.annotators"]
-allele_score = "gain.annotation.score_annotator:build_allele_score_annotator"
-allele_score_annotator = "gain.annotation.score_annotator:build_allele_score_annotator"
-position_score = "gain.annotation.score_annotator:build_position_score_annotator"
-position_score_annotator = "gain.annotation.score_annotator:build_position_score_annotator"
+allele_score = "gain.annotation.allele_score_annotator:build_allele_score_annotator"
+allele_score_annotator = "gain.annotation.allele_score_annotator:build_allele_score_annotator"
+position_score = "gain.annotation.position_score_annotator:build_position_score_annotator"
+position_score_annotator = "gain.annotation.position_score_annotator:build_position_score_annotator"
 effect_annotator = "gain.annotation.effect_annotator:build_effect_annotator"
 gene_set_annotator = "gain.annotation.gene_set_annotator:build_gene_set_annotator"
 liftover_annotator = "gain.annotation.liftover_annotator:build_liftover_annotator"
