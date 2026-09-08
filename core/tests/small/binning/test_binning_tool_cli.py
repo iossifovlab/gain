@@ -199,6 +199,21 @@ def test_dry_run_prints_the_tracks_and_counts_and_writes_nothing(
     assert not (output.parent / "bins_work").exists()
 
 
+def test_dry_run_reports_the_task_count_under_the_budget(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    run_definition: pathlib.Path, output: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Both toy regions fit one bundle under the default budget: one task
+    # per track.  A budget of 0 is one task per (track, region).
+    binning_tool(run_definition, grr_dir, output, "--dry-run")
+    assert "tasks: 2" in capsys.readouterr().out
+
+    binning_tool(
+        run_definition, grr_dir, output, "--dry-run", "--task-budget", "0")
+    assert "tasks: 4" in capsys.readouterr().out
+
+
 # scores/one twice, under its own ``max`` and under ``min``; scores/two
 # once.  Only the repeated resource carries its aggregator in its name.
 REPEATED_RUN_DEFINITION = textwrap.dedent("""
@@ -497,6 +512,45 @@ def test_an_interrupted_run_resumes_from_its_finished_chunks(
     binning_tool(run_definition, grr_dir, output, "--keep-work-dir")
 
     np.testing.assert_array_equal(read_matrix(output), first)
+
+
+def republish_scores_two_as(grr_dir: pathlib.Path, value: float) -> None:
+    """Replace ``scores/two`` with one value over chr1:1-40."""
+    resource_dir = grr_dir / "scores" / "two"
+    shutil.rmtree(resource_dir)
+    a_position_score().with_score("t", "float").with_aggregator("mean") \
+        .with_tabix().with_data(f"""
+            chrom  pos_begin  pos_end  t
+            chr1   1          40       {value}
+        """).realize_into(resource_dir)
+
+
+def test_a_missing_chunk_recomputes_its_whole_bundle(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    run_definition: pathlib.Path, output: pathlib.Path,
+) -> None:
+    # Both regions of a track are one task under the default budget, so
+    # losing scores/two's chr2 chunk recomputes its chr1 chunk too -- the
+    # rerun sees the republished value on chr1, where the chunk it lost
+    # was chr2's.  scores/one's bundle is untouched and is reused.
+    binning_tool(run_definition, grr_dir, output, "--keep-work-dir")
+    output.unlink()
+    next(output.parent.glob("bins_work/**/scores_two_*_chr2_*.npy")).unlink()
+    republish_scores_two_as(grr_dir, 7.0)
+    republish_scores_one_as(grr_dir, 9.0)
+
+    binning_tool(run_definition, grr_dir, output, "--keep-work-dir")
+
+    np.testing.assert_array_equal(read_matrix(output), [
+        [1.0, 7.0],
+        [1.0, 7.0],
+        [NAN, 7.0],
+        [2.0, 7.0],
+        [NAN, NAN],
+        [NAN, NAN],
+        [NAN, NAN],
+        [NAN, NAN],
+    ])
 
 
 def test_another_run_definition_sharing_the_work_dir_is_not_served_stale_chunks(
