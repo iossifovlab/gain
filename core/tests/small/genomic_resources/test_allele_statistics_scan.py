@@ -945,7 +945,7 @@ def test_the_coverage_section_is_absent_on_an_allele_score(
     # The converse of the two tests around it, and the reason gain#1118
     # could drop the count: an allele row collapses to a point, so the
     # span union is never scanned for this kind
-    # (``_COVERAGE_SCAN_RESOURCE_TYPES`` excludes it) and the distinct
+    # (``region_coverage_for`` answers ``None``) and the distinct
     # count that stood in for it is gone.  Nothing can ever fill the
     # section, so it does not exist -- the same rule the Alleles section
     # follows on a position score.

@@ -30,6 +30,8 @@ import numpy as np
 
 from gain.genomic_resources.cli_errors import report_resource_failure
 from gain.genomic_resources.genomic_scores import (
+    FragmentScore,
+    GenomicScore,
     RecordArrays,
     owned_records_mask,
 )
@@ -345,6 +347,27 @@ def build_fragment_display(
             for chrom in sorted(counts, key=natural_chromosome_key)
         ],
         statistics.fragment_lengths_global())
+
+
+def region_fragments_for(
+    score: GenomicScore,
+    chrom: str,
+    start: int | None,
+    end: int | None,
+) -> RegionFragments | None:
+    """A region accumulator for a fragment score, ``None`` for other kinds.
+
+    Gated on the built score's class rather than on the resource type
+    string, for the reason
+    :func:`~gain.genomic_resources.statistics.alleles.region_alleles_for`
+    gives: the builder has already resolved both spellings of the kind
+    to ``FragmentScore``, and asking the string again would restate its
+    dispatch.  The class is the property this statistic depends on --
+    that the rows ARE fragments, each counted once at its own span.
+    """
+    if not isinstance(score, FragmentScore):
+        return None
+    return RegionFragments(chrom, start, end)
 
 
 def accumulate_fragments(
