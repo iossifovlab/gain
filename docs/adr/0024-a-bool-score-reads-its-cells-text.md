@@ -137,8 +137,10 @@ does join that tuple, the vectorized form must be derived from
   exception per cell. That is the intended correction, and it is loud.
 * Two adjacent defects were found while verifying this and left alone, because
   neither is caused by it: a VCF score named in a `scores:` block *without* a
-  `type:` key gets `value_type` from the header but `value_parser` from the
-  config's `float` default, so its `Flag` reads `1.0`/`0.0` (gain#1221); and
+  `type:` key got `value_type` from the header but `value_parser` from the
+  config's `float` default, so its `Flag` read `1.0`/`0.0` (gain#1221, since
+  fixed: an entry that states no `type:` takes the header's parser along with
+  the header's type, so it reads what the header-only resource reads); and
   `stringify` renders `False` identically to `None`, so annotation output still
   cannot show a false flag (gain#1222). The second means the user-visible
   symptom in gain#1192's own repro is only half closed at the CLI.

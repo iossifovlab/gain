@@ -583,11 +583,14 @@ def parse_scoredef_config(
         # ``parse_vcf_scoredefs``, which prefers the config's type and
         # falls back to the header's).  Defaulting at this point would
         # override an INFO field's declared ``int`` with ``float``.
-        # ``finish_scoredefs`` resolves it once the merge has happened.
-        #
-        # The value PARSER defaults to float regardless, as it always
-        # has -- an unstated type has always been read as a float.
-        value_parser = SCORE_TYPE_PARSERS[score_conf.get("type", "float")]
+        # ``finish_scoredefs`` resolves it once the merge has happened,
+        # and resolves the value PARSER with it: the two are one decision,
+        # left unmade together here so that the VCF merge cannot take one
+        # half from the config and the other from the header (gain#1221).
+        value_type = score_conf.get("type")
+        value_parser = (
+            SCORE_TYPE_PARSERS[value_type] if value_type is not None
+            else None)
 
         col_name, col_index = _parse_column_address(score_conf)
 
@@ -596,7 +599,7 @@ def parse_scoredef_config(
         score_def = GenomicScoreDef(
             score_id=score_conf["id"],
             desc=score_conf.get("desc", ""),
-            value_type=score_conf.get("type"),
+            value_type=value_type,
             # Left as the config stated it, ``None`` when unstated;
             # ``finish_scoredefs`` fills the resource type's default.
             aggregator=score_conf.get("aggregator"),
@@ -772,8 +775,10 @@ def finish_scoredefs(
     """Fill in what a definition cannot decide for itself.
 
     **The value type.**  ``type:`` is optional, and an unstated one is
-    recorded as ``float`` -- what the value parser defaults to anyway.
-    Recording it matters rather than leaving it ``None``:
+    recorded as ``float``, with the ``float`` value parser alongside it
+    -- the two are resolved together, here, because they were left
+    unresolved together by ``parse_scoredef_config`` (gain#1221).
+    Recording the type matters rather than leaving it ``None``:
     ``GenomicScoreDef.__post_init__`` returns early on a ``None`` type,
     which would skip ``na_values`` normalization and leave the raw config
     string in place.  That turns the NA check into a SUBSTRING test, so a
@@ -807,6 +812,7 @@ def finish_scoredefs(
     for score_def in score_defs.values():
         if score_def.value_type is None:
             score_def.value_type = "float"
+            score_def.value_parser = SCORE_TYPE_PARSERS["float"]
             # __post_init__ skipped this when the type was unknown.
             # normalize_na_values is idempotent, so re-running it on an
             # already-normalized set is a no-op for every other score.
