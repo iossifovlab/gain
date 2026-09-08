@@ -1,0 +1,13 @@
+input_reference_genome: hg38/genomes/GRCh38-hg38
+
+bins:
+  bin_size: 10240
+  regions: ["chr21:20000000-22000000"]
+
+binners:
+- position_score_binner:
+    resource_query: "hg38/scores/*"
+    search_term: conservation
+- position_score_binner:
+    resource_query: hg38/scores/phyloP100way
+    aggregator: max
