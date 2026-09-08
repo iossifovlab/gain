@@ -25,6 +25,7 @@ from gain import logging
 from gain.genomic_resources.cli_errors import report_resource_failure
 from gain.genomic_resources.genomic_scores import (
     GenomicScore,
+    PositionScore,
     RecordArrays,
     owned_records_mask,
 )
@@ -941,6 +942,39 @@ def _plausible_lengths(
             continue
         kept[chrom] = length
     return kept
+
+
+def region_coverage_for(
+    score: GenomicScore,
+    chrom: str,
+    start: int | None,
+    end: int | None,
+) -> RegionCoverage | None:
+    """A region accumulator for a position score, ``None`` for other kinds.
+
+    Gated on the built score's class rather than on the resource type
+    string, for the reason
+    :func:`~gain.genomic_resources.statistics.alleles.region_alleles_for`
+    gives.
+
+    A position score is the one kind whose rows are pairwise disjoint --
+    its ``validate_records`` refuses a row beginning at or before its
+    predecessor's end -- and that is the property this statistic depends
+    on: only then does the union of the spans answer "is there data at
+    this position at all?" exactly, so that the count is a genuine
+    measure of what the resource covers and the fraction a genuine
+    completeness figure.  What disjointness buys the accumulator --
+    full-span rows, an additive union, published segments -- is
+    :class:`RegionCoverage`'s own docstring.
+
+    An allele score's rows are points, so there is no span to union.  A
+    fragment score's rows overlap by design;
+    :mod:`~gain.genomic_resources.statistics.fragments` and ADR 0020 say
+    why that keeps the kind out of both coverage and segments.
+    """
+    if not isinstance(score, PositionScore):
+        return None
+    return RegionCoverage(chrom, start, end)
 
 
 def accumulate_coverage(

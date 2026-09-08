@@ -56,12 +56,14 @@ from gain.genomic_resources.statistics.coverage import (
     accumulate_coverage,
     merge_region_coverage,
     normalize_values,
+    region_coverage_for,
     save_and_plot_coverage,
 )
 from gain.genomic_resources.statistics.fragments import (
     RegionFragments,
     accumulate_fragments,
     merge_region_fragments,
+    region_fragments_for,
     save_and_plot_fragments,
 )
 from gain.genomic_resources.statistics.min_max import MinMaxValue
@@ -116,45 +118,6 @@ _BULK_SCAN_RESOURCE_TYPES = frozenset(
     for resource_type in ("position_score", "allele_score", "fragment_score")
     for spelling in equivalent_resource_types(resource_type)
 )
-
-# The kinds whose covered positions are worth unioning: position scores
-# alone.  The union answers "is there data at this position at all?",
-# which is a question about a kind whose rows are PAIRWISE DISJOINT --
-# then the count is a genuine measure of what the resource covers and
-# the fraction a genuine completeness figure.
-#
-# The two kinds deliberately out, for different reasons.  An allele
-# score's rows collapse to points, so there is no span to union at all
-# (gain#777).  A fragment score's rows deliberately OVERLAP, so their
-# union counts nothing a reader wants: not fragments -- that is the
-# fragment statistic, which the kind has and which is the honest one --
-# and not completeness in a way that compares across resources
-# (gain#1127).  ADR 0020 already records the adjacent half: a fragment
-# score has no segments because merging its rows is not wanted, and the
-# same objection applies to unioning them.
-#
-# So a coverage-scanned kind is, by construction, one whose rows are
-# pairwise disjoint (``validate_records`` refuses a row beginning at or
-# before its predecessor's end; adjacent rows are legal, and the segment
-# algebra depends on that).  Two consequences ride on it: disjoint rows
-# have an exact run algebra, so their segment statistics are published;
-# and they cannot double-count a position, so the scan hands
-# ``RegionCoverage`` each row at its full, unclipped span and the union
-# stays additive across parallel regions.  The clip that overlapping
-# rows once needed was retired by gain#1175 once no kind reached it.
-_COVERAGE_SCAN_RESOURCE_TYPES = frozenset(
-    equivalent_resource_types("position_score"))
-
-# The kinds whose rows ARE fragments, in both spellings, and so publish
-# a fragment count and fragment-length histogram (gain#794).  Gates a
-# statistic of its OWN -- its own accumulator, its own file -- and no
-# longer a group riding inside the coverage one: while the two shared a
-# carrier, this set could only ever narrow a coverage object that had
-# already been built, so dropping the kind from the set above would have
-# silently dropped the tally with it (gain#1127).  These two sets are
-# now disjoint, and neither is the other's complement.
-_FRAGMENT_STATISTICS_RESOURCE_TYPES = frozenset(
-    equivalent_resource_types("fragment_score"))
 
 
 def _score_for(
@@ -494,7 +457,7 @@ def do_histogram(
                 # The row at its full span, on the same record
                 # partition as every other statistic: coverage-scanned
                 # rows are pairwise disjoint, so the union is exact
-                # unclipped (see ``_COVERAGE_SCAN_RESOURCE_TYPES``).
+                # unclipped (see ``RegionCoverage``).
                 coverage.add_interval(
                     left, right, normalize_values(rec))
             if fragments is not None:
@@ -948,39 +911,34 @@ def do_histogram_task(
     A resource the scan refuses is reported here and the refusal
     re-raised, for the reason :func:`do_min_max_task` gives.
 
-    Coverage rides the same read: a kind whose rows have a span to
-    union gets a :class:`RegionCoverage` accumulated by whichever
-    path serves the histograms, carried out in the task's RETURN
-    value — a mutated argument would not travel under a distributed
-    executor, whose task results arrive serialized.  An allele
-    score's :class:`RegionAlleles` rides it on the same terms, with
-    one extra condition on the bulk path: it needs the nucleotides,
-    so a backend that will not serve them sends the region back to
-    the per-record read rather than to a statistic with no class
-    data.  A fragment score's :class:`RegionFragments` rides it too,
-    asked for independently of the coverage question: the two share a
-    scan, not a carrier, so a kind publishes either without the other
-    (gain#1127).
+    The per-region statistics ride the same read, each accumulated by
+    whichever path serves the histograms and carried out in the task's
+    RETURN value — a mutated argument would not travel under a
+    distributed executor, whose task results arrive serialized.  Which
+    kinds get which accumulator is not decided here: each statistics
+    module answers for its own, gated on the built score's class --
+    :func:`~gain.genomic_resources.statistics.coverage.region_coverage_for`,
+    :func:`~gain.genomic_resources.statistics.fragments.region_fragments_for`
+    and
+    :func:`~gain.genomic_resources.statistics.alleles.region_alleles_for`
+    -- and the three are asked independently, so a kind publishes any
+    of them without the others.  An allele score's :class:`RegionAlleles`
+    has one extra condition on the bulk path: it needs the nucleotides,
+    so a backend that will not serve them sends the region back to the
+    per-record read rather than to a statistic with no class data.
 
-    ONE score serves the whole invocation -- the allele probe below, the
-    bulk gate, and whichever scan takes the region -- where each of those
-    used to build its own (gain#1038); see :func:`_score_for`.  An allele
-    score's probe OPENS it and hands it on closed; the scan reopens it,
-    as it would have opened a fresh one.
+    ONE score serves the whole invocation -- the three gates, the allele
+    probe below, the bulk gate, and whichever scan takes the region; see
+    :func:`_score_for`.  An allele score's probe OPENS it and hands it
+    on closed; the scan reopens it, as it would have opened a fresh one.
 
     Built BEFORE the ``try``, unlike :func:`do_min_max_task`'s, because
-    the allele probe needs it and the probe precedes the ``try``.  So a
-    construction that refuses this resource is not attributed here -- as
-    was already the case before the score was shared.
+    the gates and the allele probe need it and both precede the ``try``.
+    So a construction that refuses this resource is not attributed here.
     """
-    resource_type = resource.get_type()
-    coverage = None
-    if resource_type in _COVERAGE_SCAN_RESOURCE_TYPES:
-        coverage = RegionCoverage(chrom, start, end)
-    fragments = None
-    if resource_type in _FRAGMENT_STATISTICS_RESOURCE_TYPES:
-        fragments = RegionFragments(chrom, start, end)
     score = build_score_from_resource(resource)
+    coverage = region_coverage_for(score, chrom, start, end)
+    fragments = region_fragments_for(score, chrom, start, end)
     alleles = region_alleles_for(score, chrom, start, end)
     nucleotides = True
     if alleles is not None:
