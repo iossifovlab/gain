@@ -543,9 +543,38 @@ EOF
                                     registry.seqpipe.org
                             trap 'docker logout registry.seqpipe.org || true' EXIT
 
-                            docker pull \
+                            # A `docker pull` fails transiently often
+                            # enough that a bare one is not safe here:
+                            # #1244 lost gain-web-e2e #2391 twenty-two
+                            # seconds in to containerd's
+                            # `unexpected commit digest` on a resumed
+                            # ingest. The registry blob was verified
+                            # intact and the identical pull succeeded
+                            # on the same agent minutes later, so the
+                            # only thing the failure cost was a
+                            # ~20-minute suite. Retry a ~5s fetch
+                            # rather than discard the run; the backoff
+                            # also gives containerd time to reap the
+                            # bad ingest before the next attempt.
+                            pull_retry() {
+                                attempt=1
+                                while true; do
+                                    if docker pull "\$1"; then
+                                        return 0
+                                    fi
+                                    if [ "\$attempt" -ge 3 ]; then
+                                        echo "docker pull \$1: giving up after \$attempt attempts" >&2
+                                        return 1
+                                    fi
+                                    echo "docker pull \$1: attempt \$attempt failed, retrying in \$((attempt * 10))s" >&2
+                                    sleep "\$((attempt * 10))"
+                                    attempt=\$((attempt + 1))
+                                done
+                            }
+
+                            pull_retry \
                                 'registry.seqpipe.org/gain-web-api:${tag}'
-                            docker pull \
+                            pull_retry \
                                 'registry.seqpipe.org/gain-web-ui:${tag}'
                             docker tag \
                                 'registry.seqpipe.org/gain-web-api:${tag}' \
