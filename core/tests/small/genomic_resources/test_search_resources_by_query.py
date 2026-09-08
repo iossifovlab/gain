@@ -38,7 +38,6 @@ from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,
 )
 from gain.genomic_resources.resource_query import ResourceQueryParseError
-from gain.genomic_resources.resource_types import equivalent_resource_types
 from gain.genomic_resources.testing import build_filesystem_test_protocol
 from gain.genomic_resources.testing.builders import (
     GRRBuilder,
@@ -363,14 +362,10 @@ def test_the_query_means_the_same_with_and_without_the_index(
     has to mean the same thing for a resource that contributes one and for
     a resource that does not (gain#542).
     """
-    # Expanded the way the indexed side expands it -- a fragment score
-    # answers to two spellings, so an exact comparison here would fail for
-    # a reason belonging to the test rather than to the query.
-    accepted = equivalent_resource_types(resource_type)
     without_index = {
         r.resource_id
-        for r in labelled_grr.search_resources(resource_query=query)
-        if r.get_type() in accepted
+        for r in labelled_grr.search_resources(
+            resource_query=query, resource_type=resource_type)
     }
     through_index = {
         r.resource_id
@@ -410,12 +405,10 @@ def test_a_stale_index_does_not_change_what_a_query_means(
     index is one label out of date, which is the ordinary state of a GRR
     between a curator's edit and the next ``grr_manage`` run.
     """
-    accepted = equivalent_resource_types(resource_type)
     without_index = {
         r.resource_id
         for r in index_predating_a_label.search_resources(
-            resource_query=query)
-        if r.get_type() in accepted
+            resource_query=query, resource_type=resource_type)
     }
     through_index = {
         r.resource_id
@@ -459,12 +452,10 @@ def test_an_edited_label_does_not_change_what_a_query_means(
     never yields, and the recorded value is a row it yields that does not
     satisfy the query (gain#646).
     """
-    accepted = equivalent_resource_types(resource_type)
     without_index = {
         r.resource_id
         for r in index_predating_a_label_edit.search_resources(
-            resource_query=query)
-        if r.get_type() in accepted
+            resource_query=query, resource_type=resource_type)
     }
     through_index = {
         r.resource_id
@@ -620,6 +611,15 @@ def test_a_crafted_index_column_name_cannot_break_out_of_the_query(
             ("scores/res_a", "scores/res_a", "position_score"),
             ("secret/res_b", "secret/res_b", "position_score"),
         ])
+
+    # Positive control: an empty result would also be what a term matching
+    # nothing produced, and this test's whole claim is that the crafted key
+    # is what emptied it.
+    assert {
+        r.resource_id
+        for r in repo.search_resources(
+            search_term=_EVERY_RESOURCE, resource_type="position_score")
+    } == {"scores/res_a", "secret/res_b"}
 
     found = list(repo.search_resources(
         search_term=_EVERY_RESOURCE,

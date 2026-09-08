@@ -17,6 +17,7 @@ import pytest
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceProtocolRepo,
+    SearchIndexUnavailableError,
 )
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
@@ -32,9 +33,10 @@ def unindexed_mixed_grr(
 ) -> GenomicResourceProtocolRepo:
     """Resources of three types, so a type filter has something to reject.
 
-    The fragment score is spelled the legacy way on purpose: asking for it
-    by the preferred spelling is what proves the filter expands the type
-    rather than comparing the string.
+    One fragment score is spelled the legacy way and one the preferred
+    way, so either spelling asked for is an expansion in one direction and
+    an exact match in the other: a filter that compared the string would
+    return half the pair whichever spelling it was given.
     """
     return (
         a_grr()
@@ -48,8 +50,12 @@ def unindexed_mixed_grr(
         )
         .with_resource("genomes/res_g", a_reference_genome())
         .with_resource(
-            "fragments/res_f",
+            "fragments/res_legacy",
             a_fragment_score().with_resource_type("cnv_collection"),
+        )
+        .with_resource(
+            "fragments/res_preferred",
+            a_fragment_score().with_resource_type("fragment_score"),
         )
         .build_repo(tmp_path_factory.mktemp("unindexed_mixed_grr"))
     )
@@ -69,13 +75,13 @@ def test_a_type_alone_needs_no_index(
 
 
 @pytest.mark.parametrize("spelling", ["fragment_score", "cnv_collection"])
-def test_either_fragment_score_spelling_finds_the_other(
+def test_either_fragment_score_spelling_finds_both(
     unindexed_mixed_grr: GenomicResourceProtocolRepo, spelling: str,
 ) -> None:
     """The type is expanded, not compared, as the indexed route does it."""
     found = _ids(unindexed_mixed_grr.search_resources(resource_type=spelling))
 
-    assert found == {"fragments/res_f"}
+    assert found == {"fragments/res_legacy", "fragments/res_preferred"}
 
 
 @pytest.mark.parametrize(("resource_type", "query", "expected"), [
@@ -96,8 +102,12 @@ def test_a_type_and_a_query_conjoin_without_an_index(
 def test_a_term_beside_a_type_still_needs_the_index(
     unindexed_mixed_grr: GenomicResourceProtocolRepo,
 ) -> None:
-    """Only the term is the index's filter; adding a type does not excuse it."""
-    with pytest.raises(ValueError, match="SQLite metadata DB not found"):
+    """Only the term is the index's filter; adding a type does not excuse it.
+
+    The typed failure, not the message: a group skips a child on it, and
+    the CLI and the binner dispatch on it (ADR 0012).
+    """
+    with pytest.raises(SearchIndexUnavailableError):
         list(unindexed_mixed_grr.search_resources(
             search_term="alpha", resource_type="position_score"))
 
@@ -109,4 +119,4 @@ def test_a_blank_type_selects_everything_and_opens_no_index(
     found = _ids(unindexed_mixed_grr.search_resources(resource_type=blank))
 
     assert found == _ids(unindexed_mixed_grr.get_all_resources())
-    assert len(found) == 4
+    assert len(found) == 5

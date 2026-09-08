@@ -322,6 +322,30 @@ def test_a_type_filter_is_answered_by_an_unindexed_child(
     assert skipped == []
 
 
+def test_grr_browse_lists_an_unindexed_child_for_a_type_filter(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The reported command with the other filter: ``-t`` needs no index.
+
+    ``grr_browse -t position_score`` used to print the indexed child's rows
+    and warn the unindexed one away; both children answer a type now
+    (gain#1212), and the listing carries both.
+    """
+    group = GenomicResourceGroupRepo([
+        _build_child(tmp_path / "one", "scores/a", {"assay": "atac"}),
+        _build_child(
+            tmp_path / "two", "scores/b", {"assay": "atac"}, indexed=False),
+    ])
+
+    run_list_command(group, argparse.Namespace(type="position_score"))
+
+    out, err = capsys.readouterr()
+    assert err == ""
+    assert "scores/a" in out
+    assert "scores/b" in out
+
+
 def test_a_nested_group_reports_the_leaves_not_the_group_between(
     tmp_path: pathlib.Path,
 ) -> None:

@@ -58,7 +58,9 @@ index too: `_search_resources` short-circuits to `get_all_resources()` only when
 `search_term` and `resource_type` are *both* unset. So `grr_browse -t
 position_score` against a group with one index-less child is the same bug.
 
-*Amended by gain#1212:* the paragraph above no longer holds. A type is one
+*Amended by gain#1212:* the paragraph above no longer holds, nor does the `-t`
+half of the sentence before it about a child with no `.CONTENTS.sqlite3.gz` —
+such a child raises for `-s` alone now. A type is one
 token every resource carries, and only FTS5 tokenization is irreproducible in
 Python — so `resource_type` is now answered from the resources themselves,
 expanded through `equivalent_resource_types`, whenever no `search_term` is

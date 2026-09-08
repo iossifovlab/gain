@@ -123,12 +123,13 @@ class PositionScoreBinner:
 
         The query is always a repository search -- an exact id is the
         search that matches one resource -- restricted to position scores
-        by the search's own ``resource_type`` filter, which is answered
-        from the resources themselves and so needs no index (gain#1212),
-        and ordered by resource id, so the track order is deterministic
-        whatever the repository yields.  A ``search_term`` is the
-        full-text index's filter, conjoined with the query (D7), and the
-        one key that needs the index.
+        by the search's own ``resource_type`` filter, and ordered by
+        resource id, so the track order is deterministic whatever the
+        repository yields.  That filter on its own is answered from the
+        resources themselves and needs no index (gain#1212); with a
+        ``search_term`` beside it the type joins that statement instead.
+        A ``search_term`` is the full-text index's filter, conjoined with
+        the query (D7), and the one key that needs the index.
         """
         check_keys(label, config, cls.ENTRY_KEYS)
         query = config.get("resource_query")

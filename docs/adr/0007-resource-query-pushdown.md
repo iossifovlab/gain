@@ -205,3 +205,12 @@ materialisation, which the side table above would enable.
   or a `type` edited since the build reads as it was then — the same
   false-negative/false-positive pair, in the two filters that only the index
   can serve.
+
+  *Amended by gain#1212:* only `search_term` is such a filter. A type is one
+  token every resource carries and Python can compare it exactly, which is
+  what FTS5 tokenization denies a term — so a `resource_type` with no term
+  beside it is now answered from the resource, off the indexed route
+  entirely, and reads the live type rather than the recorded one. A type
+  *conjoined with a term* still rides the statement and still reads the
+  column, so the pair above survives for exactly that case. The half of this
+  bullet about `search_term` stands unchanged.
