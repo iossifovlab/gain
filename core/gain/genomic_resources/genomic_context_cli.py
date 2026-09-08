@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # The parsed-argument keys of the GRR options below that name a path on
 # disk.  A tool that ``chdir``s before it builds its genomic context
-# absolutizes these first (see ``gain.task_graph.work_dir``).
+# absolutizes these first.
 GENOMIC_CONTEXT_PATH_KEYS = ("grr_filename", "grr_directory")
 
 

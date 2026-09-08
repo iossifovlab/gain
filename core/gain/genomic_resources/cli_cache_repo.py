@@ -24,16 +24,14 @@ import sys
 import time
 
 from gain import logging
-from gain.annotation.annotate_utils import (
-    build_cli_genomic_context,
-    cache_pipeline_resources,
-    get_grr_from_context,
-)
+from gain.annotation.annotate_utils import cache_pipeline_resources
 from gain.annotation.annotation_genomic_context_cli import (
     get_context_pipeline,
 )
 from gain.genomic_resources.genomic_context import (
+    build_cli_genomic_context,
     context_providers_add_argparser_arguments,
+    get_grr_from_context,
 )
 from gain.utils.verbosity_configuration import VerbosityConfiguration
 
