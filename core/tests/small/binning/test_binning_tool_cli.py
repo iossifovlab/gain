@@ -267,6 +267,26 @@ def test_dry_run_reports_a_run_definition_error_and_writes_nothing(
     assert not (output.parent / "bins_work").exists()
 
 
+def test_a_stray_second_positional_argument_is_refused(
+    repo: GenomicResourceRepo, run_definition: pathlib.Path,
+    grr_dir: pathlib.Path, output: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The tool takes exactly one positional.  The annotation context
+    # provider adds an optional ``pipeline`` positional to every parser
+    # it is asked to fill, and argparse matches the leading positionals
+    # as one chunk -- so a second argument in this position was bound to
+    # a pipeline the tool never reads, rather than reported.
+    with pytest.raises(SystemExit) as excinfo:
+        cli([
+            str(run_definition), "stray.yaml", "-o", str(output),
+            "--grr-directory", str(grr_dir), "-R", "genome", "-j", "1",
+        ])
+
+    assert excinfo.value.code == 2
+    assert "unrecognized arguments" in capsys.readouterr().err
+
+
 def test_the_output_defaults_to_the_run_definition_with_an_h5_suffix(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
     run_definition: pathlib.Path,
