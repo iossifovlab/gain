@@ -167,10 +167,12 @@ def _dbsnp_shaped_flag_score(tmp_path: pathlib.Path) -> AlleleScore:
     """A VCF ``Flag`` that the resource's ``scores:`` block types ``bool``.
 
     dbSNP's shape, and the one that makes this parser shared rather than
-    text-only: the config-override branch of ``parse_vcf_scoredefs`` takes
-    ``value_parser`` from the CONFIG-derived definition, not from the
-    header-derived one.  So a VCF score declared ``type: bool`` runs the
-    very parser the text tables use, over whatever pysam decoded.
+    text-only: when the config states a ``type:``, the config-override
+    branch of ``parse_vcf_scoredefs`` takes ``value_parser`` from the
+    CONFIG-derived definition, not from the header-derived one (an entry
+    that states none inherits the header's parser instead -- gain#1221).
+    So a VCF score declared ``type: bool`` runs the very parser the text
+    tables use, over whatever pysam decoded.
 
     Hand-rolled rather than built with ``a_vcf_info_score()``, which emits
     no ``scores:`` block at all and so cannot express the override this

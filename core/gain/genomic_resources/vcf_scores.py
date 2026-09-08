@@ -377,7 +377,11 @@ def parse_vcf_scoredefs(
     ``config_scoredefs`` is what the resource's own ``scores:`` block declared,
     and overrides the header for the fields it names: value type, description,
     aggregators and NA values all take the config's value when it gives one,
-    falling back to the header's.  Column addressing is NOT overridable -- a
+    falling back to the header's.  The value parser is not overridable on
+    its own: it goes with the type, so it is the config's parser when the
+    config states ``type:`` and the header's when it does not (an entry
+    that leaves ``type:`` unstated reads exactly what the header-only
+    resource reads -- gain#1221).  Column addressing is NOT overridable -- a
     VCF score is its INFO key, so ``col_name``/``col_index`` always come from
     the header side.
 
@@ -425,7 +429,18 @@ def parse_vcf_scoredefs(
     for score, config_scoredef in config_scoredefs.items():
         vcf_scoredef = vcf_scoredefs[score]
 
-        value_type = config_scoredef.value_type or vcf_scoredef.value_type
+        # The type and the parser are chosen as a PAIR, on whether the
+        # config stated ``type:``.  Not ``config.x or vcf.x`` per field:
+        # a ``None`` parser on the header side means "pysam decoded it",
+        # not "unstated", so the fields cannot be defaulted one by one.
+        # Taking the parser from the config regardless is what read a
+        # ``Flag`` as ``1.0``/``0.0`` (gain#1221).
+        if config_scoredef.value_type is not None:
+            value_type = config_scoredef.value_type
+            value_parser = config_scoredef.value_parser
+        else:
+            value_type = vcf_scoredef.value_type
+            value_parser = vcf_scoredef.value_parser
 
         scoredef = GenomicScoreDef(
             score_id=vcf_scoredef.score_id,
@@ -439,7 +454,7 @@ def parse_vcf_scoredefs(
             col_name=vcf_scoredef.col_name,
             col_index=vcf_scoredef.col_index,
             hist_conf=config_scoredef.hist_conf,
-            value_parser=config_scoredef.value_parser,
+            value_parser=value_parser,
             na_values=config_scoredef.na_values or vcf_scoredef.na_values,
         )
         scoredefs[score] = scoredef
