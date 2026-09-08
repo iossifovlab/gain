@@ -1,0 +1,27 @@
+/* Site-wide overrides of sphinx_rtd_theme, registered through
+ * ``html_css_files`` in conf.py.
+ *
+ * Let table cells wrap (gain#1243).
+ *
+ * The theme's theme.css carries
+ *
+ *     .wy-table-responsive table td,
+ *     .wy-table-responsive table th { white-space: nowrap }
+ *
+ * and its theme.js wraps every docutils table in ``.wy-table-responsive``,
+ * so a cell holding more than a few words never wraps: the table grows past
+ * the content column and the reader scrolls horizontally to read the end of
+ * each row.  A ``:widths:`` option on the table has no effect against
+ * ``nowrap``.
+ *
+ * The selector below is one class more specific than the theme's, so it wins
+ * on specificity and not merely on load order.  The wrapper keeps its
+ * ``overflow: auto``: a table that is wider than the column even with
+ * wrapped cells (the multi-column annotation-output ``csv-table``s on the
+ * getting-started pages) still scrolls inside the wrapper instead of
+ * widening the page.
+ */
+.rst-content .wy-table-responsive table td,
+.rst-content .wy-table-responsive table th {
+    white-space: normal;
+}

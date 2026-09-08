@@ -154,14 +154,19 @@ exclude_patterns = [
 
 html_theme = 'sphinx_rtd_theme'
 
-# No ``html_static_path``.  The setting resolves relative to THIS file's
-# directory, so ``['_static']`` meant ``docs/source/_static`` -- but the
-# directory the gpf_documentation import (b5656c83e) actually carried was
-# ``docs/_static``, one level too high.  Sphinx warned on every build and no
-# asset was ever served from either place.  Removed along with the stray
-# ``docs/_static/.keep``, which existed only to keep that empty directory in
-# git.  Whoever adds the first real static asset should add the setting back
-# beside it -- and put the directory next to this file (gain#1183).
+# ``html_static_path`` resolves relative to THIS file's directory, so the
+# directory is ``docs/source/_static``.  The gpf_documentation import
+# (b5656c83e) carried it one level too high, at ``docs/_static``; Sphinx
+# warned on every build and served nothing, and gain#1183 removed the setting
+# rather than keep an empty directory.  The build runs with ``-W``, so a
+# wrong path now fails it instead of warning.
+html_static_path = ["_static"]
+
+# The theme's ``white-space: nowrap`` on table cells stops every docutils
+# table from wrapping, so a sentence-long cell pushes the table past the
+# content column (gain#1243).  ``custom.css`` overrides that rule; see the
+# comment there.
+html_css_files = ["custom.css"]
 
 
 html_theme_options = {
