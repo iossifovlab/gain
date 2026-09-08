@@ -1,10 +1,10 @@
 """The work-dir convention a task-graph CLI tool follows.
 
 Shared by the annotate tools and ``binning_tool`` (gain#1215, gain#1234):
-the paths the user typed are absolutized before the tool ``chdir``s into
-its work directory, the work directory and the task status/log directories
-are defaulted from the output, and a work directory the tool created is
-removed after a clean run.
+the paths the user typed are absolutized before the tool changes into its
+work directory with ``chdir``, the work directory and the task status/log
+directories are defaulted from the output, and a work directory the tool
+created is removed after a clean run.
 
 The parsed-argument keys read here are the task-graph ones
 :meth:`gain.task_graph.cli_tools.TaskGraphCli.add_arguments` defines

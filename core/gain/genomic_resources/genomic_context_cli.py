@@ -34,8 +34,8 @@ from .genomic_context_base import (
 logger = logging.getLogger(__name__)
 
 # The parsed-argument keys of the GRR options below that name a path on
-# disk.  A tool that ``chdir``s before it builds its genomic context
-# absolutizes these first.
+# disk.  A tool that changes directory before it builds its genomic
+# context absolutizes these first.
 GENOMIC_CONTEXT_PATH_KEYS = ("grr_filename", "grr_directory")
 
 
