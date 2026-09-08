@@ -354,7 +354,7 @@ In addition to score columns, ``source: allele`` is a virtual attribute that ret
         attributes:
         - source: allele
 
-The optional ``include_attributes`` parameter appends one or more score values to each allele key. The included attributes are joined with ``,`` and the resulting string is appended to the allele key with a ``:`` separator, producing entries of the form ``chrom:pos:ref:alt:attr1,attr2``. This is useful for returning both the allele identity and its associated scores in a single field. Every id named here must be a score the resource defines; an unknown one fails the pipeline as it is built, listing the ids that would have worked.
+The optional ``include_attributes`` parameter appends one or more score values to each allele key. The included attributes are joined with ``,`` and the resulting string is appended to the allele key with a ``:`` separator, producing entries of the form ``chrom:pos:ref:alt:attr1,attr2``. Each value is spelled as annotation output spells it: a ``bool`` score appends ``yes`` or ``no``, and a score with no value appends nothing, so a false flag and a missing one are two different keys. This is useful for returning both the allele identity and its associated scores in a single field. Every id named here must be a score the resource defines; an unknown one fails the pipeline as it is built, listing the ids that would have worked.
 
 .. code:: yaml
 

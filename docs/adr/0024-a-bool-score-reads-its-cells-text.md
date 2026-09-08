@@ -141,7 +141,8 @@ does join that tuple, the vectorized form must be derived from
   config's `float` default, so its `Flag` reads `1.0`/`0.0` (gain#1221); and
   `stringify` renders `False` identically to `None`, so annotation output still
   cannot show a false flag (gain#1222). The second means the user-visible
-  symptom in gain#1192's own repro is only half closed at the CLI.
+  symptom in gain#1192's own repro is only half closed at the CLI; it is
+  closed by ADR 0026, which spells a false flag `no` in every sink.
 * Four score-value-type tables are now keyed by the same four type names
   (`SCORE_TYPE_PARSERS`, `_DEFAULT_NA_VALUES`, `_NA_COERCIBLE_TYPES`,
   `BULK_PARSEABLE_VALUE_TYPES`), plus several more across the score kinds,

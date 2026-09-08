@@ -106,12 +106,12 @@ def test_stringify_none_vcf() -> None:
 
 def test_stringify_bool_notvcf() -> None:
     assert stringify(True, vcf=False) == "yes"  # ruff: ignore[boolean-positional-value-in-call]
-    assert stringify(False, vcf=False) == ""  # ruff: ignore[boolean-positional-value-in-call]
+    assert stringify(False, vcf=False) == "no"  # ruff: ignore[boolean-positional-value-in-call]
 
 
 def test_stringify_bool_vcf() -> None:
     assert stringify(True, vcf=True) == "yes"  # ruff: ignore[boolean-positional-value-in-call]
-    assert stringify(False, vcf=True) == "."  # ruff: ignore[boolean-positional-value-in-call]
+    assert stringify(False, vcf=True) == "no"  # ruff: ignore[boolean-positional-value-in-call]
 
 
 def test_stringify_float() -> None:
@@ -183,7 +183,7 @@ def test_stringify_tuple_vcf() -> None:
 def test_stringify_dict_notvcf() -> None:
     assert stringify({"a": 1, "b": 2}, vcf=False) == "a:1;b:2"
     assert stringify({"key": None}, vcf=False) == "key:"
-    assert stringify({"x": True, "y": False}, vcf=False) == "x:yes;y:"
+    assert stringify({"x": True, "y": False}, vcf=False) == "x:yes;y:no"
     assert stringify({}, vcf=False) == ""
 
 
