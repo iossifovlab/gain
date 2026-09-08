@@ -1,6 +1,26 @@
 Release Notes
 =============
 
+* 2026.9.1
+    * New ``binning_tool`` command bins position scores into a fixed
+      genome grid and writes one HDF5 column per track; the run
+      definition names the reference genome and is validated before any
+      task runs (:issue:`1198`, :issue:`1200`, :issue:`1201`,
+      :issue:`1202`).
+    * A ``meta.labels`` value may be a list, matched and indexed as
+      alternatives (:issue:`1225`).
+    * A bool score reads its cell as text, so ``False`` and ``0`` no
+      longer parse as true; a text bool score built before this needs
+      its statistics rebuilt with ``repo-stats --force`` (:issue:`1192`).
+    * The annotation editor templates offer ``region_length_cutoff``
+      (:issue:`1184`).
+    * ``genomic_scores_impl`` is split into one module per score kind
+      (:issue:`1210`).
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-09-04T10%3A59%3A44
+      Z..2026-09-08T07%3A49%3A32Z>`__.
+
 * 2026.9.0
     * Annotators return values keyed by attribute name and the base
       annotator no longer aggregates; ``WeightedValues``,
