@@ -6,6 +6,10 @@
 #
 # Set DOCS_STAMP to name the release directory the play publishes; see
 # `docs_stamp` in docs_deploy.yaml, which reads it from the environment.
+# CI sets it to "<build number>-<short sha>", and the play declines to
+# publish a build number older than the one already live (gain#1190).
+# Without DOCS_STAMP the release is named after the clock and always
+# publishes.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

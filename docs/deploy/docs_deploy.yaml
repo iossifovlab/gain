@@ -13,13 +13,6 @@
   gather_facts: false
 
   vars:
-    # Names the release directory this deploy publishes, so what is live on
-    # the docs host is traceable to the build that put it there. CI exports
-    # DOCS_STAMP as "<build number>-<short sha>"; a hand-run deploy falls
-    # back to the clock and needs no arguments.
-    docs_stamp: >-
-      {{ lookup('env', 'DOCS_STAMP')
-         or lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}
     # How many release trees to keep, counting the one being published.
     # Keep this >= 2: at 1, a deploy racing this one could prune the tree
     # the other is about to publish, leaving `html` dangling.
@@ -41,6 +34,24 @@
   # /var/www/ and in the vhost's own <Directory> block, so serving the
   # site through a symlink needs no change to the Apache config.
 
+  # Names the release directory this deploy publishes, so what is live on
+  # the docs host is traceable to the build that put it there. CI exports
+  # DOCS_STAMP as "<build number>-<short sha>"; a hand-run deploy falls
+  # back to the clock and needs no arguments. `-e docs_stamp=...` still
+  # wins over both, as extra vars do.
+  #
+  # Pinned with set_fact rather than declared under `vars`: a play var is
+  # re-templated at every reference, and the fallback shells out to `date`,
+  # so each task used to see its own second -- the release was created
+  # under one name and published under the next ("src file does not
+  # exist"). CI's DOCS_STAMP never changes between tasks, which is why only
+  # hand-run deploys hit it.
+  - name: name the release this deploy publishes
+    set_fact:
+      docs_stamp: >-
+        {{ lookup('env', 'DOCS_STAMP')
+           or lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ') }}
+
   # docs_stamp is interpolated into paths under base_path and is what the
   # prune below globs for, so a stray `/` or `*` would reach outside the
   # release namespace. The contract is cheap enough to check rather than
@@ -52,6 +63,64 @@
         docs_stamp must be one path segment of letters, digits, dot,
         underscore or dash; got "{{ docs_stamp }}"
       quiet: true
+
+  # Read before anything is written, so the decision below and the
+  # migration branch further down both see the host as it was when this
+  # deploy started. The #1188 stage lock is what makes that read stay true
+  # until the flip: no other CI deploy runs in between.
+  - name: check what the published path is now
+    stat:
+      path: "{{ base_path }}/gaindocs/html"
+      follow: false
+    register: gaindocs_published
+
+  # Ordering guard (gain#1190). The lock serialises deploys but does not
+  # order them: a fast docs-only build overtaking a slow full build (or
+  # simply a shorter build queued later) publishes first, and the older
+  # build then publishes last -- master #1061 did exactly that over #1062
+  # on 2026-09-05, and the site served two-commits-stale docs until the
+  # next build. The published symlink's target already carries the build
+  # number that put it there, so compare and refuse to go backwards.
+  #
+  # Only CI stamps take part: "<build number>-<anything>", where the
+  # number is a master build number and therefore monotonic in push order
+  # (the nightly rebuild carries a higher number and the same content,
+  # which is harmless). A hand-run deploy's timestamp stamp, a fresh host
+  # with no symlink, and the pre-symlink `html` directory all fall
+  # through to a normal publish: a hand-run deploy is a human decision and
+  # always wins, and the CI deploy after it publishes too. Equal numbers
+  # (a re-run of the same build) publish.
+  - name: work out whether a newer master build is already published
+    vars:
+      published_release: >-
+        {{ gaindocs_published.stat.lnk_target | default('') | basename }}
+      published_build: >-
+        {{ published_release | regex_replace('^html-([0-9]+)-.*$', '\1') }}
+      this_build: >-
+        {{ docs_stamp | regex_replace('^([0-9]+)-.*$', '\1') }}
+    set_fact:
+      docs_published_release: "{{ published_release }}"
+      docs_superseded: >-
+        {{ published_release is match('^html-[0-9]+-')
+           and docs_stamp is match('^[0-9]+-')
+           and (published_build | int) > (this_build | int) }}
+
+  # A skipped publish is the intended outcome, not an error: the stage and
+  # the build stay green, and this one line in the log says why nothing
+  # changed. Stopping before the unpack also means there is no release
+  # directory to clean up, so the prune's assumption below (the newest
+  # release by mtime is the published one) still holds.
+  - name: leave the newer build's release published
+    debug:
+      msg: >-
+        Not publishing html-{{ docs_stamp }}: {{ inventory_hostname }}
+        already serves {{ docs_published_release }}, from a newer master
+        build. Nothing was changed; this build's docs are superseded.
+    when: docs_superseded | bool
+
+  - name: stop here when a newer build is published
+    meta: end_play
+    when: docs_superseded | bool
 
   # Creates `gaindocs` too, if the host has never been deployed to. Mode is
   # explicit because --strip-components=1 drops the archive's own `html/`
@@ -80,12 +149,6 @@
       extra_opts:
         - --strip-components=1
 
-  - name: check what the published path is now
-    stat:
-      path: "{{ base_path }}/gaindocs/html"
-      follow: false
-    register: gaindocs_published
-
   # Converts the pre-symlink layout, where `html` was a real directory. It
   # cannot be left to `force: true` on the link task: the file module
   # refuses outright to turn a non-empty directory into a symlink, and
@@ -94,7 +157,8 @@
   # and fail.
   #
   # `follow: false` makes stat report a symlink as islnk and not isdir, so
-  # isdir alone distinguishes the old layout from the new one.
+  # isdir alone distinguishes the old layout from the new one. The stat was
+  # taken before the unpack above; nothing in between touches `html`.
   #
   # This is the one moment in the play when the published path does not
   # resolve, and it lasts a single task transition. It fires on the first
