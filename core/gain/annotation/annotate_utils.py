@@ -272,31 +272,9 @@ def handle_default_args(args: dict[str, Any]) -> dict[str, Any]:
     """Handle default arguments for annotation command line tools."""
     if not os.path.exists(args["input"]):
         raise ValueError(f"{args['input']} does not exist!")
-    output = build_output_path(args["input"], args.get("output"))
-    args["output"] = output
-
-    if args.get("work_dir") is None:
-        path = Path(strip_compression_suffix(args["output"]))
-        path = path.with_suffix("")
-        args["work_dir"] = str(f"{path}_work")
-
-    args["work_dir_created"] = not os.path.exists(args["work_dir"])
-    if args["work_dir_created"]:
-        os.mkdir(args["work_dir"])
-
-    if args.get("task_status_dir") is None:
-        args["task_status_dir"] = os.path.join(
-            args["work_dir"], ".task-status")
-    if args.get("task_log_dir") is None:
-        args["task_log_dir"] = os.path.join(
-            args["work_dir"], ".task-log")
-
-    for key in ("input", "output", "work_dir",
-                "task_status_dir", "task_log_dir",
-                "dask_cluster_config_file",
-                "grr_filename", "grr_directory"):
-        if args.get(key):
-            args[key] = os.path.abspath(args[key])
+    args["output"] = build_output_path(args["input"], args.get("output"))
+    absolutize_path_args(args, input_key="input")
+    apply_work_dir_defaults(args)
 
     # pipeline and reannotate may be sentinels (e.g. GRR resource ids)
     # rather than file paths; only absolutize when an actual file exists.
@@ -306,6 +284,54 @@ def handle_default_args(args: dict[str, Any]) -> dict[str, Any]:
             args[key] = os.path.abspath(value)
 
     return args
+
+
+def _absolutize(args: dict[str, Any], *keys: str) -> None:
+    """Absolutize the named path arguments; absent or empty ones stay."""
+    for key in keys:
+        if args.get(key):
+            args[key] = os.path.abspath(args[key])
+
+
+def absolutize_path_args(args: dict[str, Any], *, input_key: str) -> None:
+    """Absolutize the tool's primary input and the common path arguments.
+
+    ``input_key`` names the tool's primary input (``input`` for the
+    annotate tools, ``run_definition`` for ``binning_tool``). A key that
+    is absent or empty is left alone.
+    """
+    _absolutize(
+        args, input_key, "output", "work_dir", "task_status_dir",
+        "task_log_dir", "dask_cluster_config_file", "grr_filename",
+        "grr_directory")
+
+
+def apply_work_dir_defaults(args: dict[str, Any]) -> None:
+    """Default and create the work directory and the task directories.
+
+    The convention the annotate tools and ``binning_tool`` share: the work
+    directory is the output with its compression suffix and its extension
+    stripped plus ``_work``, the task status and log directories are
+    ``.task-status`` and ``.task-log`` inside it. ``work_dir_created``
+    records whether the tool created the directory (it did not pre-exist)
+    -- :func:`maybe_remove_work_dir` reads it -- and every non-empty path
+    set here is absolute, so the tool can ``chdir`` into the work
+    directory afterwards.
+    """
+    if args.get("work_dir") is None:
+        path = Path(strip_compression_suffix(args["output"]))
+        args["work_dir"] = f"{path.with_suffix('')}_work"
+    _absolutize(args, "work_dir")
+
+    args["work_dir_created"] = not os.path.exists(args["work_dir"])
+    if args["work_dir_created"]:
+        os.makedirs(args["work_dir"])
+
+    for key, name in (("task_status_dir", ".task-status"),
+                      ("task_log_dir", ".task-log")):
+        if args.get(key) is None:
+            args[key] = os.path.join(args["work_dir"], name)
+    _absolutize(args, "task_status_dir", "task_log_dir")
 
 
 def maybe_remove_work_dir(args: dict[str, Any], *, result: bool) -> None:
