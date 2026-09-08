@@ -1,12 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""The work-dir convention a task-graph CLI tool follows.
-
-Shared by the annotate tools and ``binning_tool``: the paths the user
-typed are absolutized before the tool ``chdir``s into its work directory,
-the work directory and the task status/log directories are defaulted from
-the output, and a work directory the tool created is removed after a
-clean run.
-"""
+"""The work-dir convention a task-graph CLI tool follows (``work_dir``)."""
 import pathlib
 
 import pytest
@@ -16,42 +9,6 @@ from gain.task_graph.work_dir import (
     apply_work_dir_defaults,
     maybe_remove_work_dir,
 )
-
-
-def test_absolutize_path_args_takes_the_genomic_context_keys_from_the_caller(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The task-graph layer owns the task directories and the executor
-    # config; which *other* options name a path (the GRR options of a
-    # tool that has them) is the caller's to say.
-    monkeypatch.chdir(tmp_path)
-    args = {
-        "run_definition": "run.yaml",
-        "task_log_dir": "logs",
-        "grr_directory": "grr",
-    }
-
-    absolutize_path_args(
-        args, input_key="run_definition", extra_keys=("grr_directory",))
-
-    assert args["run_definition"] == str(tmp_path / "run.yaml")
-    assert args["task_log_dir"] == str(tmp_path / "logs")
-    assert args["grr_directory"] == str(tmp_path / "grr")
-
-
-def test_absolutize_path_args_knows_no_genomic_context_keys_of_its_own(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A tool that does not name its GRR options gets them left alone: the
-    # task-graph layer does not know what ``grr_directory`` is.
-    monkeypatch.chdir(tmp_path)
-    args = {"input": "in.vcf", "grr_directory": "grr", "grr_filename": "g"}
-
-    absolutize_path_args(args, input_key="input")
-
-    assert args["input"] == str(tmp_path / "in.vcf")
-    assert args["grr_directory"] == "grr"
-    assert args["grr_filename"] == "g"
 
 
 def _work_dir_args(work_dir: pathlib.Path, output: pathlib.Path, **over):
@@ -200,6 +157,31 @@ def test_absolutize_path_args_leaves_empty_paths_alone() -> None:
 
     assert args["task_status_dir"] is None
     assert args["work_dir"] == ""
+
+
+def test_absolutize_path_args_takes_the_genomic_context_keys_from_the_caller(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    args = {"input": "in.vcf", "task_log_dir": "logs", "grr_directory": "grr"}
+
+    absolutize_path_args(
+        args, input_key="input", extra_keys=("grr_directory",))
+
+    assert args["task_log_dir"] == str(tmp_path / "logs")
+    assert args["grr_directory"] == str(tmp_path / "grr")
+
+
+def test_absolutize_path_args_knows_no_genomic_context_keys_of_its_own(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    args = {"input": "in.vcf", "grr_directory": "grr", "grr_filename": "g"}
+
+    absolutize_path_args(args, input_key="input")
+
+    assert args["grr_directory"] == "grr"
+    assert args["grr_filename"] == "g"
 
 
 def test_apply_work_dir_defaults_puts_the_task_dirs_in_an_absolute_work_dir(

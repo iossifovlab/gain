@@ -278,12 +278,6 @@ def build_cli_genomic_context(
     for a GRR: every registered provider sees ``cli_args`` (see
     :func:`context_providers_init`), and the result is the merged
     :class:`PriorityGenomicContext` of :func:`get_genomic_context`.
-
-    Notes
-    -----
-    Provider initialisation is one-shot: once a context is registered,
-    a second call leaves the registered contexts alone and returns the
-    same merge.
     """
     context_providers_init(**cli_args)
     return get_genomic_context()

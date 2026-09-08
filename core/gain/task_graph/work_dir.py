@@ -4,10 +4,15 @@ Shared by the annotate tools and ``binning_tool`` (gain#1215, gain#1234):
 the paths the user typed are absolutized before the tool ``chdir``s into
 its work directory, the work directory and the task status/log directories
 are defaulted from the output, and a work directory the tool created is
-removed after a clean run.  The keys named here are the ones
-:meth:`gain.task_graph.cli_tools.TaskGraphCli.add_arguments` defines plus
-the tool's output; which *other* options of a tool name a path (the GRR
-options of a tool that has them) is the caller's to say.
+removed after a clean run.
+
+The parsed-argument keys read here are the task-graph ones
+:meth:`gain.task_graph.cli_tools.TaskGraphCli.add_arguments` defines
+(``task_status_dir``, ``task_log_dir``, ``dask_cluster_config_file``,
+``command``) and the ones the convention itself names, which each tool
+defines on its own parser: ``output``, ``work_dir``, ``keep_work_dir`` and
+the annotate tools' ``keep_parts``.  Any further path option a tool has
+(its GRR options) is the caller's to name; see :func:`absolutize_path_args`.
 """
 from __future__ import annotations
 

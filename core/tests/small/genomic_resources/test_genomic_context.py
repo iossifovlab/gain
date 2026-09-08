@@ -8,6 +8,7 @@ from gain.genomic_resources.gene_models.gene_models_factory import (
 )
 from gain.genomic_resources.genomic_context import (
     get_genomic_context,
+    get_grr_from_context,
     register_context,
 )
 from gain.genomic_resources.genomic_context_base import (
@@ -147,6 +148,13 @@ def test_get_grr_missing() -> None:
 
     # Then
     assert grr is None
+
+
+def test_a_context_without_a_grr_is_refused() -> None:
+    context = SimpleGenomicContext(context_objects={}, source="empty")
+
+    with pytest.raises(ValueError, match="no valid GRR configured"):
+        get_grr_from_context(context)
 
 
 def test_get_grr_bad() -> None:

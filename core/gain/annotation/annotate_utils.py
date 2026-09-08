@@ -22,22 +22,9 @@ from gain.genomic_resources.cached_repository import (
     CachingProtocol,
     cache_resources,
 )
-
-# Re-exported: the two steps from parsed arguments to a GRR moved down
-# to the genomic-resources layer (gain#1234); gpf's schema2 annotator
-# and the annotate tools keep importing them from here.
-# pylint: disable=unused-import,useless-import-alias
-from gain.genomic_resources.genomic_context import (
-    build_cli_genomic_context as build_cli_genomic_context,
-)
 from gain.genomic_resources.genomic_context import (
     context_providers_add_argparser_arguments,
 )
-from gain.genomic_resources.genomic_context import (
-    get_grr_from_context as get_grr_from_context,
-)
-
-# pylint: enable=unused-import,useless-import-alias
 from gain.genomic_resources.genomic_context_base import (
     GenomicContext,
 )
@@ -47,23 +34,10 @@ from gain.genomic_resources.genomic_context_cli import (
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.task_graph import TaskGraphCli
 from gain.task_graph.graph import TaskGraph
-
-# Re-exported: the work-dir convention moved down to the task-graph layer
-# (gain#1234) so that ``binning_tool`` need not import the annotation
-# layer for it; the annotate tools and external callers keep importing
-# it from here.  Same alias pattern as ``stringify`` below.
-# pylint: disable=unused-import,useless-import-alias
 from gain.task_graph.work_dir import (
-    absolutize_path_args as absolutize_path_args,
+    absolutize_path_args,
+    apply_work_dir_defaults,
 )
-from gain.task_graph.work_dir import (
-    apply_work_dir_defaults as apply_work_dir_defaults,
-)
-from gain.task_graph.work_dir import (
-    maybe_remove_work_dir as maybe_remove_work_dir,
-)
-
-# pylint: enable=unused-import,useless-import-alias
 from gain.utils.fs_utils import (
     compression_suffix,
     strip_compression_suffix,
@@ -73,17 +47,29 @@ from gain.utils.regions import (
     get_chromosome_length_tabix,
     split_into_regions,
 )
+from gain.utils.verbosity_configuration import VerbosityConfiguration
 
-# Re-exported: the annotation writers and gpf (``gpf.parquet.schema2``)
-# import ``stringify`` from here, and it moved to a leaf module only so
-# the allele score could build its keys with it (gain#1163) -- see that
-# module's docstring.  The alias is what marks a re-export for ruff;
-# pylint reads the same alias as useless.
+# isort: split
+# Re-exported names that moved down but stay importable from here:
+# ``stringify`` went to a leaf module for the allele score (gain#1163),
+# the two parsed-arguments-to-GRR steps to genomic_resources and the
+# work-dir convention to task_graph (gain#1234).  gpf's schema2 annotator
+# imports ``stringify`` and the context pair from here; the annotate
+# tools import ``maybe_remove_work_dir``.  The alias is what marks a
+# re-export for ruff; pylint reads the same alias as useless.
 # pylint: disable=unused-import,useless-import-alias
+from gain.genomic_resources.genomic_context import (
+    build_cli_genomic_context as build_cli_genomic_context,
+)
+from gain.genomic_resources.genomic_context import (
+    get_grr_from_context as get_grr_from_context,
+)
+from gain.task_graph.work_dir import (
+    maybe_remove_work_dir as maybe_remove_work_dir,
+)
 from gain.utils.stringify import stringify as stringify
 
 # pylint: enable=unused-import,useless-import-alias
-from gain.utils.verbosity_configuration import VerbosityConfiguration
 
 PART_FILENAME = "{in_file}_annotation_{chrom}_{pos_beg}_{pos_end}"
 
