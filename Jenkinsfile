@@ -994,11 +994,13 @@ pipeline {
                         // no longer reproduces and two concurrent runs
                         // both succeed. Keep the lock anyway: it is what
                         // stops them interleaving the one-time migration
-                        // step, and dropping it would make gain#1190
-                        // (an older build publishing over a newer one)
-                        // easier to hit, not harder. Ephemeral resource:
-                        // created on first use, nothing to configure on
-                        // the controller.
+                        // step, and it is what makes the play's ordering
+                        // guard sound (gain#1190): the play reads which
+                        // build is published and declines to publish an
+                        // older one, which only holds if no other deploy
+                        // runs between that read and the symlink flip.
+                        // Ephemeral resource: created on first use,
+                        // nothing to configure on the controller.
                         lock(resource: 'gain-docs-deploy')
                     }
                     environment {
