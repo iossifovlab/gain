@@ -1109,7 +1109,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         chrom: str,
         pos_begin: int | None = None,
         pos_end: int | None = None,
-        scores: list[str] | None = None,
+        scores: Sequence[str] | None = None,
+        *,
+        score_filter: ScoreFilter | None = None,
     ) -> Generator[
             tuple[int, int, list[ScoreValue]], None, None]:
         """Yield ``(begin, end, values)`` per record touching the region.
@@ -1122,6 +1124,23 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         window composes :func:`~.records.clip_to_region` over this stream, or
         calls :func:`~.records.clip_span` per segment (ADR 0008).
 
+        ``score_filter`` -- from :meth:`compile_filter` -- travels to
+        :meth:`fetch_records` and nowhere else: the records it rejects
+        never reach the transform, so a rejected record costs no value
+        extraction.  It reads the RECORD, so it may name any score the
+        resource defines, including one outside ``scores``.  It is not a
+        second kind of read and it selects nothing the record read would
+        not: the composition below is the same one either way, with a
+        filtered stream in place of an unfiltered one.
+
+        Its ownership check is the one refusal here that does NOT land on
+        the call.  It rides :meth:`fetch_records`, whose generator body
+        defers it and which says so, where the request checks
+        :meth:`region_values_from_records` runs are eager -- so a filter
+        compiled against a different score is refused on the first
+        ``next()``, not from the call that a closed score, an unknown
+        contig and an unknown score id are refused from.
+
         A plain read: it checks nothing.  The statistics scan reads the same
         records through the same transform with :meth:`validate_records`
         composed in front, and that extra link -- visible at the consumer,
@@ -1131,10 +1150,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         One body per kind, in :meth:`region_values_from_records`, rather than
         one per kind per consumer: two that had to agree is how the paths
-        drift.
+        drift.  The fragment plane reads through this method for that reason
+        (gain#1272).
         """
         return self.region_values_from_records(
-            self.fetch_records(chrom, pos_begin, pos_end),
+            self.fetch_records(
+                chrom, pos_begin, pos_end, score_filter=score_filter),
             chrom, pos_begin, pos_end, scores)
 
     def fetch_region_segment_scores(

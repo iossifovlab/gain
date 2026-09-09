@@ -59,6 +59,24 @@ whole read family, and neither is settled here.
 > is the precedent for the family. The base's value reads named above still
 > take none, and threading it through them remains unsettled.
 
+> **Amendment (2026-09-09, gain#1272).**
+> `GenomicScore.fetch_region_segments` takes `score_filter` as well. This is
+> the record read's filter reaching one frame further, not a second
+> mechanism: that method *is* `region_values_from_records` composed over
+> `fetch_records`, so the parameter travels to `fetch_records` and is
+> applied there by the same `ScoreFilter.select`, under the same ownership
+> check, deferred into the same generator body. A `FragmentScore` private
+> carried it before — `_fragment_segments`, a second body of the base
+> composition — and is deleted; the fragment plane reads through the base
+> method now.
+>
+> The value reads named above still take none. Note the wrinkle this
+> leaves: `fetch_region_segment_scores` is listed there, and it is the
+> deprecated clipped sibling of the read that now takes one, so the pair
+> disagrees until gain#844 removes it. That is a consequence of the
+> deprecation, not a new position — threading a filter through the
+> remaining value reads is still unsettled.
+
 **One grammar, the superset of the two it replaces.** Digits are allowed in
 identifiers and numbers may be negative — the union, so no expression that
 parsed before stops parsing.
