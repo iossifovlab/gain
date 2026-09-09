@@ -478,12 +478,104 @@
                 if (isHier) navigateTo(currentPath);
             }
 
-            tableBtn.addEventListener("click", () => setView("table"));
-            hierBtn.addEventListener("click", () => setView("hierarchical"));
+            // ---- Browse state lives in the URL hash ----
+            // The address is the single source of truth for which view is
+            // showing. `#/` is the tree; no fragment at all is the table.
+            // The buttons below only ever *push* a new address -- what to
+            // render is decided in one place, from what the address says,
+            // so a click, a reload, a bookmark and the browser's Back all
+            // arrive through the same path instead of three of them being
+            // special cases of the fourth.
+            //
+            // The state is a record rather than a bare view string because
+            // it is about to carry more: the folder path is #579 and the
+            // search term a later slice of the same epic, and both extend
+            // these two functions rather than re-reading the hash
+            // somewhere else.
 
-            // Pre-render the tree so switching views is instant. Table stays default.
-            renderBreadcrumb();
-            renderList();
+            const HIERARCHICAL_HASH = "#/";
+
+            /** The browse state a fragment addresses. */
+            function parseHash(hash) {
+                // Anything unrecognised reads as the default rather than
+                // raising: a hand-edited or stale link must still open the
+                // page, and a fragment is also how something with no
+                // interest in this page at all -- a link into the docs, a
+                // tracker's leftovers -- ends up in the address.
+                return {
+                    view: hash === HIERARCHICAL_HASH ? "hierarchical" : "table",
+                };
+            }
+
+            /** The fragment addressing a state; "" for the default view. */
+            function buildHash(state) {
+                return state.view === "hierarchical" ? HIERARCHICAL_HASH : "";
+            }
+
+            /** Render what the current address says. The only applier. */
+            function applyHash() {
+                setView(parseHash(location.hash).view);
+            }
+
+            /** Push `state` into the session history, then render it. */
+            function goTo(state) {
+                const hash = buildHash(state);
+                // Nothing to do when the address already means this. That
+                // stops the button already active from stacking a history
+                // entry that changes nothing -- Back would then appear not
+                // to work.
+                //
+                // Compared as *canonical addresses*, which is why the
+                // current one is put through the parser and back out
+                // again. Two cheaper-looking forms are both wrong. Raw
+                // `hash === location.hash` misreads every fragment this
+                // page does not recognise: at `#section-2` the table is
+                // already showing, but "" is not "#section-2", so the
+                // table button would push a dead entry and discard a
+                // fragment belonging to whatever put it there -- and
+                // clicking a view is not consent to discard it. Comparing
+                // one named field (`.view`) is right today and rots the
+                // moment there is a second field: #579 puts the folder
+                // path in this same state, and a guard that reads only
+                // the view would swallow every move between folders
+                // while the tree is already showing, leaving Back with
+                // nothing to walk back through. Round-tripping through
+                // `buildHash` compares whatever the state currently is.
+                if (buildHash(parseHash(location.hash)) === hash) return;
+                // `pushState` rather than assigning `location.hash`, which
+                // cannot express "no fragment" -- clearing it leaves a bare
+                // "#" in the address bar. The cost is that it fires no
+                // event of its own, so the applier is called here;
+                // Back and Forward *do* fire `hashchange` (measured, not
+                // assumed) and reach it through the listener below.
+                history.pushState(
+                    null, "", hash || location.pathname + location.search);
+                applyHash();
+            }
+
+            tableBtn.addEventListener("click", () => goTo({ view: "table" }));
+            hierBtn.addEventListener("click", () => goTo({ view: "hierarchical" }));
+
+            // `hashchange` only. A same-document fragment move fires
+            // `popstate` as well, and listening to both would apply every
+            // traversal twice.
+            window.addEventListener("hashchange", applyHash);
+
+            // Pre-render the tree so switching views is instant -- unless
+            // the address is already asking for it, in which case the
+            // applier below renders it on the way in and doing it here
+            // would build the same root twice before anything is shown.
+            // That is exactly the bookmarked/shared/reloaded `#/` load
+            // this feature exists to serve, so it is the one case worth
+            // not doing twice.
+            if (parseHash(location.hash).view !== "hierarchical") {
+                renderBreadcrumb();
+                renderList();
+            }
+
+            // Arriving is the same operation as moving: the address may
+            // already name a view, and this is the only thing that reads it.
+            applyHash();
         })();
     </script>
     <script type="module">
