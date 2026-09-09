@@ -1,6 +1,6 @@
 # 8. The statistics scan owns validation; reads never validate
 
-- **Status:** accepted
+- **Status:** accepted; decision 4's placement superseded by [0027](0027-record-validation-is-a-registry-in-the-statistics-package.md)
 - **Date:** 2026-08-03
 - **Issues:** [gain#585](https://github.com/iossifovlab/gain/issues/585) (the epic this record belongs to), [gain#586](https://github.com/iossifovlab/gain/issues/586) (this record), [gain#553](https://github.com/iossifovlab/gain/issues/553) (the `open()`-time half), [gain#587](https://github.com/iossifovlab/gain/issues/587) / [gain#588](https://github.com/iossifovlab/gain/issues/588) / [gain#589](https://github.com/iossifovlab/gain/issues/589) / [gain#590](https://github.com/iossifovlab/gain/issues/590) / [gain#591](https://github.com/iossifovlab/gain/issues/591) / [gain#592](https://github.com/iossifovlab/gain/issues/592) (the implementation)
 - **Supersedes:** the approach in [gain#521](https://github.com/iossifovlab/gain/pull/521), which is not being landed
@@ -100,6 +100,16 @@ radius across every score kind and every third-party subclass, for a stricter
 failure time this epic has no need of. The chosen shape is also the one already
 used in that MRO: `@abstractmethod` paired with a raising body, where the body
 is what enforces.
+
+> **Placement superseded by [ADR 0027](0027-record-validation-is-a-registry-in-the-statistics-package.md).**
+> The decision stands — each kind still states its own rule, and no kind inherits
+> one — but the rules no longer live on the score classes. They are
+> `functools.singledispatch` registrations in
+> `statistics/record_validation.py`, and "no rule nobody chose" is now the base
+> registration for `GenomicScore` raising `NotImplementedError` rather than an
+> `@abstractmethod` over a raising body. 0027 also records what that costs: the
+> refusal moves from lint time to run time, and a registry-completeness test
+> stands in for the static check.
 
 **5. Rules are split by detectability.** A *config* error — a tabix table whose
 index and `pos_end` disagree about which column ends a record — is refused when

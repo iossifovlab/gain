@@ -69,7 +69,7 @@ of one decision will drift.
 | [0005](0005-fsspec-protocol-memo-rebuild.md) | Rebuilding a memoized fsspec protocol refreshes it, and may not reconfigure it | accepted |
 | [0006](0006-resource-value-identity.md) | A genomic resource's value identity excludes its manifest and its protocol | accepted |
 | [0007](0007-resource-query-pushdown.md) | The resource query is pushed into the FTS index, and absence reads as empty | accepted |
-| [0008](0008-scan-owns-validation.md) | The statistics scan owns validation; reads never validate | accepted |
+| [0008](0008-scan-owns-validation.md) | The statistics scan owns validation; reads never validate | accepted; decision 4's placement superseded by 0027 |
 | [0009](0009-jenkins-pipeline-definition-trust.md) | Push access to `gain` is Jenkins controller access | accepted |
 | [0010](0010-resource-file-name-containment.md) | Resource file names are contained by construction | accepted |
 | [0011](0011-deprecate-cnv-collection-vocabulary.md) | The `cnv_collection` configuration vocabulary is deprecated, removed in 2027.1.0 | accepted |
@@ -88,6 +88,7 @@ of one decision will drift.
 | [0024](0024-a-bool-score-reads-its-cells-text.md) | A bool score reads its cell's text, and declares no NA sentinels | accepted |
 | [0025](0025-binning-tool-writes-one-hdf5-matrix-from-a-fixed-grid.md) | `binning_tool` writes one HDF5 matrix from a fixed grid, and a query is always a search | accepted |
 | [0026](0026-annotation-output-spells-a-flag-yes-no.md) | Annotation output spells a flag `yes`/`no`, in every sink | accepted |
+| [0027](0027-record-validation-is-a-registry-in-the-statistics-package.md) | Record validation is a registry in the statistics package | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;

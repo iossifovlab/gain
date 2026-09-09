@@ -170,6 +170,10 @@ moved each kind's record semantics onto the score class as two facts, and made
 > no longer exists: its two readers turned out to enforce different subsets of the
 > rule, which is the drift this section hoped it would prevent. Each kind now states
 > its ordering rule in its own `validate_records` / `validate_record_arrays` body.
+> *[Since [ADR 0027](0027-record-validation-is-a-registry-in-the-statistics-package.md)
+> those bodies are `singledispatch` registrations in
+> `statistics/record_validation.py`, not methods on the score classes. Which kind
+> gets which rule is unchanged.]*
 > `RECORD_WEIGHT_IS_SPAN` is unchanged and still read by both paths.
 
 > **Amended by [gain#1095](https://github.com/iossifovlab/gain/issues/1095).**
@@ -396,9 +400,20 @@ default.
 
 That default-deny is structural, not a matter of enumeration:
 
-- `record_weight` and `validate_record_arrays` are `@abstractmethod` on
-  `GenomicScore`. A new kind cannot exist without stating its own record
-  semantics — the two facts the bulk accumulator and the bulk door read.
+- `record_weight` and `validate_record_arrays` both refuse a kind that has not
+  stated itself — the two facts the bulk accumulator and the bulk door read. A
+  new kind cannot exist without stating its own record semantics.
+
+  *[Amended by [ADR 0027](0027-record-validation-is-a-registry-in-the-statistics-package.md).
+  `record_weight` is still `@abstractmethod` on `GenomicScore`, so it is still
+  refused statically — mypy `[abstract]`, pylint `W0223`.
+  `validate_record_arrays` has left the class: it is a `singledispatch` function
+  in `statistics/record_validation.py` whose base registration raises
+  `NotImplementedError`. An unregistered kind is therefore refused when the
+  bulk door reads it, rather than when the type checker sees it, and
+  `test_every_buildable_kind_is_registered` stands in for the static half. The
+  default-deny this section relies on survives; the tier it is enforced at does
+  not.]*
 - A kind whose backend serves no column arrays is still refused, by
   `supports_region_value_arrays`' first test. That is the table's answer, and
   it is what keeps a VCF-backed allele score on the per-record path.
