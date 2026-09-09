@@ -1,7 +1,8 @@
 /* Site-wide overrides of sphinx_rtd_theme, registered through
  * ``html_css_files`` in conf.py.
- *
- * Let table cells wrap (gain#1243).
+ */
+
+/* Let table cells wrap (gain#1243).
  *
  * The theme's theme.css carries
  *
@@ -24,4 +25,50 @@
 .rst-content .wy-table-responsive table td,
 .rst-content .wy-table-responsive table th {
     white-space: normal;
+}
+
+/* Let a dotted Python identifier wrap (gain#1254).
+ *
+ * Browsers offer no break opportunity at ``.``, so a name like
+ * ``gain.genomic_resources.implementations.genomic_scores_impl.builders``
+ * is one word.  Wrapping the cells above does not help where the cell holds
+ * a single such name, and the same name overflows the content column
+ * outright as a viewcode page title, as an apidoc section heading, and as an
+ * autodoc signature.
+ *
+ * ``anywhere`` and not ``break-word``: the two differ only in whether the
+ * break opportunity counts towards intrinsic size, and every element below
+ * is sized from its intrinsic width.  The theme gives the signature ``dt``
+ *
+ *     html.writer-html5 .rst-content dl[class]:not(...)>dt { display: table }
+ *
+ * so it is shrink-to-fit, and a table column is sized from the min-content
+ * of its cells.  ``break-word`` leaves both at max-content and the name
+ * still overhangs; only ``anywhere`` lets the box narrow to the column.
+ * Measured over the built site: ``break-word`` clears the 23 viewcode
+ * titles and none of the 9 signature pages.
+ *
+ * Both are last-resort rules -- they break a word only when it would
+ * otherwise overflow -- so ordinary prose headings and short signatures are
+ * unaffected.  The cost is that a break can land mid-name
+ * (``gain.genomic_res|ources``); no CSS-only rule avoids that, because
+ * there is no better opportunity to prefer.
+ *
+ * Headings are listed through h4 because the apidoc tree titles each module
+ * section with its full dotted path, at whatever depth the package nests to.
+ */
+.rst-content h1,
+.rst-content h2,
+.rst-content h3,
+.rst-content h4,
+.rst-content dl dt.sig {
+    overflow-wrap: anywhere;
+}
+
+/* Scoped to ``code`` rather than the cell: a narrative cell should keep
+ * being sized from whole words, and it is the literals that are unbreakable.
+ */
+.rst-content .wy-table-responsive table td code,
+.rst-content .wy-table-responsive table th code {
+    overflow-wrap: anywhere;
 }
