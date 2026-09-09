@@ -43,6 +43,30 @@ VCF_TYPE_CONVERSION_MAP = {
     "Flag": "bool",
 }
 
+#: The INFO ``Number`` values a header DECLARES for a field whose value
+#: reaches a score's parser as a scalar.  pysam decodes ``0`` (a ``Flag``) to
+#: a ``bool`` and ``1`` to a single value, and :func:`extract_vcf_value`
+#: indexes ``A``/``R`` down to one element before parsing.  Every other
+#: declared shape -- unbounded ``.``, the genotype-arity ``G``, and any fixed
+#: arity above one -- decodes to a tuple, and the only thing that reads a
+#: tuple is the ``|``-joining ``converter``.
+#:
+#: It is the DECLARED number, not the shape that actually arrives: a row may
+#: carry two values for a field its header calls ``Number=1``, and nothing
+#: rejects one.  Such a row still reaches the config's parser as a tuple.
+#: That is a pre-existing hole (the header-only path hands the raw tuple back
+#: as a score value, which no ``ScoreValue`` admits), not one this set closes.
+#:
+#: ``0`` is in the set on the strength of the CONFIG side.  A ``Flag`` needs
+#: no join -- ``converter`` returns a ``bool`` unchanged -- so the header side
+#: reads the same whether it is called scalar or not.  A config that types one
+#: does not: dbSNP's ``GNO`` is ``Number=0,Type=Flag`` in the file and
+#: ``type: int`` in the resource, and it is the config's ``int`` that makes it
+#: read ``1``/``0`` rather than ``True``/``False``, with a categorical
+#: histogram built on those.  (``RV``, typed ``bool``, cannot show the
+#: difference.)
+_SCALAR_VALUED_NUMBERS = (0, 1, "A", "R")
+
 
 def _check_allele_arity(
     record: Record, score_def: GenomicScoreDef, number: str, count: int,
@@ -381,7 +405,13 @@ def parse_vcf_scoredefs(
     its own: it goes with the type, so it is the config's parser when the
     config states ``type:`` and the header's when it does not (an entry
     that leaves ``type:`` unstated reads exactly what the header-only
-    resource reads -- gain#1221).  Column addressing is NOT overridable -- a
+    resource reads -- gain#1221).  It is the config's parser only for a
+    field whose header declares a scalar ``Number``
+    (:data:`_SCALAR_VALUED_NUMBERS`); one declared multi-valued keeps the
+    header's ``converter`` whatever ``type:`` says, because that converter
+    IS the field's ``|``-join and a value type cannot describe a tuple
+    (gain#1233).  The value TYPE still follows the config wherever the
+    config states one.  Column addressing is NOT overridable -- a
     VCF score is its INFO key, so ``col_name``/``col_index`` always come from
     the header side.
 
@@ -404,9 +434,13 @@ def parse_vcf_scoredefs(
     assert vcf_header_info is not None
 
     for key, value in vcf_header_info.items():
-        value_parser: Callable[[str], Any] | None = converter
-        if value.number in (1, "A", "R"):
-            value_parser = None
+        # A scalar-valued field needs no parser at all: pysam has already
+        # decoded it (and a per-allele one is indexed down to one element
+        # before the parse).  Everything else keeps ``converter``, whose
+        # whole job is the tuple join.  The SAME set decides the config
+        # override below, so the two cannot drift apart.
+        value_parser: Callable[[str], Any] | None = (
+            None if value.number in _SCALAR_VALUED_NUMBERS else converter)
 
         vcf_scoredefs[key] = GenomicScoreDef(
             score_id=key,
@@ -429,18 +463,31 @@ def parse_vcf_scoredefs(
     for score, config_scoredef in config_scoredefs.items():
         vcf_scoredef = vcf_scoredefs[score]
 
-        # The type and the parser are chosen as a PAIR, on whether the
-        # config stated ``type:``.  Not ``config.x or vcf.x`` per field:
-        # a ``None`` parser on the header side means "pysam decoded it",
-        # not "unstated", so the fields cannot be defaulted one by one.
-        # Taking the parser from the config regardless is what read a
-        # ``Flag`` as ``1.0``/``0.0`` (gain#1221).
-        if config_scoredef.value_type is not None:
-            value_type = config_scoredef.value_type
-            value_parser = config_scoredef.value_parser
-        else:
-            value_type = vcf_scoredef.value_type
-            value_parser = vcf_scoredef.value_parser
+        # Two INDEPENDENT rules, which is why neither is a ``config.x or
+        # vcf.x`` (a ``None`` on either side means "nothing to parse", not
+        # "unstated", and ``str``'s falsiness is not the question either):
+        #
+        # * the TYPE follows the config wherever the config states one.  A
+        #   resource stays free to describe any field, and describing it is
+        #   all a type can do for a value that is joined text either way.
+        # * the PARSER follows the config only where the parse is handed a
+        #   scalar.  A field the header declares multi-valued keeps the
+        #   header's converter, because that converter IS the field's
+        #   ``|``-join: taking the config's parser there fed the raw tuple
+        #   to ``int``/``float`` (a logged non-value per row) or to ``str``
+        #   (the tuple's repr, silently) -- gain#1233.  Taking it whenever
+        #   the config merely stated a ``type:`` is the older, wider form of
+        #   the same mistake, which read a ``Flag`` as ``1.0`` (gain#1221).
+        config_type = config_scoredef.value_type
+        is_scalar = vcf_header_info[score].number in _SCALAR_VALUED_NUMBERS
+
+        value_type = (
+            config_type if config_type is not None
+            else vcf_scoredef.value_type)
+        value_parser = (
+            config_scoredef.value_parser
+            if config_type is not None and is_scalar
+            else vcf_scoredef.value_parser)
 
         scoredef = GenomicScoreDef(
             score_id=vcf_scoredef.score_id,

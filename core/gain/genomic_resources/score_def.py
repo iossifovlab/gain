@@ -584,9 +584,13 @@ def parse_scoredef_config(
         # falls back to the header's).  Defaulting at this point would
         # override an INFO field's declared ``int`` with ``float``.
         # ``finish_scoredefs`` resolves it once the merge has happened,
-        # and resolves the value PARSER with it: the two are one decision,
-        # left unmade together here so that the VCF merge cannot take one
-        # half from the config and the other from the header (gain#1221).
+        # and resolves the value PARSER with it: both are left unmade here
+        # so that the VCF merge is free to choose, rather than having to
+        # recognise and discard an eager default (gain#1221).  The merge
+        # does NOT always keep them together -- a field the header declares
+        # multi-valued takes the config's type and the header's parser
+        # (gain#1233) -- which it can only do because neither was decided
+        # for it here.
         value_type = score_conf.get("type")
         value_parser = (
             SCORE_TYPE_PARSERS[value_type] if value_type is not None
