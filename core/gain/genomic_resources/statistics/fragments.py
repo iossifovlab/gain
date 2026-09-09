@@ -28,7 +28,6 @@ from typing import Any, NamedTuple
 
 import numpy as np
 
-from gain.genomic_resources.cli_errors import report_resource_failure
 from gain.genomic_resources.genomic_scores import (
     FragmentScore,
     GenomicScore,
@@ -37,9 +36,8 @@ from gain.genomic_resources.genomic_scores import (
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.base_statistic import (
-    Statistic,
+    RegionFoldedStatistic,
     refuse_unmergeable,
-    regions_in_genomic_order,
 )
 from gain.genomic_resources.statistics.length_histogram import (
     LENGTH_BIN_EDGES,
@@ -51,6 +49,7 @@ from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
     plot_length_histogram,
 )
+from gain.genomic_resources.statistics.region_fold import merge_regions
 from gain.utils.chromosome_order import natural_chromosome_key
 
 FRAGMENT_STATISTICS_FILE = "statistics/fragments.json"
@@ -183,27 +182,16 @@ class RegionFragments:
         self.end = other.end
 
 
-class FragmentStatistics(Statistic):
+class FragmentStatistics(RegionFoldedStatistic[RegionFragments]):
     """A resource's fragment counts, per chromosome and global.
 
-    Accumulates one :class:`RegionFragments` per scanned region through
-    :meth:`fold_region` -- same-chromosome regions merge (adjacency
-    asserted there), distinct chromosomes accumulate side by side -- and
+    Folds :class:`RegionFragments` the way the base class does, and
     serializes to :data:`FRAGMENT_STATISTICS_FILE` as raw counts.
     """
 
     def __init__(self) -> None:
         super().__init__(
             "fragments", "Fragment counts and lengths per chromosome")
-        self._regions: dict[str, RegionFragments] = {}
-
-    def fold_region(self, region: RegionFragments) -> None:
-        """Fold one region's counts in, keyed by its chromosome."""
-        held = self._regions.get(region.chrom)
-        if held is None:
-            self._regions[region.chrom] = region
-        else:
-            held.merge(region)
 
     def fragments_by_chromosome(self) -> dict[str, int]:
         return {
@@ -243,17 +231,6 @@ class FragmentStatistics(Statistic):
         if not histograms:
             return None
         return binwise_sum(histograms)
-
-    def add_value(self, value: Any) -> None:  # ruff: ignore[unused-method-argument]
-        raise TypeError(
-            "FragmentStatistics accumulates regions, not values; "
-            "use fold_region")
-
-    def merge(self, other: Statistic) -> None:
-        if not isinstance(other, FragmentStatistics):
-            raise TypeError("unexpected type of statistics to merge with")
-        for region in other._regions.values():  # ruff: ignore[private-member-access]
-            self.fold_region(region)
 
     def serialize(self) -> str:
         # One walk of the regions serves the per-chromosome entries and
@@ -396,18 +373,8 @@ def merge_region_fragments(
     regions: Iterable[RegionFragments | None],
 ) -> FragmentStatistics | None:
     """Fold the regions' counts, or ``None`` for a kind with no fragments."""
-    ordered = regions_in_genomic_order(regions)
-    if not ordered:
-        return None
-    statistics = FragmentStatistics()
-    try:
-        for region in ordered:
-            statistics.fold_region(region)
-    except ValueError as err:
-        report_resource_failure(
-            err, "could not merge the fragment statistics of", resource_id)
-        raise
-    return statistics
+    return merge_regions(
+        resource_id, regions, FragmentStatistics, _MERGE_FAILURE)
 
 
 def save_and_plot_fragments(

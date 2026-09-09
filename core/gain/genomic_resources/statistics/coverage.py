@@ -22,7 +22,6 @@ from typing import Any, NamedTuple
 import numpy as np
 
 from gain import logging
-from gain.genomic_resources.cli_errors import report_resource_failure
 from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     PositionScore,
@@ -32,9 +31,8 @@ from gain.genomic_resources.genomic_scores import (
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.base_statistic import (
-    Statistic,
+    RegionFoldedStatistic,
     refuse_unmergeable,
-    regions_in_genomic_order,
 )
 from gain.genomic_resources.statistics.length_histogram import (
     LENGTH_HISTOGRAM_BIN_COUNT,
@@ -46,6 +44,7 @@ from gain.genomic_resources.statistics.length_histogram import (
     plot_length_histogram,
 )
 from gain.genomic_resources.statistics.percentages import percentage_of
+from gain.genomic_resources.statistics.region_fold import merge_regions
 from gain.utils.chromosome_order import natural_chromosome_key
 
 logger = logging.getLogger(__name__)
@@ -256,7 +255,7 @@ class RegionCoverage:
 
         Refuses a pair that is not adjacent-and-in-order on one
         chromosome -- see ``refuse_unmergeable``, which states that rule
-        for this statistic and its allele twin alike.
+        for this statistic and its two twins alike.
         """
         refuse_unmergeable(_MERGE_FAILURE, self, other)
 
@@ -428,12 +427,10 @@ class RegionCoverage:
             self.add_interval(begin, end, values)
 
 
-class CoverageStatistics(Statistic):
+class CoverageStatistics(RegionFoldedStatistic[RegionCoverage]):
     """A resource's covered positions, per chromosome and global.
 
-    Accumulates one :class:`RegionCoverage` per scanned region through
-    :meth:`fold_region` — same-chromosome regions merge (adjacency
-    asserted there), distinct chromosomes accumulate side by side — and
+    Folds :class:`RegionCoverage` the way the base class does, and
     serializes to the resource's ``statistics/coverage.json`` as raw
     counts.  Fractions are deliberately not computed here: they need
     chromosome lengths, which belong to a reference genome resolved at
@@ -443,15 +440,6 @@ class CoverageStatistics(Statistic):
     def __init__(self) -> None:
         super().__init__(
             "coverage", "Covered positions per chromosome and global")
-        self._regions: dict[str, RegionCoverage] = {}
-
-    def fold_region(self, region: RegionCoverage) -> None:
-        """Fold one region's coverage in, keyed by its chromosome."""
-        held = self._regions.get(region.chrom)
-        if held is None:
-            self._regions[region.chrom] = region
-        else:
-            held.merge(region)
 
     def covered_by_chromosome(self) -> dict[str, int]:
         return {
@@ -515,23 +503,6 @@ class CoverageStatistics(Statistic):
             return None
         return binwise_sum(
             histogram for _, histogram in summaries.values())
-
-    def add_value(self, value: Any) -> None:  # ruff: ignore[unused-method-argument]
-        raise TypeError(
-            "CoverageStatistics accumulates regions, not values; "
-            "use fold_region")
-
-    def merge(self, other: Statistic) -> None:
-        """Fold another statistics object's regions into this one.
-
-        For statistics holding LIVE regions (the scan's own): two
-        deserialized statistics carry no extents, so same-chromosome
-        regions from two files refuse to merge as non-adjacent.
-        """
-        if not isinstance(other, CoverageStatistics):
-            raise TypeError("unexpected type of statistics to merge with")
-        for region in other._regions.values():  # ruff: ignore[private-member-access]
-            self.fold_region(region)
 
     def serialize(self) -> str:
         # One walk of the regions serves the per-chromosome entries and
@@ -1022,18 +993,8 @@ def merge_region_coverage(
     regions: Iterable[RegionCoverage | None],
 ) -> CoverageStatistics | None:
     """Fold the regions' coverage, or ``None`` for an uncovered kind."""
-    ordered = regions_in_genomic_order(regions)
-    if not ordered:
-        return None
-    statistics = CoverageStatistics()
-    try:
-        for region in ordered:
-            statistics.fold_region(region)
-    except ValueError as err:
-        report_resource_failure(
-            err, "could not merge the coverage of", resource_id)
-        raise
-    return statistics
+    return merge_regions(
+        resource_id, regions, CoverageStatistics, _MERGE_FAILURE)
 
 
 def save_and_plot_coverage(

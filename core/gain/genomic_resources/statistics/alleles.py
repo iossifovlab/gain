@@ -38,7 +38,6 @@ from gain.genomic_resources.allele_classification import (
     AlleleClass,
     classify_allele,
 )
-from gain.genomic_resources.cli_errors import report_resource_failure
 from gain.genomic_resources.genomic_position_table.record import (
     ALT,
     POS_BEGIN,
@@ -54,9 +53,8 @@ from gain.genomic_resources.genomic_scores import (
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.base_statistic import (
-    Statistic,
+    RegionFoldedStatistic,
     refuse_unmergeable,
-    regions_in_genomic_order,
 )
 from gain.genomic_resources.statistics.indel_lengths import (
     NO_INDELS,
@@ -71,6 +69,7 @@ from gain.genomic_resources.statistics.length_histogram import (
     plot_length_histogram,
 )
 from gain.genomic_resources.statistics.percentages import percentage_of
+from gain.genomic_resources.statistics.region_fold import merge_regions
 from gain.utils.chromosome_order import natural_chromosome_key
 
 ALLELE_STATISTICS_FILE = "statistics/alleles.json"
@@ -671,12 +670,10 @@ class RegionAlleles:
         self.end = other.end
 
 
-class AlleleStatistics(Statistic):
+class AlleleStatistics(RegionFoldedStatistic[RegionAlleles]):
     """A resource's allele content, per chromosome and global.
 
-    Accumulates one :class:`RegionAlleles` per scanned region through
-    :meth:`fold_region` -- same-chromosome regions merge (adjacency
-    asserted there), distinct chromosomes accumulate side by side -- and
+    Folds :class:`RegionAlleles` the way the base class does, and
     serializes to the resource's :data:`ALLELE_STATISTICS_FILE` as raw
     counts.
     """
@@ -686,15 +683,6 @@ class AlleleStatistics(Statistic):
             "alleles",
             "Allele counts, class totals, the substitution matrix, the "
             "indel length maps and the complex grid")
-        self._regions: dict[str, RegionAlleles] = {}
-
-    def fold_region(self, region: RegionAlleles) -> None:
-        """Fold one region's counts in, keyed by its chromosome."""
-        held = self._regions.get(region.chrom)
-        if held is None:
-            self._regions[region.chrom] = region
-        else:
-            held.merge(region)
 
     def by_chromosome(self) -> dict[str, AlleleCounts]:
         """The per-chromosome counts, in natural chromosome order.
@@ -727,17 +715,6 @@ class AlleleStatistics(Statistic):
         ordering that accessor does would be paid and thrown away.
         """
         return _total(region.counts() for region in self._regions.values())
-
-    def add_value(self, value: Any) -> None:  # ruff: ignore[unused-method-argument]
-        raise TypeError(
-            "AlleleStatistics accumulates regions, not values; "
-            "use fold_region")
-
-    def merge(self, other: Statistic) -> None:
-        if not isinstance(other, AlleleStatistics):
-            raise TypeError("unexpected type of statistics to merge with")
-        for region in other._regions.values():  # ruff: ignore[private-member-access]
-            self.fold_region(region)
 
     def serialize(self) -> str:
         # One walk of the regions serves the per-chromosome entries and
@@ -1203,18 +1180,8 @@ def merge_region_alleles(
     regions: Iterable[RegionAlleles | None],
 ) -> AlleleStatistics | None:
     """Fold the regions' counts, or ``None`` for a kind that has none."""
-    ordered = regions_in_genomic_order(regions)
-    if not ordered:
-        return None
-    statistics = AlleleStatistics()
-    try:
-        for region in ordered:
-            statistics.fold_region(region)
-    except ValueError as err:
-        report_resource_failure(
-            err, "could not merge the allele statistics of", resource_id)
-        raise
-    return statistics
+    return merge_regions(
+        resource_id, regions, AlleleStatistics, _MERGE_FAILURE)
 
 
 def plot_complex_grid(
