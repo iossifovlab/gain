@@ -5,7 +5,7 @@ import abc
 import os
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
@@ -20,6 +20,8 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.genomic_resources.aggregators import validate_aggregator
+from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.resource_types import reject_retired_resource
 
 
 # A real ``dict`` subclass, not a ``UserDict``: ``annotate`` promises
@@ -96,6 +98,87 @@ class AnnotatorBase(Annotator):
     :meth:`annotate` and :meth:`batch_annotate` are left alone, except
     by a batch-only annotator, which makes :meth:`annotate` refuse.
     """
+
+    #: The resource types this annotator's ``resource_id`` may name.
+    #:
+    #: An annotator that consumes a typed genomic resource states them
+    #: here, and resolves its resource through :meth:`resolve_resource`.
+    #: Before gain#1329 the same fact was written once per annotator in
+    #: whatever shape that annotator happened to use -- a literal at a
+    #: call site, a constant, or nothing at all with the check left to
+    #: whichever constructor met the resource first -- and the refusal a
+    #: reader got for the wrong resource type differed accordingly.
+    #:
+    #: This is the ANNOTATOR's copy, not the only one: the wildcard
+    #: expansion in ``annotation_config`` keys the same fact on annotator
+    #: NAME rather than class (gain#1266, and gain#1334 to remove it),
+    #: and the web editor states it again per configuration field.  What
+    #: is gone is the five different shapes it took inside the annotators.
+    #:
+    #: A tuple rather than a set, for the reason
+    #: :data:`~gain.genomic_resources.resource_types.FRAGMENT_SCORE_TYPES`
+    #: is one -- it is rendered into the refusal, preferred spelling
+    #: first.  Two annotators accept two spellings; each warns from the
+    #: constructor that opens the resource, which still runs after this
+    #: check passes the spelling through.
+    #:
+    #: Empty means the annotator does not constrain its resource type --
+    #: the default, because most annotators (``effect_annotator``,
+    #: ``liftover_annotator``, ``chrom_mapping``, ...) have no single
+    #: typed resource to constrain.  Those never call
+    #: :meth:`resolve_resource`, which refuses an empty declaration
+    #: rather than rejecting every type in turn.
+    ACCEPTED_RESOURCE_TYPES: ClassVar[tuple[str, ...]] = ()
+
+    @classmethod
+    def resolve_resource(
+        cls, pipeline: AnnotationPipeline, info: AnnotatorInfo,
+    ) -> GenomicResource:
+        """Resolve this annotator's ``resource_id`` to a resource it takes.
+
+        A classmethod because two of the five callers -- the gene-score
+        and gene-set builders -- resolve the resource to hand to a
+        constructor that has not run yet; the other three call it as
+        ``self.resolve_resource(...)`` from ``__init__``.
+
+        Lives on :class:`AnnotatorBase` rather than on the genomic SCORE
+        base the free function it replaces used to sit beside: two of
+        those callers are not score annotators, and importing the score
+        machinery to reach a type check would be the wrong dependency.
+        """
+        if not cls.ACCEPTED_RESOURCE_TYPES:
+            # The annotator's mistake, not the config's, so it is not
+            # phrased as one: an empty declaration would otherwise sail
+            # into the membership test below and refuse every resource in
+            # the world for naming a type absent from an empty list.
+            raise ValueError(
+                f"{cls.__name__} resolves a 'resource_id' but declares no "
+                f"ACCEPTED_RESOURCE_TYPES; an annotator that consumes a "
+                f"typed resource must state the types it accepts.")
+        # Blank counts as absent, not as the name of a resource: resolving
+        # "" reaches the repository and raises FileNotFoundError -- a
+        # different exception CLASS from every other configuration fault
+        # here, and a message naming a resource nobody wrote.
+        resource_id = info.parameters.get("resource_id")
+        if not resource_id:
+            raise ValueError(
+                f"The {info} needs a 'resource_id' parameter naming the "
+                f"resource the annotator reads.")
+        resource = pipeline.repository.get_resource(resource_id)
+        # Before the membership test: a retired spelling is a type GAIn
+        # used to accept, and the generic message below would only say the
+        # annotator wants something else -- true, and no help to someone
+        # holding a resource that worked last release (gain#920).
+        reject_retired_resource(resource)
+        if resource.get_type() not in cls.ACCEPTED_RESOURCE_TYPES:
+            accepted_text = ", ".join(
+                f"'{resource_type}'"
+                for resource_type in cls.ACCEPTED_RESOURCE_TYPES)
+            raise ValueError(
+                f"The {info} requires 'resource_id' to point to a "
+                f"resource of type {accepted_text}; "
+                f"resource of type <{resource.get_type()}> found.")
+        return resource
 
     def __init__(
         self, pipeline: AnnotationPipeline | None,

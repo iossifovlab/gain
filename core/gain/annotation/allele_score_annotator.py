@@ -21,7 +21,6 @@ from gain.annotation.annotation_pipeline import (
 from gain.annotation.annotator_base import AnnotatedValues
 from gain.annotation.genomic_score_annotator_base import (
     GenomicScoreAnnotatorBase,
-    get_genomic_resource,
 )
 from gain.genomic_resources.aggregators import (
     ScoreAggregationQuery,
@@ -93,9 +92,10 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
     a name may contain.
     """
 
+    ACCEPTED_RESOURCE_TYPES = (PREFERRED_ALLELE_SCORE_TYPE,)
+
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
-        resource = get_genomic_resource(
-            pipeline, info, {PREFERRED_ALLELE_SCORE_TYPE})
+        resource = self.resolve_resource(pipeline, info)
         self.allele_score = build_allele_score_from_resource(resource)
         self.allele_filter = None
         allele_filter_str = info.parameters.get("allele_filter")

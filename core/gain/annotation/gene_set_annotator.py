@@ -20,6 +20,7 @@ from gain.gene_sets.gene_set import (
     build_gene_set_collection_from_resource,
 )
 from gain.genomic_resources import GenomicResource
+from gain.genomic_resources.resource_types import GENE_SET_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +30,10 @@ def build_gene_set_annotator(
     info: AnnotatorInfo,
 ) -> Annotator:
     """Create a gene set annotator."""
-    gene_set_resource_id = info.parameters["resource_id"]
-    if not gene_set_resource_id:
-        raise ValueError(f"The {info} needs a 'resource_id' parameter.")
-    gene_set_resource = pipeline.repository.get_resource(
-        gene_set_resource_id)
-    if gene_set_resource is None:
-        raise ValueError(f"The {gene_set_resource_id} is not available.")
+    # Before the input_gene_list checks below, for the reason the gene
+    # score annotator resolves its resource first: the resource is the
+    # thing this annotator was configured to read.
+    gene_set_resource = GeneSetAnnotator.resolve_resource(pipeline, info)
 
     input_gene_list = info.parameters.get("input_gene_list")
     if input_gene_list is None:
@@ -59,6 +57,12 @@ def build_gene_set_annotator(
 
 class GeneSetAnnotator(AnnotatorBase):
     """Gene set annotator class."""
+
+    #: Shared with the collection that opens the resource, rather than
+    #: spelled again here: a third spelling added there would otherwise
+    #: be refused by this annotator before the collection could accept
+    #: it -- the "stated in N places" fault gain#1329 is about.
+    ACCEPTED_RESOURCE_TYPES = GENE_SET_TYPES
 
     DEFAULT_AGGREGATOR_TYPE = "list"
 
