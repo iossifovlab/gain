@@ -25,7 +25,7 @@ The rest are the properties a memo has to earn: the answer costs no per-call
 pass over the contigs and is held as a set rather than a list, a closed table
 refuses it exactly as it refuses the list, and a reopened table answers out of
 the current file rather than the previous open's set.  Modelled on
-test_tabix_chromosome_memo.py, which asks the same questions of the mapped
+test_tabix_chromosome_list.py, which asks the same questions of the mapped
 contig list this set is derived from.
 """
 from __future__ import annotations
@@ -37,7 +37,7 @@ import pytest_mock
 from gain.genomic_resources.testing import setup_tabix, setup_vcf
 
 from .test_backend_record_contract import build_every_backend
-from .test_tabix_chromosome_memo import _build_tabix_table
+from .test_tabix_chromosome_list import _build_tabix_table
 from .test_table_lifetime import _a_mapped_vcf_table
 
 _BACKEND_IDS = ["inmemory", "tabix", "vcf", "bigwig"]

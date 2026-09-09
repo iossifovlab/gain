@@ -641,6 +641,59 @@ def test_a_closed_table_releases_what_open_established(
     )
 
 
+@pytest.mark.parametrize("build,_score_line", _LIFETIME_BACKENDS)
+def test_an_open_table_answers_its_contigs_out_of_chrom_order(
+    build: object,
+    _score_line: object,
+    tmp_path: pathlib.Path,
+) -> None:
+    """``chrom_order`` is the contig list, on every backend, not beside it.
+
+    The release policy above holds every backend to giving ``chrom_order`` up
+    on close, and :meth:`GenomicPositionTable.close` documents what that buys:
+    that ``get_chromosomes`` refuses once it is released.  That sentence is
+    only true while ``chrom_order`` is what ``get_chromosomes`` reads -- a
+    backend answering from a field of its own would satisfy the release test
+    (it gives ``chrom_order`` up like everyone else) while making the
+    documented consequence false, and would go on refusing, or not, for
+    reasons of its own.
+
+    That is not hypothetical: the tabix family did exactly this between
+    gain#1173 and gain#1303, holding the projection in a private list while
+    ``chrom_order`` was built by every open and read by nobody.
+
+    Asserted as **identity**, not equality, and that is what gives this test
+    teeth.  Equality holds vacuously across every fixture here: none of them
+    configures a ``chrom_mapping: filename``, and without one the base class's
+    list and the tabix projection agree elementwise -- so an equality version
+    of this test passes against the pre-gain#1303 implementation, measured, and
+    states nothing.  Identity fails against it, because a backend answering
+    from a list of its own hands back a different object however equal.
+
+    Identity is also the contracted behaviour rather than an implementation
+    detail: the package ledger records that ``get_chromosomes()`` returns the
+    STORED list and that callers must copy before mutating, which is precisely
+    the promise that there is no defensive copy between the two.
+    """
+    score, _region = build(tmp_path)  # type: ignore[operator]
+    table = score.table
+
+    table.open()
+    try:
+        contigs = table.get_chromosomes()
+
+        assert contigs, (
+            f"the {type(table).__name__} fixture opens onto no contigs at "
+            f"all; this test would hold vacuously")
+        assert contigs is table.chrom_order, (
+            f"{type(table).__name__}.get_chromosomes() answers {contigs} out "
+            f"of state of its own while chrom_order holds "
+            f"{table.chrom_order}: the refusal documented on close() is not "
+            f"the one this backend actually makes (gain#1303)")
+    finally:
+        table.close()
+
+
 @pytest.mark.parametrize("build,_score_line", _MAPPED_BACKENDS)
 def test_the_mapped_fixtures_really_build_a_chromosome_map(
     build: object,
@@ -757,24 +810,28 @@ def test_a_closed_vcf_table_does_not_answer_its_contigs_from_the_file(
 ) -> None:
     """Releasing the chromosome state must not make a closed VCF table LIE.
 
-    ``get_chromosomes()`` on the tabix family goes through the
-    ``get_file_chromosomes`` memo and maps each contig into reference space --
-    and ``close()`` now releases both the memo and the map, so a closed table
-    has to reach for the file to answer at all.  Every other backend's
-    ``_load_file_chromosomes`` reads the open handle and so refuses (with a
-    ``ValueError``, in all four since gain#358 -- the bigWig one asserted, and
-    the in-memory one did not refuse at all); the VCF one opened the
-    resource's ``.vcf.gz`` *itself*, which is the one implementation that can
-    still produce an answer after a close -- an answer with no chromosome map
-    left to map it through, so ``map_chromosome`` passes the FILE's contigs
-    back unmapped.
+    Reads through the OPEN table first and then closes, so what is asked about
+    is a table that HAS answered and then gave its answer up -- the state a
+    table closed without ever being read never reaches.  A closed VCF table
+    refuses, exactly as its three siblings do (gain#350).
 
-    ``['chr1']`` where an open table says ``['1']``: wrong data with no error
-    to notice it by, plus a file (or network) open on a table the caller
-    believes is closed.  A closed table refuses instead, exactly as its three
-    siblings do -- what a closed table does when read is not this issue's to
-    change, but answering *differently from every other backend, and wrongly*
-    is (gain#350).
+    **What this protected, and where that moved.**  It used to reach the VCF
+    ``_load_file_chromosomes`` guard: ``get_chromosomes()`` went through the
+    ``get_file_chromosomes`` memo, and the VCF backend is the one
+    implementation that opens the resource's ``.vcf.gz`` *itself* and so could
+    still produce an answer after a close -- an answer with no chromosome map
+    left to map it through, giving ``['chr1']`` where an open table says
+    ``['1']``.  Since gain#1303 ``get_chromosomes()`` reads ``chrom_order`` and
+    refuses off that, so this no longer reaches that guard and cannot be what
+    keeps it honest.  Verified: deleting the guard leaves this test passing.
+
+    The guard itself is still covered, by
+    ``test_a_never_opened_vcf_table_does_not_answer_its_contigs_either`` and
+    ``test_a_closed_table_refuses_its_file_chromosomes[vcf]``, both of which
+    ask ``get_file_chromosomes()`` directly.  What is left here is the
+    narrower claim in the name, and it is worth keeping because no other test
+    asks a *closed* VCF table -- as opposed to a never-opened one -- for its
+    contigs.
     """
     table = _a_mapped_vcf_table(tmp_path)
 
@@ -1268,13 +1325,13 @@ def test_a_tabix_close_that_fails_partway_leaves_it_open_not_unmapped(
     """A close() that raises mid-teardown must leave it open, not unmapped.
 
     ``TabixGenomicPositionTable.close()`` does two things whose order matters:
-    it releases the base class's chromosome map (``super().close()``) and it
-    closes the pysam handle.  Release the map first and let the handle close
-    then raise, and the table is left with a LIVE handle and no map -- which is
-    exactly the state in which ``get_chromosomes()`` hands back the file's own
-    contig names instead of reference-space ones (gain#358).  Ordered
-    handle-first, a partial failure instead leaves the table "still open": the
-    map is intact and ``get_chromosomes()`` still answers in reference space.
+    it releases the base class's chromosome state (``super().close()``) and it
+    closes the pysam handle.  Release that state first and let the handle close
+    then raise, and the table is left with a LIVE handle and no map -- open by
+    every check a caller can make, yet no longer able to answer its contigs in
+    reference space (gain#358).  Ordered handle-first, a partial failure
+    instead leaves the table "still open": the map is intact and
+    ``get_chromosomes()`` still answers in reference space.
 
     Forced by making the line-iterator close raise -- the step that in the old
     ordering sat between ``super().close()`` and the handle close, i.e. inside
@@ -1285,7 +1342,7 @@ def test_a_tabix_close_that_fails_partway_leaves_it_open_not_unmapped(
     score, region = _build_mapped_tabix(tmp_path)  # type: ignore[misc]
     table = score.table
     table.open()
-    # read so a fetch cursor exists, then answer contigs off the populated memo
+    # read so a fetch cursor exists, then answer contigs off the open table
     list(table.get_records_in_region(*region))
     assert table.get_chromosomes() == ["chr1"]
 
@@ -1298,14 +1355,15 @@ def test_a_tabix_close_that_fails_partway_leaves_it_open_not_unmapped(
     with pytest.raises(OSError, match="teardown boom"):
         table.close()
 
-    # The map itself, asked FOR ITSELF, because a memo now sits in front of
-    # get_chromosomes() (gain#1173): the behavioural assertion below can be
-    # served out of the mapped list the pre-close read derived, and would then
-    # hold whether or not the map beneath it survived.  It does not today --
-    # close() releases that memo immediately before the map, so the buggy
-    # ordering releases it too -- but that keeps this test honest only for as
-    # long as those two lines stay adjacent, which is not something this test
-    # should have to depend on.
+    # The map itself, asked FOR ITSELF.  The behavioural assertion below states
+    # the same invariant, but only ever indirectly: it goes through whatever
+    # get_chromosomes() happens to read, and what that is has changed twice --
+    # a private memo in front of the map (gain#1173), then chrom_order itself
+    # (gain#1303).  Under the buggy ordering it now fails by RAISING rather
+    # than by answering the file's own contig names, since super().close()
+    # releases chrom_order along with the map.  Both are failures and either
+    # would do, but neither says which piece of state went missing.  This one
+    # does, and it holds whatever sits in front of it.
     assert table.rev_chrom_map is not None, (
         "a close() that raised mid-teardown released the chromosome map while "
         "the pysam handle was still live (gain#358)")
