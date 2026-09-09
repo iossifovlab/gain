@@ -304,3 +304,12 @@ def test_run_point_sees_divergence_through_the_real_pool() -> None:
     assert summary.reproducible is False
     assert summary.max_abs_deviation is not None
     assert summary.max_abs_deviation > 0.0
+
+
+def test_parse_args_defaults_to_leaving_determinism_controls_alone() -> None:
+    """The default arm must be what ships, not a hardened variant."""
+    assert probe.parse_args([]).op_determinism is False
+
+
+def test_parse_args_can_ask_for_the_runtimes_determinism_controls() -> None:
+    assert probe.parse_args(["--op-determinism"]).op_determinism is True
