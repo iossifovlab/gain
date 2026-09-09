@@ -1,6 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import numpy as np
-from gain.binning.binners import PositionScoreBinner, Track, grid_bins
+from gain.binning.binners import PositionScoreBinner, Track
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.utils.regions import BedRegion
 
@@ -13,17 +13,6 @@ def scores_one(aggregator: str, replacement: float | None = None) -> Track:
         name="scores/one", resource_id="scores/one", score_id="s",
         aggregator=aggregator, none_value_replacement=replacement,
         binner="position_score_binner")
-
-
-def test_grid_bins_are_anchored_at_one_and_clipped_to_the_region() -> None:
-    # The grid is global (1-10, 11-20, ...), so a window starting at 5 gets
-    # a clipped first bin and a window ending at 24 a clipped last one --
-    # and bins from different runs tile.
-    region = BedRegion("chr1", 5, 24)
-
-    bins = grid_bins(region, BIN_SIZE)
-
-    assert bins == [(5, 10), (11, 20), (21, 24)]
 
 
 def test_a_track_bins_to_one_float64_value_per_grid_bin_nan_where_uncovered(

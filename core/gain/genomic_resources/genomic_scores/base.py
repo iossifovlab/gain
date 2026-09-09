@@ -692,17 +692,27 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 return False
         return True
 
+    def _require_open(self) -> None:
+        """Refuse any read of a score that is not open.
+
+        The one home of this message.  Reads that also need a known contig
+        take :meth:`_require_open_and_known_chrom`; the two aggregating
+        reads of :class:`~.position.PositionScore`, which accept a contig
+        the score never mentions, take this one alone (gain#1211).
+        """
+        if not self.is_open():
+            raise ValueError(f"genomic score <{self.resource_id}> is not open")
+
     def _require_open_and_known_chrom(self, chrom: str) -> None:
         """Refuse a region read this score cannot answer at all.
 
         The two conditions every bulk column read shares, stated once for
         the readers that widen it.  Several OLDER reads in this module spell
-        the same pair out inline; they are left as they are rather than
-        swept into this change, and a few of them word the contig message
-        differently on purpose (an allele read names the resource in it).
+        the contig half out inline; they are left as they are rather than
+        swept into this change, and a few of them word it differently on
+        purpose (an allele read names the resource in it).
         """
-        if not self.is_open():
-            raise ValueError(f"genomic score <{self.resource_id}> is not open")
+        self._require_open()
         if chrom not in self.get_all_chromosomes():
             raise ValueError(
                 f"{chrom} is not among the available chromosomes.")
@@ -905,9 +915,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         Raises ``ValueError`` on a score that is not open.
         """
-        if not self.is_open():
-            raise ValueError(f"genomic score <{self.resource_id}> is not open")
-
+        self._require_open()
         return self.table.get_chromosomes()
 
     def region_values_from_records(
@@ -961,14 +969,40 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         whole region rather than per record, and before the first record
         rather than on it: a typo answering differently on a populated contig
         than on an empty one is the failure that eagerness prevents.
+
+        That argument is about a read that MATERIALISES a contig's positions,
+        and it is why this refusal stays the default.  The two aggregating
+        reads of :class:`~.position.PositionScore` are the deliberate
+        exception: they answer a question about a WINDOW rather than about
+        the contig, and a genome-wide fold over a track that skips a
+        chromosome is the normal case, not a typo (gain#1211).  They take
+        :meth:`_read_defs_for_any_contig` instead and compose the absent
+        contig as one uncovered run; every other read, this method's own
+        callers included, keeps the refusal.
         """
-        if not self.is_open():
-            raise ValueError(f"genomic score <{self.resource_id}> is not open")
+        self._require_open_and_known_chrom(chrom)
+        return self._resolve_score_defs(scores)
 
-        if chrom not in self.get_all_chromosomes():
-            raise ValueError(
-                f"{chrom} is not among the available chromosomes.")
+    def _read_defs_for_any_contig(
+        self, scores: Sequence[str] | None,
+    ) -> list[GenomicScoreDef]:
+        """Resolve a read's score ids, without judging any contig.
 
+        :meth:`_region_read_defs` minus the contig refusal, for the reads
+        that treat a contig the score never mentions as uncovered rather
+        than as an error (gain#1211).  Everything else it checks is checked
+        here, in the same order: a closed score and an unknown score id are
+        refused on an absent contig exactly as on a populated one, so the
+        exemption widens what a contig may be and nothing else.
+
+        Offered by the base because the guards it reuses are, but it is
+        :class:`~.position.PositionScore`'s two aggregating reads that may
+        take it and no others: "an absent contig is uncovered" is a claim on
+        the logical read plane, and a kind without one -- an allele score --
+        has nothing for it to mean.  A kind that takes this door instead of
+        :meth:`_region_read_defs` answers "no records" to a typo.
+        """
+        self._require_open()
         return self._resolve_score_defs(scores)
 
     def _score_segments(

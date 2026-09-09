@@ -309,10 +309,29 @@ class PositionScore(GenomicScore):
         answers -- a later record contributes only the positions the
         earlier one did not -- so the total run length always equals the
         region width, and accumulated weight can never exceed it.
+
+        This region read fetched from the table; :meth:`_runs_from_segments`
+        is the same encoding over a segment stream a caller supplies.
+        """
+        return self._runs_from_segments(
+            self.fetch_region_segments(chrom, start, end, scores), start, end)
+
+    @staticmethod
+    def _runs_from_segments(
+        segments: Iterator[tuple[int, int, list[ScoreValue]]],
+        start: int, end: int,
+    ) -> Generator[tuple[list[ScoreValue] | None, int], None, None]:
+        """Run-length encode ``segments`` over ``[start, end]``.
+
+        :meth:`_position_runs` as a function OF a segment stream, so what
+        the region is read FROM is the caller's to choose.  An empty stream
+        is a whole region of uncovered positions -- one ``(None, width)``
+        run out of the tail below -- which is what lets
+        :meth:`_aggregating_runs` answer a contig the score never mentions
+        without a second spelling of that shape (gain#1211).
         """
         cursor = start
-        for left, right, values in self.fetch_region_segments(
-                chrom, start, end, scores):
+        for left, right, values in segments:
             span = clip_span(left, right, start, end)
             if span is None:
                 continue
@@ -520,11 +539,15 @@ class PositionScore(GenomicScore):
         but computed by walking segments, so cost stays proportional to
         record count.  Where two records cover one position the first
         answers, so accumulated weight never exceeds the region width.
+
+        A contig this score never mentions is uncovered rather than refused
+        (gain#1211): it answers as a window on a contig the score has but
+        does not cover.  That is this read and the binned one only; a read
+        that materialises positions still refuses an unknown contig.
         """
         self._guard_region_span(start, end)
-        targets, score_ids = self._resolve_aggregation_query_targets(
-            chrom, queries)
-        for values, length in self._position_runs(
+        targets, score_ids = self._resolve_aggregation_query_targets(queries)
+        for values, length in self._aggregating_runs(
                 chrom, start, end, score_ids):
             for column, aggregator, none_value_replacement in targets:
                 value = values[column] if values is not None else None
@@ -535,7 +558,7 @@ class PositionScore(GenomicScore):
             aggregator.get_final() for _, aggregator, _ in targets)
 
     def _resolve_aggregation_query_targets(
-        self, chrom: str, queries: Sequence[PositionScoreAggregationQuery],
+        self, queries: Sequence[PositionScoreAggregationQuery],
     ) -> tuple[list[tuple[int, Aggregator, ScoreValue]], list[str]]:
         """Resolve queries to per-run fold targets, and the fetch columns.
 
@@ -549,12 +572,18 @@ class PositionScore(GenomicScore):
         list both names what is fetched and indexes what comes back, so a
         second spelling of it that ordered the scores differently would
         have every aggregator quietly reading its neighbour's column.
+
+        No contig reaches here: what the aggregating reads resolve is which
+        scores to fetch and how to fold them, which is a property of the
+        queries alone.  Whether the contig exists is
+        :meth:`_aggregating_runs`' question, and it answers it by choosing a
+        run source rather than by refusing (gain#1211).
         """
         resolved = self._resolve_aggregation_queries(queries)
         score_ids = [
             score_def.score_id
-            for score_def in self._region_read_defs(
-                chrom, distinct_score_ids(sid for sid, _, _ in resolved))
+            for score_def in self._read_defs_for_any_contig(
+                distinct_score_ids(sid for sid, _, _ in resolved))
         ]
         column_of = {sid: i for i, sid in enumerate(score_ids)}
         targets = [
@@ -599,17 +628,60 @@ class PositionScore(GenomicScore):
         including bins no record touches; a segment straddling a bin
         boundary contributes its weight to each bin it touches, split at
         the boundary.
+
+        A contig this score never mentions is uncovered rather than refused
+        (gain#1211): every bin of it is emitted, with the bounds a covered
+        contig would yield.  That is this read and
+        :meth:`get_scores_in_region_agg` only; a read that materialises
+        positions still refuses an unknown contig.
         """
         self._guard_region_span(start, end)
         if bin_size < 1:
             raise ValueError(
                 f"genomic score <{self.resource_id}> asked for bins of "
                 f"size {bin_size}; a bin holds at least one position")
-        targets, score_ids = self._resolve_aggregation_query_targets(
-            chrom, queries)
+        targets, score_ids = self._resolve_aggregation_query_targets(queries)
         return self._binned_runs(
-            self._position_runs(chrom, start, end, score_ids),
+            self._aggregating_runs(chrom, start, end, score_ids),
             start, end, bin_size, targets)
+
+    def _aggregating_runs(
+        self, chrom: str, start: int, end: int, scores: list[str],
+    ) -> Iterator[tuple[list[ScoreValue] | None, int]]:
+        """The run source the two aggregating reads fold.
+
+        A contig the score holds records for is read from the table; one it
+        never mentions is read from an EMPTY segment stream (gain#1211).  A
+        genome-wide fold over a track that skips a chromosome is the normal
+        case, not an error, and it needs no shape of its own: a region no
+        segment covers is already one ``(None, width)`` run out of
+        :meth:`_runs_from_segments`, so the absent contig answers as the
+        wholly-uncovered window it is, by the same code, with the width
+        computed once. Both branches are that one encoder over a different
+        stream -- which is why they cannot drift, and why a degenerate span
+        would fail identically in both rather than only in one.
+
+        The BRANCH lives here, above :meth:`_position_runs`, and not inside
+        it.  Not because the per-position read would otherwise see it -- it
+        would not; that read refuses through :meth:`_region_read_defs`
+        before it ever builds these runs.  The reason is the caller after
+        next: :meth:`_position_runs` is the plain region read, and a future
+        consumer composing it has no way to say "and I did mean to allow an
+        absent contig".  Left down there the exemption would be the default
+        and silent; up here each read opts in by choosing this source, which
+        is the same reason :meth:`_read_defs_for_any_contig` is a second
+        door rather than a parameter on the first.
+
+        Choosing this source also means the backend is never asked for the
+        absent contig, so the refusals below -- the per-kind record
+        transform's, and each table's own -- stay exactly as they are and
+        are simply not reached.  ``get_all_chromosomes`` is consulted once
+        per read here, which is the call :meth:`_region_read_defs` used to
+        make on this path; it is the same one scan, moved, not a new one.
+        """
+        if chrom not in self.get_all_chromosomes():
+            return self._runs_from_segments(iter(()), start, end)
+        return self._position_runs(chrom, start, end, scores)
 
     @staticmethod
     def _binned_runs(

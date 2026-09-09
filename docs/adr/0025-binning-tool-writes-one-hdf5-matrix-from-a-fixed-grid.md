@@ -7,7 +7,9 @@
 [#1201](https://github.com/iossifovlab/gain/issues/1201) (validation),
 [#1202](https://github.com/iossifovlab/gain/issues/1202) (docs and this record),
 [grr_bench#3](https://github.com/iossifovlab/grr_bench/issues/3) (the D14 timing),
-[#1214](https://github.com/iossifovlab/gain/issues/1214) (the D13 amendment: region bundles)
+[#1214](https://github.com/iossifovlab/gain/issues/1214) (the D13 amendment: region bundles),
+[#1211](https://github.com/iossifovlab/gain/issues/1211) (the D14 amendment: an absent
+contig is one uncovered run)
 
 Design doc of record: `seqpipe/genomics-toolbox`
 `docs/2026-09-04-gain-score-binning-design.md`, whose decisions are numbered
@@ -223,6 +225,33 @@ doc deferred the question of adding a vectorised binned fold over
   over chr21 took 35.4 s from bigWig and 116.5 s from tabix, a 3.3× gap —
   larger than anything a vectorised fold could buy. Whole-genome and
   chr21-only tabix indexes were within 1%.
+
+**A contig the score never mentions is part of that read, not of the binner
+(#1211).** The tracer bullet shipped a stand-in in the binning module,
+`_uncovered_bins`, because the region read refused an absent contig: it
+rebuilt, per bin, the fold this read already performs. A genome-wide run
+over a track that skips a chromosome is the normal case rather than an
+error, so the two *aggregating* reads of `PositionScore` —
+`get_scores_in_bins` and `get_scores_in_region_agg`, with their singular
+forms — now treat a contig absent from `get_all_chromosomes()` as a single
+`(None, region_width)` run and fold it as they fold any uncovered run. The
+choice of run source is made above the shared run generator, so the
+per-position read keeps refusing and no argument travels down to say which
+consumer is reading (ADR 0008). The backend is never asked for the absent
+contig, so the per-kind record transform's refusal and each table's own
+stay exactly as they were.
+
+The cost of the exemption, accepted deliberately: an unknown contig is a
+plausible typo, and these two reads no longer catch it — a misspelled
+contig bins to NaN rather than raising. That is the price of the absent
+contig being ordinary, and it is confined to the reads that answer a
+question about a *window*; every read that materialises a contig's
+positions, the point read included, still refuses.
+
+The annotation path is unaffected either way: `PositionScoreAnnotator`
+short-circuits on `get_all_chromosomes()` for every annotatable shape
+before it picks a read, so neither the point read nor the region-aggregating
+read has ever been reached with a contig the score does not have.
 
 **The vectorised fold is not filed.** The trigger to re-open it is recorded
 here: per-base conservation tracks becoming routine in binning runs, where
