@@ -48,8 +48,10 @@ class AlleleRecordArrays(NamedTuple):
     in the same order, so ``batch[:3]`` **is** a ``RecordArrays``.
 
     That slice is required, not decorative: every consumer of the shared read
-    unpacks three names (``validate_record_arrays`` and the scan's coverage
-    accumulator among them), and handing one of them a batch of five raises
+    unpacks three names (the scan's array door
+    :func:`~gain.genomic_resources.statistics.record_validation.validate_record_arrays`
+    and its coverage accumulator among them), and handing one of them a batch
+    of five raises
     ``too many values to unpack``.  A caller feeding this read into machinery
     written for the shared one passes ``batch[:3]``, and mypy says so too --
     this type is not a ``RecordArrays``.

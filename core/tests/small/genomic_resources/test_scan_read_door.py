@@ -1,7 +1,8 @@
 """The statistics scan's own way in to a region (gain#588, ADR 0008).
 
 The scan reads a region as ``region_values_from_records`` over
-``validate_records(fetch_records(...))``; every plain read -- ``fetch_records``,
+``validate_records(score, fetch_records(...))``; every plain read --
+``fetch_records``,
 ``fetch_region_segments``,
 ``get_scores_at_position`` -- is the same transform over the same records with
 that middle link left out, and validates no RECORD.  (A read may still refuse
@@ -34,6 +35,9 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_errors import MalformedResourceError
+from gain.genomic_resources.statistics.record_validation import (
+    validate_records,
+)
 from gain.genomic_resources.testing import (
     build_filesystem_test_resource,
     setup_directories,
@@ -114,7 +118,7 @@ def test_the_scan_refuses_a_position_score_whose_records_touch(
     score = _position_score(tmp_path, "touching", TOUCHING_RECORDS)
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        list(score.validate_records(score.fetch_records("chr1", 1, 10)))
+        list(validate_records(score, score.fetch_records("chr1", 1, 10)))
 
     message = str(excinfo.value)
     assert "<touching>" in message
@@ -266,7 +270,7 @@ def test_a_fragment_score_refuses_a_fragment_that_begins_too_early(
     score = _fragment_score_reading_backwards(tmp_path, monkeypatch)
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        list(score.validate_records(score.fetch_records("chr1", 1, 30)))
+        list(validate_records(score, score.fetch_records("chr1", 1, 30)))
 
     message = str(excinfo.value)
     assert "<backwards>" in message
@@ -290,7 +294,7 @@ def test_the_fragment_rule_passes_overlapping_fragments_through(
         ("chr1", 50, 150, None, None, ("chr1", "50", "150", "0.2")),
     ]
 
-    assert list(score.validate_records(iter(records))) == records
+    assert list(validate_records(score, iter(records))) == records
 
 
 def test_the_fragment_rule_passes_fragments_sharing_a_start_through(
@@ -308,7 +312,7 @@ def test_the_fragment_rule_passes_fragments_sharing_a_start_through(
         ("chr1", 10, 99, None, None, ("chr1", "10", "99", "0.2")),
     ]
 
-    assert list(score.validate_records(iter(records))) == records
+    assert list(validate_records(score, iter(records))) == records
 
 
 def _allele_score_reading_backwards(
@@ -348,10 +352,10 @@ def test_the_scan_validates_a_fragment_score_with_the_kinds_own_rule(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The scan dispatches to ``FragmentScore.validate_records``: the message
-    # names the kind, which the base default's generic wording does not, so
-    # this fails if the kind's body is deleted and the inherited one takes
-    # over again.
+    # ``validate_records`` dispatches to the rule FragmentScore is registered
+    # under: the message names the kind, which the base registration's generic
+    # wording does not, so this fails if that registration is deleted and the
+    # NotImplementedError fallback takes over.
     #
     # Driven through the scan's own composition rather than by calling
     # ``validate_records`` by hand: what this claims is that the SCAN
@@ -614,7 +618,7 @@ def test_the_position_rule_compares_raw_spans_not_clipped_ones(
         (50, 150, [0.2]),
     ]
     with pytest.raises(MalformedResourceError) as excinfo:
-        list(score.validate_records(score.fetch_records("chr1", 120, 200)))
+        list(validate_records(score, score.fetch_records("chr1", 120, 200)))
 
     assert "chr1:50" in str(excinfo.value)
 
@@ -641,7 +645,7 @@ def test_the_position_rule_carries_a_zero_end_rather_than_dropping_it(
     monkeypatch.setattr(score, "fetch_records", at_zero)
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        list(score.validate_records(score.fetch_records("chr1", 0, 10)))
+        list(validate_records(score, score.fetch_records("chr1", 0, 10)))
 
     assert "at most one record per position" in str(excinfo.value)
 
@@ -663,7 +667,7 @@ def test_the_fragment_rule_starts_each_contig_afresh(
 
     monkeypatch.setattr(score, "fetch_records", across_contigs)
 
-    assert len(list(score.validate_records(
+    assert len(list(validate_records(score,
         score.fetch_records("chr1", 1, 200)))) == 2
 
 
@@ -688,7 +692,7 @@ def test_an_allele_scores_rule_starts_each_contig_afresh(
 
     monkeypatch.setattr(score, "fetch_records", across_contigs)
 
-    assert len(list(score.validate_records(
+    assert len(list(validate_records(score,
         score.fetch_records("chr1", 1, 200)))) == 2
 
 
@@ -707,7 +711,7 @@ def test_the_validator_hands_back_every_record_it_was_given(
         ("chr2", 1, 10, None, None, ("chr2", "1", "10", "0.3")),
     ]
 
-    assert list(score.validate_records(iter(records))) == records
+    assert list(validate_records(score, iter(records))) == records
 
 
 def test_a_statistics_pass_reads_the_region_once(

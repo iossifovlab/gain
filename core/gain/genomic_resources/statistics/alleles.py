@@ -69,6 +69,9 @@ from gain.genomic_resources.statistics.length_histogram import (
     plot_length_histogram,
 )
 from gain.genomic_resources.statistics.percentages import percentage_of
+from gain.genomic_resources.statistics.record_validation import (
+    validate_record_arrays,
+)
 from gain.genomic_resources.statistics.region_fold import merge_regions
 from gain.utils.chromosome_order import natural_chromosome_key
 
@@ -1151,7 +1154,8 @@ def allele_arrays_folded_into(
     The array twin of :func:`records_folded_into`, and the same shape: a
     transducer that folds each batch and yields it onward.  What it
     yields is the batch's ``[:3]`` slice -- a plain ``RecordArrays`` --
-    because the scan's array door (``validate_record_arrays``, ADR 0008)
+    because the scan's array door
+    (:func:`~.record_validation.validate_record_arrays`, ADR 0008)
     unpacks three names and raises on the five an
     :class:`~gain.genomic_resources.genomic_scores.records.AlleleRecordArrays`
     carries.
@@ -1171,8 +1175,8 @@ def allele_arrays_folded_into(
                 batch.pos_begin, batch.reference, batch.alternative)
             yield batch
 
-    yield from score.validate_record_arrays(
-        (batch[:3] for batch in folded()), chrom)
+    yield from validate_record_arrays(
+        score, (batch[:3] for batch in folded()), chrom)
 
 
 def merge_region_alleles(

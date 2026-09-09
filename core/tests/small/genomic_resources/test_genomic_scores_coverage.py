@@ -21,6 +21,9 @@ from gain.genomic_resources.score_def import (
     GenomicScoreDef,
     extract_column_value,
 )
+from gain.genomic_resources.statistics.record_validation import (
+    validate_records,
+)
 from gain.genomic_resources.testing import build_inmemory_test_resource
 
 
@@ -253,7 +256,7 @@ def test_position_score_multiple_values_for_position() -> None:
         (12, 18, [0.2]),
     ]
     with pytest.raises(ValueError, match="multiple values"):
-        list(score.validate_records(score.fetch_records("1", 10, 20)))
+        list(validate_records(score, score.fetch_records("1", 10, 20)))
 
 
 def test_position_score_fetch_scores_multiple_lines() -> None:
@@ -280,7 +283,7 @@ def test_position_score_fetch_scores_multiple_lines() -> None:
 
     assert score.get_scores_at_position("1", 10) == (0.1,)
     with pytest.raises(ValueError, match="multiple values"):
-        list(score.validate_records(score.fetch_records("1", 10, 10)))
+        list(validate_records(score, score.fetch_records("1", 10, 10)))
 
 
 def test_allele_score_invalid_resource_type() -> None:

@@ -67,6 +67,7 @@ from gain.genomic_resources.genomic_position_table.record import (
 from gain.genomic_resources.repository import (
     GenomicResource,
 )
+from gain.genomic_resources.resource_errors import inverted_span_error
 from gain.genomic_resources.score_def import (
     BULK_PARSEABLE_VALUE_TYPES,
     GenomicScoreDef,
@@ -234,12 +235,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         - region_values_from_records(): what a region's raw records mean for
           this kind.  ``fetch_region_segments`` is it applied to
           ``fetch_records``, and the statistics scan is it applied to
-          ``validate_records(fetch_records(...))`` -- so a kind states its
-          reading once and both consumers get it (ADR 0008).
-        - validate_records(): the rule this kind's records must hold to,
-          which only the statistics scan applies.
-        - validate_record_arrays(): the same rule over a batch's columns,
-          which only the statistics scan's vectorized path applies.
+          ``validate_records(score, fetch_records(...))`` -- so a kind states
+          its reading once and both consumers get it (ADR 0008).
         - record_weight(): how many times one record's value counts when a
           region is aggregated.  Every reader goes through it -- the
           annotators' ``aggregate_region``, the per-record scan, and the
@@ -251,8 +248,16 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
           kind that counts a record once counts it wherever it falls.
 
         All but the last have no default.  A kind that inherited one would
-        be validated, or weighed, by a rule nobody chose for it, which is
-        the failure ADR 0008 exists to undo.
+        be weighed by a rule nobody chose for it, which is the failure ADR
+        0008 exists to undo.
+
+        The validation rules this list used to name -- ``validate_records``
+        and ``validate_record_arrays`` -- are no longer methods at all.  They
+        are ``singledispatch`` functions in
+        :mod:`gain.genomic_resources.statistics.record_validation`, registered
+        per kind, and a kind with no registration is refused there for the
+        same reason (ADR 0027).  A kind's author still writes one rule per
+        door; the door is just not on this class.
 
     See Also:
         - PositionScore: For position-based genomic scores
@@ -472,55 +477,6 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 exc_type, exc_value, exc_tb)
         self.close()
 
-    @staticmethod
-    def _inverted_span_error(record: Record) -> OSError:
-        """Build the refusal for a record whose end precedes its begin.
-
-        Returned rather than raised, so the raise stays at the site that read
-        the slots -- and so the several sites that perform this check share
-        one message.  Off the hot path by construction: a caller compares two
-        integers per record and only calls this when the comparison fails.
-
-        Not to be confused with
-        :func:`~gain.genomic_resources.resource_errors.backwards_records_error`,
-        despite the neighbouring vocabulary: that one refuses a resource whose
-        records move backwards *along a contig*, raises
-        :class:`MalformedResourceError`, and belongs to ``validate_records``.
-        This one is about a single record's own two ends, and stays an
-        ``OSError`` -- the type the read path has always raised for it, and
-        the type the tests pin.
-
-        The message names the record by its DECODED slots rather than
-        interpolating it.  A record's last slot is the backend's payload, so
-        ``f"{record}"`` would print a whole ``pysam.VariantRecord`` -- whose
-        repr is the entire VCF line -- or a ``TupleProxy``.
-        """
-        chrom = record[CHROM]
-        pos_begin = record[POS_BEGIN]
-        pos_end = record[POS_END]
-        ref, alt = record[REF], record[ALT]
-        ref_alt = f" {ref}->{alt}" if ref is not None or alt is not None \
-            else ""
-        return OSError(
-            f"The resource record {chrom}:{pos_begin}-{pos_end}{ref_alt} "
-            f"has a region with end {pos_end} smaller than the "
-            f"beginning {pos_begin}.")
-
-    @staticmethod
-    def _record_to_begin_end(record: Record) -> tuple[str, int, int]:
-        """Read a record's three positional slots, checking their order.
-
-        Returns the chrom as well, so it is the wrong door for a caller that
-        wants only the two positions: read the slots and raise
-        :meth:`_inverted_span_error` directly, as the per-record loops do.
-        """
-        chrom = record[CHROM]
-        pos_begin = record[POS_BEGIN]
-        pos_end = record[POS_END]
-        if pos_end < pos_begin:
-            raise GenomicScore._inverted_span_error(record)
-        return chrom, pos_begin, pos_end
-
     def _get_header(self) -> tuple[Any, ...] | None:
         assert self.table is not None
         return self.table.header
@@ -678,9 +634,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         ``can_bulk_min_max``).  The scan does not re-test the resource
         KIND; ADR 0001 records why.  What it does
         NOT require is a particular record shape: the accumulator reads the
-        kind's own ``record_weight`` and the scan's door reads the
-        kind's own ``validate_record_arrays``, so a position, allele and
-        fragment score are all served.
+        kind's own ``record_weight`` and the scan's door reads the rule
+        registered for the kind in
+        :mod:`gain.genomic_resources.statistics.record_validation`, so a
+        position, allele and fragment score are all served.
 
         Answerable on an UNOPENED score: the table and the score definitions
         are both built in ``__init__``, so nothing here touches the file.
@@ -936,7 +893,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         rather than by a flag: :meth:`fetch_region_segments` is this
         applied to :meth:`fetch_records`, and the statistics scan is this
         applied to
-        ``validate_records(fetch_records(...))``.  Neither can quietly
+        ``validate_records(score, fetch_records(...))``.  Neither can quietly
         acquire the other's behaviour, and no argument travels down to say
         which of the two is reading (ADR 0008).
 
@@ -1031,12 +988,16 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         The hottest loop in the read path, so it reads its record slots
         directly rather than through the helpers that wrap them (gain#823):
-        :meth:`_record_to_begin_end` returns a 3-tuple whose chrom this loop
-        drops on the next line, and :meth:`get_score_values_from_record` is a
-        method call around a comprehension over defs already resolved for the
-        whole region.  Both remain, unchanged, for their other callers -- what
-        is removed is two objects and a call per record, not the surface.  The
-        ordering refusal they carried is kept, in place, as one comparison;
+        the ``_record_to_begin_end`` this loop once called returns a 3-tuple
+        whose chrom it drops on the next line, and
+        :meth:`get_score_values_from_record` is a method call around a
+        comprehension over defs already resolved for the whole region.  The
+        first of those has since followed the validation rules into
+        :mod:`gain.genomic_resources.statistics.record_validation` (ADR 0027)
+        and is private to them; the second remains, unchanged, for its other
+        callers.  The ordering refusal they carried is kept here, as one
+        comparison raising the shared
+        :func:`~gain.genomic_resources.resource_errors.inverted_span_error`;
         see ``test_segment_path_refuses_a_backwards_record``.
         """
         extract = self._extract_value
@@ -1044,65 +1005,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             rec_begin = record[POS_BEGIN]
             rec_end = record[POS_END]
             if rec_end < rec_begin:
-                raise self._inverted_span_error(record)
+                raise inverted_span_error(
+                    record[CHROM], rec_begin, rec_end,
+                    record[REF], record[ALT])
             yield (rec_begin, rec_end, [
                 extract(record, score_def) for score_def in score_defs])
-
-    @abstractmethod
-    def validate_records(
-        self, records: Iterator[Record],
-    ) -> Generator[Record, None, None]:
-        """Yield a raw record stream through, refusing a malformed one.
-
-        A **transducer**: it hands back exactly what it was given, in order,
-        and raises
-        :class:`~gain.genomic_resources.resource_errors.MalformedResourceError`
-        at the first record its
-        kind cannot mean.  It never re-reads and never materialises the
-        region -- the statistics scan pays for one read, and this rides it.
-
-        It reads RAW records rather than the spans a kind yields, because a
-        kind's normalization destroys the evidence: an allele score collapses
-        a record to the point it sits at, discarding its end entirely.  Raw
-        is also the only layer at which this and the vectorized validator
-        can state one rule (ADR 0008).
-
-        Every kind states this itself; there is deliberately no default to
-        inherit.  A kind that inherited one would be validated by a rule
-        nobody chose for it, and a rule stated once for kinds that mean
-        different things is what gain#585 is unwinding.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def validate_record_arrays(
-        self, batches: Iterator[RecordArrays], chrom: str,
-    ) -> Generator[RecordArrays, None, None]:
-        """Yield a stream of raw column batches through, refusing a bad one.
-
-        The vectorized counterpart of :meth:`validate_records`, and the same
-        transducer shape over the batches the bulk scan is already pulling.
-        It states the SAME ordering rule as its per-record twin -- both read
-        the raw begins and ends, which is the only layer at which they can --
-        so a resource whose records are out of order is refused identically
-        whichever path it was eligible for.  Divergence between the two is
-        what ADR 0008 records as the reason the shared class attribute was
-        removed.
-
-        The ordering rule is all it states.  The per-record path additionally
-        refuses a record whose end precedes its begin (the message is
-        ``_inverted_span_error``); there is no array counterpart, because
-        no backend the bulk path reads can produce one (tabix refuses to index
-        such a row, and a bigWig cannot express it).  If that ever stops being
-        true, this is where the check belongs.
-
-        ``chrom`` is what the batches were read for.  A bulk scan reads one
-        region, which lies within one contig, so the implementations carry
-        their ordering state across batches but never across contigs.
-
-        Every kind states this itself; there is deliberately no default.
-        """
-        raise NotImplementedError
 
     def fetch_region_segments(
         self,
@@ -1142,7 +1049,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         contig and an unknown score id are refused from.
 
         A plain read: it checks nothing.  The statistics scan reads the same
-        records through the same transform with :meth:`validate_records`
+        records through the same transform with
+        :func:`~gain.genomic_resources.statistics.record_validation.validate_records`
         composed in front, and that extra link -- visible at the consumer,
         in ``genomic_scores_impl/scan.py`` -- is the whole of the
         difference
@@ -1392,7 +1300,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         than by a list of callers: the others are part of the read API and
         are asked for by name (``fetch_region_segments`` IS
         :meth:`region_values_from_records`; the scan calls
-        :meth:`validate_records` and :meth:`record_weight` by name), while
+        :meth:`record_weight` by name, and reads the kind's validation rule
+        by dispatching on its class), while
         this one is never a caller's question -- it is composed, from
         inside this hierarchy, by whichever reads aggregate.  A kind
         overrides it; nothing outside the hierarchy calls it.  Stated as

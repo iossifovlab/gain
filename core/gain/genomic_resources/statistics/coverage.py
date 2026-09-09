@@ -929,8 +929,9 @@ def region_coverage_for(
     gives.
 
     A position score is the one kind whose rows are pairwise disjoint --
-    its ``validate_records`` refuses a row beginning at or before its
-    predecessor's end -- and that is the property this statistic depends
+    the rule it is registered under in :mod:`~.record_validation` refuses a
+    row beginning at or before its predecessor's end -- and that is the
+    property this statistic depends
     on: only then does the union of the spans answer "is there data at
     this position at all?" exactly, so that the count is a genuine
     measure of what the resource covers and the fraction a genuine

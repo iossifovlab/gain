@@ -20,8 +20,6 @@ from typing import (
     ClassVar,
 )
 
-import numpy as np
-
 from gain.genomic_resources.genomic_position_table.record import (
     ALT,
     CHROM,
@@ -33,9 +31,7 @@ from gain.genomic_resources.genomic_position_table.record import (
 from gain.genomic_resources.repository import (
     GenomicResource,
 )
-from gain.genomic_resources.resource_errors import (
-    backwards_records_error,
-)
+from gain.genomic_resources.resource_errors import inverted_span_error
 from gain.genomic_resources.resource_types import (
     PREFERRED_ALLELE_SCORE_TYPE,
     reject_retired_resource,
@@ -67,7 +63,6 @@ from .base import (
 )
 from .records import (
     AlleleRecordArrays,
-    RecordArrays,
     _key_column_array,
 )
 
@@ -390,68 +385,6 @@ class AlleleScore(GenomicScore):
         scores_schema["aggregator"] = AGGREGATOR_SCHEMA
         return schema
 
-    def validate_records(
-        self, records: Iterator[Record],
-    ) -> Generator[Record, None, None]:
-        """Refuse a record beginning before the one before it.
-
-        Several records legitimately sit at one position -- one per ref/alt
-        pair -- so a record at the SAME position as its predecessor is what
-        an allele score IS, not an error.  Only a record that moves
-        BACKWARDS is one: no ordering of the alleles at a site can produce
-        it, so it is a table read out of order.
-
-        The comparison is against RAW spans, and it restarts at every contig:
-        where a record sits on one contig says nothing about the next, and
-        without the reset every resource whose second contig starts before
-        the first one ended would be refused.
-        """
-        prev_chrom: str | None = None
-        prev_pos: int | None = None
-        for record in records:
-            chrom, pos, _end = self._record_to_begin_end(record)
-            if chrom != prev_chrom:
-                prev_pos = None
-            if prev_pos is not None and pos < prev_pos:
-                raise backwards_records_error(
-                    self.resource_id, chrom, pos, prev_pos,
-                    "an allele score's")
-            prev_chrom, prev_pos = chrom, pos
-            yield record
-
-    def validate_record_arrays(
-        self, batches: Iterator[RecordArrays], chrom: str,
-    ) -> Generator[RecordArrays, None, None]:
-        """Refuse a record beginning before the one before it, vectorized.
-
-        The same rule as :meth:`validate_records`, over a batch's columns.
-        The comparison is strict: several records at ONE position are what an
-        allele score is made of, and only a record that moves backwards is a
-        table read out of order.
-
-        Only the begins take part, and only the RAW ones -- the ends an
-        optional ``pos_end`` column carries are not what an allele record
-        means, and clipping would tie the verdict to the region partition.
-        A violation straddling a batch boundary is caught on the carried
-        begin.
-        """
-        prev_pos: int | None = None
-        for batch in batches:
-            pos_begin, _pos_end, _cells = batch
-            if pos_begin.size:
-                if prev_pos is not None and int(pos_begin[0]) < prev_pos:
-                    raise backwards_records_error(
-                        self.resource_id, chrom, int(pos_begin[0]), prev_pos,
-                        "an allele score's")
-                backwards = pos_begin[1:] < pos_begin[:-1]
-                if bool(backwards.any()):
-                    first = int(np.argmax(backwards))
-                    raise backwards_records_error(
-                        self.resource_id, chrom, int(pos_begin[first + 1]),
-                        int(pos_begin[first]), "an allele score's")
-                prev_pos = int(pos_begin[-1])
-            yield batch
-
     def region_values_from_records(
         self,
         records: Iterator[Record],
@@ -480,9 +413,10 @@ class AlleleScore(GenomicScore):
 
         Nothing is checked either: every record is read, whatever its
         position is next to the one before it.  The rule an allele score's
-        records hold to lives in :meth:`validate_records`, which the
-        statistics scan composes over the stream it reads and no reader
-        composes at all (ADR 0008).
+        records hold to lives in
+        :func:`~gain.genomic_resources.statistics.record_validation.validate_records`,
+        which the statistics scan composes over the stream it reads and no
+        reader composes at all (ADR 0008).
         """
         score_defs = self._region_read_defs(chrom, scores)
         return self._allele_point_values(records, score_defs)
@@ -534,7 +468,9 @@ class AlleleScore(GenomicScore):
         for record in records:
             pos = record[POS_BEGIN]
             if record[POS_END] < pos:
-                raise self._inverted_span_error(record)
+                raise inverted_span_error(
+                    record[CHROM], pos, record[POS_END],
+                    record[REF], record[ALT])
             yield pos, pos, [
                 extract(record, score_def) for score_def in score_defs]
 

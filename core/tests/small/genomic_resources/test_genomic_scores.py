@@ -1533,18 +1533,6 @@ def test_fetch_region_segments_checks_available_chromosomes() -> None:
         score.fetch_region_segments("2", 10, 10)
 
 
-def test_record_to_begin_end_validates_order() -> None:
-    # A record whose interval runs backwards -- pos_end (10) before pos_begin
-    # (20).  Built as a record rather than through the retired Line adapter
-    # (#239): _line_to_begin_end reads the score line's core-field properties,
-    # which the record's slots carry directly, so this is the same
-    # check over the shape every backend now yields.
-    bad_record = ("1", 20, 10, None, None, ("1", "20", "10"))
-
-    with pytest.raises(OSError, match="has a region"):
-        GenomicScore._record_to_begin_end(bad_record)
-
-
 def test_segment_path_refuses_a_backwards_record(
     tmp_path: pathlib.Path,
 ) -> None:
