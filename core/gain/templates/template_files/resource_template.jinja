@@ -163,9 +163,12 @@
                               }
                             </style>
                             {%- set description = resource.get_description() -%}
-                            {# markdown2 output; a plain str, so mark it safe. #}
+                            {# markdown2 output; a plain str, so mark it safe.
+                               The dialect is `render_markdown`'s to decide --
+                               naming extras here is what let this page and the
+                               about page drift apart (gain#1278). #}
                             {{
-                                (markdown(description, extras=["tables"]) if description else "N/A")|safe
+                                (markdown(description) if description else "N/A")|safe
                             }}
                         </template>
                     </div>
