@@ -30,11 +30,33 @@ def test_a_region_longer_than_the_budget_is_a_bundle_of_its_own() -> None:
 
 
 @pytest.mark.parametrize("budget", [0, -1])
-def test_a_budget_of_zero_or_less_is_one_region_per_bundle(
+def test_a_budget_of_zero_or_less_is_one_bundle_of_every_region(
     budget: int,
 ) -> None:
-    regions = [BedRegion("chr1", 1, 10), BedRegion("chr2", 1, 10)]
+    # No budget at all is no cut at all: the whole run is one unit of
+    # work, however many regions and however long they are.
+    regions = [
+        BedRegion("chr1", 1, 10), BedRegion("chr2", 1, 10),
+        BedRegion("chr3", 1, 1000),
+    ]
 
     bundles = bundle_regions(regions, budget)
 
+    assert bundles == [regions]
+
+
+def test_a_budget_of_one_is_one_region_per_bundle() -> None:
+    # A region is never split, so the smallest budget that cuts at all
+    # cuts everywhere: this is how the caller asks for a task per region.
+    regions = [BedRegion("chr1", 1, 10), BedRegion("chr2", 1, 10)]
+
+    bundles = bundle_regions(regions, 1)
+
     assert bundles == [[regions[0]], [regions[1]]]
+
+
+def test_no_regions_is_no_bundles_whatever_the_budget() -> None:
+    # The degenerate input stays degenerate: a budget of 0 must not
+    # invent an empty bundle for a run with nothing in it.
+    assert bundle_regions([], 0) == []
+    assert bundle_regions([], 50) == []

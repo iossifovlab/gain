@@ -194,9 +194,25 @@ chromosome longer than the budget is a task of its own, while the hundreds
 of alternate and unplaced contigs of a human genome — under two percent of
 its bases — pack into a handful of tasks instead of one each. The budget
 only decides how many tasks there are: the file is the same whatever its
-value, and a budget of 0 or less restores one task per region. The tasks run
-through the same task graph as the annotation tools, so the same flags
-apply: ``-j N`` sets the number of
+value.
+
+Both ends of the dial are reachable. A budget of **1** is one task per
+region — a region is never split, so the smallest budget that cuts at all
+cuts everywhere. A budget of **0 or less** is no budget at all: the whole
+run goes into one task per track. A task opens its track's resource once,
+whatever the budget, so the whole-run task opens it once for the run.
+
+Which end helps depends on how many tracks a run has, because a track's
+work is never split across tasks at budget 0: the achievable parallelism
+is then exactly the number of tracks. A run of hundreds of tracks on a few
+workers loses nothing and sheds tasks; a run of two or three tracks with
+``-j 8`` leaves most of the workers idle and should keep the default.
+Note too that a task is the unit a rerun repeats: at budget 0 a task that
+fails part-way recomputes its whole track next time, where at the default
+a rerun keeps every bundle that finished.
+
+The tasks run through the same task graph as the annotation tools, so the
+same flags apply: ``-j N`` sets the number of
 workers, ``-N`` names a configured dask cluster, and ``--task-log-dir``
 keeps a log per task. The genomic-context flags (``-g``,
 ``--grr-directory``, ``-R``) and the verbosity flags (``--verbose``,

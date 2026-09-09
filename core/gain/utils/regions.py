@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from collections import defaultdict
 from collections.abc import Iterator, Sequence
 from pathlib import Path
@@ -498,15 +499,21 @@ def bundle_regions(
     The other way round from :func:`split_into_regions`: many small
     regions become one unit of work.  Order is kept, so a bundle is a run
     of the input; a region is never split, so one longer than the budget
-    is a bundle on its own; a budget of zero or less is one region per
-    bundle.
+    is a bundle on its own.
+
+    A budget of 0 or less is no budget at all -- an unbounded one, which
+    nothing exceeds, so every region goes into a single bundle.  Saying
+    it as the limit rather than as a case of its own keeps one packing
+    rule: whatever the loop learns to do later, it does at every budget.
+    A task per region is a budget of 1, since a region is never split.
     """
+    limit = math.inf if budget <= 0 else budget
     bundles: list[list[BedRegion]] = []
     current: list[BedRegion] = []
     current_length = 0
     for region in regions:
         length = len(region)
-        if current and current_length + length > budget:
+        if current and current_length + length > limit:
             bundles.append(current)
             current, current_length = [], 0
         current.append(region)

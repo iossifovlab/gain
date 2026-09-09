@@ -6,6 +6,7 @@ registers the way every other gain plugin does, without editing the tool.
 """
 from __future__ import annotations
 
+from collections.abc import Generator
 from dataclasses import dataclass
 from importlib.metadata import entry_points
 from typing import Any, ClassVar, Protocol
@@ -85,10 +86,25 @@ class Binner(Protocol):
 
     @staticmethod
     def bin_track(
-        track: Track, region: BedRegion, bin_size: int,
+        track: Track, regions: list[BedRegion], bin_size: int,
         grr: GenomicResourceRepo,
-    ) -> npt.NDArray[np.float64]:
-        """Reduce ``track`` to one float64 per grid bin of ``region``."""
+    ) -> Generator[npt.NDArray[np.float64], None, None]:
+        """Reduce ``track`` to one float64 per grid bin, region by region.
+
+        Yields one array per region of ``regions``, in the order given --
+        a bundle is regions binned side by side, never one run of bins
+        across them.  Yielding rather than returning them all is what
+        lets the caller save each array as it arrives, so a bundle of any
+        size costs one region of memory.
+
+        The bundle is the unit an implementation opens its resource for:
+        one open per call, however many regions the bundle holds.
+
+        A generator rather than any iterator, because holding a resource
+        open across the yields makes closing part of the contract: the
+        caller closes what it does not exhaust, and only a generator can
+        be closed.
+        """
 
 
 def check_keys(label: str, config: Any, known: frozenset[str]) -> None:
@@ -181,10 +197,10 @@ class PositionScoreBinner:
 
     @staticmethod
     def bin_track(
-        track: Track, region: BedRegion, bin_size: int,
+        track: Track, regions: list[BedRegion], bin_size: int,
         grr: GenomicResourceRepo,
-    ) -> npt.NDArray[np.float64]:
-        """Reduce ``track`` to one float64 per grid bin of ``region``.
+    ) -> Generator[npt.NDArray[np.float64], None, None]:
+        """Reduce ``track`` to one float64 per grid bin, region by region.
 
         Consumes :meth:`PositionScore.get_score_in_bins` unchanged: it is
         the semantic reference for the global grid, the boundary split and
@@ -196,20 +212,25 @@ class PositionScoreBinner:
         (gain#1211), so a genome-wide run over a track that skips a
         chromosome needs no case here.  This method used to carry one, and
         with it a second copy of the fold; the read owning both is D14.
+
+        The read is folded straight into the array rather than through a
+        list of boxed floats.  A suspended generator keeps its locals
+        alive, so an intermediate list would sit beside the array -- at
+        roughly four times its size -- for as long as the caller takes to
+        save it; ``fromiter`` leaves nothing to keep.
         """
         score = PositionScore(grr.get_resource(track.resource_id))
         with score.open():
-            values = [
-                value
-                for _, _, value in score.get_score_in_bins(
-                    region.chrom, region.start, region.stop, bin_size,
-                    score=track.score_id,
-                    aggregator=track.aggregator,
-                    none_value_replacement=track.none_value_replacement)
-            ]
-        return np.array(
-            [np.nan if value is None else value for value in values],
-            dtype=np.float64)
+            for region in regions:
+                yield np.fromiter(
+                    (np.nan if value is None else value
+                     for _, _, value in score.get_score_in_bins(
+                         region.chrom, region.start, region.stop, bin_size,
+                         score=track.score_id,
+                         aggregator=track.aggregator,
+                         none_value_replacement=(
+                             track.none_value_replacement))),
+                    dtype=np.float64)
 
     @classmethod
     def _track_of(

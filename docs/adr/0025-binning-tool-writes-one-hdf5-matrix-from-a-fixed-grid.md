@@ -9,7 +9,9 @@
 [grr_bench#3](https://github.com/iossifovlab/grr_bench/issues/3) (the D14 timing),
 [#1214](https://github.com/iossifovlab/gain/issues/1214) (the D13 amendment: region bundles),
 [#1211](https://github.com/iossifovlab/gain/issues/1211) (the D14 amendment: an absent
-contig is one uncovered run)
+contig is one uncovered run),
+[#1301](https://github.com/iossifovlab/gain/issues/1301) (the D13 amendment: a budget of
+0 or less is one task per track, opening its resource once)
 
 Design doc of record: `seqpipe/genomics-toolbox`
 `docs/2026-09-04-gain-score-binning-design.md`, whose decisions are numbered
@@ -209,6 +211,28 @@ way. Splitting a chromosome
 across tasks was considered and dropped: the writer assembles one slab per
 user region and the chunk name encodes the region bounds, and the tail it
 would shorten is one chromosome-sized task.
+
+**Amended by #1301 (2026-09-09): `--task-budget` 0 or less is one task per
+track, and a task opens its resource once.** Two changes to the amendment
+above. First, 0 or less no longer means one task per region — it means no
+cut at all, so a whole run is one bundle and a run is one task per track.
+One task per region is a budget of 1, which reaches it by the ordinary
+rule, since a region is never split. The default is unchanged and both
+ends stay opt-in. Second, `Binner.bin_track` is now bundle-level: it takes
+the bundle's regions and *yields* one float64 array per region, in order,
+so `PositionScoreBinner` opens its score once per task instead of once per
+region, and the caller saves each array as it arrives — peak memory stays
+one region, which is what makes a whole-run bundle affordable.
+
+This buys task hygiene, not time: the open is part of the sub-1 ms setup
+measured for #1214, so a run saves well under a second by it. What the
+budget really trades is parallelism against task count, and at 0 a track's
+work is one task, so the achievable parallelism is the track count — right
+for many tracks on few workers, wrong for a handful of tracks on many.
+The rerun granularity moves with it, as it did for #1214: at 0 a failed
+task recomputes its whole track. Chunk names, task ids, the writer and
+chunk sharing between run definitions all stay as they were; a whole-run
+bundle simply gets an id spanning its first to its last region.
 
 ### The read path is `get_scores_in_bins`, unchanged — decided by measurement (D14)
 

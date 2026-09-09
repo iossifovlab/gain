@@ -3,6 +3,7 @@ import argparse
 import pathlib
 import shutil
 import textwrap
+from collections.abc import Generator
 from typing import Any
 
 import h5py
@@ -11,7 +12,8 @@ import numpy.typing as npt
 import pytest
 import pytest_mock
 from gain import __version__
-from gain.binning.cli import cli
+from gain.binning.binners import Track
+from gain.binning.cli import _bin_chunks, _chunk_path, cli
 from gain.genomic_resources import genomic_context as gc_mod
 from gain.genomic_resources.genomic_context_base import (
     GC_REFERENCE_GENOME_KEY,
@@ -24,6 +26,15 @@ from gain.genomic_resources.reference_genome import (
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import a_position_score
+from gain.utils.regions import BedRegion
+
+# A track for the chunk-writing task, which names chunks after it and
+# hands it to the binner.  Which binner kind produced it does not reach
+# the task -- the graph has already resolved the kind to a class.
+TRACK = Track(
+    name="scores/one", resource_id="scores/one", score_id="s",
+    aggregator="max", none_value_replacement=None,
+    binner="stub_binner")
 
 RUN_DEFINITION = textwrap.dedent("""
     input_reference_genome: genome
@@ -200,10 +211,16 @@ def test_dry_run_prints_the_tracks_and_counts_and_writes_nothing(
 
 
 # Both toy regions fit one bundle under the default budget: one task per
-# track.  A budget of 0 is one task per (track, region).
+# track.  A budget of 1 is one task per (track, region), and so is any
+# budget under a region's length, since a region is never split.  A
+# budget of 0 or less is one task per track whatever the regions are --
+# here the same two tasks the default gives, reached the other way.
 @pytest.mark.parametrize("budget, tasks", [
     ((), "tasks: 2"),
-    (("--task-budget", "0"), "tasks: 4"),
+    (("--task-budget", "1"), "tasks: 4"),
+    (("--task-budget", "20"), "tasks: 4"),
+    (("--task-budget", "0"), "tasks: 2"),
+    (("--task-budget", "-1"), "tasks: 2"),
 ])
 def test_dry_run_reports_the_task_count_under_the_budget(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
@@ -565,19 +582,26 @@ def work_dir_names(output: pathlib.Path, pattern: str) -> list[str]:
     return sorted(p.name for p in (output.parent / "bins_work").glob(pattern))
 
 
+# Budget 1 is the baseline because it is the cut that differs: the
+# default packs both toy regions into one bundle, and so does 0, since a
+# run this small has nothing to cut.  Comparing either against 1 compares
+# two real cuts; comparing them against each other would compare a cut
+# with itself.
+@pytest.mark.parametrize("budget", [(), ("--task-budget", "0")])
 def test_the_budget_changes_the_tasks_and_nothing_in_the_file(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
     run_definition: pathlib.Path, output: pathlib.Path,
+    budget: tuple[str, ...],
 ) -> None:
     # The budget is how the work is cut, not what is computed: the file
     # written with every region its own task is the file written with
     # both regions in one, dataset for dataset and attribute for
     # attribute.
-    binning_tool(run_definition, grr_dir, output)
+    binning_tool(run_definition, grr_dir, output, "--task-budget", "1")
     bundled = read_everything_but_created(output)
     output.unlink()
 
-    binning_tool(run_definition, grr_dir, output, "--task-budget", "0")
+    binning_tool(run_definition, grr_dir, output, *budget)
 
     unbundled = read_everything_but_created(output)
     np.testing.assert_array_equal(unbundled["values"], bundled["values"])
@@ -592,7 +616,8 @@ def test_the_budget_changes_the_tasks_and_nothing_in_the_file(
         np.testing.assert_array_equal(unbundled["attrs"][key], value)
 
 
-@pytest.mark.parametrize("budget", [(), ("--task-budget", "0")])
+@pytest.mark.parametrize("budget", [
+    (), ("--task-budget", "1"), ("--task-budget", "0")])
 def test_the_chunks_are_the_tracer_bullets_whatever_the_budget(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
     run_definition: pathlib.Path, output: pathlib.Path,
@@ -609,6 +634,107 @@ def test_the_chunks_are_the_tracer_bullets_whatever_the_budget(
         "scores_two_t_mean_none_bs10_chr1_1_40.npy",
         "scores_two_t_mean_none_bs10_chr2_1_40.npy",
     ]
+
+
+def test_another_budget_writes_the_same_chunk_files_byte_for_byte(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    run_definition: pathlib.Path, output: pathlib.Path,
+) -> None:
+    # A chunk is named by everything that decides its values, and the
+    # budget is not one of them: the same definition run at another
+    # budget in the same work directory leaves the same chunk files,
+    # byte for byte, so the assembled matrix cannot depend on the cut.
+    #
+    # They are *rewritten*, not reused: a task is cached under its id,
+    # and an id spans its bundle, so every id changes with the budget.
+    # Reuse holds across reruns at one budget, which is the case the
+    # work directory is for.
+    chunk_dir = output.parent / "bins_work" / "chunks"
+    binning_tool(
+        run_definition, grr_dir, output, "--keep-work-dir",
+        "--task-budget", "1")
+    written = {path.name: path.read_bytes()
+               for path in chunk_dir.glob("*.npy")}
+    output.unlink()
+
+    binning_tool(
+        run_definition, grr_dir, output, "--keep-work-dir",
+        "--task-budget", "0")
+
+    assert len(written) == 4
+    assert {path.name: path.read_bytes()
+            for path in chunk_dir.glob("*.npy")} == written
+
+
+def test_a_task_saves_each_chunk_as_the_binner_yields_it(
+    repo: GenomicResourceRepo, tmp_path: pathlib.Path,
+) -> None:
+    # Peak memory is one region, not one bundle, which holds only if the
+    # task consumes the binner's arrays one at a time.  This binner
+    # records, at each yield, which chunks are already on disk: a task
+    # that drew the whole bundle before saving any of it would leave
+    # nothing on disk at any yield.
+    chunk_dir = str(tmp_path)
+    regions = [BedRegion("chr1", start, start + 9) for start in (1, 11, 21)]
+    paths = [_chunk_path(chunk_dir, TRACK, region, 10) for region in regions]
+    on_disk_at_each_yield: list[list[str]] = []
+
+    class RecordingBinner:
+        @staticmethod
+        def bin_track(
+            _track: Track, regions: list[BedRegion], _bin_size: int,
+            _grr: GenomicResourceRepo,
+        ) -> Generator[npt.NDArray[np.float64], None, None]:
+            for index in range(len(regions)):
+                on_disk_at_each_yield.append(
+                    [path for path in paths if pathlib.Path(path).exists()])
+                yield np.array([float(index)], dtype=np.float64)
+
+    _bin_chunks(
+        RecordingBinner, TRACK, regions, 10, repo.definition, chunk_dir)
+
+    assert on_disk_at_each_yield == [[], paths[:1], paths[:2]]
+    assert [np.load(path)[0] for path in paths] == [0.0, 1.0, 2.0]
+
+
+def test_a_task_closes_the_binner_when_saving_a_chunk_fails(
+    repo: GenomicResourceRepo, tmp_path: pathlib.Path,
+) -> None:
+    # The binner holds its resource open across the yields, so the task
+    # is what must close it -- and a failed save is the case that needs
+    # saying, because the executor keeps a failed task's exception, whose
+    # traceback keeps this frame, the generator and the open handle with
+    # it.  A run of many whole-run tasks failing the same way would
+    # otherwise hold one handle each for the rest of the run.
+    closed: list[str] = []
+    chunk_dir = str(tmp_path)
+    regions = [BedRegion("chr1", 1, 10), BedRegion("chr1", 11, 20)]
+    # A directory where the second chunk's file belongs: the first save
+    # succeeds, the second raises, so the failure lands mid-bundle.
+    unwritable = pathlib.Path(_chunk_path(chunk_dir, TRACK, regions[1], 10))
+    unwritable.mkdir()
+
+    class ClosingBinner:
+        @staticmethod
+        def bin_track(
+            _track: Track, regions: list[BedRegion], _bin_size: int,
+            _grr: GenomicResourceRepo,
+        ) -> Generator[npt.NDArray[np.float64], None, None]:
+            try:
+                for _ in regions:
+                    yield np.array([1.0], dtype=np.float64)
+            finally:
+                closed.append("closed")
+
+    with pytest.raises(OSError) as failure:
+        _bin_chunks(
+            ClosingBinner, TRACK, regions, 10, repo.definition, chunk_dir)
+
+    # Reading the failure keeps the traceback alive, which is the point:
+    # it is what would keep the generator, and its resource, alive if the
+    # task did not close them itself.
+    assert failure.value.filename == str(unwritable)
+    assert closed == ["closed"]
 
 
 def test_a_set_replacement_is_named_by_its_value(
@@ -667,22 +793,53 @@ def test_a_bundle_of_many_regions_is_one_task_with_a_short_id(
     assert read_matrix(output).shape == (24, 2)
 
 
-def test_a_budget_of_zero_runs_one_task_per_track_and_region(
+def test_a_budget_of_one_runs_one_task_per_track_and_region(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
     run_definition: pathlib.Path, output: pathlib.Path,
 ) -> None:
     # The budget the command line names is the one the graph is cut by:
-    # under 0 each of the two regions is its own task per track, four
-    # single-region bundles where the default makes two.
+    # under 1 each of the two regions is its own task per track, four
+    # single-region bundles where the default makes two.  A region is
+    # never split, so 1 is the smallest budget and cuts everywhere.
     binning_tool(
         run_definition, grr_dir, output, "--keep-work-dir",
-        "--task-budget", "0")
+        "--task-budget", "1")
 
     assert work_dir_names(output, ".task-status/bin_*.flag") == [
         "bin_scores_one_s_max_none_bs10_chr1_1_chr1_40.flag",
         "bin_scores_one_s_max_none_bs10_chr2_1_chr2_40.flag",
         "bin_scores_two_t_mean_none_bs10_chr1_1_chr1_40.flag",
         "bin_scores_two_t_mean_none_bs10_chr2_1_chr2_40.flag",
+    ]
+
+
+@pytest.mark.parametrize("budget", ["0", "-1"])
+def test_a_budget_of_zero_or_less_runs_one_task_per_track(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+    budget: str,
+) -> None:
+    # The other end of the same dial: no budget is no cut, so a run of
+    # twenty-one regions is one task per track rather than twenty-one --
+    # each task's id spanning the whole run, first region to last.
+    windows = ", ".join(f'"chr1:{start}-{start + 4}"'
+                        for start in range(1, 100, 5))
+    run_definition = write_run_definition(output, textwrap.dedent(f"""
+        input_reference_genome: genome
+        bins:
+          bin_size: 10
+          regions: [{windows}, chr2]
+        binners:
+        - position_score_binner:
+            resource_query: "scores/*"
+    """))
+
+    binning_tool(
+        run_definition, grr_dir, output, "--keep-work-dir",
+        "--task-budget", budget)
+
+    assert work_dir_names(output, ".task-status/bin_*.flag") == [
+        "bin_scores_one_s_max_none_bs10_chr1_1_chr2_40.flag",
+        "bin_scores_two_t_mean_none_bs10_chr1_1_chr2_40.flag",
     ]
 
 
