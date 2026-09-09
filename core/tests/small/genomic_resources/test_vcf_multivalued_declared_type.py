@@ -123,6 +123,24 @@ _CNT_TYPED_FLOAT = textwrap.dedent("""
       type: float
 """)
 
+#: The joined field under an EXPLICIT number histogram -- gain#1285's shape --
+#: alongside a scalar field carrying nothing but its header type.  The scalar
+#: is what makes the test able to say that refusing ONE score's histogram does
+#: not cost the resource the rest of its statistics; without it the block
+#: names only MANY, since a ``scores:`` block filters.
+_MANY_NUMBER_HIST_WITH_CNT = textwrap.dedent("""
+    scores:
+    - id: MANY
+      name: MANY
+      type: int
+      histogram:
+        type: number
+        number_of_bins: 4
+    - id: CNT
+      name: CNT
+      type: int
+""")
+
 #: A stable fragment of the override report, so the silence assertions test
 #: for THAT line rather than for a quiet log -- opening a resource emits
 #: other warnings, and a test that demanded none would fail for the wrong
@@ -157,6 +175,31 @@ def _vcf_score(tmp_path: pathlib.Path, scores_block: str = "") -> AlleleScore:
     score = build_score_from_resource(build_filesystem_test_resource(tmp_path))
     assert isinstance(score, AlleleScore)
     return score.open()
+
+
+def _repaired_vcf_resource(
+    tmp_path: pathlib.Path, scores_block: str = "",
+) -> pathlib.Path:
+    """Realize ``_VCF`` as a one-resource GRR and ``repo-repair`` it.
+
+    The ``_vcf_score`` twin for the tests that need the statistics BUILT
+    rather than the definitions read: same resource, same ``scores:`` block
+    composition, but under a ``repo/`` dir the CLI can be pointed at.
+    Returns the resource directory, so a caller reads its ``statistics/``.
+    """
+    repo = tmp_path / "repo"
+    resource = repo / "vcf_score"
+    setup_directories(resource, {
+        "genomic_resource.yaml": textwrap.dedent("""
+            type: allele_score
+            table:
+                filename: data.vcf.gz
+        """) + scores_block,
+    })
+    setup_vcf(resource / "data.vcf.gz", _VCF)
+
+    cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
+    return resource
 
 
 def _declared(score: AlleleScore, field: str) -> str | None:
@@ -347,20 +390,41 @@ def test_a_resource_with_a_joined_field_builds_its_statistics(
     declaring the field unusable (a null histogram) would build just as
     quietly, and it is the joined values themselves that have to be counted.
     """
-    repo = tmp_path / "repo"
-    resource = repo / "vcf_score"
-    setup_directories(resource, {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: allele_score
-            table:
-                filename: data.vcf.gz
-        """),
-    })
-    setup_vcf(resource / "data.vcf.gz", _VCF)
-
-    cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
+    resource = _repaired_vcf_resource(tmp_path)
 
     histogram = json.loads(
         (resource / "statistics" / "histogram_MANY.json").read_text())
     assert histogram["config"]["type"] == "categorical"
     assert histogram["values"] == {"1|2": 1}
+
+
+def test_an_explicit_number_histogram_on_a_joined_field_still_builds(
+    tmp_path: pathlib.Path,
+) -> None:
+    """gain#1285: the crash gain#1259 left reachable through the CONFIG.
+
+    Declaring ``str`` fixed the DEFAULT histogram for a joined field, and a
+    resource that configures ``histogram: {type: number}`` explicitly walks
+    straight back onto the min/max scan that ``np.isnan`` aborts -- the
+    stated ``type:`` is discarded either way, so gain#1259's advice does not
+    reach this.  It is the histogram config, not the type, that selects the
+    crashing path.
+
+    Asserted through a full ``repo-repair``, like its gain#1259 sibling
+    above, because the cost was never the exception itself: the resource
+    ended with NO statistics at all.  So the scalar field's histogram is
+    what the assertion turns on -- one un-histogrammable score must not take
+    the rest of the resource down with it -- while the joined field's own
+    histogram is suppressed, exactly as a deliberately-disabled one is.
+    """
+    resource = _repaired_vcf_resource(tmp_path, _MANY_NUMBER_HIST_WITH_CNT)
+
+    statistics = resource / "statistics"
+    assert not (statistics / "histogram_MANY.json").exists(), (
+        "a number histogram over joined text was built rather than refused"
+    )
+    scalar = json.loads((statistics / "histogram_CNT.json").read_text())
+    assert scalar["config"]["type"] == "number", (
+        "the scalar field lost its histogram too; one score configured with "
+        "a histogram it cannot feed must not cost the resource the rest"
+    )

@@ -103,6 +103,38 @@ __all__ = [
     "update_hist_confs",
 ]
 
+#: The score value types a NUMBER histogram can fold ONE VALUE of.
+#:
+#: ``float`` and ``int`` are the obvious two.  ``bool`` is here because a
+#: bool IS a number to numpy -- ``np.isnan(True)`` answers ``False`` rather
+#: than raising -- so a ``type: bool`` score under a number histogram folds
+#: to a 0/1 histogram, and has always done so.  ``str`` is the one type no
+#: number histogram can fold at all: ``np.isnan`` raises ``TypeError`` on
+#: text, which is what a resource pairing the two aborted its entire
+#: statistics build with (gain#1285).
+#:
+#: Deliberately WIDER than :data:`_BULK_HISTOGRAM_VALUE_TYPES`, and the two
+#: are different questions rather than one rule stated twice: this asks what
+#: a histogram can fold value by value, that asks what it can fold a whole
+#: column of.
+_NUMBER_HISTOGRAM_VALUE_TYPES = ("float", "int", "bool")
+
+#: Which score value types each histogram kind can accumulate a whole BATCH
+#: of -- the pairing :func:`can_bulk_histogram` gates the vectorized
+#: histogram scan on.  Narrower than :data:`_NUMBER_HISTOGRAM_VALUE_TYPES`:
+#: the bulk read yields a number histogram's column as ``float64``, which a
+#: ``bool`` score's column is not, and a categorical's as ``str`` objects.
+#: A NULL histogram accumulates nothing and so appears in neither.
+#:
+#: :func:`can_bulk_min_max` deliberately does NOT read this, though its own
+#: tuple matches the number row: a min/max pass accumulates no histogram,
+#: and sharing the literal would let a future widening of one widen the
+#: other by accident.  Its docstring says so at the point of the copy.
+_BULK_HISTOGRAM_VALUE_TYPES: dict[type[HistogramConfig], tuple[str, ...]] = {
+    NumberHistogramConfig: ("float", "int"),
+    CategoricalHistogramConfig: ("str",),
+}
+
 
 def _score_for(
     resource: GenomicResource,
@@ -232,7 +264,17 @@ def do_noregion_histograms(
 def unpack_score_defs(
     resource: GenomicResource,
 ) -> tuple[list[str], dict[str, HistogramConfig]]:
-    """Extracts scores with min/max and histogram configs for a score."""
+    """Extracts scores with min/max and histogram configs for a score.
+
+    Also where a configured NUMBER histogram over a value type it cannot
+    fold is refused: it becomes a null histogram, and is therefore
+    scheduled for no min/max pass either.  See
+    :func:`_refuse_number_histogram` for why that refusal lives here rather
+    than where a value meets its histogram.  It is the only mismatch
+    refused here -- a CATEGORICAL histogram over a number is still left to
+    the per-value catch in :func:`do_histogram`, because it nullifies one
+    score rather than aborting the build.
+    """
     score = build_score_from_resource(resource)
     all_min_max_scores = []
     all_hist_confs: dict[str, HistogramConfig] = {}
@@ -252,10 +294,65 @@ def unpack_score_defs(
                 continue
 
             assert isinstance(hist_conf, NumberHistogramConfig)
+            if score_def.value_type not in _NUMBER_HISTOGRAM_VALUE_TYPES:
+                all_hist_confs[score_id] = _refuse_number_histogram(
+                    resource, score_id, score_def.value_type)
+                continue
+
             if not hist_conf.has_view_range():
                 all_min_max_scores.append(score_id)
             all_hist_confs[score_id] = hist_conf
     return all_min_max_scores, all_hist_confs
+
+
+def _refuse_number_histogram(
+    resource: GenomicResource, score_id: str, value_type: str | None,
+) -> NullHistogramConfig:
+    """Nullify a number histogram configured over a type it cannot fold.
+
+    The refusal belongs HERE, where the configs are unpacked, rather than
+    where a value meets its histogram, for three reasons.  It is the one
+    place that also decides the min/max pass, and it is that pass -- not
+    the histogram -- that a number histogram over text used to abort the
+    whole build in (gain#1285); nullifying at the value would leave the
+    min/max already scheduled.  It runs ONCE per statistics build, the
+    region tasks being handed the result as data, so the report cannot
+    repeat per record the way gain#1283's does.  And a config that can
+    never work is a fact about the resource, knowable before a single
+    record is read, where a value a histogram refuses one at a time is
+    genuinely a fact about that value -- which is why ``do_histogram``
+    keeps its own per-value catch as the backstop for the latter.
+
+    The reason names the resource and the score because the abort it
+    replaces named neither: it surfaced as a bare ``TypeError`` out of
+    ``numpy``, leaving the reader of a failed ``repo-repair`` run nothing
+    to grep for.
+
+    **It prescribes the HISTOGRAM edit and not a ``type:`` one**, though
+    both would end the mismatch for a table score.  A multi-valued VCF INFO
+    field -- the shape this was found through -- discards whatever ``type:``
+    states, because its value is the ``|``-join and no stated type can
+    describe that (gain#1259); telling its author to correct the type names
+    an edit that cannot work.  And a ``type:`` edit is not inert even where
+    it does work: it moves NA normalization and the statistics hash, which
+    is why ``_report_overridden_type`` declines to prescribe one too
+    (gain#1284).  The histogram edit is correct for every route here.
+
+    **The reason is carried by the log, not by the info page.**  A null
+    histogram writes no ``histogram_<score>.json`` -- that suppression is
+    what ``histogram: {type: "null"}`` means to the info-page templates --
+    so the page says only that there is no histogram, and this line in the
+    build log is where the why lives.  Surfacing a REFUSED null differently
+    from an author-disabled one is gain#1307.
+    """
+    reason = (
+        f"resource {resource.resource_id}: score {score_id!r} has value "
+        f"type {value_type!r}, which a number histogram cannot "
+        f"accumulate; give the score a categorical histogram "
+        f"('histogram: {{type: categorical}}') or no histogram at all"
+    )
+    logger.warning("%s", reason)
+    return NullHistogramConfig(reason)
 
 
 def scan_region(
@@ -742,21 +839,23 @@ def can_bulk_histogram(
     refuses one at a time, catches the ``TypeError`` and nullifies that
     one score, whereas a batch of the wrong shape is not a value the
     histogram can refuse -- it is a coercion failure inside ``add_batch``.
-    So a categorical histogram over an ``int`` score, or a number
-    histogram over a ``str`` one, keeps :func:`do_histogram`, which
-    handles both as it always has.
+    So a categorical histogram over an ``int`` score keeps
+    :func:`do_histogram`, which handles it as it always has.
+
+    A number histogram over a ``str`` score no longer reaches either path:
+    :func:`unpack_score_defs` refuses that pairing outright and hands this
+    one a null histogram instead (gain#1285).  The condition stays stated
+    here because it is this gate's own -- the batch shapes it admits are
+    not a consequence of what the unpack refuses, and a ``bool`` score
+    separates them: the per-value rule keeps it, this one does not.
     """
-    pairing = {
-        NumberHistogramConfig: ("float", "int"),
-        CategoricalHistogramConfig: ("str",),
-    }
     bulk_score_ids = []
     score = _score_for(resource, score)
     score_defs = score.score_definitions
     for score_id, hist_conf in all_hist_confs.items():
         if isinstance(hist_conf, NullHistogramConfig):
             continue
-        value_types = pairing.get(type(hist_conf))
+        value_types = _BULK_HISTOGRAM_VALUE_TYPES.get(type(hist_conf))
         score_def = score_defs.get(score_id)
         if value_types is None or score_def is None \
                 or score_def.value_type not in value_types:
@@ -780,14 +879,20 @@ def can_bulk_min_max(
     ``str`` score's column is an object array, which ``np.isnan`` refuses
     outright.
 
-    A str score reaches here only through a misconfiguration: a min/max is
-    scheduled for a score whose histogram is a number histogram without a
-    view range, and a number histogram over a str score is exactly the
-    mismatch :func:`can_bulk_histogram` keeps off the bulk path.  Left
+    A str score is no longer SCHEDULED for a min/max pass at all: the only
+    thing that schedules one is a number histogram without a view range,
+    and :func:`unpack_score_defs` refuses that over text before any pass is
+    planned (gain#1285).  The condition stays stated for this consumer
+    rather than assumed from that one, because it is this pass's own: left
     ungated, a column of nothing but NA sentinels would raise here, out of
     a generator and past every nullify handler, where the per-record path
-    yields an empty min/max and nullifies that one histogram -- so the
-    condition is stated for this consumer too, not assumed from the other.
+    yields an empty min/max and nullifies that one histogram.
+
+    Written out rather than read off :data:`_BULK_HISTOGRAM_VALUE_TYPES`,
+    which the tuple happens to match: that constant says what a HISTOGRAM
+    can accumulate a batch of, and this pass accumulates no histogram.
+    Sharing the literal would make a future widening of the number
+    histogram's batch types widen this gate as a side effect.
     """
     score = _score_for(resource, score)
     score_defs = score.score_definitions
