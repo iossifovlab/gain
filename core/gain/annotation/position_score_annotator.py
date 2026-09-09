@@ -162,12 +162,12 @@ phastCons, phyloP, FitCons2, etc.
             # included, so the answers pair back by position.  The base's
             # list is every attribute's source here -- a position score's
             # attribute specs ARE its score definitions, so the filter
-            # that builds it drops nothing.
-            point_scores = self.position_score.fetch_position_scores(
+            # that builds it drops nothing.  An uncovered position needs no
+            # guard of its own for the same reason: it answers a tuple of
+            # ``None``, which pairs to what ``_empty_result`` built.
+            point_scores = self.position_score.get_scores_at_position(
                 annotatable.chromosome, annotatable.position,
                 self.simple_score_queries)
-            if not point_scores:
-                return self._empty_result()
             return self._pair_all(
                 point_scores, resource_id=self.position_score.resource_id)
 

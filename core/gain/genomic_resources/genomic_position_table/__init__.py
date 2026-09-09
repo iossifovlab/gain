@@ -527,8 +527,39 @@ hoisted the extractor out of the loop) -- so the new name promises
 ``None`` guard on a yielded values slot is dead code now, as
 ``aggregate_region``'s was.  (``fetch_region_weighted_values`` carried the
 narrowing too from gain#734 until gain#1131 retired it.)
-``fetch_position_scores`` keeps its ``| None``:
-that one is real, and means "no record covers this position".
+
+**``PositionScore.fetch_position_scores`` is gone; use
+``get_scores_at_position``** (gain#1268).  It was the point read that kept a
+real ``| None`` -- the one narrowing the paragraph above excepted, meaning
+"no record covers this position".  The logical plane spells that as a tuple
+of ``None``, one per score id asked, because on the plane an uncovered
+position is a value and not an absence (#727), so the ``| None`` leaves with
+the method rather than being narrowed away.
+
+Removed outright, with no forwarder and no ``DeprecationWarning``: unlike
+``fetch_region_values`` above, this name was never on
+``docs/source/python_interface.rst``, and no caller outside ``gain`` uses it
+-- the gain#1131 situation, not the gain#730 one.
+
+**What a migrating caller has to know.**  The refusals are NOT new: a closed
+score, an unknown contig and an unknown score id were all refused by the old
+read too (its first statement went through ``get_all_chromosomes``, which
+raises ``is not open``).  Three things do change, all of them where the old
+read answered something it should not have:
+
+* a position below 1 is REFUSED (``_guard_region_span``).  The old read
+  passed the bound to ``fetch_records``, and a backend that tests its bounds
+  for truthiness read ``0`` as "unbounded" -- so position 0 answered with the
+  contig's FIRST record.  That leniency not reaching a reader is what the
+  guard is for (#727).
+* a record that does not actually COVER the position no longer answers.  The
+  old read took ``records[0]`` whatever it was; the plane clips, so a backend
+  handing back a record outside the queried region (a table whose index and
+  ``pos_end`` name different columns, gain#553) now reads as uncovered.
+* a record whose end precedes its begin is refused rather than answered.
+
+And the shape: a tuple of one value per id asked, with ``None`` per
+uncovered id, where the old read answered ``None`` for the whole position.
 
 **New method, and a new obligation on backend authors:
 ``buffered_record_count()``** (gain#1120).  ``BigWigTable``,

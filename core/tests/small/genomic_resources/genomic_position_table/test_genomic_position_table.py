@@ -3376,8 +3376,8 @@ def test_zero_based_authored_in_bigwig_config_warns_through_schema(
         with score:
             # Unchanged conversion: file interval [0, 10) reads 1-based at 5,
             # regardless of the ignored zero_based key.
-            assert score.fetch_position_scores("chr1", 5) == \
-                [pytest.approx(0.11)]
+            assert score.get_scores_at_position("chr1", 5) == \
+                (pytest.approx(0.11),)
 
     warnings = [
         r.message for r in caplog.records if r.levelname == "WARNING"

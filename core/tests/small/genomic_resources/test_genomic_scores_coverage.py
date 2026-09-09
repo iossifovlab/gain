@@ -257,7 +257,7 @@ def test_position_score_multiple_values_for_position() -> None:
 
 
 def test_position_score_fetch_scores_multiple_lines() -> None:
-    """fetch_position_scores answers from the first of several lines."""
+    """get_scores_at_position answers from the first of several lines."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: position_score
@@ -278,7 +278,7 @@ def test_position_score_fetch_scores_multiple_lines() -> None:
     score = PositionScore(res)
     score.open()
 
-    assert score.fetch_position_scores("1", 10) == [0.1]
+    assert score.get_scores_at_position("1", 10) == (0.1,)
     with pytest.raises(ValueError, match="multiple values"):
         list(score.validate_records(score.fetch_records("1", 10, 10)))
 

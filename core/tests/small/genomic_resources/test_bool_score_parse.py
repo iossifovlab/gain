@@ -78,7 +78,7 @@ def test_the_accepted_bool_spellings(
         chr1   10         19       {text}
         """)
 
-    assert score.fetch_position_scores("chr1", 12, ["flag"]) == [expected]
+    assert score.get_scores_at_position("chr1", 12, ["flag"]) == (expected,)
 
 
 @pytest.mark.parametrize("cell", ["yes", "EMPTY"])
@@ -104,7 +104,7 @@ def test_an_unreadable_bool_cell_is_a_logged_non_value(
         """)
 
     with caplog.at_level("ERROR"):
-        assert score.fetch_position_scores("chr1", 12, ["flag"]) == [None]
+        assert score.get_scores_at_position("chr1", 12, ["flag"]) == (None,)
 
     assert "unable to parse" in caplog.text
     assert "flag" in caplog.text
@@ -136,7 +136,7 @@ def test_a_configured_na_value_silences_a_missing_bool_cell(
     score.open()
 
     with caplog.at_level("ERROR"):
-        assert score.fetch_position_scores("chr1", 12, ["flag"]) == [None]
+        assert score.get_scores_at_position("chr1", 12, ["flag"]) == (None,)
 
     assert "unable to parse" not in caplog.text
 

@@ -81,7 +81,7 @@ class PositionScore(GenomicScore):
         >>> score = build_score_from_resource(resource)
         >>> with score.open() as score:
         ...     # Fetch scores at a specific position
-        ...     values = score.fetch_position_scores("chr1", 12345)
+        ...     values = score.get_scores_at_position("chr1", 12345)
         ...     # Fetch scores across a region
         ...     region = score.fetch_region_segments(
         ...         "chr1", 10000, 20000)
@@ -103,7 +103,7 @@ class PositionScore(GenomicScore):
         score_definitions: Dictionary mapping score IDs to their definitions
 
     Key Methods:
-        fetch_position_scores: Get score values at a specific position
+        get_scores_at_position: Get score values at a specific position
         fetch_region_segments: Iterate over score segments in a
         genomic region, each at its record's own extent
         get_scores_in_region_agg: Reduce a genomic region to one value per
@@ -249,43 +249,6 @@ class PositionScore(GenomicScore):
                 prev_end = int(pos_end[-1])
             yield batch
 
-    def fetch_position_scores(
-        self, chrom: str, position: int,
-        scores: list[str] | None = None,
-    ) -> list[ScoreValue] | None:
-        """Fetch score values at specific genomic position.
-
-        The FIRST record covering the position answers, and a second one is
-        not an error here: several records at one position is a malformed
-        position score, and refusing it is the statistics scan's job rather
-        than a reader's (ADR 0008).  It is the same rule the region read
-        stopped enforcing, on the same path, so it leaves with it.
-
-        The region generator is DRAINED rather than abandoned after that
-        first record.  A one-position region is one or two records, so
-        materialising it costs nothing, and it keeps this read out of the
-        question of what a backend owes an abandoned generator.
-
-        It used to be load-bearing rather than free: abandoning left
-        ``TabixGenomicPositionTable.get_records_in_region`` suspended short
-        of the ``buffer.prune()`` that ended its buffered walk, and the
-        annotation path reads position after position through here, so the
-        ``LineBuffer`` grew across a run.  That prune runs in a ``finally``
-        since gain#1120 and abandoning is safe now; draining stays because it
-        is the simpler thing to write, not because it is load-bearing.
-        """
-        if chrom not in self.get_all_chromosomes():
-            raise ValueError(
-                f"{chrom} is not among the available chromosomes.")
-
-        score_defs = self._resolve_score_defs(scores)
-
-        records = list(self.fetch_records(chrom, position, position))
-        if not records:
-            return None
-
-        return self.get_score_values_from_record(records[0], score_defs)
-
     # -- The logical read plane (#727) -------------------------------------
     #
     # On this plane a position score is a function from a genomic position
@@ -296,6 +259,29 @@ class PositionScore(GenomicScore):
     # position; the aggregating and binning reads fold one
     # ``(values, run_length)`` pair per segment, so cost stays proportional
     # to record count.
+
+    def _plane_read_score_ids(
+        self, chrom: str, start: int, end: int,
+        scores: Sequence[str] | None,
+    ) -> list[str]:
+        """Refuse what this region read cannot serve, and name its scores.
+
+        The preamble every read that takes a MANDATORY region shares: the
+        span guard, then the request refusals, then the ids in the order
+        the caller asked for them.  Here rather than repeated per read so
+        that the two cannot drift in what they refuse -- the deeper fold,
+        of :meth:`_guard_region_span` into :meth:`_region_read_defs`, is
+        declined in that method's docstring because it would also refuse
+        ``fetch_*`` requests on all three kinds, which this does not touch.
+
+        The aggregating and binning reads do NOT share it: their ids come
+        from ``distinct_score_ids`` over the queries, not from ``scores``.
+        """
+        self._guard_region_span(start, end)
+        return [
+            score_def.score_id
+            for score_def in self._region_read_defs(chrom, scores)
+        ]
 
     def _position_runs(
         self, chrom: str, start: int, end: int,
@@ -358,14 +344,30 @@ class PositionScore(GenomicScore):
     ) -> tuple[ScoreValue | None, ...]:
         """Return the score values at one position, ``None`` where uncovered.
 
-        A one-position region read, materialised: the region is one or two
-        records, so materialising it costs nothing.  Draining the generator
-        rather than abandoning it is the simpler thing to write and not a
-        requirement -- abandoning has been safe since gain#1120, which moved
-        the tabix buffer prune into a ``finally``.
+        Read straight off :meth:`_position_runs` rather than through the
+        region read's per-position expansion: a one-position region is
+        exactly ONE run -- no run is ever yielded empty, and the run
+        lengths sum to the region width -- so there is nothing to expand
+        and nothing to index a position out of.
+
+        The run is DRAINED rather than abandoned; that is simpler to
+        write, not load-bearing, since gain#1120 moved the tabix buffer
+        prune into a ``finally`` (``fragment.py`` cross-references this
+        paragraph, and ``test_a_walk_of_point_reads_leaves_the_tabix_
+        buffer_pruned`` pins the drained half).
+
+        Going straight to the runs rather than delegating to
+        :meth:`get_scores_in_region` is worth ~4% on this read, which the
+        position annotator pays once per substitution.
         """
-        rows = list(self.get_scores_in_region(chrom, pos, pos, scores))
-        return rows[0]
+        score_ids = self._plane_read_score_ids(chrom, pos, pos, scores)
+        # The single-element unpack both DRAINS the generator and asserts
+        # the one-run invariant the docstring claims; a second run would
+        # raise here rather than be silently dropped.
+        (values, _), = self._position_runs(chrom, pos, pos, score_ids)
+        return (
+            tuple(values) if values is not None
+            else (None,) * len(score_ids))
 
     def get_score_in_region(
         self, chrom: str, start: int, end: int,
@@ -656,12 +658,7 @@ class PositionScore(GenomicScore):
         every position no record covers.  ``scores`` of ``None`` asks for
         every score this resource defines, in definition order.
         """
-        self._guard_region_span(start, end)
-        score_ids = [
-            score_def.score_id
-            for score_def in self._region_read_defs(
-                chrom, list(scores) if scores is not None else None)
-        ]
+        score_ids = self._plane_read_score_ids(chrom, start, end, scores)
         return self._expand_position_runs(
             self._position_runs(chrom, start, end, score_ids),
             len(score_ids))
