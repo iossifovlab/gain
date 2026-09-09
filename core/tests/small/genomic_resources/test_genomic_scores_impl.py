@@ -1065,6 +1065,189 @@ def test_merge_histograms_nullifies_only_the_overflowing_score() -> None:
     assert few.raw_values == {"a": 1, "b": 2, "c": 1}
 
 
+#: The resource id the gain#1285 fixtures are published under, so a test
+#: asserting the refusal NAMES the resource has something to look for.
+#: ``build_resource`` would publish under ``""``, which would make that
+#: assertion vacuously true.
+_TEXT_SCORE_RESOURCE_ID = "scores/text"
+
+
+def _a_str_score_under_a_number_histogram(
+    tmp_path: pathlib.Path,
+    histogram: dict[str, Any] | None = None,
+    *,
+    tabix: bool = False,
+) -> GenomicResource:
+    """A ``str`` score configuring a NUMBER histogram -- gain#1285's shape.
+
+    The pairing a resource cannot have: text values under a histogram that
+    folds them through ``np.isnan``.  ``tabix`` realizes the same table as
+    tabix, which is what makes the score eligible for the vectorized scan.
+    """
+    builder = (
+        a_position_score()
+        .with_score("MANY", "str")
+        .with_histogram(
+            histogram if histogram is not None
+            else {"type": "number", "number_of_bins": 4})
+        .with_data(
+            """
+            chrom  pos_begin  MANY
+            1      10         A
+            1      11         B
+            """,
+        )
+    )
+    if tabix:
+        builder = builder.with_tabix()
+    return (
+        a_grr()
+        .with_resource(_TEXT_SCORE_RESOURCE_ID, builder)
+        .build_repo(tmp_path)
+        .get_resource(_TEXT_SCORE_RESOURCE_ID)
+    )
+
+
+@pytest.mark.parametrize("tabix", [False, True], ids=["table", "tabix"])
+def test_number_histogram_over_a_str_score_does_not_abort_the_build(
+    tmp_path: pathlib.Path, *, tabix: bool,
+) -> None:
+    """A number histogram no str score can feed must not kill the build.
+
+    Regression for iossifovlab/gain#1285.  A ``scores:`` entry may configure
+    ``histogram: {type: number}`` over a score whose value type is ``str``;
+    the min/max pass such a histogram schedules then reduced text through
+    ``np.isnan`` and raised ``TypeError`` out of ``numpy``, naming neither
+    the resource nor the score.  The resource ended with no statistics at
+    all and the run reported an inconsistent GRR.
+
+    Over both backends, because they dispatch differently and the outcome
+    must not depend on which served the score: a tabix table serves column
+    arrays, so its score is what ``bulk_scan_eligible`` admits and the
+    vectorized passes would read, where the in-memory table keeps the
+    per-record ones.  (``can_bulk_min_max`` already turns a str score away
+    from the vectorized min/max, onto the per-record one -- which is where
+    gain#1285 actually died.)
+    """
+    res = _a_str_score_under_a_number_histogram(tmp_path, tabix=tabix)
+
+    _build_statistics(res, region_size=10)
+
+    # The resource HAS statistics -- the cost of the defect was that it had
+    # none.  Asserted on a statistic the refused score does not own, because
+    # a missing histogram file reads back as a NullHistogram too, so that
+    # alone cannot tell "refused" from "the build died before writing it".
+    assert res.file_exists("statistics/coverage.json")
+    assert isinstance(_built_histogram(res, "MANY"), NullHistogram)
+
+
+@pytest.mark.parametrize(
+    "histogram",
+    [
+        {"type": "number", "number_of_bins": 4},
+        {"type": "number", "number_of_bins": 4,
+         "view_range": {"min": 0.0, "max": 10.0}},
+    ],
+    ids=["auto-ranged", "view-range"],
+)
+def test_unpack_score_defs_refuses_a_number_histogram_over_text(
+    tmp_path: pathlib.Path, histogram: dict[str, Any],
+) -> None:
+    """The refusal schedules no min/max, and names what it refused.
+
+    Two things at once because they are one decision: the score's histogram
+    becomes null, which is also what keeps it off the min/max list -- and it
+    is the min/max pass, not the histogram, that gain#1285 aborted in.  The
+    reason has to name the resource and the score, since the ``TypeError``
+    it replaces named neither.
+
+    Over both histogram shapes because ONE rule decides them, where master
+    had two.  Only the auto-ranged shape schedules a min/max pass and so
+    only it ever crashed; the ``view_range`` one was met by the per-record
+    histogram catch, which nullified the score with the raw ``numpy``
+    message.  Refusing both here is what makes what a reader is told
+    independent of whether a range happened to be configured -- and a
+    ``NullHistogramConfig`` at this seam can only have come from the
+    refusal, since nothing has read a value yet.
+    """
+    res = _a_str_score_under_a_number_histogram(tmp_path, histogram)
+
+    min_max_scores, hist_confs = scan.unpack_score_defs(res)
+
+    assert min_max_scores == [], (
+        "a str score was scheduled for the min/max pass, which reduces "
+        "through np.isnan and cannot read text"
+    )
+    conf = hist_confs["MANY"]
+    assert isinstance(conf, NullHistogramConfig)
+    assert _TEXT_SCORE_RESOURCE_ID in conf.reason
+    assert "MANY" in conf.reason
+
+
+def test_the_refusal_is_reported_once_per_build_not_once_per_region(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The report has to be bounded by the resource, not by the scan.
+
+    gain#1283 is the sibling defect: a report that fires where score
+    definitions are BUILT repeats per region task, because a statistics
+    build constructs a fresh score for each one -- 46 identical lines from
+    a 400 bp resource, thousands from a genome-scale one.  This refusal is
+    read off the configs the task graph is planned from, which are unpacked
+    once and handed to every region task as data, so a region size small
+    enough to split this resource many ways must not multiply it.
+    """
+    res = _a_str_score_under_a_number_histogram(tmp_path)
+
+    with caplog.at_level("WARNING"):
+        _build_statistics(res, region_size=1)
+
+    refusals = [
+        record for record in caplog.records
+        if "a number histogram cannot accumulate" in record.getMessage()
+    ]
+    assert len(refusals) == 1, (
+        f"the refusal was reported {len(refusals)} times; it is unpacked "
+        f"once per build and must not repeat per region task"
+    )
+
+
+def test_a_bool_score_keeps_the_number_histogram_it_configures(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The refusal is narrow: ``str`` is the only type it takes out.
+
+    A bool IS a number to numpy -- ``np.isnan(True)`` answers ``False``
+    rather than raising -- so a ``type: bool`` score under a number
+    histogram folds to a 0/1 histogram and always has.  Widening the
+    refusal to everything the *bulk* pairing excludes would silently drop
+    that, which is why the per-value rule is stated separately from it.
+    """
+    res = (
+        a_position_score()
+        .with_score("FLAG", "bool")
+        .with_histogram({"type": "number", "number_of_bins": 2})
+        .with_data(
+            """
+            chrom  pos_begin  FLAG
+            1      10         True
+            1      11         False
+            """,
+        )
+        .build_resource(tmp_path)
+    )
+
+    _build_statistics(res, region_size=10)
+
+    histogram = _built_histogram(res, "FLAG")
+    assert isinstance(histogram, NumberHistogram)
+    assert histogram.bars.tolist() == [1, 1], (
+        "the bool score's two values were not folded one to each bin; "
+        "a number histogram over a bool must keep working"
+    )
+
+
 def test_collect_index_info_header_includes_score_fields() -> None:
     res = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
