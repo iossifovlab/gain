@@ -112,7 +112,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # whose output is a directory of HTML.
 COPY info_pages_e2e/generate_fixtures.py ./info_pages_e2e/
 
-RUN .venv/bin/python info_pages_e2e/generate_fixtures.py /fixtures/grr
+RUN .venv/bin/python info_pages_e2e/generate_fixtures.py /fixtures
 
 # ---------------------------------------------------------------------
 # Stage 2: drive them.

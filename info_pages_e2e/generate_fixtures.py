@@ -1,9 +1,13 @@
-"""Build the GRR whose generated pages this suite drives.
+"""Build the GRRs whose generated pages this suite drives.
+
+Two of them: a Coverage GRR whose statistics table the sorter tests
+sort, and a browse GRR laid out to be navigated and searched.  Both are
+written under the directory named on the command line.
 
 Run from the repository root, before ``npx playwright test``::
 
     uv run python info_pages_e2e/generate_fixtures.py \\
-        info_pages_e2e/fixtures/grr
+        info_pages_e2e/fixtures
 
 The pages are *generated*, never committed.  A committed page is a
 snapshot of a template that has since moved on, and this suite exists to
@@ -36,11 +40,18 @@ import shutil
 import sys
 
 from gain.genomic_resources.cli import cli_manage
-from gain.genomic_resources.testing.info_page_fixtures import a_coverage_repo
+from gain.genomic_resources.testing.info_page_fixtures import (
+    a_browse_repo,
+    a_coverage_repo,
+)
+
+#: The generated GRRs, under the directory this script is pointed at.
+COVERAGE_GRR_DIRNAME = "grr"
+BROWSE_GRR_DIRNAME = "browse"
 
 
-def build_grr(repo_dir: pathlib.Path) -> None:
-    """Realize the fixture GRR into ``repo_dir`` and generate its pages."""
+def build_coverage_grr(repo_dir: pathlib.Path) -> None:
+    """Realize the Coverage GRR into ``repo_dir`` and generate its pages."""
     a_coverage_repo(repo_dir)
 
     # `-f` because the builders write a `stats_hash`, so a plain
@@ -50,24 +61,51 @@ def build_grr(repo_dir: pathlib.Path) -> None:
     cli_manage(["repo-info", "-R", str(repo_dir), "-j", "1"])
 
 
+def build_browse_grr(repo_dir: pathlib.Path) -> None:
+    """Realize the browse GRR into ``repo_dir`` and generate its pages.
+
+    ``repo-index`` alone, where the Coverage GRR needs the whole
+    statistics pass.  This fixture exists to be navigated and searched,
+    and the repository index page is assembled from ``.CONTENTS`` and the
+    search index -- both of which ``repo-index`` publishes from the
+    manifests the builders already wrote.  Computing histograms for five
+    resources whose statistics no assertion reads would only make every
+    run of this suite slower.
+    """
+    a_browse_repo(repo_dir)
+
+    cli_manage(["repo-index", "-R", str(repo_dir)])
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "output", type=pathlib.Path,
-        help="directory to build the fixture GRR into; replaced if present")
+        help="directory to build the fixture GRRs into; replaced if present")
     args = parser.parse_args(argv)
 
     # An absolute path: the builders hand the directory to pysam, which
     # resolves it against its own working directory rather than ours.
-    repo_dir = args.output.resolve()
-    # Rebuilt from scratch every time.  The builders refuse to overwrite a
-    # bgzipped table, so a second run into a populated directory fails --
-    # and a fixture that is only correct on a clean checkout is worse than
-    # one that is rebuilt.
-    if repo_dir.exists():
-        shutil.rmtree(repo_dir)
+    fixtures_dir = args.output.resolve()
 
-    build_grr(repo_dir)
+    # Each GRR is rebuilt from scratch.  The builders refuse to overwrite
+    # a bgzipped table, so a second run into a populated directory fails
+    # -- and a fixture that is only correct on a clean checkout is worse
+    # than one that is rebuilt.
+    #
+    # Only the two directories this script creates, never the directory
+    # it was handed.  What gets deleted here is deleted without asking,
+    # and the argument names the fixtures *root* -- one tab-completion
+    # away from `info_pages_e2e` itself, whose contents are this suite.
+    # Deleting only what we own makes that misfire harmless instead of
+    # needing a list of things to refuse.
+    for dirname, build in (
+        (COVERAGE_GRR_DIRNAME, build_coverage_grr),
+        (BROWSE_GRR_DIRNAME, build_browse_grr),
+    ):
+        repo_dir = fixtures_dir / dirname
+        shutil.rmtree(repo_dir, ignore_errors=True)
+        build(repo_dir)
     return 0
 
 

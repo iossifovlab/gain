@@ -74,12 +74,14 @@ which needs its fixture pages generated first:
 
 ```bash
 uv run python info_pages_e2e/generate_fixtures.py \
-    info_pages_e2e/fixtures/grr
+    info_pages_e2e/fixtures
 cd info_pages_e2e && npm ci && npx playwright test
 ```
 
-No server and no network: the pages are opened over
-`file://`. See `info_pages_e2e/README.md`.
+No server and no network: every request the pages make is
+answered from disk inside `page.route`, out of the
+generated fixtures and the two vendored CDN packages, and
+anything else is aborted. See `info_pages_e2e/README.md`.
 
 ### Linting and Type Checking
 

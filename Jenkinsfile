@@ -769,9 +769,10 @@ pipeline {
                                             -t ${imageTag} .
                                     """
                                     // `--network none` is an assertion, not
-                                    // a precaution: the pages are opened
-                                    // over file:// and the suite aborts
-                                    // every non-file: request, so a test
+                                    // a precaution: the suite answers every
+                                    // request from disk -- the generated
+                                    // fixtures and two vendored packages --
+                                    // and aborts anything else, so a test
                                     // that grew a dependency on the network
                                     // must fail here rather than pass
                                     // slowly. It also stops the sort
