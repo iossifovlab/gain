@@ -257,14 +257,20 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
         Which is why the open table is a **precondition** here, rather than
         something this can quietly do without.  Unlike its three siblings, an
         implementation that opens the file itself can still answer after
-        ``close()`` -- and answer *wrongly*: ``close()`` releases the chromosome
-        map along with the memo in front of this method (see
-        :meth:`GenomicPositionTable.close`), so ``get_chromosomes()`` would map
-        the contigs read here through nothing and hand back the FILE's names
-        where an open table hands back reference-space ones, with no error to
-        notice it by -- plus a file or network open on a table the caller
+        ``close()``: a closed table would hand back the contigs of a file it
+        reopened behind the caller's back, and leave that file -- or, on the
+        http and s3 protocols, that connection -- open on a table the caller
         believes is closed.  Refusing keeps a closed VCF table saying exactly
         what a closed tabix one says (gain#350).
+
+        It used to be able to make a closed table answer *wrongly* as well:
+        ``get_chromosomes()`` reached this method, and with the chromosome map
+        released it mapped these contigs through nothing and returned the
+        FILE's names where an open table returns reference-space ones, with no
+        error to notice it by.  That route is gone since gain#1303 --
+        ``get_chromosomes()`` reads ``chrom_order`` and refuses off that, never
+        reaching this -- so what is left to protect is the reopen and the
+        leaked handle, which is enough on its own.
         """
         if self.pysam_file is None:
             raise ValueError(

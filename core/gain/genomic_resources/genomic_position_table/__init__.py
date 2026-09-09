@@ -592,30 +592,35 @@ halves.  There is no such sweep for a backend outside this repo, which is
 what this entry is for: a backend with cross-query state overrides the method
 and releases from a ``finally``.
 
-**Changed aliasing: the tabix family's ``get_chromosomes()`` now returns the
-SAME list on every call** (gain#1173).  ``TabixGenomicPositionTable`` and
+**Changed aliasing: the tabix family's ``get_chromosomes()`` returns the SAME
+list on every call** (gain#1173).  ``TabixGenomicPositionTable`` and
 ``VCFGenomicPositionTable`` are in ``__all__`` below, so this changes public
 surface of ``gain`` and is recorded for the same reason as everything above.
 
-The mapped, filtered contig list is derived once per open and held, because
-every contig-membership check on the annotation path reaches it through
-``GenomicScore.get_all_chromosomes()``: one annotated substitution made three
-such calls, each rebuilding the list, at a cost that grew with the file's
+The mapped, filtered contig list is derived once per open and held, because at
+the time every contig-membership check on the annotation path reached it
+through ``GenomicScore.get_all_chromosomes()``: one annotated substitution made
+three such calls, each rebuilding the list, at a cost that grew with the file's
 contig count -- per CALL, 15.7us at hg38 primary-assembly contig counts and
-48.8us with the alts, against 0.40us at a single contig.  It is now a flat
-~0.05us at any contig count.
+48.8us with the alts, against 0.40us at a single contig.  (Those screens have
+since moved to ``has_chromosome``; see its entry below.)  Reads are now a flat
+attribute fetch at any contig count, paid for by one pass inside every
+``open()`` -- including an open that never asks for contigs, which the memo
+this replaced left free.  Measured against the open it rides inside, that pass
+is 0.08% of it at one contig, 2.7% at hg38 primary-assembly counts and 4.6%
+with the alts.
 
 The observable change is aliasing, not content: the list is equal to what it
 always was, but a caller that MUTATES it in place -- ``sort()``, ``reverse()``,
-``append()`` -- now corrupts every later read for the life of the open table
-instead of scribbling on a throwaway.  Copy before mutating.  This makes the
-tabix family match what the base class has always done (``get_chromosomes()``
-returns the stored ``chrom_order`` itself), so bigWig and in-memory callers
-were already living under this rule.  Nothing in-tree was affected -- every
-in-repo call site is an ``in``, a ``for``, a ``list()``/``set()`` or a splat --
-and ``gpf`` has no non-test caller of ``get_chromosomes()`` at all, which is
-why the ledger entry is the whole mitigation and there is no defensive copy:
-returning a copy per call would give back most of what the memo just bought.
+``append()`` -- corrupts every later read for the life of the open table
+instead of scribbling on a throwaway.  Copy before mutating.  This is what the
+base class has always done (``get_chromosomes()`` returns the stored
+``chrom_order`` itself), so bigWig and in-memory callers were already living
+under this rule.  Nothing in-tree was affected -- every in-repo call site is an
+``in``, a ``for``, a ``list()``/``set()`` or a splat -- and ``gpf`` has no
+non-test caller of ``get_chromosomes()`` at all, which is why this entry is the
+whole mitigation and there is no defensive copy: returning a copy per call
+would give back most of what deriving once per open buys.
 
 **New method: ``has_chromosome(chrom)``** (gain#1304).  ``BigWigTable``,
 ``TabixGenomicPositionTable`` and ``VCFGenomicPositionTable`` are in
@@ -657,6 +662,25 @@ length screens) now asks ``has_chromosome`` instead.  A backend outside this
 repo inherits the base implementation and needs no change; one that overrides
 ``get_chromosomes()`` gets a matching predicate for free, because the base
 derives from the override.
+Since gain#1303 the list IS ``chrom_order``, derived into it by the tabix
+``_build_chrom_mapping`` and read back by the single base-class
+``get_chromosomes()``; the override and the private list it answered from are
+gone.  The rule above is therefore no longer a tabix-specific caveat but the
+one the whole hierarchy shares.
+
+**Changed refusal message: a closed or never-opened tabix or VCF table now
+says "genomic table not open"** (gain#1303), where it used to say "tabix table
+not open" / "vcf table not open".  The read refuses because ``chrom_order`` was
+released -- or never built -- rather than by checking a handle of its own, so
+the raise is the base class's.  The exception TYPE is unchanged, and
+``ValueError`` is what this package contracts for the four closed-table reads
+listed on ``GenomicPositionTable.close``; the text never was.  Recorded because
+a caller matching on the message -- a log grep, a test -- sees it change even
+though nothing it can catch does.  ``get_file_chromosomes()``,
+``find_chromosome_length()`` and ``get_chromosome_length()`` are untouched and
+still refuse in each backend's own words.  ``has_chromosome`` follows
+``get_chromosomes()`` here as it does everywhere -- it is derived from it, so
+on these two backends it now refuses in the base class's words too.
 """
 from .line import LineBuffer
 from .table import ContigExtent

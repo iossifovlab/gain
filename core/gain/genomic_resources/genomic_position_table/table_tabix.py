@@ -107,12 +107,6 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         # signature takes an allele index as well) and leaves this one unused.
         self.parser: TabularParser | None = None
 
-        # Per-instance memo for get_chromosomes, in the same shape and for the
-        # same reasons as the base class's _file_chromosomes; see
-        # GenomicPositionTable.get_file_chromosomes for why neither is a
-        # functools cache.
-        self._mapped_chromosomes: list[str] | None = None
-
     def _load_header(self) -> tuple[str, ...]:
         header_lines = []
         with self.genomic_resource.open_raw_file(
@@ -330,13 +324,17 @@ class TabixGenomicPositionTable(GenomicPositionTable):
     def close(self) -> None:
         # Release the handle BEFORE the base class's chromosome state, not
         # after.  super().close() drops chrom_map/chrom_order/_file_chromosomes,
-        # and get_chromosomes() falls back to the file's own contig names once
-        # the map is gone (gain#358) -- so if the map were released first and
-        # anything here then raised, the table would be left with a LIVE handle
-        # and no map, answering its contigs wrongly.  Handle first, and nulled
-        # before super().close() runs, so the "live handle + released map" state
-        # never exists: a partial failure leaves the table "still open" rather
-        # than "open but unmapped".
+        # so if the chromosome state were released first and anything here then
+        # raised, the table would be left with a LIVE handle and no map -- open
+        # by every check a caller can make, yet unable to answer its contigs.
+        # Handle first, and nulled before super().close() runs, so the "live
+        # handle + released map" state never exists: a partial failure leaves
+        # the table "still open" rather than "open but unmapped" (gain#358).
+        #
+        # Nothing tabix-local needs ordering against super().close() any more:
+        # the mapped contig list lives in chrom_order, which that call releases
+        # itself, so there is no derived copy that could outlive what it was
+        # derived from (gain#1303).
         if self.pysam_file is not None:
             if self.line_iterator:
                 self.line_iterator.close()
@@ -344,13 +342,6 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         self.pysam_file = None
         self.line_iterator = None
 
-        # The mapped contig list goes IMMEDIATELY BEFORE the map it derives
-        # from, for the same reason the handle goes before both: a step between
-        # the two releases could raise and leave the table holding a list
-        # derived from state it no longer has -- and unlike the handle case,
-        # that state answers get_chromosomes() without consulting anything, so
-        # nothing downstream could notice.
-        self._mapped_chromosomes = None
         super().close()
         self.buffer.clear()
         self.stats = Counter()
@@ -360,70 +351,67 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         self.parser = None
 
     def _build_chrom_mapping(self) -> None:
-        # The mapped contig list derives from the file's contigs and the map
-        # this method rebuilds, so this -- not close() -- is where a REOPEN
-        # invalidates it, exactly as the base class treats its own
-        # get_file_chromosomes memo.  Both backends that inherit the
-        # get_chromosomes() below pass through here on every open, close() or
-        # no close(): VCFGenomicPositionTable.open() does not call this class's,
-        # so an invalidation hung off open() would leave a reopened VCF table
-        # answering out of the previous open's memo.  (bigWig and in-memory
-        # reach the BASE _build_chrom_mapping, not this override -- they have
-        # no mapped list to give up.)
-        self._mapped_chromosomes = None
-        super()._build_chrom_mapping()
+        """Put the file's contigs into ``chrom_order`` in REFERENCE space.
 
-    def get_chromosomes(self) -> list[str]:
-        """Return the file's contigs in reference space, in the file's order.
+        The base class enumerates the MAPPING -- the contigs a
+        ``chrom_mapping`` names, in the mapping's own order, or the file's own
+        contigs when none is configured.  This family enumerates the FILE:
+        every contig the data file has, in the file's order, mapped into
+        reference space, with the ones the mapping does not cover dropped.
 
-        Derived once per open and held: unlike the base class, which returns
-        the stored ``chrom_order``, this maps every file contig and drops the
-        ones the ``chrom_mapping`` does not cover -- an allocation and a pass
-        over the contigs.  When gain#1173 memoised it, that mattered because
-        every contig-membership check on the annotation path reached it
-        through ``GenomicScore.get_all_chromosomes()`` and a single annotated
-        substitution made three of them, so the rebuild was paid three times
-        over at a cost that grew with the file's contig count.  Measured per
-        CALL -- 0.40us at one contig, 2.3us at 25, 15.7us at hg38
-        primary-assembly counts and 48.8us with the alts, against a flat
-        0.05us from the memo (gain#1173).
+        Enumerating different things, they differ in two ways, and a
+        ``chrom_mapping: filename`` is what reaches either -- a prefix mapping
+        is built by zipping over the file's contigs, so it can produce neither.
+        A mapping file may name a contig the data lacks, and then the two
+        differ in MEMBERSHIP: the base lists it, this drops it.  It may also
+        list contigs the data all has, in an order of its own, and then they
+        differ in ORDER alone.
 
-        **Those three calls are gone**: gain#1304 moved every membership
-        screen onto :meth:`~.table.GenomicPositionTable.has_chromosome`, and
-        the set that answers it is derived from this method once per open.
-        So the memo now serves one caller per open rather than three per
-        record, and what it saves is the derivation, not the hot path -- the
-        hot path no longer asks.  It stays for that one derivation, and
-        because the aliasing it introduced is now public contract (see the
-        package docstring's ledger); it is not load-bearing for annotation
-        speed any more.
+        That divergence is load-bearing, not an oversight: the base's answer is
+        what feeds the known-but-empty-contig policy behind
+        ``ContigExtent.EMPTY`` (gain#509), so the projection stays local to
+        this class rather than moving up.
 
-        The comprehension is also cheaper than the ``list(filter(lambda ...))``
-        it replaces, which matters for the one derivation still paid per open:
-        a whole-genome ``grr_manage resource-repair`` builds a table per region
-        task and asks each exactly once, so the memo saves it nothing and the
-        cheaper derivation is all it gets.
+        Derived here, once per open, rather than per call to
+        ``get_chromosomes()``.  gain#1173 held it for that reason: every
+        contig-membership check on the annotation path reached the list
+        through ``GenomicScore.get_all_chromosomes()``, and a single annotated
+        substitution made three of them, so a per-call derivation was paid
+        three times over at a cost that grew with the file's contig count --
+        per call, 0.40us at one contig, 15.7us at hg38 primary-assembly counts
+        and 48.8us with the alts.
 
-        Nothing the derived list depends on changes while the table is open --
-        both the file's contigs and the chromosome map are fixed once the index
-        is loaded -- so the memo cannot go stale under an open table, and
-        :meth:`_build_chrom_mapping` gives it up on the way through every
-        reopen.
+        **No membership screen reaches it any more.**  gain#1304 moved them
+        all onto :meth:`~.table.GenomicPositionTable.has_chromosome`, whose
+        per-open set is derived FROM this list.  So deriving once per open no
+        longer buys the hot path anything -- the hot path does not ask -- but
+        it still buys the one derivation that set is built from, and this
+        list's freshness became a property the predicate rests on: a stale
+        list here is a predicate screening on the previous open's contigs.
 
-        A **per-instance** memo, never a ``functools`` cache, for the reasons
-        set out on :meth:`GenomicPositionTable.get_file_chromosomes` -- the
-        policy's home, and the memo this one is modelled on.
+        Reads are a flat attribute fetch.  The derivation is paid by the open,
+        at 0.08% of it at one contig, 2.7% at hg38 primary-assembly counts and
+        4.6% with the alts -- including an open that never asks, which the
+        gain#1173 memo left free.
+
+        **This** -- not ``close()`` -- is where a REOPEN gives up what the
+        previous open derived, exactly as the base class treats its own
+        ``get_file_chromosomes`` memo, and it is why the derivation lives here
+        rather than in ``open()``: ``VCFGenomicPositionTable.open()`` does not
+        call this class's, so a derivation hung off the tabix ``open()`` would
+        leave a reopened VCF table answering out of the previous open's list.
+        Both backends pass through here on every open, ``close()`` or no
+        ``close()``.
+
+        Must run AFTER ``super()._build_chrom_mapping()``: ``map_chromosome``
+        reads ``rev_chrom_map``, which that call is what establishes.
         """
-        if self._mapped_chromosomes is None:
-            # get_file_chromosomes() first, and its raise is why the memo is
-            # assigned only at the end: a closed table must refuse this read
-            # rather than be recorded as having no contigs.
-            self._mapped_chromosomes = [
-                mapped
-                for chrom in self.get_file_chromosomes()
-                if (mapped := self.map_chromosome(chrom)) is not None
-            ]
-        return self._mapped_chromosomes
+        super()._build_chrom_mapping()
+        self.chrom_order = [
+            mapped
+            for chrom in self.get_file_chromosomes()
+            if (mapped := self.map_chromosome(chrom)) is not None
+        ]
 
     def _load_file_chromosomes(self) -> list[str]:
         if self.pysam_file is None:
