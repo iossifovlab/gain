@@ -49,7 +49,17 @@ const SQLITE_URL_PREFIX =
   'https://cdn.jsdelivr.net/npm/@sqlite.org/sqlite-wasm@3.51.2-build6/';
 const SQLITE_DIR = '@sqlite.org/sqlite-wasm';
 
-/** Where `npm ci` unpacks the two vendored packages. */
+/**
+ * Where `npm ci` unpacks the two vendored packages.
+ *
+ * Both are pinned to an exact version in `package.json`, not to a range,
+ * because these bytes are served *at the CDN URLs above*. Under a range,
+ * an `npm update` would answer a URL naming one version with the
+ * contents of another -- and the page, which cannot tell, would be
+ * tested against a library the published page never loads.
+ * Changing either version is a two-line edit: here and in
+ * `core/gain/templates/template_files/grr_scripts.jinja`.
+ */
 const NODE_MODULES = path.join(__dirname, 'node_modules');
 
 /**

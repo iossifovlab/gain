@@ -50,7 +50,7 @@ COVERAGE_GRR_DIRNAME = "grr"
 BROWSE_GRR_DIRNAME = "browse"
 
 
-def build_grr(repo_dir: pathlib.Path) -> None:
+def build_coverage_grr(repo_dir: pathlib.Path) -> None:
     """Realize the Coverage GRR into ``repo_dir`` and generate its pages."""
     a_coverage_repo(repo_dir)
 
@@ -94,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     if fixtures_dir.exists():
         shutil.rmtree(fixtures_dir)
 
-    build_grr(fixtures_dir / COVERAGE_GRR_DIRNAME)
+    build_coverage_grr(fixtures_dir / COVERAGE_GRR_DIRNAME)
     build_browse_grr(fixtures_dir / BROWSE_GRR_DIRNAME)
     return 0
 
