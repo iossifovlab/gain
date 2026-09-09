@@ -12,7 +12,7 @@ exists to avoid.
 
 So the base's public method set is pinned here against an explicit allowlist.
 If someone lifts ``open``/``close``/``get_scores_at_position``/
-``get_all_chromosomes`` (or
+``get_all_chromosomes``/``has_chromosome`` (or
 any other lifecycle, table or aggregator method) into the base "because both
 subclasses happen to have one", this test fails and names the intruder.
 
@@ -52,7 +52,13 @@ FORBIDDEN_ON_BASE = {
     # methods until gain#844 / gain#730 delete them, so still pinned here.
     "fetch_region_segment_scores", "fetch_region_values",
     "fetch_allele_scores", "fetch_fragment_scores",
-    "fetch_scores_agg", "get_all_chromosomes",
+    # Both contig accessors: the ordered list, and the membership predicate
+    # gain#1304 split out of it.  A gene score is keyed by gene symbol and has
+    # no contigs at all, so neither is a catalogue-plane concern -- and the
+    # predicate is the MORE tempting of the two to lift, being a one-line
+    # yes/no with no table in its signature.  It is a question about an open
+    # table's contigs whichever way it is spelled.
+    "fetch_scores_agg", "get_all_chromosomes", "has_chromosome",
     # The position kind's logical read plane (gain#727, gain#1268).  Both
     # forms of each of the four reads, as for the fragment plane below --
     # ``get_scores_at_position`` is the only point read on a position score

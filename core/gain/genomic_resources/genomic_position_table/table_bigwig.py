@@ -426,7 +426,7 @@ class BigWigTable(GenomicPositionTable):
                 f"bigwig table not open: "
                 f"{self.genomic_resource.resource_id}: "
                 f"{self.definition}")
-        if chrom not in self.get_chromosomes():
+        if not self.has_chromosome(chrom):
             raise ValueError(
                 f"contig {chrom} not present in the table's contigs: "
                 f"{self.get_chromosomes()}")

@@ -223,10 +223,14 @@ class PositionScore(GenomicScore):
 
         A read that reaches here has run :meth:`_plane_read_defs`, or the
         aggregating pair's own resolver, and would otherwise pay the whole
-        refusal preamble twice: the open check, the contig membership scan
-        -- O(contigs) on a tabix table, gain#1173 -- and the id resolution.
-        The second answer can only agree with the first, so it was waste,
-        and gain#1282 removed it.
+        refusal preamble twice: the open check, the contig screen and the id
+        resolution.  The second answer can only agree with the first, so it
+        was waste, and gain#1282 removed it.  The contig half was the
+        expensive one when that landed -- a walk of the ordered contig list,
+        O(contigs) on a tabix table (gain#1173); it is a set lookup since
+        gain#1304, and the id resolution is now the larger of the two.  The
+        repeat is skipped either way, because a second answer that can only
+        agree is waste at any price.
 
         No refusal is weakened, because this is not the only one that runs:
         every caller resolves eagerly first and reaches here only after.
@@ -664,18 +668,25 @@ class PositionScore(GenomicScore):
         Choosing this source also means the backend is never asked for the
         absent contig, so the refusals below -- the per-kind record
         transform's, and each table's own -- stay exactly as they are and
-        are simply not reached.  ``get_all_chromosomes`` is consulted once
-        per read here, which is the call :meth:`_region_read_defs` used to
-        make on this path; it is the same one scan, moved, not a new one.
+        are simply not reached.  The contig is screened once per read here,
+        which is the question :meth:`_region_read_defs` used to ask on this
+        path; it is the same one screen, moved, not a new one.
 
         That was true of the ABSENT contig from the start, and of the
-        covered one only since gain#1282: this scan chose the source, and
+        covered one only since gain#1282: this screen chose the source, and
         then the segment read under :meth:`_position_runs` resolved the
-        request over again and scanned for the contig a second time.  It
-        takes resolved definitions now, so the one scan claimed above is
+        request over again and asked about the contig a second time.  It
+        takes resolved definitions now, so the one screen claimed above is
         the one that happens, on either branch.
+
+        Called a *scan* until gain#1304, which is what it was: a walk of the
+        ordered contig list, costing more the further down the list the
+        contig sat and most of all for one that was absent -- which on this
+        branch is the case the read exists to serve.  It is a set lookup
+        now, so what is worth saying about the count is only that the read
+        asks once.
         """
-        if chrom not in self.get_all_chromosomes():
+        if not self.has_chromosome(chrom):
             return self._runs_from_segments(iter(()), start, end)
         return self._position_runs(chrom, start, end, score_defs)
 

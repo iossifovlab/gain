@@ -672,8 +672,9 @@ def test_positions_past_the_data_are_uncovered_not_errors(
 # A read resolves WHAT IT WAS ASKED FOR once: which scores the ids name,
 # and whether the contig exists.  Both are pure over the request and the
 # score's definitions, so a second answer within one call can only agree
-# with the first -- and the contig half is O(contigs) on a tabix table
-# (gain#1173), so agreeing twice is what a genome-sized resource pays for.
+# with the first -- and asking twice is what a genome-sized resource paid
+# for, because the contig half used to be an O(contigs) walk of the
+# ordered list (gain#1173).
 #
 # Counted rather than timed: the cost is a shared box's to distort, but
 # "how many times was it asked" is exact.  The two spied names are the
@@ -684,6 +685,15 @@ def test_positions_past_the_data_are_uncovered_not_errors(
 # ``score_def_for`` once per QUERY besides, which is a dict lookup rather
 # than a scan and is not what gain#1282 was about; what these count is the
 # resolution whose second answer cost something.
+#
+# **The contig question is spied at ``has_chromosome``, not at
+# ``get_all_chromosomes``.**  gain#1304 moved every screen in the read path
+# onto the predicate, so the ordered-list accessor these counted on merge
+# is no longer reached by any read here and counting it would count zero --
+# a suite that passes while guarding nothing, silently giving back
+# gain#1282's result.  The property is unchanged: a read asks whether the
+# contig exists ONCE.  Only the name it asks through moved, and it is now
+# the name that a further duplicate screen would go through too.
 
 
 def _request_resolutions(
@@ -692,7 +702,7 @@ def _request_resolutions(
     """Spy the two questions a read asks about its request."""
     return (
         count_calls(monkeypatch, "_resolve_score_defs", score),
-        count_calls(monkeypatch, "get_all_chromosomes", score),
+        count_calls(monkeypatch, "has_chromosome", score),
     )
 
 

@@ -616,6 +616,47 @@ in-repo call site is an ``in``, a ``for``, a ``list()``/``set()`` or a splat --
 and ``gpf`` has no non-test caller of ``get_chromosomes()`` at all, which is
 why the ledger entry is the whole mitigation and there is no defensive copy:
 returning a copy per call would give back most of what the memo just bought.
+
+**New method: ``has_chromosome(chrom)``** (gain#1304).  ``BigWigTable``,
+``TabixGenomicPositionTable`` and ``VCFGenomicPositionTable`` are in
+``__all__`` below, so this adds public surface to ``gain`` and is recorded for
+the same reason as everything above.  Concrete on the base, so every backend
+answers it and no caller has to know which one it holds.
+
+It answers whether the table carries a contig, and nothing else -- no extent,
+no length, no ordering.  What it replaces is ``chrom not in
+table.get_chromosomes()``, which was the shape of every membership screen in
+the read path: a walk of the ordered list, costing more the further down the
+list the contig sat, and most of all for a contig the table does NOT carry,
+since that walks all of it before it can say no.  Measured on a tabix table at
+640 contigs, one screen ran 4.3 us on a tail alt and 2.9 us on an absent
+contig, against 0.135 us for the predicate and a 5.3 us point read on the same
+table -- and a miss and a tail alt contig, the two cases the scan is worst at,
+are exactly the two a screen exists for.  The predicate is a set lookup: flat
+in the contig count and in the contig's index.  (``GenomicPositionTable.
+has_chromosome`` carries the full measurement and the per-record totals.)
+
+The set is derived FROM ``get_chromosomes()``, once per open, and released at
+the two seams that release the ``get_file_chromosomes`` memo -- ``close()``
+and ``_build_chrom_mapping()``.  Deriving it from the accessor rather than
+beside it is what makes the two unable to disagree; a predicate that answered
+differently from the list would be this method's quietest possible failure,
+since a screen answering "no" for a contig the table has makes the read above
+it report no data on a contig full of it, with nothing raised.  A closed table
+refuses the predicate in whatever words that backend's ``get_chromosomes()``
+uses, for the same reason.
+
+``get_chromosomes()`` is **unchanged** -- same signature, same order, same
+per-open aliasing -- and remains the read for a caller that needs the order or
+the whole collection.  What changed is that the annotation path no longer
+calls it: ``GenomicScore.get_all_chromosomes()`` is still public and still
+delegates here, but every in-tree screen (both annotators, the score's shared
+region-read refusal, the position kind's absent-contig branch, both allele
+reads, and the tabix, in-memory and bigWig backends' own record-read and
+length screens) now asks ``has_chromosome`` instead.  A backend outside this
+repo inherits the base implementation and needs no change; one that overrides
+``get_chromosomes()`` gets a matching predicate for free, because the base
+derives from the override.
 """
 from .line import LineBuffer
 from .table import ContigExtent

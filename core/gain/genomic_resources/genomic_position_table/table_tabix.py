@@ -379,14 +379,24 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         Derived once per open and held: unlike the base class, which returns
         the stored ``chrom_order``, this maps every file contig and drops the
         ones the ``chrom_mapping`` does not cover -- an allocation and a pass
-        over the contigs.  It is not a read anyone does once.  Every
-        contig-membership check on the annotation path reaches it through
-        ``GenomicScore.get_all_chromosomes()``, and a single annotated
-        substitution makes three of them, so the rebuild was paid three times
+        over the contigs.  When gain#1173 memoised it, that mattered because
+        every contig-membership check on the annotation path reached it
+        through ``GenomicScore.get_all_chromosomes()`` and a single annotated
+        substitution made three of them, so the rebuild was paid three times
         over at a cost that grew with the file's contig count.  Measured per
-        CALL -- multiply by three for the substitution -- 0.40us at one contig,
-        2.3us at 25, 15.7us at hg38 primary-assembly counts and 48.8us with the
-        alts, against a flat 0.05us from the memo (gain#1173).
+        CALL -- 0.40us at one contig, 2.3us at 25, 15.7us at hg38
+        primary-assembly counts and 48.8us with the alts, against a flat
+        0.05us from the memo (gain#1173).
+
+        **Those three calls are gone**: gain#1304 moved every membership
+        screen onto :meth:`~.table.GenomicPositionTable.has_chromosome`, and
+        the set that answers it is derived from this method once per open.
+        So the memo now serves one caller per open rather than three per
+        record, and what it saves is the derivation, not the hot path -- the
+        hot path no longer asks.  It stays for that one derivation, and
+        because the aliasing it introduced is now public contract (see the
+        package docstring's ledger); it is not load-bearing for annotation
+        speed any more.
 
         The comprehension is also cheaper than the ``list(filter(lambda ...))``
         it replaces, which matters for the one derivation still paid per open:
@@ -436,7 +446,7 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                 f"tabix table not open: "
                 f"{self.genomic_resource.resource_id}: "
                 f"{self.definition}")
-        if chrom not in self.get_chromosomes():
+        if not self.has_chromosome(chrom):
             raise ValueError(
                 f"contig {chrom} not present in the table's contigs: "
                 f"{self.get_chromosomes()}")
@@ -604,7 +614,7 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         """
         self.stats["calls"] += 1
 
-        if chrom not in self.get_chromosomes():
+        if not self.has_chromosome(chrom):
             logger.error(
                 "chromosome %s not found in the tabix file "
                 "from %s; %s",
