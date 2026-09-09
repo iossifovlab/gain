@@ -10,7 +10,11 @@ from gain.annotation.annotation_config import (
     AttributeConfig,
 )
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
-from gain.annotation.gene_set_annotator import GeneSetAnnotator
+from gain.annotation.annotation_pipeline import AnnotationPipeline
+from gain.annotation.gene_set_annotator import (
+    GeneSetAnnotator,
+    build_gene_set_annotator,
+)
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
@@ -253,6 +257,23 @@ def test_gene_set_annotator_broken_configuration(
                 - ala_bala
             """),
             test_grr)
+
+
+def test_gene_set_annotator_missing_input_gene_list_names_the_annotator(
+    test_grr: GenomicResourceRepo,
+) -> None:
+    pipeline = AnnotationPipeline(test_grr)
+    info = AnnotatorInfo(
+        "gene_set_annotator", [],
+        {"resource_id": "foobar_gene_set_collection"})
+
+    with pytest.raises(ValueError) as excinfo:
+        build_gene_set_annotator(pipeline, info)
+
+    message = str(excinfo.value)
+    assert "input_gene_list" in message
+    assert "built-in function" not in message
+    assert "gene_set_annotator" in message
 
 
 @pytest.mark.parametrize("set_config,set_id, chrom,pos,ref,alt, expected", [

@@ -6,7 +6,11 @@ import textwrap
 import pytest
 from gain.annotation.annotatable import Region
 from gain.annotation.annotation_config import AnnotatorInfo, AttributeConfig
-from gain.annotation.gene_score_annotator import GeneScoreAnnotator
+from gain.annotation.annotation_pipeline import AnnotationPipeline
+from gain.annotation.gene_score_annotator import (
+    GeneScoreAnnotator,
+    build_gene_score_annotator,
+)
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GenomicResourceRepo,
@@ -176,6 +180,22 @@ def test_gene_score_annotator_used_context_attributes(
         "gene_list",
     )
     assert annotator.used_context_attributes == ("gene_list",)
+
+
+def test_gene_score_annotator_missing_input_gene_list_names_the_annotator(
+    scores_repo: GenomicResourceRepo,
+) -> None:
+    pipeline = AnnotationPipeline(scores_repo)
+    info = AnnotatorInfo(
+        "gene_score_annotator", [], {"resource_id": "LGD_rank"})
+
+    with pytest.raises(ValueError) as excinfo:
+        build_gene_score_annotator(pipeline, info)
+
+    message = str(excinfo.value)
+    assert "input_gene_list" in message
+    assert "built-in function" not in message
+    assert "gene_score_annotator" in message
 
 
 @pytest.fixture
