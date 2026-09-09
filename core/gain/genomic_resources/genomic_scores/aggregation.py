@@ -43,6 +43,7 @@ from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
 
 from ..aggregators import (
     Aggregator,
+    PositionScoreAggregationQuery,
     ScoreAggregationQuery,
 )
 
@@ -116,10 +117,12 @@ def resolve_aggregation_queries(
     second does.  The position kind keeps its own resolver because its
     query carries a third field, ``none_value_replacement``, that has to
     be judged between the two questions -- see that method for why the
-    two must not be merged.  That is also why this function must NOT be
-    handed a :class:`~..aggregators.PositionScoreAggregationQuery`: it
-    would type-check, being a subclass, and the pair answered here has
-    nowhere to put the replacement, so it would be dropped silently.
+    two must not be merged.  That is also why a
+    :class:`~..aggregators.PositionScoreAggregationQuery` is REFUSED here
+    rather than only warned against: it type-checks, being a subclass,
+    and the pair answered here has nowhere to put the replacement.
+    :func:`refuse_position_query` is that refusal, and states the rule
+    and why it has to run rather than live in this signature.
 
     Not routed through :func:`resolve_aggregator_requests`, though that
     returns exactly these pairs and already expands ``None``: it hardcodes
@@ -134,6 +137,7 @@ def resolve_aggregation_queries(
         ]
     requests = []
     for query in queries:
+        refuse_position_query(query, resource_id=resource_id)
         score_def = score_def_for(
             query.score,
             score_definitions=score_definitions,
@@ -145,6 +149,72 @@ def resolve_aggregation_queries(
                 resource_id=resource_id,
                 remedy=QUERY_AGGREGATOR_REMEDY)))
     return requests
+
+
+def refuse_position_query(
+    query: ScoreAggregationQuery, *, resource_id: str,
+) -> None:
+    """Refuse a position query on a surface that answers PAIRS.
+
+    The one statement of the rule that a
+    :class:`~..aggregators.PositionScoreAggregationQuery` may not be
+    resolved to a ``(score_id, aggregator)`` pair.  A pair has nowhere to
+    put the query's ``none_value_replacement``, so answering one would
+    drop the field -- and dropping it is not visible in the answer: the
+    pair that comes back is exactly the pair a caller who never asked for
+    a replacement would get, and the position score's uncovered loci
+    would then reach the aggregator as bare nulls.
+
+    A ``TypeError``, where this module's other refusals are ``ValueError``.
+    Those are about the DATA a caller named -- a score the resource does
+    not define, a score with no default aggregator -- and
+    ``build_annotation_pipeline`` rewraps a ``ValueError`` raised while an
+    annotator is built into an ``AnnotationConfigurationError`` saying that
+    annotator's configuration is incorrect.  That sentence is true of
+    those and false of this one: no configuration the user could write
+    puts the wrong QUERY CLASS on an internal call, so this must not be
+    laundered into it.
+
+    Keyed on the class and not on whether ``none_value_replacement`` is
+    set.  A caller handing position queries to a pair-returning resolver
+    has made one mistake, not one per query, and the queries that leave
+    the field unset resolve to a correct-looking pair -- so a guard that
+    waited for a replacement to be present would pass for whichever
+    queries a test happened to build and refuse later, on the data.
+    Two things follow from testing the POSITION query by ``isinstance``.
+    It names that class rather than "anything but the neutral one", so a
+    future kind that subclasses the neutral query for some unrelated
+    reason is not caught by a rule that is not about it.  And it is
+    ``isinstance`` rather than an exact type compare, so a future
+    subclass OF the position query is caught as well -- it inherits the
+    field, so it inherits the reason.
+
+    This RUNS rather than living in the resolver's signature because,
+    while the position query stays a SUBCLASS of the neutral one, no
+    signature can express it -- measured, not assumed.  Substitution is
+    the whole difficulty: the subclass satisfies
+    ``Sequence[ScoreAggregationQuery]`` by definition.  An ``@overload``
+    pair answering ``NoReturn`` for the subclass was tried against this
+    repo's mypy settings; it reports nothing for a call, and under
+    ``--warn-unreachable`` -- which ``mypy.ini`` does not set -- only
+    that the statement AFTER a literal call cannot be reached.  For the
+    shape the hazard actually takes, a position query sitting in a
+    ``list[ScoreAggregationQuery]`` an annotator built, it reports
+    nothing at all.
+
+    That premise is the whole of it: unpick the subclassing and mypy
+    refuses BOTH shapes on its own, which would delete this function.
+    Whether it should be unpicked is gain#1302's question, out of scope
+    for the gain#1158 that added this.
+    """
+    if isinstance(query, PositionScoreAggregationQuery):
+        raise TypeError(
+            f"score {query.score!r} of resource {resource_id!r} is asked "
+            f"for with a PositionScoreAggregationQuery, which resolves "
+            f"here to a (score_id, aggregator) pair with "
+            f"nowhere to put its none_value_replacement; resolve a "
+            f"position score's queries with "
+            f"PositionScore.resolve_aggregation_queries")
 
 
 def score_def_for(

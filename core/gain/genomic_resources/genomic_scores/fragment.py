@@ -634,7 +634,7 @@ class FragmentScore(GenomicScore):
 
         The allele and position folding reads pay the same per-call
         resolution.  Whether a resolved request should cross the seam
-        instead, which would supersede this memo, is gain#1158's
+        instead, which would supersede this memo, is gain#1300's
         question; until then it stays this kind's.
 
         ``queries`` of ``None`` means every score the resource defines,
