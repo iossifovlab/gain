@@ -106,10 +106,12 @@ def test_summarise_sweep_reports_first_divergent_k_per_thread_setting() -> None:
 
 
 def test_fixed_input_is_identical_across_calls_for_one_seed() -> None:
-    """Each worker builds the input itself.
+    """Two calls in one process agree.
 
-    If it varied between processes, the probe would manufacture drift
-    that the runtime never produced.
+    Agreement *between* processes is not shown here -- it cannot be, in a
+    single interpreter. That is why every worker reports a digest of the
+    input it actually used and `distinct_inputs` invalidates the point when
+    they disagree.
     """
     assert probe.digest_output(probe.fixed_input(width=64, seed=7)) \
         == probe.digest_output(probe.fixed_input(width=64, seed=7))
@@ -137,7 +139,7 @@ flags\t\t: fpu vme de pse avx avx2 avx512f avx512dq
 
 def test_read_host_info_reads_the_cpu_model_name() -> None:
     host = probe.read_host_info(
-        cpuinfo=_AVX2_CPUINFO, hostname="piglet", cores=32,
+        cpuinfo=_AVX2_CPUINFO, hostname="piglet", logical_cpus=32,
         load_average=(2.0, 1.0, 0.5))
 
     assert host.cpu_model == "AMD Ryzen 9 3950X 16-Core Processor"
@@ -145,7 +147,7 @@ def test_read_host_info_reads_the_cpu_model_name() -> None:
 
 def test_read_host_info_detects_avx512_when_the_cpu_has_it() -> None:
     host = probe.read_host_info(
-        cpuinfo=_AVX512_CPUINFO, hostname="eyoree", cores=12,
+        cpuinfo=_AVX512_CPUINFO, hostname="eyoree", logical_cpus=12,
         load_average=(0.1, 0.1, 0.1))
 
     assert host.avx512 is True
@@ -153,13 +155,13 @@ def test_read_host_info_detects_avx512_when_the_cpu_has_it() -> None:
 
 def test_read_host_info_reports_no_avx512_on_an_avx2_only_cpu() -> None:
     host = probe.read_host_info(
-        cpuinfo=_AVX2_CPUINFO, hostname="piglet", cores=32,
+        cpuinfo=_AVX2_CPUINFO, hostname="piglet", logical_cpus=32,
         load_average=(2.0, 1.0, 0.5))
 
     assert host.avx512 is False
 
 
-def test_importing_the_probe_does_not_import_tensorflow() -> None:
+def test_importing_the_probe_does_not_import_a_model_runtime() -> None:
     """The parent must reach the workers with the runtime uninitialised.
 
     Thread settings only take effect before a runtime initialises. If merely
@@ -171,18 +173,20 @@ def test_importing_the_probe_does_not_import_tensorflow() -> None:
         [sys.executable, "-c",
          ("import sys; sys.path.insert(0, sys.argv[1]);"
           "import spliceai_contention_probe;"
-          "print('tensorflow' in sys.modules)"),
+          "print('tensorflow' in sys.modules,"
+          " 'onnxruntime' in sys.modules)"),
          str(_SCRIPTS)],
         capture_output=True, text=True, check=True)
 
-    assert probe_import.stdout.strip() == "False"
+    assert probe_import.stdout.strip() == "False False"
 
 
-def test_summarise_run_carries_the_threads_the_runtime_actually_used() -> None:
-    """`--threads 1` that silently no-ops would fake a reproducible result.
+def test_summarise_run_carries_the_threads_the_runtime_reported() -> None:
+    """The thread readings survive the fold and reach the report.
 
-    The requested setting is an input; what the runtime reports back is
-    evidence. Keeping both lets a reader see the axis was real.
+    This pins plumbing only: both backends echo the request rather than
+    reading the pool back, so it is `observed_os_threads` that distinguishes
+    a pinned worker from an auto one, and neither is checked here.
     """
     summary = probe.summarise_run(
         processes=2, threads=1,
@@ -202,11 +206,11 @@ def test_default_process_sweep_includes_the_core_count() -> None:
     per core. A sweep that stopped below the core count would re-measure what
     CI already covers and miss the shape the default actually produces.
     """
-    assert probe.default_process_sweep(cores=12) == (1, 2, 4, 8, 12)
+    assert probe.default_process_sweep(logical_cpus=12) == (1, 2, 4, 8, 12)
 
 
 def test_default_process_sweep_does_not_repeat_an_exact_power_of_two() -> None:
-    assert probe.default_process_sweep(cores=8) == (1, 2, 4, 8)
+    assert probe.default_process_sweep(logical_cpus=8) == (1, 2, 4, 8)
 
 
 def test_parse_args_defaults_to_tensorflow_and_the_annotator_window() -> None:
@@ -246,3 +250,57 @@ def test_probe_mirrors_the_shipped_onnx_intra_op_default() -> None:
     )
 
     assert probe.ONNX_INTRA_OP_THREADS == DEFAULT_ONNX_INTRA_OP_THREADS
+
+
+def test_a_run_is_not_reproducible_when_workers_saw_different_inputs() -> None:
+    """Input drift must not be reported as runtime drift.
+
+    Each worker builds the fixed input itself. If two workers disagreed about
+    what they predicted on, identical-looking agreement -- or disagreement --
+    would say nothing about the runtime.
+    """
+    summary = probe.summarise_run(
+        processes=2, threads=1, worker_digests=[("a",), ("a",)],
+        input_digests=("x", "y"))
+
+    assert summary.distinct_inputs == 2
+    assert summary.reproducible is False
+
+
+def test_a_run_that_predicted_nothing_is_not_reproducible() -> None:
+    summary = probe.summarise_run(
+        processes=2, threads=1, worker_digests=[(), ()])
+
+    assert summary.reproducible is False
+
+
+def test_run_point_reports_agreement_through_the_real_pool(tmp_path) -> None:
+    """End-to-end over spawn, the barrier and the pool, without a model.
+
+    The orchestration is what a spurious 'reproducible' would come from, so
+    it is exercised here rather than trusted.
+    """
+    config = probe.parse_args(
+        ["--backend", "fake", "--processes", "3", "--iterations", "2"])
+
+    summary = probe.run_point(config, processes=3, threads=None)
+
+    assert summary.total_predictions == 6
+    assert summary.distinct_outputs == 1
+    assert summary.reproducible is True
+
+
+def test_run_point_sees_divergence_through_the_real_pool() -> None:
+    """The same path, with a runtime that deliberately drifts.
+
+    Without this, a clean sweep could mean the plumbing never looks.
+    """
+    config = probe.parse_args(
+        ["--backend", "fake-drift", "--processes", "3", "--iterations", "2"])
+
+    summary = probe.run_point(config, processes=3, threads=None)
+
+    assert summary.distinct_outputs > 1
+    assert summary.reproducible is False
+    assert summary.max_abs_deviation is not None
+    assert summary.max_abs_deviation > 0.0

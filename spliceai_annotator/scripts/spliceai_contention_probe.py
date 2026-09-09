@@ -13,6 +13,7 @@ input, so it can run on any host.
 import argparse
 import dataclasses
 import hashlib
+import itertools
 import json
 import multiprocessing
 import os
@@ -69,30 +70,55 @@ class RunSummary:
     #: but processes disagreed; anything above 1 is a single process changing
     #: its answer between iterations.
     per_worker_distinct: tuple[int, ...]
-    #: What each worker's runtime reported its intra-op pool actually was,
-    #: and how many OS threads the process ended up holding. `threads` above
-    #: is what was *asked* for; these are what happened. A `--threads 1` run
-    #: that silently kept the default would look reproducible for the wrong
-    #: reason, so the evidence travels with the result.
+    #: The intra-op setting each worker's runtime reported back, and the
+    #: OS thread count the process ended up holding. The first *echoes the
+    #: request* on both backends (ONNX returns the field just assigned;
+    #: TensorFlow returns the configured value, 0 meaning "size to the
+    #: machine"), so it confirms the setter ran but is not independent
+    #: evidence. `observed_os_threads` is the independent measurement: it
+    #: separates a pinned worker from an auto one whatever was asked.
     observed_intra_op_threads: tuple[int, ...] = ()
     observed_os_threads: tuple[int, ...] = ()
-    #: The box's 1/5/15-minute load as this point started. #1275 asks for it
-    #: beside every figure, because a "reproducible" point taken on an idle
-    #: box says nothing about a contended one.
+    #: The box's 1/5/15-minute load when this point *finished* -- the load
+    #: the point itself created. #1275 asks for it beside every figure,
+    #: because a "reproducible" point taken on an idle box says nothing about
+    #: a contended one. `load_average_before` is the reading on entry, which
+    #: is mostly the previous point's.
     load_average: tuple[float, float, float] | None = None
+    load_average_before: tuple[float, float, float] | None = None
+    #: How many distinct inputs the workers reported predicting on. Anything
+    #: but 1 invalidates the point: each worker builds the fixed input
+    #: itself, and input drift would otherwise read as runtime drift.
+    distinct_inputs: int = 1
+    #: The largest absolute difference between any worker's first answer and
+    #: worker 0's. Digests say *that* answers differ; #1275 asks by how much.
+    max_abs_deviation: float | None = None
 
     @property
     def reproducible(self) -> bool:
-        return self.distinct_outputs <= 1
+        """One answer, one input, and something actually ran.
+
+        A point that predicted nothing, or whose workers disagreed about
+        what they predicted on, is not evidence of a stable runtime.
+        """
+        return (
+            self.total_predictions > 0
+            and self.distinct_outputs == 1
+            and self.distinct_inputs == 1
+        )
 
 
 def summarise_run(
     processes: int,
     threads: int | None,
     worker_digests: Sequence[Sequence[str]],
+    *,
     observed_intra_op_threads: Sequence[int] = (),
     observed_os_threads: Sequence[int] = (),
     load_average: tuple[float, float, float] | None = None,
+    load_average_before: tuple[float, float, float] | None = None,
+    input_digests: Sequence[str] = (),
+    max_abs_deviation: float | None = None,
 ) -> RunSummary:
     """Fold every worker's digests into one point of the sweep."""
     every = [digest for worker in worker_digests for digest in worker]
@@ -106,6 +132,9 @@ def summarise_run(
         observed_intra_op_threads=tuple(observed_intra_op_threads),
         observed_os_threads=tuple(observed_os_threads),
         load_average=load_average,
+        load_average_before=load_average_before,
+        distinct_inputs=len(set(input_digests)) if input_digests else 1,
+        max_abs_deviation=max_abs_deviation,
     )
 
 
@@ -156,7 +185,7 @@ class HostInfo:
 
     hostname: str
     cpu_model: str
-    cores: int
+    logical_cpus: int
     #: #1206 left "oversubscription degree alone, or AVX-512 kernels?" open,
     #: so which ISA a result came from is part of the result.
     avx512: bool
@@ -166,7 +195,7 @@ class HostInfo:
 def read_host_info(
     cpuinfo: str,
     hostname: str,
-    cores: int,
+    logical_cpus: int,
     load_average: tuple[float, float, float],
 ) -> HostInfo:
     """Build the host record from an already-read /proc/cpuinfo."""
@@ -182,7 +211,7 @@ def read_host_info(
     return HostInfo(
         hostname=hostname,
         cpu_model=model,
-        cores=cores,
+        logical_cpus=logical_cpus,
         avx512=any(flag.startswith("avx512") for flag in flags),
         load_average=load_average,
     )
@@ -198,12 +227,12 @@ def capture_host() -> HostInfo:
     return read_host_info(
         cpuinfo=cpuinfo,
         hostname=platform.node(),
-        cores=os.cpu_count() or 0,
+        logical_cpus=os.cpu_count() or 0,
         load_average=(load[0], load[1], load[2]),
     )
 
 
-def default_process_sweep(cores: int) -> tuple[int, ...]:
+def default_process_sweep(logical_cpus: int) -> tuple[int, ...]:
     """Doubling process counts up to, and including, the core count.
 
     The core count is the point of the sweep: the annotation CLI's ``-j``
@@ -213,10 +242,10 @@ def default_process_sweep(cores: int) -> tuple[int, ...]:
     """
     counts = []
     k = 1
-    while k < cores:
+    while k < logical_cpus:
         counts.append(k)
         k *= 2
-    counts.append(cores)
+    counts.append(logical_cpus)
     return tuple(counts)
 
 
@@ -233,14 +262,29 @@ MODELS_DIR = (
 #: two together so the copy cannot drift.
 ONNX_INTRA_OP_THREADS = 4
 
+#: The ensemble is five models, and *both* shipped backends load all five per
+#: process. That is not a detail: ONNX Runtime opens one thread pool per
+#: session, so an ensemble costs 5 x `ONNX_INTRA_OP_THREADS` intra-op threads
+#: per process, while TensorFlow's pools are process-wide and shared across
+#: all five. A probe that loaded a single model would under-thread the ONNX
+#: arm five-fold and land it *below* the contention degree #1206 drifted at,
+#: while leaving the TensorFlow arm at full strength -- the two arms would
+#: not be comparable, and a silent ONNX arm would prove nothing.
+ENSEMBLE_SIZE = 5
+
+#: The model's receptive field: outputs are `width - 10000` positions long,
+#: so anything at or below this has nothing to predict.
+MODEL_CONTEXT = 10000
+
 
 @dataclasses.dataclass(frozen=True)
 class ProbeConfig:
     """One sweep's worth of instructions."""
 
     backend: str
-    model: int
+    models: int
     width: int
+    batch: int
     iterations: int
     processes: tuple[int, ...]
     #: None means "leave the runtime's own default alone" -- the arm that
@@ -268,29 +312,44 @@ def _thread_list(raw: str) -> tuple[int | None, ...]:
         for part in raw.split(","))
 
 
+def _width(raw: str) -> int:
+    value = _positive(raw)
+    if value <= MODEL_CONTEXT:
+        raise argparse.ArgumentTypeError(
+            f"width must exceed the model's {MODEL_CONTEXT}-position context "
+            f"or there is nothing to predict: {raw!r}")
+    return value
+
+
 def parse_args(argv: Sequence[str] | None = None) -> ProbeConfig:
     """Read a sweep off the command line."""
-    cores = os.cpu_count() or 1
-    sweep_default = default_process_sweep(cores)
+    logical_cpus = os.cpu_count() or 1
+    sweep_default = default_process_sweep(logical_cpus)
     parser = argparse.ArgumentParser(
         description="Does a SpliceAI model runtime answer differently under "
                     "load? (iossifovlab/gain#1275)")
     parser.add_argument(
-        "--backend", choices=sorted(("tensorflow", "onnx")),
-        default="tensorflow",
-        help="model runtime to probe (default: the shipped one)")
+        "--backend", choices=sorted(_LOADERS), default="tensorflow",
+        help="model runtime to probe (default: the shipped one); the two "
+             "'fake' backends need no model and exist to self-test this "
+             "script's own plumbing")
     parser.add_argument(
-        "--model", type=_positive, default=1,
-        help="which of the five ensemble models to load (default: 1)")
+        "--models", type=int, choices=range(1, ENSEMBLE_SIZE + 1),
+        default=ENSEMBLE_SIZE,
+        help=f"ensemble models to load per worker (default: {ENSEMBLE_SIZE}, "
+             "what both shipped backends load)")
     parser.add_argument(
-        "--width", type=_positive, default=DEFAULT_WIDTH,
+        "--width", type=_width, default=DEFAULT_WIDTH,
         help=f"sequence length (default: {DEFAULT_WIDTH}, distance=50)")
+    parser.add_argument(
+        "--batch", type=_positive, default=1,
+        help="windows per prediction (default: 1); Keras chunks `predict` at "
+             "32 internally, so a batch changes the reduction shape")
     parser.add_argument(
         "--iterations", type=_positive, default=3,
         help="predictions per worker after the barrier (default: 3)")
     parser.add_argument(
-        "--processes", type=_positive_list,
-        default=sweep_default,
+        "--processes", type=_positive_list, default=sweep_default,
         help="comma-separated contending process counts "
              f"(default: {','.join(str(k) for k in sweep_default)})")
     parser.add_argument(
@@ -306,8 +365,9 @@ def parse_args(argv: Sequence[str] | None = None) -> ProbeConfig:
     args = parser.parse_args(argv)
     return ProbeConfig(
         backend=args.backend,
-        model=args.model,
+        models=args.models,
         width=args.width,
+        batch=args.batch,
         iterations=args.iterations,
         processes=tuple(args.processes),
         threads=tuple(args.threads),
@@ -323,12 +383,16 @@ def _os_thread_count() -> int:
         return 0
 
 
-def _load_tensorflow(model: int, threads: int | None) -> tuple[Predict, int]:
-    """Load one Keras model, optionally pinning the thread pools first.
+def _load_tensorflow(models: int, threads: int | None) -> tuple[Predict, int]:
+    """Load the ensemble as Keras models, pinning the pools first if asked.
 
     Both settings must be applied before TensorFlow initialises its runtime,
     which is why this runs inside the worker process and why the parent never
     imports TensorFlow.
+
+    `CUDA_VISIBLE_DEVICES=-1` is set here but not by the shipped backend: the
+    question is about CPU kernels, and a probe that silently landed on a GPU
+    on some host would answer a different one.
     """
     # pylint: disable=import-outside-toplevel
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
@@ -337,23 +401,29 @@ def _load_tensorflow(model: int, threads: int | None) -> tuple[Predict, int]:
     if threads is not None:
         tf.config.threading.set_intra_op_parallelism_threads(threads)
         tf.config.threading.set_inter_op_parallelism_threads(threads)
-    keras_model = tf.keras.models.load_model(
-        str(MODELS_DIR / f"spliceai{model}.h5"))
-    # 0 is TensorFlow's way of saying "size it to the machine".
-    observed = tf.config.threading.get_intra_op_parallelism_threads()
+    loaded = [
+        tf.keras.models.load_model(str(MODELS_DIR / f"spliceai{i}.h5"))
+        for i in range(1, models + 1)
+    ]
+    # Echoes the request (0 = "size it to the machine"); it confirms the
+    # setter ran, and is not an independent read-back. `observed_os_threads`
+    # is the independent evidence.
+    requested = tf.config.threading.get_intra_op_parallelism_threads()
 
     def predict(x: np.ndarray) -> np.ndarray:
-        return cast("np.ndarray", keras_model.predict(x, verbose=0))
+        return cast("np.ndarray", np.mean(
+            [model.predict(x, verbose=0) for model in loaded], axis=0))
 
-    return predict, observed
+    return predict, requested
 
 
-def _load_onnx(model: int, threads: int | None) -> tuple[Predict, int]:
-    """Open one ONNX session with the shipped backend's settings applied.
+def _load_onnx(models: int, threads: int | None) -> tuple[Predict, int]:
+    """Open the ensemble's sessions with the shipped backend's settings.
 
     #1275 asks for the ONNX arm as a comparison baseline, so it must be the
     configuration that actually ships -- the three settings #297 and #400
-    found load-bearing -- not stock ONNX Runtime.
+    found load-bearing, and one session per ensemble model, each with its own
+    intra-op pool.
     """
     # pylint: disable=import-outside-toplevel
     import onnxruntime as ort
@@ -363,25 +433,70 @@ def _load_onnx(model: int, threads: int | None) -> tuple[Predict, int]:
         ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
     options.intra_op_num_threads = (
         ONNX_INTRA_OP_THREADS if threads is None else threads)
-    session = ort.InferenceSession(
-        str(MODELS_DIR / f"spliceai{model}.onnx"), options,
-        providers=["CPUExecutionProvider"])
-    name = session.get_inputs()[0].name
+    sessions = [
+        ort.InferenceSession(
+            str(MODELS_DIR / f"spliceai{i}.onnx"), options,
+            providers=["CPUExecutionProvider"])
+        for i in range(1, models + 1)
+    ]
+    names = [session.get_inputs()[0].name for session in sessions]
 
     def predict(x: np.ndarray) -> np.ndarray:
-        return cast("np.ndarray", session.run(None, {name: x})[0])
+        return cast("np.ndarray", np.mean([
+            session.run(None, {name: x})[0]
+            for session, name in zip(sessions, names, strict=True)
+        ], axis=0))
 
+    # Echoes the request, as above.
     return predict, options.intra_op_num_threads
 
 
-_LOADERS = {"tensorflow": _load_tensorflow, "onnx": _load_onnx}
+def _load_fake(models: int, threads: int | None) -> tuple[Predict, int]:
+    """A runtime that always answers the same thing. No model, no import.
+
+    Exists so the barrier, the process pool and the fold can be exercised in
+    CI: those are where a spurious "reproducible" would come from, and
+    without a model-free arm they would only ever run by hand.
+    """
+    del models
+
+    def predict(x: np.ndarray) -> np.ndarray:
+        return np.full((1, 3), 0.25, dtype=np.float32) * np.float32(x.shape[1])
+
+    return predict, 1 if threads is None else threads
+
+
+def _load_fake_drift(models: int, threads: int | None) -> tuple[Predict, int]:
+    """A runtime that answers differently every call -- the positive control.
+
+    The whole sweep rests on being able to tell "the runtime is stable" from
+    "the instrument cannot see". This arm makes the difference observable end
+    to end rather than only in a unit test.
+    """
+    del models
+    calls = itertools.count()
+
+    def predict(x: np.ndarray) -> np.ndarray:
+        del x
+        return np.array(
+            [[0.25, 0.25, 0.25 + next(calls) * 1e-6]], dtype=np.float32)
+
+    return predict, 1 if threads is None else threads
+
+
+_LOADERS: dict[str, Callable[[int, int | None], tuple[Predict, int]]] = {
+    "tensorflow": _load_tensorflow,
+    "onnx": _load_onnx,
+    "fake": _load_fake,
+    "fake-drift": _load_fake_drift,
+}
 
 #: Set in each worker by the pool initializer; the workers meet here so that
 #: every measured prediction happens while all K processes are running.
 _BARRIER: Any = None
 
-#: Generous: a worker that has to load a model on a saturated box can take
-#: a while, and a hang should fail rather than wedge the sweep.
+#: Generous: a worker that has to load an ensemble on a saturated box can
+#: take a while, and a hang should fail rather than wedge the sweep.
 _BARRIER_TIMEOUT_SECONDS = 900
 
 
@@ -391,20 +506,71 @@ def _init_worker(barrier: Any) -> None:
 
 
 def _run_worker(
-    spec: tuple[str, int, int | None, int, int, int],
-) -> tuple[tuple[str, ...], int, int]:
+    spec: tuple[str, int, int | None, int, int, int, int],
+) -> tuple[tuple[str, ...], str, int, int, np.ndarray, float]:
     """One contending process: load, warm up, sync, then measure."""
-    backend, model, threads, width, seed, iterations = spec
-    predict, observed = _LOADERS[backend](model, threads)
-    x = fixed_input(width, seed)
+    backend, models, threads, width, batch, seed, iterations = spec
+    predict, requested = _LOADERS[backend](models, threads)
+    x = np.repeat(fixed_input(width, seed), batch, axis=0)
     # Untimed: the first call builds the graph and allocates the arenas, and
     # doing that while other workers are already predicting would measure
     # start-up skew rather than contention.
     predict(x)
-    if _BARRIER is not None:
-        _BARRIER.wait(timeout=_BARRIER_TIMEOUT_SECONDS)
-    return probe_predictions(predict, x, iterations), observed, \
-        _os_thread_count()
+    if _BARRIER is None:
+        # Never reached via `run_point`, which always installs one. Loud
+        # rather than silent: unsynchronised workers would stagger, and a
+        # staggered run reporting "reproducible" is the exact false negative
+        # this probe exists to avoid.
+        raise RuntimeError("worker started without a barrier; the run would "
+                           "not be contended")
+    _BARRIER.wait(timeout=_BARRIER_TIMEOUT_SECONDS)
+
+    # Deviation has to come from the *measured* predictions: the warm-up call
+    # happens before the barrier, when nothing is contending, so comparing
+    # warm-ups would report 0.0 however badly the measured ones drifted.
+    # Only the first measured answer is retained; the rest are folded into a
+    # running peak, so memory stays flat in `iterations`.
+    measured: list[np.ndarray] = []
+    within = 0.0
+
+    def recording(value: np.ndarray) -> np.ndarray:
+        nonlocal within
+        out = predict(value)
+        if not measured:
+            measured.append(out)
+        else:
+            within = max(
+                within, float(np.max(np.abs(out - measured[0]))))
+        return out
+
+    digests = probe_predictions(recording, x, iterations)
+    exemplar = measured[0] if measured else np.zeros(1, dtype=np.float32)
+    return (
+        digests, digest_output(x), requested, _os_thread_count(),
+        exemplar, within)
+
+
+def _max_abs_deviation(
+    exemplars: Sequence[np.ndarray],
+    within_worker: Sequence[float],
+) -> float | None:
+    """How far apart the answers actually are.
+
+    Digests say *that* answers differ; #1275 asks by *how much* (it cites
+    3e-4 in a probability and ~5e-5 in a `DS_*`). Without this a red run
+    would need a second instrument to interpret.
+
+    Divergence takes two shapes and both count: one worker's answer changing
+    between iterations, and workers disagreeing with each other. Reporting
+    only the second would read 0.0 for a runtime that is unstable inside
+    every process but identically so across them.
+    """
+    if not exemplars:
+        return None
+    baseline = exemplars[0]
+    across = max(
+        float(np.max(np.abs(exemplar - baseline))) for exemplar in exemplars)
+    return max([across, *within_worker])
 
 
 def run_point(
@@ -416,20 +582,29 @@ def run_point(
     ctx = multiprocessing.get_context("spawn")
     barrier = ctx.Barrier(processes)
     spec = (
-        config.backend, config.model, threads,
-        config.width, config.seed, config.iterations)
-    load = os.getloadavg()
+        config.backend, config.models, threads, config.width,
+        config.batch, config.seed, config.iterations)
+    load_before = os.getloadavg()
     with ctx.Pool(
         processes, initializer=_init_worker, initargs=(barrier,),
     ) as pool:
         results = pool.map(_run_worker, [spec] * processes, chunksize=1)
+    # After, not before: the load entering a point is mostly the *previous*
+    # point's, while this one is the load the point itself created.
+    load_after = os.getloadavg()
     return summarise_run(
         processes=processes,
         threads=threads,
-        worker_digests=[digests for digests, _, _ in results],
-        observed_intra_op_threads=[observed for _, observed, _ in results],
-        observed_os_threads=[os_threads for _, _, os_threads in results],
-        load_average=(load[0], load[1], load[2]),
+        worker_digests=[digests for digests, _, _, _, _, _ in results],
+        input_digests=[x_digest for _, x_digest, _, _, _, _ in results],
+        observed_intra_op_threads=[req for _, _, req, _, _, _ in results],
+        observed_os_threads=[n for _, _, _, n, _, _ in results],
+        load_average=(load_after[0], load_after[1], load_after[2]),
+        load_average_before=(
+            load_before[0], load_before[1], load_before[2]),
+        max_abs_deviation=_max_abs_deviation(
+            [exemplar for _, _, _, _, exemplar, _ in results],
+            [within for _, _, _, _, _, within in results]),
     )
 
 
@@ -439,14 +614,7 @@ def run_sweep(config: ProbeConfig) -> SweepSummary:
     for threads in config.threads:
         for processes in config.processes:
             run = run_point(config, processes, threads)
-            print(
-                f"  {config.backend:<10} threads={_label(threads):<4} "
-                f"K={run.processes:<3} "
-                f"distinct={run.distinct_outputs:<3} "
-                "observed_intra_op="
-                f"{sorted(set(run.observed_intra_op_threads))} "
-                f"os_threads={sorted(set(run.observed_os_threads))}",
-                flush=True)
+            print(_run_line(config.backend, run), flush=True)
             runs.append(run)
     return summarise_sweep(runs)
 
@@ -455,16 +623,33 @@ def _label(threads: int | None) -> str:
     return "auto" if threads is None else str(threads)
 
 
+def _run_line(backend: str, run: RunSummary) -> str:
+    """One line per sweep point, readable while the sweep is still running."""
+    deviation = (
+        "-" if run.max_abs_deviation is None
+        else f"{run.max_abs_deviation:.3g}")
+    load = "-" if run.load_average is None else f"{run.load_average[0]:.1f}"
+    return (
+        f"  {backend:<11} threads={_label(run.threads):<4} "
+        f"K={run.processes:<3} "
+        f"distinct={run.distinct_outputs:<3} "
+        f"max_abs_dev={deviation:<10} "
+        f"os_threads={sorted(set(run.observed_os_threads))} "
+        f"load_after={load}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the sweep and report it."""
+    """Run the sweep and report it. Non-zero if anything diverged."""
     config = parse_args(argv)
     host = capture_host()
     print(
-        f"host={host.hostname} cpu={host.cpu_model!r} cores={host.cores} "
+        f"host={host.hostname} cpu={host.cpu_model!r} "
+        f"logical_cpus={host.logical_cpus} "
         f"avx512={host.avx512} load={host.load_average}")
     print(
-        f"backend={config.backend} model={config.model} "
-        f"width={config.width} iterations={config.iterations} "
+        f"backend={config.backend} models={config.models} "
+        f"width={config.width} batch={config.batch} "
+        f"iterations={config.iterations} "
         f"processes={config.processes} "
         f"threads={[_label(t) for t in config.threads]}")
     sweep = run_sweep(config)
@@ -492,7 +677,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
         config.json_path.write_text(json.dumps(report, indent=2, default=str))
         print(f"\nwrote {config.json_path}")
-    return 0
+    return 0 if all(run.reproducible for run in sweep.runs) else 1
 
 
 if __name__ == "__main__":
