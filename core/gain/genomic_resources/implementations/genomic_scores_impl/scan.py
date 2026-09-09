@@ -63,7 +63,10 @@ from gain.genomic_resources.statistics.fragments import (
     region_fragments_for,
     save_and_plot_fragments,
 )
-from gain.genomic_resources.statistics.min_max import MinMaxValue
+from gain.genomic_resources.statistics.min_max import (
+    MinMaxValue,
+    NullMinMaxValue,
+)
 from gain.genomic_resources.statistics.record_validation import (
     validate_record_arrays,
     validate_records,
@@ -409,6 +412,14 @@ def do_min_max(
     region measuring differently by which path served it is what the
     parity tests refuse.
 
+    A value the reducer refuses nullifies THAT score and the pass carries
+    on, exactly as :func:`do_histogram` has always done -- the asymmetry
+    between the two was what made a single unfoldable value cost a whole
+    statistics build (gain#1285, gain#1313).  The refused score is replaced
+    with a :class:`~gain.genomic_resources.statistics.min_max.NullMinMaxValue`,
+    which is the latch as much as the outcome: its ``add_value`` is a no-op,
+    so the refusal costs one exception per region rather than one per record.
+
     A ``score`` handed in is opened here and closed on return; see
     :func:`_score_for`.
     """
@@ -428,9 +439,25 @@ def do_min_max(
             if not owns_record(left, start, end):
                 continue
             for score_index, score_id in enumerate(score_ids):
-                result[score_id].add_value(
-                    rec[score_index],  # type: ignore
-                )
+                try:
+                    result[score_id].add_value(
+                        rec[score_index],  # type: ignore
+                    )
+                except TypeError as err:
+                    # The containment ``do_histogram`` has had all along: one
+                    # score the reducer refuses costs THAT score, not the
+                    # resource's whole statistics build (gain#1285).  The
+                    # replacement is the latch as much as the outcome --
+                    # ``NullMinMaxValue.add_value`` is a no-op, so the refusal
+                    # is paid once per region per score rather than once per
+                    # record, which is the only reason a per-value catch is
+                    # affordable in this loop.
+                    logger.exception(
+                        "Failed adding value %s to the min/max of %s in "
+                        "<%s> at %s:%s-%s; nullify the score's min/max",
+                        rec[score_index] if rec else None, score_id,
+                        resource.resource_id, chrom, start, end)
+                    result[score_id] = NullMinMaxValue(score_id, str(err))
     return result
 
 
@@ -447,16 +474,27 @@ def merge_min_max(
     result into the histogram configs the histogram pass will build
     from.  A histogram whose config already carries a view range
     never scheduled a min/max task and is not touched.
+
+    A region that REFUSED a score nullifies it for the whole fold, the way
+    ``merge_histograms`` lets one region's ``NullHistogram`` nullify a score:
+    the regions that folded values cannot answer for the one that could not.
     """
     res: dict[str, MinMaxValue] = {}
     for score_id in score_ids:
         for min_max_region in calculate_tasks:
-            if res.get(score_id) is None:
-                res[score_id] = min_max_region[score_id]
+            region_min_max = min_max_region[score_id]
+            # A refusal travels, exactly as a region's ``NullHistogram`` does
+            # in ``merge_histograms``: the regions that DID fold values
+            # cannot answer for the one that could not, and a view range
+            # built from the survivors alone would bin the score as if
+            # nothing had been refused.  Only this direction needs saying --
+            # ``NullMinMaxValue.merge`` is a no-op, so a score already
+            # refused stays refused whatever is folded into it.
+            if res.get(score_id) is None \
+                    or isinstance(region_min_max, NullMinMaxValue):
+                res[score_id] = region_min_max
             else:
-                assert res[score_id] is not None
-                res[score_id].merge(
-                    min_max_region[score_id])
+                res[score_id].merge(region_min_max)
     return update_hist_confs(
         all_hist_confs, res)
 
@@ -471,6 +509,11 @@ def update_hist_confs(
     are.  A score whose min or max came back nan has no values to
     bin -- its histogram is nullified with that as the reason, which
     is a resource fact worth reporting, not a failure to raise on.
+
+    A score the min/max pass REFUSED arrives here the same way, since a
+    refusal leaves the nan seed untouched, but it is a different fact about
+    the resource -- values that could not be folded, rather than no values --
+    so it is nullified with the refusal as the reason instead.
     """
     if minmax_task is None:
         return all_hist_confs
@@ -479,7 +522,17 @@ def update_hist_confs(
         hist_conf = all_hist_confs[score_id]
         assert isinstance(hist_conf, NumberHistogramConfig)
         assert not hist_conf.has_view_range()
-        if np.isnan(min_max.min) or np.isnan(min_max.max):
+        if isinstance(min_max, NullMinMaxValue):
+            # Same nullify, different resource fact: a score with no values in
+            # the region and a score whose values could not be folded both
+            # arrive here with nothing to bin, and a curator reading the
+            # reason has to be able to tell them apart.
+            logger.warning(
+                "min/max for %s was refused; "
+                "nullify the histogram: %s", score_id, min_max.reason)
+            all_hist_confs[score_id] = NullHistogramConfig(
+                f"min/max for {score_id} refused: {min_max.reason}")
+        elif np.isnan(min_max.min) or np.isnan(min_max.max):
             logger.warning(
                 "min/max value for %s not found; "
                 "nullify the histogram", score_id)

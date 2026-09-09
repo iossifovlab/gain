@@ -17,6 +17,51 @@ from gain.genomic_resources.histogram import (
 from gain.genomic_resources.testing.builders import a_position_score
 
 
+def _a_number_histogram() -> NumberHistogram:
+    return NumberHistogram(NumberHistogramConfig.from_dict({
+        "type": "number",
+        "view_range": {"min": 0, "max": 10},
+        "number_of_bins": 10,
+        "x_log_scale": False,
+        "y_log_scale": False,
+    }))
+
+
+def test_number_histogram_refuses_text_with_its_own_message() -> None:
+    """The refusal names the value and its type; numpy's names neither.
+
+    The guard was written for exactly this type and could never fire for it:
+    the ``np.isnan`` above it raised first, so a reader of a nullified
+    score's reason got ``ufunc 'isnan' not supported`` (gain#1312).
+    """
+    histogram = _a_number_histogram()
+
+    with pytest.raises(TypeError, match=r"non numerical value.*aaa.*str"):
+        histogram.add_value("aaa")  # type: ignore[arg-type]
+
+
+def test_number_histogram_still_skips_none_after_stating_the_refusal() -> None:
+    """``None`` is an NA cell, and must not become a raise.
+
+    Fixing gain#1312 by hoisting the existing isinstance check above the
+    ``None``/nan skip would do exactly that -- ``None`` is in no allow-list.
+    """
+    histogram = _a_number_histogram()
+
+    histogram.add_value(None)
+
+    assert histogram.bars.sum() == 0
+
+
+def test_number_histogram_still_skips_nan_after_stating_the_refusal() -> None:
+    """A nan is a non-value here, not a contract breach."""
+    histogram = _a_number_histogram()
+
+    histogram.add_value(np.nan)
+
+    assert histogram.bars.sum() == 0
+
+
 def test_histogram_simple_input() -> None:
     config = NumberHistogramConfig.from_dict({
         "type": "number",

@@ -174,6 +174,23 @@ def regions_in_genomic_order[R: ScannedRegion](
             region.start if region.start is not None else 0))
 
 
+def non_numeric_error(value: Any, what: str) -> TypeError:
+    """The one wording of a numeric accumulator's refusal.
+
+    ``what`` names the accumulator in the message; the rule is one -- the
+    same shape as :func:`refuse_unmergeable`, and here for the same reason:
+    ``NumberHistogram`` and ``MinMaxValue`` are twins that fold the same
+    values under the same numeric contract, and a reader of a nullified
+    score's reason should not be able to tell which of them produced it.
+
+    Returned rather than raised, so a caller can raise it ``from`` the
+    numpy error it is re-wording.
+    """
+    return TypeError(
+        f"Cannot add non numerical value {value!r} ({type(value)}) to {what}",
+    )
+
+
 def refuse_unmergeable(
     what: str,
     left: ScannedRegion,
