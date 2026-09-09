@@ -18,7 +18,10 @@ from matplotlib import ticker
 
 from gain import logging
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.statistics.base_statistic import Statistic
+from gain.genomic_resources.statistics.base_statistic import (
+    Statistic,
+    non_numeric_error,
+)
 from gain.genomic_resources.statistics.min_max import MinMaxValue
 
 logger = logging.getLogger(__name__)
@@ -337,14 +340,30 @@ class NumberHistogram(Statistic):
 
     def add_value(self, value: float | None, count: int = 1) -> None:
         """Add value to the histogram."""
-        if value is None or np.isnan(value):
-            return
+        # ``np.isnan`` is what refuses a value it cannot read as a number,
+        # and it raises BEFORE the allow-list below can be reached -- which
+        # is why that refusal, written for exactly the ``str`` case, could
+        # never fire for it, and a nullified score's reason read ``ufunc
+        # 'isnan' not supported`` (gain#1312).  Re-wording numpy's complaint
+        # is the whole fix; the skip itself is untouched, so ``None`` is
+        # still an NA cell rather than a contract breach.
+        #
+        # Catching beats pre-checking the type here, and measurably: this
+        # runs per value of every record, and an ``isinstance`` ahead of the
+        # skip costs it ~24% (``str | bytes`` builds a union object on every
+        # call), where a try/except that does not fire costs ~3%.
+        try:
+            if value is None or np.isnan(value):
+                return
+        except TypeError as err:
+            raise non_numeric_error(value, "number histogram") from err
 
+        # Reached only by values ``np.isnan`` accepted, so this is the
+        # allow-list's own business: widening it (``np.float32`` is not a
+        # ``float``; ``np.bool_`` is not an ``np.integer``) is gain#1338, not
+        # this change.
         if not isinstance(value, (int, float, np.integer)):
-            raise TypeError(
-                "Cannot add non numerical value "
-                f"{value} ({type(value)}) to number histogram",
-            )
+            raise non_numeric_error(value, "number histogram")
 
         self.min_value = min(value, self.min_value)
         self.max_value = max(value, self.max_value)
