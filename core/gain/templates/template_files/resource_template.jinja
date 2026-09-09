@@ -144,22 +144,23 @@
                 <td>
                     <div>
                         <template shadowrootmode="open">
+                            {# A shadow root is a style boundary, so the
+                               page's stylesheet does not reach in here.
+                               It includes the shared content rules
+                               rather than restating them;
+                               `content_styles.jinja` says why. #}
                              <style>
+                              {% include "content_styles.jinja" %}
+
+                              {# No counterpart on the page: this caps a
+                                 description's own images, where the page
+                                 chrome sizes thumbnails it emits itself. #}
                               img {
                                 max-width: min(100%, 800px);
                                 max-height: 50vh;
                                 width: auto;
                                 height: auto;
                                 display: block;
-                              }
-
-                              a {
-                                text-decoration: none;
-                                color: #24699E;
-                              }
-
-                              a:hover {
-                                color: #4C93C9;
                               }
                             </style>
                             {%- set description = resource.get_description() -%}

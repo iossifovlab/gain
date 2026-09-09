@@ -1,0 +1,83 @@
+{# The shared rules a rendered-Markdown description needs, which are also
+   most of what the page needs for the markup it lays out itself.
+
+   They live apart from the rest of `base_styles.jinja` because they have
+   two consumers, not one.  A resource page renders `meta.description`
+   into a declarative shadow root, and a shadow root is a style boundary:
+   `base_styles.jinja` cannot reach inside it, so the description's
+   `<style>` includes this file too.  Both sides then read the same text
+   -- the shadow root used to carry a hand-copied subset of these rules
+   and it fell behind, leaving description tables borderless and
+   description headings unstyled (gain#1279).
+
+   What belongs here is decided by the *selector*, not by intent: a rule
+   whose selectors name only elements and pseudo-elements belongs here,
+   because elements are all that rendered Markdown is made of.  A rule
+   naming a class, an id or an attribute stays in `base_styles.jinja` --
+   it addresses markup a template emits itself, none of which exists
+   inside a shadow root.  Reading the selector is mechanical, so the next
+   rule added does not need its author to guess at what counts as
+   "content"; it is also what settles `:where(.page-content) img`, which
+   names a class and so stays behind with no exception to argue about.
+
+   `body` is the one genuine exception -- an element selector that stays
+   in `base_styles.jinja`, because a shadow root has no body element for
+   it to match, and the colour it sets reaches the description by
+   inheritance regardless.
+
+   Not a second consumer: `about.md` and the annotator doc pages render
+   authored Markdown too, but they include `base_styles.jinja` and so
+   already receive these rules through it.  Nothing includes both. #}
+      *, *::before, *::after {
+        box-sizing: border-box;
+        font-family: "Roboto", system-ui, -apple-system, sans-serif;
+      }
+
+      h1, h2, h3, h4, h5, h6 {
+        color: #5b778c;
+      }
+
+      h2 {
+        margin-top: 50px;
+        margin-bottom: 10px;
+      }
+
+      h3,h4 {
+        margin-top:0.5em;
+        margin-bottom:0.5em;
+      }
+
+      table {
+        border-collapse: collapse;
+        width: 100%
+      }
+
+      th {
+        background: #ecf1f6;
+      }
+
+      td,
+      th {
+        border: 1px solid #cfd8df;
+        padding: 5px 10px;
+        overflow-wrap: break-word;
+      }
+
+      tr {
+        height: 38px;
+      }
+
+      ul {
+        list-style-type: '-  ';
+        padding-left: 15px;
+        margin: 0;
+      }
+
+      a {
+        text-decoration: none;
+        color: #24699E;
+      }
+
+      a:hover {
+        color: #4C93C9;
+      }
