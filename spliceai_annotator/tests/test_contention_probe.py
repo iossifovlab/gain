@@ -1,4 +1,4 @@
-# pylint: disable=W0621,C0114,C0116,W0212,W0613,C0413
+# pylint: disable=W0621,C0114,C0116,W0212,W0613,C0413,C0415
 """Unit tests for the standalone SpliceAI contention probe (#1275).
 
 The probe lives in ``scripts/`` rather than the package: it is a diagnostic
@@ -10,9 +10,11 @@ time -- ``test_importing_the_probe_does_not_import_tensorflow`` pins that, and
 it is the reason the probe loads its runtime lazily inside the worker.
 """
 import pathlib
+import subprocess
 import sys
 
 import numpy as np
+import pytest
 
 _SCRIPTS = pathlib.Path(__file__).resolve().parent.parent / "scripts"
 if str(_SCRIPTS) not in sys.path:
@@ -155,3 +157,92 @@ def test_read_host_info_reports_no_avx512_on_an_avx2_only_cpu() -> None:
         load_average=(2.0, 1.0, 0.5))
 
     assert host.avx512 is False
+
+
+def test_importing_the_probe_does_not_import_tensorflow() -> None:
+    """The parent must reach the workers with the runtime uninitialised.
+
+    Thread settings only take effect before a runtime initialises. If merely
+    importing the probe pulled TensorFlow in, the parent would carry an
+    initialised runtime into every worker and `--threads` would silently do
+    nothing -- the sweep's second axis would be a fiction.
+    """
+    probe_import = subprocess.run(
+        [sys.executable, "-c",
+         ("import sys; sys.path.insert(0, sys.argv[1]);"
+          "import spliceai_contention_probe;"
+          "print('tensorflow' in sys.modules)"),
+         str(_SCRIPTS)],
+        capture_output=True, text=True, check=True)
+
+    assert probe_import.stdout.strip() == "False"
+
+
+def test_summarise_run_carries_the_threads_the_runtime_actually_used() -> None:
+    """`--threads 1` that silently no-ops would fake a reproducible result.
+
+    The requested setting is an input; what the runtime reports back is
+    evidence. Keeping both lets a reader see the axis was real.
+    """
+    summary = probe.summarise_run(
+        processes=2, threads=1,
+        worker_digests=[("a",), ("a",)],
+        observed_intra_op_threads=(1, 1),
+        observed_os_threads=(69, 69))
+
+    assert summary.threads == 1
+    assert summary.observed_intra_op_threads == (1, 1)
+    assert summary.observed_os_threads == (69, 69)
+
+
+def test_default_process_sweep_includes_the_core_count() -> None:
+    """#1275: the sweep must reach the CLI's default job count, i.e. nproc.
+
+    The green integration tier sits at 5 workers; production runs one worker
+    per core. A sweep that stopped below the core count would re-measure what
+    CI already covers and miss the shape the default actually produces.
+    """
+    assert probe.default_process_sweep(cores=12) == (1, 2, 4, 8, 12)
+
+
+def test_default_process_sweep_does_not_repeat_an_exact_power_of_two() -> None:
+    assert probe.default_process_sweep(cores=8) == (1, 2, 4, 8)
+
+
+def test_parse_args_defaults_to_tensorflow_and_the_annotator_window() -> None:
+    config = probe.parse_args([])
+
+    assert config.backend == "tensorflow"
+    assert config.width == probe.DEFAULT_WIDTH
+
+
+def test_parse_args_reads_an_explicit_process_list() -> None:
+    config = probe.parse_args(["--processes", "1,4,32"])
+
+    assert config.processes == (1, 4, 32)
+
+
+def test_parse_args_reads_auto_as_the_runtimes_own_thread_default() -> None:
+    """`auto` is a real arm: it is what the shipped backend does today."""
+    config = probe.parse_args(["--threads", "auto,1"])
+
+    assert config.threads == (None, 1)
+
+
+def test_parse_args_rejects_a_non_positive_iteration_count() -> None:
+    with pytest.raises(SystemExit):
+        probe.parse_args(["--iterations", "0"])
+
+
+def test_probe_mirrors_the_shipped_onnx_intra_op_default() -> None:
+    """The ONNX arm is only a baseline if it is the shipped configuration.
+
+    The probe re-states the constant rather than importing it, so that it
+    stays runnable without `gain.annotation`. This pins the copy to the
+    original.
+    """
+    from spliceai_annotator.spliceai_backend_onnx import (
+        DEFAULT_ONNX_INTRA_OP_THREADS,
+    )
+
+    assert probe.ONNX_INTRA_OP_THREADS == DEFAULT_ONNX_INTRA_OP_THREADS
