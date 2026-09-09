@@ -1,4 +1,14 @@
-"""The Coverage fixture the info pages' sortable-table tests are built on.
+"""The fixtures the info pages' browser tests are built on.
+
+Two of them.  ``a_coverage_repo`` is a single resource whose statistics
+table both sortable-table suites sort; ``a_browse_repo`` is a repository
+shaped to be *navigated* -- folders to descend through and terms to
+search for -- which is what the index page's own tests need.
+
+Two rather than one because the coverage fixture's traps are tuned to a
+sorter and nothing else should perturb them: adding folders to it would
+change the table the sort assertions read, and adding a sort trap to the
+browse fixture would make its search assertions depend on row order.
 
 Two suites drive the same table from opposite sides.
 ``core/tests/small/genomic_resources/test_info_page_sortable_tables.py``
@@ -61,6 +71,67 @@ chr10  1          2        0.3
 """
 
 
+#: The browse fixture's top-level folders, in the order the tree sorts
+#: them.  Three of them, so a search that matches inside one leaves two
+#: that must disappear -- a pruned tree with nothing to prune proves
+#: nothing.
+BROWSE_TOP_LEVEL_FOLDERS = ("genomes", "hg19", "hg38")
+
+#: A term that reaches its resource through the resource's ``summary``
+#: and through nothing else.
+#:
+#: An unqualified FTS5 ``MATCH`` searches every indexed column, so "found
+#: via the summary" is only distinguishable from "found via the id" while
+#: this word appears in no id, type, description, score id or label
+#: anywhere in the fixture.  Nothing in the data enforces that;
+#: ``test_info_page_browse_fixture.py`` does.
+BROWSE_SUMMARY_ONLY_TERM = "marmoset"
+BROWSE_SUMMARY_ONLY_RESOURCE_ID = "hg19/legacy/allele_frequencies"
+
+#: The mirror of it: a term carried only by a resource's id.  Together
+#: the two pin the index's two routes independently -- stop indexing
+#: summaries and the first goes red while this one stays green.
+BROWSE_ID_ONLY_TERM = "phylop"
+BROWSE_ID_ONLY_RESOURCE_ID = "hg38/scores/conservation/phylop"
+
+#: The genome, which is the fixture's *second* resource type: a tree with
+#: one type in it cannot show that the type filter narrows anything.
+BROWSE_GENOME_RESOURCE_ID = "genomes/g984"
+
+#: Every resource the browse fixture carries, deepest path first.  The
+#: deepest is four segments, so the tree has a folder inside a folder
+#: inside a folder to descend through and walk back up.
+BROWSE_RESOURCE_IDS = (
+    BROWSE_ID_ONLY_RESOURCE_ID,
+    "hg38/scores/conservation/phastcons",
+    "hg38/scores/coverage",
+    BROWSE_SUMMARY_ONLY_RESOURCE_ID,
+    BROWSE_GENOME_RESOURCE_ID,
+)
+
+#: Summaries, by resource id.  Deliberately plain prose: each one has to
+#: stay clear of both terms above except for the single resource that
+#: carries one, and prose that names its own resource is exactly how that
+#: stops being true.
+_BROWSE_SUMMARIES = {
+    BROWSE_ID_ONLY_RESOURCE_ID:
+        "Basewise conservation across a vertebrate alignment.",
+    "hg38/scores/conservation/phastcons":
+        "Posterior probability that a base lies in a conserved element.",
+    "hg38/scores/coverage":
+        "Sequencing depth at each position.",
+    BROWSE_SUMMARY_ONLY_RESOURCE_ID:
+        "Allele frequencies from the marmoset cohort.",
+    BROWSE_GENOME_RESOURCE_ID:
+        "Small reference genome the browse fixture is laid out over.",
+}
+
+_BROWSE_SCORE_DATA = """
+chrom  pos_begin  pos_end  score
+chr1   1          10       0.1
+"""
+
+
 def a_coverage_repo(where: pathlib.Path) -> GenomicResourceRepo:
     """A three-contig score whose genome knows only two of the contigs."""
     genome = a_reference_genome()
@@ -78,3 +149,32 @@ def a_coverage_repo(where: pathlib.Path) -> GenomicResourceRepo:
         .with_resource(GENOME_RESOURCE_ID, genome)
         .build_repo(where)
     )
+
+
+def a_browse_repo(where: pathlib.Path) -> GenomicResourceRepo:
+    """A repository shaped to be navigated rather than sorted.
+
+    Three top-level folders, a four-segment path to descend, two resource
+    types, and the two search terms above -- one reaching its resource
+    only through a summary, the other only through an id.
+
+    No labels and no statistics: every column an unqualified ``MATCH``
+    can search is a column one of the two terms could leak into, so the
+    fixture carries the fewest of them it can and still be a repository.
+    """
+    genome = a_reference_genome().with_chromosome("chr1", "A" * 100)
+    grr = a_grr()
+    for resource_id in BROWSE_RESOURCE_IDS:
+        summary = _BROWSE_SUMMARIES[resource_id]
+        if resource_id == BROWSE_GENOME_RESOURCE_ID:
+            grr = grr.with_resource(
+                resource_id, genome.with_meta(summary=summary))
+            continue
+        grr = grr.with_resource(
+            resource_id,
+            a_position_score()
+            .with_score("score", "float")
+            .with_data(_BROWSE_SCORE_DATA)
+            .with_meta(summary=summary),
+        )
+    return grr.build_repo(where)

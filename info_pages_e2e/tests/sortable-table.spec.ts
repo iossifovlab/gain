@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
-import { COVERAGE_RESOURCE, infoPageUrl } from '../fixtures';
+import { COVERAGE_RESOURCE, FIXTURE_GRR } from '../fixtures';
+import { infoPageUrl, serveGrr } from '../serving';
 
 /**
  * The info page's client-side sorter, driven in a browser.
@@ -32,14 +33,12 @@ function columnHeader(page: Page, name: string) {
 }
 
 test.beforeEach(async ({ page }) => {
-  /* The page links a Google Fonts stylesheet for the sort indicator's
-   * three glyphs. Refusing every non-`file:` request keeps the suite
-   * honestly offline -- the CI container has no egress, and a test that
-   * silently depended on one would pass here and hang there. */
-  await page.route(
-    (url) => url.protocol !== 'file:',
-    (route) => route.abort(),
-  );
+  /* `serveGrr` answers out of the generated GRR and the two vendored
+   * packages, and aborts everything else -- the Google Fonts stylesheet
+   * this page links for the sort indicator's glyphs included. Keeping
+   * that rule in one place is what stops the two specs from disagreeing
+   * about what "offline" means. */
+  await serveGrr(page, FIXTURE_GRR);
   await page.goto(infoPageUrl(COVERAGE_RESOURCE));
 });
 
