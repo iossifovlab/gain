@@ -216,17 +216,14 @@ def test_normalize_allele_annotator_implicit_genome_from_context(
         assert {res.get_id() for res in annotator.resources} == {genome_id}
 
 
-def test_normalize_allele_annotator_with_no_genome_anywhere_says_so(
+def _no_genome_anywhere_cause(
     mocker: pytest_mock.MockerFixture,
     grr: GenomicResourceRepo,
-) -> None:
-    """The last resort is a message about the genome, not about the GRR.
+) -> ValueError:
+    """Build a pipeline with nothing to resolve, and return the error.
 
-    With a genome-less preamble and an empty context there is nothing to
-    resolve, and the annotator's own descriptive error is what a curator
-    can act on.  Before gain#1055 the empty id was resolved instead, so
-    what surfaced was the repository's ``resource <> (None) not found``
-    -- which names neither the genome nor the pipeline that lacks one.
+    A preamble that declares no genome and a context that holds none: the
+    one scenario in which the resolution chain runs out of operands.
     """
     config = textwrap.dedent("""
         preamble:
@@ -248,6 +245,23 @@ def test_normalize_allele_annotator_with_no_genome_anywhere_says_so(
 
     cause = excinfo.value.__cause__
     assert isinstance(cause, ValueError)
+    return cause
+
+
+def test_normalize_allele_annotator_with_no_genome_anywhere_says_so(
+    mocker: pytest_mock.MockerFixture,
+    grr: GenomicResourceRepo,
+) -> None:
+    """The last resort is a message about the genome, not about the GRR.
+
+    With a genome-less preamble and an empty context there is nothing to
+    resolve, and the annotator's own descriptive error is what a curator
+    can act on.  Before gain#1055 the empty id was resolved instead, so
+    what surfaced was the repository's ``resource <> (None) not found``
+    -- which names neither the genome nor the pipeline that lacks one.
+    """
+    cause = _no_genome_anywhere_cause(mocker, grr)
+
     assert "has no reference genome" in str(cause)
     assert "<>" not in str(cause)
 
@@ -266,26 +280,8 @@ def test_normalize_allele_annotator_no_genome_error_names_what_it_searched(
     not name the gene models' configuration, which is the wording the
     shared helper uses for annotators that *do* consult gene models.
     """
-    config = textwrap.dedent("""
-        preamble:
-          summary: a preamble that declares no reference genome
-        annotators:
-          - normalize_allele_annotator:
-              attributes:
-              - source: normalized_allele
-                name: normalized_allele
-        """)
+    cause = _no_genome_anywhere_cause(mocker, grr)
 
-    mocker.patch(
-        "gain.annotation.utils.get_genomic_context",
-    ).return_value = SimpleGenomicContext(
-        context_objects={}, source="test_context")
-
-    with pytest.raises(AnnotationConfigurationError) as excinfo:
-        load_pipeline_from_yaml(config, grr)
-
-    cause = excinfo.value.__cause__
-    assert isinstance(cause, ValueError)
     assert "preamble" in str(cause)
     assert "context" in str(cause)
     assert "gene models" not in str(cause)
