@@ -30,13 +30,15 @@ than one Python call per value.
 A second, specialized read path exists alongside the per-record one.
 
 It is used **only by the statistics scan**, and only when every one of four
-conditions holds:
+conditions holds — three since gain#1261:
 
-1. the resource is a kind the bulk path is exercised against — a
+1. ~~the resource is a kind the bulk path is exercised against — a
    **`position_score`**, an **`allele_score`**, or a **fragment score** in either
-   of its two permanent spellings (`fragment_score`, `cnv_collection`). *As
+   of its two permanent spellings (`fragment_score`, `cnv_collection`).~~ *As
    originally decided this read "a `position_score`"; gain#421 widened it — see
-   the Amendment.*
+   the Amendment. **Retired by gain#1261**: nothing on this path reads `type:`
+   any more — see the [gain#1261
+   Amendment](#amendment--gain1261-the-resource-kind-condition-is-retired).*
 2. every requested score has value type **`float`**. *As originally decided;
    gain#406 widened it to `float`, `int` and `str`, paired with the histogram
    each can feed — see the [gain#406 Amendment](#amendment--gain406-the-value-type-condition-becomes-a-pairing).*
@@ -66,14 +68,19 @@ Two predicates guard it, and the split between them is deliberate:
 - `GenomicScore.supports_region_value_arrays(scores)` answers what the **score
   facade** can do — the backend serves the array read *and* every named score is a
   float this facade can parse. It is answerable on an unopened score.
-- `genomic_scores_impl.scan.bulk_scan_eligible(...)` adds what is the
+- `genomic_scores_impl.scan.bulk_scan_eligible(...)` ~~adds what is the
   **consumer's** condition and no one else's: that the resource is a kind this
   scan is exercised against. That requirement belongs to the statistics scan,
-  not to the read facade, and is asked separately. *Originally it asked for a
+  not to the read facade, and is asked separately.~~ *Originally it asked for a
   `position_score`, because the bulk accumulators assumed position-score
   semantics. Since gain#421 they assume nothing — each kind states its own
   record semantics and both scan paths read them — so what this predicate still
-  excludes is a deliberate list, not a structural limit. See the Amendment.*
+  excludes is a deliberate list, not a structural limit. See the Amendment.
+  **Since gain#1261 it adds nothing at all** — it delegates to
+  `supports_region_value_arrays`, and the split below is between that predicate
+  and the two consumer gates `can_bulk_histogram` / `can_bulk_min_max`. See the
+  [gain#1261
+  Amendment](#amendment--gain1261-the-resource-kind-condition-is-retired).*
 
 ### Measured result
 
@@ -217,6 +224,10 @@ author considered the question and answered it.
 
 ### The condition is now a list of exercised kinds
 
+*Superseded by gain#1261 — the list no longer exists; see the [gain#1261
+Amendment](#amendment--gain1261-the-resource-kind-condition-is-retired).
+Recorded as written, because it is the state gain#421 shipped.*
+
 `bulk_scan_eligible` admits `position_score`, `allele_score`, and a fragment
 score in **both** its permanent spellings — `fragment_score` and
 `cnv_collection` ([0003-fragment-score-vocabulary.md](0003-fragment-score-vocabulary.md)).
@@ -357,6 +368,62 @@ modestly cheaper than `add_value` per record. What `str` still buys is the
 `Record` per row, which is where this ADR's original profile put ~62% of the
 cost — so 1.7x is the record-object saving alone, with none of the parse
 saving the numeric types get.
+
+## Amendment — gain#1261: the resource-kind condition is retired
+
+The first of the four conditions is gone. `bulk_scan_eligible` no longer reads
+`type:` at all — it delegates to `supports_region_value_arrays` and adds
+nothing.
+
+### It could not refuse anything
+
+Two independent reasons, either sufficient:
+
+- **The set named every kind that can become a score.** It expanded to exactly
+  `position_score`, `allele_score`, `fragment_score` and `cnv_collection` —
+  precisely what `build_score_from_resource` dispatches on before it raises
+  "is not of score type". No resource that could yield a score fell outside it.
+- **The score was already built when it ran.** Both consumers,
+  `can_bulk_histogram` and `can_bulk_min_max`, resolve the score before
+  delegating, so a resource the factory refuses had already raised by the time
+  the condition was tested. The `return False` was unreachable from production.
+
+The condition had been documented as vacuous-but-kept since gain#421, on the
+reasoning that a newly registered kind should land on the per-record path by
+default.
+
+### Why a future kind still needs no guard here
+
+That default-deny is structural, not a matter of enumeration:
+
+- `record_weight` and `validate_record_arrays` are `@abstractmethod` on
+  `GenomicScore`. A new kind cannot exist without stating its own record
+  semantics — the two facts the bulk accumulator and the bulk door read.
+- A kind whose backend serves no column arrays is still refused, by
+  `supports_region_value_arrays`' first test. That is the table's answer, and
+  it is what keeps a VCF-backed allele score on the per-record path.
+
+An `isinstance(score, (PositionScore, AlleleScore, FragmentScore))` gate was
+considered as a replacement and **rejected**: those are the only three
+`GenomicScore` subclasses and the factory can return nothing else, so it is
+exactly as vacuous as the string set — it relocates the tautology rather than
+retiring it.
+
+### The one behaviour that changed
+
+Asked directly about a non-score resource, with no score handed in,
+`bulk_scan_eligible` now raises `ValueError` from the factory instead of
+answering `False`. "Not eligible" is a claim about a score; a caller holding
+the wrong resource is better told so than sent quietly down the per-record
+path. No production caller is affected, for the second reason above.
+
+### What is still excluded, restated
+
+- **Retired vocabulary** (`np_score`) is refused by `reject_retired_resource`
+  inside the factory, not by this predicate. It is no longer an accepted
+  `type:` at all, so the exclusion is the vocabulary's, not the scan's.
+- **VCF-backed scores** are excluded exactly as before, and still for the
+  table's reason rather than the kind's.
 
 ## How the two paths are kept from drifting
 

@@ -671,10 +671,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         defines a column parse for
         (:data:`~gain.genomic_resources.score_def.BULK_PARSEABLE_VALUE_TYPES`)
         and no others.  What a *consumer* additionally needs stays with the
-        consumer: the
-        statistics scan also requires a bounded region and a resource kind it
-        is exercised against, and it keeps asking that itself (see
-        ``genomic_scores_impl.scan.bulk_scan_eligible``).  What it does
+        consumer: the statistics scan also requires a bounded region, and
+        each of its two entry points asks for its own histogram or min/max
+        pairing (see
+        ``genomic_scores_impl.scan.can_bulk_histogram`` and
+        ``can_bulk_min_max``).  The scan does not re-test the resource
+        KIND; ADR 0001 records why.  What it does
         NOT require is a particular record shape: the accumulator reads the
         kind's own ``record_weight`` and the scan's door reads the
         kind's own ``validate_record_arrays``, so a position, allele and
