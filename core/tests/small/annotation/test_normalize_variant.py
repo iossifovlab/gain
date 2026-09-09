@@ -206,7 +206,7 @@ def test_normalize_allele_annotator_implicit_genome_from_context(
     context = SimpleGenomicContext(
         context_objects={"reference_genome": genome}, source="test_context")
     mocker.patch(
-        "gain.annotation.normalize_allele_annotator.get_genomic_context",
+        "gain.annotation.utils.get_genomic_context",
     ).return_value = context
 
     annotation_pipeline = load_pipeline_from_yaml(config, grr)
@@ -239,7 +239,7 @@ def test_normalize_allele_annotator_with_no_genome_anywhere_says_so(
         """)
 
     mocker.patch(
-        "gain.annotation.normalize_allele_annotator.get_genomic_context",
+        "gain.annotation.utils.get_genomic_context",
     ).return_value = SimpleGenomicContext(
         context_objects={}, source="test_context")
 
@@ -250,6 +250,45 @@ def test_normalize_allele_annotator_with_no_genome_anywhere_says_so(
     assert isinstance(cause, ValueError)
     assert "has no reference genome" in str(cause)
     assert "<>" not in str(cause)
+
+
+def test_normalize_allele_annotator_no_genome_error_names_what_it_searched(
+    mocker: pytest_mock.MockerFixture,
+    grr: GenomicResourceRepo,
+) -> None:
+    """The message must name the sources this annotator actually consults.
+
+    Its chain is ``genome`` parameter -> preamble -> context; it has no
+    gene models operand at all.  So the message has to name the preamble
+    -- which the pre-gain#1102 wording omitted, telling a curator only
+    that the genome was "missing in the context" and leaving the
+    preamble they could have declared it in unmentioned -- and it must
+    not name the gene models' configuration, which is the wording the
+    shared helper uses for annotators that *do* consult gene models.
+    """
+    config = textwrap.dedent("""
+        preamble:
+          summary: a preamble that declares no reference genome
+        annotators:
+          - normalize_allele_annotator:
+              attributes:
+              - source: normalized_allele
+                name: normalized_allele
+        """)
+
+    mocker.patch(
+        "gain.annotation.utils.get_genomic_context",
+    ).return_value = SimpleGenomicContext(
+        context_objects={}, source="test_context")
+
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        load_pipeline_from_yaml(config, grr)
+
+    cause = excinfo.value.__cause__
+    assert isinstance(cause, ValueError)
+    assert "preamble" in str(cause)
+    assert "context" in str(cause)
+    assert "gene models" not in str(cause)
 
 
 def test_normalize_allele_annotator_genomeless_preamble_uses_the_context(
@@ -280,7 +319,7 @@ def test_normalize_allele_annotator_genomeless_preamble_uses_the_context(
     context = SimpleGenomicContext(
         context_objects={"reference_genome": genome}, source="test_context")
     mocker.patch(
-        "gain.annotation.normalize_allele_annotator.get_genomic_context",
+        "gain.annotation.utils.get_genomic_context",
     ).return_value = context
 
     annotation_pipeline = load_pipeline_from_yaml(config, grr)
@@ -312,7 +351,7 @@ def test_normalize_allele_annotator_preamble_genome_wins_over_the_context(
         """)
 
     mocker.patch(
-        "gain.annotation.normalize_allele_annotator.get_genomic_context",
+        "gain.annotation.utils.get_genomic_context",
     ).return_value = SimpleGenomicContext(
         context_objects={
             "reference_genome": build_reference_genome_from_resource_id(
@@ -350,7 +389,7 @@ def test_normalize_allele_annotator_genome_parameter_wins_over_everything(
         """)
 
     mocker.patch(
-        "gain.annotation.normalize_allele_annotator.get_genomic_context",
+        "gain.annotation.utils.get_genomic_context",
     ).return_value = SimpleGenomicContext(
         context_objects={
             "reference_genome": build_reference_genome_from_resource_id(

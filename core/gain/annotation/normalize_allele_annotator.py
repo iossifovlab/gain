@@ -10,11 +10,11 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
-from gain.genomic_resources.genomic_context import get_genomic_context
-from gain.genomic_resources.reference_genome import (
-    ReferenceGenome,
-    build_reference_genome_from_resource,
+from gain.annotation.utils import (
+    preamble_reference_genome_id,
+    resolve_reference_genome,
 )
+from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.variant_utils import normalize_variant
 
 logger = logging.getLogger(__name__)
@@ -30,23 +30,15 @@ class NormalizeAlleleAnnotator(AnnotatorBase):
 
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
 
-        genome_resource_id = info.parameters.get("genome") or \
-            (pipeline.preamble.input_reference_genome
-             if pipeline.preamble is not None else None)
-        # `input_reference_genome` is optional and parses to "" when
-        # absent, so an empty id means "not configured" -- not "the
-        # resource named the empty string" (gain#1055).
-        if not genome_resource_id:
-            genome = get_genomic_context().get_reference_genome()
-            if genome is None:
-                raise ValueError(
-                    f"The {info}  has no reference genome "
-                    f"specified and a genome is missing in "
-                    f"the context.")
-        else:
-            resource = pipeline.repository.get_resource(genome_resource_id)
-            genome = build_reference_genome_from_resource(resource)
-        assert isinstance(genome, ReferenceGenome)
+        # No gene models operand here, so the chain is shorter than the
+        # one in `find_annotator_reference_genome` -- but everything
+        # after it is shared (gain#1102).
+        genome = resolve_reference_genome(
+            info,
+            info.parameters.get("genome")
+            or preamble_reference_genome_id(pipeline),
+            pipeline.repository,
+            searched="the annotation config's preamble or the context")
 
         info.resources += [genome.resource]
         super().__init__(pipeline, info)

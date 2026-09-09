@@ -46,20 +46,34 @@ def find_annotator_gene_models(
     return gene_models
 
 
-def find_annotator_reference_genome(
-    info: AnnotatorInfo,
-    gene_models: GeneModels,
+def preamble_reference_genome_id(
     pipeline: AnnotationPipeline,
+) -> str | None:
+    """Get the reference genome id declared by the pipeline's preamble."""
+    if pipeline.preamble is None:
+        return None
+    return pipeline.preamble.input_reference_genome
+
+
+def resolve_reference_genome(
+    info: AnnotatorInfo,
+    genome_resource_id: str | None,
     grr: GenomicResourceRepo,
+    *,
+    searched: str,
 ) -> ReferenceGenome:
-    """Get reference genome from the annotator info or genomic context."""
-    genome_resource_id = info.parameters.get("genome") or \
-        gene_models.reference_genome_id or \
-        (pipeline.preamble.input_reference_genome
-            if pipeline.preamble is not None else None)
+    """Build the genome `genome_resource_id` names, else use the context.
 
-    genome: ReferenceGenome | None
+    The caller resolves its own precedence chain -- which operands it has
+    differs per annotator -- and passes the winning id here.  Everything
+    downstream of that chain is the same for every annotator and lives
+    only in this function, so a fix to it cannot miss a call site the way
+    gain#1055 had to be fixed at three of them.
 
+    `searched` names the sources the caller consulted, for the error
+    raised when nothing resolves; it is the one part of that error that
+    cannot be stated here, since the chain is the caller's.
+    """
     # `input_reference_genome` is optional and parses to "" when absent,
     # so an empty id means "not configured" -- not "the resource named
     # the empty string" (gain#1055).
@@ -74,8 +88,22 @@ def find_annotator_reference_genome(
     if genome is None:
         raise ValueError(
             f"The {info} has no reference genome"
-            " specified and no genome was found"
-            " in the gene models' configuration,"
-            " the context or the annotation config's"
-            " preamble.")
+            f" specified and no genome was found in {searched}.")
     return genome
+
+
+def find_annotator_reference_genome(
+    info: AnnotatorInfo,
+    gene_models: GeneModels,
+    pipeline: AnnotationPipeline,
+    grr: GenomicResourceRepo,
+) -> ReferenceGenome:
+    """Get reference genome from the annotator info or genomic context."""
+    genome_resource_id = info.parameters.get("genome") or \
+        gene_models.reference_genome_id or \
+        preamble_reference_genome_id(pipeline)
+
+    return resolve_reference_genome(
+        info, genome_resource_id, grr,
+        searched="the gene models' configuration, the context"
+                 " or the annotation config's preamble")
