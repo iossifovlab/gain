@@ -35,9 +35,6 @@ from gain.genomic_resources.repository import (
 from gain.genomic_resources.resource_errors import (
     MalformedResourceError,
 )
-from gain.genomic_resources.resource_types import (
-    equivalent_resource_types,
-)
 from gain.genomic_resources.score_def import ScoreValue
 from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
@@ -105,19 +102,6 @@ __all__ = [
     "unpack_score_defs",
     "update_hist_confs",
 ]
-
-# The resource kinds whose statistics the vectorized scan may serve, in every
-# spelling of each.  Expanded through ``equivalent_resource_types`` rather than
-# written out: a fragment score has TWO accepted type strings
-# (``fragment_score`` and the deprecated ``cnv_collection``, gain#471), and
-# a literal set
-# naming only one of them would send the other silently back to the per-record
-# path -- no error, no failing test, just the slow path forever.
-_BULK_SCAN_RESOURCE_TYPES = frozenset(
-    spelling
-    for resource_type in ("position_score", "allele_score", "fragment_score")
-    for spelling in equivalent_resource_types(resource_type)
-)
 
 
 def _score_for(
@@ -824,17 +808,9 @@ def bulk_scan_eligible(
 ) -> bool:
     """Whether a vectorized region scan may serve these scores.
 
-    The shared gate for the histogram and min/max bulk paths, and the place
-    the conditions that are THIS caller's live -- as opposed to the one
-    condition that is the backend's, which the score answers itself:
+    The shared gate for the histogram and min/max bulk paths.  Both
+    conditions belong to the score, so both are asked of it:
 
-    * a resource kind the bulk path is exercised against
-      (:data:`_BULK_SCAN_RESOURCE_TYPES`): a position, allele or fragment
-      score.  Their record semantics are not assumed here -- the score
-      class states them, in ``record_weight`` and in its own
-      ``validate_record_arrays`` body.  The set names every score kind
-      GAIn accepts, so this test cannot fail today; it is kept so that
-      a newly registered kind lands on the per-record path by default;
     * every score of a value type the column parse defines
       (``float``, ``int``, ``str``) -- asked of the score, which owns
       that parse;
@@ -843,14 +819,25 @@ def bulk_scan_eligible(
       allele score on the per-record path: its record payload is not a raw
       row, so its table declares no column-array support.
 
+    **No resource kind is tested.**  Eligibility is a claim about a score,
+    so it is asked of one: handed a resource that cannot become a score,
+    and no ``score`` to use instead, this raises ``ValueError`` out of the
+    factory rather than answering ``False``, which would read as a fact
+    about a score and send a caller holding the wrong resource quietly
+    down the per-record path.  With a ``score`` given the factory is not
+    called, and the pair is the caller's to match (see :func:`_score_for`).
+
+    A new kind needs no guard here either: ``record_weight`` and
+    ``validate_record_arrays`` are abstract on ``GenomicScore``, and a
+    backend serving no column arrays is refused above.  ADR 0001 records
+    why the kind condition was retired.
+
     Answered WITHOUT opening the score: the table and the score definitions
     are both built in ``GenomicScore.__init__``, so nothing here needs a
     file handle.  That is also why ``score`` may be handed in already
     closed -- a caller that has finished reading through it can still ask
     this (see :func:`_score_for` for why it would want to).
     """
-    if resource.get_type() not in _BULK_SCAN_RESOURCE_TYPES:
-        return False
     return _score_for(resource, score).supports_region_value_arrays(score_ids)
 
 

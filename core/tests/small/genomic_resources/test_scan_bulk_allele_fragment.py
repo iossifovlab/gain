@@ -25,6 +25,7 @@ from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
+    a_gene_score,
     a_vcf_info_score,
     an_allele_score,
 )
@@ -211,13 +212,37 @@ def test_fragment_score_is_bulk_scan_eligible_in_both_spellings(
     tmp_path: pathlib.Path, resource_type: str,
 ) -> None:
     # ``fragment_score`` and the deprecated ``cnv_collection`` (gain#471,
-    # deprecated by gain#538) are both spellings of one kind.  A gate that
-    # named only one would send the other back to the per-record path
-    # silently -- no error, no failing test.  Marked ``legacy_vocabulary``:
+    # deprecated by gain#538) are both spellings of one kind, and the bulk
+    # gate answers the same for each.
+    #
+    # Since gain#1261 it answers the same because nothing on this path
+    # reads ``type:`` at all -- eligibility is asked of the built score,
+    # which both spellings resolve to alike.  Kept as a regression test:
+    # the pairing is a property of the vocabulary, not of the gate that
+    # used to enumerate it, so a spelling dropped anywhere upstream of the
+    # score factory would still surface here.  Marked ``legacy_vocabulary``:
     # the legacy case declares the old spelling, so it announces it.
     resource = _fragment_tabix(tmp_path, resource_type)
     assert resource.get_type() == resource_type
     assert scan.bulk_scan_eligible(resource, ["s"])
+
+
+def test_bulk_scan_eligible_raises_for_a_non_score_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Eligibility is a question about a genomic score.  Asked of a resource
+    # that is not one -- a ``gene_score`` here -- it is a programming error,
+    # and the score factory refuses it by name.
+    #
+    # Deliberately NOT answered ``False`` (gain#1261): that reads as "this
+    # score cannot be bulk-scanned", so a caller that passed the wrong
+    # resource would take the per-record path and never learn of its
+    # mistake.  Until gain#1261 a resource-type test in front of the factory
+    # produced exactly that silent ``False``.
+    resource = a_gene_score().build_resource(tmp_path)
+
+    with pytest.raises(ValueError, match="not of score type"):
+        scan.bulk_scan_eligible(resource, ["s"])
 
 
 @pytest.mark.legacy_vocabulary
