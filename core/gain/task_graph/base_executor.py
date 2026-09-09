@@ -6,8 +6,8 @@ import os
 import pickle  # ruff: ignore[suspicious-pickle-import]
 import time
 from abc import abstractmethod
-from collections import defaultdict
-from collections.abc import Generator
+from collections import defaultdict, deque
+from collections.abc import Generator, Iterable
 from copy import copy
 from typing import Any
 
@@ -33,6 +33,35 @@ from gain.task_graph.logging import (
 logger = logging.getLogger(__name__)
 
 NO_TASK_CACHE = NoTaskCache()
+
+
+def _descendants_of_all(
+    di_graph: networkx.DiGraph, sources: Iterable[Task],
+) -> set[Task]:
+    """Return every node reachable from any source by one or more edges.
+
+    Over an acyclic graph -- which :meth:`TaskGraph.as_directed_graph`
+    guarantees, refusing a cycle outright -- this is the union of
+    :func:`networkx.descendants` over ``sources``, computed in a single
+    breadth-first walk. Each node is expanded at most twice, once as a
+    source and once when another source reaches it, where a walk per
+    source expands it once per source it is reachable from -- O(V x E)
+    over a graph whose tasks are all uncomputed, which is every graph on
+    a fresh run (gain#1236).
+
+    The sources seed the queue but are not themselves in the result: one
+    is returned only when another source reaches it. That is what makes
+    this the union of the per-source descendant sets rather than those
+    sets plus the sources.
+    """
+    reached: set[Task] = set()
+    queue: deque[Task] = deque(sources)
+    while queue:
+        for successor in di_graph.successors(queue.popleft()):
+            if successor not in reached:
+                reached.add(successor)
+                queue.append(successor)
+    return reached
 
 
 class TaskGraphExecutorBase(TaskGraphExecutor):
@@ -213,11 +242,11 @@ class TaskGraphExecutorBase(TaskGraphExecutor):
 
             uncomputed_tasks.update(intermediates_needing_recompute)
 
-            for task in uncomputed_tasks:
-                descendants = networkx.descendants(di_graph, task)
-                for descendant_task in descendants:
-                    cached_tasks[descendant_task] = \
-                        cached_tasks[descendant_task].invalidate()
+            for descendant_task in _descendants_of_all(
+                di_graph, uncomputed_tasks,
+            ):
+                cached_tasks[descendant_task] = \
+                    cached_tasks[descendant_task].invalidate()
 
         completed_tasks = {
             task: record.result_or_error

@@ -579,3 +579,138 @@ def test_missing_input_invalidates_every_ancestor_that_declares_it(
         cache_dir)
 
     assert completed == set()
+
+
+def _forked_descendants_graph(tmp_path: Path) -> TaskGraph:
+    """Two sources whose descendant sets overlap without coinciding.
+
+    ``alpha`` and ``beta`` each declare a final output; deleting both makes
+    exactly those two uncomputed on a second reconciliation::
+
+        alpha --+--> join --> tail        untouched
+          |     |
+          |     +--> (beta joins here)
+          +--> only_alpha
+
+        beta ---+--> join
+          |
+          +--> only_beta
+
+    ``join`` and ``tail`` sit downstream of both sources -- the overlap --
+    while ``only_alpha`` and ``only_beta`` are each reachable from one
+    source alone. The private tails are what make the union matter: a pass
+    seeded from a single uncomputed source still reaches ``tail`` through
+    ``join``, so without them the test passes whichever source it picks.
+    ``untouched`` depends on nothing and must survive.
+    """
+    graph = TaskGraph()
+    alpha_fn = str(tmp_path / "alpha.txt")
+    beta_fn = str(tmp_path / "beta.txt")
+    alpha = graph.create_task(
+        "alpha", _touch, args=[alpha_fn], output_files=[alpha_fn])
+    beta = graph.create_task(
+        "beta", _touch, args=[beta_fn], output_files=[beta_fn])
+    join = graph.create_task("join", noop, args=[], deps=[alpha, beta])
+    graph.create_task("tail", noop, args=[], deps=[join])
+    graph.create_task("only_alpha", noop, args=[], deps=[alpha])
+    graph.create_task("only_beta", noop, args=[], deps=[beta])
+    graph.create_task("untouched", noop, args=[])
+    return graph
+
+
+def test_downstream_invalidation_covers_every_uncomputed_source(
+    tmp_path: Path, cache_dir: Path,
+) -> None:
+    _run_with_file_cache(_forked_descendants_graph(tmp_path), cache_dir)
+    (tmp_path / "alpha.txt").unlink()
+    (tmp_path / "beta.txt").unlink()
+
+    completed = _completed_task_ids(
+        _forked_descendants_graph(tmp_path), cache_dir)
+
+    assert completed == {"untouched"}
+
+
+def _fan_in_graph(tmp_path: Path, count: int) -> tuple[TaskGraph, list[str]]:
+    """``count`` producers, each with its own final output, feeding one sink."""
+    graph = TaskGraph()
+    source_files = [str(tmp_path / f"src_{i}.txt") for i in range(count)]
+    producers = [
+        graph.create_task(
+            f"src_{i}", _touch, args=[source_files[i]],
+            output_files=[source_files[i]],
+        )
+        for i in range(count)
+    ]
+    graph.create_task("sink", noop, args=[], deps=producers)
+    return graph, source_files
+
+
+@pytest.mark.parametrize("count", [4, 16])
+def test_downstream_task_is_invalidated_once_per_reconciliation(
+    tmp_path: Path, cache_dir: Path, count: int,
+) -> None:
+    """The sink is reachable from every producer, but invalidated once."""
+    graph, source_files = _fan_in_graph(tmp_path, count)
+    _run_with_file_cache(graph, cache_dir)
+    _unlink_all(source_files)
+
+    graph2, _ = _fan_in_graph(tmp_path, count)
+    with mock.patch.object(
+        base_executor.CacheRecord, "invalidate", autospec=True,
+        side_effect=base_executor.CacheRecord.invalidate,
+    ) as invalidations:
+        completed = _completed_task_ids(graph2, cache_dir)
+
+    assert completed == set()
+    assert invalidations.call_count == 1
+
+
+def _chain_graph(count: int) -> TaskGraph:
+    """``count`` tasks in a line, each depending on the one before it."""
+    graph = TaskGraph()
+    previous = None
+    for i in range(count):
+        previous = graph.create_task(
+            f"link_{i}", noop, args=[],
+            deps=[previous] if previous is not None else None,
+        )
+    return graph
+
+
+@pytest.mark.parametrize("count", [10, 40])
+def test_reconciliation_expands_each_task_a_bounded_number_of_times(
+    cache_dir: Path, count: int,
+) -> None:
+    """A fresh run traverses the graph once, not once per uncomputed task.
+
+    Every task is uncomputed against an empty cache, so a walk per
+    uncomputed task re-reads the tail of the chain once per task ahead of
+    it -- quadratic. One multi-source traversal expands each task once.
+
+    Both routes back to a per-task walk are pinned, because neither spy
+    alone sees the other: :func:`networkx.descendants` traverses through
+    ``DiGraph.adj`` rather than ``DiGraph.successors``, so the expansion
+    counter stays flat if the networkx call comes back, and a hand-rolled
+    walk per source calls no networkx entry point at all.
+
+    ``walks`` is bounded rather than pinned to zero on purpose: resolving
+    the union with a single whole-graph call is a legitimate alternative
+    implementation, and what matters is that one reconciliation costs at
+    most one traversal however many tasks are uncomputed.
+    """
+    with (
+        mock.patch.object(
+            base_executor.networkx, "descendants",
+            wraps=base_executor.networkx.descendants,
+        ) as walks,
+        mock.patch.object(
+            base_executor.networkx.DiGraph, "successors", autospec=True,
+            side_effect=base_executor.networkx.DiGraph.successors,
+        ) as successors,
+    ):
+        completed = _completed_task_ids(_chain_graph(count), cache_dir)
+
+    assert completed == set()
+    assert walks.call_count <= 1
+    assert successors.call_count <= 3 * count
