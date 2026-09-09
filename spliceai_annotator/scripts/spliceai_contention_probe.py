@@ -20,7 +20,7 @@ import os
 import pathlib
 import platform
 from collections.abc import Callable, Sequence
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import numpy as np
 
@@ -290,6 +290,11 @@ class ProbeConfig:
     #: None means "leave the runtime's own default alone" -- the arm that
     #: reproduces what the shipped backend does today.
     threads: tuple[int | None, ...]
+    #: Turn on the runtime's own determinism switch --
+    #: `tf.config.experimental.enable_op_determinism()` for TensorFlow,
+    #: `SessionOptions.use_deterministic_compute` for ONNX Runtime. Off by
+    #: default, because the default arm has to be what ships.
+    op_determinism: bool
     seed: int
     json_path: pathlib.Path | None
 
@@ -357,6 +362,10 @@ def parse_args(argv: Sequence[str] | None = None) -> ProbeConfig:
         help="comma-separated intra/inter-op settings; 'auto' leaves the "
              "runtime's own default (default: auto,1)")
     parser.add_argument(
+        "--op-determinism", action="store_true",
+        help="enable the runtime's determinism controls (TensorFlow's "
+             "enable_op_determinism, ONNX Runtime's use_deterministic_compute)")
+    parser.add_argument(
         "--seed", type=int, default=0,
         help="seed for the fixed input (default: 0)")
     parser.add_argument(
@@ -371,6 +380,7 @@ def parse_args(argv: Sequence[str] | None = None) -> ProbeConfig:
         iterations=args.iterations,
         processes=tuple(args.processes),
         threads=tuple(args.threads),
+        op_determinism=args.op_determinism,
         seed=args.seed,
         json_path=args.json_path,
     )
@@ -383,7 +393,9 @@ def _os_thread_count() -> int:
         return 0
 
 
-def _load_tensorflow(models: int, threads: int | None) -> tuple[Predict, int]:
+def _load_tensorflow(
+    models: int, threads: int | None, *, op_determinism: bool,
+) -> tuple[Predict, int]:
     """Load the ensemble as Keras models, pinning the pools first if asked.
 
     Both settings must be applied before TensorFlow initialises its runtime,
@@ -398,6 +410,8 @@ def _load_tensorflow(models: int, threads: int | None) -> tuple[Predict, int]:
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
     import tensorflow as tf
+    if op_determinism:
+        tf.config.experimental.enable_op_determinism()
     if threads is not None:
         tf.config.threading.set_intra_op_parallelism_threads(threads)
         tf.config.threading.set_inter_op_parallelism_threads(threads)
@@ -417,7 +431,9 @@ def _load_tensorflow(models: int, threads: int | None) -> tuple[Predict, int]:
     return predict, requested
 
 
-def _load_onnx(models: int, threads: int | None) -> tuple[Predict, int]:
+def _load_onnx(
+    models: int, threads: int | None, *, op_determinism: bool,
+) -> tuple[Predict, int]:
     """Open the ensemble's sessions with the shipped backend's settings.
 
     #1275 asks for the ONNX arm as a comparison baseline, so it must be the
@@ -433,6 +449,7 @@ def _load_onnx(models: int, threads: int | None) -> tuple[Predict, int]:
         ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
     options.intra_op_num_threads = (
         ONNX_INTRA_OP_THREADS if threads is None else threads)
+    options.use_deterministic_compute = op_determinism
     sessions = [
         ort.InferenceSession(
             str(MODELS_DIR / f"spliceai{i}.onnx"), options,
@@ -451,14 +468,16 @@ def _load_onnx(models: int, threads: int | None) -> tuple[Predict, int]:
     return predict, options.intra_op_num_threads
 
 
-def _load_fake(models: int, threads: int | None) -> tuple[Predict, int]:
+def _load_fake(
+    models: int, threads: int | None, *, op_determinism: bool,
+) -> tuple[Predict, int]:
     """A runtime that always answers the same thing. No model, no import.
 
     Exists so the barrier, the process pool and the fold can be exercised in
     CI: those are where a spurious "reproducible" would come from, and
     without a model-free arm they would only ever run by hand.
     """
-    del models
+    del models, op_determinism
 
     def predict(x: np.ndarray) -> np.ndarray:
         return np.full((1, 3), 0.25, dtype=np.float32) * np.float32(x.shape[1])
@@ -466,14 +485,16 @@ def _load_fake(models: int, threads: int | None) -> tuple[Predict, int]:
     return predict, 1 if threads is None else threads
 
 
-def _load_fake_drift(models: int, threads: int | None) -> tuple[Predict, int]:
+def _load_fake_drift(
+    models: int, threads: int | None, *, op_determinism: bool,
+) -> tuple[Predict, int]:
     """A runtime that answers differently every call -- the positive control.
 
     The whole sweep rests on being able to tell "the runtime is stable" from
     "the instrument cannot see". This arm makes the difference observable end
     to end rather than only in a unit test.
     """
-    del models
+    del models, op_determinism
     calls = itertools.count()
 
     def predict(x: np.ndarray) -> np.ndarray:
@@ -484,7 +505,16 @@ def _load_fake_drift(models: int, threads: int | None) -> tuple[Predict, int]:
     return predict, 1 if threads is None else threads
 
 
-_LOADERS: dict[str, Callable[[int, int | None], tuple[Predict, int]]] = {
+class _Loader(Protocol):
+    """How the worker asks a runtime for something it can predict with."""
+
+    def __call__(
+        self, models: int, threads: int | None, *, op_determinism: bool,
+    ) -> tuple[Predict, int]:
+        ...
+
+
+_LOADERS: dict[str, _Loader] = {
     "tensorflow": _load_tensorflow,
     "onnx": _load_onnx,
     "fake": _load_fake,
@@ -506,11 +536,13 @@ def _init_worker(barrier: Any) -> None:
 
 
 def _run_worker(
-    spec: tuple[str, int, int | None, int, int, int, int],
+    spec: tuple[str, int, int | None, bool, int, int, int, int],
 ) -> tuple[tuple[str, ...], str, int, int, np.ndarray, float]:
     """One contending process: load, warm up, sync, then measure."""
-    backend, models, threads, width, batch, seed, iterations = spec
-    predict, requested = _LOADERS[backend](models, threads)
+    (backend, models, threads, op_determinism,
+     width, batch, seed, iterations) = spec
+    predict, requested = _LOADERS[backend](
+        models, threads, op_determinism=op_determinism)
     x = np.repeat(fixed_input(width, seed), batch, axis=0)
     # Untimed: the first call builds the graph and allocates the arenas, and
     # doing that while other workers are already predicting would measure
@@ -582,8 +614,8 @@ def run_point(
     ctx = multiprocessing.get_context("spawn")
     barrier = ctx.Barrier(processes)
     spec = (
-        config.backend, config.models, threads, config.width,
-        config.batch, config.seed, config.iterations)
+        config.backend, config.models, threads, config.op_determinism,
+        config.width, config.batch, config.seed, config.iterations)
     load_before = os.getloadavg()
     with ctx.Pool(
         processes, initializer=_init_worker, initargs=(barrier,),
@@ -650,6 +682,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"backend={config.backend} models={config.models} "
         f"width={config.width} batch={config.batch} "
         f"iterations={config.iterations} "
+        f"op_determinism={config.op_determinism} "
         f"processes={config.processes} "
         f"threads={[_label(t) for t in config.threads]}")
     sweep = run_sweep(config)
