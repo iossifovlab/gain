@@ -49,10 +49,18 @@ def find_annotator_gene_models(
 def preamble_reference_genome_id(
     pipeline: AnnotationPipeline,
 ) -> str | None:
-    """Get the reference genome id declared by the pipeline's preamble."""
+    """Get the reference genome id declared by the pipeline's preamble.
+
+    `None` when there is no preamble, and also when the preamble declares
+    no genome: `input_reference_genome` is optional and parses to `""`,
+    which means "not configured" rather than "the resource named the
+    empty string" (gain#1055).  Normalising that here keeps the `str |
+    None` return type honest, so a caller guarding with `is not None`
+    cannot re-acquire gain#1055 through this operand.
+    """
     if pipeline.preamble is None:
         return None
-    return pipeline.preamble.input_reference_genome
+    return pipeline.preamble.input_reference_genome or None
 
 
 def resolve_reference_genome(

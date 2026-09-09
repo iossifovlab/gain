@@ -47,7 +47,10 @@ from gain.annotation.annotation_config import (
     AnnotatorInfo,
 )
 from gain.annotation.annotation_pipeline import AnnotationPipeline
-from gain.annotation.utils import find_annotator_reference_genome
+from gain.annotation.utils import (
+    find_annotator_reference_genome,
+    preamble_reference_genome_id,
+)
 from gain.genomic_resources.gene_models.gene_models import GeneModels
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing.builders import (
@@ -278,6 +281,23 @@ def test_a_narrowed_label_falls_through_to_the_preamble_genome(
     warnings = captured_warnings(caplog)
     assert len(warnings) == 1
     assert A_GENE_MODELS_ID in warnings[0]
+
+
+def test_a_preamble_that_declares_no_genome_reads_as_absent() -> None:
+    """The accessor must not leak the parser's ``""`` to its callers.
+
+    ``input_reference_genome`` is optional and parses to ``""``, so a
+    preamble carrying only a ``summary`` yields an empty id rather than a
+    missing one.  Handing that ``""`` back would make the ``str | None``
+    return type a lie and hand the next caller the gain#1055 trap intact:
+    an ``is not None`` guard -- the spelling gain#1101 records on the
+    sibling helper -- would read "not configured" as "configured", and
+    die resolving the resource named the empty string.  Normalising here
+    means only one operand of the chain can still be ``""``, and it is
+    guarded where the chain lands.
+    """
+    assert preamble_reference_genome_id(_a_pipeline_declaring(None, "")) \
+        is None
 
 
 def _a_pipeline_declaring(
