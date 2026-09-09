@@ -699,6 +699,63 @@ def test_open_raw_file_failure_without_userinfo_is_unchanged() -> None:
     assert exc.__cause__ is not None or exc.__context__ is not None
 
 
+def test_open_raw_file_write_refusal_does_not_leak_url_credential() -> None:
+    # gain#1106 — refusing a write against a READ-ONLY protocol interpolates
+    # the resource file url into the message itself, before any handle
+    # exists, so the handle wrapper of ADR 0023 cannot reach it. No I/O is
+    # attempted: the refusal fires on the mode alone.
+    proto = build_fsspec_protocol(
+        "i1106-refuse", f"https://alice:{_SECRET}@example.org/repo")
+    resource = GenomicResource("sub/res", (1, 0), proto, {})
+    with pytest.raises(OSError) as excinfo:
+        proto.open_raw_file(resource, "data.txt", "wt")
+    exc = excinfo.value
+    # Pinned whole, not probed for fragments: asserting only that the host and
+    # the filename survive is satisfied by ``_strip_netloc_userinfo``, which
+    # drops the scheme along with the userinfo and leaves a url that no longer
+    # says what it addresses. No chain walk -- the ``raise`` is not inside an
+    # ``except``, so there is nothing linked to walk.
+    assert str(exc) == (
+        "Read-Only protocol i1106-refuse trying to open "
+        "https://example.org/repo/sub/res(1.0)/data.txt for writing")
+    # Kept alongside the pin rather than subsumed by it: this is what still
+    # fails if a future regression is "fixed" by pasting the new, leaking
+    # message into the expected string above.
+    assert _SECRET not in "".join(traceback.format_exception(exc))
+
+
+def test_open_raw_file_forwards_the_credential(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # The fence for gain#1106's redaction: it belongs on the message, not on
+    # ``filepath`` itself. Redacting at the assignment reads as a tidier fix,
+    # passes every leak test in this file, and silently breaks EVERY authed
+    # read -- fsspec would be handed the credential-free display url. Only the
+    # call args can show it, exactly as for ``get_file_content``.
+    proto = build_fsspec_protocol(
+        "i1106-forward", f"https://alice:{_SECRET}@example.org/repo")
+    resource = GenomicResource("sub/res", (1, 0), proto, {})
+    opened = mocker.patch.object(proto.filesystem, "open")
+
+    proto.open_raw_file(resource, "data.txt")
+
+    assert _SECRET in opened.call_args.args[0]
+    assert opened.call_args.args[0].endswith("data.txt")
+
+
+def test_open_raw_file_write_refusal_without_userinfo_is_unchanged() -> None:
+    # The redaction must not cost the unauthenticated case anything: with no
+    # userinfo to strip, the refusal still names the whole url. Guards against
+    # "fixing" the leak by dropping the url from the message.
+    proto = build_fsspec_protocol("i1106-plain", "https://example.org/repo")
+    resource = GenomicResource("sub/res", (1, 0), proto, {})
+    with pytest.raises(OSError) as excinfo:
+        proto.open_raw_file(resource, "data.txt", "wt")
+    assert str(excinfo.value) == (
+        "Read-Only protocol i1106-plain trying to open "
+        "https://example.org/repo/sub/res(1.0)/data.txt for writing")
+
+
 def test_sqlite_metadata_db_fetch_failure_does_not_leak_url_credential(
     mocker: pytest_mock.MockerFixture,
 ) -> None:

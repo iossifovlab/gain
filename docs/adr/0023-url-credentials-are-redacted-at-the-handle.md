@@ -6,7 +6,8 @@
 [#629](https://github.com/iossifovlab/gain/issues/629),
 [#1017](https://github.com/iossifovlab/gain/issues/1017),
 [#1058](https://github.com/iossifovlab/gain/issues/1058),
-[#1078](https://github.com/iossifovlab/gain/issues/1078)
+[#1078](https://github.com/iossifovlab/gain/issues/1078),
+[#1106](https://github.com/iossifovlab/gain/issues/1106)
 
 ## Context
 
@@ -172,3 +173,56 @@ demotion is paid exactly by the configuration it protects.
   protocol over an authed store" (gain#620). Closing those sites means
   wrapping at the filesystem rather than the protocol, which is a larger
   change than this one and was not made.
+
+## Amendment — gain#1106: the handle is not the only escape
+
+**Date:** 2026-09-09
+
+"Redaction is a property of the handle" is a statement about *reads and
+writes*, and it was read more broadly than it can carry. A credential can
+also escape from a message GAIn composes **before any handle exists**, where
+there is nothing for `_RedactingFile` to wrap.
+
+`FsspecReadOnlyProtocol.open_raw_file` refused a write against a read-only
+protocol by interpolating the resource file url — which resolves through this
+class's `get_resource_url` override to the credential-bearing `_fetch_url` —
+into an `OSError` message. The refusal fires on the mode alone, before the
+open, so the wrapper never saw it. `OSError` is in `RESOURCE_ERRORS`, so
+`report_resource_failure` logged that text at ERROR.
+
+Redacted by hand with `_strip_url_userinfo`, the way `_download_resource_file`
+already redacts its "destination file not created" path, and for the same
+reason. The Decision is unchanged; the boundary is narrower than it read.
+
+**The rule this leaves.** Redaction is automatic for anything that travels
+*through* a handle. Anything GAIn interpolates into a message itself is the
+call site's own responsibility, and the discriminator is the url's
+provenance: `_fetch_url`-derived (`get_resource_url`,
+`get_resource_file_url`, `get_file_url`, `_get_file_url`) carries the
+credential; `self.url`-derived (`get_url`, `get_public_url`, the resource
+scan) is credential-free by construction and needs nothing.
+
+An audit against that rule at the time of gain#1106 found the write refusal
+to be the only unredacted site that is *reachable* with a credential. It is
+not the only one that exists: `FsspecReadWriteProtocol` subclasses this class,
+inherits the tainted `get_resource_url`, and interpolates a
+`get_resource_file_url`-derived path unredacted in its publish-mode refusal
+and its corrupt-publish report. Those are safe for the same reason the
+Consequences above give — `build_fsspec_protocol` builds that class only for
+`file://`, `s3://` and `memory://` — which is a property of protocol
+selection, not of the sites themselves.
+
+**Left open.** The paragraph above arguing that `open_tabix_file`,
+`open_vcf_file`, `open_fasta_file` and `open_bigwig_file` need no wrapper
+because they hand their library a url string is correct about the *handle*,
+and is exactly why nobody looked at what those libraries then do with it.
+pysam embeds the full credentialed url in its own `OSError`, and htslib and
+pyBigWig write it to stderr. Tracked as gain#1314; not addressed here.
+
+Nor is the hand-remembering itself. Message interpolation is the one mechanism
+in this family with no structural guard — twelve `_strip_url_userinfo` calls
+that a thirteenth site can silently forget, which is how gain#1106 arose. A
+type cannot carry the taint (`os.path.join` drops it, and `str()` on the way
+to `yarl`/fsspec would strip the credential before it reached the wire), so
+the remedy is an AST fence over the provenance rule above. Tracked as
+gain#1318.
