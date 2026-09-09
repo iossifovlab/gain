@@ -91,7 +91,18 @@ def main(argv: list[str] | None = None) -> int:
     # bgzipped table, so a second run into a populated directory fails --
     # and a fixture that is only correct on a clean checkout is worse than
     # one that is rebuilt.
+    #
+    # Refuse to delete a directory that looks like source, though.  What
+    # this is pointed at is a whole tree that gets removed without asking,
+    # and the argument names the fixtures *root* -- one tab-completion
+    # away from `info_pages_e2e` itself, whose contents are this suite.
     if fixtures_dir.exists():
+        for marker in ("package.json", "pyproject.toml", ".git"):
+            if (fixtures_dir / marker).exists():
+                parser.error(
+                    f"refusing to delete {fixtures_dir}: it contains "
+                    f"{marker}, so it is a source directory rather than a "
+                    f"fixtures directory")
         shutil.rmtree(fixtures_dir)
 
     build_coverage_grr(fixtures_dir / COVERAGE_GRR_DIRNAME)

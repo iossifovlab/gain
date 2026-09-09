@@ -2,10 +2,11 @@ import { defineConfig, devices } from '@playwright/test';
 
 /**
  * The GRR info pages are static artifacts: `grr_manage repo-info` writes
- * them to disk and a browser opens them straight off the filesystem. So
- * there is no `webServer` and no `baseURL` here -- every test navigates to
- * a `file://` URL under `fixtures/`, which `global-setup.ts` verifies has
- * been generated.
+ * them to disk and `serving.ts` hands them to the browser, reading each
+ * one off the filesystem as it is asked for. So there is no `webServer`
+ * and no `baseURL` here -- the specs address the pages through the
+ * helper's own URL builders, under `fixtures/`, which `global-setup.ts`
+ * verifies has been generated.
  *
  * That is the whole reason this suite is cheap enough to be worth having:
  * no service to start, no network, no fixtures to seed through an API.

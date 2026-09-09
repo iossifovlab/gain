@@ -32,8 +32,10 @@ export const GRR_ORIGIN = 'https://grr.test/';
  * `window.rowData`, which the tree view is built from. Aborting it does
  * not merely lose the fonts: it empties the tree.
  */
+const JQUERY_VERSION = '3.7.1';
 const JQUERY_URL =
-  'https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js';
+  `https://ajax.googleapis.com/ajax/libs/jquery/${JQUERY_VERSION}/jquery.min.js`;
+const JQUERY_DIR = 'jquery';
 const JQUERY_FILE = 'jquery/dist/jquery.min.js';
 
 /**
@@ -45,30 +47,80 @@ const JQUERY_FILE = 'jquery/dist/jquery.min.js';
  * module's own URL, so the wasm is a second request to the same origin.
  * Allowing only the imported URL loads the module and then starves it.
  */
+const SQLITE_VERSION = '3.51.2-build6';
 const SQLITE_URL_PREFIX =
-  'https://cdn.jsdelivr.net/npm/@sqlite.org/sqlite-wasm@3.51.2-build6/';
+  `https://cdn.jsdelivr.net/npm/@sqlite.org/sqlite-wasm@${SQLITE_VERSION}/`;
 const SQLITE_DIR = '@sqlite.org/sqlite-wasm';
 
-/**
- * Where `npm ci` unpacks the two vendored packages.
- *
- * Both are pinned to an exact version in `package.json`, not to a range,
- * because these bytes are served *at the CDN URLs above*. Under a range,
- * an `npm update` would answer a URL naming one version with the
- * contents of another -- and the page, which cannot tell, would be
- * tested against a library the published page never loads.
- * Changing either version is a two-line edit: here and in
- * `core/gain/templates/template_files/grr_scripts.jinja`.
- */
+/** Where `npm ci` unpacks the two vendored packages. */
 const NODE_MODULES = path.join(__dirname, 'node_modules');
 
 /**
- * Content types the pages actually depend on being right.
+ * What must be installed, and at which version, for the URLs above to be
+ * answered honestly.
  *
- * `application/wasm` is load-bearing: sqlite-wasm instantiates through
- * `WebAssembly.instantiateStreaming`, which rejects any other type. The
- * rest are here so nothing is served as a type that would make a browser
- * refuse it; anything unlisted falls back to a byte stream.
+ * These bytes are served *at the CDN URLs*, so the installed version has
+ * to be the version the URL names. Exact pins in `package.json` stop a
+ * range from drifting, but they do not stop a deliberate bump: a
+ * dependabot PR moving jquery to 3.8.0 leaves `JQUERY_VERSION` at 3.7.1,
+ * and the suite would then serve 3.8.0's bytes at a URL claiming 3.7.1
+ * -- every test green, while testing a library the published page never
+ * loads. Nothing about that is visible from a diff of either file alone,
+ * which is why it is checked rather than merely commented.
+ *
+ * Changing a version means four edits: `package.json`, the lockfile, the
+ * matching constant above, and the URL in
+ * `core/gain/templates/template_files/grr_scripts.jinja`. This catches
+ * the first three; the browser catches the fourth, loudly, because the
+ * template would then request a URL nothing serves.
+ */
+const VENDORED = [
+  { dir: JQUERY_DIR, version: JQUERY_VERSION },
+  { dir: SQLITE_DIR, version: SQLITE_VERSION },
+];
+
+/**
+ * Why the vendored packages cannot be served, if they cannot.
+ *
+ * Checked in `global-setup.ts` rather than per test: without them the
+ * symptom is four specs reporting an empty tree and an empty status
+ * line, which looks exactly like a broken template.
+ */
+export function vendoringProblems(): string[] {
+  return VENDORED.flatMap(({ dir, version }) => {
+    const manifest = path.join(NODE_MODULES, dir, 'package.json');
+    if (!fs.existsSync(manifest)) {
+      return [`${dir} is not installed (${manifest} is missing) -- run 'npm ci'`];
+    }
+    const installed = JSON.parse(fs.readFileSync(manifest, 'utf8')).version;
+    if (installed !== version) {
+      return [
+        `${dir} is installed at ${installed}, but this suite serves it at a `
+        + `URL naming ${version}. Update the constant in serving.ts and the `
+        + 'URL in core/gain/templates/template_files/grr_scripts.jinja, or '
+        + 'pin the package back.',
+      ];
+    }
+    return [];
+  });
+}
+
+/**
+ * Content types for what is served.
+ *
+ * Two of these are load-bearing, and both fail the whole suite if
+ * removed: `text/html`, without which the browser offers the page as a
+ * download instead of rendering it, and `text/javascript`, without which
+ * Chromium refuses the `<script type="module">` blocks outright.
+ *
+ * `application/wasm` is NOT, despite being the obvious candidate.
+ * sqlite-wasm does try `WebAssembly.instantiateStreaming` and that does
+ * reject a wrong type -- but it then logs `falling back to ArrayBuffer
+ * instantiation` and loads anyway, so dropping the entry changes
+ * nothing. It is kept because it is what a real server sends, not
+ * because a test would notice.
+ *
+ * Anything unlisted falls back to a byte stream.
  */
 const CONTENT_TYPES: Record<string, string> = {
   '.css': 'text/css',

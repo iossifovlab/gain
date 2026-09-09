@@ -85,9 +85,9 @@ carries no Python, no gain and no GRR sources — just static pages and a
 browser, which is what a published GRR page is.
 
 The Jenkins stage runs it with `--network none`. That is an assertion
-rather than a precaution: the suite aborts every non-`file:` request, so
-a test that grew a dependency on the network fails there instead of
-passing slowly.
+rather than a precaution: the suite answers every request from disk and
+aborts whatever it does not recognise, so a test that grew a dependency
+on the network fails there instead of passing slowly.
 
 ## The fixtures, and why they are shaped like that
 
