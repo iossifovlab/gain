@@ -523,7 +523,7 @@ both producers build the values slot as a list comprehension over
 hoisted the extractor out of the loop) -- so the new name promises
 ``list[ScoreValue]`` and the narrowing runs down the private chain
 (``region_values_from_records``, ``_clipped_score_values``,
-``_allele_point_values``).  A caller's
+``_score_segments``).  A caller's
 ``None`` guard on a yielded values slot is dead code now, as
 ``aggregate_region``'s was.  (``fetch_region_weighted_values`` carried the
 narrowing too from gain#734 until gain#1131 retired it.)

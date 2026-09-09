@@ -24,7 +24,7 @@ from gain.genomic_resources.testing.builders import (
     a_position_score,
 )
 
-from tests.small.genomic_resources.conftest import a_flag_score
+from tests.small.genomic_resources.conftest import a_flag_score, count_calls
 
 # Two records with a two-position hole between them: positions 10-13 carry
 # 0.2, 14-15 nothing, 16 carries 0.8.
@@ -503,17 +503,22 @@ def test_a_record_outside_the_region_is_dropped_not_counted(
     it with the same ``clip_span``; counting it would yield phantom
     positions past the region width and feed the aggregator a negative
     weight.
+
+    Stubbed at ``_fetch_segments_for_defs``, which is the segment source
+    the plane reads from since gain#1282 -- the same stream
+    ``fetch_region_segments`` composes, entered with the definitions the
+    read already resolved rather than with ids to resolve again.
     """
     def outside(
         chrom: str,
         pos_begin: int | None = None,
         pos_end: int | None = None,
-        scores: list[str] | None = None,
+        score_defs: list[object] | None = None,
     ) -> Generator[tuple[int, int, list[float]], None, None]:
         # a [20, 25] record, entirely past the [10, 16] query
         yield (20, 25, [9.9])
 
-    monkeypatch.setattr(gapped, "fetch_region_segments", outside)
+    monkeypatch.setattr(gapped, "_fetch_segments_for_defs", outside)
     with gapped:
         assert list(gapped.get_score_in_region("1", 10, 16)) == [None] * 7
         assert gapped.get_score_in_region_agg("1", 10, 16) is None
@@ -558,11 +563,16 @@ def test_an_absent_contig_is_answered_without_asking_the_backend(
     refusal of an unknown contig (gain#1211 changes neither).  They stay
     correct only because nothing asks them about a contig that is not
     there, so that nothing-is-asked is the property worth pinning.
+
+    Stubbed at ``_fetch_segments_for_defs``, the plane's segment source
+    since gain#1282.  The liveness check at the end is what keeps this
+    honest: a spy left on a seam the plane no longer reads through would
+    pass the two absent-contig assertions vacuously.
     """
     def refuse(*args: object, **kwargs: object) -> object:
         raise AssertionError("the backend was asked about an absent contig")
 
-    monkeypatch.setattr(gapped, "fetch_region_segments", refuse)
+    monkeypatch.setattr(gapped, "_fetch_segments_for_defs", refuse)
     with gapped:
         # The bounds and values are pinned by the two tests above; what is
         # under test here is only that neither read reaches the backend.
@@ -655,3 +665,90 @@ def test_positions_past_the_data_are_uncovered_not_errors(
         assert list(gapped.get_score_in_region("1", 900, 902)) == [
             None, None, None,
         ]
+
+
+# -- One resolution per read (gain#1282) --------------------------------
+#
+# A read resolves WHAT IT WAS ASKED FOR once: which scores the ids name,
+# and whether the contig exists.  Both are pure over the request and the
+# score's definitions, so a second answer within one call can only agree
+# with the first -- and the contig half is O(contigs) on a tabix table
+# (gain#1173), so agreeing twice is what a genome-sized resource pays for.
+#
+# Counted rather than timed: the cost is a shared box's to distort, but
+# "how many times was it asked" is exact.  The two spied names are the
+# request's two questions; every read below reaches them through private
+# plumbing whose shape these tests deliberately do not pin.
+#
+# Those two names and no others.  The aggregating pair still asks
+# ``score_def_for`` once per QUERY besides, which is a dict lookup rather
+# than a scan and is not what gain#1282 was about; what these count is the
+# resolution whose second answer cost something.
+
+
+def _request_resolutions(
+    monkeypatch: pytest.MonkeyPatch, score: PositionScore,
+) -> tuple[list[tuple], list[tuple]]:
+    """Spy the two questions a read asks about its request."""
+    return (
+        count_calls(monkeypatch, "_resolve_score_defs", score),
+        count_calls(monkeypatch, "get_all_chromosomes", score),
+    )
+
+
+def test_a_position_read_resolves_its_request_once(
+    gapped: PositionScore, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with gapped:
+        resolutions, contig_scans = _request_resolutions(monkeypatch, gapped)
+
+        assert gapped.get_scores_at_position("1", 12, ["s"]) == (0.2,)
+
+    assert (len(resolutions), len(contig_scans)) == (1, 1)
+
+
+def test_a_region_read_resolves_its_request_once(
+    gapped: PositionScore, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with gapped:
+        resolutions, contig_scans = _request_resolutions(monkeypatch, gapped)
+
+        assert list(gapped.get_scores_in_region("1", 12, 13, ["s"])) == [
+            (0.2,), (0.2,),
+        ]
+
+    assert (len(resolutions), len(contig_scans)) == (1, 1)
+
+
+def test_an_aggregating_read_resolves_its_request_once(
+    gapped: PositionScore, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A covered contig is scanned for ONCE, not once per layer.
+
+    This read tests contig membership itself, to answer an absent contig
+    as one uncovered run instead of refusing it (gain#1211).  That is the
+    read's ONE scan -- the segment read underneath used to repeat it on
+    the covered branch, which is the half of gain#1211's "the same one
+    scan, moved, not a new one" that was not true.
+    """
+    with gapped:
+        resolutions, contig_scans = _request_resolutions(monkeypatch, gapped)
+
+        assert gapped.get_scores_in_region_agg("1", 12, 16, [
+            PositionScoreAggregationQuery("s", "max"),
+        ]) == (0.8,)
+
+    assert (len(resolutions), len(contig_scans)) == (1, 1)
+
+
+def test_a_binned_read_resolves_its_request_once(
+    gapped: PositionScore, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with gapped:
+        resolutions, contig_scans = _request_resolutions(monkeypatch, gapped)
+
+        assert list(gapped.get_scores_in_bins("1", 12, 16, 5, [
+            PositionScoreAggregationQuery("s", "max"),
+        ])) == [(12, 15, (0.2,)), (16, 16, (0.8,))]
+
+    assert (len(resolutions), len(contig_scans)) == (1, 1)
