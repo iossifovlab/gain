@@ -11,7 +11,7 @@ method that assumes any of those re-creates the false ``is-a`` this whole epic
 exists to avoid.
 
 So the base's public method set is pinned here against an explicit allowlist.
-If someone lifts ``open``/``close``/``fetch_position_scores``/
+If someone lifts ``open``/``close``/``get_scores_at_position``/
 ``get_all_chromosomes`` (or
 any other lifecycle, table or aggregator method) into the base "because both
 subclasses happen to have one", this test fails and names the intruder.
@@ -51,8 +51,21 @@ FORBIDDEN_ON_BASE = {
     # The deprecated clipped read and its alias -- still live public
     # methods until gain#844 / gain#730 delete them, so still pinned here.
     "fetch_region_segment_scores", "fetch_region_values",
-    "fetch_position_scores", "fetch_allele_scores", "fetch_fragment_scores",
+    "fetch_allele_scores", "fetch_fragment_scores",
     "fetch_scores_agg", "get_all_chromosomes",
+    # The position kind's logical read plane (gain#727, gain#1268).  Both
+    # forms of each of the four reads, as for the fragment plane below --
+    # ``get_scores_at_position`` is the only point read on a position score
+    # since gain#1268 removed ``fetch_position_scores``, so this is where
+    # that name's pin went.
+    "get_scores_at_position",
+    "get_score_at_position",
+    "get_scores_in_region",
+    "get_score_in_region",
+    "get_scores_in_region_agg",
+    "get_score_in_region_agg",
+    "get_scores_in_bins",
+    "get_score_in_bins",
     # The fragment kind's logical read plane (gain#1123, gain#1124).  Public
     # on ``FragmentScore``, and pinned here for the same reason as the
     # ``fetch_*`` reads above: they assume a table and a region, which a gene

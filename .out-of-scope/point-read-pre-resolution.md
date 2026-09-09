@@ -1,11 +1,20 @@
 # The point read resolves its score definitions on every call
 
-`PositionScore.fetch_position_scores` resolves the ids it is asked for
+`PositionScore.get_scores_at_position` resolves the ids it is asked for
 through `_resolve_score_defs` on each call, and it stays that way. There
 is no "definitions already resolved" entry on the score, and the
 annotator's substitution branch keeps reading through the documented
 point read rather than through `fetch_records` +
 `get_score_values_from_record` with a list it resolved at construction.
+
+(The point read was `fetch_position_scores` when this was written;
+gain#1268 removed it and made `get_scores_at_position` the only one. The
+refusal is unaffected — the plane's `_region_read_defs` calls the same
+`_resolve_score_defs` per read, so the resolution this entry declines to
+hoist out of the call is still inside it. It is now performed *twice* per
+point read, once in `get_scores_at_position` and once again inside
+`fetch_region_segments`; that duplication is a plain waste and is not what
+this entry refuses, which is caching the result ACROSS calls.)
 
 ## Why this is out of scope
 

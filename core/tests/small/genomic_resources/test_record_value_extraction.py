@@ -401,7 +401,7 @@ def test_point_fetch_empty_region_unknown_score_raises(
         1      10         0.5      hello
     """)
     with score, pytest.raises(ValueError, match="does not define"):
-        score.fetch_position_scores("1", 5000, scores=["NOPE"])
+        score.get_scores_at_position("1", 5000, scores=["NOPE"])
 
 
 def test_the_refusal_names_the_unknown_id_and_the_available_ones(
@@ -413,7 +413,7 @@ def test_the_refusal_names_the_unknown_id_and_the_available_ones(
         1      10         0.5      hello
     """)
     with score, pytest.raises(ValueError) as err:
-        score.fetch_position_scores("1", 10, scores=["s_flaot"])
+        score.get_scores_at_position("1", 10, scores=["s_flaot"])
     assert "s_flaot" in str(err.value)
     assert "s_float" in str(err.value)
 

@@ -30,7 +30,7 @@ Example::
             .build_repo(tmp_path)
         )
         score = PositionScore(repo.get_resource("scores/pos")).open()
-        assert score.fetch_position_scores("1", 10) == [0.1]
+        assert score.get_scores_at_position("1", 10) == (0.1,)
 """
 # One module on purpose: the builders share the resource-realize helpers
 # and the ``with_*`` idiom, and a test imports several of them together.

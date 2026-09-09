@@ -1312,8 +1312,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         does ``count``, which chooses to report nothing rather than 0 for an
         empty region (see ``CountAggregator.get_final``).  This method does
         not second-guess any of them.  That is deliberately unlike the
-        per-position reads (``fetch_position_scores``,
-        ``fetch_allele_scores``), which return ``None`` where there is no
+        per-position reads (``get_scores_at_position``,
+        ``fetch_allele_scores``), which answer ``None`` where there is no
         data -- aggregating nothing is a well-defined question, reading a
         value where there is none is not.
 

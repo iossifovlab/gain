@@ -575,7 +575,7 @@ class FragmentScore(GenomicScore):
         returns a handful of fragments, callers want all of them, and a
         materialised answer can be measured with ``len()``, iterated twice
         and kept across a later read.  It is NOT the drain hazard
-        :meth:`~.position.PositionScore.fetch_position_scores` documents:
+        :meth:`~.position.PositionScore.get_scores_at_position` documents:
         that was gain#1120's to fix, and abandoning a region generator has
         been safe since.
 

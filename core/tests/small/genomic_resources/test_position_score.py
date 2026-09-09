@@ -36,11 +36,11 @@ def test_the_simplest_position_score() -> None:
     score.open()
 
     assert score.get_all_scores() == ["phastCons100way"]
-    assert score.fetch_position_scores("1", 11) == [0.03]
-    assert score.fetch_position_scores("1", 15) == [0.46]
-    assert score.fetch_position_scores("2", 8) == [0.01]
-    assert score.fetch_position_scores("1", 10) == [0.02]
-    assert score.fetch_position_scores("1", 12) is None
+    assert score.get_scores_at_position("1", 11) == (0.03,)
+    assert score.get_scores_at_position("1", 15) == (0.46,)
+    assert score.get_scores_at_position("2", 8) == (0.01,)
+    assert score.get_scores_at_position("1", 10) == (0.02,)
+    assert score.get_scores_at_position("1", 12) == (None,)
 
 
 def test_region_score() -> None:
@@ -80,7 +80,7 @@ def test_region_score() -> None:
     assert score.table.pos_begin_key == 1  # "pos_begin"
     assert score.table.pos_end_key == 2  # "pos_end"
 
-    assert score.fetch_position_scores("1", 12) == [0.02, None]
+    assert score.get_scores_at_position("1", 12) == (0.02, None)
 
 
 def test_phastcons100way() -> None:
@@ -114,7 +114,7 @@ def test_phastcons100way() -> None:
 
     assert score.get_all_scores() == ["phastCons100way"]
 
-    assert score.fetch_position_scores("1", 54773) == [0]
+    assert score.get_scores_at_position("1", 54773) == (0,)
 
 
 def test_position_score_fetch_region() -> None:
@@ -196,7 +196,7 @@ def test_position_score_chrom_prefix() -> None:
 def test_a_walk_of_point_reads_leaves_the_tabix_buffer_pruned(
     tmp_path: pathlib.Path,
 ) -> None:
-    # ``fetch_position_scores`` DRAINS the region generator it opens, so the
+    # ``get_scores_at_position`` DRAINS the run generator it opens, so the
     # buffered walk reaches the ``buffer.prune()`` that ends it and the
     # annotation path -- which reads position after position through here --
     # does not grow a ``LineBuffer`` across a run.
@@ -237,39 +237,5 @@ def test_a_walk_of_point_reads_leaves_the_tabix_buffer_pruned(
     # test_prune_evicts_the_dead_records_a_wide_one_spans -- still passes,
     # while a buffer that scales with the reads cannot.
     for pos in range(1, 201):
-        assert score.fetch_position_scores("chr1", pos) == [0.1]
+        assert score.get_scores_at_position("chr1", pos) == (0.1,)
         assert table.buffered_record_count() <= 64
-
-
-def test_a_score_asked_for_twice_is_answered_twice(
-    tmp_path: pathlib.Path,
-) -> None:
-    """One value per REQUESTED id, in the order asked, duplicates included.
-
-    The point read does not dedupe what it is asked for: it resolves a
-    definition per id and reads each off the record.  The position
-    annotator leans on exactly that -- it asks one source per attribute
-    and pairs the answers with the attribute names by position, so a read
-    that collapsed ``["s", "t", "s"]`` to two answers would have the third
-    attribute fall off the end (gain#1111).  Distinct values under ``s``
-    and ``t``, so an answer in the wrong slot is visible.
-    """
-    resource = (
-        a_grr()
-        .with_resource(
-            "scores",
-            a_position_score()
-            .with_score("s", "float")
-            .with_score("t", "float")
-            .with_data("""
-                chrom  pos_begin  s    t
-                chr1   10         1.0  2.0
-            """))
-        .build_repo(tmp_path)
-        .get_resource("scores")
-    )
-    score = PositionScore(resource)
-    score.open()
-
-    assert score.fetch_position_scores(
-        "chr1", 10, ["s", "t", "s"]) == [1.0, 2.0, 1.0]

@@ -598,6 +598,54 @@ def test_a_position_read_refuses_what_the_region_read_refuses(
             gapped.get_scores_at_position("1", 0)
 
 
+def test_a_position_read_answers_one_value_per_id_asked(
+    two_scored: PositionScore,
+) -> None:
+    """One value per REQUESTED id, in the order asked, duplicates included.
+
+    The point read does not dedupe what it is asked for.  The position
+    annotator leans on exactly that -- it asks one source per attribute and
+    pairs the answers with the attribute names by position, so a read that
+    collapsed ``["a", "b", "a"]`` to two answers would have the third
+    attribute fall off the end (gain#1111).  The fixture's two scores differ
+    in TYPE, so an answer in the wrong slot is visible.
+    """
+    with two_scored:
+        assert two_scored.get_scores_at_position(
+            "1", 10, ["a", "b", "a"]) == (0.2, "x", 0.2)
+
+
+def test_where_two_records_cover_one_position_the_first_answers_a_point_read(
+    overlapping: PositionScore,
+) -> None:
+    # The same first-wins rule the region read follows, asked one position
+    # at a time: 12 is covered by both records and answers the earlier one.
+    # A second record at a position is not an error here -- several records
+    # at one position is a malformed position score, and refusing it is the
+    # statistics scan's job rather than a reader's (ADR 0008).
+    with overlapping:
+        assert overlapping.get_scores_at_position("1", 11) == (1.0,)
+        assert overlapping.get_scores_at_position("1", 12) == (1.0,)
+        assert overlapping.get_scores_at_position("1", 15) == (2.0,)
+
+
+def test_a_position_read_refuses_a_closed_score(
+    gapped: PositionScore,
+) -> None:
+    # Every read on the plane resolves through ``_region_read_defs``, which
+    # refuses a closed score before it touches a record -- so the point read
+    # refuses one too, rather than reaching a table that is not there.
+    #
+    # NOT a new refusal: the removed ``fetch_position_scores`` raised the
+    # same message from its first statement, because ``get_all_chromosomes``
+    # checks ``is_open`` before it answers.  Pinned here because it was
+    # unpinned before, and because the route it arrives by is now the
+    # plane's shared one rather than this read's own.
+    gapped.close()
+    with pytest.raises(ValueError, match="is not open"):
+        gapped.get_scores_at_position("1", 12)
+
+
 def test_positions_past_the_data_are_uncovered_not_errors(
     gapped: PositionScore,
 ) -> None:

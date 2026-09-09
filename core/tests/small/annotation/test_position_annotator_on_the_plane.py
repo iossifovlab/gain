@@ -221,6 +221,58 @@ def test_a_substitution_answers_a_source_named_twice_under_both_names(
     assert result == {"first": 1.0, "tee": 10.0, "second": 1.0}
 
 
+def test_an_uncovered_substitution_answers_none_under_every_name(
+    repo: GenomicResourceRepo,
+) -> None:
+    """An uncovered SUBSTITUTION answers ``None`` per attribute.
+
+    The branch has no uncovered guard of its own since gain#1268: the
+    point read answers a tuple of ``None``, one per id asked, and that
+    through ``_pair_all`` is what ``_empty_result`` used to build.  The
+    guard that stood here (``if not point_scores``) went with the read
+    that could answer ``None`` for the whole position, and this pins
+    that nothing was lost with it -- including that ``_pair_all``'s count
+    check does not fire on the all-``None`` answer.
+
+    Position 40 is past the fixture's last record but on a chromosome
+    the annotator holds, so the contig guard above (gain#1253) does not
+    fire and the read is really reached.  The source is named twice so
+    the count check is asked a question it could get wrong: an answer
+    short by one would leave the second attribute unpaired.
+    """
+    with _pipeline(repo, """
+        - source: s
+          name: score
+        - source: s
+          name: again
+    """) as pipeline:
+        result = pipeline.annotate(VCFAllele("chr1", 40, "A", "C"))
+
+    assert result == {"score": None, "again": None}
+
+
+def test_a_substitution_below_position_one_is_refused(
+    repo: GenomicResourceRepo,
+) -> None:
+    """A substitution at a position no region can mean is REFUSED.
+
+    The point read runs ``_guard_region_span`` since gain#1268, as every
+    read on the plane does.  Before that it went through ``fetch_records``,
+    whose in-memory backend reads a falsy bound as "unbounded" -- so
+    position 0 answered with the contig's FIRST record rather than
+    refusing, which is the leniency ``_guard_region_span`` exists to stop
+    reaching a reader (#727).
+
+    Pinned here because it is a user-visible change on the annotation
+    path: a job that silently got a wrong value now fails.
+    """
+    with _pipeline(repo, """
+        - source: s
+          name: score
+    """) as pipeline, pytest.raises(ValueError, match="1-based"):
+        pipeline.annotate(VCFAllele("chr1", 0, "A", "C"))
+
+
 def test_the_bool_fixtures_false_record_answers_false(
     repo: GenomicResourceRepo,
 ) -> None:

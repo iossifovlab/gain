@@ -3,8 +3,11 @@
 The scan reads a region as ``region_values_from_records`` over
 ``validate_records(fetch_records(...))``; every plain read -- ``fetch_records``,
 ``fetch_region_segments``,
-``fetch_position_scores`` -- is the same transform over the same records with
-that middle link left out, and checks nothing.  These tests pin both halves of
+``get_scores_at_position`` -- is the same transform over the same records with
+that middle link left out, and validates no RECORD.  (A read may still refuse
+the request itself -- a closed score, an unknown contig, a span no region can
+mean -- which is a different question from whether the records it then reads
+are well formed.)  These tests pin both halves of
 the split, because either half alone is quietly undoable: a scan that stops
 composing the validator still serves every read, and a read that starts
 validating again still passes the scan's tests.
@@ -159,7 +162,7 @@ def test_the_point_read_of_a_repeated_position_answers_from_the_first_record(
         chr1   10         10       0.2
     """)
 
-    assert score.fetch_position_scores("chr1", 10) == [0.1]
+    assert score.get_scores_at_position("chr1", 10) == (0.1,)
 
 
 def test_a_region_split_between_two_touching_records_still_refuses_them(
