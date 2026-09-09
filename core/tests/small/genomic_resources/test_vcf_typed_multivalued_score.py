@@ -309,9 +309,11 @@ def _declared_types(score: AlleleScore, fields: list[str]) -> list[str | None]:
 
     The definition's own ``value_type``, not the Python type of a value read
     through it -- restating a field's type must leave the resource describing
-    itself the way the header-only resource describes it, and a joined
-    ``Number=.``/``Type=Integer`` field is the case where the two differ
-    (it declares ``int`` and reads text, on every route).
+    itself the way the header-only resource describes it.  A joined
+    ``Number=.``/``Type=Integer`` field used to be where the declaration and
+    the value disagreed (it declared ``int`` and read text, on every route);
+    gain#1259 made it declare the ``str`` it reads, so the two now agree
+    everywhere and this comparison holds on both.
     """
     return [score.score_definitions[field].value_type for field in fields]
 

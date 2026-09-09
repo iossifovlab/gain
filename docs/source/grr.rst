@@ -1674,8 +1674,22 @@ id and include only the fields you want to change or extend (for example, overri
 
 
 
-GAIn derives each score's type directly from the VCF ``INFO`` field type:
-``Integer`` maps to ``int``, ``Float`` to ``float``, String to ``str``, and ``Flag`` to ``bool``.
+GAIn derives each score's type from the VCF ``INFO`` field type:
+``Integer`` maps to ``int``, ``Float`` to ``float``, ``String`` to ``str``, and ``Flag`` to ``bool``.
+
+This mapping applies to a field whose header declares a **single value per
+score** -- a ``Number`` of ``0``, ``1``, ``A`` or ``R``. A field declared
+multi-valued (an unbounded ``Number=.``, the genotype-arity ``Number=G``, or
+any fixed arity above one) has no single value to type: GAIn reads every
+element of it as one string, joined on ``|``, so such a score is typed
+``str`` whatever its ``Type=`` says. ``##INFO=<ID=A,Number=.,Type=Integer>``
+with the row ``A=1,2`` reads ``"1|2"``.
+
+A ``scores:`` entry cannot override that. Stating a ``type:`` on a
+multi-valued field is reported and ignored, because the stated type would
+describe a value the join cannot produce -- and the declared type is not
+merely descriptive, it selects the histogram the statistics build computes.
+Overriding ``type:`` works as described below for the single-valued fields.
 
 
 

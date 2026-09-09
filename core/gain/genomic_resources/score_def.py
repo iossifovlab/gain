@@ -580,16 +580,18 @@ def parse_scoredef_config(
         # ``None`` means the config did not state a type, which is NOT
         # the same as "float" here: for a VCF score, silence means "take
         # the type the file's header declares" (see
-        # ``parse_vcf_scoredefs``, which prefers the config's type and
-        # falls back to the header's).  Defaulting at this point would
+        # ``parse_vcf_scoredefs``, which prefers the config's type for a
+        # scalar-``Number`` field and falls back to the header's).
+        # Defaulting at this point would
         # override an INFO field's declared ``int`` with ``float``.
         # ``finish_scoredefs`` resolves it once the merge has happened,
         # and resolves the value PARSER with it: both are left unmade here
         # so that the VCF merge is free to choose, rather than having to
         # recognise and discard an eager default (gain#1221).  The merge
-        # does NOT always keep them together -- a field the header declares
-        # multi-valued takes the config's type and the header's parser
-        # (gain#1233) -- which it can only do because neither was decided
+        # takes them together or not at all -- a field the header declares
+        # multi-valued keeps the header's parser AND the ``str`` its
+        # ``|``-join produces, discarding the stated type (gain#1233,
+        # gain#1259) -- which it can only do because neither was decided
         # for it here.
         value_type = score_conf.get("type")
         value_parser = (

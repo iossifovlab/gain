@@ -16,7 +16,6 @@ from the score layer.
 """
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 from gain import logging
@@ -50,6 +49,13 @@ VCF_TYPE_CONVERSION_MAP = {
 #: declared shape -- unbounded ``.``, the genotype-arity ``G``, and any fixed
 #: arity above one -- decodes to a tuple, and the only thing that reads a
 #: tuple is the ``|``-joining ``converter``.
+#:
+#: It decides THREE things, on both the header side and the config-override
+#: side: which fields get that converter, which may take a stated ``type:``
+#: as their parser, and which DECLARE the ``str`` the join produces rather
+#: than the ``Type=`` of one element (gain#1259).  All three are the same
+#: question -- does a value reach the parser whole -- so they are answered
+#: from one set and cannot drift apart.
 #:
 #: It is the DECLARED number, not the shape that actually arrives: a row may
 #: carry two values for a field its header calls ``Number=1``, and nothing
@@ -372,6 +378,67 @@ def extract_vcf_value(
 # is a pure function of ``(record, score_def)``, so the per-line allocation
 # goes and the routing stays exactly where it was.
 
+def _report_overridden_type(
+    score_id: str, number: Any, config_type: str | None, *, is_scalar: bool,
+) -> None:
+    """Report a stated ``type:`` the field's join cannot produce.
+
+    **The whole rule lives here, and the call is unconditional.**  Whether
+    an entry is a discarded override is one question -- it stated a type, the
+    field is not scalar, and the type is not already the ``str`` the join
+    produces -- and splitting it across the call site would leave a reader of
+    this docstring believing it owns a rule it only half owns.  It also
+    leaves gain#1283 one place to move rather than two.
+
+    A ``scores:`` entry over a multi-valued INFO field may state any type it
+    likes; what the field reads is ``|``-joined text, so the definition
+    declares ``str`` and the stated type is discarded.  Discarding it in
+    silence is what let the misconception live: the author goes on believing
+    the field holds integers, and the only symptom used to be a statistics
+    build that died in ``np.isnan`` naming neither the resource nor the
+    field (gain#1259).
+
+    **Stating ``str`` is not an override and is not reported.**  It is the
+    type the join produces, so nothing is being discarded, and it is what
+    every multi-valued entry in the deployed GRRs states (ClinVar's twenty,
+    dbSNP's ``CAF``/``TOPMED``).  The asymmetry is not one of volume -- both
+    cases would emit the same number of lines -- but of remedy: a discarded
+    type is a misconception with an edit that ends it, while agreement is a
+    correct config that would be scolded on every deployed VCF resource
+    forever, which is how a report that matters gets tuned out.
+
+    **Once per CONSTRUCTED SCORE, which is not once per resource.**  This
+    runs while the definitions are built, and they are built in
+    ``GenomicScore.__init__`` -- so a statistics build, which constructs a
+    fresh score per region task, repeats it per task.  A 400 bp resource
+    under ``--region-size 20`` emits 46 identical lines, and a genome-scale
+    one emits thousands.  It is not deduplicated: the flags that bound
+    ``_check_allele_arity`` live on a score definition, and every repeat
+    here has a NEW definition, so they cannot see each other.  What would
+    bound it is a report that fires where a resource is validated once
+    rather than where its definitions are built; that is gain#1283, and it
+    is left out of gain#1259 deliberately -- no deployed resource states a
+    non-``str`` type on a multi-valued field, so nothing reaches this today.
+
+    It cannot name the resource -- the parse is handed a header and a
+    config, neither of which carries a resource id -- so it names the field,
+    which is what the author has to edit.
+    """
+    if config_type is None or is_scalar or config_type == "str":
+        return
+    # No "state 'str' instead" advice: that edit is not inert.  An entry's
+    # NA sentinels are still normalized against the type it states, so
+    # rewriting the type also changes which values read null, and moves the
+    # statistics hash a second time (gain#1284).  The report says what was
+    # ignored and what the field holds; it does not prescribe the fix.
+    logger.warning(
+        "INFO field %s states 'type: %s', but its ##INFO line declares "
+        "Number=%s: a field the header declares multi-valued reads "
+        "'|'-joined text, so the score declares 'str' and the stated type "
+        "is ignored.",
+        score_id, config_type, number)
+
+
 def parse_vcf_scoredefs(
     vcf_header_info: dict[str, Any] | None,
     config_scoredefs: dict[str, GenomicScoreDef] | None, *,
@@ -391,28 +458,32 @@ def parse_vcf_scoredefs(
     a field whose arity the header does not fix.
 
     ``converter`` joins with ``str`` -- a ``Number=.``/``Type=Integer`` field
-    therefore reads as text, a separate question -- which is what made it the
-    SILENT half of #630: an empty element would render as the four-character
-    string ``'None'``.  It is not guarded here.  The tuples that reach it have
-    already had their empty elements dropped by :func:`extract_vcf_value`, the
-    only route to it and the only layer holding the record a report has to
-    name; this parser sees a value, not a row.
+    therefore reads as text, which is now what such a field DECLARES as well
+    (gain#1259; it used to declare the header's ``Type=`` and was the one
+    place the definition and the value disagreed) -- and which is what made
+    it the SILENT half of #630: an empty element would render as the
+    four-character string ``'None'``.  It is not guarded here.  The tuples
+    that reach it have already had their empty elements dropped by
+    :func:`extract_vcf_value`, the only route to it and the only layer
+    holding the record a report has to name; this parser sees a value, not
+    a row.
 
     ``config_scoredefs`` is what the resource's own ``scores:`` block declared,
-    and overrides the header for the fields it names: value type, description,
-    aggregators and NA values all take the config's value when it gives one,
-    falling back to the header's.  The value parser is not overridable on
-    its own: it goes with the type, so it is the config's parser when the
-    config states ``type:`` and the header's when it does not (an entry
-    that leaves ``type:`` unstated reads exactly what the header-only
-    resource reads -- gain#1221).  It is the config's parser only for a
-    field whose header declares a scalar ``Number``
-    (:data:`_SCALAR_VALUED_NUMBERS`); one declared multi-valued keeps the
-    header's ``converter`` whatever ``type:`` says, because that converter
-    IS the field's ``|``-join and a value type cannot describe a tuple
-    (gain#1233).  The value TYPE still follows the config wherever the
-    config states one.  Column addressing is NOT overridable -- a
-    VCF score is its INFO key, so ``col_name``/``col_index`` always come from
+    and overrides the header for the fields it names: description, aggregators
+    and NA values all take the config's value when it gives one, falling back
+    to the header's.  The value TYPE and the value PARSER are overridable only
+    together, and only for a field whose header declares a scalar ``Number``
+    (:data:`_SCALAR_VALUED_NUMBERS`).  An entry that leaves ``type:`` unstated
+    takes neither, so it reads exactly what the header-only resource reads
+    (gain#1221).  A field the header declares MULTI-VALUED takes neither
+    either, whatever ``type:`` says: it keeps the header's ``converter``,
+    because that converter IS the field's ``|``-join and a value type cannot
+    describe a tuple (gain#1233), and it keeps the ``str`` that join produces,
+    because a type is not merely descriptive -- it selects the histogram, and
+    a joined field declaring ``int`` aborted its own statistics build in
+    ``np.isnan`` (gain#1259).  A stated type discarded that way is reported by
+    :func:`_report_overridden_type`.  Column addressing is NOT overridable --
+    a VCF score is its INFO key, so ``col_name``/``col_index`` always come from
     the header side.
 
     ``merge`` decides what happens to header fields the config does not
@@ -439,16 +510,19 @@ def parse_vcf_scoredefs(
         # before the parse).  Everything else keeps ``converter``, whose
         # whole job is the tuple join.  The SAME set decides the config
         # override below, so the two cannot drift apart.
-        value_parser: Callable[[str], Any] | None = (
-            None if value.number in _SCALAR_VALUED_NUMBERS else converter)
+        is_scalar = value.number in _SCALAR_VALUED_NUMBERS
 
         vcf_scoredefs[key] = GenomicScoreDef(
             score_id=key,
             col_name=key,
             col_index=None,
             desc=value.description or "",
-            value_type=VCF_TYPE_CONVERSION_MAP[value.type],
-            value_parser=value_parser,
+            value_parser=None if is_scalar else converter,
+            # ``Type=`` describes ONE element; the joined value is text
+            # whatever that says, so a multi-valued field declares what it
+            # actually holds rather than what its elements are (gain#1259).
+            value_type=(
+                VCF_TYPE_CONVERSION_MAP[value.type] if is_scalar else "str"),
             na_values=(),
             aggregator=None,
             small_values_desc=None,
@@ -463,30 +537,40 @@ def parse_vcf_scoredefs(
     for score, config_scoredef in config_scoredefs.items():
         vcf_scoredef = vcf_scoredefs[score]
 
-        # Two INDEPENDENT rules, which is why neither is a ``config.x or
-        # vcf.x`` (a ``None`` on either side means "nothing to parse", not
+        # ONE rule for both, which is why neither is a ``config.x or vcf.x``
+        # (a ``None`` on either side means "nothing to parse", not
         # "unstated", and ``str``'s falsiness is not the question either):
+        # the config's type AND its parser apply exactly where the parse is
+        # handed a scalar, and nowhere else.
         #
-        # * the TYPE follows the config wherever the config states one.  A
-        #   resource stays free to describe any field, and describing it is
-        #   all a type can do for a value that is joined text either way.
-        # * the PARSER follows the config only where the parse is handed a
-        #   scalar.  A field the header declares multi-valued keeps the
-        #   header's converter, because that converter IS the field's
-        #   ``|``-join: taking the config's parser there fed the raw tuple
-        #   to ``int``/``float`` (a logged non-value per row) or to ``str``
-        #   (the tuple's repr, silently) -- gain#1233.  Taking it whenever
-        #   the config merely stated a ``type:`` is the older, wider form of
-        #   the same mistake, which read a ``Flag`` as ``1.0`` (gain#1221).
+        # A field the header declares multi-valued keeps the header's
+        # converter, because that converter IS the field's ``|``-join:
+        # taking the config's parser there fed the raw tuple to
+        # ``int``/``float`` (a logged non-value per row) or to ``str`` (the
+        # tuple's repr, silently) -- gain#1233.  Taking it whenever the
+        # config merely stated a ``type:`` is the older, wider form of the
+        # same mistake, which read a ``Flag`` as ``1.0`` (gain#1221).
+        #
+        # The TYPE travels with the parser rather than following the config
+        # on its own, which is what gain#1233 left it doing.  That rested on
+        # a type being merely descriptive for a value that is joined text
+        # either way; it is not.  It selects the histogram, so a joined
+        # field declaring ``int`` was answered with a NUMBER histogram and
+        # aborted its own statistics build in ``np.isnan`` (gain#1259).  A
+        # config may still describe such a field -- ``desc``, aggregators
+        # and histogram config are all its own -- but not by claiming its
+        # value is something the join cannot produce.
         config_type = config_scoredef.value_type
-        is_scalar = vcf_header_info[score].number in _SCALAR_VALUED_NUMBERS
+        number = vcf_header_info[score].number
+        is_scalar = number in _SCALAR_VALUED_NUMBERS
+        takes_config_type = config_type is not None and is_scalar
+        _report_overridden_type(
+            score, number, config_type, is_scalar=is_scalar)
 
         value_type = (
-            config_type if config_type is not None
-            else vcf_scoredef.value_type)
+            config_type if takes_config_type else vcf_scoredef.value_type)
         value_parser = (
-            config_scoredef.value_parser
-            if config_type is not None and is_scalar
+            config_scoredef.value_parser if takes_config_type
             else vcf_scoredef.value_parser)
 
         scoredef = GenomicScoreDef(
