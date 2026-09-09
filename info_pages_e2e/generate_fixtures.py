@@ -87,26 +87,25 @@ def main(argv: list[str] | None = None) -> int:
     # An absolute path: the builders hand the directory to pysam, which
     # resolves it against its own working directory rather than ours.
     fixtures_dir = args.output.resolve()
-    # Rebuilt from scratch every time.  The builders refuse to overwrite a
-    # bgzipped table, so a second run into a populated directory fails --
-    # and a fixture that is only correct on a clean checkout is worse than
-    # one that is rebuilt.
+
+    # Each GRR is rebuilt from scratch.  The builders refuse to overwrite
+    # a bgzipped table, so a second run into a populated directory fails
+    # -- and a fixture that is only correct on a clean checkout is worse
+    # than one that is rebuilt.
     #
-    # Refuse to delete a directory that looks like source, though.  What
-    # this is pointed at is a whole tree that gets removed without asking,
+    # Only the two directories this script creates, never the directory
+    # it was handed.  What gets deleted here is deleted without asking,
     # and the argument names the fixtures *root* -- one tab-completion
     # away from `info_pages_e2e` itself, whose contents are this suite.
-    if fixtures_dir.exists():
-        for marker in ("package.json", "pyproject.toml", ".git"):
-            if (fixtures_dir / marker).exists():
-                parser.error(
-                    f"refusing to delete {fixtures_dir}: it contains "
-                    f"{marker}, so it is a source directory rather than a "
-                    f"fixtures directory")
-        shutil.rmtree(fixtures_dir)
-
-    build_coverage_grr(fixtures_dir / COVERAGE_GRR_DIRNAME)
-    build_browse_grr(fixtures_dir / BROWSE_GRR_DIRNAME)
+    # Deleting only what we own makes that misfire harmless instead of
+    # needing a list of things to refuse.
+    for dirname, build in (
+        (COVERAGE_GRR_DIRNAME, build_coverage_grr),
+        (BROWSE_GRR_DIRNAME, build_browse_grr),
+    ):
+        repo_dir = fixtures_dir / dirname
+        shutil.rmtree(repo_dir, ignore_errors=True)
+        build(repo_dir)
     return 0
 
 

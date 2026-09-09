@@ -36,7 +36,6 @@ const JQUERY_VERSION = '3.7.1';
 const JQUERY_URL =
   `https://ajax.googleapis.com/ajax/libs/jquery/${JQUERY_VERSION}/jquery.min.js`;
 const JQUERY_DIR = 'jquery';
-const JQUERY_FILE = 'jquery/dist/jquery.min.js';
 
 /**
  * The sqlite-wasm build the templates import, as a *prefix*.
@@ -60,19 +59,11 @@ const NODE_MODULES = path.join(__dirname, 'node_modules');
  * answered honestly.
  *
  * These bytes are served *at the CDN URLs*, so the installed version has
- * to be the version the URL names. Exact pins in `package.json` stop a
- * range from drifting, but they do not stop a deliberate bump: a
- * dependabot PR moving jquery to 3.8.0 leaves `JQUERY_VERSION` at 3.7.1,
- * and the suite would then serve 3.8.0's bytes at a URL claiming 3.7.1
- * -- every test green, while testing a library the published page never
- * loads. Nothing about that is visible from a diff of either file alone,
- * which is why it is checked rather than merely commented.
- *
- * Changing a version means four edits: `package.json`, the lockfile, the
- * matching constant above, and the URL in
- * `core/gain/templates/template_files/grr_scripts.jinja`. This catches
- * the first three; the browser catches the fourth, loudly, because the
- * template would then request a URL nothing serves.
+ * to be the version the URL names. Exact pins stop a range drifting but
+ * not a deliberate bump: move jquery to 3.8.0 and the suite serves
+ * 3.8.0's bytes at a URL claiming 3.7.1 -- every test green, testing a
+ * library the published page never loads. Invisible in a diff of either
+ * file alone, which is why it is checked rather than commented.
  */
 const VENDORED = [
   { dir: JQUERY_DIR, version: JQUERY_VERSION },
@@ -106,33 +97,19 @@ export function vendoringProblems(): string[] {
 }
 
 /**
- * Content types for what is served.
+ * ``relative`` resolved under ``root``, or null if it escapes.
  *
- * Two of these are load-bearing, and both fail the whole suite if
- * removed: `text/html`, without which the browser offers the page as a
- * download instead of rendering it, and `text/javascript`, without which
- * Chromium refuses the `<script type="module">` blocks outright.
- *
- * `application/wasm` is NOT, despite being the obvious candidate.
- * sqlite-wasm does try `WebAssembly.instantiateStreaming` and that does
- * reject a wrong type -- but it then logs `falling back to ArrayBuffer
- * instantiation` and loads anyway, so dropping the entry changes
- * nothing. It is kept because it is what a real server sends, not
- * because a test would notice.
- *
- * Anything unlisted falls back to a byte stream.
+ * `path.resolve` follows `..` out of the directory it was given, and a
+ * harness that can be talked into serving the checkout to the page under
+ * test is not one anyone should have to think about again. One
+ * definition, because a containment rule with two copies is a
+ * containment rule that gets hardened in one of them.
  */
-const CONTENT_TYPES: Record<string, string> = {
-  '.css': 'text/css',
-  '.gz': 'application/gzip',
-  '.html': 'text/html',
-  '.js': 'text/javascript',
-  '.json': 'application/json',
-  '.mjs': 'text/javascript',
-  '.png': 'image/png',
-  '.svg': 'image/svg+xml',
-  '.wasm': 'application/wasm',
-};
+function resolveUnder(root: string, relative: string): string | null {
+  const base = path.resolve(root);
+  const file = path.resolve(base, relative);
+  return file.startsWith(base + path.sep) ? file : null;
+}
 
 /** The file a request is answered from, or null if nothing may answer it. */
 function resolveRequest(url: string, grrDir: string): string | null {
@@ -142,21 +119,17 @@ function resolveRequest(url: string, grrDir: string): string | null {
   const address = url.split('?')[0];
 
   if (address.startsWith(GRR_ORIGIN)) {
-    const relative = decodeURIComponent(address.slice(GRR_ORIGIN.length));
-    const file = path.resolve(grrDir, relative);
-    // Kept inside the fixture: `path.resolve` would happily follow `..`
-    // out of it, and a helper that serves the checkout to a page under
-    // test is not a harness anyone should have to think about again.
-    return file.startsWith(path.resolve(grrDir) + path.sep) ? file : null;
+    return resolveUnder(
+      grrDir, decodeURIComponent(address.slice(GRR_ORIGIN.length)));
   }
   if (address === JQUERY_URL) {
-    return path.join(NODE_MODULES, JQUERY_FILE);
+    return resolveUnder(
+      path.join(NODE_MODULES, JQUERY_DIR), 'dist/jquery.min.js');
   }
   if (address.startsWith(SQLITE_URL_PREFIX)) {
-    const relative = address.slice(SQLITE_URL_PREFIX.length);
-    const file = path.resolve(NODE_MODULES, SQLITE_DIR, relative);
-    const root = path.resolve(NODE_MODULES, SQLITE_DIR);
-    return file.startsWith(root + path.sep) ? file : null;
+    return resolveUnder(
+      path.join(NODE_MODULES, SQLITE_DIR),
+      address.slice(SQLITE_URL_PREFIX.length));
   }
   return null;
 }
@@ -173,6 +146,14 @@ function resolveRequest(url: string, grrDir: string): string | null {
  * runs the suite under `docker run --network none`, so a page that
  * quietly started needing the network would pass on a developer's
  * machine and hang in CI; failing here makes the two agree.
+ *
+ * `fulfill({ path })` derives the content type from the extension
+ * itself, which matters for two of them: without `text/html` the browser
+ * offers the page as a download instead of rendering it, and without a
+ * JavaScript type it refuses the `<script type="module">` blocks
+ * outright. (`application/wasm` looks like a third and is not --
+ * sqlite-wasm logs `falling back to ArrayBuffer instantiation` and loads
+ * anyway.)
  */
 export async function serveGrr(page: Page, grrDir: string): Promise<void> {
   await page.route(
@@ -183,11 +164,7 @@ export async function serveGrr(page: Page, grrDir: string): Promise<void> {
         await route.abort();
         return;
       }
-      await route.fulfill({
-        body: fs.readFileSync(file),
-        contentType:
-          CONTENT_TYPES[path.extname(file)] ?? 'application/octet-stream',
-      });
+      await route.fulfill({ path: file });
     },
   );
 }

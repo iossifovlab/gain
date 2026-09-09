@@ -42,6 +42,9 @@ from gain.genomic_resources.testing.info_page_fixtures import (
 #: reaches the index through both of them.
 _ID_COLUMNS = frozenset({"full_id", "id"})
 
+#: The column a resource's summary is indexed in.
+_SUMMARY_COLUMN = frozenset({"summary"})
+
 
 def _indexed_browse_repo(
     tmp_path: pathlib.Path,
@@ -57,6 +60,11 @@ def _found(repo: GenomicResourceProtocolRepo, term: str) -> set[str]:
     return {res.resource_id for res in repo.search_resources(search_term=term)}
 
 
+def _only(columns: frozenset[str]) -> str:
+    """An FTS5 column filter naming exactly these columns."""
+    return "{" + " ".join(sorted(columns)) + "}"
+
+
 def _anywhere_but(columns: frozenset[str]) -> str:
     """An FTS5 column filter naming every indexed column except these.
 
@@ -66,9 +74,13 @@ def _anywhere_but(columns: frozenset[str]) -> str:
     guards against.  ``test_the_fixture_declares_no_labels`` is what
     keeps that vocabulary complete: a label would add a column these
     constants do not know about.
+
+    Paired with :func:`_only` so the two halves of an assertion are fed
+    from one set of column names: spelling the included half literally
+    lets a third id-bearing column be excluded correctly and included
+    wrongly, on adjacent lines.
     """
-    rest = sorted(GR_INDEX_NON_LABEL_COLUMNS - columns)
-    return "{" + " ".join(rest) + "}"
+    return _only(frozenset(GR_INDEX_NON_LABEL_COLUMNS) - columns)
 
 
 def test_the_summary_only_term_finds_only_that_resource(
@@ -77,12 +89,8 @@ def test_the_summary_only_term_finds_only_that_resource(
     """The term reaches its resource, and reaches no other."""
     repo = _indexed_browse_repo(tmp_path)
 
-    found = {
-        res.resource_id
-        for res in repo.search_resources(search_term=BROWSE_SUMMARY_ONLY_TERM)
-    }
-
-    assert found == {BROWSE_SUMMARY_ONLY_RESOURCE_ID}
+    assert _found(repo, BROWSE_SUMMARY_ONLY_TERM) == {
+        BROWSE_SUMMARY_ONLY_RESOURCE_ID}
 
 
 def test_the_summary_only_term_matches_through_the_summary_alone(
@@ -102,11 +110,12 @@ def test_the_summary_only_term_matches_through_the_summary_alone(
     """
     repo = _indexed_browse_repo(tmp_path)
 
-    assert _found(repo, f"summary : {BROWSE_SUMMARY_ONLY_TERM}") == {
+    assert _found(
+        repo, f"{_only(_SUMMARY_COLUMN)} : {BROWSE_SUMMARY_ONLY_TERM}") == {
         BROWSE_SUMMARY_ONLY_RESOURCE_ID}
     assert _found(
         repo,
-        f"{_anywhere_but(frozenset({'summary'}))} : "
+        f"{_anywhere_but(_SUMMARY_COLUMN)} : "
         f"{BROWSE_SUMMARY_ONLY_TERM}") == set()
 
 
@@ -116,12 +125,8 @@ def test_the_id_only_term_finds_only_that_resource(
     """The other term reaches its resource through the id."""
     repo = _indexed_browse_repo(tmp_path)
 
-    found = {
-        res.resource_id
-        for res in repo.search_resources(search_term=BROWSE_ID_ONLY_TERM)
-    }
-
-    assert found == {BROWSE_ID_ONLY_RESOURCE_ID}
+    assert _found(repo, BROWSE_ID_ONLY_TERM) == {
+        BROWSE_ID_ONLY_RESOURCE_ID}
 
 
 def test_the_id_only_term_matches_through_the_id_alone(
@@ -137,7 +142,8 @@ def test_the_id_only_term_matches_through_the_id_alone(
     """
     repo = _indexed_browse_repo(tmp_path)
 
-    assert _found(repo, f"{{full_id id}} : {BROWSE_ID_ONLY_TERM}") == {
+    assert _found(
+        repo, f"{_only(_ID_COLUMNS)} : {BROWSE_ID_ONLY_TERM}") == {
         BROWSE_ID_ONLY_RESOURCE_ID}
     assert _found(
         repo,

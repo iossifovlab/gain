@@ -35,6 +35,7 @@ import pathlib
 
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import (
+    PositionScoreBuilder,
     a_grr,
     a_position_score,
     a_reference_genome,
@@ -98,33 +99,22 @@ BROWSE_ID_ONLY_RESOURCE_ID = "hg38/scores/conservation/phylop"
 #: one type in it cannot show that the type filter narrows anything.
 BROWSE_GENOME_RESOURCE_ID = "genomes/g984"
 
-#: Every resource the browse fixture carries, deepest path first.  The
-#: deepest is four segments, so the tree has a folder inside a folder
-#: inside a folder to descend through and walk back up.
+#: The two resources with nothing special about them.  They are what
+#: gives ``hg38`` a subtree to prune down to and the type filter more
+#: than one row to work on.
+BROWSE_PHASTCONS_RESOURCE_ID = "hg38/scores/conservation/phastcons"
+BROWSE_COVERAGE_RESOURCE_ID = "hg38/scores/coverage"
+
+#: Every resource the browse fixture carries.  The deepest id is four
+#: segments, so the tree has a folder inside a folder inside a folder to
+#: descend through and walk back up.
 BROWSE_RESOURCE_IDS = (
     BROWSE_ID_ONLY_RESOURCE_ID,
-    "hg38/scores/conservation/phastcons",
-    "hg38/scores/coverage",
+    BROWSE_PHASTCONS_RESOURCE_ID,
+    BROWSE_COVERAGE_RESOURCE_ID,
     BROWSE_SUMMARY_ONLY_RESOURCE_ID,
     BROWSE_GENOME_RESOURCE_ID,
 )
-
-#: Summaries, by resource id.  Deliberately plain prose: each one has to
-#: stay clear of both terms above except for the single resource that
-#: carries one, and prose that names its own resource is exactly how that
-#: stops being true.
-_BROWSE_SUMMARIES = {
-    BROWSE_ID_ONLY_RESOURCE_ID:
-        "Basewise conservation across a vertebrate alignment.",
-    "hg38/scores/conservation/phastcons":
-        "Posterior probability that a base lies in a conserved element.",
-    "hg38/scores/coverage":
-        "Sequencing depth at each position.",
-    BROWSE_SUMMARY_ONLY_RESOURCE_ID:
-        "Allele frequencies from the marmoset cohort.",
-    BROWSE_GENOME_RESOURCE_ID:
-        "Small reference genome the browse fixture is laid out over.",
-}
 
 _BROWSE_SCORE_DATA = """
 chrom  pos_begin  pos_end  score
@@ -151,6 +141,21 @@ def a_coverage_repo(where: pathlib.Path) -> GenomicResourceRepo:
     )
 
 
+def _a_browse_score(summary: str) -> PositionScoreBuilder:
+    """One of the browse fixture's interchangeable position scores.
+
+    They differ only in their summary.  Nothing here reads their data, so
+    it is the smallest table that is still a score -- what the fixture is
+    for is the *shape* of the repository around them.
+    """
+    return (
+        a_position_score()
+        .with_score("score", "float")
+        .with_data(_BROWSE_SCORE_DATA)
+        .with_meta(summary=summary)
+    )
+
+
 def a_browse_repo(where: pathlib.Path) -> GenomicResourceRepo:
     """A repository shaped to be navigated rather than sorted.
 
@@ -158,23 +163,37 @@ def a_browse_repo(where: pathlib.Path) -> GenomicResourceRepo:
     types, and the two search terms above -- one reaching its resource
     only through a summary, the other only through an id.
 
+    The summaries are deliberately plain prose: each has to stay clear of
+    both terms except for the one resource that carries it, and prose
+    naming its own resource is exactly how that stops being true.
+
     No labels and no statistics: every column an unqualified ``MATCH``
     can search is a column one of the two terms could leak into, so the
     fixture carries the fewest of them it can and still be a repository.
     """
-    genome = a_reference_genome().with_chromosome("chr1", "A" * 100)
-    grr = a_grr()
-    for resource_id in BROWSE_RESOURCE_IDS:
-        summary = _BROWSE_SUMMARIES[resource_id]
-        if resource_id == BROWSE_GENOME_RESOURCE_ID:
-            grr = grr.with_resource(
-                resource_id, genome.with_meta(summary=summary))
-            continue
-        grr = grr.with_resource(
-            resource_id,
-            a_position_score()
-            .with_score("score", "float")
-            .with_data(_BROWSE_SCORE_DATA)
-            .with_meta(summary=summary),
-        )
-    return grr.build_repo(where)
+    return (
+        a_grr()
+        .with_resource(
+            BROWSE_ID_ONLY_RESOURCE_ID,
+            _a_browse_score(
+                "Basewise conservation across a vertebrate alignment."))
+        .with_resource(
+            BROWSE_PHASTCONS_RESOURCE_ID,
+            _a_browse_score(
+                "Posterior probability that a base lies in a conserved "
+                "element."))
+        .with_resource(
+            BROWSE_COVERAGE_RESOURCE_ID,
+            _a_browse_score("Sequencing depth at each position."))
+        .with_resource(
+            BROWSE_SUMMARY_ONLY_RESOURCE_ID,
+            _a_browse_score("Allele frequencies from the marmoset cohort."))
+        .with_resource(
+            BROWSE_GENOME_RESOURCE_ID,
+            a_reference_genome()
+            .with_chromosome("chr1", "A" * 100)
+            .with_meta(summary=(
+                "Small reference genome the browse fixture is laid out "
+                "over.")))
+        .build_repo(where)
+    )

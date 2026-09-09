@@ -13,20 +13,33 @@ import {
 import { indexPageUrl, serveGrr } from '../serving';
 
 /**
- * The resource rows a visitor can actually see.
+ * The resource ids the visible rows name, in the order they are shown.
  *
  * A search does not remove rows, it hides them and rewrites the ones it
  * keeps, so counting `tbody tr` counts the whole repository however
  * narrow the search was. Only the `:visible` filter reads what is on the
  * screen.
  */
-function visibleRows(page: Page) {
-  return page.locator('#resource-table tbody tr:visible');
+function visibleResourceIds(page: Page) {
+  return page.locator('#resource-table tbody tr:visible td.id-cell a');
 }
 
-/** The resource ids those rows name, in the order they are shown. */
-function visibleResourceIds(page: Page) {
-  return visibleRows(page).locator('td.id-cell a');
+/**
+ * Open the browse GRR's index page and wait for its search to be usable.
+ *
+ * The `#status` wait is a synchronization point, not decoration: it is
+ * the only signal that the page has finished deserializing the FTS
+ * database, and until it appears a search types into a box whose handler
+ * is still awaiting a promise. Every cheaper-looking signal is already
+ * true on arrival -- the rows are server-rendered, and the search box is
+ * shown synchronously whether or not the database ever loads.
+ */
+async function openBrowseIndex(page: Page): Promise<void> {
+  await serveGrr(page, FIXTURE_BROWSE_GRR);
+  await page.goto(indexPageUrl());
+  await expect(page.locator('#status')).toHaveText(
+    `${BROWSE_RESOURCE_COUNT} resources`,
+  );
 }
 
 /** Type a term into the search box and run the search. */
@@ -35,33 +48,41 @@ async function search(page: Page, term: string): Promise<void> {
   await page.locator('#search-field').press('Enter');
 }
 
-test('the index page loads its search index with the network off', async ({
+test('a repo-info published index page loads its search index offline', async ({
   page,
 }) => {
   await serveGrr(page, FIXTURE_GRR);
   await page.goto(indexPageUrl());
 
-  /* `#status` is written by `UpdateStatus`, which is only ever reached
+  /* The Coverage GRR, which is the one published by the full `repo-info`
+   * pass -- the browse GRR the other tests use is published by
+   * `repo-index`. Both render this page through `build_index_info`, and
+   * this is the only test that drives the `repo-info` route.
+   *
+   * `#status` is written by `UpdateStatus`, which is only ever reached
    * after the page has deserialized `.CONTENTS.sqlite3.gz` and queried
    * it -- so this is the whole offline load path in one DOM assertion.
+   * Every *cheaper* signal lies: the rows are rendered by the template
+   * and are already in the markup, and `#search-container` is shown
+   * synchronously, outside the promise that awaits the database. A page
+   * whose sqlite-wasm never loaded looks completely normal -- full
+   * table, visible search box -- and only this line stays empty.
    *
-   * It is the assertion to make, because every *cheaper* signal lies.
-   * The rows are rendered by the template and are already in the markup;
-   * `#search-container` is shown synchronously, outside the promise that
-   * awaits the database. A page whose sqlite-wasm never loaded therefore
-   * looks completely normal -- full table, visible search box -- and
-   * only this line stays empty. */
-  await expect(page.locator('#status')).toHaveText('2 resources');
+   * Counted from the rendered rows rather than written as a literal: the
+   * number is the Coverage GRR's business, and a resource added there
+   * for a sorter test must not redden an index-page one. The two counts
+   * reaching the same answer is itself the check -- the rows come from
+   * the template, the status line from the search index. */
+  const rows = await page.locator('#resource-table tbody tr').count();
+
+  expect(rows).toBeGreaterThan(0);
+  await expect(page.locator('#status')).toHaveText(`${rows} resources`);
 });
 
 test('a term matching only a summary filters the table to that resource', async ({
   page,
 }) => {
-  await serveGrr(page, FIXTURE_BROWSE_GRR);
-  await page.goto(indexPageUrl());
-  await expect(page.locator('#status')).toHaveText(
-    `${BROWSE_RESOURCE_COUNT} resources`,
-  );
+  await openBrowseIndex(page);
 
   await search(page, BROWSE_SUMMARY_ONLY_TERM);
 
@@ -76,11 +97,7 @@ test('a term matching only a summary filters the table to that resource', async 
 test('a term matching only an id filters the table to that resource', async ({
   page,
 }) => {
-  await serveGrr(page, FIXTURE_BROWSE_GRR);
-  await page.goto(indexPageUrl());
-  await expect(page.locator('#status')).toHaveText(
-    `${BROWSE_RESOURCE_COUNT} resources`,
-  );
+  await openBrowseIndex(page);
 
   await search(page, BROWSE_ID_ONLY_TERM);
 
@@ -97,8 +114,7 @@ test('a term matching only an id filters the table to that resource', async ({
 test('the hierarchical view lists the repository\'s top-level folders', async ({
   page,
 }) => {
-  await serveGrr(page, FIXTURE_BROWSE_GRR);
-  await page.goto(indexPageUrl());
+  await openBrowseIndex(page);
 
   await page.locator('#hierarchical-view-btn').click();
 
@@ -127,11 +143,7 @@ test('the harness refuses every request it does not serve itself', async ({
   page.on('request', (request) => requested.push(request.url()));
   page.on('requestfailed', (request) => failed.add(request.url()));
 
-  await serveGrr(page, FIXTURE_BROWSE_GRR);
-  await page.goto(indexPageUrl());
-  await expect(page.locator('#status')).toHaveText(
-    `${BROWSE_RESOURCE_COUNT} resources`,
-  );
+  await openBrowseIndex(page);
 
   /* The pages link a Google Fonts stylesheet for the sort indicator's
    * glyphs, so there is always at least one request that must not be
