@@ -370,6 +370,59 @@ def _run_redacting_userinfo[T](fn: Callable[[], T]) -> T:
     raise reraise
 
 
+def _url_carries_userinfo(url: str) -> bool:
+    """Whether ``url`` embeds ``user:pass@`` userinfo.
+
+    Defined as "the redactor would change it", so that this predicate and
+    ``_strip_url_userinfo`` cannot come to disagree about what counts as a
+    credential.
+    """
+    return _strip_url_userinfo(url) != url
+
+
+def _open_htslib_file[T](url: str, open_: Callable[[], T]) -> T:
+    """Run a pysam open that is handed the credential-bearing ``url``.
+
+    ``open_tabix_file``, ``open_vcf_file`` and ``open_fasta_file`` hand pysam
+    a url STRING rather than a handle, so ADR 0023's ``_RedactingFile`` never
+    sees them -- the library owns the transport, and GAIn composes none of the
+    messages, so ``_strip_url_userinfo`` on an f-string has nothing to act on
+    either. Both channels the credential escapes through are closed here
+    (gain#1314).
+
+    The error pysam raises embeds the url verbatim, and it is an ``OSError``
+    -- in ``RESOURCE_ERRORS``, so ``report_resource_failure`` writes its text
+    to the log at ERROR, where it persists and is shipped.
+
+    htslib *additionally* writes the url to fd 2 itself, which no redaction of
+    the raised exception can reach, so an authed open is bracketed at
+    verbosity 0. That silences htslib's own diagnostics for the duration of
+    the open, which is a genuine loss of detail -- and it is spent only where
+    it buys something. An unauthed GRR, which is every deployment today, keeps
+    them. The scoping mirrors the type demotion of ADR 0023, likewise paid by
+    exactly the configuration it protects.
+
+    The previous level is restored rather than assumed: this module sets 1 at
+    import, but a caller may have lowered it already
+    (``VCFGenomicPositionTable._load_vcf_header`` does). Note the level is
+    PROCESS-global, so concurrent brackets can interleave and strand it at 0;
+    no open here is driven from a thread pool today.
+
+    Named for htslib rather than for libraries in general because the
+    silencing half is ``pysam``-specific: ``open_bigwig_file`` cannot use this
+    and calls ``_run_redacting_userinfo`` directly. ADR 0023's gain#1314
+    amendment records what the predicate leaves uncovered (s3 presigned urls,
+    gain#1339) and why the returned handle's later reads are not in scope.
+    """
+    if not _url_carries_userinfo(url):
+        return _run_redacting_userinfo(open_)
+    saved_verbosity = pysam.set_verbosity(0)
+    try:
+        return _run_redacting_userinfo(open_)
+    finally:
+        pysam.set_verbosity(saved_verbosity)
+
+
 #: Redacted I/O operations that are NOT on every handle, and so must be
 #: mirrored from the wrapped object rather than declared. ``readall`` and
 #: ``read1`` are absent from fsspec's ``AbstractBufferedFile`` (and so from
@@ -1477,9 +1530,11 @@ class FsspecReadOnlyProtocol(
                 resource, filename)
         index_url = self._get_file_url(resource, index_filename)
 
-        return pysam.TabixFile(  # pylint: disable=no-member
-            file_url, index=index_url, encoding="utf-8",
-            parser=pysam.asTuple())
+        return _open_htslib_file(
+            file_url,
+            lambda: pysam.TabixFile(  # pylint: disable=no-member
+                file_url, index=index_url, encoding="utf-8",
+                parser=pysam.asTuple()))
 
     def open_vcf_file(
             self, resource: GenomicResource,
@@ -1513,12 +1568,17 @@ class FsspecReadOnlyProtocol(
             if not resource.file_exists(index_filename):
                 # Nothing resolved: a file that ships no index at all -- a
                 # VCF header sidecar, say -- still opens, unindexed.
-                return pysam.VariantFile(file_url)  # pylint: disable=no-member
+                return _open_htslib_file(
+                    file_url,
+                    lambda: pysam.VariantFile(  # pylint: disable=no-member
+                        file_url))
 
         index_url = self._get_file_url(resource, index_filename)
 
-        vcf_file = pysam.VariantFile(  # pylint: disable=no-member
-            file_url, index_filename=index_url)
+        vcf_file = _open_htslib_file(
+            file_url,
+            lambda: pysam.VariantFile(  # pylint: disable=no-member
+                file_url, index_filename=index_url))
         _declare_index_contigs(vcf_file)
         return vcf_file
 
@@ -1563,10 +1623,16 @@ class FsspecReadOnlyProtocol(
                 resource, index_filename, tmpdir)
             local_compressed_index = self._copy_resource_file_to_local(
                 resource, compressed_index_filename, tmpdir)
-            return pysam.FastaFile(  # pylint: disable=no-member
+            # Only this branch needs the guard: ``file_url`` is the one url
+            # that stays remote and reaches htslib, and the ``file`` branch
+            # above hands pysam a bare filesystem path, which cannot carry
+            # userinfo.
+            return _open_htslib_file(
                 file_url,
-                filepath_index=local_index,
-                filepath_index_compressed=local_compressed_index)
+                lambda: pysam.FastaFile(  # pylint: disable=no-member
+                    file_url,
+                    filepath_index=local_index,
+                    filepath_index_compressed=local_compressed_index))
 
     def _copy_resource_file_to_local(
             self, resource: GenomicResource,
@@ -1608,7 +1674,16 @@ class FsspecReadOnlyProtocol(
             raise OSError(
                 f"bigwig files are not supported on schema {self.scheme}")
         file_url = self._get_file_url(resource, filename)
-        return pyBigWig.open(file_url)  # pylint: disable=I1101
+        # Redaction only, not the verbosity bracket of ``_open_htslib_file``:
+        # libBigWig is not htslib and ``pysam.set_verbosity`` does not reach
+        # it. Its ``[urlOpen]`` line goes to fd 2 through its own ``fprintf``,
+        # so the stderr half of gain#1314 stays open here -- tracked as
+        # gain#1333. pyBigWig's own exception carries no url today, which
+        # makes this wrapper a guard against a future one rather than a fix
+        # for a live leak; it costs nothing, because a message with no
+        # userinfo is propagated untouched.
+        return _run_redacting_userinfo(
+            lambda: pyBigWig.open(file_url))  # pylint: disable=I1101
 
 
 @dataclass(frozen=True)

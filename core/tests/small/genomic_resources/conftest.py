@@ -1,7 +1,9 @@
 # pylint: disable=W0621,C0114,C0116,C0415,W0212,W0613
 
 import contextlib
+import functools
 import gzip
+import http.server
 import logging
 import os
 import pathlib
@@ -669,6 +671,43 @@ def index_row(resource: GenomicResource) -> dict[str, str]:
     """
     header, row = build_resource_implementation(resource).collect_index_info()
     return dict(zip(header, row, strict=True))
+
+
+class QuietHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
+    """A file-serving handler that keeps its access log out of the capture.
+
+    Silenced on the CLASS: handler instances never consult an attribute set
+    on the ``functools.partial`` that constructs them, so assigning
+    ``log_message`` there leaves the access log printing to stderr -- into
+    the very captured stream a test asserting on stderr then reads.
+    """
+
+    def log_message(self, format: str, *args: Any) -> None:  # ruff: ignore[builtin-argument-shadowing]
+        """Suppress the access log."""
+
+
+@contextlib.contextmanager
+def serving_http(
+    serve_dir: pathlib.Path,
+    handler_cls: type[http.server.SimpleHTTPRequestHandler] = (
+        QuietHTTPRequestHandler),
+) -> Iterator[str]:
+    """Serve ``serve_dir`` over localhost http; yield the base url.
+
+    The poll interval is dropped from ``serve_forever``'s default half a
+    second because ``shutdown()`` blocks until the polling loop notices it:
+    at the default, that wait -- not the request under test -- is the bulk of
+    such a test's runtime (measured 0.50s of a 0.52s test).
+    """
+    handler = functools.partial(handler_cls, directory=str(serve_dir))
+    with http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler) as httpd:
+        threading.Thread(
+            target=httpd.serve_forever, kwargs={"poll_interval": 0.01},
+            daemon=True).start()
+        try:
+            yield f"http://127.0.0.1:{httpd.server_address[1]}"
+        finally:
+            httpd.shutdown()
 
 
 def indexed_repo(
