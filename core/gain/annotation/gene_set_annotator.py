@@ -39,7 +39,7 @@ def build_gene_set_annotator(
 
     input_gene_list = info.parameters.get("input_gene_list")
     if input_gene_list is None:
-        raise ValueError(f"The {input} must have an 'input_gene_list' "
+        raise ValueError(f"The {info} must have an 'input_gene_list' "
                          "parameter")
     input_gene_list_info = pipeline.get_attribute_info(input_gene_list)
     if input_gene_list_info is None:
