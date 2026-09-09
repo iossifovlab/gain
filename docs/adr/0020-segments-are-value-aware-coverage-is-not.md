@@ -89,9 +89,9 @@ statistic.
 *Amended by gain#1118 and gain#1127: covered positions are a **position
 score** statistic, and only that.* The union is a genuine measure of what a
 resource covers exactly when its rows are **pairwise disjoint** — which is the
-same fact the segment algebra rests on, and which a position score's
-`validate_records` enforces by refusing a row beginning at or before its
-predecessor's end. The other two kinds are out, for reasons that differ in
+same fact the segment algebra rests on, and which the `validate_records` rule
+a position score is registered under (ADR 0027) enforces by refusing a row
+beginning at or before its predecessor's end. The other two kinds are out, for reasons that differ in
 mechanism and agree in conclusion:
 
 - An **allele score**'s rows collapse to points, so the span union never

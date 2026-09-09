@@ -1533,28 +1533,19 @@ def test_fetch_region_segments_checks_available_chromosomes() -> None:
         score.fetch_region_segments("2", 10, 10)
 
 
-def test_record_to_begin_end_validates_order() -> None:
-    # A record whose interval runs backwards -- pos_end (10) before pos_begin
-    # (20).  Built as a record rather than through the retired Line adapter
-    # (#239): _line_to_begin_end reads the score line's core-field properties,
-    # which the record's slots carry directly, so this is the same
-    # check over the shape every backend now yields.
-    bad_record = ("1", 20, 10, None, None, ("1", "20", "10"))
-
-    with pytest.raises(OSError, match="has a region"):
-        GenomicScore._record_to_begin_end(bad_record)
-
-
 def test_segment_path_refuses_a_backwards_record(
     tmp_path: pathlib.Path,
 ) -> None:
     # The same refusal, at the seam that performs it in the hot loop.  The
-    # segment loop used to reach it only by calling _record_to_begin_end and
-    # throwing away the chrom that method returns; it now reads the two
-    # position slots itself (gain#823), so the check has to be pinned HERE and
-    # not only on the helper -- otherwise dropping it from the loop leaves a
-    # green suite while a backwards record streams out as an inverted span,
-    # whose width as a weight is negative.
+    # segment loop used to reach it only by calling a helper that returned
+    # the chrom it threw away; it now reads the two position slots itself
+    # (gain#823), so the check has to be pinned HERE -- otherwise dropping it
+    # from the loop leaves a green suite while a backwards record streams out
+    # as an inverted span, whose width as a weight is negative.
+    #
+    # The WHOLE message, not just "has a region": the refusal is built from
+    # five positional arguments now (ADR 0027), so a begin/end transposition
+    # at this call site type-checks and still reads plausibly.
     #
     # A zero-based row is how a backwards record is authored: the zero-based
     # adjustment bumps end only when begin == end, so an end < begin row is
@@ -1570,8 +1561,11 @@ def test_segment_path_refuses_a_backwards_record(
         .build_resource(tmp_path),
     ).open()
 
-    with pytest.raises(OSError, match="has a region"):
+    with pytest.raises(OSError) as excinfo:
         list(score.fetch_region_segments("1", 1, 100))
+    assert str(excinfo.value) == (
+        "The resource record 1:6-3 has a region with end 3 smaller than the "
+        "beginning 6.")
 
 
 def test_allele_point_path_refuses_a_backwards_record(
@@ -1593,8 +1587,13 @@ def test_allele_point_path_refuses_a_backwards_record(
         .build_resource(tmp_path),
     ).open()
 
-    with pytest.raises(OSError, match="has a region"):
+    # The whole message here too, and for the same reason -- this site passes
+    # the allele nucleotides as well, so it has five chances to transpose.
+    with pytest.raises(OSError) as excinfo:
         list(score.fetch_region_segments("1", 1, 100))
+    assert str(excinfo.value) == (
+        "The resource record 1:6-3 A->G has a region with end 3 smaller than "
+        "the beginning 6.")
 
 
 def test_default_annotation_requires_list() -> None:

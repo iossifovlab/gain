@@ -14,16 +14,8 @@ from typing import (
     ClassVar,
 )
 
-import numpy as np
-
-from gain.genomic_resources.genomic_position_table.record import (
-    Record,
-)
 from gain.genomic_resources.repository import (
     GenomicResource,
-)
-from gain.genomic_resources.resource_errors import (
-    overlapping_records_error,
 )
 from gain.genomic_resources.score_def import (
     ScoreValue,
@@ -48,7 +40,6 @@ from .aggregation import (
 )
 from .base import GenomicScore
 from .records import (
-    RecordArrays,
     clip_span,
     clip_to_region,
 )
@@ -132,8 +123,9 @@ class PositionScore(GenomicScore):
 
         The only kind whose answer is not 1.  That there is exactly one
         value per position -- what a position score PROMISES -- is not
-        stated here but in ``validate_records`` / ``validate_record_arrays``,
-        the only places that enforce it.  This is a MEASURE.
+        stated here but in the rules this kind is registered under in
+        :mod:`gain.genomic_resources.statistics.record_validation`, the only
+        places that enforce it.  This is a MEASURE.
 
         Elementwise, as the base requires: handed the position columns of a
         whole batch, the same expression answers that batch's weights.
@@ -176,78 +168,6 @@ class PositionScore(GenomicScore):
         scores_schema = schema["scores"]["schema"]["schema"]
         scores_schema["aggregator"] = AGGREGATOR_SCHEMA
         return schema
-
-    def validate_records(
-        self, records: Iterator[Record],
-    ) -> Generator[Record, None, None]:
-        """Refuse two records that overlap -- or merely touch.
-
-        A position score promises one value per position, so a record
-        beginning where its predecessor has not yet ended claims a position
-        already taken.  ``begin <= prev_end`` and not ``<``: two records
-        sharing a single base pair is the same error as two overlapping by a
-        hundred.
-
-        The comparison is against RAW spans, so the verdict does not depend
-        on how the scan happened to partition the contig -- clipping a record
-        to a queried region can only shrink it, and two records a region
-        boundary pulled apart still claim one position between them.
-
-        Adjacent pairs only, as :meth:`validate_record_arrays` also compares
-        them: each record is measured against the one before it, not against
-        the widest end seen so far.  A record whose own end precedes its own
-        begin can therefore hide an overlap between its two neighbours.
-        gain#668 carries that, with the data survey it needs -- widening
-        either validator to a running maximum refuses strictly more than
-        ``repo-stats`` accepts today.
-        """
-        prev_chrom: str | None = None
-        prev_end: int | None = None
-        for record in records:
-            chrom, begin, end = self._record_to_begin_end(record)
-            if chrom != prev_chrom:
-                prev_end = None
-            if prev_end is not None and begin <= prev_end:
-                raise overlapping_records_error(
-                    self.resource_id, chrom, begin, prev_end)
-            prev_chrom, prev_end = chrom, end
-            yield record
-
-    def validate_record_arrays(
-        self, batches: Iterator[RecordArrays], chrom: str,
-    ) -> Generator[RecordArrays, None, None]:
-        """Refuse two records that overlap -- or merely touch, vectorized.
-
-        The same rule as :meth:`validate_records`, stated over a batch's
-        columns instead of over records: a record beginning where its
-        predecessor has not yet ended claims a position already taken.  Both
-        read the RAW begin and end, which is the only layer at which the two
-        can say the same thing -- clipping a record to the scanned region
-        would make the verdict depend on how the contig was partitioned.
-
-        A violation straddling a batch boundary is caught on the carried end:
-        batches are a read-granularity artefact, and no rule may depend on
-        where one happens to break.
-
-        Adjacent pairs only, exactly as :meth:`validate_records` compares
-        them -- the two agree on this limitation as they agree on the rule.
-        See that method, and gain#668.
-        """
-        prev_end: int | None = None
-        for batch in batches:
-            pos_begin, pos_end, _cells = batch
-            if pos_begin.size:
-                if prev_end is not None and int(pos_begin[0]) <= prev_end:
-                    raise overlapping_records_error(
-                        self.resource_id, chrom, int(pos_begin[0]), prev_end)
-                touching = pos_begin[1:] <= pos_end[:-1]
-                if bool(touching.any()):
-                    first = int(np.argmax(touching))
-                    raise overlapping_records_error(
-                        self.resource_id, chrom,
-                        int(pos_begin[first + 1]), int(pos_end[first]))
-                prev_end = int(pos_end[-1])
-            yield batch
 
     # -- The logical read plane (#727) -------------------------------------
     #

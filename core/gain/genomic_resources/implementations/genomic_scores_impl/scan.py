@@ -64,6 +64,10 @@ from gain.genomic_resources.statistics.fragments import (
     save_and_plot_fragments,
 )
 from gain.genomic_resources.statistics.min_max import MinMaxValue
+from gain.genomic_resources.statistics.record_validation import (
+    validate_record_arrays,
+    validate_records,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -281,8 +285,8 @@ def scan_region(
     is the optional allele fold, which reads the nucleotides off the RAW
     records the transform is about to collapse to points (gain#777).
     """
-    records = score.validate_records(
-        score.fetch_records(chrom, start, end))
+    records = validate_records(
+        score, score.fetch_records(chrom, start, end))
     if alleles is not None:
         records = records_folded_into(records, alleles)
     yield from score.region_values_from_records(
@@ -601,8 +605,9 @@ def bulk_region_scan[AccT](
     :func:`scan_region`: the batches are read through
     ``validate_record_arrays``, one visible extra link over the stream
     the scan is already pulling, so that a pass cannot be added that
-    quietly reads unvalidated (ADR 0008).  The kind states its own rule
-    in that method's body; nothing here knows what the rule is.
+    quietly reads unvalidated (ADR 0008).  That function dispatches on the
+    score's class to the rule registered for its kind (ADR 0027); nothing
+    here knows what the rule is.
 
     The validator is per REGION, and a region lies within one contig, so
     the ordering carry never spans a contig boundary -- the same reason
@@ -627,7 +632,8 @@ def _validated_batches(
     score_ids: list[str],
 ) -> Iterable[RecordArrays]:
     """The default producer: the shared read through the shared door."""
-    return score.validate_record_arrays(
+    return validate_record_arrays(
+        score,
         score.fetch_region_value_arrays(
             chrom, start, end, score_ids,
             batch_size=_SCAN_BATCH_SIZE),
@@ -827,10 +833,12 @@ def bulk_scan_eligible(
     down the per-record path.  With a ``score`` given the factory is not
     called, and the pair is the caller's to match (see :func:`_score_for`).
 
-    A new kind needs no guard here either: ``record_weight`` and
-    ``validate_record_arrays`` are abstract on ``GenomicScore``, and a
-    backend serving no column arrays is refused above.  ADR 0001 records
-    why the kind condition was retired.
+    A new kind needs no guard here either: ``record_weight`` is abstract on
+    ``GenomicScore``, a kind absent from ``record_validation``'s registry is
+    refused by the array door below, and a backend serving no column arrays
+    is refused above.  ADR 0001 records why the kind condition was retired,
+    and ADR 0027 why the second of those three refusals is now a run-time one
+    rather than something mypy and pylint catch first.
 
     Answered WITHOUT opening the score: the table and the score definitions
     are both built in ``GenomicScore.__init__``, so nothing here needs a

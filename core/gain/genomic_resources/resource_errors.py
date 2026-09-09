@@ -64,6 +64,45 @@ def backwards_records_error(
         f"backwards")
 
 
+def inverted_span_error(
+    chrom: str, pos_begin: int, pos_end: int,
+    ref: str | None, alt: str | None,
+) -> OSError:
+    """Refuse a single record whose end precedes its begin.
+
+    Returned rather than raised, so the raise stays at the site that read the
+    slots -- and so the several sites that perform this check share one
+    message.  Off the hot path by construction: a caller compares two integers
+    per record and only calls this when the comparison fails.
+
+    Not to be confused with :func:`backwards_records_error`, despite the
+    neighbouring vocabulary: that one refuses a resource whose records move
+    backwards *along a contig*, raises :class:`MalformedResourceError`, and
+    belongs to the scan's validation.  This one is about a single record's own
+    two ends, and stays an ``OSError`` -- the type the read path has always
+    raised for it, and the type the tests pin.
+
+    Takes the five decoded values rather than the record they came from, for
+    two reasons.  Reading the slots here would mean importing them from
+    ``genomic_position_table.record``, whose package ``__init__`` imports
+    ``table_tabix``, which imports this module -- a cycle, and the end of this
+    module's leaf status (see the module docstring).  And a record's last slot
+    is the backend's payload, so a helper handed the whole record must be
+    careful never to interpolate it: ``f"{record}"`` would print an entire
+    ``pysam.VariantRecord`` -- whose repr is the whole VCF line -- or a
+    ``TupleProxy``.  Named values cannot make that mistake.
+
+    ``ref`` and ``alt`` are what tell two records at one position apart, so
+    the message names them when the record carries them, and says nothing in
+    their place when it does not (ADR 0027).
+    """
+    ref_alt = f" {ref}->{alt}" if ref is not None or alt is not None else ""
+    return OSError(
+        f"The resource record {chrom}:{pos_begin}-{pos_end}{ref_alt} "
+        f"has a region with end {pos_end} smaller than the "
+        f"beginning {pos_begin}.")
+
+
 def index_column_mismatch_error(
     resource_id: str,
     index_filename: str,

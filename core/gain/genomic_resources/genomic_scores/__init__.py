@@ -37,6 +37,16 @@ through this module for one of those worked by accident, never by
 intention, and an AST scan of gain, gpf and ``grr_bench`` (2026-08-31)
 found no caller that did.  Import them from the module that defines them.
 
+What has since moved OUT is the pair of scan validation rules.
+``validate_records`` and ``validate_record_arrays`` were
+``@abstractmethod`` on :class:`~.base.GenomicScore` with one body per kind
+here; they are now ``singledispatch`` functions in
+:mod:`gain.genomic_resources.statistics.record_validation`, registered per
+kind, because the statistics scan is their only caller and a read class
+should not carry a rule only its consumer applies (gain#1269, ADR 0027).
+They were never part of the pre-split module's re-exported surface -- they
+were instance methods -- so the facade promise above is untouched.
+
 What did NOT move here is the resource *implementation* --
 ``genomic_scores_impl``, which gain#1007 split into scan and classes and
 gain#1210 then laid out as this package is, one module per kind -- nor

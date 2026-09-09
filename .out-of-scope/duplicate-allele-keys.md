@@ -4,6 +4,16 @@ An allele score will **not** be refused for carrying more than one record with
 the same `(chrom, pos, ref, alt)` key. A repeated key is normal data, not a
 malformed resource.
 
+> **Where the names below now live.** This record was written while the two
+> validators were methods on the score classes, and it names them that way
+> throughout — `AlleleScore.validate_records` and its array twin. Since
+> [ADR 0027](../docs/adr/0027-record-validation-is-a-registry-in-the-statistics-package.md)
+> they are `singledispatch` functions in
+> `gain/genomic_resources/statistics/record_validation.py`, registered per kind.
+> Nothing this record decides changes; anyone revisiting gain#663 to add the
+> rule after all should add it to the body allele scores are registered under,
+> not to the class.
+
 ## Why this is out of scope
 
 The proposal was to give `AlleleScore.validate_records` a second rule alongside

@@ -17,6 +17,9 @@ from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.score_def import (
     ScoreValue,
 )
+from gain.genomic_resources.statistics.record_validation import (
+    validate_records,
+)
 from gain.genomic_resources.testing import (
     build_filesystem_test_resource,
     setup_directories,
@@ -148,7 +151,7 @@ def test_position_score_scan_consistency(
     # where that check went rather than what happened to it.
     with pytest.raises(MalformedResourceError,
                        match="multiple values for positions"):
-        list(position_score.validate_records(
+        list(validate_records(position_score,
             position_score.fetch_records(chrom, begin, end)))
 
 
@@ -562,7 +565,7 @@ def test_a_position_score_overlap_names_the_resource_locus_and_rule(
     # that is where the refusal lives, and the message it carries is what
     # gain#587 pinned.
     with pytest.raises(MalformedResourceError) as excinfo:
-        list(score.validate_records(score.fetch_records("chr1", 1, 10)))
+        list(validate_records(score, score.fetch_records("chr1", 1, 10)))
 
     message = str(excinfo.value)
     assert "<overlapping>" in message
@@ -589,7 +592,7 @@ def test_a_position_score_repeat_names_the_resource_locus_and_rule(
     # The point read stopped refusing this with gain#588 -- one rule, one
     # path -- so the repeat is named by the validator that now owns the rule.
     with pytest.raises(MalformedResourceError) as excinfo:
-        list(score.validate_records(score.fetch_records("chr1", 1, 20)))
+        list(validate_records(score, score.fetch_records("chr1", 1, 20)))
 
     message = str(excinfo.value)
     assert "<repeated>" in message
@@ -631,7 +634,7 @@ def test_an_allele_score_going_backwards_names_the_resource_locus_and_rule(
     score = _an_allele_score(tmp_path)
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        list(score.validate_records(iter(BACKWARDS_ALLELE_RECORDS)))
+        list(validate_records(score, iter(BACKWARDS_ALLELE_RECORDS)))
 
     message = str(excinfo.value)
     assert "<alleles>" in message
@@ -656,7 +659,7 @@ def test_the_allele_rule_passes_the_records_sharing_one_position(
         ("chr1", 20, 20, "C", "T", ("chr1", "20", "C", "T", "0.4")),
     ]
 
-    assert list(score.validate_records(iter(at_one_site))) == at_one_site
+    assert list(validate_records(score, iter(at_one_site))) == at_one_site
 
 
 def test_reading_an_allele_score_going_backwards_raises_nothing(

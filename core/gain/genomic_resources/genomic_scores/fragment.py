@@ -10,24 +10,16 @@ from __future__ import annotations
 
 import copy
 import functools
-from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterable, Sequence
 from dataclasses import dataclass
 from typing import (
     Any,
     ClassVar,
 )
 
-import numpy as np
-
 from gain import logging
-from gain.genomic_resources.genomic_position_table.record import (
-    Record,
-)
 from gain.genomic_resources.repository import (
     GenomicResource,
-)
-from gain.genomic_resources.resource_errors import (
-    backwards_records_error,
 )
 from gain.genomic_resources.resource_types import (
     FRAGMENT_SCORE_TYPES,
@@ -55,7 +47,6 @@ from .aggregation import (
 )
 from .base import GenomicScore
 from .records import (
-    RecordArrays,
     overlap_fractions_admit,
     owns_record,
 )
@@ -260,64 +251,6 @@ class FragmentScore(GenomicScore):
         scores_schema = schema["scores"]["schema"]["schema"]
         scores_schema["aggregator"] = AGGREGATOR_SCHEMA
         return schema
-
-    def validate_records(
-        self, records: Iterator[Record],
-    ) -> Generator[Record, None, None]:
-        """Refuse a fragment that begins before the one before it.
-
-        Fragments overlap freely and several may share a start, so only the
-        BEGINS are compared, and only against each other.  A fragment's own end
-        takes no part: an interval reaching back over its predecessor is the
-        normal case, not a data error.
-
-        The comparison is against RAW spans, the layer at which this rule and
-        the vectorized one can ever be stated once (ADR 0008), and it starts
-        afresh at every contig: "begins after the one before it" is a claim
-        about one contig, and a second contig starting lower than the first
-        ended is most resources.
-        """
-        prev_chrom: str | None = None
-        prev_begin: int | None = None
-        for record in records:
-            chrom, begin, _end = self._record_to_begin_end(record)
-            if chrom != prev_chrom:
-                prev_begin = None
-            if prev_begin is not None and begin < prev_begin:
-                raise backwards_records_error(
-                    self.resource_id, chrom, begin, prev_begin,
-                    "a fragment score's")
-            prev_chrom, prev_begin = chrom, begin
-            yield record
-
-    def validate_record_arrays(
-        self, batches: Iterator[RecordArrays], chrom: str,
-    ) -> Generator[RecordArrays, None, None]:
-        """Refuse a fragment beginning before the one before it, vectorized.
-
-        The same rule as :meth:`validate_records`, over a batch's columns:
-        only the RAW begins are compared, and only against each other.  A
-        fragment's own end takes no part -- an interval reaching back over
-        its predecessor is the normal case for this kind, not a data error.
-        A violation straddling a batch boundary is caught on the carried
-        begin.
-        """
-        prev_begin: int | None = None
-        for batch in batches:
-            pos_begin, _pos_end, _cells = batch
-            if pos_begin.size:
-                if prev_begin is not None and int(pos_begin[0]) < prev_begin:
-                    raise backwards_records_error(
-                        self.resource_id, chrom, int(pos_begin[0]),
-                        prev_begin, "a fragment score's")
-                backwards = pos_begin[1:] < pos_begin[:-1]
-                if bool(backwards.any()):
-                    first = int(np.argmax(backwards))
-                    raise backwards_records_error(
-                        self.resource_id, chrom, int(pos_begin[first + 1]),
-                        int(pos_begin[first]), "a fragment score's")
-                prev_begin = int(pos_begin[-1])
-            yield batch
 
     def fetch_fragment_scores(
         self, chrom: str,

@@ -707,7 +707,8 @@ def test_the_verdict_on_a_malformed_resource_survives_any_region_size(
     # float, so it is bulk-eligible, and only ``0`` -- which has no bounded
     # region for the vectorized scan to serve -- takes the per-record path
     # this slice changed.  The other two are answered by the vectorized
-    # door, in ``PositionScore.validate_record_arrays``.
+    # door, through the rule PositionScore is registered under in
+    # ``statistics/record_validation.py``.
     # That is the point of the parametrisation (one verdict whichever path
     # answers), not an oversight; the per-record rule is exercised across a
     # split by test_a_region_split_between_two_touching_records_still_
