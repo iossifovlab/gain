@@ -23,7 +23,10 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
-from gain.genomic_resources.aggregators import ScoreAggregationQuery
+from gain.genomic_resources.aggregators import (
+    PositionScoreAggregationQuery,
+    ScoreAggregationQuery,
+)
 from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_scores import (
     AlleleAggregate,
@@ -326,6 +329,24 @@ def test_an_unknown_score_is_refused_from_the_call(
             ValueError, match=r"not defined by resource .*\['freq', 'id'\]"):
         score.get_allele_scores_in_region_agg(
             "1", 10, 16, queries=[ScoreAggregationQuery("nope")])
+
+
+def test_a_position_query_is_refused_from_the_call(
+    alleles: AlleleScore,
+) -> None:
+    """This read takes the NEUTRAL query, and says so when handed the other.
+
+    Pins that ``refuse_position_query`` -- which states the rule and why
+    it is a ``TypeError`` -- is reached through THIS kind's resolver and
+    not only through the shared function that calls it (gain#1158).  An
+    allele score has no uncovered locus to speak for, so a replacement is
+    something this read could only drop.
+    """
+    with alleles.open() as score, pytest.raises(
+            TypeError, match="nowhere to put its none_value_replacement"):
+        score.get_allele_scores_in_region_agg(
+            "1", 10, 16,
+            queries=[PositionScoreAggregationQuery("freq", "max", 0.0)])
 
 
 # ---------------------------------------------------------------------------
