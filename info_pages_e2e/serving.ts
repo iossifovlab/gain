@@ -111,17 +111,19 @@ function resolveUnder(root: string, relative: string): string | null {
   return file.startsWith(base + path.sep) ? file : null;
 }
 
-/** The file a request is answered from, or null if nothing may answer it. */
-function resolveRequest(url: string, grrDir: string): string | null {
-  // Query strings address nothing on disk. The FTS database is fetched
-  // with a `?v=<md5>` cache-buster, which is part of the page's contract
-  // with a real web server and must not become part of a filename here.
-  const address = url.split('?')[0];
+/**
+ * The address a request names, with any query string dropped.
+ *
+ * Query strings address nothing on disk. The FTS database is fetched
+ * with a `?v=<md5>` cache-buster, which is part of the page's contract
+ * with a real web server and must not become part of a filename here.
+ */
+function addressOf(url: string): string {
+  return url.split('?')[0];
+}
 
-  if (address.startsWith(GRR_ORIGIN)) {
-    return resolveUnder(
-      grrDir, decodeURIComponent(address.slice(GRR_ORIGIN.length)));
-  }
+/** The file a vendored-CDN request is answered from, or null. */
+function resolveVendored(address: string): string | null {
   if (address === JQUERY_URL) {
     return resolveUnder(
       path.join(NODE_MODULES, JQUERY_DIR), 'dist/jquery.min.js');
@@ -132,6 +134,87 @@ function resolveRequest(url: string, grrDir: string): string | null {
       address.slice(SQLITE_URL_PREFIX.length));
   }
   return null;
+}
+
+/** The file a request is answered from, or null if nothing may answer it. */
+function resolveRequest(url: string, grrDir: string): string | null {
+  const address = addressOf(url);
+
+  if (address.startsWith(GRR_ORIGIN)) {
+    return resolveUnder(
+      grrDir, decodeURIComponent(address.slice(GRR_ORIGIN.length)));
+  }
+  return resolveVendored(address);
+}
+
+/**
+ * As `resolveRequest`, but with a GRR under each named sub-path.
+ *
+ * The first path segment selects the repository and is then stripped, so
+ * `/one/index.html` is `one`'s own `index.html` -- the same file it
+ * would serve at the root. That is the arrangement the index page was
+ * fixed for in iossifovlab/gain#129: several GRRs published under one
+ * host, each in its own directory.
+ */
+function resolveSubPathRequest(
+  url: string, grrDirs: Map<string, string>,
+): string | null {
+  const address = addressOf(url);
+  if (!address.startsWith(GRR_ORIGIN)) return resolveVendored(address);
+
+  const relative = address.slice(GRR_ORIGIN.length);
+  const slash = relative.indexOf('/');
+  if (slash < 0) return null;
+
+  // A `Map`, not an object keyed by sub-path. A plain object answers
+  // `constructor`, `toString`, `valueOf` and `__proto__` out of its
+  // prototype, so those lookups yield a *function* instead of
+  // undefined; the miss goes unnoticed and a path join is handed a
+  // function and throws. An exception here escapes the route handler,
+  // and a request that raises is neither fulfilled nor aborted -- it
+  // hangs, which under `--network none` is indistinguishable from a
+  // page reaching for the network. A Map has no inherited keys, so
+  // that whole class of miss cannot arise rather than being guarded
+  // against at the one site that happens to trip over it.
+  const grrDir = grrDirs.get(relative.slice(0, slash));
+  if (grrDir === undefined) return null;
+
+  // The remainder is the root case with a different directory
+  // answering, so hand it back rather than restate it: decoding and
+  // containment get one definition instead of two that can drift.
+  return resolveRequest(GRR_ORIGIN + relative.slice(slash + 1), grrDir);
+}
+
+/**
+ * Answer this page's requests through `resolve`, aborting the rest.
+ *
+ * The one definition of *how* an answer is delivered and what happens to
+ * everything else -- what may be answered at all is each resolver's
+ * business, and containment is `resolveUnder`'s alone. See `serveGrr`
+ * for why aborting is the point rather than a precaution.
+ *
+ * `fulfill({ path })` derives the content type from the extension
+ * itself, which matters for two of them: without `text/html` the browser
+ * offers the page as a download instead of rendering it, and without a
+ * JavaScript type it refuses the `<script type="module">` blocks
+ * outright. (`application/wasm` looks like a third and is not --
+ * sqlite-wasm logs `falling back to ArrayBuffer instantiation` and loads
+ * anyway.)
+ */
+async function routeThrough(
+  page: Page, resolve: (url: string) => string | null,
+): Promise<void> {
+  await page.route(
+    () => true,
+    async (route) => {
+      const file = resolve(route.request().url());
+      if (file === null || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+        await route.abort();
+        return;
+      }
+      await route.fulfill({ path: file });
+    },
+  );
 }
 
 /**
@@ -146,32 +229,36 @@ function resolveRequest(url: string, grrDir: string): string | null {
  * runs the suite under `docker run --network none`, so a page that
  * quietly started needing the network would pass on a developer's
  * machine and hang in CI; failing here makes the two agree.
- *
- * `fulfill({ path })` derives the content type from the extension
- * itself, which matters for two of them: without `text/html` the browser
- * offers the page as a download instead of rendering it, and without a
- * JavaScript type it refuses the `<script type="module">` blocks
- * outright. (`application/wasm` looks like a third and is not --
- * sqlite-wasm logs `falling back to ArrayBuffer instantiation` and loads
- * anyway.)
  */
 export async function serveGrr(page: Page, grrDir: string): Promise<void> {
-  await page.route(
-    () => true,
-    async (route) => {
-      const file = resolveRequest(route.request().url(), grrDir);
-      if (file === null || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
-        await route.abort();
-        return;
-      }
-      await route.fulfill({ path: file });
-    },
-  );
+  await routeThrough(page, (url) => resolveRequest(url, grrDir));
+}
+
+/**
+ * Serve a GRR under each named sub-path of the one origin.
+ *
+ * `serveGrrsUnderSubPaths(page, new Map([['one', dirA], ['two', dirB]]))`
+ * puts `dirA` at `/one/` and `dirB` at `/two/`, both on
+ * `https://grr.test`. Two repositories sharing a host is the arrangement
+ * that broke the index page in iossifovlab/gain#129, and it is the only
+ * way to tell state that belongs to a *document* from state that belongs
+ * to an origin -- `sessionStorage` and `localStorage` are shared by both
+ * of these pages, a fragment is not.
+ */
+export async function serveGrrsUnderSubPaths(
+  page: Page, grrDirs: Map<string, string>,
+): Promise<void> {
+  await routeThrough(page, (url) => resolveSubPathRequest(url, grrDirs));
 }
 
 /** The served URL of the repository index page. */
 export function indexPageUrl(): string {
   return `${GRR_ORIGIN}index.html`;
+}
+
+/** The served URL of the index page of the GRR under `subPath`. */
+export function indexPageUrlUnder(subPath: string): string {
+  return `${GRR_ORIGIN}${subPath}/index.html`;
 }
 
 /** The served URL of one resource's generated info page. */

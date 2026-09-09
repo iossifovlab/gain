@@ -7,10 +7,17 @@ import {
   BROWSE_SUMMARY_ONLY_RESOURCE_ID,
   BROWSE_SUMMARY_ONLY_TERM,
   BROWSE_TOP_LEVEL_FOLDERS,
+  COVERAGE_RESOURCE,
   FIXTURE_BROWSE_GRR,
   FIXTURE_GRR,
 } from '../fixtures';
-import { indexPageUrl, serveGrr } from '../serving';
+import {
+  indexPageUrl,
+  indexPageUrlUnder,
+  infoPageUrl,
+  serveGrr,
+  serveGrrsUnderSubPaths,
+} from '../serving';
 
 /**
  * The resource ids the visible rows name, in the order they are shown.
@@ -34,9 +41,14 @@ function visibleResourceIds(page: Page) {
  * true on arrival -- the rows are server-rendered, and the search box is
  * shown synchronously whether or not the database ever loads.
  */
-async function openBrowseIndex(page: Page): Promise<void> {
+async function openBrowseIndex(page: Page, hash = ''): Promise<void> {
   await serveGrr(page, FIXTURE_BROWSE_GRR);
-  await page.goto(indexPageUrl());
+  await page.goto(indexPageUrl() + hash);
+  /* Read as text, never as visibility. The hierarchical view hides this
+   * element, so an address naming the tree would make a `toBeVisible`
+   * wait hang forever on a page that had loaded perfectly. The status is
+   * written with jQuery's `.text()`, which does not care that the
+   * element is hidden, so the signal survives being out of sight. */
   await expect(page.locator('#status')).toHaveText(
     `${BROWSE_RESOURCE_COUNT} resources`,
   );
@@ -161,4 +173,282 @@ test('the harness refuses every request it does not serve itself', async ({
     (url) => !failed.has(url) && !SERVED_HOSTS.includes(new URL(url).host),
   );
   expect(letThrough).toEqual([]);
+});
+
+/* ---- The browse view lives in the URL hash (#578) ---- */
+
+/** The fragment the page is currently addressed by, `''` when bare. */
+function hashOf(page: Page): string {
+  return new URL(page.url()).hash;
+}
+
+/**
+ * Assert which view the page is showing.
+ *
+ * Both wrappers, not just the expected one: the views are toggled by
+ * `display`, and asserting only that the tree is visible would pass just
+ * as well on a page showing the tree *and* the table at once -- which is
+ * what a half-applied state looks like.
+ */
+async function expectView(
+  page: Page, view: 'table' | 'hierarchical',
+): Promise<void> {
+  const hier = view === 'hierarchical';
+  await expect(page.locator('#hierarchical-wrapper'))
+    .toBeVisible({ visible: hier });
+  await expect(page.locator('#table-wrapper')).toBeVisible({ visible: !hier });
+}
+
+test('choosing the hierarchical view puts it in the URL hash', async ({
+  page,
+}) => {
+  await openBrowseIndex(page);
+
+  await page.locator('#hierarchical-view-btn').click();
+
+  await expect.poll(() => hashOf(page)).toBe('#/');
+  await expectView(page, 'hierarchical');
+});
+
+test('choosing the table view again clears the fragment', async ({
+  page,
+}) => {
+  await openBrowseIndex(page, '#/');
+  await expectView(page, 'hierarchical');
+
+  await page.locator('#table-view-btn').click();
+
+  /* The way back out, under its own test rather than as a step in one
+   * about something else. A `buildHash` that could not express the
+   * default view -- returning `#/` whatever it was handed -- leaves this
+   * button pushing the address it is trying to leave, and the table
+   * never comes back. Nothing else here notices that on its own. */
+  await expect.poll(() => hashOf(page)).toBe('');
+  await expectView(page, 'table');
+});
+
+test('the toggle for the view already showing changes nothing', async ({
+  page,
+}) => {
+  await openBrowseIndex(page, '#section-2');
+  await expectView(page, 'table');
+  const entriesBefore = await page.evaluate(() => history.length);
+
+  await page.locator('#table-view-btn').click();
+
+  /* Two things this button must not do when it is already the active
+   * one. It must not stack a history entry that changes nothing on
+   * screen -- Back would then appear not to work, which is the whole
+   * reason the push is guarded. And it must not rewrite the address:
+   * a fragment this page does not recognise belongs to whatever put it
+   * there, and clicking a view is not consent to discard it.
+   *
+   * Both fail if the guard compares fragments instead of views: `''` is
+   * not `'#section-2'`, so a build that asks "is the address already
+   * exactly what I would write?" pushes, where one that asks "is this
+   * view already showing?" does not. */
+  await expect.poll(() => hashOf(page)).toBe('#section-2');
+  expect(await page.evaluate(() => history.length)).toBe(entriesBefore);
+});
+
+test('the browser\'s Back leaves the hierarchical view again', async ({
+  page,
+}) => {
+  await openBrowseIndex(page);
+  await page.locator('#hierarchical-view-btn').click();
+  await expectView(page, 'hierarchical');
+
+  await page.goBack();
+
+  /* Back over a fragment-only entry is a same-document navigation: the
+   * page is not reloaded, so what restores the table is the `hashchange`
+   * listener and nothing else. A build that pushed the entry but left
+   * rendering to the click handler passes the test above and fails here. */
+  await expect.poll(() => hashOf(page)).toBe('');
+  await expectView(page, 'table');
+});
+
+test('the page opens in the view its address names', async ({ page }) => {
+  await openBrowseIndex(page, '#/');
+
+  await expectView(page, 'hierarchical');
+
+  /* The tree is asserted to have *contents*, not merely to be the
+   * visible half. Arriving already at `#/` is the one path that does not
+   * pre-render the tree on the way in -- there would be no point, since
+   * showing it renders it -- so this load leans entirely on that render
+   * happening, and a wrapper assertion alone would be equally happy with
+   * an empty one. */
+  await expect(page.locator('#hierarchical-list .hv-folder .hv-name'))
+    .toHaveText(BROWSE_TOP_LEVEL_FOLDERS);
+});
+
+test('the page opens in the table view with no fragment at all', async ({
+  page,
+}) => {
+  await openBrowseIndex(page);
+
+  /* On its own this is also what the markup says -- the tree wrapper
+   * ships hidden -- so it would survive the feature being deleted. It
+   * earns its place as the other half of a pair: with the test above it
+   * pins the mapping in both directions, and a `parseHash` that answered
+   * "hierarchical" to everything (or swapped the two) fails here while
+   * passing there. Measured, not assumed. */
+  await expectView(page, 'table');
+});
+
+test('Forward re-enters the hierarchical view', async ({ page }) => {
+  await openBrowseIndex(page);
+  await page.locator('#hierarchical-view-btn').click();
+  await page.goBack();
+  await expectView(page, 'table');
+
+  await page.goForward();
+
+  await expect.poll(() => hashOf(page)).toBe('#/');
+  await expectView(page, 'hierarchical');
+});
+
+test('a fragment that names no browse state opens the table view', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(String(error)));
+
+  /* Not path-shaped, on purpose. A fragment *is* how things with no
+   * interest in this page reach it -- a link into a section, a tracker's
+   * leftovers -- so the parser has to treat a stranger as the default
+   * rather than as a broken instruction. `#/something` is deliberately
+   * not the example: that shape becomes meaningful when the folder path
+   * lands (#579), and a test pinning it to the table view would have to
+   * be rewritten by the slice it is supposed to protect. */
+  await openBrowseIndex(page, '#not-a-browse-state');
+
+  await expectView(page, 'table');
+
+  /* Ignored, not swallowed: the address is left exactly as it was found,
+   * so a fragment meant for something else survives the visit. */
+  await expect.poll(() => hashOf(page)).toBe('#not-a-browse-state');
+  expect(errors).toEqual([]);
+});
+
+test('coming back from a resource page returns to the tree', async ({
+  page,
+}) => {
+  /* The Coverage GRR, not the browse one. This is the only test here
+   * that has to *leave* the index page, and the browse GRR has nowhere
+   * to go: it is published by `repo-index`, which writes no page inside
+   * any resource directory, so its tree links address files that do not
+   * exist and the harness aborts the navigation. The Coverage GRR gets
+   * the full `repo-info` pass and does have them. */
+  await serveGrr(page, FIXTURE_GRR);
+  await page.goto(indexPageUrl() + '#/');
+  await expectView(page, 'hierarchical');
+
+  await page.locator('#hierarchical-list .hv-folder')
+    .filter({ hasText: 'scores' }).click();
+  await page.locator('#hierarchical-list .hv-link').click();
+
+  await expect(page).toHaveURL(infoPageUrl(COVERAGE_RESOURCE));
+
+  await page.goBack();
+
+  /* A real reload, not a fragment move -- the resource page is a
+   * different document. So this is the *load* path being asserted, and
+   * the history entry having carried the fragment with it: the page has
+   * no other memory of where the reader was. */
+  await expect.poll(() => hashOf(page)).toBe('#/');
+  await expectView(page, 'hierarchical');
+});
+
+test('two GRRs sharing an origin do not share a browse view', async ({
+  page,
+}) => {
+  /* Both repositories on one host, each under its own sub-path -- how
+   * they are actually published, and the arrangement that broke this
+   * page once before (iossifovlab/gain#129).
+   *
+   * The check is not ceremony. It is the one assertion that
+   * distinguishes state belonging to a *document* from state belonging
+   * to an origin, and this issue arrived proposing `sessionStorage` --
+   * which is shared by both of these pages and would carry the first
+   * one's view to the second. Keeping the state in the address is what
+   * makes them independent, and this is where that is demonstrated
+   * rather than argued. */
+  await serveGrrsUnderSubPaths(page, new Map([
+    ['browse', FIXTURE_BROWSE_GRR],
+    ['coverage', FIXTURE_GRR],
+  ]));
+
+  /* Reached by *clicking*, not by loading `#/` directly. The design this
+   * rules out would put its `setItem` in the click handler, so a first
+   * document that only ever had the state handed to it in its URL would
+   * never run the line that leaks. */
+  await page.goto(indexPageUrlUnder('browse'));
+  await page.locator('#hierarchical-view-btn').click();
+  await expectView(page, 'hierarchical');
+
+  await page.goto(indexPageUrlUnder('coverage'));
+
+  await expectView(page, 'table');
+});
+
+test('the sub-path router refuses a segment that names no GRR', async ({
+  page,
+}) => {
+  /* Kept short: the failure this guards against is a request that is
+   * never answered *either way*, and the symptom of that is the default
+   * timeout rather than a refusal. */
+  test.setTimeout(20_000);
+  await serveGrrsUnderSubPaths(
+    page, new Map([['browse', FIXTURE_BROWSE_GRR]]));
+
+  await expect(page.goto(indexPageUrlUnder('nonesuch'))).rejects.toThrow();
+
+  /* `constructor` names no GRR either. Kept as its own case because it
+   * is the one that goes wrong when the lookup is an object rather than
+   * a Map: an object answers it with `Object`'s constructor instead of
+   * `undefined`, the miss goes unnoticed, and a *function* reaches a
+   * path join and throws. An exception inside the route handler leaves
+   * the request neither fulfilled nor aborted -- it hangs, which is the
+   * one thing this harness promises never to do, and under
+   * `--network none` in CI it is indistinguishable from the network
+   * being reached for. This passes structurally now; it is here so that
+   * swapping the Map back for an object fails loudly. */
+  await expect(page.goto(indexPageUrlUnder('constructor'))).rejects.toThrow();
+});
+
+/** The inline width every table column currently carries. */
+function columnWidths(page: Page): Promise<string[]> {
+  return page.locator('#resource-table colgroup col').evaluateAll(
+    (cols) => cols.map((col) => (col as HTMLElement).style.width));
+}
+
+test('a round trip through the tree leaves the column widths intact', async ({
+  page,
+}) => {
+  await openBrowseIndex(page);
+
+  /* The widths start as inline percentages and are rewritten to pixels
+   * by the first `ResizeObserver` callback, so wait for that conversion
+   * rather than racing it -- otherwise "before" is a set of percentages
+   * and the comparison at the end means nothing. */
+  await expect.poll(async () => (await columnWidths(page)).every(
+    (width) => width.endsWith('px'))).toBe(true);
+  const before = await columnWidths(page);
+
+  await page.locator('#hierarchical-view-btn').click();
+  await expectView(page, 'hierarchical');
+  await page.locator('#table-view-btn').click();
+  await expectView(page, 'table');
+
+  /* Hiding the wrapper fires the observer with a `clientWidth` of 0, and
+   * scaling by that would write `0px` into every column -- permanently,
+   * because the total would then be 0 and the guard would bail forever
+   * after. The `!newWidth` guard added in iossifovlab/gain#560 is what
+   * stops it, and routing the toggle through the address must not step
+   * around it. Named explicitly so this cannot pass by both sides being
+   * equally broken. */
+  expect(before).not.toContain('0px');
+  expect(await columnWidths(page)).toEqual(before);
 });
