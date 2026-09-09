@@ -1,6 +1,5 @@
 import argparse
 import os
-import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -25,15 +24,20 @@ from gain.genomic_resources.cached_repository import (
 )
 from gain.genomic_resources.genomic_context import (
     context_providers_add_argparser_arguments,
-    context_providers_init,
-    get_genomic_context,
 )
 from gain.genomic_resources.genomic_context_base import (
     GenomicContext,
 )
+from gain.genomic_resources.genomic_context_cli import (
+    GENOMIC_CONTEXT_PATH_KEYS,
+)
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.task_graph import TaskGraphCli
 from gain.task_graph.graph import TaskGraph
+from gain.task_graph.work_dir import (
+    absolutize_path_args,
+    apply_work_dir_defaults,
+)
 from gain.utils.fs_utils import (
     compression_suffix,
     strip_compression_suffix,
@@ -43,17 +47,29 @@ from gain.utils.regions import (
     get_chromosome_length_tabix,
     split_into_regions,
 )
+from gain.utils.verbosity_configuration import VerbosityConfiguration
 
-# Re-exported: the annotation writers and gpf (``gpf.parquet.schema2``)
-# import ``stringify`` from here, and it moved to a leaf module only so
-# the allele score could build its keys with it (gain#1163) -- see that
-# module's docstring.  The alias is what marks a re-export for ruff;
-# pylint reads the same alias as useless.
+# isort: split
+# Re-exported names that moved down but stay importable from here:
+# ``stringify`` went to a leaf module for the allele score (gain#1163),
+# the two parsed-arguments-to-GRR steps to genomic_resources and the
+# work-dir convention to task_graph (gain#1234).  gpf's schema2 annotator
+# imports ``stringify`` and the context pair from here; the annotate
+# tools import ``maybe_remove_work_dir``.  The alias is what marks a
+# re-export for ruff; pylint reads the same alias as useless.
 # pylint: disable=unused-import,useless-import-alias
+from gain.genomic_resources.genomic_context import (
+    build_cli_genomic_context as build_cli_genomic_context,
+)
+from gain.genomic_resources.genomic_context import (
+    get_grr_from_context as get_grr_from_context,
+)
+from gain.task_graph.work_dir import (
+    maybe_remove_work_dir as maybe_remove_work_dir,
+)
 from gain.utils.stringify import stringify as stringify
 
 # pylint: enable=unused-import,useless-import-alias
-from gain.utils.verbosity_configuration import VerbosityConfiguration
 
 PART_FILENAME = "{in_file}_annotation_{chrom}_{pos_beg}_{pos_end}"
 
@@ -92,28 +108,12 @@ def produce_partfile_paths(
     return filenames
 
 
-def build_cli_genomic_context(
-    cli_args: dict[str, Any],
-) -> GenomicContext:
-    """Helper method to collect necessary objects from the genomic context."""
-    context_providers_init(**cli_args)
-    return get_genomic_context()
-
-
 def get_pipeline_from_context(context: GenomicContext) -> AnnotationPipeline:
     """Get the annotation pipeline from the genomic context."""
     pipeline = get_context_pipeline(context)
     if pipeline is None:
         raise ValueError("no valid annotation pipeline configured")
     return pipeline
-
-
-def get_grr_from_context(context: GenomicContext) -> GenomicResourceRepo:
-    """Get the genomic resource repository from the genomic context."""
-    grr = context.get_genomic_resources_repository()
-    if grr is None:
-        raise ValueError("no valid GRR configured")
-    return grr
 
 
 def add_input_files_to_task_graph(args: dict, task_graph: TaskGraph) -> None:
@@ -273,7 +273,8 @@ def handle_default_args(args: dict[str, Any]) -> dict[str, Any]:
     if not os.path.exists(args["input"]):
         raise ValueError(f"{args['input']} does not exist!")
     args["output"] = build_output_path(args["input"], args.get("output"))
-    absolutize_path_args(args, input_key="input")
+    absolutize_path_args(
+        args, input_key="input", extra_keys=GENOMIC_CONTEXT_PATH_KEYS)
     apply_work_dir_defaults(args)
 
     # pipeline and reannotate may be sentinels (e.g. GRR resource ids)
@@ -284,95 +285,6 @@ def handle_default_args(args: dict[str, Any]) -> dict[str, Any]:
             args[key] = os.path.abspath(value)
 
     return args
-
-
-def _absolutize(args: dict[str, Any], *keys: str) -> None:
-    """Absolutize the named path arguments; absent or empty ones stay."""
-    for key in keys:
-        if args.get(key):
-            args[key] = os.path.abspath(args[key])
-
-
-def absolutize_path_args(args: dict[str, Any], *, input_key: str) -> None:
-    """Absolutize the tool's primary input and the common path arguments.
-
-    ``input_key`` names the tool's primary input (``input`` for the
-    annotate tools, ``run_definition`` for ``binning_tool``). A key that
-    is absent or empty is left alone.
-    """
-    _absolutize(
-        args, input_key, "output", "work_dir", "task_status_dir",
-        "task_log_dir", "dask_cluster_config_file", "grr_filename",
-        "grr_directory")
-
-
-def apply_work_dir_defaults(args: dict[str, Any]) -> None:
-    """Default and create the work directory and the task directories.
-
-    The convention the annotate tools and ``binning_tool`` share: the work
-    directory is the output with its compression suffix and its extension
-    stripped plus ``_work``, the task status and log directories are
-    ``.task-status`` and ``.task-log`` inside it. ``work_dir_created``
-    records whether the tool created the directory (it did not pre-exist)
-    -- :func:`maybe_remove_work_dir` reads it -- and every non-empty path
-    set here is absolute, so the tool can ``chdir`` into the work
-    directory afterwards.
-    """
-    if args.get("work_dir") is None:
-        path = Path(strip_compression_suffix(args["output"]))
-        args["work_dir"] = f"{path.with_suffix('')}_work"
-    _absolutize(args, "work_dir")
-
-    args["work_dir_created"] = not os.path.exists(args["work_dir"])
-    if args["work_dir_created"]:
-        os.makedirs(args["work_dir"])
-
-    for key, name in (("task_status_dir", ".task-status"),
-                      ("task_log_dir", ".task-log")):
-        if args.get(key) is None:
-            args[key] = os.path.join(args["work_dir"], name)
-    _absolutize(args, "task_status_dir", "task_log_dir")
-
-
-def maybe_remove_work_dir(args: dict[str, Any], *, result: bool) -> None:
-    """Remove the working directory after a clean run, if the tool made it.
-
-    The directory is removed only when every condition holds:
-
-    - the tool created it (it did not pre-exist; see ``work_dir_created``),
-    - the command actually ran annotation (not ``list``/``status``),
-    - the run succeeded (``result`` is ``True`` -- a ``--keep-going`` run that
-      finished with task errors returns ``False`` and is preserved),
-    - neither ``--keep-parts`` nor ``--keep-work-dir`` was requested,
-    - the output file does not live inside the working directory.
-
-    Removal is best-effort: a failure to remove logs a warning and is not
-    fatal, since the annotation has already succeeded.
-    """
-    if not args.get("work_dir_created"):
-        return
-    if args.get("command") not in (None, "run"):
-        return
-    if not result:
-        return
-    if args.get("keep_parts") or args.get("keep_work_dir"):
-        return
-
-    work_dir = Path(os.path.abspath(args["work_dir"]))
-    output = Path(os.path.abspath(args["output"]))
-    if output.is_relative_to(work_dir):
-        logger.warning(
-            "output %s is inside the working directory %s; not removing it",
-            output, work_dir)
-        return
-
-    try:
-        shutil.rmtree(work_dir)
-    except OSError as err:
-        logger.warning(
-            "could not remove working directory %s: %s", work_dir, err)
-        return
-    logger.info("removed working directory %s", work_dir)
 
 
 def add_common_annotation_arguments(parser: argparse.ArgumentParser) -> None:

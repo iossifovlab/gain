@@ -10,10 +10,12 @@ from gain.genomic_resources.gene_models.gene_models import (
     GeneModels,
 )
 from gain.genomic_resources.genomic_context import (
+    build_cli_genomic_context,
     context_providers_add_argparser_arguments,
     context_providers_init,
     context_providers_init_with_argparser,
     get_genomic_context,
+    get_grr_from_context,
     register_context_provider,
 )
 from gain.genomic_resources.genomic_context_cli import (
@@ -350,3 +352,15 @@ def test_cli_genomic_context_providers_init_with_argparser(
     grr = context.get_genomic_resources_repository()
     assert grr is not None
     assert isinstance(grr, GenomicResourceRepo)
+
+
+def test_the_grr_named_on_the_command_line_is_the_one_served(
+    grr_dirname: str,
+) -> None:
+    # The two steps a CLI tool takes from its parsed arguments to its GRR.
+    register_context_provider(CLIGenomicContextProvider())
+
+    context = build_cli_genomic_context({"grr_directory": grr_dirname})
+    grr = get_grr_from_context(context)
+
+    assert grr.get_resource("t4c8_genome") is not None
