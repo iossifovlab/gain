@@ -29,8 +29,11 @@ spelling.
 from __future__ import annotations
 
 import ast
+import functools
 import pathlib
+from collections.abc import Iterator
 
+import gain
 import pytest
 from gain.annotation import pipeline_doc
 
@@ -205,11 +208,13 @@ def test_the_fence_can_see_the_project_it_polices() -> None:
     assert (WEB_API_SRC / "manage.py").resolve() in swept
 
 
+@functools.cache
 def _imported_modules(py: pathlib.Path) -> frozenset[str]:
     """Absolute dotted names ``py`` imports, however it spells them.
 
-    Uncached: one rule calls this, and it visits each file once, so a
-    cache here could never hit.
+    Cached per file: two rules sweep the whole project -- the Markdown
+    one above and the import-time-deprecation one below -- and the
+    sources do not change within a test run.
 
     Resolved from the AST rather than matched against the source text, so
     that ``import markdown2``, ``from markdown2 import markdown`` and an
@@ -280,6 +285,286 @@ def _dynamically_imported_names(call: ast.Call) -> set[str]:
     if isinstance(first, ast.Constant) and isinstance(first.value, str):
         return {first.value}
     return set()
+
+
+#: The ``gain`` package this project builds on.  Resolved from the
+#: imported package rather than by walking up from this file: the CI
+#: image lays ``core/gain`` and ``web_api`` out differently from the
+#: checkout, and a path that missed would derive an empty set and police
+#: nothing.  ``test_the_derived_set_finds_the_shim_it_is_anchored_to`` is
+#: what would go red if it ever missed.
+GAIN_PKG = pathlib.Path(gain.__file__).parent
+
+#: The deprecated alias for ``gain.annotation.annotate_tabular``, which
+#: warns from its module body.  Named so the rule below has an anchor
+#: that cannot pass on an empty scan.
+ANNOTATE_COLUMNS_SHIM = "gain.annotation.annotate_columns"
+
+
+@functools.cache
+def _modules_warning_at_import() -> frozenset[str]:
+    """Dotted names of the ``gain`` modules that warn on import.
+
+    The subject set of the fence below, read out of the tree rather than
+    listed, so a shim added to ``gain`` later is covered by the rule that
+    already exists.  gain#1153 wrote a fence naming ``score_annotator``:
+    it protected that one module, for exactly as long as it existed, and
+    gain#1154 deleted it again along with the shim.
+
+    Cached because two rules here ask for the set, and deriving it reads
+    and parses every module in the ``gain`` package.
+    """
+    found = set()
+    for py in GAIN_PKG.rglob("*.py"):
+        if not _warns_at_import(py.read_text(encoding="utf8")):
+            continue
+        parts = list(py.relative_to(GAIN_PKG).with_suffix("").parts)
+        if parts[-1] == "__init__":
+            parts.pop()
+        found.add(".".join(["gain", *parts]))
+    return frozenset(found)
+
+
+def _warns_at_import(source: str) -> bool:
+    """Does importing a module with this source emit a DeprecationWarning?
+
+    Only what importing *runs* counts.  A module body, a class body and
+    any ``if``/``try``/``with``/``for`` nesting inside them all execute on
+    import; a ``def`` body executes when it is called, which may be never.
+    """
+    return any(
+        _is_deprecation_warn(node)
+        for node in _import_time_nodes(ast.parse(source))
+    )
+
+
+def _import_time_nodes(node: ast.AST) -> Iterator[ast.AST]:
+    """Every node under ``node`` that importing the module would execute.
+
+    Descends into class bodies -- those run at import -- and stops at the
+    *body* of every ``def`` and ``lambda``, which does not.  A ``def`` is
+    not skipped whole: its decorators and its argument defaults are
+    evaluated where the ``def`` is written, so they run at import like
+    any other module-level expression.  Skipping the node entirely would
+    also make a decorator count on a ``class`` and not on a ``def``,
+    which is a distinction nothing could justify.
+    """
+    children = (
+        _signature_nodes(node) if isinstance(node, _DEFERRED_BODIES)
+        else ast.iter_child_nodes(node))
+    for child in children:
+        yield child
+        yield from _import_time_nodes(child)
+
+
+#: Nodes whose body import does not run.
+_DEFERRED_BODIES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+
+
+def _signature_nodes(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda,
+) -> Iterator[ast.expr]:
+    """The parts of a ``def``/``lambda`` that import evaluates anyway.
+
+    The annotations are deliberately not among them.  Under ``from
+    __future__ import annotations`` -- which more than half of ``gain``'s
+    modules carry -- an annotation is never evaluated at all, so reading
+    one proves nothing about what importing the module does.
+    """
+    yield from node.args.defaults
+    yield from (d for d in node.args.kw_defaults if d is not None)
+    if not isinstance(node, ast.Lambda):
+        yield from node.decorator_list
+
+
+def _is_deprecation_warn(node: ast.AST) -> bool:
+    """Is ``node`` a ``warnings.warn(...)`` whose category is deprecation?
+
+    The callee must be named ``warn``: a module that merely *names* the
+    category -- ``filterwarnings("ignore", category=DeprecationWarning)``
+    is the one that matters -- warns nobody, and sweeping it in would
+    fence a module for silencing the thing this rule is about.
+    """
+    if not isinstance(node, ast.Call) or _tail_name(node.func) != "warn":
+        return False
+    # ``warn(DeprecationWarning("gone"))`` -- the category *is* the
+    # message, and it warns exactly as loudly as the two-argument form.
+    message = node.args[0] if node.args else None
+    if isinstance(message, ast.Call) \
+            and _tail_name(message.func) == "DeprecationWarning":
+        return True
+    by_keyword = {kw.arg: kw.value for kw in node.keywords}
+    category = (node.args[1] if len(node.args) > 1
+                else by_keyword.get("category"))
+    return _tail_name(category) == "DeprecationWarning"
+
+
+def _tail_name(node: ast.AST | None) -> str | None:
+    """The last segment of a dotted name, or ``None`` if it is not one.
+
+    Both halves of the judgement above are this question: the callee must
+    end in ``warn`` and the category in ``DeprecationWarning``, whether
+    either is reached bare or through a module.  An alias bound at import
+    (``from warnings import warn as _w``) is out of reach of a static
+    read and is not covered; every deprecation in this repository spells
+    both the call and the category out.
+    """
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+#: What a module must do to be a subject of the rule below, and what it
+#: may do without becoming one.  The same rows ``core`` pins, against
+#: this project's own copy of the predicate -- it cannot import
+#: ``core``'s, because ``core/tests`` is not in this project's CI image.
+WARNS_AT_IMPORT_CASES = (
+    # The shim shape: a warn in the module body.
+    (("import warnings\n"
+      "warnings.warn('gone', DeprecationWarning, stacklevel=2)\n"), True),
+    # The category named by keyword rather than by position.
+    (("import warnings\n"
+      "warnings.warn('gone', category=DeprecationWarning)\n"), True),
+    # Module-level nesting still runs on import.
+    (("import warnings\n"
+      "if True:\n"
+      "    warnings.warn('gone', DeprecationWarning)\n"), True),
+    # A class body runs on import too.
+    (("import warnings\n"
+      "class C:\n"
+      "    warnings.warn('gone', DeprecationWarning)\n"), True),
+    # The category as the message, which is idiomatic and warns just as
+    # loudly: `warn(DeprecationWarning("gone"))`.
+    (("import warnings\n"
+      "warnings.warn(DeprecationWarning('gone'))\n"), True),
+    # The category reached through a module rather than by bare name.
+    (("import builtins, warnings\n"
+      "warnings.warn('gone', builtins.DeprecationWarning)\n"), True),
+    # A def body waits to be called, but its decorators and its argument
+    # defaults are evaluated where the def is written -- at import.
+    (("import warnings\n"
+      "def g(x=warnings.warn('gone', DeprecationWarning)):\n"
+      "    pass\n"), True),
+    (("import warnings\n"
+      "@(warnings.warn('gone', DeprecationWarning) or (lambda f: f))\n"
+      "def g():\n"
+      "    pass\n"), True),
+    # The same decorator on a class -- the two must not disagree.
+    (("import warnings\n"
+      "@(warnings.warn('gone', DeprecationWarning) or (lambda c: c))\n"
+      "class C:\n"
+      "    pass\n"), True),
+    # A keyword-only default is evaluated at import like any other.
+    (("import warnings\n"
+      "def g(*, x=warnings.warn('gone', DeprecationWarning)):\n"
+      "    pass\n"), True),
+    # And a lambda's default, whose body is otherwise deferred.
+    (("import warnings\n"
+      "f = lambda x=warnings.warn('gone', DeprecationWarning): x\n"), True),
+    # A function body does not run on import.
+    (("import warnings\n"
+      "def f():\n"
+      "    warnings.warn('gone', DeprecationWarning, stacklevel=2)\n"), False),
+    # Nor a method body -- the shape every deprecated method in gain uses.
+    (("import warnings\n"
+      "class C:\n"
+      "    def m(self):\n"
+      "        warnings.warn('gone', DeprecationWarning)\n"), False),
+    # Another category is not a deprecation.
+    (("import warnings\n"
+      "warnings.warn('careful', UserWarning)\n"), False),
+    # No category at all is a UserWarning.
+    ("import warnings\nwarnings.warn('careful')\n", False),
+    # Naming the category without warning is not a warning.  A module
+    # that silences the category at import must not be swept up.
+    (("import warnings\n"
+      "warnings.filterwarnings('ignore', category=DeprecationWarning)\n"),
+     False),
+)
+
+
+def test_what_counts_as_a_warning_at_import() -> None:
+    """The rule the derived set applies, stated on its own.
+
+    Table-driven rather than by planting modules: extraction and
+    judgement are separate jobs, and a bug in the judgement is invisible
+    in an empty offender list.
+
+    The two ``def``-body rows are the ones this pins.  A warn inside a
+    function fires when it is *called*, which may be never -- and
+    ``gain`` deprecates methods exactly that way, on modules half of that
+    package imports.  Reading the tree with ``ast.walk`` instead of
+    descending only what import executes puts every one of them in the
+    derived set, and the fence then fails on the modules it was never
+    about.
+
+    One test over the whole table rather than a ``parametrize``, which is
+    how ``core`` spells it: every test item in this project pays the
+    autouse fixtures in ``conftest.py``, including one that opens a
+    database transaction and creates a user -- about a third of a second
+    each, against a judgement that takes no measurable time at all.  The
+    loop reports every row that disagrees, so a failure still names them.
+    """
+    wrong = [
+        source for source, at_import in WARNS_AT_IMPORT_CASES
+        if _warns_at_import(source) is not at_import
+    ]
+
+    assert wrong == [], (
+        f"the predicate disagrees with the table on: {wrong}")
+
+
+def test_the_derived_set_finds_the_shim_it_is_anchored_to() -> None:
+    """The derived set must not be empty, and must name a known shim.
+
+    An empty offender list satisfies the fence below just as well when
+    the derived set is empty -- and here that is the likelier accident of
+    the two, because the set is derived from a tree in *another* project.
+    ``GAIN_PKG`` resolving somewhere unexpected would be silent without
+    this.
+    """
+    derived = _modules_warning_at_import()
+
+    assert ANNOTATE_COLUMNS_SHIM in derived, (
+        f"the anchor shim is not in the derived set: {sorted(derived)}. "
+        f"Either GAIN_PKG no longer points at the gain package, or the "
+        f"shim is gone and this needs anchoring on another module-level "
+        f"DeprecationWarning -- an unanchored rule passes on an empty scan"
+    )
+
+
+def test_no_web_api_module_imports_a_module_that_warns_at_import() -> None:
+    """No module here imports one whose import warns.
+
+    A deprecated alias kept for outside callers -- ``annotate_columns``
+    is kept for the CLI name -- warns from its module body, so
+    *importing* it warns.  An in-tree caller makes every process that
+    loads that module emit the warning, and pins the shim past the
+    release meant to remove it, with nothing going red: the import
+    works, and this project does not turn warnings into errors.
+
+    The subject set is derived from ``gain`` rather than listed, so the
+    next shim is covered by the rule that already exists.
+
+    ``core``'s copy sweeps the ``gain`` package and cannot see this tree,
+    the same split as the Markdown rule above: this project's CI image is
+    the only one that contains it.
+    """
+    shims = _modules_warning_at_import()
+    offenders = sorted(
+        f"{py.relative_to(WEB_API_SRC)}: {imported}"
+        for py in WEB_API_SRC.rglob("*.py")
+        for imported in shims & _imported_modules(py)
+    )
+
+    assert offenders == [], (
+        f"these web_api modules import a module that warns at import: "
+        f"{offenders}. Import the module the shim forwards to -- "
+        f"importing the shim warns in every process that loads the "
+        f"importer, and keeps the shim alive past its removal"
+    )
 
 
 #: The pipeline documentation template, spelled out rather than imported
