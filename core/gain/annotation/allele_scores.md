@@ -27,13 +27,15 @@
 
 ---
 
-## `score_annotator.py`
+## `genomic_score_annotator_base.py`
 
 ### `GenomicScoreAnnotatorBase`
 
 - `simple_score_queries` is now filtered to only include attribute sources that
   exist in the resource's `score_definitions`. Virtual attributes (like `"allele"`)
   are excluded, preventing a `KeyError` when `fetch_allele_scores` is called.
+
+## `allele_score_annotator.py`
 
 ### `AlleleScoreAnnotator` — modes
 

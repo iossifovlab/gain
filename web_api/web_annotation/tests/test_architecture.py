@@ -29,7 +29,6 @@ spelling.
 from __future__ import annotations
 
 import ast
-import functools
 import pathlib
 
 import pytest
@@ -206,12 +205,11 @@ def test_the_fence_can_see_the_project_it_polices() -> None:
     assert (WEB_API_SRC / "manage.py").resolve() in swept
 
 
-@functools.cache
 def _imported_modules(py: pathlib.Path) -> frozenset[str]:
     """Absolute dotted names ``py`` imports, however it spells them.
 
-    Cached per file: two rules sweep the whole project, and the sources
-    do not change within a test run.
+    Uncached: one rule calls this, and it visits each file once, so a
+    cache here could never hit.
 
     Resolved from the AST rather than matched against the source text, so
     that ``import markdown2``, ``from markdown2 import markdown`` and an
@@ -221,10 +219,9 @@ def _imported_modules(py: pathlib.Path) -> frozenset[str]:
     The dynamic spelling is read only from the argument of a call to
     ``import_module``/``__import__``.  ``core``'s equivalent takes *every*
     string constant instead, which reports a module that merely names the
-    library in data -- and forces the rule's own module to exempt itself,
-    since it has to name what it forbids.  Narrowing to the call argument
-    costs nothing here: a name assembled at runtime is out of reach of a
-    static sweep either way.
+    library in data.  Narrowing to the call argument costs nothing here:
+    a name assembled at runtime is out of reach of a static sweep either
+    way.
 
     Relative imports are resolved against the containing package, taken as
     the directories between ``WEB_API_SRC`` and the file.  A level that
@@ -283,35 +280,6 @@ def _dynamically_imported_names(call: ast.Call) -> set[str]:
     if isinstance(first, ast.Constant) and isinstance(first.value, str):
         return {first.value}
     return set()
-
-
-#: The deprecated facade over the per-annotator score modules (gain#1152).
-#: A constant, which the sweep does not read as an import -- see
-#: ``_imported_modules``.
-SCORE_ANNOTATOR_FACADE = "gain.annotation.score_annotator"
-
-
-def test_no_web_api_module_imports_the_score_annotator_facade() -> None:
-    """The facade is for gpf; this project imports the base from its module.
-
-    ``core``'s copy of the rule sweeps ``core/gain`` and ``core/tests``
-    and cannot see this tree -- the same split as the Markdown rule
-    above.  ``test_the_fence_can_see_the_project_it_polices`` is what
-    stops this sweep passing by finding nothing.
-    """
-    offenders = [
-        str(py.relative_to(WEB_API_SRC))
-        for py in sorted(WEB_API_SRC.rglob("*.py"))
-        if SCORE_ANNOTATOR_FACADE in _imported_modules(py)
-    ]
-
-    assert offenders == [], (
-        f"these web_api modules import the deprecated "
-        f"{SCORE_ANNOTATOR_FACADE}: {offenders}. Import "
-        f"GenomicScoreAnnotatorBase from "
-        f"gain.annotation.genomic_score_annotator_base instead -- "
-        f"gain#1154 deletes the facade"
-    )
 
 
 #: The pipeline documentation template, spelled out rather than imported
