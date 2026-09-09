@@ -17,10 +17,14 @@ score's class:
 - :func:`validate_record_arrays` -- the same rule over a batch's columns.
 
 Both are **transducers**: they hand back exactly what they were given, in
-order, and raise
-:class:`~gain.genomic_resources.resource_errors.MalformedResourceError` at the
-first record their kind cannot mean.  Neither re-reads and neither
-materialises the region -- the scan pays for one read, and these ride it.
+order, and raise at the first record their kind cannot mean.  A record the
+kind's ORDERING rule refuses raises
+:class:`~gain.genomic_resources.resource_errors.MalformedResourceError`; a
+record whose own end precedes its own begin raises the plain ``OSError`` that
+:func:`~gain.genomic_resources.resource_errors.inverted_span_error` builds,
+which is a claim about one record rather than about the resource's order.
+Neither re-reads and neither materialises the region -- the scan pays for one
+read, and these ride it.
 
 Both read RAW records rather than the spans a kind yields, because a kind's
 normalization destroys the evidence: an allele score collapses a record to the
@@ -39,10 +43,13 @@ avoid a *hidden* shared statement -- one class attribute two validators read
 and interpreted differently.  A body called explicitly from two registrations
 hides nothing, so that reason does not reach this arrangement (ADR 0027).
 
-**A kind nobody wrote a rule for cannot be scanned.**  The registration for
-``GenomicScore`` raises ``NotImplementedError``: the three kinds are flat
-siblings, so a kind added later lands there rather than inheriting a rule
-chosen for something else.  That refusal is at run time -- a missing
+**A kind nobody wrote a rule for cannot be scanned.**  The undecorated body
+of each function -- ``singledispatch``'s default, which it keys on ``object``
+rather than on ``GenomicScore`` -- raises ``NotImplementedError`` naming the
+class it was handed.  The three kinds are flat siblings, so a kind added later
+reaches that default rather than inheriting a rule chosen for something else.
+
+That refusal is at run time -- a missing
 registration has no static analogue the way a missing ``@abstractmethod``
 override had -- so ``test_every_buildable_kind_is_registered`` stands in for
 the check the type checker used to make.  ADR 0001's gain#1261 Amendment
@@ -85,6 +92,23 @@ _ALLELE = "an allele score's"
 _FRAGMENT = "a fragment score's"
 
 
+def _no_rule_message(score: GenomicScore, door: str) -> str:
+    """What both doors say to a kind nobody registered a rule for.
+
+    Worded here rather than at either raise site so the two cannot drift: the
+    only test on these messages matches on the class name, and would not
+    notice if one door started wording the rest differently.
+
+    The ``raise NotImplementedError(...)`` stays spelled out at each door
+    rather than being built here too -- ruff reads that exact shape as a stub
+    and stops asking why the door does not use its stream arguments.
+    """
+    return (
+        f"no {door} validation rule is registered for "
+        f"{type(score).__name__}; a score kind is scanned only through a "
+        f"rule written for it (ADR 0027)")
+
+
 @singledispatch
 def validate_records(
     score: GenomicScore, records: Iterator[Record],
@@ -96,10 +120,7 @@ def validate_records(
     otherwise be validated by a rule nobody chose for it, which is the failure
     ADR 0008 exists to undo.
     """
-    raise NotImplementedError(
-        f"no record validation rule is registered for "
-        f"{type(score).__name__}; a score kind is scanned only through a "
-        f"rule written for it (ADR 0027)")
+    raise NotImplementedError(_no_rule_message(score, "record"))
 
 
 @singledispatch
@@ -131,18 +152,15 @@ def validate_record_arrays(
     gives.
     """
     raise NotImplementedError(
-        f"no record-array validation rule is registered for "
-        f"{type(score).__name__}; a score kind is scanned only through a "
-        f"rule written for it (ADR 0027)")
+        _no_rule_message(score, "record-array"))
 
 
 def _record_to_begin_end(record: Record) -> tuple[str, int, int]:
     """Read a record's three positional slots, checking their order.
 
-    Returns the chrom as well, so it is the wrong door for a caller that wants
-    only the two positions: read the slots and raise
-    :func:`~gain.genomic_resources.resource_errors.inverted_span_error`
-    directly, as the read path's per-record loops do.
+    Private to this module, and to the two rules above: both use the chrom to
+    reset their carry at a contig boundary, which is why they take the
+    3-tuple rather than reading the two positions themselves.
     """
     chrom = record[CHROM]
     pos_begin = record[POS_BEGIN]

@@ -251,13 +251,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         be weighed by a rule nobody chose for it, which is the failure ADR
         0008 exists to undo.
 
-        The validation rules this list used to name -- ``validate_records``
-        and ``validate_record_arrays`` -- are no longer methods at all.  They
-        are ``singledispatch`` functions in
-        :mod:`gain.genomic_resources.statistics.record_validation`, registered
-        per kind, and a kind with no registration is refused there for the
-        same reason (ADR 0027).  A kind's author still writes one rule per
-        door; the door is just not on this class.
+        A kind's two validation rules are not on this list, and not on this
+        class: they are registered per kind in
+        :mod:`gain.genomic_resources.statistics.record_validation`, whose
+        default refuses a kind nobody wrote one for (ADR 0027).
 
     See Also:
         - PositionScore: For position-based genomic scores
@@ -988,15 +985,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         The hottest loop in the read path, so it reads its record slots
         directly rather than through the helpers that wrap them (gain#823):
-        the ``_record_to_begin_end`` this loop once called returns a 3-tuple
-        whose chrom it drops on the next line, and
         :meth:`get_score_values_from_record` is a method call around a
-        comprehension over defs already resolved for the whole region.  The
-        first of those has since followed the validation rules into
-        :mod:`gain.genomic_resources.statistics.record_validation` (ADR 0027)
-        and is private to them; the second remains, unchanged, for its other
-        callers.  The ordering refusal they carried is kept here, as one
-        comparison raising the shared
+        comprehension over defs already resolved for the whole region, and it
+        remains, unchanged, for its other callers.  The refusal those helpers
+        carried is kept here, as one comparison raising the shared
         :func:`~gain.genomic_resources.resource_errors.inverted_span_error`;
         see ``test_segment_path_refuses_a_backwards_record``.
         """

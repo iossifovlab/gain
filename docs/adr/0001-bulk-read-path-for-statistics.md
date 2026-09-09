@@ -402,7 +402,7 @@ That default-deny is structural, not a matter of enumeration:
 
 - `record_weight` and `validate_record_arrays` both refuse a kind that has not
   stated itself — the two facts the bulk accumulator and the bulk door read. A
-  new kind cannot exist without stating its own record semantics.
+  new kind cannot be SCANNED without stating its own record semantics.
 
   *[Amended by [ADR 0027](0027-record-validation-is-a-registry-in-the-statistics-package.md).
   `record_weight` is still `@abstractmethod` on `GenomicScore`, so it is still

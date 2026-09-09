@@ -3,10 +3,10 @@
 ADR 0008 gave each score kind its own validation rule and gave the scan sole
 ownership of applying it.  The rules used to sit on the read classes anyway;
 this module is where they live now -- two ``functools.singledispatch``
-functions whose base registration refuses a kind nobody wrote a rule for.
+functions whose default refuses a kind nobody wrote a rule for.
 
 What these tests cover is the registry itself: that dispatch reaches the right
-body, and that every kind the factory can build has been registered.  The rule
+body, and that the kinds the factory builds are registered.  The rule
 bodies are covered where they always were -- ``test_scan_read_door.py`` and
 ``test_scan_array_door.py`` -- through this module's front door.
 
@@ -22,13 +22,11 @@ from collections.abc import Generator
 
 import numpy as np
 import pytest
-from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_scores import (
     AlleleRecordArrays,
     AlleleScore,
     FragmentScore,
     PositionScore,
-    build_score_from_resource,
 )
 from gain.genomic_resources.resource_errors import (
     MalformedResourceError,
@@ -43,18 +41,19 @@ from gain.genomic_resources.statistics.record_validation import (
     validate_records,
 )
 from gain.genomic_resources.testing.builders import (
-    a_fragment_score,
-    a_position_score,
     an_allele_score,
 )
 
 
-def _a_record(chrom: str, pos: int) -> Record:
-    """One raw allele record, as a backend yields it."""
-    return (chrom, pos, pos, "A", "G", (chrom, str(pos), str(pos)))
+def _an_unopened_allele_score(tmp_path: pathlib.Path) -> AlleleScore:
+    """An allele score to dispatch on, never opened.
 
-
-def _an_allele_score(tmp_path: pathlib.Path) -> AlleleScore:
+    Validation reads the records it is handed and never touches the table,
+    so nothing here needs opening.  Named for that, because
+    ``test_genomic_scores_fetch_region.py`` has an ``_an_allele_score`` that
+    IS opened, and two same-named helpers differing in that silently would
+    be a trap.
+    """
     return AlleleScore(
         an_allele_score()
         .with_score("s", "float")
@@ -64,36 +63,6 @@ def _an_allele_score(tmp_path: pathlib.Path) -> AlleleScore:
         """)
         .build_resource(tmp_path),
     )
-
-
-def test_dispatch_reaches_the_rule_written_for_the_score_kind(
-    tmp_path: pathlib.Path,
-) -> None:
-    # The tracer bullet: an allele score's records may repeat a position but
-    # may not move backwards, and the refusal names the kind.  That the
-    # message says "an allele score's" is what proves dispatch landed on the
-    # allele body rather than on some shared default.
-    score = _an_allele_score(tmp_path)
-
-    with pytest.raises(MalformedResourceError) as excinfo:
-        list(validate_records(score, iter([
-            _a_record("chr1", 20), _a_record("chr1", 10),
-        ])))
-
-    assert "an allele score's records must not move backwards" in str(
-        excinfo.value)
-
-
-def test_records_that_hold_to_the_rule_pass_through_unchanged(
-    tmp_path: pathlib.Path,
-) -> None:
-    # A transducer: what comes out is what went in, in order.  Two records at
-    # ONE position is what an allele score is made of, so this stream is legal.
-    score = _an_allele_score(tmp_path)
-    records = [_a_record("chr1", 10), _a_record("chr1", 10),
-               _a_record("chr1", 20)]
-
-    assert list(validate_records(score, iter(records))) == records
 
 
 def test_a_record_whose_span_runs_backwards_is_refused(
@@ -107,7 +76,7 @@ def test_a_record_whose_span_runs_backwards_is_refused(
     #
     # Asked through the door rather than of the helper: the helper is private
     # to this module now, and the door is where the scan meets the rule.
-    score = _an_allele_score(tmp_path)
+    score = _an_unopened_allele_score(tmp_path)
     backwards_span = ("chr1", 20, 10, None, None, ("chr1", "20", "10"))
 
     with pytest.raises(OSError, match="has a region") as excinfo:
@@ -116,9 +85,9 @@ def test_a_record_whose_span_runs_backwards_is_refused(
     assert not isinstance(excinfo.value, MalformedResourceError)
 
 
-def test_every_buildable_kind_is_registered(
-    tmp_path: pathlib.Path,
-) -> None:
+@pytest.mark.parametrize(
+    "kind", [PositionScore, AlleleScore, FragmentScore])
+def test_every_buildable_kind_is_registered(kind: type) -> None:
     # The test that stands in for a compile-time check.  While the rules were
     # @abstractmethod on GenomicScore, a kind that omitted one was refused by
     # mypy ([abstract]) and pylint (W0223) before anything ran; a missing
@@ -126,34 +95,15 @@ def test_every_buildable_kind_is_registered(
     # Amendment retired the bulk scan's kind gate on the strength of that
     # refusal, so this is where the guarantee is kept now (ADR 0027).
     #
-    # The kinds are read off the factory rather than listed here: a fourth
-    # kind wired into build_score_from_resource and registered nowhere is
-    # exactly the case this must catch.
-    resources = [
-        a_position_score().with_score("s", "float").with_data("""
-            chrom  pos_begin  pos_end  s
-            chr1   10         20       0.5
-        """),
-        an_allele_score().with_score("s", "float").with_data("""
-            chrom  pos_begin  reference  alternative  s
-            chr1   10         A          G            0.5
-        """),
-        a_fragment_score().with_score("s", "float").with_data("""
-            chrom  pos_begin  pos_end  s
-            chr1   10         20       0.5
-        """),
-    ]
-
-    kinds = {
-        type(build_score_from_resource(
-            builder.build_resource(tmp_path / f"kind{index}")))
-        for index, builder in enumerate(resources)
-    }
-
-    assert kinds == {PositionScore, AlleleScore, FragmentScore}
-    for kind in kinds:
-        assert kind in validate_records.registry
-        assert kind in validate_record_arrays.registry
+    # The three kinds build_score_from_resource builds today, listed.  They
+    # cannot be derived: it is an if/elif chain over type strings, with
+    # nothing to enumerate.  So a fourth kind is caught here only if whoever
+    # adds it to that chain adds it here too -- the same discipline the chain
+    # itself needs.  Sweeping GenomicScore.__subclasses__() would derive the
+    # set, and is not used because a shared pytest process also carries the
+    # deliberately unregistered doubles this design requires.
+    assert kind in validate_records.registry
+    assert kind in validate_record_arrays.registry
 
 
 class _BackwardsAlleleScore(AlleleScore):

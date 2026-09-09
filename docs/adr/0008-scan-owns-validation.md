@@ -105,9 +105,9 @@ is what enforces.
 > The decision stands — each kind still states its own rule, and no kind inherits
 > one — but the rules no longer live on the score classes. They are
 > `functools.singledispatch` registrations in
-> `statistics/record_validation.py`, and "no rule nobody chose" is now the base
-> registration for `GenomicScore` raising `NotImplementedError` rather than an
-> `@abstractmethod` over a raising body. 0027 also records what that costs: the
+> `statistics/record_validation.py`, and "no rule nobody chose" is now each
+> function's `singledispatch` default raising `NotImplementedError` rather than
+> an `@abstractmethod` over a raising body. 0027 also records what that costs: the
 > refusal moves from lint time to run time, and a registry-completeness test
 > stands in for the static check.
 
@@ -194,7 +194,9 @@ refuses to index a file whose positions decrease
 (`[E::hts_idx_push] Unsorted positions on sequence`), and a bigWig's intervals
 are sorted by its format. So `AlleleScore.validate_record_arrays` and
 `FragmentScore.validate_record_arrays` cannot fire on any resource that reaches
-them, and their tests reach them by substituting the backend. They are written
+them, and their tests reach them by substituting the backend.  *[Since ADR
+0027 these are the rules those two kinds are REGISTERED under rather than
+methods on them; which rule fires on which kind is unchanged.]* They are written
 anyway, because the alternative is a kind that states no rule on one of its two
 paths, and because "the backend happens to prevent it" is a property of today's
 backends rather than of the kind. What #591 genuinely changed on that path is

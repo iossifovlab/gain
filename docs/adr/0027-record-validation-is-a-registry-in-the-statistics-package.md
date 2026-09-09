@@ -39,12 +39,15 @@ both `functools.singledispatch`, both dispatching on the score's class. Their
 signatures are otherwise what the methods had; the receiver became the first
 argument.
 
-**2. The base registration refuses.** The registration for `GenomicScore` raises
-`NotImplementedError` naming the class it was handed. This is decision 4's "no rule
-nobody chose" restated for a registry: the three kinds are flat siblings of
-`GenomicScore`, so a kind added later dispatches to the base registration and cannot
-be scanned until someone registers a rule for it. What it may *not* do is inherit
-one silently.
+**2. The default refuses.** Each function's undecorated body raises
+`NotImplementedError` naming the class it was handed. `singledispatch` keys that
+default on `object`, not on `GenomicScore` — the effect is the one wanted, and
+the spelling is worth knowing before anyone edits the registry.
+
+This is decision 4's "no rule nobody chose" restated for a registry: the three
+kinds are flat siblings of `GenomicScore`, so a kind added later reaches that
+default and cannot be scanned until someone registers a rule for it. What it may
+*not* do is inherit one silently.
 
 **3. Two rule bodies serve three kinds.** There are two rules, not six: a position
 score refuses records that overlap *or touch* (`begin <= prev_end`); allele and
@@ -67,6 +70,15 @@ the three `validate_records` bodies. `GenomicScore._inverted_span_error` is prom
 to a public `resource_errors.inverted_span_error`, beside `overlapping_records_error`
 and `backwards_records_error`, and the read-path callers raise it directly.
 `GenomicScore` ends up with neither.
+
+**One refusal deliberately stays on the read path.** `GenomicScore._score_segments`
+and `AlleleScore._allele_point_values` each still compare a record's two ends and
+raise. That is not an oversight and not a counter-example to ADR 0008 decision 1: it
+is a claim about a single record's own two slots, not about the resource's order, and
+a reader cannot proceed past it whoever is reading. What ADR 0008 removed from the
+read path was *ordering* validation, which is the pair this record moves. So the
+Consequences below say `GenomicScore` no longer *defines* `_inverted_span_error` —
+it still raises the shared one, twice, and should.
 
 `inverted_span_error` takes **scalars** — `(chrom, pos_begin, pos_end, ref, alt)` —
 not a `Record`, and that is not a style choice. The record slot constants live in
@@ -102,11 +114,22 @@ attribute … [abstract]` and pylint reports `W0223`, both without any `ABCMeta`
 kind that omitted the method was refused before anything ran.
 
 A missing `@register` has no such analogue. No checker verifies that a
-`singledispatch` registry is complete. So the refusal moves from lint time to run
-time — the base registration raising when a scan reaches it — and the static half is
-replaced by a test: `test_every_buildable_kind_is_registered` asserts that every
-class `build_score_from_resource` can return appears in both dispatchers'
+`singledispatch` registry is complete. Nor does anything check a registered body's
+*signature* against the dispatcher's: `register(cls, partial(...))` is opaque to mypy,
+where an `@abstractmethod` override was checked. Both halves of the static guarantee
+go, not just completeness. So the refusal moves from lint time to run
+time — the default raising when a scan reaches it — and the static half is
+replaced by a test: `test_every_buildable_kind_is_registered` asserts that the
+three kinds `build_score_from_resource` builds today appear in both dispatchers'
 `.registry`.
+
+That test lists those three rather than deriving them, and the limitation is
+worth naming: `build_score_from_resource` is an `if`/`elif` chain over resource
+type strings, so there is nothing to enumerate. A fourth kind added to that
+chain is caught only if whoever adds it also adds it here — the same discipline
+the chain itself needs. Sweeping `GenomicScore.__subclasses__()` would derive
+the set instead, and was rejected because a shared pytest process also carries
+the deliberately-unregistered test doubles this design requires.
 
 This matters beyond bookkeeping, because [ADR 0001](0001-bulk-read-path-for-statistics.md)'s
 gain#1261 Amendment retired the bulk scan's resource-kind condition on the strength
@@ -121,6 +144,20 @@ abstract.
 **Leave the bodies on the classes and re-word ADR 0008.** The cheapest option, and
 it keeps a rule in a file whose other readers never invoke it. ADR 0008's title is
 not the thing that was wrong.
+
+**A sibling module inside `genomic_scores/`.** `genomic_scores/record_validation.py`
+would also be importable by both callers acyclically, and would keep the rules beside
+the kinds that hold to them. Rejected because it re-states the thing this record is
+undoing: the rule would sit in the read package again, one file over, and the reason
+it is not a read concern would once more be visible only in the call graph. The
+consumer owns the rule.
+
+**`singledispatch` is a new idiom here.** It is the first use in `core/gain/`. A plain
+`if`/`elif` chain ending in `raise` would have the same default-deny with no new
+vocabulary. Rejected on readability: six `register` lines read as a table of kind to
+rule, and a chain's fallthrough is easy to write as "the last kind" rather than as a
+refusal. A judgement call, and the cheaper one to reverse if the idiom does not earn
+its keep.
 
 **Put the functions on the implementation classes.** Rejected by the fence above:
 `scan.py` cannot import its own package, and the task bodies hold a score, not an
