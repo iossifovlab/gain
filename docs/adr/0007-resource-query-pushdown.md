@@ -54,9 +54,9 @@ added it and no `grr_manage` run has rebuilt the index since. The resource
 serves the label from its `meta.labels` regardless, so "no column" does not
 imply "no resource carries the key", and settling the clause for every
 resource at once was wrong in the direction that silently loses them: since
-supplying a `search_term` or a `resource_type` is what routes the search
-through the index, adding a filter that should only narrow the result set
-emptied it instead. Such a clause is now handed back to the caller and
+supplying a `search_term` or a `resource_type` was what routed the search
+through the index (a `resource_type` no longer does — gain#1212), adding a
+filter that should only narrow the result set emptied it instead. Such a clause is now handed back to the caller and
 re-asked of each resource the statement yields, which the indexed path already
 materialises in full.
 
@@ -205,3 +205,12 @@ materialisation, which the side table above would enable.
   or a `type` edited since the build reads as it was then — the same
   false-negative/false-positive pair, in the two filters that only the index
   can serve.
+
+  *Amended by gain#1212:* only `search_term` is such a filter. A type is one
+  token every resource carries and Python can compare it exactly, which is
+  what FTS5 tokenization denies a term — so a `resource_type` with no term
+  beside it is now answered from the resource, off the indexed route
+  entirely, and reads the live type rather than the recorded one. A type
+  *conjoined with a term* still rides the statement and still reads the
+  column, so the pair above survives for exactly that case. The half of this
+  bullet about `search_term` stands unchanged.

@@ -920,8 +920,8 @@ class SearchIndexUnavailableError(ValueError):
         super().__init__(
             f"repository <{repo_id}> cannot be searched: {reason}. "
             f"Build a search index with `grr_manage repo-repair`, or "
-            f"select by id and labels with a resource query, which needs "
-            f"none",
+            f"select by type, id and labels with a type filter and a "
+            f"resource query, which need none",
         )
 
 
@@ -1660,16 +1660,18 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
         """Search for resources using SQLite full-text search.
 
         The three filters conjoin: a resource must satisfy every one that is
-        supplied. ``search_term`` and ``resource_type`` are matched against
-        the FTS index; ``resource_query`` is the annotator wildcard language
-        -- an id glob plus an optional label query -- whose id glob joins
-        them in the same statement, so the index narrows once rather than
-        handing rows to a filter.
+        supplied. A ``search_term`` is matched against the FTS index, and
+        when one is supplied the ``resource_type`` and the id glob of the
+        ``resource_query`` -- the annotator wildcard language, an id glob
+        plus an optional label query -- join it in the same statement, so
+        the index narrows once rather than handing rows to a filter.
 
-        A ``resource_query`` on its own never opens the index, and is
-        matched in Python instead. That is what makes it work on a
-        repository with no ``.CONTENTS.sqlite3.gz`` at all, where opening
-        the metadata db raises.
+        Without a ``search_term`` the index is never opened: the type and
+        the query are matched in Python, over every resource. That is what
+        makes them work on a repository with no ``.CONTENTS.sqlite3.gz`` at
+        all, where opening the metadata db raises. Only the term genuinely
+        needs the index -- FTS5 tokenisation is not reproducible in Python,
+        while a type is one token every resource carries (gain#1212).
 
         Both routes evaluate the same parsed query, and every label clause
         is answered against the resource's own ``meta.labels`` rather than
@@ -1730,10 +1732,22 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
             resource_type: str | None,
             parsed_query: ResourceQuery | None,
     ) -> Generator[GenomicResource, None, None]:
-        if search_term is None and resource_type is None:
+        # Expanded rather than compared, whichever route runs below: a
+        # fragment score has two accepted `type:` spellings, and asking for
+        # one must find the other. Empty when no type was asked for, which
+        # both routes read as "no type predicate".
+        accepted = (
+            equivalent_resource_types(resource_type) if resource_type else ()
+        )
+        if search_term is None:
+            # Asked of each resource, because only a term needs the index
+            # (gain#1212). The docstring above says why.
             for res in self.get_all_resources():
-                if parsed_query is None or parsed_query.match(res):
-                    yield res
+                if accepted and res.get_type() not in accepted:
+                    continue
+                if parsed_query is not None and not parsed_query.match(res):
+                    continue
+                yield res
             return
 
         conn = self.open_repository_metadata()
@@ -1757,22 +1771,18 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
                     "be indexed -- check the repair report for the "
                     "resources it skipped")
             query = "SELECT full_id FROM contents "
-            conditions = []
-            params: list[Any] = []
-            if search_term is not None:
-                # Ahead of the statement below, and independent of
-                # whether that statement ends up asking FTS5 to read the
-                # term at all.
-                _reject_unparsable_search_term(conn, search_term)
-                conditions.append("contents MATCH ?")
-                params.append(search_term)
-            if resource_type is not None:
-                # Expanded, not compared: a fragment score has two accepted
-                # `type:` spellings, and asking for one must find the other.
-                # This has to happen HERE rather than in a caller -- the
-                # predicate is applied in SQL, so no Python-side filtering
-                # downstream can recover a row this query never returned.
-                accepted = equivalent_resource_types(resource_type)
+            # Ahead of the statement below, and independent of whether
+            # that statement ends up asking FTS5 to read the term at all.
+            _reject_unparsable_search_term(conn, search_term)
+            # A term is what routes a search here, so it is always one of
+            # the conditions -- there is no reaching this with none.
+            conditions = ["contents MATCH ?"]
+            params: list[Any] = [search_term]
+            if accepted:
+                # The type predicate has to be applied HERE rather than in
+                # a caller: it is applied in SQL, so no Python-side
+                # filtering downstream can recover a row this query never
+                # returned.
                 placeholders = ", ".join("?" * len(accepted))
                 conditions.append(f"type IN ({placeholders})")
                 params.extend(accepted)
@@ -1781,9 +1791,7 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
                 id_condition, deferred = _resource_query_condition(
                     conn, parsed_query)
                 conditions.append(id_condition)
-            if conditions:
-                query += " WHERE "
-                query += " AND ".join(conditions)
+            query += " WHERE " + " AND ".join(conditions)
             rows = cursor.execute(query, params)
             all_resources = self.get_all_resources_dict()
             for row in rows:

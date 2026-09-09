@@ -97,17 +97,19 @@ def test_a_malformed_search_term_is_reported_as_such(
     assert '"' in str(excinfo.value)
 
 
+@pytest.mark.parametrize("blank", ["", " ", "\t"])
 def test_an_empty_resource_type_is_an_unset_one(
-    unindexed_grr: GenomicResourceProtocolRepo,
+    unindexed_grr: GenomicResourceProtocolRepo, blank: str,
 ) -> None:
     """The other filter is unset when blank too (gain#653).
 
     Same accident as an empty term, and the same two symptoms: nothing
     found where everything was meant to be, and a repository with no
-    index reporting one as missing for a filter nobody set.
+    index reporting one as missing for a filter nobody set. Whitespace
+    counts as blank here exactly as it does for a term.
     """
     found = {res.resource_id for res in unindexed_grr.search_resources(
-        resource_type="")}
+        resource_type=blank)}
 
     assert found == {"scores/res_a", "other/res_b"}
 

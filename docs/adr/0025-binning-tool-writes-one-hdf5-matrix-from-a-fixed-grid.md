@@ -107,6 +107,14 @@ full-text filter, conjoined with the query; it needs an indexed repository,
 and a repository without one refuses the entry at parse time rather than
 mid-run. Matches are ordered by resource id.
 
+*Amended by gain#1212:* the type restriction is the search's own
+`resource_type` filter, not the binner's. It was the binner's because
+`search_resources` could only answer a type out of the full-text index, which
+a repository need not have; a type with no `search_term` beside it is answered
+from the resources themselves now, so the binner asks for what it wants and
+the expansion of equivalent `type:` spellings comes with it. The sentence
+about `search_term` stands: it remains the one key that needs an index.
+
 **An entry matching no resource is a parse-time error naming the entry.**
 This is the one deliberate departure from the prototype's language, which
 silently produced no column. A typo must not shrink the matrix.

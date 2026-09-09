@@ -632,9 +632,12 @@ def test_a_non_score_resource_keeps_labels_that_collide_with_nothing(
     assert _create_contents_db(proto) == frozenset()
 
     repo = GenomicResourceProtocolRepo(proto)
+    # Searched with a term, so the index that kept the label is the one
+    # answering: a type alone never opens it (gain#1212).
     assert {
         res.resource_id
         for res in repo.search_resources(
+            search_term="hg38",
             resource_query='*[reference_genome="hg38"]',
             resource_type="genome")
     } == {"genome"}
@@ -727,10 +730,13 @@ def test_searching_a_repository_whose_index_holds_nothing(
 
     repo = GenomicResourceProtocolRepo(proto)
 
-    # Both filters route through the index, so both have to say so.
-    with pytest.raises(SearchIndexUnavailableError) as excinfo:
-        list(repo.search_resources(resource_type="position_score"))
-    assert "no resource could be indexed" in str(excinfo.value)
+    # Only a term routes through the index. A type is asked of the
+    # resources themselves (gain#1212), so the rejected resource is still
+    # found by its type -- the index was never consulted for it.
+    assert [
+        res.resource_id
+        for res in repo.search_resources(resource_type="position_score")
+    ] == ["evil"]
 
     with pytest.raises(SearchIndexUnavailableError) as excinfo:
         list(repo.search_resources(search_term="liver"))

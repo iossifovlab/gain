@@ -174,9 +174,13 @@ def test_resource_search_by_the_new_type_finds_legacy_typed_resources(
 ) -> None:
     """The picker's *search* path needs the same expansion as its list path.
 
-    Separate endpoint, separate code path -- and this one pushes the type
-    predicate down into the FTS index, where no Python-side filtering can
-    recover a row the query never returned.
+    Separate endpoint, separate code path -- and one whose type predicate
+    is applied inside the search rather than by the endpoint, so only the
+    search can expand it.  With no ``search`` beside it the type is
+    answered from the resources (gain#1212); conjoined with one it is
+    pushed into the FTS index, where no Python-side filtering could
+    recover a row the statement never returned.  The expansion has to hold
+    on both routes, and this pins the one the picker actually issues.
     """
     legacy = "cnv_collections/test_collection"
 

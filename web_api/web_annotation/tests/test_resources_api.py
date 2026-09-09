@@ -130,9 +130,10 @@ from web_annotation.resources.views import SearchResources
         # whether `scores/allele1` is in it. The committed index was
         # stale: `scores/allele1` and `pipeline/allele_pipeline` had been
         # on the fixture filesystem for some time without ever having
-        # been indexed, so a `search`/`type` request could not see them
-        # while an unfiltered one (which short-circuits to
-        # `get_all_resources()`) could. Rebuilding the index to carry the
+        # been indexed, so a `search` request could not see them while an
+        # unfiltered one (which short-circuits to `get_all_resources()`)
+        # could -- as a `type` request also could not, until gain#1212
+        # took the type off the indexed route. Rebuilding the index to carry the
         # label columns the query language needs also corrected that, and
         # these two cases pin the corrected answers so the next rebuild
         # cannot move them unnoticed.
@@ -528,29 +529,36 @@ def test_every_listed_resource_is_indexed(
 ) -> None:
     """A resource in the fixture GRR has to be indexed, not just present.
 
-    Every filtered request answers out of the committed FTS index, while
-    an unfiltered listing walks the filesystem, so a resource dropped into
+    A ``search`` request answers out of the committed FTS index, while an
+    unfiltered listing walks the filesystem, so a resource dropped into
     the fixture without a rebuild is visible to the one and invisible to
     the other -- the drift the `scores/allele1` cases above were added to
-    pin, one resource at a time.  This pins it for the whole fixture: the
-    union of every ``type`` filter has to be the unfiltered listing, so
+    pin, one resource at a time.  This pins it for the whole fixture, so
     the next addition without a rebuild (gain#1165 was the last) fails
     here rather than surfacing as an empty picker somewhere.
+
+    Levered on ``search`` rather than on ``type``: since gain#1212 a type
+    filter is answered from the resources themselves and opens no index,
+    so enumerating by type would make this hold by construction and stop
+    detecting anything.  Each resource is looked for by the last segment
+    of its own id, which the index carries in its ``id`` column -- these
+    fixture ids share no one token that would find them all at once.
     """
     client = clients["anonymous"]
     listed = set(client.get("/api/resources").json())
-    assert listed, "an empty listing would make the union below vacuous"
+    assert listed, "an empty listing would make the loop below vacuous"
 
-    indexed: set[str] = set()
-    for resource_type in client.get("/api/resources/types").json():
+    for resource_id in listed:
+        term = resource_id.rsplit("/", 1)[-1]
         response = client.get(
             "/api/resources/search",
-            query_params={"type": resource_type, "page_size": 100})
+            query_params={"search": term, "page_size": 100})
         assert response.status_code == 200, response.content
-        indexed |= {
-            res["resource_id"] for res in response.json()["resources"]}
-
-    assert indexed == listed
+        found = {res["resource_id"] for res in response.json()["resources"]}
+        assert resource_id in found, (
+            f"<{resource_id}> is on the filesystem and not in the FTS "
+            f"index; rebuild it with `grr_manage repo-repair`"
+        )
 
 
 @pytest.mark.parametrize("page_size", [0, -1])

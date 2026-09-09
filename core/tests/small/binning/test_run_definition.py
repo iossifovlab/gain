@@ -61,6 +61,25 @@ def test_a_glob_entry_expands_to_its_matches_sorted_by_resource_id(
     ]
 
 
+def test_a_query_matching_only_non_scores_matches_nothing(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    """The entry is type-restricted, and a genome is what shows it.
+
+    ``gen*`` selects the toy GRR's two reference genomes and nothing else.
+    Every other query in this module is scoped to a prefix only position
+    scores live under, so none of them can tell a search that restricts
+    the type from one that does not: without the restriction these two
+    would be taken for tracks, and the error below is the parser saying
+    the entry selected no score at all.  The restriction is the search's
+    own ``resource_type``, which needs no index (gain#1212).
+    """
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_one_entry({"resource_query": "gen*"}, repo, genome)
+
+    assert "matches no position_score resource" in str(excinfo.value)
+
+
 def test_an_entry_matching_nothing_is_a_parse_error_naming_the_entry(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:

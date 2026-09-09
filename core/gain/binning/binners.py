@@ -123,12 +123,12 @@ class PositionScoreBinner:
 
         The query is always a repository search -- an exact id is the
         search that matches one resource -- restricted to position scores
-        and ordered by resource id, so the track order is deterministic
-        whatever the repository yields.  The type restriction is applied
-        here because the search's own ``resource_type`` filter is answered
-        by the full-text index, which a repository need not have.  A
-        ``search_term`` is that index's filter, conjoined with the query
-        (D7).
+        by the search's own ``resource_type`` filter, and ordered by
+        resource id, so the track order is deterministic whatever the
+        repository yields.  That filter needs no index of its own
+        (gain#1212).  A ``search_term`` is the full-text index's filter,
+        conjoined with the query (D7), and the one key that needs the
+        index.
         """
         check_keys(label, config, cls.ENTRY_KEYS)
         query = config.get("resource_query")
@@ -150,10 +150,10 @@ class PositionScoreBinner:
         # draw, so the consumption sits inside the same try.
         try:
             found = grr.search_resources(
-                search_term=search_term, resource_query=query)
+                search_term=search_term, resource_query=query,
+                resource_type="position_score")
             matches = sorted(
-                (r for r in found if r.get_type() == "position_score"),
-                key=lambda resource: resource.resource_id)
+                found, key=lambda resource: resource.resource_id)
         except (ResourceQueryParseError, SearchTermError) as err:
             raise RunDefinitionError(f"{label}: {err}") from err
         except SearchIndexUnavailableError as err:
