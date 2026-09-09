@@ -1394,9 +1394,17 @@ class FsspecReadOnlyProtocol(
         filepath = self.get_resource_file_url(resource, filename)
         if "w" in mode:
             if self.mode() == Mode.READONLY:
+                # ``filepath`` derives from the credential-BEARING
+                # ``_fetch_url``, and this message is interpolated before any
+                # handle exists, so the ``_RedactingFile`` wrapper of ADR 0023
+                # cannot reach it. Redacted here by hand, as the download
+                # loop's "destination file not created" path already is
+                # (gain#620, gain#1106). It matters more than a propagated
+                # error: ``OSError`` is in ``RESOURCE_ERRORS``, so
+                # ``report_resource_failure`` logs this text at ERROR.
                 raise OSError(
                     f"Read-Only protocol {self.get_id()} trying to open "
-                    f"{filepath} for writing")
+                    f"{_strip_url_userinfo(filepath)} for writing")
 
             # Create the containing directory if it doesn't exists.
             parent = os.path.dirname(filepath)
