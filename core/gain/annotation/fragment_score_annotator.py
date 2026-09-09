@@ -18,6 +18,9 @@ from gain.genomic_resources.aggregators import (
 )
 from gain.genomic_resources.genomic_scores import FragmentScore
 from gain.genomic_resources.resource_types import (
+    LEGACY_ANNOTATOR_NAMES as _LEGACY_ANNOTATOR_NAMES,
+)
+from gain.genomic_resources.resource_types import (
     warn_deprecated_spelling,
 )
 from gain.genomic_resources.score_filter import ScoreFilterError
@@ -31,13 +34,14 @@ FRAGMENT_FILTER_PARAMETER = "fragment_filter"
 LEGACY_FILTER_PARAMETER = "cnv_filter"
 
 #: The annotator names that mean this annotator, deprecated spelling to the
-#: preferred one it should be rewritten as.  Both are registered entry-point
-#: keys, so a pipeline naming either builds; only the value is worth typing
-#: in a config written today.
-LEGACY_ANNOTATOR_NAMES = {
-    "cnv_collection": "fragment_score",
-    "cnv_collection_annotator": "fragment_score_annotator",
-}
+#: preferred one it should be rewritten as.
+#:
+#: Re-exported rather than declared here: ``annotation_config`` needs the
+#: same set while parsing and imports this module's dependencies rather
+#: than this module, so it lives beside ``RETIRED_ANNOTATOR_NAMES`` in
+#: ``resource_types`` (gain#1266).  Kept as a name here because this is
+#: where a reader of the annotator looks for it.
+LEGACY_ANNOTATOR_NAMES = _LEGACY_ANNOTATOR_NAMES
 
 
 def _read_overlap_fraction(

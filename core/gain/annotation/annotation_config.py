@@ -25,7 +25,9 @@ from gain.genomic_resources.resource_query import (
     ResourceQueryParseError,
 )
 from gain.genomic_resources.resource_types import (
-    FRAGMENT_SCORE_TYPES,
+    LEGACY_ANNOTATOR_NAMES,
+    PREFERRED_ALLELE_SCORE_TYPE,
+    PREFERRED_FRAGMENT_SCORE_TYPE,
     RETIRED_ANNOTATOR_NAMES,
     retired_annotator_message,
 )
@@ -614,33 +616,45 @@ class AnnotationConfigParser:
         recognised as a wildcard. It is spelled the same as the
         ``search_resources`` parameter that takes the same language.
 
-        The query language itself lives in ``genomic_resources``; what this
-        adds is the annotation layer's policy about the result -- an
-        annotator name selects the resource types it can consume, a wildcard
-        that selects nothing is a configuration error, and one that selects
-        more than ``WILDCARD_LIMIT`` resources is refused rather than
-        silently expanded into a pipeline of that size.
+        Both filters are answered by ``search_resources``: the query
+        language and the resource-type vocabulary live in
+        ``genomic_resources``, and asking it means a wildcard here selects
+        exactly what the same query selects anywhere else.
+
+        What this adds is the annotation layer's policy about the result --
+        an annotator name selects the one resource type it can consume, an
+        annotator that names its resource directly is refused a wildcard
+        outright, a wildcard that selects nothing is a configuration error,
+        a resource two repositories both carry is expanded once, and a
+        wildcard selecting more than ``WILDCARD_LIMIT`` resources is
+        refused rather than silently expanded into a pipeline of that size.
         """
-        # Maps an annotator name a user may type to the resource types it
-        # consumes.  A SET, not one type: a fragment score has two accepted
-        # spellings and either annotator name must find either of them --
-        # a pipeline on the new name will point at repositories that never
-        # migrated, and third-party GRRs answer to no migration of ours.
+        # Maps an annotator name a user may type to the ONE canonical
+        # resource type it consumes.  Canonical, not every accepted
+        # spelling: a fragment score has two, and either annotator name
+        # must find either of them, but which spellings denote the same
+        # kind of resource is a fact about the repository vocabulary.
+        # `search_resources` expands the type it is given through
+        # `equivalent_resource_types`, so tabulating the expansion here
+        # too would be a second copy of that rule -- one that a type
+        # acquiring a second spelling updates in the repository and
+        # silently misses here, leaving a wildcard that matches nothing
+        # in a repository that does hold the resources (gain#1266).
         #
         # The legacy keys are deprecated (gain#538) but warn nowhere near
         # here: this resolves a wildcard against every resource in the
         # repository, so a warning would fire per candidate rather than per
         # pipeline.  `FragmentScoreAnnotator.__init__` owns that.
         annotator_resources_map = {
-            "position_score": {"position_score"},
-            "position_score_annotator": {"position_score"},
-            "allele_score": {"allele_score"},
-            "allele_score_annotator": {"allele_score"},
-            "fragment_score": FRAGMENT_SCORE_TYPES,
-            "fragment_score_annotator": FRAGMENT_SCORE_TYPES,
-            "cnv_collection": FRAGMENT_SCORE_TYPES,
-            "cnv_collection_annotator": FRAGMENT_SCORE_TYPES,
-            "gene_score_annotator": {"gene_score"},
+            "position_score": "position_score",
+            "position_score_annotator": "position_score",
+            "allele_score": PREFERRED_ALLELE_SCORE_TYPE,
+            "allele_score_annotator": PREFERRED_ALLELE_SCORE_TYPE,
+            "fragment_score": PREFERRED_FRAGMENT_SCORE_TYPE,
+            "fragment_score_annotator": PREFERRED_FRAGMENT_SCORE_TYPE,
+            "cnv_collection": PREFERRED_FRAGMENT_SCORE_TYPE,
+            "cnv_collection_annotator": PREFERRED_FRAGMENT_SCORE_TYPE,
+            "gene_score_annotator": "gene_score",
         }
 
         # Before the query runs, because a retired annotator name is absent
@@ -653,37 +667,81 @@ class AnnotationConfigParser:
             raise AnnotationConfigurationError(
                 retired_annotator_message(annotator_type))
 
+        # Caller text -- the annotator type is a YAML mapping key and can
+        # carry anything -- so it is escaped to one line before it reaches
+        # any message or log record (iossifovlab/gain#655).
+        safe_type = escape_unsafe_characters(annotator_type)
+
+        # Stated, rather than left to fall out of the lookup below. An
+        # unknown name matching no resource happens to be the answer a map
+        # to SETS of types gives, but it is the wrong accusation -- it
+        # sends the reader to a repository that is fine -- and a map to ONE
+        # type gives the opposite accident, applying no type filter at all
+        # and expanding a mistyped name across the whole repository.
+        if annotator_type not in annotator_resources_map:
+            # Phrased without claiming the name is an annotator at all:
+            # this refuses a misspelling and an annotator that names its
+            # resource outright with one message, and telling the first
+            # of those to "name the resource directly" would send it on
+            # to a second failure in `get_annotator_factory`.
+            #
+            # The legacy fragment-score spellings are accepted (ADR 0011,
+            # gain#538) but not advertised: listing a deprecated name in a
+            # message that exists to say what to write instead reads as a
+            # recommendation to write it.
+            accepted = sorted(
+                annotator_resources_map.keys() - LEGACY_ANNOTATOR_NAMES.keys(),
+            )
+            raise AnnotationConfigurationError(
+                f"No wildcard resource_id is accepted for annotator "
+                f"'{safe_type}'. These annotators accept one: "
+                f"{', '.join(accepted)}.",
+            )
+
         try:
             parsed_query = ResourceQuery.parse(resource_query)
         except ResourceQueryParseError as err:
             raise AnnotationConfigurationError(str(err)) from err
 
-        accepted_types = annotator_resources_map.get(
-            annotator_type, frozenset())
-
-        # Both reach the logged messages below as caller text -- the
-        # annotator type is a YAML mapping key and can carry anything -- so
-        # both are escaped to one line (iossifovlab/gain#655).
+        # The wildcard reaches the messages below as caller text too. It
+        # cannot carry a control character -- the query grammar's charsets
+        # exclude them -- but it is escaped as well rather than leaning on
+        # the grammar staying that way.
         safe_pattern = escape_unsafe_characters(
             parsed_query.resource_id_pattern)
-        safe_type = escape_unsafe_characters(annotator_type)
 
+        # Both filters are the repository's to apply: it expands the type
+        # through the spelling-equivalence rule it owns, and it evaluates
+        # the query with the same parse this method just validated. No
+        # `search_term`, which is what keeps this on the route that reads
+        # the resources themselves -- a pipeline must expand against a
+        # checked-out GRR that has no FTS index yet (gain#1212).
+        #
+        # Consumed lazily, so the cap below still short-circuits: the
+        # generator stops being drawn from as soon as it is exceeded.
         selected_resources: set[str] = set()
         result: list[str] = []
-        for resource in grr.get_all_resources():
-            if resource.get_id() in selected_resources:
+        for resource in grr.search_resources(
+            resource_type=annotator_resources_map[annotator_type],
+            resource_query=resource_query,
+        ):
+            # A group yields a shadowed id once per child that carries it
+            # -- neither `get_all_resources` nor the search collapses them,
+            # and a listing is right not to. Two annotators built from one
+            # id would be wrong, so the dedupe is annotation policy and
+            # lives here.
+            resource_id = resource.get_id()
+            if resource_id in selected_resources:
                 continue
-            if resource.get_type() in accepted_types \
-                    and parsed_query.match(resource):
-                selected_resources.add(resource.resource_id)
-                result.append(resource.resource_id)
-                if len(result) > AnnotationConfigParser.WILDCARD_LIMIT:
-                    raise AnnotationConfigurationError(
-                        f"Too many resources ({len(result)}/"
-                        f"{AnnotationConfigParser.WILDCARD_LIMIT}) "
-                        f"match the wildcard '{safe_pattern}' "
-                        f"for annotator '{safe_type}'.",
-                    )
+            selected_resources.add(resource_id)
+            result.append(resource_id)
+            if len(result) > AnnotationConfigParser.WILDCARD_LIMIT:
+                raise AnnotationConfigurationError(
+                    f"Too many resources ({len(result)}/"
+                    f"{AnnotationConfigParser.WILDCARD_LIMIT}) "
+                    f"match the wildcard '{safe_pattern}' "
+                    f"for annotator '{safe_type}'.",
+                )
 
         if len(result) == 0:
             raise AnnotationConfigurationError(

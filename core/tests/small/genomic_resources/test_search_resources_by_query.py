@@ -934,6 +934,54 @@ def test_a_group_does_not_dedupe_an_id_two_children_both_carry(
         "position_score", "scores/*", group) == ["scores/dup"]
 
 
+def test_the_wildcard_limit_counts_distinct_resources(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cap bounds the pipeline built, not the rows walked to build it.
+
+    A group yields a shadowed id once per child, so a repository stacking
+    two GRRs over each other reaches the cap at half the resources it can
+    actually contribute. Counting before the dedupe would refuse a
+    perfectly ordinary two-child group.
+    """
+    monkeypatch.setattr(AnnotationConfigParser, "WILDCARD_LIMIT", 1)
+    left = (
+        a_grr()
+        .with_resource("scores/dup", a_position_score())
+        .build_repo(tmp_path / "left")
+    )
+    right = (
+        a_grr()
+        .with_resource("scores/dup", a_position_score())
+        .build_repo(tmp_path / "right")
+    )
+    group = GenomicResourceGroupRepo([left, right], "group")
+
+    # Two rows for one id: without this the cap and the dedupe cannot
+    # disagree, and the test proves nothing.
+    assert len(list(group.search_resources(resource_query="scores/*"))) == 2
+
+    assert AnnotationConfigParser.query_resources(
+        "position_score", "scores/*", group) == ["scores/dup"]
+
+
+def test_a_wildcard_expands_against_a_repository_with_no_index(
+    unindexed_grr: GenomicResourceProtocolRepo,
+) -> None:
+    """Expansion may not acquire a dependency on the FTS index.
+
+    A checked-out GRR carries no ``.CONTENTS.sqlite3.gz`` until
+    ``grr_manage`` builds one, and a pipeline has to expand against it
+    anyway. The refusals either side of this are already pinned; this is
+    the successful expansion, which is the case an index dependency would
+    break by raising rather than by returning the wrong answer.
+    """
+    assert AnnotationConfigParser.query_resources(
+        "position_score", "scores/*", unindexed_grr,
+    ) == ["scores/res_a", "scores/res_b"]
+
+
 def test_an_empty_query_filters_nothing(
     unindexed_grr: GenomicResourceProtocolRepo,
 ) -> None:
@@ -969,3 +1017,42 @@ def test_a_malformed_query_error_names_the_query_and_the_cause(
 
     assert 'scores/*[bad="x"' in str(err.value)
     assert str(err.value) != f'Unparsable resource query: \'{"x"}\''
+
+
+@pytest.mark.parametrize("annotator_name", [
+    # Registered, but its resources are named directly rather than
+    # selected: a wildcard against it is a misunderstanding, not a typo.
+    "effect_annotator",
+    # Not registered at all -- one transposition away from a name that is.
+    "positon_score",
+])
+def test_a_wildcard_for_an_annotator_that_takes_none_names_the_annotator(
+    unindexed_grr: GenomicResourceProtocolRepo,
+    annotator_name: str,
+) -> None:
+    """The refusal must accuse the annotator, not the wildcard.
+
+    Only some annotator names select their resource by wildcard. For the
+    rest the message has to say so, because the alternative reading --
+    that the wildcard matched nothing -- sends the reader to look at a
+    repository that is fine. It is also the reading that a name-to-type
+    map answers by accident, by mapping the unknown name to no acceptable
+    type and letting every resource fail the type test.
+
+    Accidental is the problem: the same accident, in a map that carries
+    one type per name rather than a set, resolves the other way and
+    applies NO type filter, so a transposed name would expand across the
+    whole repository into a pipeline of annotators that cannot be built.
+    So this is pinned as its own refusal rather than left to fall out of
+    however the map happens to be shaped.
+    """
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        AnnotationConfigParser.query_resources(
+            annotator_name, "scores/*", unindexed_grr)
+
+    message = str(excinfo.value)
+    assert annotator_name in message
+    assert "wildcard" in message
+    # The repository is not at fault and must not be blamed: `scores/*`
+    # matches two resources in this fixture.
+    assert "No resources match" not in message
