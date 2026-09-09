@@ -1298,6 +1298,18 @@ def test_a_tabix_close_that_fails_partway_leaves_it_open_not_unmapped(
     with pytest.raises(OSError, match="teardown boom"):
         table.close()
 
+    # The map itself, asked FOR ITSELF, because a memo now sits in front of
+    # get_chromosomes() (gain#1173): the behavioural assertion below can be
+    # served out of the mapped list the pre-close read derived, and would then
+    # hold whether or not the map beneath it survived.  It does not today --
+    # close() releases that memo immediately before the map, so the buggy
+    # ordering releases it too -- but that keeps this test honest only for as
+    # long as those two lines stay adjacent, which is not something this test
+    # should have to depend on.
+    assert table.rev_chrom_map is not None, (
+        "a close() that raised mid-teardown released the chromosome map while "
+        "the pysam handle was still live (gain#358)")
+
     # still open, not open-but-unmapped: the chromosome map survived the failed
     # teardown, so the contigs are reference-space names, not the file's own
     assert table.get_chromosomes() == ["chr1"], (

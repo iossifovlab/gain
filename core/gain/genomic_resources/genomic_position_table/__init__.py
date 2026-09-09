@@ -591,6 +591,31 @@ across another query, not resumed.
 halves.  There is no such sweep for a backend outside this repo, which is
 what this entry is for: a backend with cross-query state overrides the method
 and releases from a ``finally``.
+
+**Changed aliasing: the tabix family's ``get_chromosomes()`` now returns the
+SAME list on every call** (gain#1173).  ``TabixGenomicPositionTable`` and
+``VCFGenomicPositionTable`` are in ``__all__`` below, so this changes public
+surface of ``gain`` and is recorded for the same reason as everything above.
+
+The mapped, filtered contig list is derived once per open and held, because
+every contig-membership check on the annotation path reaches it through
+``GenomicScore.get_all_chromosomes()``: one annotated substitution made three
+such calls, each rebuilding the list, at a cost that grew with the file's
+contig count -- per CALL, 15.7us at hg38 primary-assembly contig counts and
+48.8us with the alts, against 0.40us at a single contig.  It is now a flat
+~0.05us at any contig count.
+
+The observable change is aliasing, not content: the list is equal to what it
+always was, but a caller that MUTATES it in place -- ``sort()``, ``reverse()``,
+``append()`` -- now corrupts every later read for the life of the open table
+instead of scribbling on a throwaway.  Copy before mutating.  This makes the
+tabix family match what the base class has always done (``get_chromosomes()``
+returns the stored ``chrom_order`` itself), so bigWig and in-memory callers
+were already living under this rule.  Nothing in-tree was affected -- every
+in-repo call site is an ``in``, a ``for``, a ``list()``/``set()`` or a splat --
+and ``gpf`` has no non-test caller of ``get_chromosomes()`` at all, which is
+why the ledger entry is the whole mitigation and there is no defensive copy:
+returning a copy per call would give back most of what the memo just bought.
 """
 from .line import LineBuffer
 from .table import ContigExtent
