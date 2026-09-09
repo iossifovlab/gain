@@ -232,11 +232,15 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         A kind whose records read as something other than the span they
         cover states that ONCE, by overriding:
 
-        - region_values_from_records(): what a region's raw records mean for
-          this kind.  ``fetch_region_segments`` is it applied to
+        - _score_segments(): what a region's raw records mean for this kind.
+          ``region_values_from_records`` is the request resolution followed
+          by it, ``fetch_region_segments`` is THAT applied to
           ``fetch_records``, and the statistics scan is it applied to
           ``validate_records(score, fetch_records(...))`` -- so a kind states
-          its reading once and both consumers get it (ADR 0008).
+          its reading once and every consumer gets it (ADR 0008).  Override
+          this and not ``region_values_from_records``: the resolving entry is
+          shared by every kind, and a read holding an already-resolved
+          request composes this body without going through it (gain#1282).
         - record_weight(): how many times one record's value counts when a
           region is aggregated.  Every reader goes through it -- the
           annotators' ``aggregate_region``, the per-record scan, and the
@@ -695,10 +699,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         with a whole contig.
 
         Called by each read rather than folded into
-        :meth:`_region_read_defs`, which is the seam every kind's
-        ``region_values_from_records`` already shares and which already
-        receives the two positions it ignores.  Folding it in is the
-        deeper placement and is deliberately not taken here: it would
+        :meth:`_region_read_defs`, which is the seam the shared
+        :meth:`region_values_from_records` already runs for every kind and
+        which already receives the two positions it ignores.  Folding it in
+        is the deeper placement and is deliberately not taken here: it would
         refuse ``fetch_*`` requests that are accepted today, on all three
         kinds at once, which is a behaviour change no reader of this slice
         asked for.  Until that is decided, a read that takes a mandatory
@@ -908,8 +912,13 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         is on the annotation hot path, where a per-call
         ``get_all_chromosomes()`` membership scan is a real cost.
 
-        This base body yields every record at its own extent, which is what
-        a position score and a fragment score both mean by it.
+        What a kind yields is :meth:`_score_segments`, and not this method:
+        the resolution above is the same for every kind, the reading below
+        is not, and since gain#1282 they are split so that a kind states
+        only the half that is its own.  Override THAT to say what a record
+        means here; overriding this one would take the resolution with it,
+        and would be skipped by a read that enters below it holding
+        definitions it has already resolved.
         """
         score_defs = self._region_read_defs(chrom, scores)
         return self._score_segments(records, score_defs)
@@ -967,13 +976,29 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         score_defs: list[GenomicScoreDef],
     ) -> Generator[
             tuple[int, int, list[ScoreValue]], None, None]:
-        """Stream each record's own span for an already-checked request.
+        """Stream this kind's segments for an already-resolved request.
+
+        **The per-kind hook.**  :meth:`region_values_from_records` minus
+        the resolution -- the half of a region read that differs by kind,
+        split from the half that does not.  A kind states its reading by
+        overriding THIS, and inherits one resolution of the request rather
+        than spelling out a second (gain#1282); an allele score is the one
+        kind that does, reading each record as the point it sits at.
+
+        It is also why the two ways into the segment stream cannot drift in
+        what a segment is: :meth:`region_values_from_records` resolves and
+        composes this body, and a caller that has resolved already composes
+        the same body directly.  A kind that overrode the resolving entry
+        instead would be read by one and skipped by the other, which is
+        drift by another name.
 
         Every record is yielded at its full extent, including one that only
         partly overlaps -- or entirely misses -- the region it was fetched
         for.  What a partial overlap means depends on what the caller is
         computing, so deciding it belongs to the window-answering consumers,
-        each of which clips with :func:`clip_span` (ADR 0008).
+        each of which clips with :func:`clip_span` (ADR 0008).  That is the
+        BASE body's reading -- what a position score and a fragment score
+        both mean by a record -- and an overriding kind replaces it.
 
         A record whose end precedes its begin is refused: that is a claim
         about the record itself, not about any window.  A record outside
@@ -1048,10 +1073,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         difference
         between the two (ADR 0008).
 
-        One body per kind, in :meth:`region_values_from_records`, rather than
-        one per kind per consumer: two that had to agree is how the paths
-        drift.  The fragment plane reads through this method for that reason
-        (gain#1272).
+        One body per kind, in :meth:`_score_segments`, rather than one per
+        kind per consumer: two that had to agree is how the paths drift.
+        The fragment plane reads through this method for that reason
+        (gain#1272), and the position plane reaches the same body with an
+        already-resolved request (gain#1282) -- different entries, one
+        reading.
         """
         return self.region_values_from_records(
             self.fetch_records(
@@ -1288,8 +1315,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         to carry a flag saying which kind it is serving, and that flag
         would be a second statement of the weight rule.
 
-        Underscored, alone among the per-kind hooks, by a criterion rather
-        than by a list of callers: the others are part of the read API and
+        Underscored by a criterion rather than by a list of callers, as
+        :meth:`_score_segments` is: the hooks that are part of the read API
         are asked for by name (``fetch_region_segments`` IS
         :meth:`region_values_from_records`; the scan calls
         :meth:`record_weight` by name, and reads the kind's validation rule

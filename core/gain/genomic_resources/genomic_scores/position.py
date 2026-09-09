@@ -18,6 +18,7 @@ from gain.genomic_resources.repository import (
     GenomicResource,
 )
 from gain.genomic_resources.score_def import (
+    GenomicScoreDef,
     ScoreValue,
 )
 from gain.utils.regions import (
@@ -180,32 +181,83 @@ class PositionScore(GenomicScore):
     # ``(values, run_length)`` pair per segment, so cost stays proportional
     # to record count.
 
-    def _plane_read_score_ids(
+    def _plane_read_defs(
         self, chrom: str, start: int, end: int,
         scores: Sequence[str] | None,
-    ) -> list[str]:
-        """Refuse what this region read cannot serve, and name its scores.
+    ) -> list[GenomicScoreDef]:
+        """Refuse what this region read cannot serve, and resolve its scores.
 
         The preamble every read that takes a MANDATORY region shares: the
-        span guard, then the request refusals, then the ids in the order
-        the caller asked for them.  Here rather than repeated per read so
-        that the two cannot drift in what they refuse -- the deeper fold,
-        of :meth:`_guard_region_span` into :meth:`_region_read_defs`, is
-        declined in that method's docstring because it would also refuse
+        span guard, then the request refusals, then the definitions in the
+        order the caller asked for them.  Here rather than repeated per
+        read so that the two cannot drift in what they refuse -- the deeper
+        fold, of :meth:`_guard_region_span` into :meth:`_region_read_defs`,
+        is declined in that method's docstring because it would also refuse
         ``fetch_*`` requests on all three kinds, which this does not touch.
 
-        The aggregating and binning reads do NOT share it: their ids come
-        from ``distinct_score_ids`` over the queries, not from ``scores``.
+        The DEFINITIONS are what travels on, not the ids resolved out of
+        them: a read that has resolved its request carries the answer down
+        to :meth:`~.base.GenomicScore._fetch_segments_for_defs` rather than
+        handing back ids for the segment read to resolve a second time
+        (gain#1282).  A caller wanting the ids reads them off the defs.
+
+        The aggregating and binning reads do NOT share it: their scores
+        come from ``distinct_score_ids`` over the queries, not from
+        ``scores``, and a contig this score never mentions is uncovered
+        there rather than refused (gain#1211).
         """
         self._guard_region_span(start, end)
-        return [
-            score_def.score_id
-            for score_def in self._region_read_defs(chrom, scores)
-        ]
+        return self._region_read_defs(chrom, scores)
+
+    def _fetch_segments_for_defs(
+        self, chrom: str, start: int, end: int,
+        score_defs: list[GenomicScoreDef],
+    ) -> Generator[
+            tuple[int, int, list[ScoreValue]], None, None]:
+        """:meth:`~.base.GenomicScore.fetch_region_segments`, pre-resolved.
+
+        The same read, from the same records, through the same per-kind
+        transform (:meth:`~.base.GenomicScore._score_segments`) -- entered
+        one step lower, with the definitions this plane already holds
+        instead of ids for that method to resolve a second time.
+
+        A read that reaches here has run :meth:`_plane_read_defs`, or the
+        aggregating pair's own resolver, and would otherwise pay the whole
+        refusal preamble twice: the open check, the contig membership scan
+        -- O(contigs) on a tabix table, gain#1173 -- and the id resolution.
+        The second answer can only agree with the first, so it was waste,
+        and gain#1282 removed it.
+
+        No refusal is weakened, because this is not the only one that runs:
+        every caller resolves eagerly first and reaches here only after.
+        What is skipped is a REPEAT, never the first answer.
+
+        On :class:`PositionScore` rather than on the base, though it uses
+        only base methods: a door that skips the eager refusals may be
+        opened only by a read that has already made them, and this plane's
+        reads are the ones that have.  Same placement argument as
+        :meth:`~.base.GenomicScore._read_defs_for_any_contig`, which is on
+        the base and has to say in prose who may call it; this does not
+        need to.  The fragment plane wants nothing here -- it never
+        resolves before reading, so it has no definitions to carry and
+        pays the preamble exactly once through the public entry.
+
+        Like the method it shadows, a plain function returning a generator:
+        what the caller resolved was refused at ITS call, and nothing moved
+        to the first ``next()``.
+
+        No ``score_filter``, unlike the method it shadows: none of this
+        plane's reads select records.  One that grew a filter would take
+        the parameter here and forward it to
+        :meth:`~.base.GenomicScore.fetch_records`, where it belongs
+        (gain#1272).
+        """
+        return self._score_segments(
+            self.fetch_records(chrom, start, end), score_defs)
 
     def _position_runs(
         self, chrom: str, start: int, end: int,
-        scores: list[str],
+        score_defs: list[GenomicScoreDef],
     ) -> Generator[tuple[list[ScoreValue] | None, int], None, None]:
         """Yield ``(values, run_length)`` runs tiling ``[start, end]``.
 
@@ -218,9 +270,16 @@ class PositionScore(GenomicScore):
 
         This region read fetched from the table; :meth:`_runs_from_segments`
         is the same encoding over a segment stream a caller supplies.
+
+        Takes DEFINITIONS, not ids: every caller has already resolved the
+        request -- through :meth:`_plane_read_defs`, or through the
+        aggregating reads' own resolver -- and
+        :meth:`_fetch_segments_for_defs` is the segment read that does not
+        resolve it a second time (gain#1282).
         """
         return self._runs_from_segments(
-            self.fetch_region_segments(chrom, start, end, scores), start, end)
+            self._fetch_segments_for_defs(chrom, start, end, score_defs),
+            start, end)
 
     @staticmethod
     def _runs_from_segments(
@@ -299,14 +358,14 @@ class PositionScore(GenomicScore):
         :meth:`get_scores_in_region` is worth ~4% on this read, which the
         position annotator pays once per substitution.
         """
-        score_ids = self._plane_read_score_ids(chrom, pos, pos, scores)
+        score_defs = self._plane_read_defs(chrom, pos, pos, scores)
         # The single-element unpack both DRAINS the generator and asserts
         # the one-run invariant the docstring claims; a second run would
         # raise here rather than be silently dropped.
-        (values, _), = self._position_runs(chrom, pos, pos, score_ids)
+        (values, _), = self._position_runs(chrom, pos, pos, score_defs)
         return (
             tuple(values) if values is not None
-            else (None,) * len(score_ids))
+            else (None,) * len(score_defs))
 
     def get_score_in_region(
         self, chrom: str, start: int, end: int,
@@ -468,9 +527,9 @@ class PositionScore(GenomicScore):
         that materialises positions still refuses an unknown contig.
         """
         self._guard_region_span(start, end)
-        targets, score_ids = self._resolve_aggregation_query_targets(queries)
+        targets, score_defs = self._resolve_aggregation_query_targets(queries)
         for values, length in self._aggregating_runs(
-                chrom, start, end, score_ids):
+                chrom, start, end, score_defs):
             for column, aggregator, none_value_replacement in targets:
                 value = values[column] if values is not None else None
                 if value is None:
@@ -481,7 +540,9 @@ class PositionScore(GenomicScore):
 
     def _resolve_aggregation_query_targets(
         self, queries: Sequence[PositionScoreAggregationQuery],
-    ) -> tuple[list[tuple[int, Aggregator, ScoreValue]], list[str]]:
+    ) -> tuple[
+            list[tuple[int, Aggregator, ScoreValue]],
+            list[GenomicScoreDef]]:
         """Resolve queries to per-run fold targets, and the fetch columns.
 
         One fetch serves every query: each DISTINCT score is fetched once,
@@ -495,6 +556,13 @@ class PositionScore(GenomicScore):
         second spelling of it that ordered the scores differently would
         have every aggregator quietly reading its neighbour's column.
 
+        The resolved DEFINITIONS are what comes back, and they are what the
+        read hands down: this is the aggregating pair's resolution of its
+        request, so re-deriving ids from them for a lower layer to resolve
+        again is the waste gain#1282 removed.  The column index is taken
+        off the same list, in the same order, so the two still cannot
+        disagree about which column a query folds.
+
         No contig reaches here: what the aggregating reads resolve is which
         scores to fetch and how to fold them, which is a property of the
         queries alone.  Whether the contig exists is
@@ -502,17 +570,15 @@ class PositionScore(GenomicScore):
         run source rather than by refusing (gain#1211).
         """
         resolved = self._resolve_aggregation_queries(queries)
-        score_ids = [
-            score_def.score_id
-            for score_def in self._read_defs_for_any_contig(
-                distinct_score_ids(sid for sid, _, _ in resolved))
-        ]
-        column_of = {sid: i for i, sid in enumerate(score_ids)}
+        score_defs = self._read_defs_for_any_contig(
+            distinct_score_ids(sid for sid, _, _ in resolved))
+        column_of = {
+            score_def.score_id: i for i, score_def in enumerate(score_defs)}
         targets = [
             (column_of[score_id], aggregator, none_value_replacement)
             for score_id, aggregator, none_value_replacement in resolved
         ]
-        return targets, score_ids
+        return targets, score_defs
 
     def get_score_in_bins(
         self, chrom: str, start: int, end: int, bin_size: int,
@@ -562,13 +628,14 @@ class PositionScore(GenomicScore):
             raise ValueError(
                 f"genomic score <{self.resource_id}> asked for bins of "
                 f"size {bin_size}; a bin holds at least one position")
-        targets, score_ids = self._resolve_aggregation_query_targets(queries)
+        targets, score_defs = self._resolve_aggregation_query_targets(queries)
         return self._binned_runs(
-            self._aggregating_runs(chrom, start, end, score_ids),
+            self._aggregating_runs(chrom, start, end, score_defs),
             start, end, bin_size, targets)
 
     def _aggregating_runs(
-        self, chrom: str, start: int, end: int, scores: list[str],
+        self, chrom: str, start: int, end: int,
+        score_defs: list[GenomicScoreDef],
     ) -> Iterator[tuple[list[ScoreValue] | None, int]]:
         """The run source the two aggregating reads fold.
 
@@ -600,10 +667,17 @@ class PositionScore(GenomicScore):
         are simply not reached.  ``get_all_chromosomes`` is consulted once
         per read here, which is the call :meth:`_region_read_defs` used to
         make on this path; it is the same one scan, moved, not a new one.
+
+        That was true of the ABSENT contig from the start, and of the
+        covered one only since gain#1282: this scan chose the source, and
+        then the segment read under :meth:`_position_runs` resolved the
+        request over again and scanned for the contig a second time.  It
+        takes resolved definitions now, so the one scan claimed above is
+        the one that happens, on either branch.
         """
         if chrom not in self.get_all_chromosomes():
             return self._runs_from_segments(iter(()), start, end)
-        return self._position_runs(chrom, start, end, scores)
+        return self._position_runs(chrom, start, end, score_defs)
 
     @staticmethod
     def _binned_runs(
@@ -650,7 +724,7 @@ class PositionScore(GenomicScore):
         every position no record covers.  ``scores`` of ``None`` asks for
         every score this resource defines, in definition order.
         """
-        score_ids = self._plane_read_score_ids(chrom, start, end, scores)
+        score_defs = self._plane_read_defs(chrom, start, end, scores)
         return self._expand_position_runs(
-            self._position_runs(chrom, start, end, score_ids),
-            len(score_ids))
+            self._position_runs(chrom, start, end, score_defs),
+            len(score_defs))

@@ -128,7 +128,7 @@ class _AlleleKeyCollector:
     because what it collects is not a property of the segments the fold
     sees but of the RECORDS beneath them -- the nucleotides and the
     suffix values -- so it has to sit on the record stream, above
-    :meth:`AlleleScore.region_values_from_records`, where the fold cannot
+    :meth:`AlleleScore._score_segments`, where the fold cannot
     reach.
 
     Keys de-duplicate in first-seen order -- ``dict.fromkeys`` semantics
@@ -385,42 +385,6 @@ class AlleleScore(GenomicScore):
         scores_schema["aggregator"] = AGGREGATOR_SCHEMA
         return schema
 
-    def region_values_from_records(
-        self,
-        records: Iterator[Record],
-        chrom: str,
-        pos_begin: int | None = None,  # ruff: ignore[unused-method-argument]
-        pos_end: int | None = None,  # ruff: ignore[unused-method-argument]
-        scores: Sequence[str] | None = None,
-    ) -> Generator[
-            tuple[int, int, list[ScoreValue]], None, None]:
-        """Read each allele record as the point it sits at.
-
-        Several records legitimately share a position -- one per ref/alt pair
-        -- so each is yielded separately, and the span is the point
-        ``(pos, pos)``: an allele's value stands for its ref/alt pair, not for
-        the bases an optional ``pos_end`` column may cover.  A caller that
-        needs the nucleotides themselves reads ``record[REF]`` /
-        ``record[ALT]`` off :meth:`~.base.GenomicScore.fetch_records`.
-
-        The point stands wherever it falls relative to the queried window:
-        like every segment read, this holds no window opinion, and what a
-        point outside the window means is the caller's question (ADR 0008).
-        ``pos_begin`` and ``pos_end`` are still taken, because they are what
-        :meth:`GenomicScore.region_values_from_records()
-        <.base.GenomicScore.region_values_from_records>` means by a region
-        and this is one kind's answer to it.
-
-        Nothing is checked either: every record is read, whatever its
-        position is next to the one before it.  The rule an allele score's
-        records hold to lives in
-        :func:`~gain.genomic_resources.statistics.record_validation.validate_records`,
-        which the statistics scan composes over the stream it reads and no
-        reader composes at all (ADR 0008).
-        """
-        score_defs = self._region_read_defs(chrom, scores)
-        return self._allele_point_values(records, score_defs)
-
     def fetch_region_segment_scores(
         self,
         chrom: str,
@@ -447,22 +411,56 @@ class AlleleScore(GenomicScore):
         )
         return self.fetch_region_segments(chrom, pos_begin, pos_end, scores)
 
-    def _allele_point_values(
+    def _score_segments(
         self,
         records: Iterator[Record],
         score_defs: list[GenomicScoreDef],
     ) -> Generator[
             tuple[int, int, list[ScoreValue]], None, None]:
-        """Stream one point per allele record, for a checked request.
+        """Stream one point per allele record, for a resolved request.
+
+        This kind's answer to the per-kind hook
+        :meth:`GenomicScore._score_segments
+        <.base.GenomicScore._score_segments>` -- read each allele record as
+        the point it sits at.  Several records legitimately share a position
+        -- one per ref/alt pair -- so each is yielded separately, and the
+        span is the point ``(pos, pos)``: an allele's value stands for its
+        ref/alt pair, not for the bases an optional ``pos_end`` column may
+        cover.  A caller that needs the nucleotides themselves reads
+        ``record[REF]`` / ``record[ALT]`` off
+        :meth:`~.base.GenomicScore.fetch_records`.
+
+        The point stands wherever it falls relative to the queried window:
+        like every segment read, this holds no window opinion, and what a
+        point outside the window means is the caller's question (ADR 0008).
+        No region reaches here at all -- what this kind does to a record
+        does not depend on what was asked for, which is why the region is
+        :meth:`GenomicScore.region_values_from_records()
+        <.base.GenomicScore.region_values_from_records>`' argument and not
+        this method's.
 
         The point is POS_BEGIN, but POS_END is read too, to refuse a record
         whose end precedes its begin: a different rule from anything the scan
         validates, one no reader can proceed past, and one no other allele
-        read states -- ``validate_records`` states the scan's rules, and the
-        single-allele read matches on ref/alt without looking at the span.
+        read states -- the scan's rules are the record-validation registry's,
+        and the single-allele read matches on ref/alt without looking at the
+        span.  Nothing else is checked: the rule an allele score's records
+        hold to lives in
+        :func:`~gain.genomic_resources.statistics.record_validation.validate_records`,
+        which the statistics scan composes over the stream it reads and no
+        reader composes at all (ADR 0008, ADR 0027).
 
-        Reads its slots directly and extracts inline, for the reasons
-        :meth:`GenomicScore._score_segments` gives.
+        The REQUEST is not resolved here.  This kind used to override
+        :meth:`GenomicScore.region_values_from_records()
+        <.base.GenomicScore.region_values_from_records>` whole, and so
+        carried a second copy of the resolution that method performs; since
+        gain#1282 the resolution is the base's alone and a kind states only
+        its reading.  This method carried the name
+        ``_allele_point_values`` until then, when overriding the hook made
+        the second name redundant.
+
+        Reads its slots directly and extracts inline, for the reasons the
+        base's body gives.
         """
         extract = self._extract_value
         for record in records:
@@ -712,12 +710,15 @@ class AlleleScore(GenomicScore):
         if collector is not None:
             records = collector(records)
         score_ids = request_score_ids(requests)
-        # The kind's streaming half directly, not `region_values_from_records`:
-        # that entry re-checks the contig, and on a tabix table the
-        # chromosome list is rebuilt per call -- a cost linear in the
-        # contig count, which `_selected_allele_records` has already paid.
+        # The per-kind hook directly, not `region_values_from_records`: that
+        # entry re-checks the contig, and on a tabix table the chromosome
+        # list is rebuilt per call -- a cost linear in the contig count,
+        # which `_selected_allele_records` has already paid.  gain#1282 made
+        # this the general shape rather than this read's special case, so
+        # the hook is what runs here and the fold cannot drift from what the
+        # other allele reads mean by a segment.
         values = fold_region_segments(
-            self._allele_point_values(
+            self._score_segments(
                 records, self._resolve_score_defs(score_ids)),
             aggregators, requests,
             score_ids=score_ids, weigh=self.record_weight)
