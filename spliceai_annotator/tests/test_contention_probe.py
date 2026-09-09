@@ -1,4 +1,4 @@
-# pylint: disable=W0621,C0114,C0116,W0212,W0613,C0413,C0415
+# pylint: disable=C0116,C0413,C0415
 """Unit tests for the standalone SpliceAI contention probe (#1275).
 
 The probe lives in ``scripts/`` rather than the package: it is a diagnostic
@@ -38,31 +38,32 @@ def test_digest_output_distinguishes_arrays_that_differ_only_in_shape() -> None:
         != probe.digest_output(values.reshape(3, 2))
 
 
-def test_probe_predictions_reports_every_answer_when_it_drifts(
-) -> None:
+def test_measure_reports_every_answer_when_the_runtime_drifts() -> None:
     """Positive control: a clean sweep is only meaningful if drift is visible.
 
     Feeds a predict that returns a slightly different answer each call, the
     shape a load-dependent runtime produces, and pins that the probe reports
-    both.
+    both -- and says how far apart they were.
     """
     answers = iter([
         np.array([0.5], dtype=np.float32),
         np.array([0.5000001], dtype=np.float32),
     ])
 
-    digests = probe.probe_predictions(
+    measured = probe.measure(
         lambda _x: next(answers), np.zeros((1, 1), np.float32), iterations=2)
 
-    assert len(set(digests)) == 2
+    assert len(set(measured.digests)) == 2
+    assert measured.within_deviation > 0.0
 
 
-def test_probe_predictions_reports_one_answer_when_stable() -> None:
-    digests = probe.probe_predictions(
+def test_measure_reports_one_answer_when_the_runtime_is_stable() -> None:
+    measured = probe.measure(
         lambda _x: np.array([0.5], dtype=np.float32),
         np.zeros((1, 1), np.float32), iterations=4)
 
-    assert len(set(digests)) == 1
+    assert len(set(measured.digests)) == 1
+    assert measured.within_deviation == 0.0
 
 
 def test_summarise_run_counts_one_distinct_output_when_workers_agree() -> None:
@@ -191,11 +192,11 @@ def test_summarise_run_carries_the_threads_the_runtime_reported() -> None:
     summary = probe.summarise_run(
         processes=2, threads=1,
         worker_digests=[("a",), ("a",)],
-        observed_intra_op_threads=(1, 1),
+        observed_intra_op_threads=1,
         observed_os_threads=(69, 69))
 
     assert summary.threads == 1
-    assert summary.observed_intra_op_threads == (1, 1)
+    assert summary.observed_intra_op_threads == 1
     assert summary.observed_os_threads == (69, 69)
 
 
@@ -238,18 +239,28 @@ def test_parse_args_rejects_a_non_positive_iteration_count() -> None:
         probe.parse_args(["--iterations", "0"])
 
 
-def test_probe_mirrors_the_shipped_onnx_intra_op_default() -> None:
+def test_probe_mirrors_the_shipped_onnx_session_settings() -> None:
     """The ONNX arm is only a baseline if it is the shipped configuration.
 
-    The probe re-states the constant rather than importing it, so that it
-    stays runnable without `gain.annotation`. This pins the copy to the
-    original.
+    The probe re-states these rather than importing them, so that it stays
+    runnable without `gain.annotation` (importing any annotator submodule
+    pulls that in). Copying is only safe if the copies are pinned: #297 and
+    #400 found all three settings load-bearing, and a silent divergence
+    would leave the paired comparison measuring a configuration nobody
+    ships.
     """
     from spliceai_annotator.spliceai_backend_onnx import (
         DEFAULT_ONNX_INTRA_OP_THREADS,
+        spliceai_session_options,
     )
 
+    shipped = spliceai_session_options()
+
     assert probe.ONNX_INTRA_OP_THREADS == DEFAULT_ONNX_INTRA_OP_THREADS
+    assert probe.onnx_session_options(threads=None).graph_optimization_level \
+        == shipped.graph_optimization_level
+    assert probe.onnx_session_options(threads=None).intra_op_num_threads \
+        == shipped.intra_op_num_threads
 
 
 def test_a_run_is_not_reproducible_when_workers_saw_different_inputs() -> None:
@@ -264,7 +275,7 @@ def test_a_run_is_not_reproducible_when_workers_saw_different_inputs() -> None:
         input_digests=("x", "y"))
 
     assert summary.distinct_inputs == 2
-    assert summary.reproducible is False
+    assert summary.valid is False
 
 
 def test_a_run_that_predicted_nothing_is_not_reproducible() -> None:
@@ -274,14 +285,13 @@ def test_a_run_that_predicted_nothing_is_not_reproducible() -> None:
     assert summary.reproducible is False
 
 
-def test_run_point_reports_agreement_through_the_real_pool(tmp_path) -> None:
+def test_run_point_reports_agreement_through_the_real_pool() -> None:
     """End-to-end over spawn, the barrier and the pool, without a model.
 
     The orchestration is what a spurious 'reproducible' would come from, so
     it is exercised here rather than trusted.
     """
-    config = probe.parse_args(
-        ["--backend", "fake", "--processes", "3", "--iterations", "2"])
+    config = probe.self_test_config("fake")
 
     summary = probe.run_point(config, processes=3, threads=None)
 
@@ -295,15 +305,43 @@ def test_run_point_sees_divergence_through_the_real_pool() -> None:
 
     Without this, a clean sweep could mean the plumbing never looks.
     """
-    config = probe.parse_args(
-        ["--backend", "fake-drift", "--processes", "3", "--iterations", "2"])
+    config = probe.self_test_config("fake-drift")
 
     summary = probe.run_point(config, processes=3, threads=None)
 
     assert summary.distinct_outputs > 1
+    assert summary.diverged is True
+    assert summary.valid is True
     assert summary.reproducible is False
     assert summary.max_abs_deviation is not None
     assert summary.max_abs_deviation > 0.0
+
+
+def test_parse_args_refuses_a_model_free_backend() -> None:
+    """A sweep report must never be able to name a runtime that loads nothing.
+
+    The deliverable of #1275 is a *negative* result, so a mistyped backend
+    that quietly answered without a model would produce a clean, publishable
+    table that means nothing. The doubles are reachable only via --self-test.
+    """
+    with pytest.raises(SystemExit):
+        probe.parse_args(["--backend", "fake"])
+
+
+def test_an_unusable_point_is_not_reported_as_a_divergence() -> None:
+    """Workers disagreeing about the input must not read as runtime drift.
+
+    This is the failure `distinct_inputs` exists to catch, and reporting it
+    as "the runtime first diverged at K=2" would be the precise wrong answer.
+    """
+    unusable = probe.summarise_run(
+        processes=2, threads=None, worker_digests=[("a",), ("b",)],
+        input_digests=("x", "y"))
+
+    sweep = probe.summarise_sweep([unusable])
+
+    assert sweep.first_divergent_processes == {None: None}
+    assert sweep.unusable == (unusable,)
 
 
 def test_parse_args_defaults_to_leaving_determinism_controls_alone() -> None:
