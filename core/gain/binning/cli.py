@@ -15,7 +15,7 @@ import functools
 import json
 import os
 import sys
-from contextlib import chdir
+from contextlib import chdir, closing
 from typing import Any
 
 import h5py
@@ -93,8 +93,9 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         "--task-budget", type=int, default=TASK_BUDGET, metavar="BP",
         help="how many bases of consecutive regions one task bins; a "
         "region is never split, so a chromosome longer than the budget "
-        "is a task of its own; 0 or less makes every region its own "
-        f"task (default: {TASK_BUDGET:_})")
+        "is a task of its own; 0 or less is one task per track over the "
+        "whole run, and 1 is one task per region "
+        f"(default: {TASK_BUDGET:_})")
     # Only the GRR options are this tool's business.  It never builds an
     # annotation pipeline (and the provider's optional ``pipeline``
     # positional swallows a stray argument typed after the run
@@ -214,7 +215,7 @@ def _build_task_graph(
             chunk_tasks.append(graph.create_task(
                 _task_id(track, bundle, run.bin_size), _bin_chunks,
                 args=[kinds[track.binner], track, bundle, run.bin_size,
-                      grr.definition, paths],
+                      grr.definition, chunk_dir],
                 output_files=paths,
             ))
     # chunk_paths[region][track], the writer's map of the work directory.
@@ -290,12 +291,34 @@ def _repository(definition: str) -> GenomicResourceRepo:
 
 def _bin_chunks(
     binner: type[Binner], track: Track, regions: list[BedRegion],
-    bin_size: int, grr_definition: dict[str, Any], paths: list[str],
+    bin_size: int, grr_definition: dict[str, Any], chunk_dir: str,
 ) -> None:
-    """Write one chunk per region of a bundle, in the same process."""
+    """Write one chunk per region of a bundle, in the same process.
+
+    Each array is saved as it arrives and then dropped, so a bundle costs
+    one region of memory however many regions it holds -- which is what
+    makes a whole run in one task (``--task-budget 0``) affordable.
+
+    The region names its own chunk here, through the same
+    :func:`_chunk_path` the graph declared its outputs with, so the name
+    a task writes and the name the graph expects come from one function
+    rather than from two lists kept parallel across a task argument.
+    ``strict`` then counts the binner's arrays against the regions --
+    the contract's own subject -- rather than against a list built
+    elsewhere.  Their *order* is still the binner's promise to keep: a
+    binner yielding out of turn would write good arrays under the wrong
+    names, and nothing here can see that.
+
+    Closing the generator is this function's job, not the garbage
+    collector's.  The binner's resource stays open across its yields, and
+    on a failed save the executor keeps the exception, whose traceback
+    keeps this frame and the suspended generator with it -- so without
+    the close, a failing task holds its handle for the rest of the run.
+    """
     grr = _repository(json.dumps(grr_definition, sort_keys=True))
-    for region, path in zip(regions, paths, strict=True):
-        np.save(path, binner.bin_track(track, region, bin_size, grr))
+    with closing(binner.bin_track(track, regions, bin_size, grr)) as arrays:
+        for region, array in zip(regions, arrays, strict=True):
+            np.save(_chunk_path(chunk_dir, track, region, bin_size), array)
 
 
 def _write_hdf5(
