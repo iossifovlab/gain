@@ -228,6 +228,28 @@ def retired_resource_type_message(*, found_in: str) -> str:
     )
 
 
+#: Annotator names still accepted but deprecated, mapped to what to write
+#: instead.
+#:
+#: The annotator half of the fragment-score vocabulary deprecation (ADR
+#: 0011, gain#538): both spellings are registered entry-point keys, so a
+#: pipeline naming either builds, and only the value is worth typing in a
+#: config written today.  They stop being accepted in
+#: ``LEGACY_VOCABULARY_REMOVAL_RELEASE``.
+#:
+#: Here for the same reason ``RETIRED_ANNOTATOR_NAMES`` below is: two seams
+#: on opposite sides of an import edge need it -- the fragment-score
+#: annotator warns on one, and ``annotation_config`` keeps them out of the
+#: names it advertises while parsing, and the former imports the latter.
+#: Deriving the set from a resource-type spelling instead would make a
+#: naming coincidence load-bearing: these are annotator names, and nothing
+#: obliges a deprecated one to be spelled like the type it reads.
+LEGACY_ANNOTATOR_NAMES = {
+    "cnv_collection": "fragment_score",
+    "cnv_collection_annotator": "fragment_score_annotator",
+}
+
+
 #: Annotator names GAIn no longer accepts, mapped to what to write instead.
 #:
 #: The annotator half of the same retirement (gain#919): these named the

@@ -113,7 +113,12 @@ def test_a_retired_name_is_refused_before_a_wildcard_is_resolved(
 
     message = str(excinfo.value)
     assert retired_annotator_message(retired) in message
+    # The two ways this seam can answer a name it does not carry, neither
+    # of which says what is actually wrong. A retired name reaches both --
+    # it matches no resource AND is absent from the wildcard map -- so the
+    # retirement check has to keep running before either (gain#1266).
     assert "No resources match the wildcard" not in message
+    assert "No wildcard resource_id is accepted" not in message
 
 
 def test_the_refusal_names_the_replacement_and_the_release() -> None:

@@ -476,8 +476,9 @@ async def test_sync_thread_proof_is_discriminating(
 # ...and neither does the expansion-gate parse, which scans the repository
 # ---------------------------------------------------------------------------
 # The gate parse resolves no resource, but every wildcard it expands is a scan
-# of the whole repository (``AnnotationConfigParser.query_resources`` iterates
-# ``grr.get_all_resources()`` once per wildcard). Measured against the
+# of the whole repository (``AnnotationConfigParser.query_resources`` searches
+# the repository once per wildcard, and a search carrying no ``search_term``
+# reads every resource rather than opening the index). Measured against the
 # production-scale ENCODE GRR (7922 position scores): 27 ms for one wildcard,
 # 1.59 s for a config at ``MAX_ANNOTATORS``. On a *sync* view that was a busy
 # worker thread; on this async view "inline" means the event loop, where the

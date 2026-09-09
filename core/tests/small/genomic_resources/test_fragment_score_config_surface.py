@@ -657,9 +657,10 @@ def test_legacy_annotator_names_still_select_resources_by_wildcard(
 
     ``query_resources`` keys its annotator-name-to-resource-type map on
     names a user types in a pipeline config, so both legacy spellings are
-    config surface too.  Nothing else fails if one of them is renamed:
-    a wildcard simply stops matching, and every pipeline in the suite
-    names its resource outright.
+    config surface too.  Renaming one is now a refusal rather than a
+    silence: since gain#1266 a name the map does not carry is rejected
+    outright, so this test fails with that refusal rather than with an
+    empty match.
     """
     assert AnnotationConfigParser.query_resources(
         annotator_name, "*", legacy_grr) == ["fragments"]
