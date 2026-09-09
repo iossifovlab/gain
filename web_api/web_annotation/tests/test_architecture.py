@@ -331,11 +331,35 @@ def _warns_at_import(source: str) -> bool:
     Only what importing *runs* counts.  A module body, a class body and
     any ``if``/``try``/``with``/``for`` nesting inside them all execute on
     import; a ``def`` body executes when it is called, which may be never.
+
+    A module-level ``__getattr__`` is the one ``def`` that exception does
+    not cover.  PEP 562 has the import system call it for any name the
+    module does not itself define -- which is what ``from <module> import
+    <name>`` does -- so a shim written that way warns every module that
+    imports a name from it, at *that* module's import.  Reading only the
+    module body would make the fence's coverage depend on which
+    deprecation idiom the shim's author happened to pick.
+
+    Matching that one name is the whole of the exception, not the first
+    entry in a list that will grow: PEP 562 gives a module exactly two
+    hooks, and the other, ``__dir__``, answers ``dir()`` rather than an
+    attribute lookup, so no import reaches it.
+
+    ``__getattr__`` bound by assignment rather than by ``def`` --
+    ``__getattr__ = _make_shim()`` -- is out of reach of a static read
+    and is not covered, like the aliased ``warn`` in :func:`_tail_name`.
     """
-    return any(
-        _is_deprecation_warn(node)
-        for node in _import_time_nodes(ast.parse(source))
+    tree = ast.parse(source)
+    return _warns(_import_time_nodes(tree)) or any(
+        _warns(_call_time_nodes(fn))
+        for fn in _module_level_defs(tree)
+        if fn.name == "__getattr__"
     )
+
+
+def _warns(nodes: Iterator[ast.AST]) -> bool:
+    """Does any of ``nodes`` warn a deprecation?"""
+    return any(_is_deprecation_warn(node) for node in nodes)
 
 
 def _import_time_nodes(node: ast.AST) -> Iterator[ast.AST]:
@@ -375,6 +399,51 @@ def _signature_nodes(
     yield from (d for d in node.args.kw_defaults if d is not None)
     if not isinstance(node, ast.Lambda):
         yield from node.decorator_list
+
+
+def _module_level_defs(node: ast.AST) -> Iterator[ast.FunctionDef]:
+    """Every ``def`` that running the module body binds as a global.
+
+    Module-level nesting is followed, by the same reading
+    :func:`_import_time_nodes` applies: a ``def`` under an ``if`` or a
+    ``try`` runs and binds exactly like one at the top, and PEP 562 calls
+    whatever ended up bound.  ``if not TYPE_CHECKING:`` is where a shim
+    that wants to stay legible to a type checker puts it.
+
+    A ``class`` and a ``def`` are not descended into.  What they contain
+    binds an attribute or a local, never a module global -- which is what
+    keeps a ``__getattr__`` method, and one nested in a function, out of
+    the fence's subject set, structurally rather than by name.
+    """
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.FunctionDef):
+            yield child
+        if not isinstance(child, _BINDS_ITS_OWN_SCOPE):
+            yield from _module_level_defs(child)
+
+
+#: Nodes whose contents bind somewhere other than the module's globals:
+#: the deferred bodies, which bind their own locals whenever they do run,
+#: plus the one node that is not one of them.  A class body *does* run at
+#: import -- which is why it is absent above -- but what it binds is an
+#: attribute of the class, never a module global.  Derived rather than
+#: re-typed so the two cannot drift apart: a node kind added to the
+#: deferred bodies later binds its own scope too.
+_BINDS_ITS_OWN_SCOPE = (ast.ClassDef, *_DEFERRED_BODIES)
+
+
+def _call_time_nodes(fn: ast.FunctionDef) -> Iterator[ast.AST]:
+    """Every node under ``fn`` that *calling* it would execute.
+
+    The body statements and whatever nesting runs with them, by the same
+    rule the module body is read under: a ``def`` inside ``fn`` is
+    deferred again, since calling ``fn`` only binds it.  One traversal
+    rule, applied to the two places something can run from, rather than
+    two rules that would have to be reconciled.
+    """
+    for stmt in fn.body:
+        yield stmt
+        yield from _import_time_nodes(stmt)
 
 
 def _is_deprecation_warn(node: ast.AST) -> bool:
@@ -463,6 +532,45 @@ WARNS_AT_IMPORT_CASES = (
     # And a lambda's default, whose body is otherwise deferred.
     (("import warnings\n"
       "f = lambda x=warnings.warn('gone', DeprecationWarning): x\n"), True),
+    # A module-level `__getattr__` is the one def body import can reach:
+    # PEP 562 has the import system call it for any name the module does
+    # not define, which is what `from <module> import <name>` does.
+    (("import warnings\n"
+      "def __getattr__(name):\n"
+      "    warnings.warn('gone', DeprecationWarning, stacklevel=2)\n"), True),
+    # The shape such a shim is actually written in: the warn guarded by
+    # the name being one the shim moved.  Nesting inside the body runs
+    # with it, exactly as module-level nesting runs on import.
+    (("import warnings\n"
+      "_MOVED = {'cli': 'gain.annotation.annotate_tabular'}\n"
+      "def __getattr__(name):\n"
+      "    if name in _MOVED:\n"
+      "        warnings.warn('gone', DeprecationWarning, stacklevel=2)\n"
+      "    raise AttributeError(name)\n"), True),
+    # The category as the message reads the same inside `__getattr__`.
+    (("import warnings\n"
+      "def __getattr__(name):\n"
+      "    warnings.warn(DeprecationWarning('gone'))\n"), True),
+    # Module-level nesting binds the module global just as well, and PEP
+    # 562 calls whatever is bound.  `if not TYPE_CHECKING:` is how such a
+    # shim is written so a type checker does not have to make sense of
+    # the dynamic name -- the likelier spelling of a real one, not the
+    # rarer.  The read does not evaluate the condition, so the mirrored
+    # `if TYPE_CHECKING:` counts too; that is the safe direction, since
+    # being named here only asks the importer for the canonical module.
+    (("import warnings\n"
+      "from typing import TYPE_CHECKING\n"
+      "if not TYPE_CHECKING:\n"
+      "    def __getattr__(name):\n"
+      "        warnings.warn('gone', DeprecationWarning, stacklevel=2)\n"),
+     True),
+    # The same one level down a `try`, where an import fallback puts it.
+    (("import warnings\n"
+      "try:\n"
+      "    from gain.annotation.annotate_tabular import cli\n"
+      "except ImportError:\n"
+      "    def __getattr__(name):\n"
+      "        warnings.warn('gone', DeprecationWarning)\n"), True),
     # A function body does not run on import.
     (("import warnings\n"
       "def f():\n"
@@ -472,6 +580,31 @@ WARNS_AT_IMPORT_CASES = (
       "class C:\n"
       "    def m(self):\n"
       "        warnings.warn('gone', DeprecationWarning)\n"), False),
+    # `__getattr__` on a *class* is attribute access on an instance, not
+    # on the module, and the import system never calls it.  Three classes
+    # in `gain` define one -- the annotator decorator's, the fsspec
+    # handle's and the faulty-filesystem test double's.  All three only
+    # delegate, so matching the name anywhere in the tree would not widen
+    # the derived set today; it would make all three subjects the moment
+    # one of them warned.  What pins it now is this row: such a match
+    # judges this source `True`, and the rule says `False`.
+    (("import warnings\n"
+      "class C:\n"
+      "    def __getattr__(self, name):\n"
+      "        warnings.warn('gone', DeprecationWarning)\n"), False),
+    # PEP 562 looks up `__getattr__` and calls it; it does not await one.
+    # An `async def` returns a coroutine that warns only when awaited,
+    # and nothing awaits an attribute lookup.
+    (("import warnings\n"
+      "async def __getattr__(name):\n"
+      "    warnings.warn('gone', DeprecationWarning)\n"), False),
+    # Only a *module-level* `__getattr__` is the module's.  One nested in
+    # a function is an ordinary local def that import never binds.
+    (("import warnings\n"
+      "def make():\n"
+      "    def __getattr__(name):\n"
+      "        warnings.warn('gone', DeprecationWarning)\n"
+      "    return __getattr__\n"), False),
     # Another category is not a deprecation.
     (("import warnings\n"
       "warnings.warn('careful', UserWarning)\n"), False),
@@ -492,13 +625,19 @@ def test_what_counts_as_a_warning_at_import() -> None:
     judgement are separate jobs, and a bug in the judgement is invisible
     in an empty offender list.
 
-    The two ``def``-body rows are the ones this pins.  A warn inside a
+    The ``def``-body rows are the ones this pins.  A warn inside a
     function fires when it is *called*, which may be never -- and
     ``gain`` deprecates methods exactly that way, on modules half of that
     package imports.  Reading the tree with ``ast.walk`` instead of
     descending only what import executes puts every one of them in the
     derived set, and the fence then fails on the modules it was never
     about.
+
+    A module-level ``__getattr__`` is the one exception to that, so the
+    rows around it carve the exception back down: a ``__getattr__`` on a
+    class, an ``async def`` one and one nested in a function are all
+    ``False``, because the import system calls only what the module body
+    bound.  Without them the exception swallows the rule it belongs to.
 
     One test over the whole table rather than a ``parametrize``, which is
     how ``core`` spells it: every test item in this project pays the
