@@ -33,8 +33,21 @@ of the author's ``<``.
 from __future__ import annotations
 
 import re
+from typing import Final
 
 from markdown2 import markdown
+
+#: The Markdown dialect every GAIn caller renders GRR prose in.  Applied
+#: by ``render_markdown`` when a caller names no ``extras`` of its own,
+#: so the dialect is one decision rather than one per call site -- which
+#: is how the about page and the resource page drifted into rendering the
+#: same source differently (gain#1278).
+#:
+#: ``fenced-code-blocks`` highlights through Pygments when a fence names a
+#: language *and* Pygments is importable, and falls back to a plain
+#: ``<pre><code>`` otherwise; Pygments is not a declared dependency, so
+#: that shape is environment-dependent.  gain#1289 decides it.
+DEFAULT_EXTRAS: Final = ("tables", "fenced-code-blocks")
 
 #: Element names a browser recognizes -- HTML per the WHATWG living
 #: standard plus obsolete names browsers still tokenize, and the SVG and
@@ -128,9 +141,12 @@ def _escape_bogus_tags(html: str) -> str:
 def render_markdown(text: str, **kwargs: object) -> str:
     """Render Markdown to HTML, rescuing prose from bogus tags.
 
-    Keyword options (``extras=...`` and the rest) pass through to
+    Renders in ``DEFAULT_EXTRAS`` unless the caller names its own
+    ``extras``; passing ``extras=[]`` asks for plain Markdown and gets
+    it.  Keyword options (``extras=...`` and the rest) pass through to
     ``markdown2.markdown``.  Returns a plain ``str``: the attribute side
     channel of markdown2's return type (``toc_html``, ``metadata``) is
     not carried over.
     """
+    kwargs.setdefault("extras", DEFAULT_EXTRAS)
     return _escape_bogus_tags(markdown(text, **kwargs))
