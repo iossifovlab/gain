@@ -39,22 +39,48 @@ def digest_output(array: np.ndarray) -> str:
     """
     digest = hashlib.sha256()
     digest.update(f"{array.dtype.str}:{array.shape}:".encode())
-    digest.update(np.ascontiguousarray(array).tobytes())
+    # `tobytes()` is C-ordered whatever the array's layout, so no copy first.
+    digest.update(array.tobytes())
     return digest.hexdigest()
 
 
-def probe_predictions(
+@dataclasses.dataclass(frozen=True)
+class Measurement:
+    """What one worker saw: digests, an exemplar, and its own peak drift."""
+
+    digests: tuple[str, ...]
+    #: The first answer, kept so the parent can compare workers against each
+    #: other. Only one is retained, so memory is flat in `iterations`.
+    first: np.ndarray
+    #: The largest absolute departure of any later answer from `first`, i.e.
+    #: how far this worker drifted from itself.
+    within_deviation: float
+
+
+def measure(
     predict: Predict,
     x: np.ndarray,
     iterations: int,
-) -> tuple[str, ...]:
-    """Digest of every prediction one worker makes on the same input.
+) -> Measurement:
+    """Predict the same input `iterations` times and describe the answers.
 
-    The input never changes, so every digest here should be identical. Any
+    The input never changes, so every digest should be identical. Any
     variation is the runtime answering differently for reasons that are not
     the data.
     """
-    return tuple(digest_output(predict(x)) for _ in range(iterations))
+    digests = []
+    first: np.ndarray | None = None
+    within = 0.0
+    for _ in range(iterations):
+        out = predict(x)
+        if first is None:
+            first = out
+        else:
+            within = max(within, float(np.max(np.abs(out - first))))
+        digests.append(digest_output(out))
+    if first is None:
+        raise ValueError("iterations must be at least 1")
+    return Measurement(tuple(digests), first, within)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -70,14 +96,15 @@ class RunSummary:
     #: but processes disagreed; anything above 1 is a single process changing
     #: its answer between iterations.
     per_worker_distinct: tuple[int, ...]
-    #: The intra-op setting each worker's runtime reported back, and the
-    #: OS thread count the process ended up holding. The first *echoes the
-    #: request* on both backends (ONNX returns the field just assigned;
-    #: TensorFlow returns the configured value, 0 meaning "size to the
-    #: machine"), so it confirms the setter ran but is not independent
-    #: evidence. `observed_os_threads` is the independent measurement: it
-    #: separates a pinned worker from an auto one whatever was asked.
-    observed_intra_op_threads: tuple[int, ...] = ()
+    #: The intra-op setting the runtime reported back. Recorded once, not
+    #: per worker: every worker of a point is configured identically, and the
+    #: value *echoes the request* on both backends (ONNX returns the field
+    #: just assigned; TensorFlow returns the configured value, 0 meaning
+    #: "size to the machine"), so it confirms the setter ran and is not
+    #: independent evidence.
+    observed_intra_op_threads: int | None = None
+    #: The independent measurement: how many OS threads each worker actually
+    #: held. This is what separates a pinned worker from an auto one.
     observed_os_threads: tuple[int, ...] = ()
     #: The box's 1/5/15-minute load when this point *finished* -- the load
     #: the point itself created. #1275 asks for it beside every figure,
@@ -95,17 +122,26 @@ class RunSummary:
     max_abs_deviation: float | None = None
 
     @property
-    def reproducible(self) -> bool:
-        """One answer, one input, and something actually ran.
+    def valid(self) -> bool:
+        """Was this point a measurement at all?
 
-        A point that predicted nothing, or whose workers disagreed about
-        what they predicted on, is not evidence of a stable runtime.
+        Deliberately separate from `diverged`: a point that predicted
+        nothing, or whose workers disagreed about *what they predicted on*,
+        tells you nothing about the runtime either way. Folding the two
+        together would let a broken point be reported as drift -- the exact
+        wrong answer for #1275, whose deliverable is a negative result.
         """
-        return (
-            self.total_predictions > 0
-            and self.distinct_outputs == 1
-            and self.distinct_inputs == 1
-        )
+        return self.total_predictions > 0 and self.distinct_inputs == 1
+
+    @property
+    def diverged(self) -> bool:
+        """More than one answer came back. Only meaningful on a valid point."""
+        return self.distinct_outputs > 1
+
+    @property
+    def reproducible(self) -> bool:
+        """A usable point that found one answer."""
+        return self.valid and not self.diverged
 
 
 def summarise_run(
@@ -113,7 +149,7 @@ def summarise_run(
     threads: int | None,
     worker_digests: Sequence[Sequence[str]],
     *,
-    observed_intra_op_threads: Sequence[int] = (),
+    observed_intra_op_threads: int | None = None,
     observed_os_threads: Sequence[int] = (),
     load_average: tuple[float, float, float] | None = None,
     load_average_before: tuple[float, float, float] | None = None,
@@ -129,7 +165,7 @@ def summarise_run(
         distinct_outputs=len(set(every)),
         per_worker_distinct=tuple(
             len(set(worker)) for worker in worker_digests),
-        observed_intra_op_threads=tuple(observed_intra_op_threads),
+        observed_intra_op_threads=observed_intra_op_threads,
         observed_os_threads=tuple(observed_os_threads),
         load_average=load_average,
         load_average_before=load_average_before,
@@ -146,18 +182,25 @@ class SweepSummary:
     #: Per intra/inter-op thread setting (None = the runtime's own default),
     #: the smallest process count at which more than one distinct answer
     #: appeared -- or None if the setting stayed reproducible throughout.
+    #: Built from valid points only.
     first_divergent_processes: dict[int | None, int | None]
+    #: Points that were not measurements (nothing ran, or the workers
+    #: disagreed about the input). Reported separately and never as drift.
+    unusable: tuple[RunSummary, ...] = ()
 
 
 def summarise_sweep(runs: Sequence[RunSummary]) -> SweepSummary:
     """Fold the sweep into the K at which each thread setting first drifts."""
     first: dict[int | None, int | None] = {}
     for run in sorted(runs, key=lambda r: r.processes):
-        if run.threads not in first:
-            first[run.threads] = None
-        if not run.reproducible and first[run.threads] is None:
+        first.setdefault(run.threads, None)
+        if run.valid and run.diverged and first[run.threads] is None:
             first[run.threads] = run.processes
-    return SweepSummary(runs=tuple(runs), first_divergent_processes=first)
+    return SweepSummary(
+        runs=tuple(runs),
+        first_divergent_processes=first,
+        unusable=tuple(run for run in runs if not run.valid),
+    )
 
 
 #: The annotator's own window at the default `distance=50`: 10000 + 2*50 + 1.
@@ -208,6 +251,8 @@ def read_host_info(
             model = value.strip()
         elif key == "flags" and not flags:
             flags = set(value.split())
+        if model and flags:
+            break
     return HostInfo(
         hostname=hostname,
         cpu_model=model,
@@ -290,6 +335,8 @@ class ProbeConfig:
     #: None means "leave the runtime's own default alone" -- the arm that
     #: reproduces what the shipped backend does today.
     threads: tuple[int | None, ...]
+    #: Run the plumbing self-test instead of a measurement.
+    self_test: bool
     #: Turn on the runtime's own determinism switch --
     #: `tf.config.experimental.enable_op_determinism()` for TensorFlow,
     #: `SessionOptions.use_deterministic_compute` for ONNX Runtime. Off by
@@ -334,15 +381,22 @@ def parse_args(argv: Sequence[str] | None = None) -> ProbeConfig:
         description="Does a SpliceAI model runtime answer differently under "
                     "load? (iossifovlab/gain#1275)")
     parser.add_argument(
-        "--backend", choices=sorted(_LOADERS), default="tensorflow",
-        help="model runtime to probe (default: the shipped one); the two "
-             "'fake' backends need no model and exist to self-test this "
-             "script's own plumbing")
+        "--backend", choices=REAL_BACKENDS, default="tensorflow",
+        help="model runtime to probe (default: the shipped one)")
+    parser.add_argument(
+        "--self-test", action="store_true",
+        help="check this script's own plumbing -- barrier, process pool and "
+             "fold -- against two model-free runtimes, one stable and one "
+             "that deliberately drifts, then exit. Runs no real model and "
+             "writes no report.")
     parser.add_argument(
         "--models", type=int, choices=range(1, ENSEMBLE_SIZE + 1),
         default=ENSEMBLE_SIZE,
         help=f"ensemble models to load per worker (default: {ENSEMBLE_SIZE}, "
-             "what both shipped backends load)")
+             "what both shipped backends load). Fewer is for quick smoke "
+             "runs only: ONNX Runtime opens one thread pool per session, so "
+             "a short ensemble under-threads that arm and makes the two "
+             "backends incomparable.")
     parser.add_argument(
         "--width", type=_width, default=DEFAULT_WIDTH,
         help=f"sequence length (default: {DEFAULT_WIDTH}, distance=50)")
@@ -380,6 +434,7 @@ def parse_args(argv: Sequence[str] | None = None) -> ProbeConfig:
         iterations=args.iterations,
         processes=tuple(args.processes),
         threads=tuple(args.threads),
+        self_test=args.self_test,
         op_determinism=args.op_determinism,
         seed=args.seed,
         json_path=args.json_path,
@@ -431,6 +486,30 @@ def _load_tensorflow(
     return predict, requested
 
 
+def onnx_session_options(
+    threads: int | None, *, op_determinism: bool = False,
+) -> Any:
+    """The shipped ONNX session settings, with the sweep's thread count.
+
+    Named and public so a test can pin it against the real
+    `spliceai_session_options`: all three settings are re-stated here rather
+    than imported (importing any annotator submodule pulls in
+    `gain.annotation`), and #297/#400 found each of them load-bearing, so an
+    unpinned copy could silently turn the baseline arm into a configuration
+    nobody ships.
+    """
+    # pylint: disable=import-outside-toplevel
+    import onnxruntime as ort
+    options = ort.SessionOptions()
+    options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    options.graph_optimization_level = \
+        ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+    options.intra_op_num_threads = (
+        ONNX_INTRA_OP_THREADS if threads is None else threads)
+    options.use_deterministic_compute = op_determinism
+    return options
+
+
 def _load_onnx(
     models: int, threads: int | None, *, op_determinism: bool,
 ) -> tuple[Predict, int]:
@@ -443,13 +522,8 @@ def _load_onnx(
     """
     # pylint: disable=import-outside-toplevel
     import onnxruntime as ort
-    options = ort.SessionOptions()
-    options.add_session_config_entry("session.intra_op.allow_spinning", "0")
-    options.graph_optimization_level = \
-        ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
-    options.intra_op_num_threads = (
-        ONNX_INTRA_OP_THREADS if threads is None else threads)
-    options.use_deterministic_compute = op_determinism
+    options = onnx_session_options(
+        threads=threads, op_determinism=op_determinism)
     sessions = [
         ort.InferenceSession(
             str(MODELS_DIR / f"spliceai{i}.onnx"), options,
@@ -514,6 +588,13 @@ class _Loader(Protocol):
         ...
 
 
+#: The runtimes a measurement may name. The two model-free doubles below
+#: are deliberately NOT here: #1275's deliverable is a *negative* result, and
+#: a mistyped backend that answered without loading a model would print a
+#: clean, publishable table meaning nothing. They are reachable only through
+#: `--self-test`, which reports pass/fail and never writes a sweep report.
+REAL_BACKENDS = ("onnx", "tensorflow")
+
 _LOADERS: dict[str, _Loader] = {
     "tensorflow": _load_tensorflow,
     "onnx": _load_onnx,
@@ -535,15 +616,45 @@ def _init_worker(barrier: Any) -> None:
     _BARRIER = barrier
 
 
-def _run_worker(
-    spec: tuple[str, int, int | None, bool, int, int, int, int],
-) -> tuple[tuple[str, ...], str, int, int, np.ndarray, float]:
+@dataclasses.dataclass(frozen=True)
+class WorkerSpec:
+    """One point's instructions, as handed to every contending worker.
+
+    A dataclass rather than a tuple because four of its fields are bare
+    `int`s: transposing `width` and `batch` in a positional tuple would
+    type-check, run, and silently measure something else.
+    """
+
+    backend: str
+    models: int
+    threads: int | None
+    op_determinism: bool
+    width: int
+    batch: int
+    seed: int
+    iterations: int
+
+
+@dataclasses.dataclass(frozen=True)
+class WorkerResult:
+    """What one contending worker reports back."""
+
+    digests: tuple[str, ...]
+    #: Digest of the input this worker actually predicted on. Workers build
+    #: it independently, so this is what lets the parent tell input drift
+    #: from runtime drift.
+    input_digest: str
+    intra_op_threads: int
+    os_threads: int
+    exemplar: np.ndarray
+    within_deviation: float
+
+
+def _run_worker(spec: WorkerSpec) -> WorkerResult:
     """One contending process: load, warm up, sync, then measure."""
-    (backend, models, threads, op_determinism,
-     width, batch, seed, iterations) = spec
-    predict, requested = _LOADERS[backend](
-        models, threads, op_determinism=op_determinism)
-    x = np.repeat(fixed_input(width, seed), batch, axis=0)
+    predict, requested = _LOADERS[spec.backend](
+        spec.models, spec.threads, op_determinism=spec.op_determinism)
+    x = np.repeat(fixed_input(spec.width, spec.seed), spec.batch, axis=0)
     # Untimed: the first call builds the graph and allocates the arenas, and
     # doing that while other workers are already predicting would measure
     # start-up skew rather than contention.
@@ -556,30 +667,17 @@ def _run_worker(
         raise RuntimeError("worker started without a barrier; the run would "
                            "not be contended")
     _BARRIER.wait(timeout=_BARRIER_TIMEOUT_SECONDS)
-
-    # Deviation has to come from the *measured* predictions: the warm-up call
-    # happens before the barrier, when nothing is contending, so comparing
-    # warm-ups would report 0.0 however badly the measured ones drifted.
-    # Only the first measured answer is retained; the rest are folded into a
-    # running peak, so memory stays flat in `iterations`.
-    measured: list[np.ndarray] = []
-    within = 0.0
-
-    def recording(value: np.ndarray) -> np.ndarray:
-        nonlocal within
-        out = predict(value)
-        if not measured:
-            measured.append(out)
-        else:
-            within = max(
-                within, float(np.max(np.abs(out - measured[0]))))
-        return out
-
-    digests = probe_predictions(recording, x, iterations)
-    exemplar = measured[0] if measured else np.zeros(1, dtype=np.float32)
-    return (
-        digests, digest_output(x), requested, _os_thread_count(),
-        exemplar, within)
+    # Measured strictly after the barrier: the warm-up above ran uncontended,
+    # so folding it in would report 0.0 however badly the measured ones drift.
+    measured = measure(predict, x, spec.iterations)
+    return WorkerResult(
+        digests=measured.digests,
+        input_digest=digest_output(x),
+        intra_op_threads=requested,
+        os_threads=_os_thread_count(),
+        exemplar=measured.first,
+        within_deviation=measured.within_deviation,
+    )
 
 
 def _max_abs_deviation(
@@ -600,9 +698,12 @@ def _max_abs_deviation(
     if not exemplars:
         return None
     baseline = exemplars[0]
-    across = max(
-        float(np.max(np.abs(exemplar - baseline))) for exemplar in exemplars)
-    return max([across, *within_worker])
+    return max([
+        0.0,
+        *(float(np.max(np.abs(exemplar - baseline)))
+          for exemplar in exemplars[1:]),
+        *within_worker,
+    ])
 
 
 def run_point(
@@ -613,9 +714,16 @@ def run_point(
     """Run one (process count, thread setting) point of the sweep."""
     ctx = multiprocessing.get_context("spawn")
     barrier = ctx.Barrier(processes)
-    spec = (
-        config.backend, config.models, threads, config.op_determinism,
-        config.width, config.batch, config.seed, config.iterations)
+    spec = WorkerSpec(
+        backend=config.backend,
+        models=config.models,
+        threads=threads,
+        op_determinism=config.op_determinism,
+        width=config.width,
+        batch=config.batch,
+        seed=config.seed,
+        iterations=config.iterations,
+    )
     load_before = os.getloadavg()
     with ctx.Pool(
         processes, initializer=_init_worker, initargs=(barrier,),
@@ -627,16 +735,16 @@ def run_point(
     return summarise_run(
         processes=processes,
         threads=threads,
-        worker_digests=[digests for digests, _, _, _, _, _ in results],
-        input_digests=[x_digest for _, x_digest, _, _, _, _ in results],
-        observed_intra_op_threads=[req for _, _, req, _, _, _ in results],
-        observed_os_threads=[n for _, _, _, n, _, _ in results],
+        worker_digests=[result.digests for result in results],
+        input_digests=[result.input_digest for result in results],
+        observed_intra_op_threads=results[0].intra_op_threads,
+        observed_os_threads=[result.os_threads for result in results],
         load_average=(load_after[0], load_after[1], load_after[2]),
         load_average_before=(
             load_before[0], load_before[1], load_before[2]),
         max_abs_deviation=_max_abs_deviation(
-            [exemplar for _, _, _, _, exemplar, _ in results],
-            [within for _, _, _, _, _, within in results]),
+            [result.exemplar for result in results],
+            [result.within_deviation for result in results]),
     )
 
 
@@ -651,6 +759,35 @@ def run_sweep(config: ProbeConfig) -> SweepSummary:
     return summarise_sweep(runs)
 
 
+def self_test_config(backend: str) -> ProbeConfig:
+    """A tiny sweep point against one of the model-free doubles."""
+    return ProbeConfig(
+        backend=backend, models=1, width=DEFAULT_WIDTH, batch=1,
+        iterations=2, processes=(3,), threads=(None,), self_test=True,
+        op_determinism=False, seed=0, json_path=None)
+
+
+def self_test() -> int:
+    """Prove the orchestration can both agree and see disagreement.
+
+    A sweep that reports "reproducible" is only worth reading if the
+    machinery producing it would have said otherwise had the runtime drifted.
+    """
+    stable = run_point(self_test_config("fake"), processes=3, threads=None)
+    drifting = run_point(
+        self_test_config("fake-drift"), processes=3, threads=None)
+    checks = [
+        ("stable runtime reports agreement", stable.reproducible),
+        ("stable runtime is a usable point", stable.valid),
+        ("drifting runtime is seen to drift", drifting.diverged),
+        ("drift magnitude is reported",
+         (drifting.max_abs_deviation or 0.0) > 0.0),
+    ]
+    for name, ok in checks:
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}")
+    return 0 if all(ok for _, ok in checks) else 1
+
+
 def _label(threads: int | None) -> str:
     return "auto" if threads is None else str(threads)
 
@@ -661,18 +798,29 @@ def _run_line(backend: str, run: RunSummary) -> str:
         "-" if run.max_abs_deviation is None
         else f"{run.max_abs_deviation:.3g}")
     load = "-" if run.load_average is None else f"{run.load_average[0]:.1f}"
+    before = (
+        "-" if run.load_average_before is None
+        else f"{run.load_average_before[0]:.1f}")
     return (
         f"  {backend:<11} threads={_label(run.threads):<4} "
         f"K={run.processes:<3} "
         f"distinct={run.distinct_outputs:<3} "
         f"max_abs_dev={deviation:<10} "
         f"os_threads={sorted(set(run.observed_os_threads))} "
-        f"load_after={load}")
+        f"load={before}->{load}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the sweep and report it. Non-zero if anything diverged."""
+    """Run the sweep and report it.
+
+    Exit code 0 when every point was a usable, reproducible measurement, 1
+    when a runtime diverged, and 2 when some point was not a measurement at
+    all -- a broken run and a real finding must not look alike to a script.
+    """
     config = parse_args(argv)
+    if config.self_test:
+        print("self-test: probe plumbing")
+        return self_test()
     host = capture_host()
     print(
         f"host={host.hostname} cpu={host.cpu_model!r} "
@@ -692,25 +840,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         verdict = "none up to " + str(max(config.processes)) \
             if first is None else str(first)
         print(f"  threads={_label(threads):<4} {verdict}")
+    for run in sweep.unusable:
+        print(
+            f"  UNUSABLE at K={run.processes} threads={_label(run.threads)}: "
+            f"{run.total_predictions} predictions, "
+            f"{run.distinct_inputs} distinct inputs -- not counted as drift")
 
     if config.json_path is not None:
         report = {
             "issue": "iossifovlab/gain#1275",
             "host": dataclasses.asdict(host),
-            "config": {
-                **dataclasses.asdict(config),
-                "threads": [_label(t) for t in config.threads],
-                "json_path": str(config.json_path),
-            },
+            "config": dataclasses.asdict(config),
             "runs": [dataclasses.asdict(run) for run in sweep.runs],
-            "first_divergent_processes": {
-                _label(threads): first
+            # A list of records, not an object keyed by `_label`'s output:
+            # "auto" is a console rendering, and JSON has null. A reader
+            # should not have to parse the display layer back out.
+            "first_divergent": [
+                {"threads": threads, "first_divergent_processes": first}
                 for threads, first in sweep.first_divergent_processes.items()
-            },
+            ],
+            "unusable": [
+                dataclasses.asdict(run) for run in sweep.unusable],
         }
         config.json_path.write_text(json.dumps(report, indent=2, default=str))
         print(f"\nwrote {config.json_path}")
-    return 0 if all(run.reproducible for run in sweep.runs) else 1
+    if sweep.unusable:
+        return 2
+    return 1 if any(run.diverged for run in sweep.runs) else 0
 
 
 if __name__ == "__main__":
