@@ -11,12 +11,15 @@ import typing
 import unittest.mock
 
 import aiohttp
+import pyBigWig
+import pysam
 import pytest
 import pytest_mock
 import yarl
 from gain.genomic_resources import cli as grr_cli
 from gain.genomic_resources.cli import cli_browse
 from gain.genomic_resources.fsspec_protocol import (
+    FsspecReadOnlyProtocol,
     FsspecReadWriteProtocol,
     FsspecRepositoryProtocol,
     build_fsspec_protocol,
@@ -38,12 +41,17 @@ from gain.genomic_resources.repository_factory import (
 from gain.genomic_resources.testing import (
     build_faulty_test_protocol,
     setup_directories,
+    setup_genome_bgz,
 )
 from gain.genomic_resources.testing.faulty_filesystem import FaultyFileSystem
 from multidict import CIMultiDict, CIMultiDictProxy
 from pydantic import ValidationError
 
-from .conftest import BASIC_RESOURCE_ID, BASIC_RESOURCE_LAYOUT
+from .conftest import (
+    BASIC_RESOURCE_ID,
+    BASIC_RESOURCE_LAYOUT,
+    serving_http,
+)
 
 _SECRET = "s3cr3t-do-not-log"  # ruff: ignore[hardcoded-password-string]
 
@@ -1374,16 +1382,26 @@ def _a_remote_handle_whose_io_fails(
     return proto, resource, planted
 
 
+def _assert_no_credential_escaped(exc: BaseException) -> None:
+    """The secret must survive nowhere the raised error can be rendered.
+
+    Callers that know the exact expected text pin the message whole on top of
+    this; this covers the surfaces a message pin cannot see -- the rendered
+    traceback, and every exception linked through
+    ``__cause__``/``__context__`` (the walk includes ``exc`` itself, so the
+    message is covered here too).
+    """
+    assert _SECRET not in "".join(traceback.format_exception(exc))
+    for linked in _walk_exception_chain(exc):
+        assert _SECRET not in str(linked)
+
+
 def _assert_redacted(
     exc: BaseException, planted: BaseException, filename: str,
 ) -> None:
     """The whole redaction contract, asserted in one place."""
-    tb = "".join(traceback.format_exception(exc))
-    assert _SECRET not in str(exc)
+    _assert_no_credential_escaped(exc)
     assert "alice" not in str(exc)
-    assert _SECRET not in tb
-    for linked in _walk_exception_chain(exc):
-        assert _SECRET not in str(linked)
     # host, port and filename preserved so the error stays diagnosable.
     assert "127.0.0.1:1" in str(exc)
     assert filename in str(exc)
@@ -1738,3 +1756,312 @@ def test_md5_sum_reads_a_multi_chunk_file_in_bounded_reads(
     # more than one read, and not one of them unbounded
     assert len(sizes) > 1
     assert all(size is not None for size in sizes)
+
+
+# ---------------------------------------------------------------------------
+# gain#1314 — the four opens that hand a url to pysam/pyBigWig. ADR 0023's
+# ``_RedactingFile`` cannot reach them: the library owns the transport, so
+# there is no handle to wrap, and GAIn composes none of the messages. pysam
+# embeds the credential-bearing url in the error it raises, and htslib writes
+# it to stderr on top of that.
+# ---------------------------------------------------------------------------
+
+_TABIX_FILE_NAME = "data.txt.gz"
+_VCF_FILE_NAME = "data.vcf.gz"
+_BIGWIG_FILE_NAME = "data.bw"
+
+
+def _a_refused_protocol(
+    proto_id: str, *, authed: bool = True,
+) -> tuple[FsspecRepositoryProtocol, GenomicResource]:
+    """A protocol whose host refuses every connection.
+
+    Port 1 is never listening, so the open fails offline and instantly --
+    the arrangement the rest of this module uses. It has to be a real url and
+    a real failure: pysam and pyBigWig bypass fsspec entirely, so planting a
+    fault on the filesystem the way the handle-level tests do would never be
+    reached.
+    """
+    userinfo = f"alice:{_SECRET}@" if authed else ""
+    proto = build_fsspec_protocol(
+        proto_id, f"https://{userinfo}127.0.0.1:1/path")
+    return proto, GenomicResource("sub/res", (1, 0), proto, {})
+
+
+def test_tabix_open_failure_does_not_leak_url_credential(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    proto, resource = _a_refused_protocol("i1314-tabix")
+
+    with pytest.raises(OSError) as excinfo:
+        proto.open_tabix_file(
+            resource, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+    exc = excinfo.value
+    # Pinned WHOLE. A fragment probe (``"127.0.0.1" in str(exc)``) passes just
+    # as well for an over-redaction that drops the scheme or the host along
+    # with the userinfo, leaving a message that can no longer say which GRR
+    # failed -- which is the point of redacting rather than suppressing.
+    assert str(exc) == (
+        "could not open file "
+        f"`https://127.0.0.1:1/path/sub/res(1.0)/{_TABIX_FILE_NAME}`")
+    _assert_no_credential_escaped(exc)
+    # The second channel, independent of the exception: htslib writes
+    # ``[E::hts_open_format] Failed to open file "<url>"`` to fd 2 itself, so
+    # no redaction of the raised error can reach it, and under CI or
+    # supervisord it lands in the same log stream as the ERROR line. Asserted
+    # at FD level -- the write comes from C, and ``capsys``, which only
+    # replaces ``sys.stderr``, never sees it.
+    assert _SECRET not in capfd.readouterr().err
+
+
+def test_tabix_open_still_hands_pysam_the_credential(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # What only a mock can show: the url pysam is HANDED. Redacting it before
+    # the call reads as the tidier fix and breaks every authed read, and no
+    # leak test can see that -- every failure this suite plants is on the way
+    # out. Both urls carry it: htslib authenticates the index fetch too.
+    # Precedent: ``..._forwards_the_mode_and_the_credential``.
+    proto, resource = _a_refused_protocol("i1314-tabix-cred")
+    opened = mocker.patch.object(pysam, "TabixFile")
+
+    proto.open_tabix_file(
+        resource, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+    assert _SECRET in opened.call_args.args[0]
+    assert _SECRET in opened.call_args.kwargs["index"]
+
+
+def test_tabix_open_without_userinfo_raises_the_librarys_own_error(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # Nothing to redact must mean nothing touched: the library's own error
+    # propagates as-is, keeping its type, its traceback and its chain.
+    # Asserted on identity, because a rebuild carrying an identical message
+    # would satisfy any assertion on the message alone.
+    proto, resource = _a_refused_protocol("i1314-tabix-plain", authed=False)
+    planted = OSError(
+        "could not open file "
+        f"`https://127.0.0.1:1/path/sub/res(1.0)/{_TABIX_FILE_NAME}`")
+    mocker.patch.object(pysam, "TabixFile", side_effect=planted)
+
+    with pytest.raises(OSError) as excinfo:
+        proto.open_tabix_file(
+            resource, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+    assert excinfo.value is planted
+
+
+def test_tabix_open_without_userinfo_keeps_htslib_diagnostics(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # The silencing costs htslib's own account of why the open failed, so it
+    # is spent only on the configuration it protects. An unauthed GRR -- every
+    # deployment today -- has no credential to lose and keeps the diagnosis.
+    proto, resource = _a_refused_protocol("i1314-tabix-loud", authed=False)
+
+    with pytest.raises(OSError):
+        proto.open_tabix_file(
+            resource, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+    assert "[E::hts_open_format]" in capfd.readouterr().err
+
+
+def test_failed_authed_open_does_not_silence_the_next_one(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # The verbosity level is PROCESS-global, so a bracket that does not
+    # restore turns one authed open into permanent silence for every htslib
+    # user after it. Asserted on that consequence rather than on the
+    # ``set_verbosity`` calls, so it stays true if the mechanism changes.
+    authed, authed_res = _a_refused_protocol("i1314-restore-fail")
+    plain, plain_res = _a_refused_protocol(
+        "i1314-restore-fail-plain", authed=False)
+
+    with pytest.raises(OSError):
+        authed.open_tabix_file(
+            authed_res, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+    capfd.readouterr()
+
+    with pytest.raises(OSError):
+        plain.open_tabix_file(
+            plain_res, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+    assert "[E::hts_open_format]" in capfd.readouterr().err
+
+
+def test_successful_authed_open_does_not_silence_the_next_one(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # The same guarantee on the path that does not raise -- restoring only
+    # where the open failed would leave every successful authed read silencing
+    # htslib for good.
+    authed, authed_res = _a_refused_protocol("i1314-restore-ok")
+    plain, plain_res = _a_refused_protocol(
+        "i1314-restore-ok-plain", authed=False)
+
+    with unittest.mock.patch.object(pysam, "TabixFile"):
+        authed.open_tabix_file(
+            authed_res, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+    capfd.readouterr()
+
+    with pytest.raises(OSError):
+        plain.open_tabix_file(
+            plain_res, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+    assert "[E::hts_open_format]" in capfd.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("index_filename", "index_exists"),
+    [(None, False), (f"{_VCF_FILE_NAME}.tbi", True)],
+    ids=["unindexed", "indexed"])
+def test_vcf_open_failure_does_not_leak_url_credential(
+    index_filename: str | None, index_exists: bool,
+    capfd: pytest.CaptureFixture[str], mocker: pytest_mock.MockerFixture,
+) -> None:
+    # This method reaches ``pysam.VariantFile`` at TWO call sites -- the
+    # indexed open a configured table takes, and the early return for a file
+    # that ships no index at all (a VCF header sidecar, say). Wrapping one and
+    # not the other would leave half the method leaking, so both are pinned
+    # here. The existence probe decides which branch is taken.
+    proto, resource = _a_refused_protocol(f"i1314-vcf-{index_exists}")
+    mocker.patch.object(
+        proto.filesystem, "exists", return_value=index_exists)
+
+    with pytest.raises(OSError) as excinfo:
+        proto.open_vcf_file(resource, _VCF_FILE_NAME, index_filename)
+
+    assert str(excinfo.value) == (
+        "[Errno 111] Could not open variant file: Connection refused: "
+        f"'https://127.0.0.1:1/path/sub/res(1.0)/{_VCF_FILE_NAME}'")
+    _assert_no_credential_escaped(excinfo.value)
+    assert _SECRET not in capfd.readouterr().err
+
+
+def test_vcf_unindexed_open_still_hands_pysam_the_credential(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # The index-less branch needs its own forwarding fence. Redacting the url
+    # on this branch alone would break every unindexed authed VCF read while
+    # the leak test above went on passing -- it pins the message, and a
+    # credential-free url produces a clean message for the wrong reason.
+    proto, resource = _a_refused_protocol("i1314-vcf-plain-cred")
+    opened = mocker.patch.object(pysam, "VariantFile")
+
+    proto.open_vcf_file(resource, _VCF_FILE_NAME)
+
+    assert _SECRET in opened.call_args.args[0]
+
+
+def test_vcf_indexed_open_still_hands_pysam_the_credential(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # Both urls carry it: htslib fetches the index over the same authenticated
+    # transport as the data file.
+    proto, resource = _a_refused_protocol("i1314-vcf-cred")
+    mocker.patch.object(proto.filesystem, "exists", return_value=True)
+    opened = mocker.patch.object(pysam, "VariantFile")
+
+    proto.open_vcf_file(resource, _VCF_FILE_NAME, f"{_VCF_FILE_NAME}.tbi")
+
+    assert _SECRET in opened.call_args.args[0]
+    assert _SECRET in opened.call_args.kwargs["index_filename"]
+
+
+def test_bigwig_open_failure_does_not_leak_url_credential(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # pyBigWig's own exception carries no url today ("Received an error during
+    # file opening!"), so this closes a LATENT leak: the wrapper is what keeps
+    # a future libBigWig message -- or a failure from any layer in between --
+    # from carrying the credential out. The message is planted for that
+    # reason, not to mimic today's text.
+    #
+    # The channel that does leak today is stderr: libBigWig writes the url
+    # with its own ``fprintf``, which ``pysam.set_verbosity`` cannot reach, so
+    # this method closes the exception half only. That remainder is gain#1333.
+    proto, resource = _a_refused_protocol("i1314-bw")
+    file_url = proto.get_resource_file_url(resource, _BIGWIG_FILE_NAME)
+    mocker.patch.object(
+        pyBigWig, "open",
+        side_effect=RuntimeError(f"Couldn't open {file_url} for reading"))
+
+    with pytest.raises(RuntimeError) as excinfo:
+        proto.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
+
+    # The type survives too: ``RuntimeError`` rebuilds from a single message,
+    # so nothing is demoted to the ``OSError`` fallback.
+    assert str(excinfo.value) == (
+        "Couldn't open "
+        f"https://127.0.0.1:1/path/sub/res(1.0)/{_BIGWIG_FILE_NAME} "
+        "for reading")
+    _assert_no_credential_escaped(excinfo.value)
+
+
+def test_bigwig_open_still_hands_pybigwig_the_credential(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    proto, resource = _a_refused_protocol("i1314-bw-cred")
+    opened = mocker.patch.object(pyBigWig, "open")
+
+    proto.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
+
+    assert _SECRET in opened.call_args.args[0]
+
+
+def test_fasta_open_failure_does_not_leak_url_credential(
+    tmp_path: pathlib.Path, capfd: pytest.CaptureFixture[str],
+) -> None:
+    """A fasta open that actually reaches pysam must not leak the credential.
+
+    This one needs a live server, and that is the whole point: the ``.gzi``
+    precondition raises before any url is built, so a resource with no files
+    -- the arrangement every other test in this section uses -- reports the
+    method clean when it is not. The indexes are served for real so the
+    precondition passes and the copy succeeds; only the multi-GB data file,
+    which stays remote, is missing, so ``pysam.FastaFile`` is what fails.
+    """
+    resource_dir = tmp_path / "sub" / "res(1.0)"
+    setup_genome_bgz(resource_dir / _FASTA_FILE_NAME, """
+        >chr1
+        NNACCCAAAC
+        GGGCCTTCCN
+    """)
+    # Remove the data file, keeping its indexes: htslib then fails on the one
+    # url it was handed remotely.
+    (resource_dir / _FASTA_FILE_NAME).unlink()
+
+    with serving_http(tmp_path) as base_url:
+        host = base_url.removeprefix("http://")
+        proto = build_fsspec_protocol(
+            "i1314-fasta", f"http://alice:{_SECRET}@{host}")
+        resource = GenomicResource("sub/res", (1, 0), proto, {})
+
+        with pytest.raises(OSError) as excinfo:
+            proto.open_fasta_file(resource, _FASTA_FILE_NAME)
+
+    assert str(excinfo.value) == (
+        "error when opening file "
+        f"`http://{host}/sub/res(1.0)/{_FASTA_FILE_NAME}`")
+    _assert_no_credential_escaped(excinfo.value)
+    assert _SECRET not in capfd.readouterr().err
+
+
+def test_fasta_open_still_hands_pysam_the_credential(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # The data file stays remote and is fetched by htslib itself, so it is the
+    # one url that must keep the credential. The two small indexes do not:
+    # they are copied local first and pysam is handed temp paths.
+    proto, resource = _a_refused_protocol("i1314-fasta-cred")
+    mocker.patch.object(proto.filesystem, "exists", return_value=True)
+    mocker.patch.object(
+        FsspecReadOnlyProtocol, "_copy_resource_file_to_local",
+        return_value="/tmp/index")  # ruff: ignore[hardcoded-temp-file]
+    opened = mocker.patch.object(pysam, "FastaFile")
+
+    proto.open_fasta_file(resource, _FASTA_FILE_NAME)
+
+    assert _SECRET in opened.call_args.args[0]

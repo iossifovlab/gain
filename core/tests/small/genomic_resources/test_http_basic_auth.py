@@ -1,15 +1,13 @@
 # pylint: disable=W0621,W0622,C0114,C0116
 import base64
 import contextlib
-import functools
-import http.server
 import pathlib
-import threading
 from collections.abc import Generator
-from typing import Any
 
 import pytest
 from gain.genomic_resources.fsspec_protocol import build_fsspec_protocol
+
+from .conftest import QuietHTTPRequestHandler, serving_http
 
 _TEST_USER = "testuser"
 _TEST_PASSWORD = "testpass"  # ruff: ignore[hardcoded-password-string]
@@ -17,7 +15,7 @@ _TEST_FILE = "hello.txt"
 _TEST_CONTENT = "hello world\n"
 
 
-class _BasicAuthHTTPHandler(http.server.SimpleHTTPRequestHandler):
+class _BasicAuthHTTPHandler(QuietHTTPRequestHandler):
     """SimpleHTTPRequestHandler that requires HTTP Basic authentication."""
 
     def _is_authorized(self) -> bool:
@@ -46,25 +44,14 @@ class _BasicAuthHTTPHandler(http.server.SimpleHTTPRequestHandler):
             return
         super().do_HEAD()
 
-    def log_message(self, format: str, *args: Any) -> None:  # ruff: ignore[builtin-argument-shadowing]
-        pass  # suppress server output in tests
-
 
 @contextlib.contextmanager
 def _auth_http_server(
     serve_dir: pathlib.Path,
 ) -> Generator[str, None, None]:
     """Spin up a localhost HTTP server requiring Basic auth over `serve_dir`."""
-    handler = functools.partial(
-        _BasicAuthHTTPHandler, directory=str(serve_dir))
-    with http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler) as httpd:
-        port = httpd.server_address[1]
-        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-        thread.start()
-        try:
-            yield f"http://127.0.0.1:{port}"
-        finally:
-            httpd.shutdown()
+    with serving_http(serve_dir, _BasicAuthHTTPHandler) as base_url:
+        yield base_url
 
 
 @pytest.fixture

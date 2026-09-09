@@ -7,7 +7,8 @@
 [#1017](https://github.com/iossifovlab/gain/issues/1017),
 [#1058](https://github.com/iossifovlab/gain/issues/1058),
 [#1078](https://github.com/iossifovlab/gain/issues/1078),
-[#1106](https://github.com/iossifovlab/gain/issues/1106)
+[#1106](https://github.com/iossifovlab/gain/issues/1106),
+[#1314](https://github.com/iossifovlab/gain/issues/1314)
 
 ## Context
 
@@ -116,7 +117,9 @@ faithfully or break backends that work today — was measured and found not to
 hold. `open_tabix_file`, `open_vcf_file`, `open_fasta_file` and
 `open_bigwig_file` each hand those libraries a **url string** and never touch
 `open_raw_file`; there is no `fileno()` or `readinto` call anywhere in
-`core/gain`. For the same reason the wrapper is not in the score-scan hot
+`core/gain`. (*Read the gain#1314 amendment with this paragraph.* It is
+correct that those four need no handle wrapper, and that is exactly why the
+credential they hand over went unexamined until gain#1314.) For the same reason the wrapper is not in the score-scan hot
 path, which reaches its data through pysam and pyBigWig by url. The one
 genuine per-call path is `_RawSeekSequence.fetch`'s seek-and-read on its held
 handle.
@@ -217,7 +220,8 @@ selection, not of the sites themselves.
 because they hand their library a url string is correct about the *handle*,
 and is exactly why nobody looked at what those libraries then do with it.
 pysam embeds the full credentialed url in its own `OSError`, and htslib and
-pyBigWig write it to stderr. Tracked as gain#1314; not addressed here.
+pyBigWig write it to stderr. Tracked as gain#1314; addressed in the amendment
+below.
 
 Nor is the hand-remembering itself. Message interpolation is the one mechanism
 in this family with no structural guard — twelve `_strip_url_userinfo` calls
@@ -226,3 +230,98 @@ type cannot carry the taint (`os.path.join` drops it, and `str()` on the way
 to `yarl`/fsspec would strip the credential before it reached the wire), so
 the remedy is an AST fence over the provenance rule above. Tracked as
 gain#1318.
+
+## Amendment — gain#1314: a url handed to a library is the third escape
+
+**Date:** 2026-09-09
+
+The two escapes named so far are a handle (wrapped) and a message GAIn
+composes (redacted by hand). There is a third: a credential-bearing url
+handed to a **third-party library**, which then puts it in its own error text
+and on its own stderr. GAIn wraps nothing and composes nothing there, so
+neither existing remedy reaches it.
+
+All four opens leak, `open_fasta_file` included — the one the issue left
+unmeasured, because its "bgzip index is required" guard raises before any url
+is built and so hides the leak from any test that arranges a resource with no
+files. Three of them raise an `OSError` subclass, which is in
+`RESOURCE_ERRORS`, so the credential lands in the log at ERROR.
+
+**Decided.** The three pysam opens route their *remote* library call through
+`_open_htslib_file`, which closes both channels:
+
+- the raised error goes through `_run_redacting_userinfo`, as everything else
+  in this family does; and
+- an authed open is bracketed at `pysam.set_verbosity(0)`, which is what
+  silences htslib's own `[E::…]` line on fd 2. The module already sets level
+  1 at import — "errors only", which is precisely why that line still
+  printed.
+
+**The silencing is scoped to urls that carry userinfo**, and that scoping is
+the load-bearing part. Silencing htslib costs its account of *why* an open
+failed, so it is spent only where it buys something: an unauthed GRR — every
+deployment today — keeps its diagnostics. This is the same bargain the
+Consequences above strike for the type demotion, and for the same reason.
+
+**`open_bigwig_file` gets the redaction and not the bracket.** libBigWig is
+not htslib: `set_verbosity` does not reach it, and it has no verbosity control
+of its own — its `[urlOpen]` line goes to fd 2 through its own `fprintf`. Its
+exception, unlike pysam's, carries no url and is a `RuntimeError`, which is
+not in `RESOURCE_ERRORS` and so never reaches the ERROR log. So its remaining
+leak is stderr-only and strictly less severe, and closing it needs an
+fd-level capture with no precedent in this tree. Split as gain#1333. The
+redaction wrapper is still applied there, because "the message is clean" is a
+property of that library's current wording rather than a guarantee, and it
+costs nothing: a message with no userinfo is propagated untouched.
+
+`open_fasta_file` wraps only its remote branch: the `file` scheme reduces the
+url to a bare filesystem path before pysam sees it, so no userinfo can reach
+that call.
+
+**What this does NOT cover, and the scope of the word "credential" here.**
+Everything above is about `user:pass@` **userinfo**, which is what
+`_strip_url_userinfo` and therefore `_url_carries_userinfo` recognise. An
+**s3** GRR is a different shape: `_get_file_url` hands pysam a *presigned*
+url, whose `X-Amz-Credential`/`X-Amz-Signature` live in the query string. The
+predicate is False for it, so there is no verbosity bracket, and the redactor
+would not strip those parameters even if there were. A failing s3 open can
+therefore still put a time-limited signature into the ERROR log. Closing that
+needs a second notion of what a credential in a url looks like, not a wider
+application of this one. Tracked as gain#1339.
+
+**The guard is scoped to the open, and the returned object is not.** The
+pysam object keeps the credential-bearing url — `TabixFile.filename` returns
+it verbatim — and does its real data I/O later, outside all three remedies.
+That is the shape that cost this tree #1017 and then #1058, so it deserves an
+explicit answer rather than silence.
+
+It is accepted, on a measurement: htslib's *read*-path errors do not carry the
+url. Probed two ways against a real authed server — killing the server after
+the open, and answering every later request with a 500 — a far-region `fetch`
+gives `ValueError: iteration failed (error code -2)` and an
+`[E::hts_itr_next] Failed to seek` on stderr, neither carrying the url. No
+site in `core/gain` interpolates `pysam_file.filename` either. So the exposure
+is latent rather than live, and it rests on that measurement: an htslib
+upgrade that starts naming the file in a read error would reopen it.
+
+The wrapper that would close it structurally is rejected for the reason this
+ADR already gives for keeping `_RedactingFile` off this path. A redacting
+pysam proxy would break five load-bearing `isinstance` checks (in
+`table_tabix`, `table_vcf`, and a refusal in `genomic_scores.base` documented
+around one of them) and would put a Python wrapper on `fetch` — the
+score-scan hot path this ADR deliberately keeps wrappers out of.
+
+**The rule this leaves.** Two questions decide the remedy, in order. *Is
+there a handle GAIn holds?* If so the handle redacts, and the call site needs
+to know nothing. If not, *where did the url come from?* — the same
+`_fetch_url`-provenance test the gain#1106 amendment states: a
+`_fetch_url`-derived url must not reach a message unredacted, whether GAIn
+interpolates it (redact at the site) or hands it to a library (wrap the
+call).
+
+What the third case adds is that wrapping the call is not sufficient by
+itself, because the library also owns diagnostic channels GAIn does not
+raise: htslib's stderr is silenced, pyBigWig's is not (gain#1333), and the
+returned handle's later I/O is neither (above). So a new url-taking backend
+must be checked channel by channel, and this ADR is where the answer for each
+is recorded — the coverage claim lives in that list, not in the rule.
