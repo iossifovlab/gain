@@ -110,3 +110,43 @@ test('the hierarchical view lists the repository\'s top-level folders', async ({
   await expect(page.locator('#hierarchical-list .hv-folder .hv-name'))
     .toHaveText(BROWSE_TOP_LEVEL_FOLDERS);
 });
+
+/*
+ * The hosts the harness is allowed to answer for, spelled out here
+ * rather than imported from `serving.ts`: a test that asked the helper
+ * what it permits and then checked it permitted that would pass however
+ * wide the helper had been opened.
+ */
+const SERVED_HOSTS = ['grr.test', 'ajax.googleapis.com', 'cdn.jsdelivr.net'];
+
+test('the harness refuses every request it does not serve itself', async ({
+  page,
+}) => {
+  const requested: string[] = [];
+  const failed = new Set<string>();
+  page.on('request', (request) => requested.push(request.url()));
+  page.on('requestfailed', (request) => failed.add(request.url()));
+
+  await serveGrr(page, FIXTURE_BROWSE_GRR);
+  await page.goto(indexPageUrl());
+  await expect(page.locator('#status')).toHaveText(
+    `${BROWSE_RESOURCE_COUNT} resources`,
+  );
+
+  /* The pages link a Google Fonts stylesheet for the sort indicator's
+   * glyphs, so there is always at least one request that must not be
+   * answered -- which is what keeps the check below from passing
+   * vacuously on a page that happened to ask for nothing. */
+  const fonts = requested.filter((url) => url.includes('fonts.googleapis.com'));
+  expect(fonts.length).toBeGreaterThan(0);
+  expect(fonts.filter((url) => !failed.has(url))).toEqual([]);
+
+  /* Nothing else got through either. The Jenkins stage runs this suite
+   * under `docker run --network none`, so a page that grew a dependency
+   * on the network would hang there; failing here instead is the whole
+   * point of aborting rather than allowing. */
+  const letThrough = requested.filter(
+    (url) => !failed.has(url) && !SERVED_HOSTS.includes(new URL(url).host),
+  );
+  expect(letThrough).toEqual([]);
+});
