@@ -18,10 +18,11 @@ from gain.genomic_resources.aggregators import (
 )
 from gain.genomic_resources.genomic_scores import FragmentScore
 from gain.genomic_resources.resource_types import (
-    LEGACY_ANNOTATOR_NAMES as _LEGACY_ANNOTATOR_NAMES,
+    FRAGMENT_SCORE_TYPES,
+    warn_deprecated_spelling,
 )
 from gain.genomic_resources.resource_types import (
-    warn_deprecated_spelling,
+    LEGACY_ANNOTATOR_NAMES as _LEGACY_ANNOTATOR_NAMES,
 )
 from gain.genomic_resources.score_filter import ScoreFilterError
 
@@ -102,12 +103,14 @@ class FragmentScoreAnnotator(AnnotatorBase):
     See ``docs/adr/0011-deprecate-cnv-collection-vocabulary.md``.
     """
 
+    ACCEPTED_RESOURCE_TYPES = FRAGMENT_SCORE_TYPES
+
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
-        resource_id = info.parameters.get("resource_id")
-        if resource_id is None:
-            raise ValueError(f"Can't create {info.type}: "
-                             "no resrouce_id parameter.")
-        resource = pipeline.repository.get_resource(resource_id)
+        resource = self.resolve_resource(pipeline, info)
+        # The id as the reader wrote it, for the message below -- not the
+        # resource's own, which carries a version they did not type.
+        # Present and non-empty: `resolve_resource` just refused both.
+        resource_id = info.parameters["resource_id"]
 
         # The stack at this point runs through GAIn's config parsing, never
         # through the YAML the reader has to edit, so the messages below

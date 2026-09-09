@@ -121,12 +121,13 @@ def test_an_annotation_pipeline_naming_a_np_score_resource_is_guided_too(
     """The seam a user is most likely to meet, and the easiest to regress.
 
     An annotator resolves its resource through ``get_genomic_resource``,
-    which checks the declared type against the set the annotator accepts
-    before anything builds a score.  That check raises an error of its
-    own, so narrowing its set without guarding it first would swap this
-    migration message for a bare "requires 'resource_id' to point to a
-    resource of type {'allele_score'}" -- true, and useless to someone
-    holding a resource that used to work.
+    which checks the declared type against the annotator's
+    ``ACCEPTED_RESOURCE_TYPES`` before anything builds a score.  That
+    check raises an error of its own, so narrowing the declaration
+    without guarding it first would swap this migration message for a
+    bare "requires 'resource_id' to point to a resource of type
+    'allele_score'" -- true, and useless to someone holding a resource
+    that used to work.
     """
     repo = build_inmemory_test_repository(
         {"retired": _RETIRED_NP_SCORE_RESOURCE})

@@ -7,8 +7,9 @@ defaults, help text -- from the score's own definitions.  The kinds,
 ``position_score_annotator`` and ``allele_score_annotator``, live one
 per module beside this one and add the read.
 
-``get_genomic_resource`` resolves an annotator's ``resource_id`` to a
-resource of an accepted type; both kinds call it.
+Both kinds resolve their ``resource_id`` through
+:meth:`~gain.annotation.annotator_base.AnnotatorBase.resolve_resource`,
+which reads the types they accept off ``ACCEPTED_RESOURCE_TYPES``.
 """
 import abc
 from typing import Any
@@ -30,30 +31,7 @@ from gain.genomic_resources.aggregators import (
     aggregator_name,
 )
 from gain.genomic_resources.genomic_scores import GenomicScore
-from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.resource_types import reject_retired_resource
 from gain.templates import get_template
-
-
-def get_genomic_resource(
-        pipeline: AnnotationPipeline, info: AnnotatorInfo,
-        resource_types: set[str]) -> GenomicResource:
-    """Return genomic score resource used for given genomic score annotator."""
-    if "resource_id" not in info.parameters:
-        raise ValueError(f"The {info} has not 'resource_id' parameters")
-    resource_id = info.parameters["resource_id"]
-    resource = pipeline.repository.get_resource(resource_id)
-    # Before the membership test: a retired spelling is a type GAIn used to
-    # accept, and the generic message below would only say the annotator
-    # wants something else -- true, and no help to someone holding a
-    # resource that worked last release (gain#920).
-    reject_retired_resource(resource)
-    if resource.get_type() not in resource_types:
-        raise ValueError(
-            f"The {info} requires 'resource_id' to point to a "
-            f"resource of type {resource_types}; "
-            f"resource of type <{resource.get_type()}> found.")
-    return resource
 
 
 class GenomicScoreAnnotatorBase(AnnotatorBase):

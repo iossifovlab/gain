@@ -19,13 +19,15 @@ from gain.annotation.annotation_pipeline import (
 from gain.annotation.annotator_base import AnnotatedValues
 from gain.annotation.genomic_score_annotator_base import (
     GenomicScoreAnnotatorBase,
-    get_genomic_resource,
 )
 from gain.genomic_resources.aggregators import (
     PositionScoreAggregationQuery,
 )
 from gain.genomic_resources.genomic_scores import (
     build_position_score_from_resource,
+)
+from gain.genomic_resources.resource_types import (
+    PREFERRED_POSITION_SCORE_TYPE,
 )
 
 
@@ -61,9 +63,11 @@ class PositionScoreAnnotator(GenomicScoreAnnotatorBase):
     is declined before it is read.
     """
 
+    ACCEPTED_RESOURCE_TYPES = (PREFERRED_POSITION_SCORE_TYPE,)
+
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
 
-        resource = get_genomic_resource(pipeline, info, {"position_score"})
+        resource = self.resolve_resource(pipeline, info)
         self.position_score = build_position_score_from_resource(resource)
         super().__init__(pipeline, info, self.position_score)
 

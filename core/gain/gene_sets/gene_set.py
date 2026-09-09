@@ -28,6 +28,11 @@ from gain.genomic_resources.repository import (
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
+from gain.genomic_resources.resource_types import (
+    GENE_SET_TYPES,
+    LEGACY_GENE_SET_TYPE,
+    PREFERRED_GENE_SET_TYPE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,12 +162,12 @@ class GeneSetCollection(
         super().__init__(self.config.resource_id)
 
         assert self.collection_id != "denovo"
-        if resource.get_type() not in {"gene_set_collection", "gene_set"}:
+        if resource.get_type() not in GENE_SET_TYPES:
             raise ValueError("Invalid resource type for gene set collection")
-        if resource.get_type() == "gene_set":
+        if resource.get_type() == LEGACY_GENE_SET_TYPE:
             logger.warning(
-                "'gene_set' resource type is deprecated; "
-                "use 'gene_set_collection' instead")
+                "'%s' resource type is deprecated; use '%s' instead",
+                LEGACY_GENE_SET_TYPE, PREFERRED_GENE_SET_TYPE)
 
         self.web_label = self.config.web_label or ""
         self.web_format_str = self.config.web_format_str or ""

@@ -17,6 +17,7 @@ from gain.annotation.annotation_pipeline import (
 from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
 from gain.gene_scores.gene_scores import build_gene_score_from_resource
 from gain.genomic_resources import GenomicResource
+from gain.genomic_resources.resource_types import GENE_SCORE_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +25,11 @@ logger = logging.getLogger(__name__)
 def build_gene_score_annotator(pipeline: AnnotationPipeline,
                                info: AnnotatorInfo) -> Annotator:
     """Create a gene score annotator."""
-    gene_score_resource_id = info.parameters["resource_id"]
-    if not gene_score_resource_id:
-        raise ValueError(f"The {info} needs a 'resource_id' parameter.")
-    gene_score_resource = pipeline.repository.get_resource(
-        gene_score_resource_id)
-    if gene_score_resource is None:
-        raise ValueError(f"The {gene_score_resource_id} is not available.")
+    # Before the input_gene_list checks below: a holder whose resource is
+    # the wrong kind is told THAT first, rather than about a pipeline
+    # attribute they would go on to wire up correctly for a resource this
+    # annotator was never going to accept.
+    gene_score_resource = GeneScoreAnnotator.resolve_resource(pipeline, info)
 
     input_gene_list = info.parameters.get("input_gene_list")
     if input_gene_list is None:
@@ -50,6 +49,8 @@ def build_gene_score_annotator(pipeline: AnnotationPipeline,
 
 class GeneScoreAnnotator(AnnotatorBase):
     """Gene score annotator class."""
+
+    ACCEPTED_RESOURCE_TYPES = (GENE_SCORE_TYPE,)
 
     def __init__(self, pipeline: AnnotationPipeline | None,
                  info: AnnotatorInfo,

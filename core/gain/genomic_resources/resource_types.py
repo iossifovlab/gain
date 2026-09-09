@@ -48,6 +48,14 @@ LEGACY_VOCABULARY_REMOVAL_RELEASE = "2027.1.0"
 #: The resource ``type:`` for an allele score.
 PREFERRED_ALLELE_SCORE_TYPE = "allele_score"
 
+#: The resource ``type:`` for a position score.  One spelling, so there is
+#: no pair below; named here because this module owns the vocabulary and
+#: its sibling kinds are named here too.
+PREFERRED_POSITION_SCORE_TYPE = "position_score"
+
+#: The resource ``type:`` for a gene score.  One spelling, as above.
+GENE_SCORE_TYPE = "gene_score"
+
 #: The retired resource ``type:`` that used to name an allele score.
 #:
 #: Deprecated since 2024-11 and removed in
@@ -76,6 +84,29 @@ RETIRED_VOCABULARY_REMOVAL_RELEASE = "2026.8.5"
 #: a recommendation.
 FRAGMENT_SCORE_TYPES = (
     PREFERRED_FRAGMENT_SCORE_TYPE, LEGACY_FRAGMENT_SCORE_TYPE)
+
+#: The resource ``type:`` for a gene set collection.
+PREFERRED_GENE_SET_TYPE = "gene_set_collection"
+
+#: The deprecated resource ``type:`` that also names one.  Still accepted;
+#: opening one warns.
+LEGACY_GENE_SET_TYPE = "gene_set"
+
+#: The resource ``type:`` values that name a gene set collection.
+#:
+#: An ordered pair for the same reasons as ``FRAGMENT_SCORE_TYPES``
+#: above, shared by the collection that opens the resource and the
+#: annotator that declares what it accepts (gain#1329).
+#:
+#: **Deliberately not an equivalence group.**  Unlike the fragment
+#: score's pair, this one is absent from ``equivalent_resource_types``
+#: below, so a search or type filter for ``gene_set_collection`` does not
+#: answer a repository's ``gene_set`` resources.  That is the behaviour
+#: as it stands, not a considered position: making the pair searchable
+#: would change what the repository predicate, the resources endpoint and
+#: the editor return, which is a decision of its own rather than a
+#: consequence of naming the pair here.
+GENE_SET_TYPES = (PREFERRED_GENE_SET_TYPE, LEGACY_GENE_SET_TYPE)
 
 
 def deprecated_spelling_message(
@@ -183,9 +214,14 @@ def reset_deprecation_notices() -> None:
 def equivalent_resource_types(resource_type: str) -> tuple[str, ...]:
     """Return every ``type:`` value denoting the same kind of resource.
 
-    Only a fragment score has more than one spelling; every other type maps
-    to itself, so a caller can filter by the result unconditionally without
-    special-casing.
+    Only a fragment score is treated as having more than one spelling here;
+    every other type maps to itself, so a caller can filter by the result
+    unconditionally without special-casing.
+
+    A gene set collection also has two spellings (``GENE_SET_TYPES``) and
+    is deliberately NOT one of them -- see that constant.  So this is the
+    set of equivalences that SEARCH honours, which is narrower than the set
+    of types some annotator will open.
 
     Exists because filtering resources by an exact type string went wrong
     the moment a second spelling appeared: asking for ``fragment_score``
