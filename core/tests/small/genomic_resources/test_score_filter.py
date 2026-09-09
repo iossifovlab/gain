@@ -157,6 +157,68 @@ def test_fetch_records_keeps_only_records_the_filter_accepts(
     assert [record[1] for record in records] == [11, 12]
 
 
+def test_the_segment_read_keeps_only_the_records_the_filter_accepts(
+    position_score: PositionScore,
+) -> None:
+    """A filter reaches the segment read, not only the record read.
+
+    On a POSITION score deliberately.  The parameter is
+    :meth:`~.base.GenomicScore.fetch_region_segments`'s, so what it must
+    not be is fragment-only -- the fragment plane reaches the same
+    composition through the same method.
+
+    The unfiltered arm is the control: the fixture holds three records
+    and the filter rejects one, so a filter dropped on the way to
+    ``fetch_records`` answers the unfiltered list and fails here.
+    """
+    with position_score.open() as score:
+        score_filter = score.compile_filter("freq > 0.15")
+
+        filtered = list(score.fetch_region_segments(
+            "1", 10, 12, ["freq"], score_filter=score_filter))
+        unfiltered = list(score.fetch_region_segments("1", 10, 12, ["freq"]))
+
+    assert [begin for begin, _end, _values in filtered] == [11, 12]
+    assert [begin for begin, _end, _values in unfiltered] == [10, 11, 12]
+
+
+def test_the_segment_read_refuses_a_filter_of_a_different_score(
+    position_score: PositionScore,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Ownership is checked on this door as on every other filtered read.
+
+    Refused on ITERATION rather than from the call, unlike the reads that
+    answer a list: the check rides :meth:`~.base.GenomicScore.fetch_records`,
+    whose generator body defers it and which says so.  What keeps the check
+    reachable at all is that the segment read COMPOSES that stream instead
+    of applying the filter itself.
+
+    ``other`` puts ``freq`` at a different column index, which is the
+    failure the check exists to prevent: a foreign filter would read a real
+    value from the wrong column and select records nobody can tell are
+    wrong.
+    """
+    other = build_position_score_from_resource(
+        a_position_score()
+        .with_score("padding", "str")
+        .with_score("freq", "float")
+        .with_data("""
+            chrom  pos_begin  padding  freq
+            1      10         x        0.9
+        """)
+        .build_resource(tmp_path / "other"))
+
+    with position_score.open() as score, other.open() as other_score:
+        foreign = score.compile_filter("freq > 0.15")
+
+        with pytest.raises(ScoreFilterError) as excinfo:
+            list(other_score.fetch_region_segments(
+                "1", 10, 10, ["freq"], score_filter=foreign))
+
+    assert "compiled against" in str(excinfo.value)
+
+
 @pytest.fixture
 def allele_score(tmp_path: pathlib.Path) -> AlleleScore:
     resource = (

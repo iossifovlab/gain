@@ -328,11 +328,17 @@ class FragmentScore(GenomicScore):
     ) -> Generator[tuple[int, int, tuple[ScoreValue, ...]], None, None]:
         """Stream ``(begin, end, values)`` for the fragments over a region.
 
-        **Private to the fragment plane.**  :meth:`_fragment_segments`
-        through :func:`_tupled`, and not a read to reach for directly; it
-        keeps its name because it had one, not because the name is an
-        invitation.  It diverges from the internals beside it
-        (``_score_segments``, ``_region_read_defs``) in spelling only.
+        **Private to the fragment plane.**
+        :meth:`~.base.GenomicScore.fetch_region_segments` through
+        :func:`_tupled`, and not a read to reach for directly; it keeps its
+        name because it had one, not because the name is an invitation.  It
+        diverges from the internals beside it (``_score_segments``,
+        ``_region_read_defs``) in spelling only.
+
+        What it adds to the base read is the tuple, a locus that is required
+        rather than defaulted, and a ``list`` of score ids.  What the
+        fragment plane once had a private TWIN of that method for was
+        ``score_filter``, which the base method takes now (gain#1272).
 
         One entry per overlapping fragment, in table order, each reporting
         the fragment's OWN extent -- unclipped, even where it runs past the
@@ -380,27 +386,8 @@ class FragmentScore(GenomicScore):
         runs when the generator is released, so a caller holding a reference
         to a ``close()``-ed generator still holds the read open.
         """
-        return _tupled(self._fragment_segments(
+        return _tupled(self.fetch_region_segments(
             chrom, start, stop, scores, score_filter=score_filter))
-
-    def _fragment_segments(
-        self, chrom: str,
-        start: int, stop: int,
-        scores: Sequence[str] | None = None,
-        *,
-        score_filter: ScoreFilter | None = None,
-    ) -> Generator[_RawSegment, None, None]:
-        """The record plane's stream over a region, one list per fragment.
-
-        :meth:`~.base.GenomicScore.region_values_from_records` applied to
-        :meth:`~.base.GenomicScore.fetch_records`; the eager request
-        checks and the lazy reading are :meth:`fetch_fragment_scores`'s,
-        documented there.  The fold consumes this as it is.
-        """
-        records = self.fetch_records(
-            chrom, start, stop, score_filter=score_filter)
-        return self.region_values_from_records(
-            records, chrom, start, stop, scores)
 
     # -- The logical read plane (#1123) -------------------------------------
     #
@@ -519,7 +506,7 @@ class FragmentScore(GenomicScore):
             "min_region_overlap_fraction", min_region_overlap_fraction)
         self._guard_overlap_fraction(
             "min_fragment_overlap_fraction", min_fragment_overlap_fraction)
-        rows = self._fragment_segments(
+        rows = self.fetch_region_segments(
             chrom, start, end, scores, score_filter=score_filter)
         if (min_region_overlap_fraction is None
                 and min_fragment_overlap_fraction is None):
