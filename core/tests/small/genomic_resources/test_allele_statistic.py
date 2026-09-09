@@ -593,21 +593,9 @@ def test_display_rows_follow_nucleotide_order() -> None:
     assert [cell.alleles for cell in cells] == [1, 0, 0, 0]
 
 
-def test_the_statistic_refuses_a_bare_value() -> None:
-    with pytest.raises(TypeError, match="use fold_region"):
-        AlleleStatistics().add_value(1)
-
-
-def test_merging_two_statistics_of_one_chromosome_needs_adjacency() -> None:
-    # Two DESERIALIZED statistics carry no extents, so their regions
-    # refuse to merge -- the same guard the coverage statistic has.
-    left = AlleleStatistics()
-    left.fold_region(RegionAlleles.frozen("chr1", 1, {"other": 1}))
-    right = AlleleStatistics()
-    right.fold_region(RegionAlleles.frozen("chr1", 1, {"other": 1}))
-
-    with pytest.raises(ValueError, match="adjacent-and-in-order"):
-        left.merge(right)
+# The bare-value refusal and the adjacency rule on merge are not
+# allele-specific: they belong to every region-folded statistic, and are
+# asserted for all three in test_region_folded_statistics.py.
 
 
 def test_an_insertion_is_recorded_at_the_exact_bases_it_adds() -> None:
