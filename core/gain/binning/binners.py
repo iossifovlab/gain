@@ -27,13 +27,7 @@ from gain.genomic_resources.repository import (
     SearchTermError,
 )
 from gain.genomic_resources.resource_query import ResourceQueryParseError
-from gain.genomic_resources.score_def import ScoreValue
-from gain.utils.regions import (
-    BedRegion,
-    calc_bin_begin,
-    calc_bin_end,
-    calc_bin_index,
-)
+from gain.utils.regions import BedRegion
 
 BINNERS_ENTRY_POINT_GROUP = "gain.binning.binners"
 
@@ -110,23 +104,6 @@ def check_keys(label: str, config: Any, known: frozenset[str]) -> None:
             raise RunDefinitionError(
                 f"{label}: unknown key {key!r}; known keys: "
                 f"{', '.join(sorted(known))}")
-
-
-def grid_bins(region: BedRegion, bin_size: int) -> list[tuple[int, int]]:
-    """The ``(start, end)`` of every grid bin ``region`` touches.
-
-    Bins follow the global grid anchored at position 1, as
-    :meth:`PositionScore.get_score_in_bins` does, so bins from different
-    runs tile; the edge bins are clipped to the region, so the bounds name
-    exactly what was aggregated.
-    """
-    first = calc_bin_index(bin_size, region.start)
-    last = calc_bin_index(bin_size, region.stop)
-    return [
-        (max(calc_bin_begin(bin_size, index), region.start),
-         min(calc_bin_end(bin_size, index), region.stop))
-        for index in range(first, last + 1)
-    ]
 
 
 class PositionScoreBinner:
@@ -213,20 +190,23 @@ class PositionScoreBinner:
         the semantic reference for the global grid, the boundary split and
         first-record-wins.  A bin no record covers comes back ``None`` and
         is stored as NaN, unless the track's replacement made it count.
+
+        Unconditionally, a chromosome the score never mentions included:
+        that read folds an absent contig as one uncovered run of its own
+        (gain#1211), so a genome-wide run over a track that skips a
+        chromosome needs no case here.  This method used to carry one, and
+        with it a second copy of the fold; the read owning both is D14.
         """
         score = PositionScore(grr.get_resource(track.resource_id))
         with score.open():
-            if region.chrom not in score.get_all_chromosomes():
-                values = _uncovered_bins(track, region, bin_size)
-            else:
-                values = [
-                    value
-                    for _, _, value in score.get_score_in_bins(
-                        region.chrom, region.start, region.stop, bin_size,
-                        score=track.score_id,
-                        aggregator=track.aggregator,
-                        none_value_replacement=track.none_value_replacement)
-                ]
+            values = [
+                value
+                for _, _, value in score.get_score_in_bins(
+                    region.chrom, region.start, region.stop, bin_size,
+                    score=track.score_id,
+                    aggregator=track.aggregator,
+                    none_value_replacement=track.none_value_replacement)
+            ]
         return np.array(
             [np.nan if value is None else value for value in values],
             dtype=np.float64)
@@ -287,32 +267,6 @@ class PositionScoreBinner:
             none_value_replacement=replacement,
             binner=cls.kind,
         )
-
-
-def _uncovered_bins(
-    track: Track, region: BedRegion, bin_size: int,
-) -> list[ScoreValue]:
-    """Every bin of a chromosome the score holds no record for.
-
-    A genome-wide run over a track that skips a chromosome is the normal
-    case, not an error the table's region read should raise.  Each bin
-    is what ``get_score_in_bins`` would yield for a run of uncovered
-    positions: the replacement folded through the aggregator over the
-    bin's width, or ``None`` when there is no replacement.
-
-    A stand-in: the binned reads of ``PositionScore`` are the one home of
-    this fold, and once they treat an absent contig as a single uncovered
-    run this function and the guard that calls it go away.
-    """
-    if track.none_value_replacement is None:
-        return [None] * len(grid_bins(region, bin_size))
-    aggregator = Aggregator.build(track.aggregator)
-    values: list[ScoreValue] = []
-    for start, end in grid_bins(region, bin_size):
-        aggregator.add(track.none_value_replacement, end - start + 1)
-        values.append(aggregator.get_final())
-        aggregator.clear()
-    return values
 
 
 def discover_binner_kinds() -> dict[str, type[Binner]]:

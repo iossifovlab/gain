@@ -332,9 +332,10 @@ def _bins_table(run: RunDefinition, counts: list[int]) -> npt.NDArray[Any]:
     """The ``/bins`` table, one row per grid bin, region by region.
 
     Vectorised per region: the bounds are ``calc_bin_begin`` and
-    ``calc_bin_end`` over an index range, with the edge bins clipped to
-    the region, exactly as :func:`~gain.binning.binners.grid_bins` has
-    them one bin at a time.
+    ``calc_bin_end`` over a ``calc_bin_index`` range, with the edge bins
+    clipped to the region -- the same global grid
+    :meth:`PositionScore.get_scores_in_bins` yields one bin at a time, so
+    a row here names the bin whose value that read produced.
     """
     chrom_width = max(len(region.chrom.encode()) for region in run.regions)
     table = np.empty(sum(counts), dtype=[
