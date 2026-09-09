@@ -223,6 +223,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         close(): Release resources and close the data table
         get_all_scores(): Get list of all available score IDs
         get_all_chromosomes(): Get list of all available chromosomes
+        has_chromosome(): Whether one chromosome is available
         get_score_definition(): Get metadata for a specific score
         get_default_annotation_attributes(): Get default annotation config
         get_histogram(): Load histogram for a score (if available)
@@ -673,7 +674,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         purpose (an allele read names the resource in it).
         """
         self._require_open()
-        if chrom not in self.get_all_chromosomes():
+        if not self.has_chromosome(chrom):
             raise ValueError(
                 f"{chrom} is not among the available chromosomes.")
 
@@ -878,6 +879,34 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         self._require_open()
         return self.table.get_chromosomes()
 
+    def has_chromosome(self, chrom: str) -> bool:
+        """Answer whether this score's table carries ``chrom``.
+
+        The yes/no half of :meth:`get_all_chromosomes`, and what every
+        contig screen in the read path asks -- the annotators' pre-read
+        screens, the shared region-read refusal, the position kind's
+        absent-contig branch and both allele reads' refusals.  All of them
+        spelled ``chrom not in self.get_all_chromosomes()``, a walk of the
+        ordered list whose cost grew with the resource's contig count and
+        with the contig's index in it, and grew WORST for a contig the
+        resource does not carry, since that walks the whole list before it
+        can say no (gain#1304).
+
+        Raises ``ValueError`` on a score that is not open, exactly as
+        :meth:`get_all_chromosomes` does and for the same reason: those
+        screens got that refusal for free from the accessor they used, and a
+        predicate that answered ``False`` instead would turn "this score was
+        never opened" into "this score does not carry that contig" at every
+        one of them.
+
+        The ordered list keeps its meaning, its order and its aliasing for
+        the callers that genuinely need the collection -- a statistics scan
+        splitting a genome into region tasks, the resource implementation's
+        contig report.  This is for the ones that only ever asked a question.
+        """
+        self._require_open()
+        return self.table.has_chromosome(chrom)
+
     def region_values_from_records(
         self,
         records: Iterator[Record],
@@ -908,9 +937,15 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         The guards run when this is CALLED rather than on the first
         ``next()`` -- the pattern :meth:`fetch_records` documents -- which is
         why the streaming half lives in ``_score_segments``.  They
-        stay here rather than moving down into ``fetch_records``: that method
-        is on the annotation hot path, where a per-call
-        ``get_all_chromosomes()`` membership scan is a real cost.
+        stay here rather than moving down into ``fetch_records`` because
+        that is not where the request is: half of what they resolve is the
+        score ids, which ``fetch_records`` is not even given, and the contig
+        half would be a THIRD screen of the same contig in one read -- after
+        this one and before the backend's own, which refuses an unknown
+        contig from ``get_records_in_region`` regardless.  This used to be
+        argued on cost, from a time when each screen walked the ordered
+        contig list; since gain#1304 the screen is a set lookup and the
+        argument is only about where a request is resolved, which is here.
 
         What a kind yields is :meth:`_score_segments`, and not this method:
         the resolution above is the same for every kind, the reading below

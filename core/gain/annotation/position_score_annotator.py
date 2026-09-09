@@ -156,7 +156,7 @@ phastCons, phyloP, FitCons2, etc.
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> AnnotatedValues:
 
-        if annotatable.chromosome not in self.score.get_all_chromosomes():
+        if not self.score.has_chromosome(annotatable.chromosome):
             return self._empty_result()
 
         if annotatable.type == Annotatable.Type.SUBSTITUTION:

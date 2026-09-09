@@ -1687,6 +1687,59 @@ def test_bigwig_position_score_get_all_chromosomes(
     assert bigwig_position_score.get_all_chromosomes() == ["chr1", "chr2"]
 
 
+def test_a_score_screens_a_contig_by_the_list_it_reports(
+    bigwig_position_score: GenomicScore,
+) -> None:
+    """``has_chromosome`` answers exactly what ``get_all_chromosomes`` holds.
+
+    The score-plane half of the predicate gain#1304 adds: the read path
+    screens contigs through the score, not through the table, so the score
+    needs the yes/no accessor too rather than making every screen reach for
+    the ordered list and walk it.
+
+    Both accessors are asked in the same test and against each other,
+    because the pair's only interesting property is that they agree -- a
+    screen that answered differently from the list the same score reports
+    would make a read report no data on a contig it plainly lists.  The
+    table-level agreement is pinned per backend in
+    genomic_position_table/test_chromosome_membership.py; this is the
+    delegation above it.
+    """
+    listed = bigwig_position_score.get_all_chromosomes()
+
+    assert listed, "fixture score reports no chromosomes"
+    for chrom in listed:
+        assert bigwig_position_score.has_chromosome(chrom)
+    assert not bigwig_position_score.has_chromosome("chr3")
+
+
+def test_a_closed_score_refuses_the_contig_screen(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The screen refuses a closed score, as the list accessor does.
+
+    Not a detail: the screens this predicate replaces got their closed-score
+    refusal for free, because ``get_all_chromosomes`` checks ``is_open``
+    before it answers.  A predicate that answered ``False`` on a closed score
+    instead would turn every one of those refusals into a silent "this score
+    does not carry that contig" -- the annotator would return empty results
+    for a whole run rather than say the score was never opened.
+
+    Builds a score of its own rather than taking the module-scoped fixture:
+    this is the one test here that closes what it is given, and the fixture
+    is shared with every test below it.
+    """
+    _build_bigwig_score_dir(tmp_path)
+    grr = build_filesystem_test_repository(tmp_path)
+    score = build_position_score_from_resource_id("bw_score", grr)
+
+    with score.open():
+        assert score.has_chromosome("chr1")
+
+    with pytest.raises(ValueError, match="is not open"):
+        score.has_chromosome("chr1")
+
+
 def test_bigwig_position_score_get_all_scores(
     bigwig_position_score: GenomicScore,
 ) -> None:

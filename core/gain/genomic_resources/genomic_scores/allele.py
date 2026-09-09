@@ -514,7 +514,7 @@ class AlleleScore(GenomicScore):
         ``score_filter`` selects whether this allele is reported at all; an
         allele it rejects reads as absent, exactly as an unmatched one does.
         """
-        if chrom not in self.get_all_chromosomes():
+        if not self.has_chromosome(chrom):
             raise ValueError(
                 f"{chrom} is not among the available chromosomes for "
                 f"NP Score resource {self.resource_id}")
@@ -613,7 +613,7 @@ class AlleleScore(GenomicScore):
         every other allele read refuses it: answering ``None`` would make
         a caller's typo indistinguishable from real absent data.
         """
-        if chrom not in self.get_all_chromosomes():
+        if not self.has_chromosome(chrom):
             raise ValueError(
                 f"{chrom} is not among the available chromosomes for "
                 f"allele score resource {self.resource_id}")

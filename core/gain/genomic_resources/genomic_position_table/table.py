@@ -135,6 +135,12 @@ class GenomicPositionTable(abc.ABC):
         # table reopened over changed data re-reads its contigs.
         self._file_chromosomes: list[str] | None = None
 
+        # Per-instance memo backing has_chromosome, in the same shape, with
+        # the same lifetime and reset at the same two seams as the one above.
+        # Derived FROM get_chromosomes(), which is what makes the predicate
+        # and the list unable to disagree -- see has_chromosome.
+        self._chromosome_index: set[str] | None = None
+
         self.chrom_key: int
         self.pos_begin_key: int
         self.pos_end_key: int
@@ -163,8 +169,13 @@ class GenomicPositionTable(abc.ABC):
     def _build_chrom_mapping(self) -> None:
         self.chrom_map = None
         # Called from every backend's open(), and so the point at which a
-        # reopened table must forget what the previous open() read.
+        # reopened table must forget what the previous open() read.  Both
+        # memos, and for the same reason: a reopen is not required to have
+        # been preceded by a close(), so an invalidation that lived only in
+        # close() would leave a reopened table answering out of the previous
+        # open's contigs.
         self._file_chromosomes = None
+        self._chromosome_index = None
         file_chromosomes = self.get_file_chromosomes()
         self.chrom_order = file_chromosomes
         if "chrom_mapping" not in self.definition:
@@ -465,6 +476,7 @@ class GenomicPositionTable(abc.ABC):
         self.chrom_order = None
         self.rev_chrom_map = None
         self._file_chromosomes = None
+        self._chromosome_index = None
 
     @abc.abstractmethod
     def get_all_records(self) -> Generator[Record, None, None]:
@@ -571,6 +583,68 @@ class GenomicPositionTable(abc.ABC):
                 f"{self.definition}")
         assert self.chrom_order is not None
         return self.chrom_order
+
+    def has_chromosome(self, chrom: str) -> bool:
+        """Answer whether this table carries ``chrom``.
+
+        The yes/no half of :meth:`get_chromosomes`, for the callers -- most
+        of them -- that only screen a contig and never look at the order.
+        Answered out of a set derived once per open, so the cost does not
+        grow with the table's contig count nor with where the contig sits in
+        the order; ``chrom not in table.get_chromosomes()`` grew with both,
+        and grew worst for a contig the table does NOT carry, which is
+        exactly what a screen exists to detect (gain#1304).
+
+        Measured through ``GenomicScore.get_all_chromosomes()`` on a real
+        TABIX table -- not the in-memory test fixture, whose denominator
+        ``.out-of-scope/point-read-pre-resolution.md`` refuses for this layer
+        -- at hg38-shaped contig counts, ``timeit`` best-of-5 over 20k calls,
+        one screen, in microseconds::
+
+            screen             195 contigs   640 contigs   predicate
+            chr1, index 0            0.136         0.135       0.135
+            chr22, index 21          0.270         0.262       0.135
+            tail alt                 1.359         4.311       0.135
+            absent                   0.973         2.929       0.132
+
+        One annotated substitution makes THREE such screens on this tree:
+        the annotator's and the shared region-read refusal's, both on the
+        score (0.135us each, the score adding an ``is_open`` check to the
+        table's own 0.070us), and the tabix record read's, on the table.  So
+        at 640 contigs a record on a tail alt paid about 12.9us and one on an
+        absent contig about 8.8us, against a 5.3us point read on the same
+        table; all three together now cost ~0.34us, flat in the contig count
+        and in the contig's index.  The saving is an absolute per-record
+        cost, so it does not shrink against the larger point reads a
+        genome-sized file gives (31us sequential, ~500us random, measured in
+        that same out-of-scope note); it is worth most where the file has
+        many contigs, which is where the screens cost most.
+
+        Raises ``ValueError`` on a table that is not open, in whatever words
+        that backend's :meth:`get_chromosomes` uses -- because it is that
+        method the set is derived from.  A drop-in for the screens that used
+        to spell the membership out over the list, refusal included.
+
+        **Derived from :meth:`get_chromosomes` rather than beside it**, so
+        the two cannot answer differently.  A predicate that disagreed with
+        the list would be the quietest failure this method could have: not a
+        wrong value handed to a caller, but a screen answering "no" for a
+        contig the table has, so the read above it reports no data on a
+        contig full of it and nothing raises.  Deriving from the accessor
+        makes that unrepresentable on every backend at once, including the
+        tabix family, whose list is mapped and filtered rather than stored.
+
+        The memo's lifetime is the open table's, released by :meth:`close`
+        and by :meth:`_build_chrom_mapping` -- the same two seams as the
+        ``get_file_chromosomes`` memo, and per-instance for the reasons set
+        out there.
+        """
+        if self._chromosome_index is None:
+            # get_chromosomes() first, and the memo assigned only after it
+            # answers: a closed table must refuse this read rather than be
+            # recorded as carrying no contigs.
+            self._chromosome_index = set(self.get_chromosomes())
+        return chrom in self._chromosome_index
 
     def _map_file_chrom(self, chrom: str) -> str:
         """Transfrom chromosome name to the chromosomes from score file."""

@@ -254,14 +254,16 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
     ) -> Generator[Record, None, None]:
 
         # An unknown contig is an error; a known-but-empty one yields nothing.
-        # Probe the dict FIRST: this runs once per annotated variant, and
-        # ``get_chromosomes()`` is a list -- membership in it is O(n_contigs).
-        # The populated-contig case (the hot one) therefore pays a single O(1)
-        # dict lookup, and only the miss falls back to the list scan to tell an
-        # unknown contig from a known-but-empty one.
+        # The dict is probed first because it answers BOTH -- the records and,
+        # by their absence, the only case that has to be classified further.
+        # The classification is ``has_chromosome``, which is O(1) since
+        # gain#1304; it was a walk of the ordered contig list, which is why
+        # this used to be written as an optimisation ("probe the dict first,
+        # fall back to the scan only on the miss") rather than as the plain
+        # reading it now is.
         records = self.records_by_chr.get(chrom)
         if records is None:
-            if chrom not in self.get_chromosomes():
+            if not self.has_chromosome(chrom):
                 raise ValueError(
                     f"The chromosome {chrom} is not present in the table")
             return
@@ -293,11 +295,10 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
         if not records:
             # An unknown contig and a known-but-empty one both arrive here with
             # nothing to take a maximum over, and they are DIFFERENT answers:
-            # only a contig this table lists is PROVEN empty.  Probe the dict
-            # first and fall back to the contig list only on the miss, as
-            # get_records_in_region does, so the populated case stays a single
-            # O(1) lookup rather than an O(n_contigs) scan.
-            if chrom not in self.get_chromosomes():
+            # only a contig this table lists is PROVEN empty.  The dict says
+            # which, and the screen below classifies what it could not find,
+            # as get_records_in_region does it.
+            if not self.has_chromosome(chrom):
                 raise ValueError(
                     f"contig {chrom} not present in the table's contigs: "
                     f"{self.get_chromosomes()}")

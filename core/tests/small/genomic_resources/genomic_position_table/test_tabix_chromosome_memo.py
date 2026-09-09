@@ -3,10 +3,17 @@
 ``TabixGenomicPositionTable.get_chromosomes()`` is the odd one out among the
 backends: the base class returns a stored ``chrom_order``, while this one maps
 every file contig through :meth:`map_chromosome` and filters the unmapped ones
-out.  It is on the annotation hot path -- ``GenomicScore.get_all_chromosomes()``
-delegates straight to it, and every contig-membership check in the read path
-goes through that -- so a single annotated substitution used to pay the whole
-rebuild three times over (gain#1173).
+out.  It was on the annotation hot path when this was written --
+``GenomicScore.get_all_chromosomes()`` delegates straight to it, and every
+contig-membership check in the read path went through that -- so a single
+annotated substitution paid the whole rebuild three times over (gain#1173).
+
+**No membership check reaches it any more.**  gain#1304 moved every screen
+onto ``has_chromosome``, whose per-open set derives from this method once, so
+the memo now serves one caller per open rather than three per record.  What is
+pinned below is unchanged and still worth pinning: the set inherits whatever
+staleness this list has, so the list being derived once per open, and given up
+on close and on reopen, is now a property the predicate rests on too.
 
 What is pinned here is that the *derivation* happens once per open, not that it
 is fast: the work is counted, through :meth:`map_chromosome`, rather than

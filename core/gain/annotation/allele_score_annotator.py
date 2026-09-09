@@ -274,8 +274,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         For VCFAllele: mode selects between exact-match and region aggregation.
         For all other annotatables: always use region aggregation.
         """
-        all_chroms = self.allele_score.get_all_chromosomes()
-        if annotatable.chromosome not in all_chroms:
+        if not self.allele_score.has_chromosome(annotatable.chromosome):
             return self._empty_result()
 
         if isinstance(annotatable, VCFAllele):
