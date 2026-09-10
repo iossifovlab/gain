@@ -273,6 +273,16 @@
         margin: 10px 10%;
       }
 
+      /* The tree's own status line.  Styled like #status, which says the
+         same kind of thing for the table, but without its 10% left
+         margin: #hierarchical-wrapper already carries that inset, and
+         inheriting it as well would step the line in twice. */
+      #hv-status {
+        margin-bottom: 8px;
+        font-size: 0.875em;
+        color: #5b778c;
+      }
+
       #breadcrumb {
         margin-bottom: 8px;
         font-size: 15px;
@@ -387,6 +397,17 @@
         text-align: center;
         color: #8a9aa8;
       }
+
+      .hv-widen {
+        display: block;
+        margin-top: 8px;
+        color: #4C93C9;
+        cursor: pointer;
+      }
+
+      .hv-widen:hover {
+        text-decoration: underline;
+      }
     </style>
  </head>
 {% include "grr_scripts.jinja" %}
@@ -471,6 +492,7 @@
         </table>
         </div>
         <div id="hierarchical-wrapper" style="display: none;">
+          <div id="hv-status" style="display: none;"></div>
           <nav id="breadcrumb"></nav>
           <div id="hierarchical-list"></div>
         </div>
