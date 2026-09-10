@@ -1226,11 +1226,13 @@ class GenomicResource:
         return version_tuple_to_string(self.version)
 
     def get_genomic_resource_id_version(self) -> str:
-        """Return a string combinint resource ID and version.
+        """Return a string combining resource ID and version.
 
-        Returns a string of the form aa/bb/cc[3.2] for a genomic resource with
+        Returns a string of the form aa/bb/cc(3.2) for a genomic resource with
         id aa/bb/cc and version 3.2.
         If the version is 0 the string will be aa/bb/cc.
+
+        Returns the same string as :meth:`get_full_id`.
         """
         return f"{self.resource_id}{version_tuple_to_suffix(self.version)}"
 

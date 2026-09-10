@@ -19,15 +19,17 @@ commands that build and publish them — and that side is documented on
 :doc:`/grr`, not here. The two pages meet at two places, and each is
 documented on exactly one side:
 
-* A score's ``scores:`` block is a YAML question — see
+* A score's ``scores:`` block. How to write it — the keys it accepts and the
+  values they take — is documented on the YAML side: see
   :ref:`grr-position-scores` and its siblings. What that block *becomes* at
   runtime is a :class:`~gain.genomic_resources.score_def.GenomicScoreDef`,
   and that is described in :doc:`resources/scores`.
-* A score's ``histogram:`` block is likewise a YAML question — see
-  :ref:`grr-histogram-configuration`, which also carries the one Python
-  example that belongs on the user page, the custom ``plot_function``. The
-  configuration *objects* it parses into, and the histogram objects a
-  statistics build produces, are described in :doc:`resources/histograms`.
+* A score's ``histogram:`` block. How to write it is likewise documented on
+  the YAML side: see :ref:`grr-histogram-configuration`, which also carries
+  the one Python example that belongs on the user page, the custom
+  ``plot_function``. The configuration *objects* it parses into, and the
+  histogram objects a statistics build produces, are described in
+  :doc:`resources/histograms`.
 
 If you are new to the Python interface, :doc:`/python_interface` is the
 getting-started guide: it connects to a repository and runs three short
