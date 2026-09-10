@@ -173,11 +173,37 @@
 
         $("#search-container").show()
 
+        // Looked up once. Both are static markup that nothing replaces,
+        // and between them they are read on every keystroke that settles,
+        // every folder move and every step of Back and Forward.
+        const searchField = $("#search-field");
+        const typeControl = $("#type-filter");
+
+        /**
+         * What the search controls hold.
+         *
+         * The one reader of the two of them, so that "no type filter" has
+         * a single spelling. Two other spellings exist and both arrive
+         * here: the markup's own "all" option, and the `null` jQuery
+         * answers for a select with nothing selected -- which is what an
+         * address naming a type this repository does not have leaves
+         * behind, since `val()` sets `selectedIndex` to -1 rather than
+         * refusing. Neither escapes this function, so nothing downstream
+         * has to know they exist, and the SQL below cannot end up asking
+         * for a type called "null".
+         */
+        function currentSearch() {
+            const type = typeControl.val();
+            return {
+                q: searchField.val().trim(),
+                type: (type === null || type === "all") ? "" : type,
+            };
+        }
+
         async function doSearch() {
             await window.dbLoaded;
-            const searchValue = $("#search-field").val().trim();
-            const typeFilter = $("#type-filter").val();
-            if (searchValue === "" && typeFilter === "all") {
+            const { q, type } = currentSearch();
+            if (q === "" && type === "") {
                 window.last_error = null;
                 applyRefreshData(Array.from(window.all_ids))
                 return;
@@ -185,17 +211,15 @@
 
             $(".searching").show()
 
-            const ids = new Set();
-
-            let query = "";;
-            if (searchValue !== "" && typeFilter !== "all") {
-                query = `SELECT full_id FROM contents WHERE contents MATCH '${searchValue}' AND type = '${typeFilter}'`
+            let query = "";
+            if (q !== "" && type !== "") {
+                query = `SELECT full_id FROM contents WHERE contents MATCH '${q}' AND type = '${type}'`
             }
-            else if (searchValue !== "") {
-                query = `SELECT full_id FROM contents WHERE contents MATCH '${searchValue}'`
+            else if (q !== "") {
+                query = `SELECT full_id FROM contents WHERE contents MATCH '${q}'`
             }
             else {
-                query = `SELECT full_id FROM contents WHERE type = '${typeFilter}'`
+                query = `SELECT full_id FROM contents WHERE type = '${type}'`
             }
 
             window.last_error = null;
@@ -225,79 +249,52 @@
          * are filled from what the address says -- so it is one named
          * object rather than three more bare properties, and the other
          * module reaches for nothing in here except this.
-         *
-         * The empty string is "no type filter" across the seam, rather
-         * than the "all" the markup gives the option: it makes "is
-         * anything filtering?" the same question for both fields, and it
-         * keeps the dropdown's sentinel from having to be spelled in the
-         * address.
          */
-        const searchChangeListeners = [];
+        let searchChanged = () => {};
 
         window.grrSearch = {
-            /** What the controls hold right now. */
-            current() {
-                // jQuery answers `null` for a select with nothing
-                // selected, which is the state a `type=` naming an option
-                // that is not there leaves behind -- `val()` sets
-                // `selectedIndex` to -1 rather than refusing. That and
-                // the markup's own "all" both mean "no type filter", and
-                // the seam promises one spelling of that, so both become
-                // the empty string here rather than leaking a third
-                // value into the address and into the SQL.
-                const type = $("#type-filter").val();
-                return {
-                    q: $("#search-field").val().trim(),
-                    type: (type === null || type === "all") ? "" : type,
-                };
-            },
+            current: currentSearch,
 
-            /**
-             * Put a search into the controls and run it.
-             *
-             * `stillWanted` is asked again after the wait below, and the
-             * application is abandoned if it answers no. Whoever calls
-             * this owns the question of what "still wanted" means; all
-             * that matters here is that the wait makes the answer able to
-             * change.
-             */
-            async apply({ q, type, stillWanted }) {
+            /** Put a search into the controls and run it. */
+            async apply({ q, type }) {
                 // The term goes in at once. It is a text input and needs
                 // nothing that is still loading, and putting it in now
                 // means the controls tell the truth about the search for
                 // the whole of the download rather than only after it --
                 // which is exactly when a reader who followed a filtered
                 // link is looking at them.
-                $("#search-field").val(q);
+                searchField.val(q);
                 // The type cannot: its options are built from the loaded
                 // index, so selecting one before that resolves selects
                 // nothing at all, and does it silently.
                 await window.dbLoaded;
                 // A wait long enough to matter is long enough for the
-                // reader to have typed something else -- the box is
-                // usable throughout it, deliberately. They are the later
-                // authority, and their own search has already been
-                // queued, so this one is abandoned rather than written
-                // over the top of theirs.
-                if (stillWanted && !stillWanted()) return;
-                const filter = $("#type-filter");
-                filter.val(type === "" ? "all" : type);
-                if (filter.val() === null) {
+                // reader to have typed over what was just put in -- the
+                // box is usable throughout it, deliberately. The box is
+                // therefore the record of who asked last: if it no longer
+                // holds this term, a later search has replaced this one
+                // and has already been queued by whoever made it, so this
+                // application is abandoned rather than written over the
+                // top of theirs. Two applications racing each other sort
+                // themselves out the same way, for the same reason.
+                if (searchField.val().trim() !== q) return;
+                typeControl.val(type === "" ? "all" : type);
+                if (typeControl.val() === null) {
                     // The address named a type this repository does not
                     // have -- a stale link, or a hand-edited one. Selected
                     // nothing at all, which would leave the dropdown blank
-                    // and the search asking for the string "null". Fall
+                    // and the table empty with no account of why. Fall
                     // back to searching every type, the same salvage the
                     // folder path makes when it walks up to an ancestor
                     // that still exists.
-                    filter.val("all");
+                    typeControl.val("all");
                 }
                 await doSearch();
             },
 
-            /** Call `listener` when the reader changes either control. */
+            /** Be told when the reader changes either control. */
             onChange(listener) {
-                searchChangeListeners.push(listener);
+                searchChanged = listener;
             },
         };
 
@@ -311,12 +308,10 @@
          */
         function searchFromControls() {
             doSearch();
-            for (const listener of searchChangeListeners) listener();
+            searchChanged();
         }
 
-        $("#type-filter").on("change", (e) => {
-            searchFromControls();
-        })
+        typeControl.on("change", searchFromControls)
 
         function debounce(func, wait, immediate) {
             var timeout;
@@ -335,7 +330,7 @@
 
         var debouncedSearch = debounce(searchFromControls, 400, false);
 
-        $("#search-field").on("keydown", (e) => {
+        searchField.on("keydown", (e) => {
           if (e.key === "Enter") {
             searchFromControls();
           }
@@ -703,29 +698,24 @@
 
             /** The search a fragment's query part names. */
             function parseSearch(encodedSearch) {
-                const search = { q: "", type: "" };
-                for (const pair of encodedSearch.split("&")) {
-                    if (pair === "") continue;
-                    const eq = pair.indexOf("=");
-                    if (eq < 0) continue;
-                    const name = pair.slice(0, eq);
-                    // `hasOwn`, not `in`: `in` walks the prototype chain,
-                    // so `toString=x` and `constructor=x` would both read
-                    // as fields this understands and be written onto the
-                    // record. Nothing downstream reads them today, which
-                    // is exactly what makes it worth closing now.
-                    if (!Object.hasOwn(search, name)) continue;
-                    try {
-                        search[name] = decodeURIComponent(pair.slice(eq + 1));
-                    } catch {
-                        // Malformed escape ("%zz"), which a hand-edited or
-                        // truncated address can carry. The field is left
-                        // empty rather than the load abandoned -- the same
-                        // choice `parsePath` makes, for the same reason.
-                        search[name] = "";
-                    }
-                }
-                return search;
+                // `URLSearchParams` for reading, hand-rolled for writing,
+                // and the asymmetry is deliberate rather than an
+                // oversight. It cannot build these addresses: it spells a
+                // space "+", so a term would come back to the reader
+                // differently from how they typed it. It reads them
+                // exactly, though -- "%20" decodes to a space either
+                // way -- and reading is where all the awkward input is.
+                //
+                // Everything a hand-rolled parser has to guard against
+                // it answers by construction: a pair with no "=", a name
+                // like "toString" that is only on the prototype, a
+                // repeated key, a malformed escape. None of them can
+                // reach the record below.
+                const params = new URLSearchParams(encodedSearch);
+                return {
+                    q: params.get("q") || "",
+                    type: params.get("type") || "",
+                };
             }
 
             /** The folder segments a fragment's path names, outermost first. */
@@ -768,31 +758,30 @@
              * controls and put the answer in the state.
              */
             function buildHash(state) {
-                const search = buildSearch(state);
+                const search = buildSearch(state.q, state.type);
+                const query = search === "" ? "" : "?" + search;
                 if (state.view !== "hierarchical") {
                     // The table's address is the query alone, so with no
                     // search there is nothing to say and the fragment goes
                     // away entirely.
-                    return search === "" ? "" : "#?" + search;
+                    return query === "" ? "" : "#" + query;
                 }
-                return buildPath(state) + (search === "" ? "" : "?" + search);
+                return buildPath(state.path) + query;
             }
 
-            /** The query part addressing a state's search; "" when unset. */
-            function buildSearch(state) {
+            /** The query part addressing a search; "" when unset. */
+            function buildSearch(q, type) {
                 const pairs = [];
                 // A fixed order, so that one search has one address: the
                 // round trip above compares strings, and two spellings of
                 // the same state would make the guard miss.
-                if (state.q) pairs.push("q=" + encodeURIComponent(state.q));
-                if (state.type) {
-                    pairs.push("type=" + encodeURIComponent(state.type));
-                }
+                if (q) pairs.push("q=" + encodeURIComponent(q));
+                if (type) pairs.push("type=" + encodeURIComponent(type));
                 return pairs.join("&");
             }
 
-            /** The path part addressing a hierarchical state. */
-            function buildPath(state) {
+            /** The path part addressing a folder. */
+            function buildPath(path) {
                 // Encoded per segment and then joined, never the other way
                 // round: the segments are resource id fragments, which are
                 // untrusted repository content (gain#467, gain#528), and
@@ -810,29 +799,30 @@
                 // what makes a name containing "/" impossible to spell --
                 // it comes back as one folder, not two.
                 return HIERARCHICAL_HASH
-                    + state.path.map(encodeURIComponent).join("/");
+                    + path.map(encodeURIComponent).join("/");
             }
 
             /** Render what the current address says. The only applier. */
             function applyHash() {
-                const { view, path, q, type } = parseHash(location.hash);
-                setView(view);
-                applySearch(q, type);
+                const state = parseHash(location.hash);
+                setView(state.view);
+                applySearch(state);
                 // The table has no folder to resolve and no address of its
                 // own to canonicalise -- see `canonicalise` for why
                 // rewriting it would be actively wrong -- so this is where
                 // the tree's half of the work begins and ends.
-                if (view !== "hierarchical") return;
-                const { reached } = descend(path);
+                if (state.view !== "hierarchical") return;
+                const { reached } = descend(state.path);
                 navigateTo(reached);
-                // The search comes from the *address*, not from the
-                // controls: `applySearch` above has only started putting
-                // it into them -- it waits on the loaded index first -- so
-                // reading them here would rewrite the address to the
-                // search that is on its way out rather than the one
-                // arriving, and drop the query on every load that carries
-                // one.
-                canonicalise(reached, { q, type });
+                // Canonicalised from the state the *address* gave, with
+                // only the folder replaced by the one actually reached.
+                // The controls are not consulted: `applySearch` above has
+                // only started putting the search into them -- it waits on
+                // the loaded index first -- so reading them here would
+                // rewrite the address to the search on its way out rather
+                // than the one arriving, and drop the query on every load
+                // that carries one.
+                canonicalise({ ...state, path: reached });
             }
 
             /**
@@ -851,23 +841,14 @@
              * the controls agree with the address, so the next call is a
              * no-op by the same test.
              */
-            function applySearch(q, type) {
-                const current = searchControls.current();
-                if (current.q === q && current.type === type) return;
-                // The address is the authority on what is wanted, and it
-                // is kept current by the reader's own edits: pressing a
-                // key rewrites it before this application has finished
-                // waiting. So "does the address still ask for this?" is
-                // the question that distinguishes an application worth
-                // finishing from one the reader has already overtaken.
-                searchControls.apply({
-                    q,
-                    type,
-                    stillWanted() {
-                        const addressed = parseHash(location.hash);
-                        return addressed.q === q && addressed.type === type;
-                    },
-                });
+            function applySearch(state) {
+                if (sameSearch(searchControls.current(), state)) return;
+                searchControls.apply(state);
+            }
+
+            /** Whether two states ask for the same search. */
+            function sameSearch(one, other) {
+                return one.q === other.q && one.type === other.type;
             }
 
             /**
@@ -904,9 +885,8 @@
              * available, because `#/nonesuch/deeper` resolving to `#/` is
              * exactly what the stale-path behaviour asks for.
              */
-            function canonicalise(path, search) {
-                const hash = buildHash(
-                    { view: "hierarchical", path, ...search });
+            function canonicalise(state) {
+                const hash = buildHash(state);
                 // Never "" for this view, so there is no "cannot express a
                 // bare path" case to handle as `goTo` has to.
                 if (hash !== location.hash) {

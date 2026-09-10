@@ -45,23 +45,25 @@ function visibleResourceIds(page: Page) {
  * is still awaiting a promise. Every cheaper-looking signal is already
  * true on arrival -- the rows are server-rendered, and the search box is
  * shown synchronously whether or not the database ever loads.
+ *
+ * Read as text, never as visibility. The hierarchical view hides this
+ * element, so an address naming the tree would make a `toBeVisible` wait
+ * hang forever on a page that had loaded perfectly. The status is written
+ * with jQuery's `.text()`, which does not care that the element is
+ * hidden, so the signal survives being out of sight.
+ *
+ * @param resources - the count to wait *for*. An address carrying a
+ * search has to override it: such a load passes through the unfiltered
+ * count on its way to the filtered one, so waiting for the whole
+ * repository would match on the way past and hand the test a page that
+ * has not searched yet. Only pass it where the assertion that follows
+ * does not retry on its own.
  */
 async function openBrowseIndex(
   page: Page, hash = '', resources = BROWSE_RESOURCE_COUNT,
 ): Promise<void> {
   await serveGrr(page, FIXTURE_BROWSE_GRR);
   await page.goto(indexPageUrl() + hash);
-  /* `resources` is the count to wait *for*, which an address carrying a
-   * search has to override. Such a load passes through the unfiltered
-   * count on its way to the filtered one -- the rows are server-rendered
-   * and the search is applied afterwards -- so waiting for the whole
-   * repository would match on the way past and hand the test a page that
-   * has not searched yet. The filtered count cannot be reached early. */
-  /* Read as text, never as visibility. The hierarchical view hides this
-   * element, so an address naming the tree would make a `toBeVisible`
-   * wait hang forever on a page that had loaded perfectly. The status is
-   * written with jQuery's `.text()`, which does not care that the
-   * element is hidden, so the signal survives being out of sight. */
   await expect(page.locator('#status')).toHaveText(`${resources} resources`);
 }
 
@@ -69,6 +71,35 @@ async function openBrowseIndex(
 async function search(page: Page, term: string): Promise<void> {
   await page.locator('#search-field').fill(term);
   await page.locator('#search-field').press('Enter');
+}
+
+/** The option the type filter offers for "every type". */
+const EVERY_TYPE = 'all';
+
+/** Choose a type in the filter, or `EVERY_TYPE` to stop filtering. */
+async function filterByType(page: Page, type: string): Promise<void> {
+  await page.locator('#type-filter').selectOption(type);
+}
+
+/**
+ * Open the Coverage GRR's index page and wait for its search to be usable.
+ *
+ * The peer of `openBrowseIndex` for the other fixture, which the tests
+ * that have to *leave* the index page need: the browse GRR is published
+ * by `repo-index` and has no pages inside its resource directories to
+ * navigate to, while this one gets the full `repo-info` pass.
+ *
+ * Its resource count is read off the rendered table rather than written
+ * here, because the number is the Coverage GRR's own business -- a
+ * resource added there for a sorter test must not redden an index-page
+ * one.
+ */
+async function openCoverageIndex(page: Page, hash = ''): Promise<void> {
+  await serveGrr(page, FIXTURE_GRR);
+  await page.goto(indexPageUrl() + hash);
+  const rows = await page.locator('#resource-table tbody tr').count();
+  expect(rows).toBeGreaterThan(0);
+  await expect(page.locator('#status')).toHaveText(`${rows} resources`);
 }
 
 test('a repo-info published index page loads its search index offline', async ({
@@ -886,7 +917,7 @@ test('the tree orders names by locale, as the table does', async ({ page }) => {
 
 /* ---- The search state lives in the URL hash (#1331) ---- */
 
-test('a term searched in the table view is put in the address', async ({
+test('Enter runs the search and writes it to the address', async ({
   page,
 }) => {
   await openBrowseIndex(page);
@@ -897,7 +928,9 @@ test('a term searched in the table view is put in the address', async ({
     .toBe(`#?q=${BROWSE_SUMMARY_ONLY_TERM}`);
 });
 
-test('typing a term leaves no history entry behind it', async ({ page }) => {
+test('the debounced path writes the address without pushing', async ({
+  page,
+}) => {
   await openBrowseIndex(page);
   const entriesBefore = await page.evaluate(() => history.length);
 
@@ -923,7 +956,7 @@ test('the chosen type joins the term in the address', async ({ page }) => {
   await openBrowseIndex(page);
 
   await search(page, BROWSE_SUMMARY_ONLY_TERM);
-  await page.locator('#type-filter').selectOption(BROWSE_SCORE_TYPE);
+  await filterByType(page, BROWSE_SCORE_TYPE);
 
   /* Both fields, in a fixed order. One search having one spelling is
    * what lets `goTo`'s guard compare addresses as strings at all. */
@@ -934,7 +967,7 @@ test('the chosen type joins the term in the address', async ({ page }) => {
 test('a type chosen on its own is the whole query', async ({ page }) => {
   await openBrowseIndex(page);
 
-  await page.locator('#type-filter').selectOption(BROWSE_GENOME_TYPE);
+  await filterByType(page, BROWSE_GENOME_TYPE);
 
   await expect.poll(() => hashOf(page)).toBe(`#?type=${BROWSE_GENOME_TYPE}`);
 
@@ -951,11 +984,11 @@ test('clearing both controls takes the query out of the address', async ({
 }) => {
   await openBrowseIndex(page);
   await search(page, BROWSE_SUMMARY_ONLY_TERM);
-  await page.locator('#type-filter').selectOption(BROWSE_SCORE_TYPE);
+  await filterByType(page, BROWSE_SCORE_TYPE);
   await expect.poll(() => hashOf(page)).not.toBe('');
 
   await search(page, '');
-  await page.locator('#type-filter').selectOption('all');
+  await filterByType(page, EVERY_TYPE);
 
   /* Not `#?`, and not a bare `#` either: an emptied search leaves the
    * address exactly as an unfiltered table found it, so that arriving
@@ -1002,13 +1035,10 @@ test('an address carrying a type selects it once the options exist', async ({
 test('coming back from a resource page restores the filtered table', async ({
   page,
 }) => {
-  /* The Coverage GRR, for the reason the folder test above gives: it is
-   * the only fixture with pages inside its resource directories, so it
-   * is the only one a table row can actually be clicked through to. */
-  await serveGrr(page, FIXTURE_GRR);
-  await page.goto(indexPageUrl());
-  const rows = await page.locator('#resource-table tbody tr').count();
-  await expect(page.locator('#status')).toHaveText(`${rows} resources`);
+  /* The Coverage GRR, for the reason its helper gives: it is the only
+   * fixture with pages inside its resource directories, so it is the
+   * only one a table row can actually be clicked through to. */
+  await openCoverageIndex(page);
 
   /* Reaches the score through its id and the genome through nothing. */
   await search(page, 'coverage');
@@ -1059,22 +1089,43 @@ test('a term typed while the index loads survives the address', async ({
 }) => {
   await serveGrr(page, FIXTURE_BROWSE_GRR);
 
-  /* Hold the search index back, to widen the window between "the box is
-   * usable" and "the address's search has been applied" enough to type
-   * into. The page opens that window itself and on purpose -- the search
+  /* Hold the search index back, to open the window between "the box is
+   * usable" and "the address's search has been applied" and type into
+   * it. The page opens that window itself and on purpose -- the search
    * container is shown synchronously, well before the index has been
    * downloaded and deserialized -- so this is the page's own invitation
-   * to type, slowed down, not a contrived one. */
+   * to type, held open, not a contrived one.
+   *
+   * Held on a promise rather than a timer. A sleep long enough to be
+   * safe here is a flat cost on every run and still only probably long
+   * enough on a loaded machine; releasing it once the box demonstrably
+   * holds the typed term closes the window on the event that actually
+   * matters. */
+  let releaseIndex!: () => void;
+  const indexHeld = new Promise<void>((resolve) => { releaseIndex = resolve; });
   await page.route(
     (url) => url.pathname.endsWith('.CONTENTS.sqlite3.gz'),
     async (route) => {
-      await new Promise((resolve) => { setTimeout(resolve, 1000); });
+      await indexHeld;
       await route.fallback();
     },
   );
 
-  await page.goto(`${indexPageUrl()}#?q=${BROWSE_SUMMARY_ONLY_TERM}`);
+  /* The link carries a type as well as a term, and the type is the half
+   * that can still land late: the term is written into the box before
+   * the wait, but the dropdown cannot be touched until its options
+   * exist. So this address is what makes the abandonment check
+   * observable -- with a term alone, the ordering does all the work and
+   * the check has nothing left to catch. `genome` also disagrees with
+   * what the reader is about to ask for, so applying it late changes the
+   * rows rather than merely the control. */
+  await page.goto(
+    `${indexPageUrl()}#?q=${BROWSE_SUMMARY_ONLY_TERM}`
+    + `&type=${BROWSE_GENOME_TYPE}`,
+  );
   await search(page, BROWSE_ID_ONLY_TERM);
+  await expect(page.locator('#search-field')).toHaveValue(BROWSE_ID_ONLY_TERM);
+  releaseIndex();
 
   /* The reader wins. They typed after the link was opened, and the
    * address already agrees with them -- it was rewritten the moment they
@@ -1089,6 +1140,7 @@ test('a term typed while the index loads survives the address', async ({
     BROWSE_ID_ONLY_RESOURCE_ID,
   ]);
   await expect(page.locator('#search-field')).toHaveValue(BROWSE_ID_ONLY_TERM);
+  await expect(page.locator('#type-filter')).toHaveValue(EVERY_TYPE);
   expect(hashOf(page)).toBe(`#?q=${BROWSE_ID_ONLY_TERM}`);
 });
 
@@ -1177,7 +1229,7 @@ test('an address naming a type that is gone searches every type', async ({
    * an option that is not there selects *nothing*, leaving the dropdown
    * blank and the query asking for the literal string "null" -- an empty
    * table, a blank control, and no account of why. */
-  await expect(page.locator('#type-filter')).toHaveValue('all');
+  await expect(page.locator('#type-filter')).toHaveValue(EVERY_TYPE);
   await expect(visibleResourceIds(page)).toHaveCount(BROWSE_RESOURCE_COUNT);
 });
 
