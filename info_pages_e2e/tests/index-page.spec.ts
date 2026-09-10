@@ -1776,3 +1776,37 @@ test('climbing to the root prunes the whole repository, box intact',
     await expect(page.locator('#search-field'))
       .toHaveValue(BROWSE_ID_ONLY_TERM);
   });
+
+test('the counts are re-derived at every step, not carried over',
+  async ({ page }) => {
+    await openBrowseIndex(page, '#/');
+
+    /* Everything under `hg38`, unfiltered. `hg38` holds exactly one child
+     * folder, `scores`, so every resource beneath the one is beneath the
+     * other -- which is what lets this single reading serve as the
+     * expected value for a *different* row further down, without either
+     * number being written here. */
+    const wholeSubtree = await folderCount(page, 'hg38');
+
+    await search(page, BROWSE_ID_ONLY_TERM);
+    await expect.poll(() => folderCount(page, 'hg38')).toBe('(1)');
+
+    await folderRow(page, 'hg38').click();
+
+    /* Moved into the folder while filtered, and the row that greets the
+     * reader there reports what matched rather than what the folder
+     * holds. A build that rendered the move from the listing it already
+     * had -- rather than walking into the pruned tree afresh -- would
+     * show the reader numbers belonging to the folder they just left. */
+    await expect.poll(() => folderCount(page, 'scores')).toBe('(1)');
+
+    await search(page, '');
+
+    /* And clearing puts the whole subtree back, in the folder the reader
+     * navigated to rather than the one they searched from. The count is
+     * the assertion because it is the part that can go stale on its own:
+     * the rows can come back correctly while the totals beside them still
+     * describe the search that has just been cleared. */
+    await expect.poll(() => folderCount(page, 'scores')).toBe(wholeSubtree);
+    expect(hashOf(page)).toBe('#/hg38');
+  });
