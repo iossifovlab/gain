@@ -237,24 +237,61 @@
         window.grrSearch = {
             /** What the controls hold right now. */
             current() {
+                // jQuery answers `null` for a select with nothing
+                // selected, which is the state a `type=` naming an option
+                // that is not there leaves behind -- `val()` sets
+                // `selectedIndex` to -1 rather than refusing. That and
+                // the markup's own "all" both mean "no type filter", and
+                // the seam promises one spelling of that, so both become
+                // the empty string here rather than leaking a third
+                // value into the address and into the SQL.
+                const type = $("#type-filter").val();
                 return {
                     q: $("#search-field").val().trim(),
-                    type: $("#type-filter").val() === "all"
-                        ? "" : $("#type-filter").val(),
+                    type: (type === null || type === "all") ? "" : type,
                 };
             },
 
-            /** Put a search into the controls and run it. */
-            async apply({ q, type }) {
-                // Awaited because the type options are built from the
-                // loaded index: setting the dropdown before that resolves
-                // selects nothing at all -- the option is not there yet --
-                // and does it silently. The term alone would not need the
-                // wait, but filling one control and not the other leaves
-                // the page showing a search nobody asked for.
-                await window.dbLoaded;
+            /**
+             * Put a search into the controls and run it.
+             *
+             * `stillWanted` is asked again after the wait below, and the
+             * application is abandoned if it answers no. Whoever calls
+             * this owns the question of what "still wanted" means; all
+             * that matters here is that the wait makes the answer able to
+             * change.
+             */
+            async apply({ q, type, stillWanted }) {
+                // The term goes in at once. It is a text input and needs
+                // nothing that is still loading, and putting it in now
+                // means the controls tell the truth about the search for
+                // the whole of the download rather than only after it --
+                // which is exactly when a reader who followed a filtered
+                // link is looking at them.
                 $("#search-field").val(q);
-                $("#type-filter").val(type === "" ? "all" : type);
+                // The type cannot: its options are built from the loaded
+                // index, so selecting one before that resolves selects
+                // nothing at all, and does it silently.
+                await window.dbLoaded;
+                // A wait long enough to matter is long enough for the
+                // reader to have typed something else -- the box is
+                // usable throughout it, deliberately. They are the later
+                // authority, and their own search has already been
+                // queued, so this one is abandoned rather than written
+                // over the top of theirs.
+                if (stillWanted && !stillWanted()) return;
+                const filter = $("#type-filter");
+                filter.val(type === "" ? "all" : type);
+                if (filter.val() === null) {
+                    // The address named a type this repository does not
+                    // have -- a stale link, or a hand-edited one. Selected
+                    // nothing at all, which would leave the dropdown blank
+                    // and the search asking for the string "null". Fall
+                    // back to searching every type, the same salvage the
+                    // folder path makes when it walks up to an ancestor
+                    // that still exists.
+                    filter.val("all");
+                }
                 await doSearch();
             },
 
@@ -361,6 +398,26 @@
         // renders it as an alternative to the flat table.
         (function () {
             const rowData = window.rowData || {};
+
+            /*
+             * The search, reached through the seam it publishes -- or a
+             * stand-in for it.
+             *
+             * The module that owns the search imports sqlite-wasm from a
+             * CDN at its top level, so a blocked or missing import means
+             * that module never evaluates and never publishes anything.
+             * Before the search became addressable, nothing here touched
+             * it, and such a failure still left a browsable tree and a
+             * working Back and Forward over an empty table. Standing in
+             * for the seam keeps that true, where reaching for it
+             * directly would take the whole address machinery down with
+             * the CDN.
+             */
+            const searchControls = window.grrSearch || {
+                current: () => ({ q: "", type: "" }),
+                apply() {},
+                onChange() {},
+            };
 
             // Mirror gain.utils.helpers.convert_size so aggregated folder
             // sizes are formatted the same way as the per-resource sizes.
@@ -652,7 +709,12 @@
                     const eq = pair.indexOf("=");
                     if (eq < 0) continue;
                     const name = pair.slice(0, eq);
-                    if (!(name in search)) continue;
+                    // `hasOwn`, not `in`: `in` walks the prototype chain,
+                    // so `toString=x` and `constructor=x` would both read
+                    // as fields this understands and be written onto the
+                    // record. Nothing downstream reads them today, which
+                    // is exactly what makes it worth closing now.
+                    if (!Object.hasOwn(search, name)) continue;
                     try {
                         search[name] = decodeURIComponent(pair.slice(eq + 1));
                     } catch {
@@ -790,9 +852,22 @@
              * no-op by the same test.
              */
             function applySearch(q, type) {
-                const current = window.grrSearch.current();
+                const current = searchControls.current();
                 if (current.q === q && current.type === type) return;
-                window.grrSearch.apply({ q, type });
+                // The address is the authority on what is wanted, and it
+                // is kept current by the reader's own edits: pressing a
+                // key rewrites it before this application has finished
+                // waiting. So "does the address still ask for this?" is
+                // the question that distinguishes an application worth
+                // finishing from one the reader has already overtaken.
+                searchControls.apply({
+                    q,
+                    type,
+                    stillWanted() {
+                        const addressed = parseHash(location.hash);
+                        return addressed.q === q && addressed.type === type;
+                    },
+                });
             }
 
             /**
@@ -852,7 +927,7 @@
                 // a pure function of its argument for the guard below to
                 // mean anything.
                 const hash = buildHash(
-                    { ...state, ...window.grrSearch.current() });
+                    { ...state, ...searchControls.current() });
                 // Nothing to do when the address already means this. That
                 // stops the button already active from stacking a history
                 // entry that changes nothing -- Back would then appear not
@@ -914,10 +989,10 @@
             // The rest of the state is read back out of the address, so
             // that a search typed while the tree is showing keeps the
             // folder it was typed in.
-            window.grrSearch.onChange(() => {
+            searchControls.onChange(() => {
                 const hash = buildHash({
                     ...parseHash(location.hash),
-                    ...window.grrSearch.current(),
+                    ...searchControls.current(),
                 });
                 if (hash === location.hash) return;
                 history.replaceState(

@@ -901,11 +901,16 @@ test('typing a term leaves no history entry behind it', async ({ page }) => {
   await openBrowseIndex(page);
   const entriesBefore = await page.evaluate(() => history.length);
 
-  /* Typed a key at a time, not `fill`ed: the debounce is what makes this
-   * worth asserting. A term this long pushed rather than replaced would
-   * put up to eight entries between the reader and wherever they came
-   * from, and Back would crawl back through the term one keystroke at a
-   * time instead of leaving the page. */
+  /* Typed a key at a time rather than `fill`ed, so the term reaches the
+   * address the way a reader puts it there: through the debounce, which
+   * is the path that would stack entries.
+   *
+   * At Playwright's default typing speed the debounce coalesces the
+   * whole term into one settled call, so a build that pushed would add
+   * one entry here, not eight. That is still the difference between Back
+   * leaving the page and Back stepping through the reader's own typing,
+   * and one entry is enough to detect it -- but the count is a property
+   * of how fast this test types, not a measurement of the feature. */
   await page.locator('#search-field')
     .pressSequentially(BROWSE_SUMMARY_ONLY_TERM);
 
@@ -1049,6 +1054,58 @@ test('switching to the tree carries the term along', async ({ page }) => {
     .toEqual([...BROWSE_TOP_LEVEL_FOLDERS].sort());
 });
 
+test('a term typed while the index loads survives the address', async ({
+  page,
+}) => {
+  await serveGrr(page, FIXTURE_BROWSE_GRR);
+
+  /* Hold the search index back, to widen the window between "the box is
+   * usable" and "the address's search has been applied" enough to type
+   * into. The page opens that window itself and on purpose -- the search
+   * container is shown synchronously, well before the index has been
+   * downloaded and deserialized -- so this is the page's own invitation
+   * to type, slowed down, not a contrived one. */
+  await page.route(
+    (url) => url.pathname.endsWith('.CONTENTS.sqlite3.gz'),
+    async (route) => {
+      await new Promise((resolve) => { setTimeout(resolve, 1000); });
+      await route.fallback();
+    },
+  );
+
+  await page.goto(`${indexPageUrl()}#?q=${BROWSE_SUMMARY_ONLY_TERM}`);
+  await search(page, BROWSE_ID_ONLY_TERM);
+
+  /* The reader wins. They typed after the link was opened, and the
+   * address already agrees with them -- it was rewritten the moment they
+   * pressed Enter. An application that finished by writing what the link
+   * had said would leave the address, the box and the table each saying
+   * something different, with nothing that ever reconciles them.
+   *
+   * The rows are what settles it: both terms match exactly one resource,
+   * so the status line reads "1 resources" either way and would let the
+   * wrong one through. */
+  await expect(visibleResourceIds(page)).toHaveText([
+    BROWSE_ID_ONLY_RESOURCE_ID,
+  ]);
+  await expect(page.locator('#search-field')).toHaveValue(BROWSE_ID_ONLY_TERM);
+  expect(hashOf(page)).toBe(`#?q=${BROWSE_ID_ONLY_TERM}`);
+});
+
+test('resolving a tree address leaves its query on it', async ({ page }) => {
+  await openBrowseIndex(page, `#/hg38?q=${BROWSE_SUMMARY_ONLY_TERM}`, 1);
+
+  /* The tree's render path rewrites the address to the folder it
+   * actually resolved to, and that rewrite has to carry the search with
+   * it or every tree load that has a query loses it.
+   *
+   * Asserted here, before anything is clicked, because clicking heals
+   * it: the next move rebuilds the address from the controls, which by
+   * then hold the term, so an assertion made after one passes whether or
+   * not the rewrite dropped anything. */
+  expect(hashOf(page)).toBe(`#/hg38?q=${BROWSE_SUMMARY_ONLY_TERM}`);
+});
+
 test('moving between folders keeps the term without searching again', async ({
   page,
 }) => {
@@ -1092,6 +1149,11 @@ test('a malformed term in the address degrades, it does not throw', async ({
    * from the address must reach that same path: a link is now a way to
    * hand this page a query, and the one it cannot parse must not be the
    * one that breaks the load. */
+  /* The count this waits for is the whole repository, which is also what
+   * a failed query falls back to -- so unlike the other search loads,
+   * the wait is not what synchronises this test. The error message
+   * below is; it cannot appear before the query has been run and
+   * rejected. */
   await openBrowseIndex(page, '#?q=%22');
 
   await expect(page.locator('#status-error'))
@@ -1099,6 +1161,90 @@ test('a malformed term in the address degrades, it does not throw', async ({
   await expect(visibleResourceIds(page)).toHaveCount(BROWSE_RESOURCE_COUNT);
   await expect(page.locator('#search-field')).toHaveValue('"');
   expect(errors).toEqual([]);
+});
+
+test('an address naming a type that is gone searches every type', async ({
+  page,
+}) => {
+  await openBrowseIndex(page, '#?type=nosuchtype');
+
+  /* Salvaged rather than obeyed, which is the choice the folder path
+   * already makes when it walks up to an ancestor that still exists:
+   * repositories are regenerated, and a link that named a type nobody
+   * publishes any more should still open.
+   *
+   * Obeying it is not an option that leaves the page usable. Selecting
+   * an option that is not there selects *nothing*, leaving the dropdown
+   * blank and the query asking for the literal string "null" -- an empty
+   * table, a blank control, and no account of why. */
+  await expect(page.locator('#type-filter')).toHaveValue('all');
+  await expect(visibleResourceIds(page)).toHaveCount(BROWSE_RESOURCE_COUNT);
+});
+
+test('a tree still browses when the search index cannot be loaded', async ({
+  page,
+}) => {
+  const errors = collectPageErrors(page);
+  await serveGrr(page, FIXTURE_BROWSE_GRR);
+
+  /* Abort sqlite-wasm. It is a *static* import at the top of the module
+   * that owns the search, so failing it means that module never
+   * evaluates at all and never publishes the seam -- not that the search
+   * merely comes up empty.
+   *
+   * Before the search was addressable, the module that owns the address
+   * touched none of it, and a CDN this page could not reach still left a
+   * browsable tree and a working Back and Forward over an empty table.
+   * Consulting the seam put that at risk: reaching for it directly makes
+   * the whole address machinery die with the CDN. */
+  await page.route(
+    (url) => url.href.includes('sqlite-wasm'),
+    (route) => route.abort(),
+  );
+
+  await page.goto(`${indexPageUrl()}#/`);
+
+  /* An *empty* tree, and that is the pre-existing bargain rather than a
+   * shortfall: the tree is folded up from `window.rowData`, which the
+   * same unevaluated module publishes, which is why the fold has always
+   * started from `window.rowData || {}`. What is being asserted is that
+   * the page still reads its address and renders the view it names,
+   * without throwing on the way. */
+  await expectView(page, 'hierarchical');
+  expect(await folderNames(page)).toEqual([]);
+  expect(errors).toEqual([]);
+
+  /* And that the address machinery is alive, not merely that nothing
+   * was thrown while it started up. A build that took the seam on trust
+   * dies at module evaluation, which leaves the buttons inert and Back
+   * unable to restore the table. */
+  await page.locator('#table-view-btn').click();
+  await expect.poll(() => hashOf(page)).toBe('');
+  await expectView(page, 'table');
+
+  await page.goBack();
+  await expect.poll(() => hashOf(page)).toBe('#/');
+  await expectView(page, 'hierarchical');
+});
+
+test('searching replaces a fragment the page does not recognise', async ({
+  page,
+}) => {
+  await openBrowseIndex(page, '#section-2');
+
+  await search(page, BROWSE_SUMMARY_ONLY_TERM);
+
+  /* The one place this page discards a fragment it did not write, and
+   * deliberately, so it is pinned rather than left to be discovered.
+   *
+   * The view buttons do not do this: arriving at a view is not consent
+   * to discard someone else's anchor, and their guard says so. Searching
+   * is different twice over. It is an act aimed at this page rather than
+   * a way of arriving at it, and the table's address is the query and
+   * nothing else -- there is no spelling of "filtered, and also
+   * #section-2" to keep. */
+  await expect.poll(() => hashOf(page))
+    .toBe(`#?q=${BROWSE_SUMMARY_ONLY_TERM}`);
 });
 
 /*
@@ -1118,20 +1264,19 @@ test('a term of FTS operators and non-ASCII survives the round trip', async ({
 
   await search(page, AWKWARD_TERM);
   await expect.poll(() => hashOf(page)).not.toBe('');
-  const addressed = hashOf(page);
 
   await page.reload();
 
   /* Reloaded rather than merely re-read, so the term comes back out of
    * the *address* and not out of the box it was typed into. Asserting
-   * the box before a reload would pass on a page that never encoded
-   * anything, since the value was already sitting there. */
+   * the box without reloading would pass on a page that never encoded
+   * anything, since the value was already sitting there.
+   *
+   * This one assertion carries the test. Comparing the fragment across
+   * the reload would look like a second, independent check and is not
+   * one: nothing rewrites the table's address on load, so the browser
+   * preserves it whatever the parser and builder do with it. */
   await expect(page.locator('#search-field')).toHaveValue(AWKWARD_TERM);
-
-  /* And the address is the same one, not merely one that decodes alike:
-   * the parser and the builder have to agree on a single spelling, or
-   * `goTo`'s guard -- which compares them as strings -- stops matching. */
-  expect(hashOf(page)).toBe(addressed);
 });
 
 test('the toggle for the view already showing stacks nothing, term or not',
@@ -1145,16 +1290,19 @@ test('the toggle for the view already showing stacks nothing, term or not',
     await page.locator('#table-view-btn').click();
 
     /* The same guard the view slice put in, asked again now that the
-     * state it compares has two more fields in it. It works by
-     * round-tripping the current address through the parser and back
-     * through the builder, so it only keeps working while those two
-     * agree about *every* field -- a builder that emitted the search in
-     * one order and a parser that returned it in another would compare
-     * unequal here and stack an entry that changes nothing, and Back
-     * would then appear not to work.
+     * state it compares has two more fields in it.
      *
-     * Its old test covers the no-search case; this is the case that the
-     * search fields could newly break. */
+     * What this catches is a guard that has fallen behind the push: the
+     * address `goTo` builds includes the search, so a comparison that
+     * still looked at only the view and the folder would call these two
+     * states equal, decline to push -- or, inverted, push an entry that
+     * changes nothing and leave Back appearing not to work.
+     *
+     * What it cannot catch, despite appearances, is the builder and the
+     * parser disagreeing about how to spell a search: both sides of that
+     * comparison go through the same builder, so a change of field order
+     * cancels out. `the chosen type joins the term in the address` is
+     * what pins the spelling. Its old test covers the no-search case. */
     expect(await page.evaluate(() => history.length)).toBe(entriesBefore);
     await expect.poll(() => hashOf(page))
       .toBe(`#?q=${BROWSE_SUMMARY_ONLY_TERM}`);
