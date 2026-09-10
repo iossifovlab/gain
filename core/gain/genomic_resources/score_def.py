@@ -45,6 +45,7 @@ from gain.genomic_resources.histogram import (
     NumberHistogramConfig,
     build_histogram_config,
 )
+from gain.genomic_resources.resource_errors import score_configuration_error
 from gain.genomic_resources.resource_implementation import (
     get_base_resource_schema,
 )
@@ -873,11 +874,12 @@ def refuse_unfoldable_histograms(
             continue
         if score_def.value_type in NUMBER_HISTOGRAM_VALUE_TYPES:
             continue
-        raise ValueError(
-            f"Invalid configuration: {resource_id}: score {score_id!r} has "
-            f"value type {score_def.value_type!r}, which a number histogram "
-            f"cannot accumulate; give the score a categorical histogram "
-            f"('histogram: {{type: categorical}}') or no histogram at all")
+        raise score_configuration_error(
+            resource_id, score_id,
+            f"has value type {score_def.value_type!r}, which a number "
+            f"histogram cannot accumulate; give the score a categorical "
+            f"histogram ('histogram: {{type: categorical}}') or no "
+            f"histogram at all")
     return score_defs
 
 

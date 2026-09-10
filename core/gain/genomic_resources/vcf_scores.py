@@ -31,6 +31,7 @@ from gain.genomic_resources.genomic_position_table.table_vcf import (
     INFO_META,
     VARIANT,
 )
+from gain.genomic_resources.resource_errors import score_configuration_error
 from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
 
 logger = logging.getLogger(__name__)
@@ -422,9 +423,9 @@ def _refuse_overridden_type(
     # the type also changes which values read null (gain#1284).  The message
     # says what was claimed and what the field holds; the author chooses
     # between stating ``str`` and dropping the ``type:`` line.
-    raise ValueError(
-        f"Invalid configuration: {resource_id}: score {score_id!r} states "
-        f"'type: {config_type}', but its ##INFO line declares "
+    raise score_configuration_error(
+        resource_id, score_id,
+        f"states 'type: {config_type}', but its ##INFO line declares "
         f"Number={number},Type={meta_type}: a field the header declares "
         f"multi-valued reads '|'-joined text, so its value type is 'str'. "
         f"State 'type: str' or leave 'type:' unstated.")
@@ -555,11 +556,12 @@ def parse_vcf_scoredefs(
         # and histogram config are all its own -- but not by claiming its
         # value is something the join cannot produce.
         config_type = config_scoredef.value_type
-        number = vcf_header_info[score].number
+        header_entry = vcf_header_info[score]
+        number = header_entry.number
         is_scalar = number in _SCALAR_VALUED_NUMBERS
         takes_config_type = config_type is not None and is_scalar
         _refuse_overridden_type(
-            resource_id, score, number, vcf_header_info[score].type,
+            resource_id, score, number, header_entry.type,
             config_type, is_scalar=is_scalar)
 
         value_type = (

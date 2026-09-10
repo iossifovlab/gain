@@ -64,6 +64,34 @@ def backwards_records_error(
         f"backwards")
 
 
+def score_configuration_error(
+    resource_id: str, score_id: str, detail: str,
+) -> MalformedResourceError:
+    """Refuse a score whose CONFIG states what the score cannot be.
+
+    The sibling of :func:`overlapping_records_error` for the other half of
+    what makes a resource malformed: not a record that breaks its kind's
+    promise, but a ``scores:`` entry claiming a value the score cannot hold.
+    Two rules are detected in two layers -- a stated ``type:`` the VCF
+    header contradicts, in the header/config merge, and a number histogram
+    over a value type no number histogram accumulates, at the construction
+    convergence point -- and each phrases its own ``detail``.
+
+    What is shared is the ADDRESS: which resource, and which score in it.
+    That is the half a reader needs to find the file to edit, it is the half
+    neither raise site can word differently without sending someone to the
+    wrong place, and it is why it is built here rather than at each site.
+
+    The prefix matches ``ResourceConfigValidationMixin`` so that a caller
+    reading a config error sees one wording; the TYPE is
+    :class:`MalformedResourceError`, so a caller that already catches "this
+    resource's own config is bad" by type catches these too rather than
+    matching on a string.
+    """
+    return MalformedResourceError(
+        f"Invalid configuration: {resource_id}: score {score_id!r} {detail}")
+
+
 def inverted_span_error(
     chrom: str, pos_begin: int, pos_end: int,
     ref: str | None, alt: str | None,

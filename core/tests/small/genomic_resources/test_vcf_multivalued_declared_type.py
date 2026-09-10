@@ -100,11 +100,6 @@ _JOINED_FIELDS = ["MANY", "FMANY", "TAGS", "TWO"]
 #: The shapes that reach a parser as a single value.
 _SCALAR_FIELDS = ["RV", "CNT", "PA", "PR"]
 
-#: A ``scores:`` block naming every field and restating the header's own type.
-_TYPED_BLOCK = "scores:\n" + "".join(
-    f"- id: {field}\n  name: {field}\n  type: {value_type}\n"
-    for field, value_type in _HEADER_TYPES.items())
-
 #: The same block with no ``type:`` at all -- the gain#1221 shape.
 _UNTYPED_BLOCK = "scores:\n" + "".join(
     f"- id: {field}\n  name: {field}\n" for field in _HEADER_TYPES)
@@ -158,10 +153,10 @@ _JOINED_TEXT_REPORT = "reads '|'-joined text"
 #: The ways a resource can reach a field's definition AND still construct.
 #: Named so a failure says which route drifted.
 #:
-#: ``_TYPED_BLOCK`` -- restating each field's own ``Type=`` -- is deliberately
-#: NOT here since gain#1336: on a joined field that restatement is the
-#: contradiction the build now refuses, so it cannot be a route to a
-#: definition.  It is exercised on its own in
+#: A block restating each field's own ``Type=`` is deliberately NOT here
+#: since gain#1336: on a joined field that restatement is the contradiction
+#: the build now refuses, so it cannot be a route to a definition.  It is
+#: exercised on its own in
 #: :func:`test_restating_a_numeric_header_type_on_a_joined_field_is_refused`,
 #: which is where the fixture's numeric joined entries are still pinned.
 _ROUTES = [
@@ -169,17 +164,41 @@ _ROUTES = [
     pytest.param(_UNTYPED_BLOCK, id="named-without-type"),
 ]
 
-#: The joined fields ``_TYPED_BLOCK`` states a NUMBER for, paired with that
-#: number.  ``TAGS`` is excluded because its header type IS ``str``, so
-#: restating it claims nothing the join cannot produce and stays legal --
-#: that half is pinned by
+#: The joined fields whose header ``Type=`` is a NUMBER, paired with the
+#: type an author restating it would write.  ``TAGS`` is excluded because
+#: its header type IS ``str``, so restating it claims nothing the join
+#: cannot produce and stays legal -- that half is pinned by
 #: :func:`test_restating_str_on_a_joined_field_still_constructs`.  Derived
-#: from the same mapping ``_TYPED_BLOCK`` is, so a fixture edit cannot leave
-#: this exercising nothing.
+#: from ``_HEADER_TYPES``, so a fixture edit cannot leave this exercising
+#: nothing.
 _JOINED_NUMERIC_TYPES = [
     (field, _HEADER_TYPES[field])
     for field in _JOINED_FIELDS if _HEADER_TYPES[field] != "str"
 ]
+
+
+def _realize_vcf_resource(
+    resource_dir: pathlib.Path, scores_block: str = "", vcf: str = _VCF,
+) -> pathlib.Path:
+    """Write one allele-score resource over ``vcf`` into ``resource_dir``.
+
+    The single place this file states what a VCF score resource looks like
+    on disk -- the config skeleton and the data file beside it -- so that
+    the shape cannot drift between the tests that open the score, the ones
+    that run ``repo-repair`` over it, and the ones that build a repository
+    of two.  Hand-rolled rather than built with ``a_vcf_info_score()``,
+    which emits no ``scores:`` block at all, and the block is what every
+    test here varies (gain#1290).
+    """
+    setup_directories(resource_dir, {
+        "genomic_resource.yaml": textwrap.dedent("""
+            type: allele_score
+            table:
+                filename: data.vcf.gz
+        """) + scores_block,
+    })
+    setup_vcf(resource_dir / "data.vcf.gz", vcf)
+    return resource_dir
 
 
 def _vcf_score(tmp_path: pathlib.Path, scores_block: str = "") -> AlleleScore:
@@ -190,14 +209,7 @@ def _vcf_score(tmp_path: pathlib.Path, scores_block: str = "") -> AlleleScore:
     is half of what these tests are about.  An empty ``scores_block`` is the
     header-only resource.
     """
-    setup_directories(tmp_path, {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: allele_score
-            table:
-                filename: data.vcf.gz
-        """) + scores_block,
-    })
-    setup_vcf(tmp_path / "data.vcf.gz", _VCF)
+    _realize_vcf_resource(tmp_path, scores_block)
     score = build_score_from_resource(build_filesystem_test_resource(tmp_path))
     assert isinstance(score, AlleleScore)
     return score.open()
@@ -214,15 +226,7 @@ def _repaired_vcf_resource(
     Returns the resource directory, so a caller reads its ``statistics/``.
     """
     repo = tmp_path / "repo"
-    resource = repo / "vcf_score"
-    setup_directories(resource, {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: allele_score
-            table:
-                filename: data.vcf.gz
-        """) + scores_block,
-    })
-    setup_vcf(resource / "data.vcf.gz", _VCF)
+    resource = _realize_vcf_resource(repo / "vcf_score", scores_block)
 
     cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
     return resource
@@ -251,8 +255,8 @@ def test_a_stated_type_the_join_cannot_produce_is_refused(
     config and the header, and a contradiction is refused rather than
     reinterpreted.
 
-    The route matrix below no longer covers this field through
-    ``_TYPED_BLOCK``, because that block does not construct at all now; the
+    The route matrix below no longer covers this field with a restated
+    numeric type, because such a block does not construct at all now; the
     pairing is written out here so it cannot drift out of the fixture.
     """
     with pytest.raises(ValueError, match="MANY") as excinfo:
@@ -381,15 +385,7 @@ def test_the_refusal_names_the_resource_it_came_from(
     with the threading removed.
     """
     repo = tmp_path / "repo"
-    resource = repo / "a_named_vcf_resource"
-    setup_directories(resource, {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: allele_score
-            table:
-                filename: data.vcf.gz
-        """) + _MANY_TYPED_INT,
-    })
-    setup_vcf(resource / "data.vcf.gz", _VCF)
+    _realize_vcf_resource(repo / "a_named_vcf_resource", _MANY_TYPED_INT)
     # Through a PROTOCOL rather than ``build_filesystem_test_resource``,
     # which hands back ``get_resource("")`` -- an id of "" cannot show that
     # the id reached the message.
@@ -449,14 +445,7 @@ def test_the_genotype_arity_shape_declares_str_too(
     is not one of the scalar four must not take its element ``Type=`` as its
     own, whether or not a value ever arrives.
     """
-    setup_directories(tmp_path, {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: allele_score
-            table:
-                filename: data.vcf.gz
-        """),
-    })
-    setup_vcf(tmp_path / "data.vcf.gz", _PERGT_VCF)
+    _realize_vcf_resource(tmp_path, vcf=_PERGT_VCF)
     score = build_score_from_resource(build_filesystem_test_resource(tmp_path))
 
     assert score.score_definitions["PERGT"].value_type == "str"
@@ -477,18 +466,12 @@ def test_the_genotype_arity_shape_refuses_a_stated_numeric_type(
     decided from the header and the config, before any value is read, so it
     fires here exactly as it does for a readable field.
     """
-    setup_directories(tmp_path, {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: allele_score
-            table:
-                filename: data.vcf.gz
-            scores:
-            - id: PERGT
-              name: PERGT
-              type: int
-        """),
-    })
-    setup_vcf(tmp_path / "data.vcf.gz", _PERGT_VCF)
+    _realize_vcf_resource(tmp_path, textwrap.dedent("""
+        scores:
+        - id: PERGT
+          name: PERGT
+          type: int
+    """), vcf=_PERGT_VCF)
 
     with pytest.raises(ValueError, match="PERGT") as excinfo:
         build_score_from_resource(build_filesystem_test_resource(tmp_path))
@@ -547,25 +530,9 @@ def test_repo_repair_fails_only_the_contradicting_resource(
     statistics, which is worse than the warning it replaces.
     """
     repo = tmp_path / "repo"
-    bad = repo / "contradicting"
-    setup_directories(bad, {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: allele_score
-            table:
-                filename: data.vcf.gz
-        """) + _MANY_NUMBER_HIST_WITH_CNT,
-    })
-    setup_vcf(bad / "data.vcf.gz", _VCF)
-
-    good = repo / "agreeing"
-    setup_directories(good, {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: allele_score
-            table:
-                filename: data.vcf.gz
-        """) + _UNTYPED_BLOCK,
-    })
-    setup_vcf(good / "data.vcf.gz", _VCF)
+    bad = _realize_vcf_resource(
+        repo / "contradicting", _MANY_NUMBER_HIST_WITH_CNT)
+    good = _realize_vcf_resource(repo / "agreeing", _UNTYPED_BLOCK)
 
     with pytest.raises(SystemExit):
         cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
