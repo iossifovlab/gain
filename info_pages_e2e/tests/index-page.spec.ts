@@ -1076,12 +1076,15 @@ test('switching to the tree carries the term along', async ({ page }) => {
   await expect(page.locator('#search-field'))
     .toHaveValue(BROWSE_SUMMARY_ONLY_TERM);
 
-  /* And the tree is untouched by it. Pruning the tree to matches is
-   * iossifovlab/gain#581; this slice only carries the term, so a tree
-   * that had started filtering itself would be running ahead of the
-   * issue that decides what filtering there should mean. */
-  expect((await folderNames(page)).sort())
-    .toEqual([...BROWSE_TOP_LEVEL_FOLDERS].sort());
+  /* And the tree arrives already pruned to it (iossifovlab/gain#581).
+   *
+   * The term carried across the toggle is only half of what makes a
+   * shared filtered link work: this is the half where the tree does
+   * something with it. `marmoset` reaches one resource, in `hg19`, so
+   * that is the only top-level folder left -- a tree that had merely
+   * accepted the term and gone on listing the repository would show all
+   * four, which is what this asserted while pruning was still unbuilt. */
+  await expect.poll(() => folderNames(page)).toEqual(['hg19']);
 });
 
 test('a term typed while the index loads survives the address', async ({
@@ -1164,12 +1167,12 @@ test('moving between folders keeps the term without searching again', async ({
   await openBrowseIndex(page, `#/?q=${BROWSE_SUMMARY_ONLY_TERM}`, 1);
 
   /* Counted through the page's own handle on the loaded index, because
-   * re-running the search is invisible any other way: the rows the tree
-   * shows do not depend on it, so a build that re-searched on every
-   * folder move would look exactly like this one and merely cost a query
-   * and a re-render each time. The applier runs on every address change
-   * and not only on arrival, so this is a real hazard rather than a
-   * theoretical one. */
+   * re-running the search is invisible any other way: what the tree
+   * lists is rebuilt from the standing hit set on every move, so a build
+   * that re-queried for each one would show exactly these rows and
+   * merely cost a query each time. The applier runs on every address
+   * change and not only on arrival, so this is a real hazard rather than
+   * a theoretical one. */
   await page.evaluate(() => {
     const win = window as any;
     const query = win.sqlite3.query;
@@ -1180,10 +1183,13 @@ test('moving between folders keeps the term without searching again', async ({
     };
   });
 
-  await folderRow(page, 'hg38').click();
+  /* `hg19` rather than any folder, now that the tree is pruned to the
+   * term (iossifovlab/gain#581): it is where `marmoset`'s one match
+   * lives, and so the only folder there is to move into. */
+  await folderRow(page, 'hg19').click();
 
   await expect.poll(() => hashOf(page))
-    .toBe(`#/hg38?q=${BROWSE_SUMMARY_ONLY_TERM}`);
+    .toBe(`#/hg19?q=${BROWSE_SUMMARY_ONLY_TERM}`);
   await expect(page.locator('#search-field'))
     .toHaveValue(BROWSE_SUMMARY_ONLY_TERM);
   expect(await page.evaluate(() => (window as any).searchesIssued)).toBe(0);
@@ -1359,3 +1365,24 @@ test('the toggle for the view already showing stacks nothing, term or not',
     await expect.poll(() => hashOf(page))
       .toBe(`#?q=${BROWSE_SUMMARY_ONLY_TERM}`);
   });
+
+/* ---- The search prunes the tree (#581) ---- */
+
+test('a term prunes the tree to the folders containing a match', async ({
+  page,
+}) => {
+  await openBrowseIndex(page, '#/');
+  await expectView(page, 'hierarchical');
+
+  await search(page, BROWSE_ID_ONLY_TERM);
+
+  /* `phylop` reaches exactly one resource -- `hg38/scores/conservation/
+   * phylop`, and through its id -- so `hg38` is the only top-level folder
+   * with a match anywhere beneath it.
+   *
+   * The other three folders are what make this falsifiable in both
+   * directions. A tree that ignored the search entirely would still list
+   * all four; a tree that emptied itself on any search at all would list
+   * none. Only pruning gives exactly this one. */
+  await expect.poll(() => folderNames(page)).toEqual(['hg38']);
+});
