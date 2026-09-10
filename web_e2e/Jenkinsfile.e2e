@@ -61,6 +61,29 @@ def zulipAlert(String status, String emoji) {
         "(${env.BUILD_URL}) ${status}${suffix}"
 }
 
+// The single exit for a build whose COMMIT_SHA the branch has
+// already moved past (gain#414, gain#1362). Two independent
+// detections reach it — an orphaned SHA that will not check out,
+// and a still-reachable SHA the branch has fast-forwarded past —
+// and they have to agree on every part of the outcome, so the
+// outcome lives here rather than being spelled out twice.
+//
+// NOT_BUILT is load-bearing, not cosmetic: the Zulip alert fires
+// only from the `failure` / `unstable` post-conditions, so this
+// result is what keeps a superseded run silent. Do not "improve"
+// it to ABORTED or SUCCESS.
+def markSuperseded(String sha, String tip, String why) {
+    env.SUPERSEDED = 'true'
+    currentBuild.result = 'NOT_BUILT'
+    currentBuild.displayName += ' (superseded)'
+    echo(
+        "COMMIT_SHA ${sha} ${why} ${params.BRANCH_NAME} (tip is " +
+        "now ${tip ?: 'nothing — branch is gone'}). This build " +
+        'was superseded by a newer push before it could start; ' +
+        'marking it NOT_BUILT and skipping the suite.'
+    )
+}
+
 pipeline {
     // builder = general build agents; deploy targets don't carry it
     agent { label 'builder' }
@@ -137,9 +160,10 @@ pipeline {
     }
 
     environment {
-        // Named once because the `Checkout` stage both clones from it
-        // and `git ls-remote`s it to tell a superseded commit from a
-        // genuine checkout failure.
+        // Named once because the `Checkout` stage clones from it, and
+        // then reads it twice more to tell a superseded commit from a
+        // genuine checkout failure: `git ls-remote` when the checkout
+        // throws, `git fetch` when it succeeds.
         GAIN_REPO_URL = 'https://github.com/iossifovlab/gain.git'
 
         BACKEND_IMAGE  = "gain-web-api-prod:${env.BUILD_NUMBER}"
@@ -292,6 +316,30 @@ pipeline {
         // runs, but it aborts older builds of the whole JOB, and this
         // one job serves every branch — it would cancel unrelated
         // branches' builds.
+        //
+        // A branch can move past us in TWO ways, and for years this
+        // stage only noticed one of them (gain#1362). The guard above
+        // lives in the `catch`, so it can only fire when the checkout
+        // THROWS — i.e. only on the force-push supersede, where the
+        // SHA is orphaned. A FAST-FORWARD supersede is invisible to
+        // it: the commit stays perfectly reachable as an ancestor of
+        // the new tip, the checkout succeeds, nothing throws, and the
+        // suite runs ~9 minutes to a verdict about a commit nobody
+        // will ship. `master` is fast-forward-only, so on `master`
+        // that guard caught nothing at all: e2e #2553 re-reported
+        // gain#1353 against e29780d, the parent of the very commit
+        // (94ac75a) that had already fixed it. Hence the second,
+        // post-checkout detection below — same exit, same reasoning,
+        // the other half of "the branch moved past us".
+        //
+        // Note what this deliberately does NOT do: it does not ask
+        // whether the build was triggered upstream or started by hand.
+        // A manual run pinned to a historical COMMIT_SHA is now
+        // reported superseded too. That is consistent — the `catch`
+        // above has always treated manual runs the same way — and the
+        // display name says `(superseded)` rather than failing, so the
+        // reason is legible. To force a suite run against an old
+        // commit, point BRANCH_NAME at a ref whose tip IS that commit.
         stage('Checkout') {
             steps {
                 script {
@@ -331,17 +379,87 @@ pipeline {
                         if (!sha || tip == sha) {
                             throw err
                         }
-                        env.SUPERSEDED = 'true'
-                        currentBuild.result = 'NOT_BUILT'
-                        currentBuild.displayName += ' (superseded)'
-                        echo(
-                            "COMMIT_SHA ${sha} is no longer on " +
-                            "${params.BRANCH_NAME} (tip is now " +
-                            "${tip ?: 'nothing — branch is gone'}). " +
-                            'This build was superseded by a newer ' +
-                            'push before it could start; marking it ' +
-                            'NOT_BUILT and skipping the suite.'
+                        markSuperseded(sha, tip, 'is no longer on')
+                    }
+
+                    // The checkout SUCCEEDING does not mean our SHA is
+                    // still current — see the fast-forward case in the
+                    // comment above. Ask, now that we have a work tree.
+                    //
+                    // Skip when the catch already answered (there is no
+                    // work tree to run git in), and when no SHA was
+                    // pinned (BRANCH_NAME resolves to the tip by
+                    // definition, so there is nothing to be behind).
+                    if (sha && env.SUPERSEDED != 'true') {
+                        // ONE fetch answers both halves of the
+                        // question. Resolving the tip remotely and then
+                        // testing ancestry against whatever the work
+                        // tree happens to hold lets the two disagree —
+                        // the commit named as the tip need not be a
+                        // commit we have. FETCH_HEAD is both, and it is
+                        // a file in .git, so it survives into the
+                        // second `sh`.
+                        //
+                        // The branch name is read from the shell
+                        // environment, never interpolated into the
+                        // command string — same fence as the ls-remote
+                        // above.
+                        //
+                        // A fetch failure must not invent a new way for
+                        // a healthy build to go red: this check is an
+                        // optimisation, and a network blip here means
+                        // "unknown", not "broken". Unknown runs the
+                        // suite.
+                        String tip = ''
+                        int fetched = sh(
+                            script: 'git fetch --quiet --no-tags ' +
+                                    '"$GAIN_REPO_URL" ' +
+                                    '"refs/heads/$BRANCH_NAME"',
+                            returnStatus: true,
                         )
+                        if (fetched == 0) {
+                            tip = sh(
+                                script: 'git rev-parse FETCH_HEAD',
+                                returnStdout: true,
+                            ).trim()
+                        }
+
+                        // Compare against the checked-out HEAD, not the
+                        // COMMIT_SHA param. HEAD is what was ACTUALLY
+                        // built, and it is always the full 40-char
+                        // form, so it compares like-for-like with the
+                        // tip. An abbreviated COMMIT_SHA — legal on a
+                        // manual run — would never equal a full tip,
+                        // and `--is-ancestor` answers 0 for a commit
+                        // against ITSELF, so comparing the raw param
+                        // would report an up-to-date build superseded.
+                        //
+                        // Only an exact "yes, it is an ancestor"
+                        // supersedes. `--is-ancestor` answers 1 for a
+                        // clean no and 128 for a question it could not
+                        // answer (unknown commit, no work tree); both
+                        // mean "not proven superseded", and the safe
+                        // direction there is to RUN the suite. A
+                        // reachable-but-not-an-ancestor commit is a
+                        // divergent history, not a fast-forward, and
+                        // gain#414 wants that red.
+                        String head = sh(
+                            script: 'git rev-parse HEAD',
+                            returnStdout: true,
+                        ).trim()
+                        boolean fastForwarded = false
+                        if (tip && head && tip != head) {
+                            fastForwarded = sh(
+                                script: 'git merge-base --is-ancestor ' +
+                                        'HEAD FETCH_HEAD',
+                                returnStatus: true,
+                            ) == 0
+                        }
+                        if (fastForwarded) {
+                            markSuperseded(
+                                head, tip, 'has been fast-forwarded past on'
+                            )
+                        }
                     }
                 }
             }
