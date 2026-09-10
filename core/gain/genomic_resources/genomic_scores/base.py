@@ -76,6 +76,7 @@ from gain.genomic_resources.score_def import (
     build_genomic_score_schema,
     finish_scoredefs,
     parse_scoredef_config,
+    refuse_unfoldable_histograms,
     validate_scoredefs,
 )
 from gain.genomic_resources.score_filter import (
@@ -343,7 +344,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         else:
             scoredefs = config_scoredefs
 
-        return finish_scoredefs(scoredefs, self.DEFAULT_AGGREGATORS)
+        return refuse_unfoldable_histograms(
+            finish_scoredefs(scoredefs, self.DEFAULT_AGGREGATORS),
+            self.resource_id)
 
     def get_config(self) -> dict[str, Any]:
         """The configuration, validated and normalized at construction."""
