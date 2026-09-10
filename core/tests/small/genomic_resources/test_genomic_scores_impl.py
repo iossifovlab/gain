@@ -11,6 +11,7 @@ from typing import Any, cast
 import pysam
 import pytest
 import pytest_mock
+from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.genomic_scores import (
     build_score_from_resource,
 )
@@ -36,6 +37,7 @@ from gain.genomic_resources.repository import (
 )
 from gain.genomic_resources.statistics.min_max import MinMaxValue
 from gain.genomic_resources.testing import (
+    build_filesystem_test_protocol,
     build_filesystem_test_repository,
     build_inmemory_test_resource,
     convert_to_tab_separated,
@@ -1109,36 +1111,58 @@ def _a_str_score_under_a_number_histogram(
 
 
 @pytest.mark.parametrize("tabix", [False, True], ids=["table", "tabix"])
-def test_number_histogram_over_a_str_score_does_not_abort_the_build(
+def test_number_histogram_over_a_str_score_costs_only_its_own_resource(
     tmp_path: pathlib.Path, *, tabix: bool,
 ) -> None:
-    """A number histogram no str score can feed must not kill the build.
+    """A number histogram no str score can feed fails that resource alone.
 
-    Regression for iossifovlab/gain#1285.  A ``scores:`` entry may configure
-    ``histogram: {type: number}`` over a score whose value type is ``str``;
-    the min/max pass such a histogram schedules then reduced text through
-    ``np.isnan`` and raised ``TypeError`` out of ``numpy``, naming neither
-    the resource nor the score.  The resource ended with no statistics at
-    all and the run reported an inconsistent GRR.
+    gain#1285 was the ``TypeError`` out of ``numpy`` that this pairing
+    raised from the min/max pass, naming neither the resource nor the
+    score and leaving the resource with no statistics at all.  It was
+    answered with a null histogram, so the resource built; gain#1336
+    refuses the config instead, so it does not.
+
+    What must not widen with that is the RUN.  ``repo-repair`` over a
+    repository holding this resource and a sound one has to name this one
+    and still build the other -- a refusal that stopped the run would make
+    one wrong line of YAML cost every other resource its statistics.
 
     Over both backends, because they dispatch differently and the outcome
     must not depend on which served the score: a tabix table serves column
     arrays, so its score is what ``bulk_scan_eligible`` admits and the
     vectorized passes would read, where the in-memory table keeps the
-    per-record ones.  (``can_bulk_min_max`` already turns a str score away
-    from the vectorized min/max, onto the per-record one -- which is where
-    gain#1285 actually died.)
+    per-record ones.
     """
-    res = _a_str_score_under_a_number_histogram(tmp_path, tabix=tabix)
+    _a_str_score_under_a_number_histogram(tmp_path, tabix=tabix)
+    sound = (
+        a_position_score()
+        .with_score("OK", "float")
+        .with_histogram({"type": "number", "number_of_bins": 4})
+        .with_data(
+            """
+            chrom  pos_begin  OK
+            1      10         0.5
+            1      11         1.5
+            """,
+        )
+    )
+    a_grr().with_resource("scores/sound", sound).build_repo(tmp_path)
 
-    _build_statistics(res, region_size=10)
+    with pytest.raises(SystemExit):
+        cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
 
-    # The resource HAS statistics -- the cost of the defect was that it had
-    # none.  Asserted on a statistic the refused score does not own, because
-    # a missing histogram file reads back as a NullHistogram too, so that
-    # alone cannot tell "refused" from "the build died before writing it".
-    assert res.file_exists("statistics/coverage.json")
-    assert isinstance(_built_histogram(res, "MANY"), NullHistogram)
+    text_res = build_filesystem_test_protocol(
+        tmp_path).get_resource(_TEXT_SCORE_RESOURCE_ID)
+    assert not text_res.file_exists("statistics/coverage.json"), (
+        "the refused resource built statistics; its config states a "
+        "pairing no value of it can feed and must not build at all"
+    )
+    sound_res = build_filesystem_test_protocol(
+        tmp_path).get_resource("scores/sound")
+    assert isinstance(_built_histogram(sound_res, "OK"), NumberHistogram), (
+        "the sound resource lost its histogram; one resource's refused "
+        "config must not cost the rest of the repository its build"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1150,66 +1174,78 @@ def test_number_histogram_over_a_str_score_does_not_abort_the_build(
     ],
     ids=["auto-ranged", "view-range"],
 )
-def test_unpack_score_defs_refuses_a_number_histogram_over_text(
+def test_a_number_histogram_over_text_is_refused_at_construction(
     tmp_path: pathlib.Path, histogram: dict[str, Any],
 ) -> None:
-    """The refusal schedules no min/max, and names what it refused.
+    """The pairing is refused where the score is BUILT, not where it scans.
 
-    Two things at once because they are one decision: the score's histogram
-    becomes null, which is also what keeps it off the min/max list -- and it
-    is the min/max pass, not the histogram, that gain#1285 aborted in.  The
-    reason has to name the resource and the score, since the ``TypeError``
-    it replaces named neither.
+    gain#1285 nullified this histogram when the statistics build unpacked
+    the score definitions, which left the resource building with one score
+    silently histogram-less and the reason only in the log (gain#1307).
+    gain#1336 makes it what it always was -- a config stating something the
+    score cannot do -- so it raises at construction, naming the resource
+    and the score.
 
-    Over both histogram shapes because ONE rule decides them, where master
-    had two.  Only the auto-ranged shape schedules a min/max pass and so
-    only it ever crashed; the ``view_range`` one was met by the per-record
-    histogram catch, which nullified the score with the raw ``numpy``
-    message.  Refusing both here is what makes what a reader is told
-    independent of whether a range happened to be configured -- and a
-    ``NullHistogramConfig`` at this seam can only have come from the
-    refusal, since nothing has read a value yet.
+    Over both histogram shapes because ONE rule decides them.  Only the
+    auto-ranged shape ever scheduled a min/max pass and so only it crashed;
+    the ``view_range`` one was met by the per-record histogram catch, which
+    nullified the score with the raw ``numpy`` message.  Refusing both at
+    construction makes what a reader is told independent of whether a range
+    happened to be configured.
     """
     res = _a_str_score_under_a_number_histogram(tmp_path, histogram)
 
-    min_max_scores, hist_confs = scan.unpack_score_defs(res)
+    with pytest.raises(ValueError, match="MANY") as excinfo:
+        build_score_from_resource(res)
 
-    assert min_max_scores == [], (
-        "a str score was scheduled for the min/max pass, which reduces "
-        "through np.isnan and cannot read text"
-    )
-    conf = hist_confs["MANY"]
-    assert isinstance(conf, NullHistogramConfig)
-    assert _TEXT_SCORE_RESOURCE_ID in conf.reason
-    assert "MANY" in conf.reason
+    assert _TEXT_SCORE_RESOURCE_ID in str(excinfo.value)
+    assert "str" in str(excinfo.value)
 
 
-def test_the_refusal_is_reported_once_per_build_not_once_per_region(
+@pytest.mark.parametrize("jobs", ["1", "2"])
+def test_the_refusal_is_raised_once_per_run_whatever_the_region_size(
     tmp_path: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
+    jobs: str,
 ) -> None:
     """The report has to be bounded by the resource, not by the scan.
 
     gain#1283 is the sibling defect: a report that fires where score
     definitions are BUILT repeats per region task, because a statistics
     build constructs a fresh score for each one -- 46 identical lines from
-    a 400 bp resource, thousands from a genome-scale one.  This refusal is
-    read off the configs the task graph is planned from, which are unpacked
-    once and handed to every region task as data, so a region size small
-    enough to split this resource many ways must not multiply it.
-    """
-    res = _a_str_score_under_a_number_histogram(tmp_path)
+    a 400 bp resource, thousands from a genome-scale one, and a floor of
+    about nine constructions before any region task exists at all.
 
-    with caplog.at_level("WARNING"):
-        _build_statistics(res, region_size=1)
+    gain#1336 refuses at construction, which is exactly where that
+    repetition came from, so this is the test that says the cure is not the
+    disease: the refusal RAISES, so the first construction ends the
+    resource's build instead of logging and letting the next one repeat.
+    A region size small enough to split this resource many ways must
+    therefore still cost exactly one report.
+
+    Over ``-j 1`` and ``-j 2`` because the production build runs
+    ``-N sge -j 120``: a dedupe keyed on the message would hold only
+    within one process and still emit a line per worker.  Nothing is
+    deduplicated here -- the refusal lands while the tasks are PLANNED,
+    before any executor exists -- and running both spellings is what says
+    so rather than assuming it.
+    """
+    _a_str_score_under_a_number_histogram(tmp_path)
+
+    with caplog.at_level("WARNING"), pytest.raises(SystemExit):
+        cli_manage([
+            "repo-repair", "-R", str(tmp_path), "-j", jobs,
+            "--region-size", "1",
+        ])
 
     refusals = [
         record for record in caplog.records
         if "a number histogram cannot accumulate" in record.getMessage()
     ]
     assert len(refusals) == 1, (
-        f"the refusal was reported {len(refusals)} times; it is unpacked "
-        f"once per build and must not repeat per region task"
+        f"the refusal was reported {len(refusals)} times; raising at "
+        f"construction must end the resource's build at the first one, not "
+        f"repeat per construction the way the warning it replaces did"
     )
 
 

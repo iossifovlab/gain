@@ -35,6 +35,28 @@ class HistogramError(Exception):
     """
 
 
+#: Which score value types a NUMBER histogram can accumulate, one value at a
+#: time.  ``bool`` is in: ``numpy`` folds it as 0/1, and a two-bin histogram
+#: over a flag is meaningful.  ``str`` is not, and a resource pairing the two
+#: aborted its entire statistics build in ``np.isnan`` (gain#1285); since
+#: gain#1336 that pairing is refused when the score is CONSTRUCTED, by
+#: :func:`~gain.genomic_resources.score_def.refuse_unfoldable_histograms`,
+#: which is the only thing that reads this set.
+#:
+#: It lives here, with the config whose acceptance it describes, rather than
+#: in the statistics scan that used to own it -- the refusal moved to the
+#: score layer, and the score layer must not import the scan to ask what a
+#: histogram can fold.
+#:
+#: Deliberately WIDER than the scan's ``_BULK_HISTOGRAM_VALUE_TYPES``, and
+#: the two are different questions rather than one rule stated twice: this
+#: asks what a histogram can fold value by value, that asks what it can fold
+#: a whole column of (a bulk read yields a number histogram's column as
+#: ``float64``, which a ``bool`` score's column is not).  Merging them would
+#: widen the vectorized path to a type it cannot read.
+NUMBER_HISTOGRAM_VALUE_TYPES = ("float", "int", "bool")
+
+
 @dataclass
 class NumberHistogramConfig:
     """Configuration class for number histograms."""

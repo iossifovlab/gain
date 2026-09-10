@@ -31,6 +31,7 @@ from gain.genomic_resources.genomic_position_table.table_vcf import (
     INFO_META,
     VARIANT,
 )
+from gain.genomic_resources.resource_errors import score_configuration_error
 from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
 
 logger = logging.getLogger(__name__)
@@ -378,70 +379,62 @@ def extract_vcf_value(
 # is a pure function of ``(record, score_def)``, so the per-line allocation
 # goes and the routing stays exactly where it was.
 
-def _report_overridden_type(
-    score_id: str, number: Any, config_type: str | None, *, is_scalar: bool,
+def _refuse_overridden_type(
+    resource_id: str, score_id: str, number: Any, meta_type: str,
+    config_type: str | None, *, is_scalar: bool,
 ) -> None:
-    """Report a stated ``type:`` the field's join cannot produce.
+    """Refuse a stated ``type:`` the field's join cannot produce.
 
     **The whole rule lives here, and the call is unconditional.**  Whether
-    an entry is a discarded override is one question -- it stated a type, the
+    an entry contradicts its header is one question -- it stated a type, the
     field is not scalar, and the type is not already the ``str`` the join
     produces -- and splitting it across the call site would leave a reader of
-    this docstring believing it owns a rule it only half owns.  It also
-    leaves gain#1283 one place to move rather than two.
+    this docstring believing it owns a rule it only half owns.
 
-    A ``scores:`` entry over a multi-valued INFO field may state any type it
-    likes; what the field reads is ``|``-joined text, so the definition
-    declares ``str`` and the stated type is discarded.  Discarding it in
-    silence is what let the misconception live: the author goes on believing
-    the field holds integers, and the only symptom used to be a statistics
-    build that died in ``np.isnan`` naming neither the resource nor the
-    field (gain#1259).
+    A ``scores:`` entry over a multi-valued INFO field may describe it
+    freely -- ``desc``, aggregators and a histogram config are all its own --
+    but it may not claim a value the field cannot hold.  What the field
+    reads is ``|``-joined text, so its value type is ``str`` by definition;
+    an entry stating anything else is a contradiction between the config and
+    the header, and gain#1336 raises on it.
 
-    **Stating ``str`` is not an override and is not reported.**  It is the
-    type the join produces, so nothing is being discarded, and it is what
-    every multi-valued entry in the deployed GRRs states (ClinVar's twenty,
-    dbSNP's ``CAF``/``TOPMED``).  The asymmetry is not one of volume -- both
-    cases would emit the same number of lines -- but of remedy: a discarded
-    type is a misconception with an edit that ends it, while agreement is a
-    correct config that would be scolded on every deployed VCF resource
-    forever, which is how a report that matters gets tuned out.
+    **Stating ``str`` is not a contradiction and is not refused.**  It is
+    the type the join produces, so nothing is being claimed that the field
+    cannot hold, and it is what every multi-valued entry in the deployed
+    GRRs states (ClinVar's twenty, dbSNP's ``CAF``/``TOPMED``).  Leaving
+    ``type:`` unstated is equally fine -- the definition takes ``str`` from
+    the header side either way.
 
-    **Once per CONSTRUCTED SCORE, which is not once per resource.**  This
-    runs while the definitions are built, and they are built in
-    ``GenomicScore.__init__`` -- so a statistics build, which constructs a
-    fresh score per region task, repeats it per task.  A 400 bp resource
-    under ``--region-size 20`` emits 46 identical lines, and a genome-scale
-    one emits thousands.  It is not deduplicated: the flags that bound
-    ``_check_allele_arity`` live on a score definition, and every repeat
-    here has a NEW definition, so they cannot see each other.  What would
-    bound it is a report that fires where a resource is validated once
-    rather than where its definitions are built; that is gain#1283, and it
-    is left out of gain#1259 deliberately -- no deployed resource states a
-    non-``str`` type on a multi-valued field, so nothing reaches this today.
+    The refusal is raised while the definitions are BUILT, so it reaches
+    every consumer of the resource: ``repo-repair`` reports the resource
+    failed by name before any region task is planned, and an annotation
+    pipeline naming it fails to load with the same message.
 
-    It cannot name the resource -- the parse is handed a header and a
-    config, neither of which carries a resource id -- so it names the field,
-    which is what the author has to edit.
+    ``resource_id`` is threaded in from
+    :meth:`GenomicScore._build_scoredefs` for the message alone -- a parse
+    handed only a header and a config could name the field but not the
+    resource, which is not enough to find the file to edit in a repository
+    of thousands.
     """
     if config_type is None or is_scalar or config_type == "str":
         return
     # No "state 'str' instead" advice: that edit is not inert.  An entry's
-    # NA sentinels are still normalized against the type it states, so
-    # rewriting the type also changes which values read null, and moves the
-    # statistics hash a second time (gain#1284).  The report says what was
-    # ignored and what the field holds; it does not prescribe the fix.
-    logger.warning(
-        "INFO field %s states 'type: %s', but its ##INFO line declares "
-        "Number=%s: a field the header declares multi-valued reads "
-        "'|'-joined text, so the score declares 'str' and the stated type "
-        "is ignored.",
-        score_id, config_type, number)
+    # NA sentinels are normalized against the type it states, so rewriting
+    # the type also changes which values read null (gain#1284).  The message
+    # says what was claimed and what the field holds; the author chooses
+    # between stating ``str`` and dropping the ``type:`` line.
+    raise score_configuration_error(
+        resource_id, score_id,
+        f"states 'type: {config_type}', but its ##INFO line declares "
+        f"Number={number},Type={meta_type}: a field the header declares "
+        f"multi-valued reads '|'-joined text, so its value type is 'str'. "
+        f"State 'type: str' or leave 'type:' unstated.")
 
 
 def parse_vcf_scoredefs(
     vcf_header_info: dict[str, Any] | None,
     config_scoredefs: dict[str, GenomicScoreDef] | None, *,
+    resource_id: str,
     merge: bool = False,
 ) -> dict[str, GenomicScoreDef]:
     """Build score definitions from a VCF header's INFO metadata.
@@ -481,8 +474,10 @@ def parse_vcf_scoredefs(
     describe a tuple (gain#1233), and it keeps the ``str`` that join produces,
     because a type is not merely descriptive -- it selects the histogram, and
     a joined field declaring ``int`` aborted its own statistics build in
-    ``np.isnan`` (gain#1259).  A stated type discarded that way is reported by
-    :func:`_report_overridden_type`.  Column addressing is NOT overridable --
+    ``np.isnan`` (gain#1259).  An entry stating such a type is REFUSED by
+    :func:`_refuse_overridden_type` -- it contradicts the header, and
+    gain#1336 raises rather than discarding it.  ``resource_id`` is threaded
+    in for that message alone.  Column addressing is NOT overridable --
     a VCF score is its INFO key, so ``col_name``/``col_index`` always come from
     the header side.
 
@@ -561,11 +556,13 @@ def parse_vcf_scoredefs(
         # and histogram config are all its own -- but not by claiming its
         # value is something the join cannot produce.
         config_type = config_scoredef.value_type
-        number = vcf_header_info[score].number
+        header_entry = vcf_header_info[score]
+        number = header_entry.number
         is_scalar = number in _SCALAR_VALUED_NUMBERS
         takes_config_type = config_type is not None and is_scalar
-        _report_overridden_type(
-            score, number, config_type, is_scalar=is_scalar)
+        _refuse_overridden_type(
+            resource_id, score, number, header_entry.type,
+            config_type, is_scalar=is_scalar)
 
         value_type = (
             config_type if takes_config_type else vcf_scoredef.value_type)

@@ -40,7 +40,12 @@ from gain.genomic_resources.genomic_position_table.record import (
     PAYLOAD,
     Record,
 )
-from gain.genomic_resources.histogram import build_histogram_config
+from gain.genomic_resources.histogram import (
+    NUMBER_HISTOGRAM_VALUE_TYPES,
+    NumberHistogramConfig,
+    build_histogram_config,
+)
+from gain.genomic_resources.resource_errors import score_configuration_error
 from gain.genomic_resources.resource_implementation import (
     get_base_resource_schema,
 )
@@ -590,8 +595,8 @@ def parse_scoredef_config(
         # recognise and discard an eager default (gain#1221).  The merge
         # takes them together or not at all -- a field the header declares
         # multi-valued keeps the header's parser AND the ``str`` its
-        # ``|``-join produces, discarding the stated type (gain#1233,
-        # gain#1259) -- which it can only do because neither was decided
+        # ``|``-join produces, and REFUSES an entry stating any other type
+        # (gain#1336) -- which it can only do because neither was decided
         # for it here.
         value_type = score_conf.get("type")
         value_parser = (
@@ -826,6 +831,55 @@ def finish_scoredefs(
                 score_def.na_values, score_def.value_type)
         if score_def.aggregator is None:
             score_def.aggregator = default_aggregators[score_def.value_type]
+    return score_defs
+
+
+def refuse_unfoldable_histograms(
+    score_defs: dict[str, GenomicScoreDef], resource_id: str,
+) -> dict[str, GenomicScoreDef]:
+    """Refuse a configured NUMBER histogram no value of the score can feed.
+
+    A ``histogram: {type: number}`` over a score whose value type is not one
+    a number histogram accumulates
+    (:data:`~gain.genomic_resources.histogram.NUMBER_HISTOGRAM_VALUE_TYPES`)
+    is a config stating something the score cannot do, so gain#1336 raises
+    on it rather than working around it.
+
+    **Why here.**  It runs after :func:`finish_scoredefs`, which is where an
+    unstated ``type:`` becomes ``float`` -- checking before that would judge
+    a score by a type it does not end up with.  And it runs at the
+    convergence point of all three construction routes, so the ``scores:``
+    block, a VCF header and a bigWig are all held to it; a check on one
+    route only is the same bug in a new place.
+
+    Raising at CONSTRUCTION rather than where the statistics build reads
+    the configs is what makes the refusal reach every consumer: annotation
+    never unpacks score definitions, so a check living there tells an
+    annotation run nothing.
+
+    Only an EXPLICIT config reaches this.  A score with no ``histogram:``
+    carries ``hist_conf=None`` here and is skipped: the default for its
+    type is chosen later, by ``build_default_histogram_conf`` where the
+    statistics build unpacks the definitions, and that never answers a
+    non-numeric type with a number histogram.  So the refusal cannot fire
+    on a resource that configured nothing.
+
+    A CATEGORICAL histogram over a number is deliberately NOT refused: it
+    folds one value at a time and nullifies just that score, which is a
+    fact about a value rather than about the config, and ``do_histogram``
+    keeps its per-value catch for it.
+    """
+    for score_id, score_def in score_defs.items():
+        if not isinstance(score_def.hist_conf, NumberHistogramConfig):
+            continue
+        if score_def.value_type in NUMBER_HISTOGRAM_VALUE_TYPES:
+            continue
+        raise score_configuration_error(
+            resource_id, score_id,
+            f"has value type {score_def.value_type!r}, which a number "
+            f"histogram cannot accumulate; give the score a categorical "
+            f"histogram ('histogram: {{type: categorical}}') or no "
+            f"histogram at all")
     return score_defs
 
 

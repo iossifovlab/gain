@@ -1709,11 +1709,35 @@ element of it as one string, joined on ``|``, so such a score is typed
 ``str`` whatever its ``Type=`` says. ``##INFO=<ID=A,Number=.,Type=Integer>``
 with the row ``A=1,2`` reads ``"1|2"``.
 
-A ``scores:`` entry cannot override that. Stating a ``type:`` on a
-multi-valued field is reported and ignored, because the stated type would
-describe a value the join cannot produce -- and the declared type is not
-merely descriptive, it selects the histogram the statistics build computes.
-Overriding ``type:`` works as described below for the single-valued fields.
+A ``scores:`` entry cannot override that, and must not contradict it.
+Stating any ``type:`` other than ``str`` on a multi-valued field is a
+**configuration error**: the stated type describes a value the join cannot
+produce, and the declared type is not merely descriptive -- it selects the
+histogram the statistics build computes. Such a resource fails to build,
+and ``repo-repair`` names it and the score:
+
+.. code-block:: text
+
+    Invalid configuration: <resource id>: score 'A' states 'type: int', but
+    its ##INFO line declares Number=.,Type=Integer: a field the header
+    declares multi-valued reads '|'-joined text, so its value type is 'str'.
+    State 'type: str' or leave 'type:' unstated.
+
+State ``type: str``, or leave ``type:`` unstated and let the field take
+``str`` from the header. Overriding ``type:`` works as described below for
+the single-valued fields.
+
+Configuring a **number histogram** over a score whose type is not
+``int``, ``float`` or ``bool`` is a configuration error for the same
+reason -- no number histogram can accumulate text. This reaches a joined
+VCF field and equally a plain table score declaring ``type: str``. Give
+such a score ``histogram: {type: categorical}``, or no ``histogram:`` at
+all and let GAIn pick the default for its type.
+
+Both errors are raised for the **genomic** score types described in this
+section -- ``position_score``, ``np_score``, ``allele_score`` and
+``fragment_score``. A ``gene_score`` builds its definitions on its own
+path and reports a mismatched histogram differently.
 
 
 
