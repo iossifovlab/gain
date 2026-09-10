@@ -595,6 +595,62 @@ test('a hash naming a folder that is gone opens its nearest surviving '
   expect(errors).toEqual([]);
 });
 
+test('a walked-up address is rewritten to the folder it resolved to', async ({
+  page,
+}) => {
+  await openBrowseIndex(page, '#/hg38/scores/nonesuch');
+  await expect(breadcrumbTrail(page)).resolves.toEqual(
+    ['All resources', 'hg38', 'scores']);
+
+  /* The address is made to agree with the screen, so the URL the reader
+   * can copy out of the bar names the folder they are looking at rather
+   * than the dead one they arrived by.
+   *
+   * It also keeps the no-op guard honest. That guard compares *parsed*
+   * addresses and knows nothing about the walk-up, so while the address
+   * still said `nonesuch` the already-active tree button pushed an entry
+   * that changed nothing on screen -- and the Back that followed appeared
+   * to do nothing, which is the exact symptom the guard exists to
+   * prevent. Asserted on its own below. */
+  await expect.poll(() => hashOf(page)).toBe('#/hg38/scores');
+});
+
+test('the address a walk-up replaced cannot be gone back to', async ({
+  page,
+}) => {
+  await openBrowseIndex(page, '#/');
+
+  /* Reached by moving the address within the loaded document, so that the
+   * entry the walk-up rewrites has a known entry behind it to go back to.
+   * Measuring `history.length` instead cannot see this: loading a document
+   * adds an entry of its own, so the count grows by one either way. */
+  await page.evaluate(() => { location.hash = '/hg38/scores/nonesuch'; });
+
+  await expect.poll(() => hashOf(page)).toBe('#/hg38/scores');
+
+  await page.goBack();
+
+  /* The root, because `replaceState` put the resolved address *in place
+   * of* the dead one. Had it been pushed, the dead address would still sit
+   * one step back: this Back would land on it, the applier would resolve
+   * it again, and the reader would be returned to `#/hg38/scores` -- Back
+   * appearing not to work, which is the whole reason for rewriting. */
+  await expect.poll(() => hashOf(page)).toBe('#/');
+  await expect(breadcrumbTrail(page)).resolves.toEqual(['All resources']);
+});
+
+test('the tree button stacks nothing once the address has been rewritten',
+  async ({ page }) => {
+  await openBrowseIndex(page, '#/hg38/scores/nonesuch');
+  await expect.poll(() => hashOf(page)).toBe('#/hg38/scores');
+  const before = await page.evaluate(() => history.length);
+
+  await page.locator('#hierarchical-view-btn').click();
+
+  expect(await page.evaluate(() => history.length)).toBe(before);
+  await expect.poll(() => hashOf(page)).toBe('#/hg38/scores');
+});
+
 test('a hash with no surviving ancestor opens the root, still as a tree',
   async ({ page }) => {
   const errors: string[] = [];

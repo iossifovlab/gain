@@ -610,7 +610,45 @@
             /** Render what the current address says. The only applier. */
             function applyHash() {
                 const state = parseHash(location.hash);
-                setView(state.view, existingPrefix(state.path));
+                const path = existingPrefix(state.path);
+                setView(state.view, path);
+                canonicalise(state.view, path);
+            }
+
+            /**
+             * Make the address agree with what was just rendered.
+             *
+             * A walked-up path, a dropped empty segment and a decoded
+             * escape all leave the address saying something other than the
+             * folder now on screen, and that costs twice over. The URL the
+             * reader can copy out of the bar names a folder they are not
+             * looking at. And `goTo`'s no-op guard compares *parsed*
+             * addresses, knowing nothing about any of this, so it sees a
+             * difference where there is none on screen: the button for the
+             * view already showing would push an entry that changes
+             * nothing, and the Back after it would appear to do nothing --
+             * the exact symptom that guard exists to prevent.
+             *
+             * `replaceState`, so the resolved address takes the place of
+             * the one it resolves rather than being stacked on top of it:
+             * Back still leads out of the page, and an address that could
+             * not be followed cannot be returned to by going back to it.
+             *
+             * Only for the hierarchical view. A fragment this page does not
+             * recognise belongs to whatever put it there -- someone's deep
+             * link into a section -- and the table view's canonical address
+             * is "", so canonicalising that one would silently delete it.
+             * Arriving at the table is not consent to discard it, which is
+             * the rule `goTo` already follows.
+             */
+            function canonicalise(view, path) {
+                if (view !== "hierarchical") return;
+                const hash = buildHash({ view, path });
+                // Never "" for this view, so there is no "cannot express a
+                // bare path" case to handle as `goTo` has to.
+                if (hash !== location.hash) {
+                    history.replaceState(null, "", hash);
+                }
             }
 
             /** Push `state` into the session history, then render it. */
