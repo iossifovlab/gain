@@ -1620,8 +1620,44 @@ test('a malformed term leaves the tree browsable', async ({ page }) => {
    * nothing and reporting it as "no resources". */
   await openBrowseIndex(page, '#/?q=%22');
 
+  /* The synchronisation point, and it is not optional. Everything this
+   * test asserts afterwards -- all four folders, no error thrown -- is
+   * equally true of the page *before* the malformed query has been run,
+   * because the load passes through the unfiltered repository on its way
+   * to attempting the search. Without something that cannot be true
+   * until the query has been rejected, the test could be answered in
+   * full by a page that had not searched yet. `#status-error` is that:
+   * it is written only in the `catch`. It survives the tree view, unlike
+   * `#status` beside it, which `setView` hides. */
+  await expect(page.locator('#status-error'))
+    .toHaveText(/Query failed due to syntax error/);
+
   await expect(page.locator('#search-field')).toHaveValue('"');
-  await expect.poll(async () => (await folderNames(page)).sort())
+  expect((await folderNames(page)).sort())
     .toEqual([...BROWSE_TOP_LEVEL_FOLDERS].sort());
   expect(errors).toEqual([]);
 });
+
+test('toggling to the table shows matches from outside the folder',
+  async ({ page }) => {
+    /* Opened in a folder the term does not reach, so the tree is empty
+     * -- which is what makes the toggle say something. */
+    await openBrowseIndex(page, `#/hg38?q=${BROWSE_SUMMARY_ONLY_TERM}`, 1);
+    await expect(page.locator('#hierarchical-list .hv-empty')).toBeVisible();
+
+    await page.locator('#table-view-btn').click();
+
+    /* The table has no current folder and never had one, so leaving the
+     * tree for it widens the same search back out to the repository: the
+     * match is in `hg19`, nowhere near where the reader was standing.
+     *
+     * The pairing is the point. A build that had scoped the *search*
+     * rather than the listing -- narrowing the ids at the moment they
+     * arrived, instead of walking into them at render time -- would show
+     * this table as empty too, having thrown away every hit outside
+     * `hg38` before either view got to see them. */
+    await expect(visibleResourceIds(page))
+      .toHaveText([BROWSE_SUMMARY_ONLY_RESOURCE_ID]);
+    await expect(page.locator('#search-field'))
+      .toHaveValue(BROWSE_SUMMARY_ONLY_TERM);
+  });

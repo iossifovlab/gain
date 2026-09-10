@@ -103,13 +103,28 @@
             return sortOrder === 'desc' ? sorted.reverse() : sorted;
         }
 
-        function applyRefreshData(ids) {
+        /**
+         * Show `ids`, which are the answer to `search`.
+         *
+         * The search is passed in rather than read back out of the
+         * controls here, because the two are not the same thing at the
+         * one call that matters. The initial load hands over the whole
+         * repository *before* any search has run -- but a reader who
+         * followed a filtered link already has the term in the box by
+         * then, put there ahead of the index finishing so that the
+         * controls tell the truth during the wait. Reading the box would
+         * therefore announce every id in the repository as the answer to
+         * their query, and a listener that renders from the hit set would
+         * believe it.
+         *
+         * `ids` unsorted, because the one listener sorts by name and this
+         * order is the table's column sort -- passing it on would be
+         * handing over a detail of a view the listener is not.
+         */
+        function applyRefreshData(ids, search) {
             lastIds = ids;
             refreshData(sortedIds(ids));
-            // Unsorted, because the one listener sorts by name and this
-            // order is the table's column sort -- passing it on would be
-            // handing over a detail of a view the listener is not.
-            searchResults({ ...currentSearch(), ids });
+            searchResults({ ...search, ids });
         }
 
         function UpdateStatus() {
@@ -168,7 +183,9 @@
                 option.textContent = type;
                 typeFilter.append(option);
             }
-            applyRefreshData(Array.from(window.all_ids))
+            // The unfiltered repository, and announced as exactly that --
+            // no search has run yet, whatever the box may already hold.
+            applyRefreshData(Array.from(window.all_ids), { q: "", type: "" })
 
             resolve(window.sqlite3)
         });
@@ -209,7 +226,7 @@
             const { q, type } = currentSearch();
             if (q === "" && type === "") {
                 window.last_error = null;
-                applyRefreshData(Array.from(window.all_ids))
+                applyRefreshData(Array.from(window.all_ids), { q, type })
                 return;
             }
 
@@ -229,12 +246,16 @@
             window.last_error = null;
             try {
                 const displayIds = window.sqlite3.query(query).map((row) => row[0]);
-                applyRefreshData(displayIds);
+                applyRefreshData(displayIds, { q, type });
             }
             catch (error) {
                 window.last_error = error;
                 console.error("Error during search:", error);
-                applyRefreshData(Array.from(window.all_ids))
+                // Still this search, and still what it came to: a query
+                // that could not be run falls back to the whole
+                // repository, and both views have to show that rather
+                // than an empty answer.
+                applyRefreshData(Array.from(window.all_ids), { q, type })
             }
             finally {
                 $(".searching").hide()
