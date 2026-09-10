@@ -662,6 +662,182 @@
              */
             let listing = root;
 
+            /**
+             * The search `listing` answers, or null when nothing is
+             * filtered.
+             *
+             * Kept beside the tree it goes with, and for the same reason
+             * the tree is kept: the cues below have to be redrawn when
+             * the reader *moves*, and a folder move does not re-run the
+             * search, so nothing arrives through the results seam to
+             * redraw them from. Reading the search box instead would
+             * answer with whatever is in it now -- mid-word, or a term
+             * whose search has not come back yet -- rather than with the
+             * search the listing on screen actually answers.
+             *
+             * Null rather than an empty search, because that is the
+             * distinction every cue here turns on: "nothing is filtered"
+             * shows no status line and the plain empty-folder message,
+             * where "a filter that matched nothing" shows both. The
+             * producer decides it, once, so this cannot drift from what
+             * the pruning decided.
+             */
+            let listedSearch = null;
+
+            const hvStatusEl = document.getElementById("hv-status");
+
+            const searchFieldEl = document.getElementById("search-field");
+
+            /*
+             * What the box says when it belongs to the table.
+             *
+             * Read off the markup rather than written here, so the two
+             * cannot drift: this is the only copy of that wording, and a
+             * template that changes it keeps working with no second edit.
+             */
+            const tablePlaceholder = (searchFieldEl
+                && searchFieldEl.getAttribute("placeholder")) || "";
+
+            /**
+             * Offer to search what a search from here would actually
+             * cover.
+             *
+             * The box is shared with the table, whose search is
+             * repository-wide and whose placeholder therefore stays the
+             * markup's own. In the tree the same box means something
+             * narrower, and nothing said so: the breadcrumb is the only
+             * cue that a search covers `hg38/scores` rather than
+             * everything, and a breadcrumb reads as navigation.
+             *
+             * Both spellings of this write the same place -- `placeholder`
+             * is a reflected attribute, so the property and the attribute
+             * are one value -- and it is set rather than interpolated
+             * because a folder name is untrusted repository content.
+             *
+             * Which view is showing arrives as an argument rather than
+             * being read back from the buttons or kept in a flag beside
+             * them. The applier has just parsed it out of the address, and
+             * anything else here would be a second answer to a question
+             * already settled -- one that has to be kept agreeing with the
+             * first.
+             */
+            function renderPlaceholder(isHierarchical) {
+                if (!searchFieldEl) return;
+                if (!isHierarchical) {
+                    searchFieldEl.setAttribute(
+                        "placeholder", tablePlaceholder);
+                    return;
+                }
+                searchFieldEl.setAttribute(
+                    "placeholder",
+                    currentPath.length
+                        ? "Search" + scopePhrase() + "…"
+                        : "Search all resources…");
+            }
+
+            /**
+             * The folder the cues are talking about, as a phrase to hang
+             * off the end of a sentence.
+             *
+             * Empty at the root, where the scope is everything and there
+             * is no name to give it: "under all resources" is not
+             * English, and unqualified "resources" already means the
+             * whole repository. Shared by the two cues that word the root
+             * that way; the placeholder does not, because "Search…" with
+             * nothing after it says less than the box already said.
+             *
+             * Folder names are segments of resource ids, which are
+             * untrusted repository content (iossifovlab/gain#467,
+             * iossifovlab/gain#528) -- so what this returns is text for a
+             * text node, never markup.
+             */
+            function scopePhrase() {
+                return currentPath.length
+                    ? " under " + currentPath.join("/")
+                    : "";
+            }
+
+            /**
+             * Say how much of this folder the filter kept.
+             *
+             * Two counts of the *same* folder, one in each tree: the
+             * matches from the pruned listing, and the folder's own total
+             * from the full tree. Since iossifovlab/gain#581 the folder
+             * rows carry matched figures alone, so this line is the only
+             * place the reader is told what they were matched *out of* --
+             * which is the difference between "this folder holds one
+             * score" and "this folder holds thirty and you are looking at
+             * one".
+             *
+             * Both are a property lookup rather than a walk: `aggregate`
+             * gives every folder in either tree its recursive count when
+             * the tree is built.
+             *
+             * The matched half arrives as `listed`, the folder the
+             * renderer has already resolved, rather than being resolved
+             * again here -- the second lookup would allocate a throwaway
+             * folder every time a filter matched nothing, and is one more
+             * place for "which tree is this resolved in?" to be answered
+             * differently.
+             *
+             * Nothing at all when no filter is active. The unfiltered
+             * listing already says how many resources are in the folder,
+             * on the rows themselves, and a line reporting "3 of 3" under
+             * every folder the reader walks through would be noise that
+             * never changes.
+             */
+            function renderStatus(listed) {
+                if (!hvStatusEl) return;
+                if (listedSearch === null) {
+                    hvStatusEl.style.display = "none";
+                    hvStatusEl.textContent = "";
+                    return;
+                }
+                // The denominator comes from the *full* tree, which is
+                // what makes it a denominator: taken from the pruned one
+                // it would be the numerator again.
+                const total = descend(currentPath).node.count;
+                hvStatusEl.textContent =
+                    listed.count + " of " + total + " resources"
+                    + scopePhrase() + " match";
+                hvStatusEl.style.display = "";
+            }
+
+            /**
+             * A link that moves the page rather than leaving it.
+             *
+             * The shape is a contract, not three lines that happen to sit
+             * together: `href="#"` so it is a real link to keyboard and
+             * screen reader, `preventDefault` so the bare fragment is
+             * never what gets followed, and `goTo` so the move is pushed
+             * and rendered the one way every move on this page is. Get one
+             * of the three wrong and the link either navigates twice or
+             * strands the reader on `#`.
+             *
+             * Written out twice before this -- the breadcrumb's crumbs and
+             * the empty state's way out of a scope -- which is once more
+             * than a contract survives being copied.
+             *
+             * `href` is the bare fragment rather than the address `goTo`
+             * will build, so opening in a new tab lands on the page rather
+             * than on the state. That is the breadcrumb's existing bargain
+             * and this does not change it: the address `goTo` builds folds
+             * in the live search controls, and an `href` fixed at render
+             * time would promise a state that a reader who kept typing is
+             * no longer being taken to.
+             */
+            function navLink(text, className, state) {
+                const el = document.createElement("a");
+                el.textContent = text;
+                el.className = className;
+                el.href = "#";
+                el.addEventListener("click", (e) => {
+                    e.preventDefault();
+                    goTo(state);
+                });
+                return el;
+            }
+
             function renderBreadcrumb() {
                 breadcrumbEl.innerHTML = "";
                 const crumbs = [{ name: "All resources", path: [] }];
@@ -675,19 +851,19 @@
                         sep.textContent = "/";
                         breadcrumbEl.appendChild(sep);
                     }
+                    // The folder showing is named but not linked: it is
+                    // where the reader already is, so a link on it would
+                    // offer a move that changes nothing.
                     const isLast = i === crumbs.length - 1;
-                    const el = document.createElement(isLast ? "span" : "a");
-                    el.textContent = crumb.name;
-                    el.className = "breadcrumb-item" + (isLast ? " current" : "");
-                    if (!isLast) {
-                        el.href = "#";
-                        el.addEventListener("click", (e) => {
-                            e.preventDefault();
-                            goTo({
-                                view: "hierarchical",
-                                path: crumb.path,
-                            });
-                        });
+                    let el;
+                    if (isLast) {
+                        el = document.createElement("span");
+                        el.textContent = crumb.name;
+                        el.className = "breadcrumb-item current";
+                    } else {
+                        el = navLink(
+                            crumb.name, "breadcrumb-item",
+                            { view: "hierarchical", path: crumb.path });
                     }
                     breadcrumbEl.appendChild(el);
                 });
@@ -718,6 +894,85 @@
                 return reached.length === path.length
                     ? node
                     : makeNode(path[path.length - 1], path);
+            }
+
+            /**
+             * What to say about a folder with nothing to list.
+             *
+             * Two different things, and telling them apart is the whole
+             * point of the node. "No resources" is a statement about the
+             * *folder*; a search that matched nothing here is a statement
+             * about the *search*, and saying the first when the second is
+             * true tells the reader their filter found an empty folder
+             * rather than that they are standing in the wrong one.
+             *
+             * The plain branch is not reachable by *searching*: folders
+             * exist only because some resource id put them there, so
+             * every folder in the full tree holds at least one resource,
+             * and `currentPath` is only ever assigned what `descend`
+             * reached in that tree. Narrow a filter as far as it goes and
+             * the other branch is what draws.
+             *
+             * It is reached when there is nothing to list at all. The
+             * module that owns the search also populates `rowData`, and
+             * it imports sqlite-wasm from a CDN at its top level, so a
+             * blocked import leaves this module building its tree from an
+             * empty object: one root folder, no children, no resources,
+             * and no search to have filtered them. That is a page whose
+             * table is empty too, and "No resources" is what both should
+             * say -- it is not the moment to start describing a filter.
+             */
+            function emptyState() {
+                const empty = document.createElement("div");
+                empty.className = "hv-empty";
+                if (listedSearch === null) {
+                    empty.textContent = "No resources";
+                    return empty;
+                }
+                // A type chosen with no term is still a filter, and it has
+                // no term to quote -- naming it "''" would report an empty
+                // search rather than the one that ran.
+                const matching = listedSearch.q
+                    ? " match '" + listedSearch.q + "'"
+                    : " match the current filter";
+                // Text, not markup. The term is whatever the reader typed
+                // and the scope is built from resource ids, which are
+                // untrusted repository content (iossifovlab/gain#467,
+                // iossifovlab/gain#528) -- this node is the one place on
+                // the page where both meet.
+                empty.appendChild(document.createTextNode(
+                    "No resources" + scopePhrase() + matching));
+                // Nothing to widen to at the root: it is already every
+                // resource, and an offer to search what is being searched
+                // would be an invitation to click something that changes
+                // nothing.
+                if (currentPath.length) {
+                    empty.appendChild(widenLink());
+                }
+                return empty;
+            }
+
+            /**
+             * The way out of a scope that turned out to be too narrow.
+             *
+             * Drops the folder and keeps the query, which is the pairing
+             * the address already makes possible by carrying the two
+             * independently. It goes through `goTo` like every other move
+             * on this page -- so it pushes, and Back returns to the narrow
+             * scope the reader is being offered a way out of, rather than
+             * leaving the page.
+             *
+             * `goTo` folds in the live controls, so the term travelling
+             * with it is the one in the box. That is the same rule the
+             * folder rows and the breadcrumb follow, and it is the right
+             * one: if the reader has retyped since this node was drawn,
+             * widening should carry what they have now, not what the
+             * listing behind it answered.
+             */
+            function widenLink() {
+                return navLink(
+                    "Search all resources instead", "hv-widen",
+                    { view: "hierarchical", path: [] });
             }
 
             function renderList() {
@@ -784,11 +1039,15 @@
                 }
 
                 if (!Object.keys(node.children).length && !node.resources.length) {
-                    const empty = document.createElement("div");
-                    empty.className = "hv-empty";
-                    empty.textContent = "No resources";
-                    listEl.appendChild(empty);
+                    listEl.appendChild(emptyState());
                 }
+
+                // Drawn from here rather than from either caller, so that
+                // the line describing the listing cannot be left saying
+                // something about a listing that has been replaced. Both
+                // paths that change what is on screen -- a move, and a
+                // search coming back -- already come through here.
+                renderStatus(node);
             }
 
             function navigateTo(path) {
@@ -983,24 +1242,38 @@
             /** Render what the current address says. The only applier. */
             function applyHash() {
                 const state = parseHash(location.hash);
+                const isHier = state.view === "hierarchical";
                 setView(state.view);
                 applySearch(state);
                 // The table has no folder to resolve and no address of its
                 // own to canonicalise -- see `canonicalise` for why
-                // rewriting it would be actively wrong -- so this is where
-                // the tree's half of the work begins and ends.
-                if (state.view !== "hierarchical") return;
-                const { reached } = descend(state.path);
-                navigateTo(reached);
-                // Canonicalised from the state the *address* gave, with
-                // only the folder replaced by the one actually reached.
-                // The controls are not consulted: `applySearch` above has
-                // only started putting the search into them -- it waits on
-                // the loaded index first -- so reading them here would
-                // rewrite the address to the search on its way out rather
-                // than the one arriving, and drop the query on every load
-                // that carries one.
-                canonicalise({ ...state, path: reached });
+                // rewriting it would be actively wrong -- so the tree's
+                // half of the work begins and ends in here.
+                if (isHier) {
+                    const { reached } = descend(state.path);
+                    navigateTo(reached);
+                    // Canonicalised from the state the *address* gave, with
+                    // only the folder replaced by the one actually reached.
+                    // The controls are not consulted: `applySearch` above
+                    // has only started putting the search into them -- it
+                    // waits on the loaded index first -- so reading them
+                    // here would rewrite the address to the search on its
+                    // way out rather than the one arriving, and drop the
+                    // query on every load that carries one.
+                    canonicalise({ ...state, path: reached });
+                }
+                // Last, and from here rather than from the two functions
+                // above, because this is the one place that knows a move
+                // has finished. The scope the box offers is not settled
+                // until the folder is -- an address can name a folder that
+                // no longer exists, and what the reader should be offered
+                // is the one they were actually left in.
+                //
+                // Keeping it here also means a search *arriving* does not
+                // touch it. That path re-renders the listing without moving
+                // anyone, so the scope it would recompute is the one
+                // already showing.
+                renderPlaceholder(isHier);
             }
 
             /**
@@ -1180,6 +1453,16 @@
             // shows, reached the same way.
             searchControls.onResults(({ search, ids }) => {
                 const next = search ? buildTree(ids) : root;
+                // Recorded before the guard below, so that what the cues
+                // read is what the *producer* last announced rather than
+                // something inferred from which tree happens to be
+                // standing. The two cannot disagree -- a search always
+                // builds a fresh tree, so `next === listing` can only
+                // mean both are the unfiltered one -- but that is an
+                // argument a reader would have to reconstruct, and it
+                // stops holding the moment a search is allowed to reuse a
+                // tree.
+                listedSearch = search;
                 // Every load ends with an unfiltered announcement, and for
                 // most of them that is the state already showing: the tree
                 // was rendered on the way in, or pre-rendered for the view

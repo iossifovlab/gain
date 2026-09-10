@@ -1296,6 +1296,16 @@ test('a tree still browses when the search index cannot be loaded', async ({
   expect(await folderNames(page)).toEqual([]);
   expect(errors).toEqual([]);
 
+  /* Empty with nothing to blame it on, and worded that way. This is the
+   * one route to a folder with nothing in it and no filter behind it:
+   * every folder in a repository that *has* resources exists because one
+   * of them put it there, so a filter is the only thing that can empty
+   * one. A page reaching for a search that is not there and describing
+   * this as "no matches" would be inventing a filter the reader never
+   * set (iossifovlab/gain#583). */
+  await expect(emptyState(page)).toHaveText('No resources');
+  await expect(treeStatus(page)).toBeHidden();
+
   /* And that the address machinery is alive, not merely that nothing
    * was thrown while it started up. A build that took the seam on trust
    * dies at module evaluation, which leaves the buttons inert and Back
@@ -1644,6 +1654,14 @@ test('a malformed term leaves the tree browsable', async ({ page }) => {
   expect((await folderNames(page)).sort())
     .toEqual([...BROWSE_TOP_LEVEL_FOLDERS].sort());
   expect(errors).toEqual([]);
+
+  /* A query that could not be run is still a filter -- it reaches the
+   * tree with its search attached, not as an absence -- so the tree's own
+   * status line has something to say, and what it says is that everything
+   * matched. That is the same fallback the folders above show, counted:
+   * the two would disagree if either had taken the failure for an empty
+   * answer (iossifovlab/gain#583). */
+  await expect(treeStatus(page)).toHaveText('7 of 7 resources match');
 });
 
 test('toggling to the table shows matches from outside the folder',
@@ -1861,4 +1879,321 @@ test('the toggle applies a standing term to the folder it restores',
     expect(await folderNames(page)).toEqual(['conservation']);
     await expect(page.locator('#search-field'))
       .toHaveValue(BROWSE_ID_ONLY_TERM);
+  });
+
+/* ---- The search scope is legible (#583) ---- */
+
+/**
+ * The tree's own status line.
+ *
+ * A different element from `#status`, which reports the repository-wide
+ * count and which `setView` hides here. Reading that one instead would
+ * be reading the table's answer (iossifovlab/gain#583).
+ */
+function treeStatus(page: Page) {
+  return page.locator('#hv-status');
+}
+
+test('a filtered tree counts the matches against the folder they are in',
+  async ({ page }) => {
+    /* `hg38` holds three resources and `phylop` reaches exactly one of
+     * them, so the two numbers differ -- which is the only reason this
+     * assertion is worth making. A denominator taken from the *pruned*
+     * tree, which is where the folder rows' own figures come from since
+     * iossifovlab/gain#581, would report "1 of 1" and be wrong in a way
+     * no equal pair could show. */
+    await openBrowseIndex(page, `#/hg38?q=${BROWSE_ID_ONLY_TERM}`, 1);
+
+    /* Visibility asserted separately, and it is not redundant: the line
+     * ships hidden and `toHaveText` reads `textContent`, which a hidden
+     * element has just as much as a shown one. A build that worded the
+     * status perfectly and never revealed it satisfies every other
+     * assertion in this file, including the ones below that watch it
+     * disappear. */
+    await expect(treeStatus(page)).toBeVisible();
+    await expect(treeStatus(page))
+      .toHaveText('1 of 3 resources under hg38 match');
+  });
+
+test('the matched figure is the folder\'s, not the repository\'s',
+  async ({ page }) => {
+    /* The other half of the pair above, and it needs its own fixture
+     * shape: there the folder's matches and the repository's happened to
+     * be the same one resource, so a line built from the whole hit set
+     * would have read correctly by coincidence.
+     *
+     * Every one of `hg38`'s three resources is a position score, and so
+     * are three more outside it. Matched here is 3 where the repository
+     * matched 6 -- which is the number `#status` carries for the table,
+     * one element away. */
+    await openBrowseIndex(page, `#/hg38?type=${BROWSE_SCORE_TYPE}`, 6);
+
+    await expect(treeStatus(page))
+      .toHaveText('3 of 3 resources under hg38 match');
+  });
+
+test('the tree says nothing about counts until something is filtered',
+  async ({ page }) => {
+    /* The unfiltered listing already reports each folder's size on the
+     * rows themselves, so a status line here would only ever say that all
+     * of the folder is showing. */
+    await openBrowseIndex(page, '#/hg38');
+
+    await expect(treeStatus(page)).toBeHidden();
+
+    /* And it comes back when there is something to say, so what the first
+     * assertion pins is "hidden while unfiltered" rather than "never
+     * rendered at all". */
+    await search(page, BROWSE_ID_ONLY_TERM);
+
+    await expect(treeStatus(page)).toBeVisible();
+    await expect(treeStatus(page))
+      .toHaveText('1 of 3 resources under hg38 match');
+
+    /* Then goes again -- clearing is the path that has to put it back,
+     * and it is a different one from never having searched. */
+    await search(page, '');
+
+    await expect(treeStatus(page)).toBeHidden();
+  });
+
+/** What the search box offers to search, before anything is typed. */
+function searchPlaceholder(page: Page) {
+  return page.locator('#search-field');
+}
+
+test('the search box names the folder it would search', async ({ page }) => {
+  /* The scope of a search made from here is the folder showing, and
+   * until it is said somewhere the only cue is the breadcrumb -- which
+   * reads as navigation, because that is what it is. */
+  await openBrowseIndex(page, '#/hg38/scores');
+
+  await expect(searchPlaceholder(page))
+    .toHaveAttribute('placeholder', 'Search under hg38/scores…');
+});
+
+test('at the root the box offers the whole repository', async ({ page }) => {
+  /* The root has no name to give, and "under" nothing is not a scope.
+   * Asserted separately from the folder case because it is the branch
+   * most easily left saying "Search under " with nothing after it. */
+  await openBrowseIndex(page, '#/');
+
+  await expect(searchPlaceholder(page))
+    .toHaveAttribute('placeholder', 'Search all resources…');
+});
+
+test('both cues follow the reader between folders', async ({ page }) => {
+  /* The case the cues are most easily got wrong in. A folder move does
+   * not re-run the search -- it cannot, the answer has not changed -- so
+   * nothing arrives through the results seam to redraw them from. A
+   * build that renders them only when a search comes back shows the
+   * folder the reader searched *from* for the rest of the visit, and
+   * passes every assertion made without moving. */
+  await openBrowseIndex(page, `#/?type=${BROWSE_SCORE_TYPE}`, 6);
+
+  await expect(treeStatus(page)).toHaveText('6 of 7 resources match');
+  await expect(searchPlaceholder(page))
+    .toHaveAttribute('placeholder', 'Search all resources…');
+
+  /* Counted the way the neighbouring test counts it: the rows a move
+   * shows are rebuilt from the standing hit set, so a build that
+   * re-queried on every step would look identical and merely cost a
+   * query each time. */
+  await page.evaluate(() => {
+    const win = window as any;
+    const query = win.sqlite3.query;
+    win.searchesIssued = 0;
+    win.sqlite3.query = (sql: string) => {
+      win.searchesIssued += 1;
+      return query(sql);
+    };
+  });
+
+  await folderRow(page, 'hg38').click();
+
+  /* Both numbers move, and they move differently: matched falls from 6
+   * to 3 because the reader descended, and the total falls from 7 to 3
+   * because it is the folder's own. */
+  await expect(treeStatus(page))
+    .toHaveText('3 of 3 resources under hg38 match');
+  await expect(searchPlaceholder(page))
+    .toHaveAttribute('placeholder', 'Search under hg38…');
+
+  /* Climbing back out widens the scope again, which is how a reader
+   * discovers they were searching too deep. */
+  await breadcrumbLink(page, 'All resources').click();
+
+  await expect(treeStatus(page)).toHaveText('6 of 7 resources match');
+  await expect(searchPlaceholder(page))
+    .toHaveAttribute('placeholder', 'Search all resources…');
+
+  expect(await page.evaluate(() => (window as any).searchesIssued)).toBe(0);
+});
+
+test('leaving the tree gives the box back to the table', async ({ page }) => {
+  /* The placeholder is the one cue on a control the two views share, so
+   * it is the one that can be left describing a view the reader is no
+   * longer in -- a box offering to search `hg38` above a table listing
+   * the whole repository. */
+  await openBrowseIndex(page);
+
+  /* The table's own wording, taken off the page before the tree has been
+   * entered. What this test is about is the box being handed back, not
+   * what the markup happens to say, so the value it is handed back to
+   * comes from the page rather than from a literal here. */
+  const tableWording = await searchPlaceholder(page).getAttribute('placeholder');
+  expect(tableWording).not.toBeNull();
+
+  await page.locator('#hierarchical-view-btn').click();
+
+  await expect(searchPlaceholder(page))
+    .toHaveAttribute('placeholder', 'Search all resources…');
+
+  await folderRow(page, 'hg38').click();
+
+  await expect(searchPlaceholder(page))
+    .toHaveAttribute('placeholder', 'Search under hg38…');
+
+  await page.locator('#table-view-btn').click();
+
+  await expect(searchPlaceholder(page))
+    .toHaveAttribute('placeholder', tableWording as string);
+
+  /* And back, to the folder the tree was left in -- the placeholder
+   * follows the restored folder rather than resetting to the root. */
+  await page.locator('#hierarchical-view-btn').click();
+
+  await expect(searchPlaceholder(page))
+    .toHaveAttribute('placeholder', 'Search under hg38…');
+});
+
+/** The message a folder shows when it has nothing to list. */
+function emptyState(page: Page) {
+  return page.locator('#hierarchical-list .hv-empty');
+}
+
+test('a filter that matched nothing here names what it looked in',
+  async ({ page }) => {
+    /* `marmoset`'s one match lives under `hg19`, so `hg38` has nothing to
+     * show. Before this the reader was told "No resources" -- which is
+     * what a genuinely empty folder says, and so reads as a statement
+     * about the folder rather than about their search. */
+    await openBrowseIndex(page, `#/hg38?q=${BROWSE_SUMMARY_ONLY_TERM}`, 1);
+
+    await expect(emptyState(page)).toContainText(
+      `No resources under hg38 match '${BROWSE_SUMMARY_ONLY_TERM}'`);
+
+    /* The count stays, and it says something the message does not: the
+     * message carries the term, the count carries what the term was
+     * matched against. "0 of 3" is how the reader learns this folder was
+     * small enough to be the wrong place to look, rather than large
+     * enough that the term was too narrow.
+     *
+     * Pinned as a pair because the two are worded independently. Nothing
+     * stops one being reworded later, and if "under hg38" drifts in one
+     * and not the other the page contradicts itself in adjacent lines --
+     * which is what this assertion is here to make loud, rather than the
+     * redundancy two reviewers reasonably read it as. */
+    await expect(treeStatus(page)).toBeVisible();
+    await expect(treeStatus(page))
+      .toHaveText('0 of 3 resources under hg38 match');
+  });
+
+/**
+ * A term no column in the browse fixture carries.
+ *
+ * Local rather than mirrored from `fixtures.ts` like the `BROWSE_*`
+ * constants, and deliberately: those name things the fixture *has*, and
+ * are pinned Python-side so that retuning the data reddens there rather
+ * than hollowing out an assertion here. This one names an absence, which
+ * that arrangement cannot check -- and does not need to. A term that
+ * started matching something would empty no folder, so the tests below
+ * fail loudly instead of passing while proving less.
+ */
+const BROWSE_NO_MATCH_TERM = 'zzzunmatchable';
+
+test('at the root there is no narrower scope to blame', async ({ page }) => {
+  /* The same message without the "under X", because there is no X, and
+   * without the offer to widen, because this *is* the widest scope --
+   * a link that searched what was already being searched would change
+   * nothing and say the reader had somewhere else to look. */
+  await openBrowseIndex(page, `#/?q=${BROWSE_NO_MATCH_TERM}`, 0);
+
+  await expect(emptyState(page))
+    .toHaveText(`No resources match '${BROWSE_NO_MATCH_TERM}'`);
+  await expect(emptyState(page).locator('a')).toHaveCount(0);
+});
+
+test('a type chosen with no term has no term to quote', async ({ page }) => {
+  /* A filter need not be a search: the type control alone prunes the
+   * tree, and the message has to describe *that* without printing an
+   * empty pair of quotes where the term would go. `hg38` holds three
+   * position scores and no genome. */
+  await openBrowseIndex(page, `#/hg38?type=${BROWSE_GENOME_TYPE}`, 1);
+
+  await expect(emptyState(page))
+    .toContainText('No resources under hg38 match the current filter');
+
+  /* Still a scope worth widening out of -- the genome it could not find
+   * is one folder over. */
+  await expect(emptyState(page).locator('a')).toHaveCount(1);
+});
+
+test('a term is shown as text, whatever it is made of', async ({ page }) => {
+  /* The term is the one thing on this page the reader writes, and the
+   * empty state is where it is read back to them. Built as markup rather
+   * than as text, this is the whole of the bug.
+   *
+   * Wrapped in the quotes the page's own help text offers, and that is
+   * load-bearing rather than cosmetic: `<` is not a legal bareword
+   * character in FTS5 query syntax, so the unquoted form is a *syntax
+   * error*, and a rejected query falls back to the whole repository --
+   * which leaves `hg38` listing its folders, the node under test never
+   * drawn, and the test asserting nothing. Quoted, it is one phrase that
+   * matches nothing, which is the state this test needs.
+   *
+   * Still live HTML inside the quotes: `src=x` cannot load, so `onerror`
+   * runs if this ever reaches a parser. */
+  const injected = '"<img src=x onerror=window.pwned=true>zzzunmatchable"';
+
+  await openBrowseIndex(page, '#/hg38');
+  await search(page, injected);
+
+  await expect(emptyState(page))
+    .toContainText(`No resources under hg38 match '${injected}'`);
+
+  /* The assertion above would also pass on a page that had parsed the
+   * markup and shown its text -- these two are what tell the difference. */
+  expect(await emptyState(page).locator('img').count()).toBe(0);
+  expect(await page.evaluate(() => (window as any).pwned)).toBeUndefined();
+});
+
+test('the way out of a scope that found nothing keeps the term',
+  async ({ page }) => {
+    /* Being told the folder is the wrong one is only half an answer; the
+     * other half is not having to retype the term to act on it. */
+    await openBrowseIndex(page, `#/hg38?q=${BROWSE_SUMMARY_ONLY_TERM}`, 1);
+
+    await emptyState(page).locator('a').click();
+
+    /* The folder is dropped and the query is not -- they ride in the
+     * address independently, so widening is the one without the other.
+     * And the match that was out of reach from `hg38` is now listed:
+     * `hg19` is where `marmoset` lives. */
+    await expect.poll(() => hashOf(page))
+      .toBe(`#/?q=${BROWSE_SUMMARY_ONLY_TERM}`);
+    await expect.poll(() => folderNames(page)).toEqual(['hg19']);
+    await expect(treeStatus(page)).toHaveText('1 of 7 resources match');
+    await expect(searchPlaceholder(page))
+      .toHaveAttribute('placeholder', 'Search all resources…');
+
+    /* It pushed, so the offer is reversible. A widen that replaced the
+     * entry would leave Back walking out of the page from a reader who
+     * had merely looked. */
+    await page.goBack();
+
+    await expect.poll(() => hashOf(page))
+      .toBe(`#/hg38?q=${BROWSE_SUMMARY_ONLY_TERM}`);
+    await expect(emptyState(page)).toContainText(
+      `No resources under hg38 match '${BROWSE_SUMMARY_ONLY_TERM}'`);
   });
