@@ -1755,6 +1755,13 @@ test('climbing to the root prunes the whole repository, box intact',
     await openBrowseIndex(page, '#/hg38/scores/conservation');
     await search(page, BROWSE_ID_ONLY_TERM);
 
+    /* Waited for, not assumed. Clicking straight after asking for a
+     * search would leave it to timing whether the reader climbs *while
+     * filtered* -- the scenario -- or climbs before the answer arrives,
+     * which is a different one that happens to end in the same place. */
+    await expect.poll(() => resourceNames(page))
+      .toEqual([BROWSE_ID_ONLY_RESOURCE_ID.split('/').pop()]);
+
     await breadcrumbLink(page, 'All resources').click();
 
     await expect.poll(() => hashOf(page)).toBe(`#/?q=${BROWSE_ID_ONLY_TERM}`);
@@ -1809,4 +1816,47 @@ test('the counts are re-derived at every step, not carried over',
      * describe the search that has just been cleared. */
     await expect.poll(() => folderCount(page, 'scores')).toBe(wholeSubtree);
     expect(hashOf(page)).toBe('#/hg38');
+
+    /* The guard the assertion above needs to keep meaning something. It
+     * compares against a reading rather than a literal, which is what
+     * keeps it honest as the fixture grows -- but a fixture that ever
+     * narrowed to a single resource under `hg38` would make the whole
+     * count and the matched count the same string, and a listing left
+     * stale on the search would satisfy it. */
+    expect(wholeSubtree).not.toBe('(1)');
+  });
+
+test('the toggle applies a standing term to the folder it restores',
+  async ({ page }) => {
+    await openBrowseIndex(page, '#/hg38/scores');
+
+    /* What the folder holds with nothing filtered. The resource is the
+     * half that matters: `scores` keeps its one child folder under this
+     * term either way, so a listing that ignored the search would give
+     * itself away by the resource beside it rather than by the folder. */
+    expect(await folderNames(page)).toEqual(['conservation']);
+    const wholeResources = await resourceNames(page);
+    expect(wholeResources).not.toEqual([]);
+
+    await page.locator('#table-view-btn').click();
+    await search(page, BROWSE_ID_ONLY_TERM);
+    await page.locator('#hierarchical-view-btn').click();
+
+    /* Back to the folder the reader left, not to the root -- the toggle
+     * carries the folder showing at the time it is clicked, and the visit
+     * to the table does not disturb it. */
+    await expect.poll(() => hashOf(page))
+      .toBe(`#/hg38/scores?q=${BROWSE_ID_ONLY_TERM}`);
+    expect(await breadcrumbTrail(page)).toContain('scores');
+
+    /* And pruned *there*. This is the case the tree can get wrong in a
+     * way that shows: the term was typed while the tree was not on
+     * screen, so a build that applied searches only to the view that was
+     * showing would restore the folder exactly as it was left --
+     * listing a resource the box says was filtered out, with the term
+     * still in the box to contradict it. */
+    await expect.poll(() => resourceNames(page)).toEqual([]);
+    expect(await folderNames(page)).toEqual(['conservation']);
+    await expect(page.locator('#search-field'))
+      .toHaveValue(BROWSE_ID_ONLY_TERM);
   });
