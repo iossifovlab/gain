@@ -47,6 +47,12 @@ class NumberHistogramConfig:
     plot_function: str | None = None
 
     def has_view_range(self) -> bool:
+        """Whether both ends of the view range are pinned.
+
+        A histogram can only be built once its bin edges are known, so a
+        config whose range is half-open still needs the score's min/max
+        before it can be used.
+        """
         return self.view_range[0] is not None and \
             self.view_range[1] is not None
 
@@ -152,6 +158,13 @@ class CategoricalHistogramConfig:
 
     @staticmethod
     def default_config() -> CategoricalHistogramConfig:
+        """The config used when a score declares no ``histogram`` block.
+
+        Type enforcement is off in the default: a score that was never
+        configured as categorical may still carry mixed value types, and
+        refusing those would turn an unconfigured score into a build
+        failure rather than a histogram.
+        """
         return CategoricalHistogramConfig(enforce_type=False)
 
     @staticmethod
@@ -202,6 +215,7 @@ class NullHistogramConfig:
     reason: str
 
     def to_dict(self) -> dict[str, Any]:
+        """Render this config as the mapping ``from_dict`` reads back."""
         return {
             "type": "null",
             "reason": self.reason,
@@ -209,6 +223,13 @@ class NullHistogramConfig:
 
     @staticmethod
     def default_config() -> NullHistogramConfig:
+        """A null config for a caller with no reason of its own to give.
+
+        ``reason`` is required rather than optional, so that every null
+        histogram on a summary page can say why it is null; this is the
+        placeholder for the few call sites that genuinely have nothing to
+        add.
+        """
         return NullHistogramConfig("Unspecified reason")
 
     @staticmethod
@@ -307,9 +328,20 @@ class NumberHistogram(Statistic):
             )
 
     def view_min(self) -> float:
+        """The low edge of the first bin.
+
+        This is the histogram's *view* range, not the score's observed
+        minimum: values below it are counted in ``out_of_range_bins``
+        rather than binned.
+        """
         return self.view_range[0]
 
     def view_max(self) -> float:
+        """The high edge of the last bin.
+
+        The counterpart of :meth:`view_min`; values above it are counted
+        as out of range.
+        """
         return self.view_range[1]
 
     def merge(self, other: Statistic) -> None:
@@ -336,6 +368,12 @@ class NumberHistogram(Statistic):
             self.max_value = max(self.max_value, other.max_value)
 
     def values_domain(self) -> str:
+        """The observed value range, rendered for the summary page.
+
+        Unlike :meth:`view_min` / :meth:`view_max` this reports the values
+        actually seen, so a score whose configured view range is wider than
+        its data still shows the narrower true extent.
+        """
         return f"[{self.min_value:0.3g}, {self.max_value:0.3g}]"
 
     def add_value(self, value: float | None, count: int = 1) -> None:
@@ -482,6 +520,11 @@ class NumberHistogram(Statistic):
         return min(index, self.config.number_of_bins - 1)
 
     def to_dict(self) -> dict[str, Any]:
+        """Render this histogram as the mapping :meth:`from_dict` reads back.
+
+        Bin edges and bar counts are carried as plain lists rather than
+        arrays, so the result is JSON-serialisable as it stands.
+        """
         return {
             "config": self.config.to_dict(),
             "bins": self.bins.tolist(),
@@ -492,6 +535,7 @@ class NumberHistogram(Statistic):
         }
 
     def serialize(self) -> str:
+        """Render this histogram as the JSON stored in the resource."""
         return json.dumps(self.to_dict(), indent=2)
 
     def plot(
@@ -575,6 +619,7 @@ class NumberHistogram(Statistic):
 
     @staticmethod
     def deserialize(content: str) -> NumberHistogram:
+        """Rebuild a number histogram from :meth:`serialize` output."""
         data = json.loads(content)
         return NumberHistogram.from_dict(data)
 
@@ -607,13 +652,29 @@ class NullHistogram(Statistic):
     def add_value(
         self, value: Any, count: int = 1,  # ruff: ignore[unused-method-argument]
     ) -> None:
+        """Discard the value.
+
+        A null histogram counts nothing by design, so that a statistics
+        build can feed every score the same way without first asking
+        whether this one has a histogram.
+        """
         # pylint: disable=unused-argument
         return
 
     def merge(self, other: Any) -> None:  # ruff: ignore[unused-method-argument]
+        """Do nothing: there are no counts to fold together.
+
+        Merging is a no-op rather than an error so that a parallel build
+        can reduce its partial results uniformly, null histograms included.
+        """
         return
 
     def to_dict(self) -> dict[str, Any]:
+        """Render this histogram as the mapping :meth:`from_dict` reads back.
+
+        Only the config survives a round trip, because the reason is the
+        whole of a null histogram's content.
+        """
         return {
             "config": {
                 "type": "null",
@@ -622,13 +683,21 @@ class NullHistogram(Statistic):
         }
 
     def values_domain(self) -> str:
+        """Report that there is no domain, in the other kinds' place."""
         return "NO DOMAIN"
 
     # pylint: disable=unused-argument
     def plot(self, _outfile: IO, _score_id: str) -> None:
+        """Draw nothing, leaving ``outfile`` untouched.
+
+        The summary page renders :attr:`reason` in place of the image; see
+        the template gate, which is what keeps a skipped image from
+        dangling.
+        """
         return
 
     def serialize(self) -> str:
+        """Render this histogram as the JSON stored in the resource."""
         return json.dumps(self.to_dict(), indent=2)
 
     @staticmethod
@@ -645,6 +714,7 @@ class NullHistogram(Statistic):
 
     @staticmethod
     def deserialize(content: str) -> NullHistogram:
+        """Rebuild a null histogram from :meth:`serialize` output."""
         data = json.loads(content)
         return NullHistogram.from_dict(data)
 
@@ -782,6 +852,13 @@ class CategoricalHistogram(Statistic):
 
     @property
     def raw_values(self) -> dict[str | int, int]:
+        """Every counted value with its count, untruncated and unordered.
+
+        This is the histogram's full content, as distinct from
+        :attr:`display_values`, which is the ordered subset the summary
+        page draws.  A custom ``plot_function`` receives the histogram
+        itself and so can read either.
+        """
         return dict(self._counter)
 
     @property
@@ -874,12 +951,18 @@ class CategoricalHistogram(Statistic):
         return domain
 
     def to_dict(self) -> dict[str, Any]:
+        """Render this histogram as the mapping :meth:`from_dict` reads back.
+
+        Carries *every* counted value, not the displayed subset; the
+        truncated companion form is :meth:`serialize_truncated`.
+        """
         return {
             "config": self.config.to_dict(),
             "values": dict(self._counter),
         }
 
     def serialize(self) -> str:
+        """Render the full histogram as the JSON stored in the resource."""
         return json.dumps(self.to_dict(), indent=2)
 
     def serialize_truncated(self) -> str:
@@ -923,6 +1006,12 @@ class CategoricalHistogram(Statistic):
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> CategoricalHistogram:
+        """Build a categorical histogram from a dict.
+
+        Reads both forms :meth:`to_dict` and :meth:`serialize_truncated`
+        produce: the truncation flag and the two totals are absent from a
+        full histogram and default accordingly.
+        """
         config = CategoricalHistogramConfig.from_dict(data["config"])
         return CategoricalHistogram(
             config,
@@ -934,6 +1023,7 @@ class CategoricalHistogram(Statistic):
 
     @staticmethod
     def deserialize(content: str) -> CategoricalHistogram:
+        """Rebuild a categorical histogram from :meth:`serialize` output."""
         data = json.loads(content)
         return CategoricalHistogram.from_dict(data)
 

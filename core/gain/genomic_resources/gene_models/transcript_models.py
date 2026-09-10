@@ -552,12 +552,22 @@ class TranscriptModel:
         return regions
 
     def total_len(self) -> int:
+        """The spliced length of the transcript, in base pairs.
+
+        The sum of the exon lengths -- NOT the genomic span ``tx``, which
+        includes the introns between them.
+        """
         length = 0
         for reg in self.exons:
             length += reg.stop - reg.start + 1
         return length
 
     def cds_len(self) -> int:
+        """The coding length of the transcript, in base pairs.
+
+        The sum of :meth:`cds_regions`, so it counts coding sequence only
+        and is 0 for a non-coding transcript.
+        """
         regions = self.cds_regions()
         length = 0
         for reg in regions:
@@ -565,6 +575,12 @@ class TranscriptModel:
         return length
 
     def utr3_len(self) -> int:
+        """The length of the 3' untranslated region, in base pairs.
+
+        The sum of :meth:`utr3_regions`.  "3'" is relative to the
+        transcript's own orientation, so on a ``-`` strand transcript this
+        is the lower-coordinate end.
+        """
         utr3 = self.utr3_regions()
         length = 0
         for reg in utr3:
@@ -573,6 +589,12 @@ class TranscriptModel:
         return length
 
     def utr5_len(self) -> int:
+        """The length of the 5' untranslated region, in base pairs.
+
+        The sum of :meth:`utr5_regions`.  "5'" is relative to the
+        transcript's own orientation, so on a ``-`` strand transcript this
+        is the higher-coordinate end.
+        """
         utr5 = self.utr5_regions()
         length = 0
         for reg in utr5:
