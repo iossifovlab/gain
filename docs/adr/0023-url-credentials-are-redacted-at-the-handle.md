@@ -8,7 +8,8 @@
 [#1058](https://github.com/iossifovlab/gain/issues/1058),
 [#1078](https://github.com/iossifovlab/gain/issues/1078),
 [#1106](https://github.com/iossifovlab/gain/issues/1106),
-[#1314](https://github.com/iossifovlab/gain/issues/1314)
+[#1314](https://github.com/iossifovlab/gain/issues/1314),
+[#1333](https://github.com/iossifovlab/gain/issues/1333)
 
 ## Context
 
@@ -269,7 +270,8 @@ of its own — its `[urlOpen]` line goes to fd 2 through its own `fprintf`. Its
 exception, unlike pysam's, carries no url and is a `RuntimeError`, which is
 not in `RESOURCE_ERRORS` and so never reaches the ERROR log. So its remaining
 leak is stderr-only and strictly less severe, and closing it needs an
-fd-level capture with no precedent in this tree. Split as gain#1333. The
+fd-level capture with no precedent in this tree. Split as gain#1333, and
+closed there by the amendment below. The
 redaction wrapper is still applied there, because "the message is clean" is a
 property of that library's current wording rather than a guarantee, and it
 costs nothing: a message with no userinfo is propagated untouched.
@@ -288,6 +290,11 @@ would not strip those parameters even if there were. A failing s3 open can
 therefore still put a time-limited signature into the ERROR log. Closing that
 needs a second notion of what a credential in a url looks like, not a wider
 application of this one. Tracked as gain#1339.
+
+(*The gain#1333 amendment defines that second notion and applies it on the
+bigwig path only — the paragraph above still describes the three pysam opens
+exactly. Note also that `X-Amz-Credential`/`X-Amz-Signature` names the SigV4
+spelling; the default s3fs produces is SigV2.*)
 
 **The guard is scoped to the open, and the returned object is not.** The
 pysam object keeps the credential-bearing url — `TabixFile.filename` returns
@@ -321,7 +328,104 @@ call).
 
 What the third case adds is that wrapping the call is not sufficient by
 itself, because the library also owns diagnostic channels GAIn does not
-raise: htslib's stderr is silenced, pyBigWig's is not (gain#1333), and the
-returned handle's later I/O is neither (above). So a new url-taking backend
-must be checked channel by channel, and this ADR is where the answer for each
-is recorded — the coverage claim lives in that list, not in the rule.
+raise: htslib's stderr is silenced, libBigWig's is silenced by a different
+mechanism (the gain#1333 amendment), and the returned handle's later I/O is
+neither (above). So a new url-taking backend must be checked channel by
+channel, and this ADR is where the answer for each is recorded — the coverage
+claim lives in that list, not in the rule.
+
+## Amendment — gain#1333: the descriptor, and a second shape of credential
+
+**Date:** 2026-09-10
+
+The gain#1314 amendment closed `open_bigwig_file`'s exception channel and
+left its stderr channel open, on the reasoning that the remedy had no
+precedent here. This closes it, and in doing so has to answer a question the
+htslib half never faced: *what counts as a credential in a url.*
+
+**The descriptor, because nothing above it works.** libBigWig writes with its
+own `fprintf` from C, so it holds fd 2 directly. Rebinding `sys.stderr` or
+using `contextlib.redirect_stderr` swaps a Python object the C code never
+consults: they suppress nothing while appearing to work, which makes a test
+written against either of them pass identically on unfixed code. So
+`_open_libbigwig_file` points fd 2 at the null device for the duration of the
+open and restores it in a `finally`. It is the first fd-level suppression in
+this tree.
+
+It is a separate function from `_open_htslib_file` because *neither* half of
+that one transfers. The redaction has nothing to act on — pyBigWig's
+exception carries no url — and `pysam.set_verbosity` is htslib's knob, which
+reaches another library not at all. Sharing the name would suggest a
+generality that does not exist.
+
+**The gate is wider than the htslib one, deliberately.**
+`_url_carries_credential` is userinfo **or a query string**, where
+`_open_htslib_file` tests userinfo alone. The query string is what an s3
+GRR's presigned url carries, and both alternatives to testing it are wrong:
+
+- **A parameter-name list is wrong.** s3fs signs with **SigV2** unless told
+  otherwise — `AWSAccessKeyId`, `Signature`, `Expires` — and yields the
+  `X-Amz-*` set only under an explicit `signature_version` of `s3v4`, which
+  GAIn does not pass. A gate keyed on `X-Amz-*` names would therefore miss
+  the shape GAIn produces by default. Measured against live MinIO with
+  `s3fs==2026.3.0`.
+- **The scheme is wrong the other way.** `sign()` on an anonymous filesystem
+  answers a **bare** url, with no query string and no credential in it. A
+  "suppress whenever the scheme is s3" gate would spend that GRR's
+  diagnostics for nothing.
+
+The cost of testing the query string whole is that an http GRR whose base url
+legitimately carried one would be read as credentialed and lose its libBigWig
+diagnostics. Accepted: it costs detail, never correctness, and no GRR in this
+tree is shaped that way.
+
+**This does not close gain#1339, and must not be made to.** The wider notion
+of "credential" is applied *only* on this path. The three pysam opens still
+gate on userinfo alone, so a failing s3 open still puts a time-limited
+signature into the ERROR log through them — the more severe channel of the
+two, since the bigwig leak was never more than stderr.
+
+Handing `_url_carries_credential` to `_open_htslib_file` as well would look
+like finishing the job and would in fact make things worse. gain#1339 is two
+separable pieces: this predicate, and a *redactor* that can strip a
+query-string signature out of a message where pysam and htslib delimit the
+embedded url differently. Widening only the gate would silence htslib's
+diagnostics for every failing s3 open while leaving the exception text — the
+part that reaches the log at ERROR — still carrying the signature. That
+trades away the diagnosis and buys nothing. The predicate is deliberately
+left as a module-level function so gain#1339 can reuse it once it has the
+redactor to go with it.
+
+**The bargain is gain#1314's; the caveat is NOT.** The suppression is spent
+only where it buys something, so an uncredentialed url — every deployment
+today — keeps libBigWig's account of why the open failed. That half carries
+over unchanged.
+
+The concurrency caveat does not, and the difference is why this suppression
+needs a lock where the verbosity bracket does not have one. Both touch
+process-global state, but the consequences are not comparable: a lost
+verbosity restore strands htslib at "silent" and costs detail, while a lost
+fd 2 restore leaves the process writing every subsequent log line, traceback
+and library diagnostic into the null device, permanently, with nothing raised
+to say so. Two overlapping suppressions do exactly that — the second thread
+saves the first one's null device as its "previous" fd 2 and restores *that*.
+
+And it is reachable. The claim that no bigwig open is driven from a thread
+pool is true only of `core`: `web_api`'s pipeline cache loads pipelines on a
+`ThreadedTaskExecutor` (8 loaders by default, alongside 16 annotation workers
+under its gunicorn settings), and opening a pipeline opens the bigwig tables
+in it. So `_STDERR_SUPPRESSION_LOCK` serialises the save/redirect/restore
+sequence. The cost is that concurrent credentialed bigwig opens serialise;
+accepted, because it is the open rather than the read, so it is not the
+score-scan hot path this ADR keeps wrappers out of.
+
+Serialising buys correctness, not isolation: while one thread has fd 2
+pointed at the null device, another thread's stderr goes there too. That is
+inherent to a process-global descriptor, and it is the reason the suppression
+is scoped to a single library call on a credential-bearing url rather than to
+anything wider.
+
+Failures on **reads** through an already-open bigwig handle are out of scope
+here, as the pysam equivalent is above, and for a weaker reason: unlike the
+htslib read path, libBigWig's was not measured. If it names urls too, that is
+a new finding rather than a widening of this one.

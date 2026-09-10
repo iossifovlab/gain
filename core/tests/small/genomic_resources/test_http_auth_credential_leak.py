@@ -1,11 +1,16 @@
 # pylint: disable=C0114,C0116,W0212
 import dataclasses
+import errno
 import gzip
 import hashlib
 import io
+import itertools
 import logging
+import os
 import pathlib
 import textwrap
+import threading
+import time
 import traceback
 import typing
 import unittest.mock
@@ -40,6 +45,7 @@ from gain.genomic_resources.repository_factory import (
 )
 from gain.genomic_resources.testing import (
     build_faulty_test_protocol,
+    build_filesystem_test_protocol,
     setup_directories,
     setup_genome_bgz,
 )
@@ -1770,6 +1776,11 @@ _TABIX_FILE_NAME = "data.txt.gz"
 _VCF_FILE_NAME = "data.vcf.gz"
 _BIGWIG_FILE_NAME = "data.bw"
 
+#: The bearer half of a presigned url. Distinct from ``_SECRET`` because it
+#: leaks through a different door: an s3 GRR has no userinfo at all, and
+#: carries its credential in the query string instead.
+_SIGNATURE = "Ns1gNaTuReDoNoTlOg%3D"
+
 
 def _a_refused_protocol(
     proto_id: str, *, authed: bool = True,
@@ -1979,9 +1990,11 @@ def test_bigwig_open_failure_does_not_leak_url_credential(
     # from carrying the credential out. The message is planted for that
     # reason, not to mimic today's text.
     #
-    # The channel that does leak today is stderr: libBigWig writes the url
-    # with its own ``fprintf``, which ``pysam.set_verbosity`` cannot reach, so
-    # this method closes the exception half only. That remainder is gain#1333.
+    # The channel that did leak was stderr: libBigWig writes the url with its
+    # own ``fprintf``, which ``pysam.set_verbosity`` cannot reach. That half
+    # was gain#1333, and it is closed below by taking fd 2 away rather than by
+    # anything this test can see -- the two are independent, which is why both
+    # are pinned.
     proto, resource = _a_refused_protocol("i1314-bw")
     file_url = proto.get_resource_file_url(resource, _BIGWIG_FILE_NAME)
     mocker.patch.object(
@@ -2009,6 +2022,269 @@ def test_bigwig_open_still_hands_pybigwig_the_credential(
     proto.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
 
     assert _SECRET in opened.call_args.args[0]
+
+
+def test_bigwig_open_failure_does_not_leak_url_credential_to_stderr(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # libBigWig writes the url it was handed to fd 2 through its own
+    # ``fprintf``. ``pysam.set_verbosity`` is htslib's knob and does not
+    # reach another library, and replacing ``sys.stderr`` does not either --
+    # the writer holds the descriptor directly. This is the channel gain#1333
+    # closes; the exception half was already clean.
+    proto, resource = _a_refused_protocol("i1333-bw")
+
+    with pytest.raises(RuntimeError):
+        proto.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
+
+    assert _SECRET not in capfd.readouterr().err
+
+
+def test_bigwig_open_failure_does_not_leak_a_presigned_signature(
+    capfd: pytest.CaptureFixture[str], mocker: pytest_mock.MockerFixture,
+) -> None:
+    # An s3 GRR carries its credential in the QUERY STRING rather than in
+    # userinfo -- ``_get_file_url`` presigns for that scheme -- so the gate
+    # cannot be the userinfo predicate alone. Nor can it be the scheme:
+    # ``sign()`` on an anonymous filesystem returns a bare url with nothing to
+    # protect. Nor a list of ``X-Amz-*`` parameter names: s3fs defaults to
+    # SigV2, spelled ``AWSAccessKeyId``/``Signature``/``Expires``, so a name
+    # list would miss the shape GAIn produces by default. The presence of a
+    # query string is what is accurate for both signature versions.
+    proto, resource = _a_refused_protocol("i1333-bw-signed", authed=False)
+    mocker.patch.object(
+        proto, "_get_file_url",
+        return_value=(
+            f"https://127.0.0.1:1/path/sub/res(1.0)/{_BIGWIG_FILE_NAME}"
+            f"?AWSAccessKeyId=AKIAEXAMPLE&Signature={_SIGNATURE}"
+            "&Expires=1789000000"))
+
+    with pytest.raises(RuntimeError):
+        proto.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
+
+    assert _SIGNATURE not in capfd.readouterr().err
+
+
+def test_bigwig_open_without_a_credential_keeps_libbigwig_diagnostics(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # Taking fd 2 away costs libBigWig's account of why the open failed, so
+    # it is spent only on the urls that need protecting. An unauthed GRR --
+    # every deployment today -- has no credential to lose and keeps the
+    # diagnosis. This is also what keeps the assertions above honest: without
+    # it they would pass just as well for a suppression that never lifts.
+    proto, resource = _a_refused_protocol("i1333-bw-plain", authed=False)
+
+    with pytest.raises(RuntimeError):
+        proto.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
+
+    assert (
+        "[urlOpen] Couldn't open "
+        f"https://127.0.0.1:1/path/sub/res(1.0)/{_BIGWIG_FILE_NAME} "
+        "for reading"
+    ) in capfd.readouterr().err
+
+
+def test_bigwig_open_on_an_anonymous_s3_url_keeps_libbigwig_diagnostics(
+    capfd: pytest.CaptureFixture[str], mocker: pytest_mock.MockerFixture,
+) -> None:
+    # ``sign()`` on an anonymous s3 filesystem returns a BARE url -- no query
+    # string, nothing to protect. Pinned because the tempting simplification
+    # of the gate, "suppress whenever the scheme is s3", silences exactly
+    # this case for no benefit.
+    proto, resource = _a_refused_protocol("i1333-bw-anon-s3", authed=False)
+    bare_url = f"https://bucket.example.invalid/sub/res(1.0)/{_BIGWIG_FILE_NAME}"
+    mocker.patch.object(proto, "_get_file_url", return_value=bare_url)
+
+    with pytest.raises(RuntimeError):
+        proto.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
+
+    assert f"[urlOpen] Couldn't open {bare_url} for reading" in (
+        capfd.readouterr().err)
+
+
+def test_bigwig_open_on_a_file_scheme_path_keeps_libbigwig_diagnostics(
+    tmp_path: pathlib.Path, capfd: pytest.CaptureFixture[str],
+) -> None:
+    # A local GRR takes a DIFFERENT ``_get_file_url`` branch from the two
+    # controls above -- the url is reduced to a bare filesystem path -- and
+    # one that can carry no credential at all, whatever the base looks like.
+    proto = build_filesystem_test_protocol(tmp_path)
+    resource = GenomicResource("sub/res", (1, 0), proto, {})
+
+    with pytest.raises(RuntimeError):
+        proto.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
+
+    captured = capfd.readouterr().err
+    assert "[urlOpen] Couldn't open " in captured
+    assert _BIGWIG_FILE_NAME in captured
+
+
+def test_bigwig_open_survives_a_closed_stderr(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # With fd 2 closed there is nothing to suppress and nothing to put back,
+    # so the open runs unsuppressed. A read that worked before this guard
+    # existed must not start raising because of it -- the guard exists to
+    # withhold a diagnostic, never to refuse the open.
+    proto, resource = _a_refused_protocol("i1333-bw-no-stderr")
+    mocker.patch.object(
+        os, "dup", side_effect=OSError(errno.EBADF, "Bad file descriptor"))
+
+    with pytest.raises(RuntimeError) as excinfo:
+        proto.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
+
+    assert str(excinfo.value) == "Received an error during file opening!"
+
+
+def test_bigwig_open_failure_still_reports_the_failure(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # Silencing the descriptor must not swallow the failure itself. The
+    # caller still learns the open failed, through an exception that names no
+    # url -- which is why the exception half needed no fixing.
+    proto, resource = _a_refused_protocol("i1333-bw-raises")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        proto.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
+
+    assert str(excinfo.value) == "Received an error during file opening!"
+    _assert_no_credential_escaped(excinfo.value)
+    assert _SECRET not in capfd.readouterr().err
+
+
+def test_failed_authed_bigwig_open_does_not_silence_the_next_one(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # fd 2 is PROCESS-global, so a suppression that does not lift turns one
+    # authed open into permanent silence for everything that writes to stderr
+    # afterwards -- far worse than the leak it closes. Asserted on that
+    # consequence rather than on the ``dup2`` calls, so it stays true if the
+    # mechanism changes. The failing path is the one that matters: a failed
+    # open is exactly when libBigWig writes.
+    authed, authed_res = _a_refused_protocol("i1333-restore-fail")
+    plain, plain_res = _a_refused_protocol(
+        "i1333-restore-fail-plain", authed=False)
+
+    with pytest.raises(RuntimeError):
+        authed.open_bigwig_file(authed_res, _BIGWIG_FILE_NAME)
+    capfd.readouterr()
+
+    with pytest.raises(RuntimeError):
+        plain.open_bigwig_file(plain_res, _BIGWIG_FILE_NAME)
+
+    assert "[urlOpen]" in capfd.readouterr().err
+
+
+def test_successful_authed_bigwig_open_does_not_silence_the_next_one(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # The same guarantee on the path that does not raise: restoring only
+    # where the open failed would leave every successful authed read
+    # swallowing stderr for good.
+    authed, authed_res = _a_refused_protocol("i1333-restore-ok")
+    plain, plain_res = _a_refused_protocol(
+        "i1333-restore-ok-plain", authed=False)
+
+    with unittest.mock.patch.object(pyBigWig, "open"):
+        authed.open_bigwig_file(authed_res, _BIGWIG_FILE_NAME)
+    capfd.readouterr()
+
+    with pytest.raises(RuntimeError):
+        plain.open_bigwig_file(plain_res, _BIGWIG_FILE_NAME)
+
+    assert "[urlOpen]" in capfd.readouterr().err
+
+
+def test_concurrent_authed_bigwig_opens_do_not_strand_stderr(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Overlapping suppressions must not leave the process without stderr.
+
+    fd 2 is PROCESS-global, and bigwig opens ARE driven from a thread pool:
+    ``web_api``'s pipeline cache loads pipelines on a ``ThreadedTaskExecutor``
+    (8 loaders by default, and its gunicorn settings run 16 annotation
+    workers), and opening a pipeline opens the bigwig tables in it.
+
+    Two suppressions that overlap strand the descriptor. The second thread
+    saves the FIRST thread's null device as its "previous" fd 2 and restores
+    *that* on the way out, so the process is left with no stderr at all for
+    the rest of its life -- every log line and every traceback written to it
+    silently discarded, and nothing raised to say so. A worse outcome than
+    the credential leak the suppression exists to close.
+
+    The interleaving is FORCED rather than raced for. Thread two is started
+    only once thread one is known to be inside the window, and thread one is
+    held there until thread two has entered it too -- so thread two saves the
+    null device, and sleeps long enough on the way out to restore it last.
+    Left to chance this reproduces only sometimes: whether fd 2 ends up
+    stranded depends on which thread happens to restore last, so the same
+    test passed and then failed on consecutive runs before it was pinned this
+    way.
+
+    Thread one's wait is bounded because on CORRECT code thread two never
+    enters the window at all -- it blocks on the lock, which is the fix --
+    so the wait must end by itself rather than deadlock. It is kept short by
+    waiting for thread two to REACH the open first: once that is known, the
+    only remaining gap is the microseconds thread two would need to get
+    inside were it not blocked, so the bound covers scheduling jitter rather
+    than thread start-up. Waiting for entry directly would have to cover both
+    and would be paid in full on every green run.
+    """
+    authed, resource = _a_refused_protocol("i1333-bw-threads")
+    first_inside = threading.Event()
+    second_started = threading.Event()
+    second_inside = threading.Event()
+    counter = itertools.count()
+
+    def fake_open(*_args: typing.Any, **_kwargs: typing.Any) -> None:
+        if next(counter) == 0:
+            first_inside.set()
+            assert second_started.wait(timeout=10.0), "second thread stalled"
+            second_inside.wait(timeout=0.25)
+        else:
+            second_inside.set()
+            # Outlast the first thread's restore, so this one -- holding the
+            # null device as its "previous" -- is the one that restores last.
+            time.sleep(0.1)
+
+    # Restored unconditionally: a REGRESSION here strands fd 2, which would
+    # otherwise take the rest of the suite's stderr down with it and report as
+    # a cascade of unrelated failures somewhere else entirely.
+    saved_stderr = os.dup(2)
+    try:
+        def work(*, second: bool = False) -> None:
+            if second:
+                # Set BEFORE the call, so the wait above covers only the gap
+                # between reaching the open and being inside it.
+                second_started.set()
+            authed.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
+
+        # The real ``pyBigWig.open`` is restored before the probe below,
+        # which needs libBigWig to actually write.
+        with unittest.mock.patch.object(
+                pyBigWig, "open", side_effect=fake_open):
+            first = threading.Thread(target=work, daemon=True)
+            first.start()
+            assert first_inside.wait(timeout=5.0), "first thread never opened"
+            second = threading.Thread(
+                target=work, kwargs={"second": True}, daemon=True)
+            second.start()
+            first.join(timeout=30.0)
+            second.join(timeout=30.0)
+            assert not first.is_alive()
+            assert not second.is_alive()
+        capfd.readouterr()
+
+        plain, plain_res = _a_refused_protocol(
+            "i1333-bw-threads-plain", authed=False)
+        with pytest.raises(RuntimeError):
+            plain.open_bigwig_file(plain_res, _BIGWIG_FILE_NAME)
+
+        assert "[urlOpen]" in capfd.readouterr().err
+    finally:
+        os.dup2(saved_stderr, 2)
+        os.close(saved_stderr)
 
 
 def test_fasta_open_failure_does_not_leak_url_credential(
