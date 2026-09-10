@@ -89,6 +89,7 @@ of one decision will drift.
 | [0025](0025-binning-tool-writes-one-hdf5-matrix-from-a-fixed-grid.md) | `binning_tool` writes one HDF5 matrix from a fixed grid, and a query is always a search | accepted |
 | [0026](0026-annotation-output-spells-a-flag-yes-no.md) | Annotation output spells a flag `yes`/`no`, in every sink | accepted |
 | [0027](0027-record-validation-is-a-registry-in-the-statistics-package.md) | Record validation is a registry in the statistics package | accepted |
+| [0028](0028-a-test-may-not-grow-the-heap-past-its-own-budget.md) | A test may not grow the heap past its own budget | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;
