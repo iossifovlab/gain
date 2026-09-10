@@ -54,25 +54,25 @@ def test_close_tears_down_cluster_gracefully(
 
 
 @pytest.mark.parametrize(
-    "tasks,expected_order", [
-        (  # 0: simple chain
+    "tasks", [
+        pytest.param(
             [
                 ("A", []),
                 ("B", ["A"]),
                 ("C", ["B"]),
             ],
-            [["A"], ["B"], ["C"]],
+            id="simple-chain",
         ),
-        (  # 1: diamond
+        pytest.param(
             [
                 ("A", []),
                 ("B", ["A"]),
                 ("C", ["A"]),
                 ("D", ["B", "C"]),
             ],
-            [["A"], ["B", "C"], ["D"]],
+            id="diamond",
         ),
-        (  # 2: wide graph
+        pytest.param(
             [
                 ("A", []),
                 ("B", []),
@@ -80,9 +80,9 @@ def test_close_tears_down_cluster_gracefully(
                 ("D", []),
                 ("E", ["A", "B", "C", "D"]),
             ],
-            [["A", "B", "C", "D"], ["E"]],
+            id="wide-graph",
         ),
-        (  # 3: complex graph
+        pytest.param(
             [
                 ("A", []),
                 ("B", ["A"]),
@@ -91,20 +91,20 @@ def test_close_tears_down_cluster_gracefully(
                 ("E", ["B", "C"]),
                 ("F", ["D", "E"]),
             ],
-            [["A"], ["B", "C"], ["D", "E"], ["F"]],
+            id="complex-graph",
         ),
-        (
-            [  # 4: multiple roots
+        pytest.param(
+            [
                 ("A", []),
                 ("B", []),
                 ("C", ["A"]),
                 ("D", ["B"]),
                 ("E", ["C", "D"]),
             ],
-            [["A", "B", "C", "D"], ["E"]],
+            id="multiple-roots",
         ),
-        (
-            [  # 5: multiple independent chains
+        pytest.param(
+            [
                 ("A1", []),
                 ("B1", ["A1"]),
                 ("C1", ["B1"]),
@@ -112,23 +112,42 @@ def test_close_tears_down_cluster_gracefully(
                 ("B2", ["A2"]),
                 ("C2", ["B2"]),
             ],
-            [["A1", "A2", "B1", "B2", "C1", "C2"]],
+            id="independent-chains",
         ),
-        (
-            [  # 6: simple graph with numeric ids
+        pytest.param(
+            [
                 ("3", []),
                 ("2", []),
                 ("1", ["2", "3"]),
             ],
-            [["2", "3"], ["1"]],
+            id="numeric-ids",
         ),
     ],
 )
-def test_dask_executor(
+def test_dask_executor_yields_a_topological_order(
     executor: TaskGraphExecutor,
     tasks: list[tuple[str, list[str]]],
-    expected_order: list[list[str]],
 ) -> None:
+    """Every task is delivered exactly once, and after its dependencies.
+
+    That is the whole of what an executor promises about ordering, and the
+    only thing worth asserting here. This used to pin each graph's tasks into
+    BFS layers instead -- as if ``execute()`` handed back one wavefront at a
+    time -- which is not true of any of the three executors and is flatly
+    false of the dask one: it yields in COMPLETION order, and
+    ``RunState.claim_for_gather`` takes whatever has completed so far, so a
+    single finished task can be delivered alone. Delivering it readies its
+    dependents, which are then submitted alongside the tasks the layering
+    imagined they came after.
+
+    Regression for iossifovlab/gain#1374, where the "complex-graph" case
+    (``D`` depends on ``B`` alone) went red on master after ``D`` completed
+    ahead of ``C`` -- a legal order the test called a failure. The same flake
+    had already been papered over once, in ``0a3ca4f345``, by flattening two
+    other cases' layers into a single group; a flat group pins nothing but
+    the set, so the topological check below is strictly stronger than what
+    those two cases asserted.
+    """
     graph = TaskGraph()
     for task_id, dep_ids in tasks:
         deps = [Task(dep_id) for dep_id in dep_ids]
@@ -137,13 +156,18 @@ def test_dask_executor(
     executed_tasks = list(executor.execute(graph))
     executed_task_ids: list[str] = [
         task.task_id for task, _ in executed_tasks]
-    index = 0
-    for expected_group in expected_order:
-        executed_group = set()
-        for _ in expected_group:
-            executed_group.add(executed_task_ids[index])
-            index += 1
-        assert set(expected_group) == executed_group
+
+    deps_by_id = dict(tasks)
+    assert sorted(executed_task_ids) == sorted(deps_by_id), (
+        "every task must be delivered exactly once")
+
+    completed: set[str] = set()
+    for task_id in executed_task_ids:
+        missing = set(deps_by_id[task_id]) - completed
+        assert not missing, (
+            f"{task_id} was delivered before its dependencies {sorted(missing)}"
+            f"; order was {executed_task_ids}")
+        completed.add(task_id)
 
 
 def slow_task() -> int:
