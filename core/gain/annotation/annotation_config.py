@@ -614,7 +614,7 @@ class AnnotationConfigParser:
     #: and kept honest by ``test_wildcard_annotator_map``, which pins
     #: every value against the annotator's own
     #: ``ACCEPTED_RESOURCE_TYPES[0]``. Why not derived:
-    #: ``docs/adr/0028-wildcard-expandability-is-parser-policy.md``.
+    #: ``docs/adr/0029-wildcard-expandability-is-parser-policy.md``.
     #:
     #: Canonical, not every accepted spelling: a fragment score has two,
     #: and either annotator name must find either of them, but which

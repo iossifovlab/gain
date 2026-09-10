@@ -90,7 +90,7 @@ of one decision will drift.
 | [0026](0026-annotation-output-spells-a-flag-yes-no.md) | Annotation output spells a flag `yes`/`no`, in every sink | accepted |
 | [0027](0027-record-validation-is-a-registry-in-the-statistics-package.md) | Record validation is a registry in the statistics package | accepted |
 | [0028](0028-a-test-may-not-grow-the-heap-past-its-own-budget.md) | A test may not grow the heap past its own budget | accepted |
-| [0028](0028-wildcard-expandability-is-parser-policy.md) | Wildcard expandability is parser policy, pinned against the annotators | accepted |
+| [0029](0029-wildcard-expandability-is-parser-policy.md) | Wildcard expandability is parser policy, pinned against the annotators | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;

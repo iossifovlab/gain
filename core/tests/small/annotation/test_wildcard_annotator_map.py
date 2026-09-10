@@ -7,7 +7,7 @@ accept, on ``ACCEPTED_RESOURCE_TYPES``.  Those are two statements of
 overlapping facts, and until now nothing checked that they agree.
 
 The list stays a list -- deriving it from the annotators was considered and
-rejected (``docs/adr/0028-wildcard-expandability-is-parser-policy.md``).
+rejected (``docs/adr/0029-wildcard-expandability-is-parser-policy.md``).
 What these tests add is the guard that makes keeping it tolerable: the
 agreement is pinned here rather than left to review.
 

@@ -1,4 +1,4 @@
-# 28. Wildcard expandability is parser policy, pinned against the annotators
+# 29. Wildcard expandability is parser policy, pinned against the annotators
 
 - **Status:** accepted
 - **Date:** 2026-09-10

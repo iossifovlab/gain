@@ -116,7 +116,7 @@ class AnnotatorBase(Annotator):
     #: shapes it took inside the annotators.  The wildcard map stays a
     #: separate statement on purpose -- whether a name expands a wildcard
     #: is the annotation layer's policy, not a property of the annotator
-    #: (``docs/adr/0028-wildcard-expandability-is-parser-policy.md``,
+    #: (``docs/adr/0029-wildcard-expandability-is-parser-policy.md``,
     #: gain#1334) -- and a test pins the two against each other.
     #:
     #: **The first element is the preferred spelling.**  A tuple rather
@@ -125,7 +125,7 @@ class AnnotatorBase(Annotator):
     #: is one: the order is rendered into the refusal, and
     #: ``AnnotationConfigParser.WILDCARD_RESOURCE_TYPES`` is pinned
     #: against element zero rather than against membership (why, in ADR
-    #: 0028).  So an annotator that comes to accept a further spelling
+    #: 0029).  So an annotator that comes to accept a further spelling
     #: APPENDS it.
     #:
     #: Two annotators accept two spellings; each warns from the
