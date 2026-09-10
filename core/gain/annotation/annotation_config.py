@@ -6,6 +6,7 @@ import math
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from textwrap import dedent
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, overload
 
 import yaml
@@ -25,9 +26,11 @@ from gain.genomic_resources.resource_query import (
     ResourceQueryParseError,
 )
 from gain.genomic_resources.resource_types import (
+    GENE_SCORE_TYPE,
     LEGACY_ANNOTATOR_NAMES,
     PREFERRED_ALLELE_SCORE_TYPE,
     PREFERRED_FRAGMENT_SCORE_TYPE,
+    PREFERRED_POSITION_SCORE_TYPE,
     RETIRED_ANNOTATOR_NAMES,
     retired_annotator_message,
 )
@@ -630,17 +633,21 @@ class AnnotationConfigParser:
     #: here: a wildcard resolves against every resource in the repository,
     #: so a warning would fire per candidate rather than per pipeline.
     #: ``FragmentScoreAnnotator.__init__`` owns that.
-    WILDCARD_RESOURCE_TYPES: ClassVar[dict[str, str]] = {
-        "position_score": "position_score",
-        "position_score_annotator": "position_score",
+    #:
+    #: Read-only, like its sibling below. It used to be rebuilt on every
+    #: call, so an in-place edit could not outlive one; as a class
+    #: attribute it would, process-wide.
+    WILDCARD_RESOURCE_TYPES: ClassVar[Mapping[str, str]] = MappingProxyType({
+        "position_score": PREFERRED_POSITION_SCORE_TYPE,
+        "position_score_annotator": PREFERRED_POSITION_SCORE_TYPE,
         "allele_score": PREFERRED_ALLELE_SCORE_TYPE,
         "allele_score_annotator": PREFERRED_ALLELE_SCORE_TYPE,
         "fragment_score": PREFERRED_FRAGMENT_SCORE_TYPE,
         "fragment_score_annotator": PREFERRED_FRAGMENT_SCORE_TYPE,
         "cnv_collection": PREFERRED_FRAGMENT_SCORE_TYPE,
         "cnv_collection_annotator": PREFERRED_FRAGMENT_SCORE_TYPE,
-        "gene_score_annotator": "gene_score",
-    }
+        "gene_score_annotator": GENE_SCORE_TYPE,
+    })
 
     #: The annotators that declare ``ACCEPTED_RESOURCE_TYPES`` and still
     #: take no wildcard.
@@ -650,10 +657,12 @@ class AnnotationConfigParser:
     #: mistake, and a pin that cannot tell the two apart catches neither.
     #:
     #: ``gene_set_annotator`` is here because the two spellings it accepts
-    #: are deliberately *not* an equivalence group (see
-    #: :data:`~gain.genomic_resources.resource_types.GENE_SET_TYPES`), so
-    #: a wildcard keyed on either one could only ever answer half of a
-    #: repository's gene sets. Whether that should change is gain#1365.
+    #: are not related by
+    #: :func:`~gain.genomic_resources.resource_types.equivalent_resource_types`
+    #: (see :data:`~gain.genomic_resources.resource_types.GENE_SET_TYPES`),
+    #: so a wildcard keyed on either one would answer only the gene sets
+    #: declaring that spelling. Whether search should relate them, and
+    #: this annotator then take a wildcard, is gain#1365.
     WILDCARD_EXEMPT_ANNOTATORS: ClassVar[frozenset[str]] = frozenset({
         "gene_set_annotator",
     })

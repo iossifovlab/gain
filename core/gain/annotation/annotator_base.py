@@ -124,11 +124,19 @@ class AnnotatorBase(Annotator):
     #: :data:`~gain.genomic_resources.resource_types.FRAGMENT_SCORE_TYPES`
     #: is one: the order is rendered into the refusal, and
     #: ``AnnotationConfigParser.WILDCARD_RESOURCE_TYPES`` is pinned
-    #: against element zero rather than against membership -- a wildcard
-    #: keyed on a deprecated spelling answers only the resources that
-    #: have not migrated, which is the miss gain#1266 closed.  So an
-    #: annotator that comes to accept a further spelling appends it;
-    #: leading with it would silently change what a wildcard selects.
+    #: against element zero rather than against membership.  So an
+    #: annotator that comes to accept a further spelling APPENDS it.
+    #:
+    #: Element zero rather than membership because
+    #: :func:`~gain.genomic_resources.resource_types.equivalent_resource_types`
+    #: relates a narrower set of spellings than the annotators accept.
+    #: Search expands either fragment-score spelling into both, so for
+    #: that pair the two rules agree; it does not relate
+    #: :data:`~gain.genomic_resources.resource_types.GENE_SET_TYPES`, and
+    #: for a pair like that a map entry naming the non-preferred spelling
+    #: would answer only the resources declaring it.  Membership would
+    #: pass exactly that entry.
+    #:
     #: Two annotators accept two spellings; each warns from the
     #: constructor that opens the resource, which still runs after this
     #: check passes the spelling through.

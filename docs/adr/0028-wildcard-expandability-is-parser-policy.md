@@ -19,9 +19,9 @@ A pipeline may write a wildcard in place of an annotator's `resource_id`:
 `AnnotationConfigParser.query_resources` answers it. Since
 [gain#1266](https://github.com/iossifovlab/gain/issues/1266) it does so through
 a map from the annotator name a user may type to the **one** canonical resource
-type that name's wildcard selects — nine entries, covering the four score
-annotators under both their spellings, plus the deprecated `cnv_collection`
-pair.
+type that name's wildcard selects — nine entries: the position, allele and
+fragment score annotators under both their spellings, `gene_score_annotator`
+(which has only the one), and the deprecated `cnv_collection` pair.
 
 gain#1329 then gave every annotator that consumes a typed genomic resource a
 class-level `ACCEPTED_RESOURCE_TYPES`, so that a wrong-type refusal reads the
@@ -40,14 +40,17 @@ annotator.** The map stays a list `AnnotationConfigParser` owns. It is not
 derived from the entry points, from the annotator classes, or from anything the
 annotators declare.
 
-The map's own docstring already called it "the annotation layer's policy", and
-the annotators bear it out: `gene_set_annotator` declares
-`ACCEPTED_RESOURCE_TYPES` and is deliberately **not** wildcard-expandable,
-because the two spellings it accepts are not an equivalence group (see
-`GENE_SET_TYPES`) — so a wildcard keyed on either would answer only half of a
-repository's gene sets. A derived map cannot express that without a second
-declaration saying "…but not for wildcards", at which point the policy is being
-declared anyway, just further from the parser that applies it.
+`query_resources`' own docstring already called this "the annotation layer's
+policy about the result", and the annotators bear it out: `gene_set_annotator`
+declares `ACCEPTED_RESOURCE_TYPES` and takes no wildcard. The two spellings it
+accepts are not related by `equivalent_resource_types` — `GENE_SET_TYPES`
+records that this "is the behaviour as it stands, not a considered position",
+and gain#1365 is open on it — so as things are, a wildcard keyed on either
+spelling would answer only the gene sets declaring that one. A derived map
+cannot express an annotator that declares a type and still takes no wildcard,
+without a second declaration saying "…but not for wildcards" — at which point
+the policy is being declared anyway, just further from the parser that applies
+it.
 
 **2. The cost objection gain#1334 raised is wrong, and is not the reason.**
 gain#1334 argued that deriving would mean "importing every annotator module to
@@ -100,10 +103,19 @@ is rendered into; this promotes it to a stated contract and gives the pin
 something exact to compare against. An annotator that comes to accept a further
 spelling **appends** it.
 
-Equality against element zero, not membership: membership would pass a map
-entry pointing at `cnv_collection`, and a wildcard keyed on the deprecated
-spelling answers only the resources that have not migrated — which is precisely
-the silent miss gain#1266 closed.
+Equality against element zero, not membership. For the fragment score's pair
+the two rules agree today and the difference is hygiene: `search_resources`
+expands whichever spelling it is given through `equivalent_resource_types`, so
+a map entry naming `cnv_collection` would select the same resources as one
+naming `fragment_score`.
+
+They do not agree in general, and that is the reason. `equivalent_resource_types`
+relates a **narrower** set of spellings than the annotators accept — its own
+docstring says so, and `GENE_SET_TYPES` is exactly such a pair, unrelated by
+search. For a pair like that, a map entry naming the non-preferred spelling
+would answer only the resources declaring it, and membership would pass that
+entry. Element zero also fails loudly rather than silently if the fragment
+score's equivalence is ever narrowed.
 
 **5. `gene_set_annotator` is the first and only exemption.** Whether it should
 be — whether `GENE_SET_TYPES` should become a search equivalence group and the
@@ -116,9 +128,18 @@ The residual duplication is nine lines, and it is not unguarded. Since
 gain#1266 an annotator name absent from the map is refused outright, with a
 message listing the names that do accept a wildcard, rather than expanding to
 nothing. What was *not* guarded is narrower: an annotator whose declared
-canonical type drifts from its map entry, and an annotator that comes to accept
-a second resource type while its map entry names only one. Both are silent, and
-both are what decision 3 closes.
+canonical type drifts from its map entry, silently. That is what decision 3
+closes.
+
+gain#1334 named a second silent case — an annotator that comes to accept a
+second resource type while its map entry names only one — and decision 3 does
+**not** close it, by design. The map names one canonical type on purpose, and
+`search_resources` expands it through `equivalent_resource_types`, so a second
+spelling of the *same* kind needs no map change. A second, genuinely different
+kind would need one, and the pin would not ask for it: it compares against
+element zero, which such an annotator would not have changed. No annotator is
+in that position, and putting one there is a large enough change to be noticed
+without a pin.
 
 A test is the proportionate instrument for that. It costs a file, catches the
 drift at CI time rather than at pipeline-authoring time, and — unlike a
@@ -128,13 +149,15 @@ derivation — leaves the policy visible at the place that applies it.
 
 **Register classes instead of factories.** The entry-point table would map a
 name to an `AnnotatorBase` subclass, and the parser would read the attribute
-off it. Rejected: the factories are not thin. `build_fragment_score_annotator`
-and its siblings resolve resources, read parameters and wrap the annotator in
-decorators; several names share one class (`allele_score` and
-`allele_score_annotator`, and the legacy fragment-score pair both build
-`FragmentScoreAnnotator`), so a class-keyed table loses the name distinctions
-the map is keyed on. It is also a breaking change to every third-party
-registration.
+off it. It would work — the table stays keyed by name, so the two spellings per
+annotator keep their own entries, and the pin test in this change does very
+nearly this to build its expectation. Rejected on decision 1: the attribute it
+would read is the annotator's, and reading policy off it is derivation by
+another route. Rejected additionally on cost: it is a breaking change to every
+third-party registration, and two of the five factories
+(`build_gene_score_annotator`, `build_gene_set_annotator`) do real work —
+resolving a resource and reading parameters before construction — which a class
+in the table cannot carry.
 
 **An attribute on the factory function.** `build_position_score_annotator.
 wildcard_resource_type = "position_score"` needs no new entry-point group and
@@ -163,11 +186,20 @@ entry naming a deprecated spelling.
 - `query_resources` reads `AnnotationConfigParser.WILDCARD_RESOURCE_TYPES`
   instead of building a local dict. Its refusal message, its semantics and its
   handling of the legacy and retired names are unchanged; no user-visible
-  behaviour changes.
+  behaviour changes. The constant is a `MappingProxyType`: the local dict was
+  rebuilt per call, so an in-place edit could not outlive one, and a plain dict
+  class attribute would have made that edit process-wide.
 - A new score annotator must be added to `WILDCARD_RESOURCE_TYPES` or to
   `WILDCARD_EXEMPT_ANNOTATORS`. Forgetting fails
   `test_wildcard_annotator_map.py` at CI time, where before it failed for
-  whoever first wrote a wildcard for it.
+  whoever first wrote a wildcard for it. Choosing the exemption is a second
+  edit, not a cheaper one: the exemption set's exact content is pinned too, so
+  a new exemption has to be written down deliberately and given its reason.
+- The pin is only as wide as its walk, which reads the annotator class from
+  the module its entry point names. An annotator whose class lived in a shared
+  base module and was merely imported by its factory's module would be invisible
+  to it. That is why a second test asserts the floor: every declaring annotator
+  class GAIn has loaded is one the walk attributed to a registered name.
 - An annotator that appends a second accepted spelling keeps working. One that
   *leads* with a new spelling changes what its wildcard selects, and the pin
   fails until the map is updated to match — which is the point.

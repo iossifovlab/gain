@@ -19,7 +19,8 @@ not fail GAIn's own pin.
 """
 # pylint: disable=W0621,C0116
 import importlib
-from collections.abc import Iterable
+import sys
+from collections.abc import Iterable, Mapping
 from importlib.metadata import entry_points
 
 import pytest
@@ -35,23 +36,43 @@ from gain.genomic_resources.resource_types import (
 #: The entry-point group every annotator registers under.
 ENTRY_POINT_GROUP = "gain.annotation.annotators"
 
+#: An annotator name with the class its wildcard policy is judged against,
+#: or ``None`` for a registered name whose annotator declares no accepted
+#: resource types.
+Declarations = dict[str, type[AnnotatorBase] | None]
 
-def _declared_resource_types() -> dict[str, tuple[str, ...]]:
-    """Return each GAIn annotator name with the types its class declares.
+
+def _declaring_classes_in(module_name: str) -> set[type[AnnotatorBase]]:
+    """Return the annotator classes ``module_name`` DEFINES that declare."""
+    module = sys.modules[module_name]
+    return {
+        obj
+        for obj in vars(module).values()
+        if isinstance(obj, type)
+        and issubclass(obj, AnnotatorBase)
+        # Defined here, not imported here: every score annotator module
+        # imports its base, and two import each other's constants.
+        and obj.__module__ == module_name
+        and obj.ACCEPTED_RESOURCE_TYPES
+    }
+
+
+def _declared_by_entry_point() -> Declarations:
+    """Return each GAIn annotator name with the class that declares for it.
 
     Keyed by the name a pipeline writes, not by class: several names share
     one class (``allele_score`` and ``allele_score_annotator``; the legacy
     fragment-score pair), and the map under test is keyed the same way.
 
-    The declaration is read off the classes *defined in* the entry point's
-    own module rather than off the factory's return type, which would mean
-    building an annotator -- a resource, a repository and a pipeline -- to
-    read a class attribute.  An annotator that declares nothing is kept,
-    with an empty tuple, because the pin has something to say about it: a
-    map entry naming it would be a wildcard for an annotator with no
+    The class is found in the entry point's own module rather than by
+    calling the factory, which would mean building an annotator -- a
+    resource, a repository and a pipeline -- to read a class attribute.
+    A registered name whose annotator declares nothing is kept, as
+    ``None``, because the pin has something to say about it: a map entry
+    naming it would promise a wildcard for an annotator with no
     resource-type concept.
     """
-    declarations: dict[str, tuple[str, ...]] = {}
+    declarations: Declarations = {}
     for entry in entry_points(group=ENTRY_POINT_GROUP):
         if not entry.module.startswith("gain."):
             continue
@@ -59,33 +80,26 @@ def _declared_resource_types() -> dict[str, tuple[str, ...]]:
         # then read from -- and a broken entry point should fail here,
         # loudly, rather than look like an annotator that declares nothing.
         entry.load()
-        module = importlib.import_module(entry.module)
-        declared = {
-            obj.ACCEPTED_RESOURCE_TYPES
-            for obj in vars(module).values()
-            if isinstance(obj, type)
-            and issubclass(obj, AnnotatorBase)
-            and obj.__module__ == entry.module
-            and obj.ACCEPTED_RESOURCE_TYPES
-        }
+        importlib.import_module(entry.module)
+        declared = _declaring_classes_in(entry.module)
         assert len(declared) <= 1, (
             f"'{entry.name}' resolves to {entry.module}, which defines more "
             f"than one annotator declaring accepted resource types "
-            f"({sorted(declared)}); this pin cannot tell which of them the "
-            f"name refers to."
+            f"({sorted(cls.__name__ for cls in declared)}); this pin cannot "
+            f"tell which of them the name refers to."
         )
-        declarations[entry.name] = declared.pop() if declared else ()
+        declarations[entry.name] = declared.pop() if declared else None
     return declarations
 
 
 @pytest.fixture(scope="module")
-def declarations() -> dict[str, tuple[str, ...]]:
-    return _declared_resource_types()
+def declarations() -> Declarations:
+    return _declared_by_entry_point()
 
 
 def _pin_violations(
-    declarations: dict[str, tuple[str, ...]],
-    wildcard_types: dict[str, str],
+    declarations: Declarations,
+    wildcard_types: Mapping[str, str],
     exempt: frozenset[str],
 ) -> list[str]:
     """Return one sentence per disagreement, or an empty list.
@@ -95,9 +109,10 @@ def _pin_violations(
     show that the pin bites.
     """
     violations = []
-    for name, accepted in sorted(declarations.items()):
-        if not accepted:
+    for name, annotator in sorted(declarations.items()):
+        if annotator is None:
             continue
+        accepted = annotator.ACCEPTED_RESOURCE_TYPES
         mapped = name in wildcard_types
         exempted = name in exempt
         if mapped and exempted:
@@ -112,10 +127,14 @@ def _pin_violations(
                 f"nor in WILDCARD_EXEMPT_ANNOTATORS; a wildcard "
                 f"'resource_id' written for it would be refused.")
         # Equality against the FIRST accepted type, not membership in the
-        # accepted ones: the preferred spelling leads the tuple by
-        # contract, and membership would pass a map pointing at the
-        # deprecated one -- a wildcard that answers only the resources
-        # that have not migrated (gain#1266).
+        # accepted ones. For the fragment score's pair the two would agree
+        # today, because `search_resources` expands whichever spelling it
+        # is given through `equivalent_resource_types`. They do not agree
+        # in general: search honours a narrower set of equivalences than
+        # the annotators accept -- `GENE_SET_TYPES` is a pair search does
+        # NOT relate -- so for such a pair, membership would pass a map
+        # entry naming the non-preferred spelling and the wildcard would
+        # answer only the resources declaring it.
         elif mapped and wildcard_types[name] != accepted[0]:
             violations.append(
                 f"annotator '{name}' is mapped to resource type "
@@ -132,8 +151,7 @@ def _pin_violations(
 
 
 def _stale_entries(
-    names: Iterable[str], role: str,
-    declarations: dict[str, tuple[str, ...]],
+    names: Iterable[str], role: str, declarations: Declarations,
 ) -> list[str]:
     """Return one sentence per name no GAIn annotator declaration backs.
 
@@ -148,7 +166,7 @@ def _stale_entries(
             violations.append(
                 f"'{name}' is {role}, but no annotator of that name is "
                 f"registered under {ENTRY_POINT_GROUP}.")
-        elif not declarations[name]:
+        elif declarations[name] is None:
             violations.append(
                 f"'{name}' is {role}, but its annotator declares no "
                 f"ACCEPTED_RESOURCE_TYPES; it consumes no one typed "
@@ -157,7 +175,7 @@ def _stale_entries(
 
 
 def test_every_declaring_annotator_is_mapped_or_exempt(
-    declarations: dict[str, tuple[str, ...]],
+    declarations: Declarations,
 ) -> None:
     violations = _pin_violations(
         declarations,
@@ -165,6 +183,39 @@ def test_every_declaring_annotator_is_mapped_or_exempt(
         AnnotationConfigParser.WILDCARD_EXEMPT_ANNOTATORS)
 
     assert not violations, violations
+
+
+def test_the_walk_sees_every_declaring_annotator_class_gain_has_imported(
+    declarations: Declarations,
+) -> None:
+    """The pin above is only as wide as the walk that feeds it.
+
+    A class is found in the module its entry point names, so an annotator
+    whose class lives in a shared base module and is merely imported by
+    its factory's module would record nothing and slip past the
+    mapped-or-exempt requirement silently -- the one fault the pin exists
+    to catch.  This is the floor: every declaring annotator class GAIn has
+    loaded must be one the walk attributed to some registered name.
+
+    Judged against what is in ``sys.modules``, so it grows with whatever
+    else the session imported.  That can only widen the check, and a
+    declaring class no registered name resolves to is worth failing on
+    however it got loaded.
+    """
+    seen = {cls for cls in declarations.values() if cls is not None}
+    loaded = {
+        cls
+        for module_name in list(sys.modules)
+        if module_name.startswith("gain.") and sys.modules[module_name]
+        for cls in _declaring_classes_in(module_name)
+    }
+
+    # A subset assertion passes on an empty left side, and this one is
+    # the guard against a walk that finds nothing -- so it has to say
+    # that it found something first.
+    assert loaded, "the sweep found no declaring annotator class at all"
+    assert loaded <= seen, sorted(
+        cls.__name__ for cls in loaded - seen)
 
 
 def test_the_gene_set_annotator_is_the_only_exemption() -> None:
@@ -178,12 +229,25 @@ def test_the_gene_set_annotator_is_the_only_exemption() -> None:
     assert exemptions == {"gene_set_annotator"}
 
 
+def test_the_wildcard_map_cannot_be_edited_in_place() -> None:
+    # As a local it was rebuilt per call, so an in-place edit could not
+    # outlive one parse. As a class attribute it would last the process,
+    # and a test that reached for `monkeypatch.setitem` would leave the
+    # parser corrupted for every test after it.
+    with pytest.raises(TypeError):
+        AnnotationConfigParser.WILDCARD_RESOURCE_TYPES[  # type: ignore[index]
+            "position_score"] = "gene_score"
+
+
 def test_a_map_value_naming_a_legacy_spelling_is_refused(
-    declarations: dict[str, tuple[str, ...]],
+    declarations: Declarations,
 ) -> None:
-    # The silent miss gain#1266 closed, reintroduced: a wildcard keyed on
-    # the deprecated spelling answers only the resources that still
-    # declare it, in a repository that has migrated to the preferred one.
+    # Behaviour-neutral for THIS pair as it stands -- search expands
+    # either fragment-score spelling into both -- and refused anyway: the
+    # map is meant to say what the annotator says, and search's
+    # equivalences are narrower than the spellings annotators accept, so
+    # the same entry written for a pair search does not relate would
+    # answer only half a repository.
     broken = dict(AnnotationConfigParser.WILDCARD_RESOURCE_TYPES)
     broken["fragment_score_annotator"] = LEGACY_FRAGMENT_SCORE_TYPE
 
@@ -198,7 +262,7 @@ def test_a_map_value_naming_a_legacy_spelling_is_refused(
 
 
 def test_an_annotator_that_is_both_mapped_and_exempt_is_refused(
-    declarations: dict[str, tuple[str, ...]],
+    declarations: Declarations,
 ) -> None:
     # The two constants answer one question between them, so an annotator
     # in both leaves the answer to whichever is consulted first -- and the
@@ -214,7 +278,7 @@ def test_an_annotator_that_is_both_mapped_and_exempt_is_refused(
 
 
 def test_a_declaring_annotator_missing_from_the_map_is_refused(
-    declarations: dict[str, tuple[str, ...]],
+    declarations: Declarations,
 ) -> None:
     # The case a new score annotator lands in: since gain#1266 its
     # wildcard is refused outright rather than expanding to nothing, so
@@ -232,7 +296,7 @@ def test_a_declaring_annotator_missing_from_the_map_is_refused(
 
 
 def test_an_annotator_moved_from_the_map_to_the_exemptions_is_accepted(
-    declarations: dict[str, tuple[str, ...]],
+    declarations: Declarations,
 ) -> None:
     # Deciding an annotator takes no wildcard is a decision the pin
     # accepts, not one it argues with; what it insists on is that the
@@ -248,7 +312,7 @@ def test_an_annotator_moved_from_the_map_to_the_exemptions_is_accepted(
 
 
 def test_a_map_key_that_names_no_registered_annotator_is_refused(
-    declarations: dict[str, tuple[str, ...]],
+    declarations: Declarations,
 ) -> None:
     # What an entry left behind by a retirement looks like: the annotator
     # is gone, the wildcard policy for its name is not, and the name is
@@ -265,7 +329,7 @@ def test_a_map_key_that_names_no_registered_annotator_is_refused(
 
 
 def test_a_map_key_whose_annotator_takes_no_typed_resource_is_refused(
-    declarations: dict[str, tuple[str, ...]],
+    declarations: Declarations,
 ) -> None:
     # A registered name, so the staleness check above passes it -- but
     # ``effect_annotator`` consumes gene models and a reference genome,
@@ -284,7 +348,7 @@ def test_a_map_key_whose_annotator_takes_no_typed_resource_is_refused(
 
 
 def test_an_exemption_that_names_no_registered_annotator_is_refused(
-    declarations: dict[str, tuple[str, ...]],
+    declarations: Declarations,
 ) -> None:
     # An exemption outliving its annotator is quieter than a stale map
     # entry -- nothing reads it at runtime at all -- so it would sit there
