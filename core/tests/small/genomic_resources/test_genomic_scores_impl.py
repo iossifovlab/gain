@@ -1202,9 +1202,11 @@ def test_a_number_histogram_over_text_is_refused_at_construction(
     assert "str" in str(excinfo.value)
 
 
+@pytest.mark.parametrize("jobs", ["1", "2"])
 def test_the_refusal_is_raised_once_per_run_whatever_the_region_size(
     tmp_path: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
+    jobs: str,
 ) -> None:
     """The report has to be bounded by the resource, not by the scan.
 
@@ -1220,12 +1222,19 @@ def test_the_refusal_is_raised_once_per_run_whatever_the_region_size(
     resource's build instead of logging and letting the next one repeat.
     A region size small enough to split this resource many ways must
     therefore still cost exactly one report.
+
+    Over ``-j 1`` and ``-j 2`` because the production build runs
+    ``-N sge -j 120``: a dedupe keyed on the message would hold only
+    within one process and still emit a line per worker.  Nothing is
+    deduplicated here -- the refusal lands while the tasks are PLANNED,
+    before any executor exists -- and running both spellings is what says
+    so rather than assuming it.
     """
     _a_str_score_under_a_number_histogram(tmp_path)
 
     with caplog.at_level("WARNING"), pytest.raises(SystemExit):
         cli_manage([
-            "repo-repair", "-R", str(tmp_path), "-j", "1",
+            "repo-repair", "-R", str(tmp_path), "-j", jobs,
             "--region-size", "1",
         ])
 

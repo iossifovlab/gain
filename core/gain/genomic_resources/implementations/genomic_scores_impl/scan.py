@@ -838,11 +838,12 @@ def can_bulk_histogram(
     So a categorical histogram over an ``int`` score keeps
     :func:`do_histogram`, which handles it as it always has.
 
-    A number histogram over a ``str`` score no longer reaches either path:
-    :func:`unpack_score_defs` refuses that pairing outright and hands this
-    one a null histogram instead (gain#1285).  The condition stays stated
-    here because it is this gate's own -- the batch shapes it admits are
-    not a consequence of what the unpack refuses, and a ``bool`` score
+    A number histogram over a ``str`` score never reaches either path: such
+    a config is refused when the score is CONSTRUCTED
+    (:func:`~gain.genomic_resources.score_def.refuse_unfoldable_histograms`),
+    so no definition carrying it survives to be scanned.  The condition
+    stays stated here because it is this gate's own -- the batch shapes it
+    admits are not a consequence of that refusal, and a ``bool`` score
     separates them: the per-value rule keeps it, this one does not.
     """
     bulk_score_ids = []
@@ -875,10 +876,11 @@ def can_bulk_min_max(
     ``str`` score's column is an object array, which ``np.isnan`` refuses
     outright.
 
-    A str score is no longer SCHEDULED for a min/max pass at all: the only
+    A str score is never SCHEDULED for a min/max pass at all: the only
     thing that schedules one is a number histogram without a view range,
-    and :func:`unpack_score_defs` refuses that over text before any pass is
-    planned (gain#1285).  The condition stays stated for this consumer
+    and a score construction carrying that pairing raises
+    (:func:`~gain.genomic_resources.score_def.refuse_unfoldable_histograms`),
+    so no such resource reaches a scan.  The condition stays stated
     rather than assumed from that one, because it is this pass's own: left
     ungated, a column of nothing but NA sentinels would raise here, out of
     a generator and past every nullify handler, where the per-record path

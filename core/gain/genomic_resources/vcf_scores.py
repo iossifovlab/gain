@@ -397,31 +397,23 @@ def _refuse_overridden_type(
     an entry stating anything else is a contradiction between the config and
     the header, and gain#1336 raises on it.
 
-    **Why an error and not the warning it replaces.**  gain#1259 discarded
-    the stated type and logged, which left the author's misconception in
-    place -- the config still said ``int`` and every consumer was told
-    ``str`` -- and put the report where it could name neither the resource
-    nor a bounded number of times: definitions are built in
-    ``GenomicScore.__init__``, so a statistics build repeated the line once
-    per region task, dozens of times for one wrong line of YAML (gain#1283).
-    Raising ends both: every resource is run through ``repo-repair`` before
-    it is annotated with, so the refusal lands once, at build time, before
-    any region task exists, and the resource is reported failed by name.
-    It also leaves no half-applied definition behind, so the discarded
-    type's NA sentinels cannot outlive it (gain#1284).
-
     **Stating ``str`` is not a contradiction and is not refused.**  It is
     the type the join produces, so nothing is being claimed that the field
     cannot hold, and it is what every multi-valued entry in the deployed
     GRRs states (ClinVar's twenty, dbSNP's ``CAF``/``TOPMED``).  Leaving
     ``type:`` unstated is equally fine -- the definition takes ``str`` from
-    the header side either way.  No deployed resource states a non-``str``
-    type on a multi-valued field, so nothing in the GRRs reaches this.
+    the header side either way.
 
-    It names the RESOURCE as well as the field: the parse is handed a
-    resource id by :meth:`GenomicScore._build_scoredefs` precisely so that a
-    failed ``repo-repair`` over a whole repository says which resource to
-    edit, which the warning this replaces could not.
+    The refusal is raised while the definitions are BUILT, so it reaches
+    every consumer of the resource: ``repo-repair`` reports the resource
+    failed by name before any region task is planned, and an annotation
+    pipeline naming it fails to load with the same message.
+
+    ``resource_id`` is threaded in from
+    :meth:`GenomicScore._build_scoredefs` for the message alone -- a parse
+    handed only a header and a config could name the field but not the
+    resource, which is not enough to find the file to edit in a repository
+    of thousands.
     """
     if config_type is None or is_scalar or config_type == "str":
         return

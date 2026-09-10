@@ -41,7 +41,7 @@ class HistogramError(Exception):
 #: aborted its entire statistics build in ``np.isnan`` (gain#1285); since
 #: gain#1336 that pairing is refused when the score is CONSTRUCTED, by
 #: :func:`~gain.genomic_resources.score_def.refuse_unfoldable_histograms`,
-#: which is the only reader of this set outside the scan.
+#: which is the only thing that reads this set.
 #:
 #: It lives here, with the config whose acceptance it describes, rather than
 #: in the statistics scan that used to own it -- the refusal moved to the

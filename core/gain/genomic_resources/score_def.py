@@ -594,8 +594,8 @@ def parse_scoredef_config(
         # recognise and discard an eager default (gain#1221).  The merge
         # takes them together or not at all -- a field the header declares
         # multi-valued keeps the header's parser AND the ``str`` its
-        # ``|``-join produces, discarding the stated type (gain#1233,
-        # gain#1259) -- which it can only do because neither was decided
+        # ``|``-join produces, and REFUSES an entry stating any other type
+        # (gain#1336) -- which it can only do because neither was decided
         # for it here.
         value_type = score_conf.get("type")
         value_parser = (
@@ -851,20 +851,17 @@ def refuse_unfoldable_histograms(
     block, a VCF header and a bigWig are all held to it; a check on one
     route only is the same bug in a new place.
 
-    **What it replaces.**  gain#1285 caught this while the statistics build
-    unpacked score definitions, and answered it with a null histogram whose
-    reason went to the build log.  That left the resource BUILDING, one
-    score quietly histogram-less, with nothing on the info page to say why
-    (gain#1307), and it only ever ran on the statistics path -- annotation
-    never passes through the unpack, so an annotation run was never told.
-    Raising at construction reaches every path and costs the author one
-    ``repo-repair``, which every resource is run through before it is
-    annotated with.
+    Raising at CONSTRUCTION rather than where the statistics build reads
+    the configs is what makes the refusal reach every consumer: annotation
+    never unpacks score definitions, so a check living there tells an
+    annotation run nothing.
 
     Only an EXPLICIT config reaches this.  A score with no ``histogram:``
-    takes ``build_default_histogram_conf``, which answers a non-numeric
-    type with a categorical or null config and never a number one, so the
-    refusal cannot fire on a resource that configured nothing.
+    carries ``hist_conf=None`` here and is skipped: the default for its
+    type is chosen later, by ``build_default_histogram_conf`` where the
+    statistics build unpacks the definitions, and that never answers a
+    non-numeric type with a number histogram.  So the refusal cannot fire
+    on a resource that configured nothing.
 
     A CATEGORICAL histogram over a number is deliberately NOT refused: it
     folds one value at a time and nullifies just that score, which is a

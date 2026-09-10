@@ -1734,6 +1734,11 @@ VCF field and equally a plain table score declaring ``type: str``. Give
 such a score ``histogram: {type: categorical}``, or no ``histogram:`` at
 all and let GAIn pick the default for its type.
 
+Both errors are raised for the **genomic** score types described in this
+section -- ``position_score``, ``np_score``, ``allele_score`` and
+``fragment_score``. A ``gene_score`` builds its definitions on its own
+path and reports a mismatched histogram differently.
+
 
 
 

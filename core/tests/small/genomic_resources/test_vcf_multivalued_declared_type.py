@@ -16,9 +16,12 @@ resource with no statistics and no info page.
 
 The contract these tests hold: a field the header declares multi-valued
 declares ``str``, the type its joined value actually has, whatever its
-``Type=`` says and whatever a ``scores:`` entry states.  The shapes that
-reach a parser as a scalar are untouched -- they really do hold their
-declared type.
+``Type=`` says.  A ``scores:`` entry may agree with that -- by stating
+``str`` or by stating nothing -- but an entry claiming any other type is
+a contradiction between the config and the header, and is REFUSED at
+construction (gain#1336), naming the resource and the score.  The shapes
+that reach a parser as a scalar are untouched: they really do hold their
+declared type, and a ``scores:`` entry still overrides it there.
 """
 import json
 import pathlib
@@ -124,16 +127,20 @@ _CNT_TYPED_FLOAT = textwrap.dedent("""
       type: float
 """)
 
-#: The joined field under an EXPLICIT number histogram -- gain#1285's shape --
-#: alongside a scalar field carrying nothing but its header type.  The scalar
-#: is what makes the test able to say that refusing ONE score's histogram does
-#: not cost the resource the rest of its statistics; without it the block
-#: names only MANY, since a ``scores:`` block filters.
+#: The joined field under an EXPLICIT number histogram -- gain#1285's shape.
+#:
+#: ``MANY`` states ``type: str`` DELIBERATELY, though its ``##INFO`` line says
+#: ``Type=Integer``.  ``str`` is what the join produces and so is legal, which
+#: is the whole point: it lets the entry past the type refusal, so what this
+#: fixture exercises is the HISTOGRAM refusal on a VCF-derived definition.
+#: Stating ``int`` here instead would be refused for the type before the
+#: histogram was ever consulted, and a test built on it would pass with the
+#: histogram check deleted.
 _MANY_NUMBER_HIST_WITH_CNT = textwrap.dedent("""
     scores:
     - id: MANY
       name: MANY
-      type: int
+      type: str
       histogram:
         type: number
         number_of_bins: 4
@@ -455,6 +462,40 @@ def test_the_genotype_arity_shape_declares_str_too(
     assert score.score_definitions["PERGT"].value_type == "str"
 
 
+def test_the_genotype_arity_shape_refuses_a_stated_numeric_type(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``Number=G`` is refused with the rest of the joined side.
+
+    The shapes in ``_VCF`` are ``.`` and a fixed ``2``, so every other
+    refusal test here would still pass under a rule keyed on ``number ==
+    "."`` or on ``isinstance(number, int)``.  ``G`` is neither, and is the
+    shape that catches such a rule.
+
+    It gets its own resource because pysam will not READ an INFO field
+    declared per-genotype -- see :data:`_PERGT_VCF` -- but the refusal is
+    decided from the header and the config, before any value is read, so it
+    fires here exactly as it does for a readable field.
+    """
+    setup_directories(tmp_path, {
+        "genomic_resource.yaml": textwrap.dedent("""
+            type: allele_score
+            table:
+                filename: data.vcf.gz
+            scores:
+            - id: PERGT
+              name: PERGT
+              type: int
+        """),
+    })
+    setup_vcf(tmp_path / "data.vcf.gz", _PERGT_VCF)
+
+    with pytest.raises(ValueError, match="PERGT") as excinfo:
+        build_score_from_resource(build_filesystem_test_resource(tmp_path))
+
+    assert "Number=G" in str(excinfo.value)
+
+
 def test_a_resource_with_a_joined_field_builds_its_statistics(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -491,9 +532,13 @@ def test_repo_repair_fails_only_the_contradicting_resource(
     gain#1285's shape -- a joined field under an EXPLICIT
     ``histogram: {type: number}`` -- used to be nullified per score, so the
     resource kept the rest of its statistics.  gain#1336 refuses the
-    CONFIG instead, at construction, so the resource does not build at all:
-    its ``scores:`` entry states ``type: int`` on a joined field, and that
-    is a contradiction whatever the histogram says.
+    CONFIG instead, at construction, so the resource does not build at all.
+
+    This is the VCF route to the HISTOGRAM refusal specifically: the entry
+    states the ``str`` its joined field really holds, so the type is not
+    what is wrong with it -- only the number histogram over that ``str``
+    is.  A resource whose entry states a numeric type is refused a step
+    earlier, for the type, and is covered above.
 
     What must NOT widen with it is the run.  ``repo-repair`` over a
     repository holding a bad resource and a good one has to name the bad one
