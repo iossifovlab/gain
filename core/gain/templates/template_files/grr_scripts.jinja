@@ -649,11 +649,21 @@
                 applyHash();
             }
 
-            // Both carry the folder, so that leaving the tree for the table
-            // and coming back lands where the reader left rather than at the
-            // root. `currentPath` is the folder showing now -- [] until the
-            // tree has been entered, which is why a first click on the tree
-            // button addresses the root.
+            // The tree button carries the folder showing at the time it is
+            // clicked, so that leaving the tree for the table and coming
+            // back lands where the reader left rather than at the root.
+            // `currentPath` is [] until the tree has been entered, which is
+            // why a first click on it addresses the root.
+            //
+            // What survives the visit to the table is `currentPath` itself:
+            // `setView` only reassigns it -- through `navigateTo` -- for the
+            // hierarchical view, so the table leg leaves it alone. The
+            // `path` handed to the table state is therefore inert today,
+            // `buildHash` returning "" for any non-hierarchical state
+            // without reading it. It is passed anyway so that both buttons
+            // build a whole state rather than one of them a partial one,
+            // which is what the slice adding the search term (#1331) will
+            // extend.
             tableBtn.addEventListener("click", () => goTo(
                 { view: "table", path: currentPath }));
             hierBtn.addEventListener("click", () => goTo(

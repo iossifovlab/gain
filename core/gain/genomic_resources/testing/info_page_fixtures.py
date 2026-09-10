@@ -127,19 +127,23 @@ BROWSE_CAPITALISED_FOLDER = "Zoo"
 #: by code unit, which is the same disagreement ``Zoo`` creates among the
 #: folders.
 #:
-#: No resource here carries a name needing URL-escaping, and none can: a
-#: resource id is matched against ``[a-zA-Z0-9/._-]+`` while a repository
-#: is enumerated (``_scan_path_for_resources``, via
-#: ``parse_resource_id_version``), so a directory with a space, a percent
-#: or a non-ASCII letter in it fails the *scan* -- the repository cannot
-#: be built at all, let alone published.  Every character the grammar does
-#: allow is unreserved in ``encodeURIComponent``, so percent-encoding a
-#: legal folder segment is the identity.  The page encodes anyway, because
-#: ids read from a remote ``.CONTENTS`` are untrusted content
-#: (iossifovlab/gain#467, iossifovlab/gain#528) rather than something this
-#: scanner vouched for -- but it is the *decoding* half that a reader can
-#: actually reach, by typing a fragment, and that is where
-#: ``info_pages_e2e`` pins it.
+#: No resource here carries a name needing URL-escaping, and none built
+#: this way can: ``_scan_path_for_resources`` parses each candidate path
+#: with ``parse_gr_id_version_token``, which matches it against
+#: ``[a-zA-Z0-9/._-]+``, so a directory with a space, a percent or a
+#: non-ASCII letter in it fails the *scan* -- the repository cannot be
+#: enumerated at all, let alone published.  Every character that grammar
+#: does allow is unreserved in ``encodeURIComponent``, so percent-encoding
+#: a legal folder segment is the identity.
+#:
+#: The page encodes anyway, because that grammar is not checked everywhere:
+#: a resource id read from a remote ``.CONTENTS`` is validated only for
+#: containment, so an id this scanner would have refused can still reach a
+#: published page, and ids are untrusted repository content in any case
+#: (iossifovlab/gain#467, iossifovlab/gain#528).  Pinning the *encoding*
+#: half therefore needs a ``.CONTENTS``-built fixture rather than this one;
+#: the *decoding* half is reachable from any address a reader can type, and
+#: that is what ``info_pages_e2e`` asserts.
 BROWSE_ORDERING_RESOURCE_IDS = (
     f"{BROWSE_CAPITALISED_FOLDER}/alpha",
     f"{BROWSE_CAPITALISED_FOLDER}/Track",

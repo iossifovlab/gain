@@ -469,10 +469,10 @@ test('a round trip through the tree leaves the column widths intact', async ({
  * The folder row with exactly this name.
  *
  * Matched on the name element rather than with `hasText` on the row,
- * because a row's text also carries its resource count and its size --
- * so a substring match is answered by any row whose *size* happens to
- * spell the folder being looked for, and the folder names this suite
- * navigates include one that is mostly punctuation.
+ * because a row's text also carries its resource count and its size -- so
+ * a substring match is answered by any row whose *size* happens to spell
+ * the folder being looked for, and by any folder whose name merely
+ * contains it.
  */
 function folderRow(page: Page, name: string) {
   return page.locator('#hierarchical-list .hv-folder').filter({
@@ -488,10 +488,10 @@ function escapeForRegExp(name: string): string {
 /**
  * The breadcrumb trail, outermost crumb first.
  *
- * `allTextContents` rather than `allInnerTexts`, which collapses runs of
- * whitespace -- a folder whose name carries a space would then be
- * reported under a name it does not have, and one of the names this
- * suite navigates is there precisely to prove spaces survive.
+ * `allTextContents` rather than `allInnerTexts`: the latter reports text
+ * as *rendered*, collapsing whitespace runs and reading nothing at all
+ * from a hidden element -- and the breadcrumb is hidden whenever the table
+ * view is showing. This reads what the page actually set.
  *
  * The separators are excluded by selecting the crumbs themselves, so the
  * result is the trail and not the trail interleaved with "/".
@@ -611,31 +611,74 @@ test('a hash with no surviving ancestor opens the root, still as a tree',
   expect(errors).toEqual([]);
 });
 
-test('a hash naming an inherited property name is not a folder', async ({
+/* Names no folder has, which a plain object nonetheless answers for out of
+ * `Object.prototype` -- so a lookup written as `children[segment]` accepts
+ * a folder that does not exist. `__proto__` is the worst of them: *writing*
+ * that key on a plain object sets the prototype instead of adding a child,
+ * so a repository actually carrying such a folder would corrupt the tree as
+ * it was built rather than only when it was addressed.
+ *
+ * Each gets its own case rather than one test walking the list, so a
+ * failure names the segment that broke. */
+for (const inherited of ['constructor', '__proto__', 'toString']) {
+  test(`a hash naming the inherited property ${inherited} is not a folder`,
+    async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(String(error)));
+
+    /* Reachable only since the folder path became addressable (#579):
+     * before it, the path was built exclusively from folders that
+     * existed. What follows acceptance is not a wrong render but a throw
+     * -- the accepted "folder" is a function, and reading children off it
+     * hands `Object.values` an undefined. The same shape, in this same
+     * suite, is why `serving.ts` looks its GRRs up in a `Map`. */
+    await openBrowseIndex(page, `#/${inherited}`);
+
+    /* The throw first, because it is the worse half: the breadcrumb below
+     * is merely wrong, while this leaves the list empty and every later
+     * render broken. */
+    expect(errors).toEqual([]);
+    await expectView(page, 'hierarchical');
+    await expect(breadcrumbTrail(page)).resolves.toEqual(['All resources']);
+  });
+}
+
+test('a percent-escaped segment is decoded before it is looked up', async ({
   page,
 }) => {
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(String(error)));
-
-  /* `constructor` names no folder, but it *is* reachable on any plain
-   * object through its prototype -- so a lookup written as
-   * `children[segment]` answers this one with `Object`'s constructor and
-   * the walk-up accepts a folder that does not exist. What follows is not
-   * a wrong render but a throw: the accepted "folder" is a function, and
-   * reading children off it hands `Object.values` an undefined.
+  /* `%68` is "h", so this address names `hg38` -- spelled in a way only a
+   * page that really decodes can follow. Hand the raw segment to the
+   * lookup instead and this reads as a folder literally called
+   * "%68g38", which does not exist, so it walks up to the root: this is
+   * therefore the test that fails when the decode is dropped, which the
+   * malformed-escape test below cannot notice on its own.
    *
-   * Reachable only since the folder path became addressable (#579) --
-   * before it, the path was only ever built from folders that existed.
-   * The same shape, in the same suite, is why `serving.ts` looks its GRRs
-   * up in a `Map`. */
-  await openBrowseIndex(page, '#/constructor');
+   * An escape in a fragment always arrives from outside, never from the
+   * page's own links: no *legal* folder name needs escaping, because a
+   * resource id is matched against `[a-zA-Z0-9/._-]+` when the repository
+   * is enumerated and every one of those characters is unreserved. So
+   * what this protects is the hand-edited address and the link mangled by
+   * whatever carried it -- and it is the half of the round trip a reader
+   * can actually reach. */
+  await openBrowseIndex(page, '#/%68g38');
 
-  /* The throw first, because it is the worse half: the breadcrumb below
-   * is merely wrong, while this leaves the list empty and every later
-   * render broken. */
-  expect(errors).toEqual([]);
   await expectView(page, 'hierarchical');
-  await expect(breadcrumbTrail(page)).resolves.toEqual(['All resources']);
+  await expect(breadcrumbTrail(page)).resolves.toEqual(
+    ['All resources', 'hg38']);
+  await expect(folderRow(page, 'scores')).toBeVisible();
+});
+
+test('a hash naming a resource rather than a folder opens its folder',
+  async ({ page }) => {
+  /* The likeliest stale address there is, because what a reader has to
+   * hand is a resource id rather than a folder path. Its last segment
+   * names a resource, which is not a folder, so the walk-up stops at the
+   * folder holding it. */
+  await openBrowseIndex(page, '#/' + BROWSE_ID_ONLY_RESOURCE_ID);
+
+  await expectView(page, 'hierarchical');
+  await expect(breadcrumbTrail(page)).resolves.toEqual(
+    ['All resources', 'hg38', 'scores', 'conservation']);
 });
 
 test('a hash carrying a malformed escape opens the root without throwing',
@@ -689,13 +732,27 @@ test('leaving the tree for the table and back returns to the same folder',
     ['All resources', 'hg38', 'scores']);
 });
 
-/** The two orders a mixed-case list of names can be put in. */
-function bothOrders(names: string[]): { byCodeUnit: string[], byLocale: string[] } {
+/**
+ * The two orders a mixed-case list of names can be put in.
+ *
+ * The locale order is computed by the **page**, not by this process.
+ * `localeCompare` consults the engine's collation table, and these tests
+ * run in Node while the page runs in Chromium -- so deriving the expected
+ * order here would compare one ICU build's answer against another's, and
+ * an environment where those differ fails the test without anything being
+ * wrong with the page. Asking the page keeps the assertion about *which
+ * comparator the tree used*, which is what the issue is about.
+ */
+async function bothOrders(page: Page, names: string[]): Promise<{
+  byCodeUnit: string[], byLocale: string[],
+}> {
   return {
     /* `sort()` with no comparator compares UTF-16 code units, which is
-     * what `<` did. */
+     * what `<` did. Engine-independent, so it stays here. */
     byCodeUnit: [...names].sort(),
-    byLocale: [...names].sort((a, b) => a.localeCompare(b)),
+    byLocale: await page.evaluate(
+      (unsorted) => [...unsorted].sort((a, b) => a.localeCompare(b)),
+      names),
   };
 }
 
@@ -708,7 +765,7 @@ test('the tree orders names by locale, as the table does', async ({ page }) => {
    * and merely happened to receive its folders in order -- passes an
    * assertion like this one, and the divergence between the two views
    * (iossifovlab/gain#564) is invisible. */
-  const folders = bothOrders(BROWSE_TOP_LEVEL_FOLDERS);
+  const folders = await bothOrders(page, BROWSE_TOP_LEVEL_FOLDERS);
   expect(folders.byCodeUnit).not.toEqual(folders.byLocale);
   await expect(page.locator('#hierarchical-list .hv-folder .hv-name'))
     .toHaveText(folders.byLocale);
@@ -718,7 +775,7 @@ test('the tree orders names by locale, as the table does', async ({ page }) => {
    * folders having come out right. */
   await folderRow(page, BROWSE_CAPITALISED_FOLDER).click();
 
-  const resources = bothOrders(BROWSE_ORDERING_RESOURCE_NAMES);
+  const resources = await bothOrders(page, BROWSE_ORDERING_RESOURCE_NAMES);
   expect(resources.byCodeUnit).not.toEqual(resources.byLocale);
   await expect(page.locator('#hierarchical-list .hv-resource .hv-name'))
     .toHaveText(resources.byLocale);
