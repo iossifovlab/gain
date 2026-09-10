@@ -361,3 +361,186 @@ def test_shipped_budget_bounds_what_ort_is_asked_to_do(
         f"one ORT run covered {max(batch_sizes) * width} positions at width "
         f"{width}; the shipped budget must keep it under "
         f"{MAX_POSITIONS_PER_RUN}")
+
+
+class _RecordingModel:
+    """Stand-in for a Keras model that records the chunk size it is told to.
+
+    The asymmetry with `_RecordingSession` is the point. The ONNX backend
+    chunks the batch axis itself, so there the recorded number is the batch
+    ORT actually saw. Keras chunks *internally*, so all the TensorFlow
+    backend owns -- and all this can observe -- is the `batch_size` argument
+    it passes.
+    """
+
+    def __init__(self, batch_sizes: list, scale: float) -> None:
+        self.batch_sizes = batch_sizes
+        self.scale = scale
+
+    def predict(
+        self,
+        x: np.ndarray,
+        batch_size: int | None = None,
+        verbose: int | str = 0,
+    ) -> np.ndarray:
+        self.batch_sizes.append(batch_size)
+        row_id = x[:, 0, 0].astype(np.float32)
+        out = np.zeros((x.shape[0], x.shape[1] - 10000, 3), np.float32)
+        out[:, :, 0] = (row_id * self.scale)[:, None]
+        return out
+
+
+def test_tensorflow_predict_is_given_an_explicit_batch_size(
+    tensorflow_backend: ModuleType,
+) -> None:
+    """Leaving `batch_size` unset is the defect #427 fixes.
+
+    An unset `batch_size` is not a neutral default -- it is the instruction
+    that makes Keras chunk at 32, which the sweep in
+    `scripts/measure_tf_batch_size.py` measured at ~2.1x the cost of the
+    plateau at both the default window and the widest.
+
+    This pins only that the argument is passed; a backend hardcoding 32
+    would still satisfy it. What the value has to be is
+    `test_tensorflow_chunk_follows_the_window_width`, below.
+    """
+    batch_sizes: list = []
+    models = [_RecordingModel(batch_sizes, scale) for scale in range(1, 6)]
+    x = np.zeros((8, MIN_WIDTH, 4), np.int8)
+
+    tensorflow_backend.spliceai_predict(models, x)
+
+    assert len(batch_sizes) == 5, (
+        f"expected one predict per ensemble member, got {len(batch_sizes)}")
+    assert None not in batch_sizes, (
+        "the backend left batch_size unset, which is exactly how Keras is "
+        "told to fall back to its own default of 32")
+
+
+@pytest.mark.parametrize(("width", "expected_rows"), [
+    # 65536 // 10001 and 65536 // 20201. Spelled as literals rather than
+    # recomputed from the constant: an expression mirroring the source would
+    # follow the backend wherever it went, including off the plateau.
+    (MIN_WIDTH, 6),
+    (MAX_WIDTH, 3),
+])
+def test_tensorflow_chunk_follows_the_window_width(
+    tensorflow_backend: ModuleType, width: int, expected_rows: int,
+) -> None:
+    """The chunk is a position budget, so its row count halves as width does.
+
+    This is what a plain row count cannot do. The sweep behind
+    `TENSORFLOW_POSITION_BUDGET` found the cost curve identical at both
+    widths when indexed by positions and a factor of two apart when indexed
+    by rows, so a constant that did not track the width would be right at one
+    end and wrong at the other.
+    """
+    batch_sizes: list = []
+    models = [_RecordingModel(batch_sizes, scale) for scale in range(1, 6)]
+    x = np.zeros((8, width, 4), np.int8)
+
+    tensorflow_backend.spliceai_predict(models, x)
+
+    assert set(batch_sizes) == {expected_rows}, (
+        f"at width {width} the backend asked Keras for {set(batch_sizes)} "
+        f"rows per chunk; the shipped budget "
+        f"({tensorflow_backend.TENSORFLOW_POSITION_BUDGET}) allows "
+        f"{expected_rows}")
+
+
+# The widest window the annotator can construct, as opposed to the widest a
+# *default* deployment builds (MAX_WIDTH): `distance` clamps at 5000 and
+# `max_insertion_length` at 2000, so `_batch_width` tops out here.
+WIDEST_BUILDABLE_WINDOW = 22001
+
+# The sweep behind `TENSORFLOW_POSITION_BUDGET` measured a plateau flat to
+# ~2% from ~40k positions to ~81k, and a knee past ~162k. Below ~40k it
+# measured nothing at all, so a width that fell under this would be running
+# on an extrapolation rather than on the evidence.
+PLATEAU_FLOOR_POSITIONS = 40_000
+
+
+def test_shipped_budget_keeps_every_buildable_window_on_the_plateau(
+    tensorflow_backend: ModuleType,
+) -> None:
+    """Exercise the shipped constant across the whole reachable width range.
+
+    The tests around this one check two widths and patch the budget to drive
+    the mechanism. Neither says the *value* suits every window in between --
+    and the quantity that matters, ``rows x width``, moves non-monotonically
+    with width because the row count is an integer division: it collapses at
+    each divisor boundary. The worst case is a width just under one, which is
+    not a width anyone would think to parametrize.
+    """
+    budget = tensorflow_backend.TENSORFLOW_POSITION_BUDGET
+
+    def positions(width: int) -> int:
+        return max(1, budget // width) * width
+
+    worst_width = min(
+        range(MIN_WIDTH, WIDEST_BUILDABLE_WINDOW + 1), key=positions)
+    worst_positions = positions(worst_width)
+
+    assert worst_positions >= PLATEAU_FLOOR_POSITIONS, (
+        f"a window of width {worst_width} gets "
+        f"{max(1, budget // worst_width)} rows per chunk, i.e. "
+        f"{worst_positions} positions -- below the {PLATEAU_FLOOR_POSITIONS} "
+        f"the sweep behind the budget actually measured")
+    assert worst_positions <= budget, (
+        f"width {worst_width} exceeds the budget it is derived from")
+
+
+def test_tensorflow_chunk_never_falls_to_zero(
+    tensorflow_backend: ModuleType, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A window wider than the whole budget still asks for one row.
+
+    The budget is patched below one window because no *width* can reach this
+    branch: the widest the annotator builds is 22001 and 65536 // 22001 is 2.
+    What the floor guards is a future change to the constant -- drop it below
+    a window and the backend would ask Keras for `batch_size=0`, which it
+    rejects outright rather than reading as "no chunking".
+    """
+    monkeypatch.setattr(
+        tensorflow_backend, "TENSORFLOW_POSITION_BUDGET", MIN_WIDTH - 1)
+    batch_sizes: list = []
+    models = [_RecordingModel(batch_sizes, scale) for scale in range(1, 6)]
+    x = np.zeros((2, MIN_WIDTH, 4), np.int8)
+
+    tensorflow_backend.spliceai_predict(models, x)
+
+    assert set(batch_sizes) == {1}, (
+        f"a budget below one window gave batch_size {set(batch_sizes)}; "
+        f"0 is what Keras refuses")
+
+
+def test_tensorflow_chunking_does_not_change_results(
+    tensorflow_backend: ModuleType,
+    tensorflow_models: list,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chunking is a throughput device, not a numerical one.
+
+    Deliberately `allclose` and not `array_equal`, unlike the ONNX sibling.
+    TensorFlow's batched path is not bitwise reproducible -- #1275 measured
+    ~4e-11 between repeat calls and *between batch positions*, so re-chunking
+    moves the last bits by construction. Checked rather than assumed: at
+    `atol=0` this test fails, and the two arms here differ by up to 9.3e-10
+    (at a value of 8.4e-03, 9 of 15 elements).
+
+    1e-7 is therefore ~100x above the observed drift, so it will not flake,
+    and ~100x below the corpus's own `FLOAT_TOL` of 1e-5. It stays tight
+    enough to catch a real chunking bug by orders of magnitude: a dropped,
+    duplicated or reordered row moves a score by O(0.1), not O(1e-9).
+    """
+    x = a_one_hot_window(MIN_WIDTH, batch=5)
+
+    monkeypatch.setattr(
+        tensorflow_backend, "TENSORFLOW_POSITION_BUDGET", 1024 * MIN_WIDTH)
+    unchunked = tensorflow_backend.spliceai_predict(tensorflow_models, x)
+    monkeypatch.setattr(
+        tensorflow_backend, "TENSORFLOW_POSITION_BUDGET", 2 * MIN_WIDTH)
+    chunked = tensorflow_backend.spliceai_predict(tensorflow_models, x)
+
+    assert chunked.shape == unchunked.shape == (5, 1, 3)
+    np.testing.assert_allclose(chunked, unchunked, atol=1e-7)
