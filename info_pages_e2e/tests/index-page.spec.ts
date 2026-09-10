@@ -1711,3 +1711,41 @@ test('climbing the breadcrumb widens the search rather than dropping it',
     expect(await folderCount(page, 'scores')).toBe('(1)');
     expect(wholeScores).not.toBe('(1)');
   });
+
+test('Back from a folder entered while filtered returns to the wider scope',
+  async ({ page }) => {
+    await openBrowseIndex(page, '#/hg38');
+    await search(page, BROWSE_ID_ONLY_TERM);
+    await expect.poll(() => folderCount(page, 'scores')).toBe('(1)');
+
+    await folderRow(page, 'scores').click();
+
+    await expect.poll(() => hashOf(page))
+      .toBe(`#/hg38/scores?q=${BROWSE_ID_ONLY_TERM}`);
+    await expect.poll(() => folderNames(page)).toEqual(['conservation']);
+
+    await page.goBack();
+
+    /* Back leads out of the *folder*, not out of the page. Moving while
+     * filtered pushes, where editing the search replaces (#1331), and the
+     * difference is the whole of this test: with a move that replaced
+     * too, the reader's arrival, their search and their descent would all
+     * be the same single entry, and this Back would leave the page
+     * altogether.
+     *
+     * Which is also why the wider scope has to be reached by going back
+     * rather than by clicking the crumb -- the crumb is what the test
+     * above climbs, and it would pass just as well against a history
+     * that had recorded nothing at all. */
+    await expect.poll(() => hashOf(page))
+      .toBe(`#/hg38?q=${BROWSE_ID_ONLY_TERM}`);
+
+    /* Still filtered, in the box and in the tree alike. An entry that had
+     * been pushed without the query would come back to `#/hg38`, and the
+     * applier would then clear the box to agree with it -- so the reader
+     * would find themselves where they started with their search
+     * silently undone. */
+    await expect(page.locator('#search-field'))
+      .toHaveValue(BROWSE_ID_ONLY_TERM);
+    await expect.poll(() => folderCount(page, 'scores')).toBe('(1)');
+  });
