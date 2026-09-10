@@ -511,3 +511,127 @@ test('drilling into a folder puts it in the URL hash', async ({ page }) => {
    * seeing it is what says the descent happened. */
   await expect(folderRow(page, 'scores')).toBeVisible();
 });
+
+test('the page opens in the folder its address names', async ({ page }) => {
+  await openBrowseIndex(page, '#/hg38/scores');
+
+  await expectView(page, 'hierarchical');
+  /* The trail, not just the contents. Restoring the folder while
+   * rebuilding the breadcrumb from the root would leave the reader
+   * somewhere they cannot climb out of, and the list alone cannot tell
+   * the two apart. */
+  await expect(breadcrumbTrail(page)).resolves.toEqual(
+    ['All resources', 'hg38', 'scores']);
+  await expect(folderRow(page, 'conservation')).toBeVisible();
+});
+
+test('a breadcrumb click pushes the folder it climbs to', async ({ page }) => {
+  await openBrowseIndex(page, '#/hg38/scores');
+
+  await page.locator('#breadcrumb a.breadcrumb-item')
+    .filter({ hasText: 'hg38' }).click();
+
+  await expect.poll(() => hashOf(page)).toBe('#/hg38');
+  await expect(breadcrumbTrail(page)).resolves.toEqual(
+    ['All resources', 'hg38']);
+
+  /* Climbing is a push and not a replace, so the way back down is still
+   * in the history. A breadcrumb that called the renderer directly --
+   * which is what it did before iossifovlab/gain#579 -- leaves the
+   * address saying `#/hg38/scores` while the screen shows `hg38`, and
+   * this Back then leaves the page entirely. */
+  await page.goBack();
+
+  await expect.poll(() => hashOf(page)).toBe('#/hg38/scores');
+  await expect(breadcrumbTrail(page)).resolves.toEqual(
+    ['All resources', 'hg38', 'scores']);
+});
+
+test('Back walks up the way you came and Forward re-descends', async ({
+  page,
+}) => {
+  await openBrowseIndex(page, '#/');
+
+  await folderRow(page, 'hg38').click();
+  await expect.poll(() => hashOf(page)).toBe('#/hg38');
+  await folderRow(page, 'scores').click();
+  await expect.poll(() => hashOf(page)).toBe('#/hg38/scores');
+
+  /* Two steps up, one per descent, rather than one step out of the tree:
+   * each folder move is its own entry, so the trail back is the trail in
+   * reverse. */
+  await page.goBack();
+  await expect.poll(() => hashOf(page)).toBe('#/hg38');
+  await expect(breadcrumbTrail(page)).resolves.toEqual(
+    ['All resources', 'hg38']);
+
+  await page.goBack();
+  await expect.poll(() => hashOf(page)).toBe('#/');
+  await expect(breadcrumbTrail(page)).resolves.toEqual(['All resources']);
+
+  await page.goForward();
+
+  await expect.poll(() => hashOf(page)).toBe('#/hg38');
+  await expect(folderRow(page, 'scores')).toBeVisible();
+});
+
+test('a hash naming a folder that is gone opens its nearest surviving '
+  + 'ancestor', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(String(error)));
+
+  /* The shape a bookmark takes after the folder it pointed at was
+   * renamed away: the repository is regenerated whenever its content
+   * changes, so an address outliving a folder is ordinary rather than
+   * exceptional. `hg38/scores` is real and `nonesuch` is not. */
+  await openBrowseIndex(page, '#/hg38/scores/nonesuch');
+
+  await expectView(page, 'hierarchical');
+  await expect(breadcrumbTrail(page)).resolves.toEqual(
+    ['All resources', 'hg38', 'scores']);
+  await expect(folderRow(page, 'conservation')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('a hash with no surviving ancestor opens the root, still as a tree',
+  async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(String(error)));
+
+  await openBrowseIndex(page, '#/nonesuch/deeper');
+
+  /* The root *in the hierarchical view*, not the table. The address said
+   * tree and only the folder on it was wrong, so falling back to the
+   * table would answer a question nobody asked. */
+  await expectView(page, 'hierarchical');
+  await expect(breadcrumbTrail(page)).resolves.toEqual(['All resources']);
+  await expect(folderRow(page, BROWSE_TOP_LEVEL_FOLDERS[0])).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('a hash naming an inherited property name is not a folder', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(String(error)));
+
+  /* `constructor` names no folder, but it *is* reachable on any plain
+   * object through its prototype -- so a lookup written as
+   * `children[segment]` answers this one with `Object`'s constructor and
+   * the walk-up accepts a folder that does not exist. What follows is not
+   * a wrong render but a throw: the accepted "folder" is a function, and
+   * reading children off it hands `Object.values` an undefined.
+   *
+   * Reachable only since the folder path became addressable (#579) --
+   * before it, the path was only ever built from folders that existed.
+   * The same shape, in the same suite, is why `serving.ts` looks its GRRs
+   * up in a `Map`. */
+  await openBrowseIndex(page, '#/constructor');
+
+  /* The throw first, because it is the worse half: the breadcrumb below
+   * is merely wrong, while this leaves the list empty and every later
+   * render broken. */
+  expect(errors).toEqual([]);
+  await expectView(page, 'hierarchical');
+  await expect(breadcrumbTrail(page)).resolves.toEqual(['All resources']);
+});

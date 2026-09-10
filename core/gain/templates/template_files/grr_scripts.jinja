@@ -322,7 +322,18 @@
             }
 
             function makeNode(name, path) {
-                return { name, path, children: {}, resources: [], count: 0, bytes: 0 };
+                // `children` has no prototype, so the only names in it are
+                // folders that were put there. A plain `{}` answers
+                // `children["constructor"]` -- and `"toString"`, and
+                // `"__proto__"` -- out of `Object.prototype`, which since
+                // the folder path became addressable (#579) is a name a
+                // reader can put in the URL: the lookup would accept a
+                // folder that does not exist and then hand the renderer a
+                // function to read children off.
+                return {
+                    name, path, children: Object.create(null),
+                    resources: [], count: 0, bytes: 0,
+                };
             }
 
             const root = makeNode("All resources", []);
@@ -363,6 +374,30 @@
                 return node;
             }
 
+            /**
+             * How much of `path` is actually there, as a path.
+             *
+             * The folders exist only as a shape derived from the resource
+             * ids the page was generated with, so an address can outlive
+             * the folder it names -- a repository is regenerated whenever
+             * its content changes, which makes a stale bookmark ordinary
+             * rather than exceptional. Walking up instead of refusing
+             * leaves the reader on the deepest part of their address that
+             * still means something, and "no surviving ancestor" is the
+             * root, which is the same answer spelled with nothing left.
+             */
+            function existingPrefix(path) {
+                let node = root;
+                const prefix = [];
+                for (const seg of path) {
+                    const child = node.children[seg];
+                    if (!child) break;
+                    node = child;
+                    prefix.push(seg);
+                }
+                return prefix;
+            }
+
             const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 
             const breadcrumbEl = document.getElementById("breadcrumb");
@@ -390,7 +425,8 @@
                         el.href = "#";
                         el.addEventListener("click", (e) => {
                             e.preventDefault();
-                            navigateTo(crumb.path);
+                            goTo({
+                                view: "hierarchical", path: crumb.path });
                         });
                     }
                     breadcrumbEl.appendChild(el);
@@ -556,7 +592,7 @@
             /** Render what the current address says. The only applier. */
             function applyHash() {
                 const state = parseHash(location.hash);
-                setView(state.view, state.path);
+                setView(state.view, existingPrefix(state.path));
             }
 
             /** Push `state` into the session history, then render it. */
