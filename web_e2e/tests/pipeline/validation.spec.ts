@@ -36,17 +36,21 @@ test.describe('Pipeline validation tests', () => {
     await editor.newPipeline();
     await utils.typeInPipelineEditor(page, '- allele_score');
 
-    // The default work_dir is minted lazily via tempfile.mkdtemp (see gain#331),
-    // so its value is an absolute path with a random suffix that changes every
-    // run. Assert the stable head and tail around it rather than pinning the
-    // volatile work_dir path.
+    // Two assertions, and deliberately neither of them spans the middle of
+    // the message: everything between them is the AnnotatorInfo repr, which
+    // is this test's own input echoed back (annotator id, type, attributes,
+    // and a work_dir minted lazily by tempfile.mkdtemp, see gain#331, whose
+    // random suffix changes every run). Pinning it asserts what we typed
+    // rather than what the server refused, and it rotted once already when
+    // the refusal was reworded (gain#1353).
     await expect(editor.errorMessage).toContainText(
-      'Invalid configuration, reason: The A0 annotator configuration is incorrect:  ' +
-      'The AnnotatorInfo(annotator_id=\'A0\', type=\'allele_score\', attributes=[], ' +
-      'parameters={\'work_dir\': \'');
+      'Invalid configuration, reason: ' +
+      'The A0 annotator configuration is incorrect:');
+    // The refusal clause, whole and contiguous: it sits after the repr, so
+    // it can be asserted in one piece, and the repr cannot satisfy it.
     await expect(editor.errorMessage).toContainText(
-      'A0_allele_score\'}, documentation=\'\', resources=[]) ' +
-      'has not \'resource_id\' parameters');
+      'needs a \'resource_id\' parameter naming the resource ' +
+      'the annotator reads.');
   });
 
   test('should show a resource-not-found error for a config referencing a missing resource', async({ page }) => {
