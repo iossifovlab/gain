@@ -610,14 +610,11 @@ class AnnotationConfigParser:
     #: The annotator names a wildcard ``resource_id`` is accepted for,
     #: each mapped to the ONE canonical resource type it selects.
     #:
-    #: Whether a name takes a wildcard at all is the annotation layer's
-    #: policy rather than a property of the annotator, which is why this
-    #: is a list written here and not something derived from what the
-    #: annotators declare
-    #: (``docs/adr/0028-wildcard-expandability-is-parser-policy.md``).
-    #: What keeps the two from drifting is a test rather than a
-    #: derivation: ``test_wildcard_annotator_map`` pins every value here
-    #: against the annotator's own ``ACCEPTED_RESOURCE_TYPES[0]``.
+    #: Written here rather than derived from what the annotators declare,
+    #: and kept honest by ``test_wildcard_annotator_map``, which pins
+    #: every value against the annotator's own
+    #: ``ACCEPTED_RESOURCE_TYPES[0]``. Why not derived:
+    #: ``docs/adr/0028-wildcard-expandability-is-parser-policy.md``.
     #:
     #: Canonical, not every accepted spelling: a fragment score has two,
     #: and either annotator name must find either of them, but which

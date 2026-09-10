@@ -40,17 +40,24 @@ annotator.** The map stays a list `AnnotationConfigParser` owns. It is not
 derived from the entry points, from the annotator classes, or from anything the
 annotators declare.
 
+The argument that carries this on its own is the plugin API. Third-party
+annotators register through the same `gain.annotation.annotators` group. If the
+map were derived from what an annotator declares, any third-party annotator
+declaring `ACCEPTED_RESOURCE_TYPES` would silently acquire wildcard expansion —
+a behaviour GAIn would then owe it, without ever having decided to. Adding a
+*separate* declaration for expandability instead makes it a required part of
+the plugin API, with an external blast radius, to state a policy that is
+GAIn's. That holds whatever the in-tree annotators happen to look like.
+
 `query_resources`' own docstring already called this "the annotation layer's
-policy about the result", and the annotators bear it out: `gene_set_annotator`
-declares `ACCEPTED_RESOURCE_TYPES` and takes no wildcard. The two spellings it
-accepts are not related by `equivalent_resource_types` — `GENE_SET_TYPES`
-records that this "is the behaviour as it stands, not a considered position",
-and gain#1365 is open on it — so as things are, a wildcard keyed on either
-spelling would answer only the gene sets declaring that one. A derived map
-cannot express an annotator that declares a type and still takes no wildcard,
-without a second declaration saying "…but not for wildcards" — at which point
-the policy is being declared anyway, just further from the parser that applies
-it.
+policy about the result", and today one in-tree annotator sits on the
+distinction: `gene_set_annotator` declares `ACCEPTED_RESOURCE_TYPES` and takes
+no wildcard, because the two spellings it accepts are not related by
+`equivalent_resource_types`, so a wildcard keyed on either would answer only
+the gene sets declaring that one. That instance is *supporting* evidence, not
+the argument — `GENE_SET_TYPES` records that its absence from the equivalences
+"is the behaviour as it stands, not a considered position", and gain#1365 may
+remove it. If it does, decision 1 stands unchanged on the paragraph above.
 
 **2. The cost objection gain#1334 raised is wrong, and is not the reason.**
 gain#1334 argued that deriving would mean "importing every annotator module to
@@ -62,17 +69,8 @@ cost one import sweep per process, not one per request, and in any process that
 has ever built a pipeline it would cost nothing at all.
 
 This is recorded so a later reader does not re-derive a premise that does not
-hold and reopen the question on it. Derivation is rejected on decision 1, and
-on the plugin-API blast radius in decision 2b below — not on import cost.
-
-**2b. Deriving would make wildcard expandability a plugin-API promise.**
-Third-party annotators register through the same `gain.annotation.annotators`
-group. If the map were derived from what an annotator declares, any third-party
-annotator declaring `ACCEPTED_RESOURCE_TYPES` would silently acquire wildcard
-expansion — a behaviour GAIn would then owe it, without ever having decided to.
-Adding a *separate* declaration for expandability instead makes it a required
-part of the plugin API, with an external blast radius, to state a policy that
-is GAIn's.
+hold and reopen the question on it. Derivation is rejected on decision 1's
+plugin-API blast radius — not on import cost.
 
 **3. The agreement is pinned by a test, with an explicit exemption set.**
 `AnnotationConfigParser` carries two class-level constants:
@@ -168,14 +166,14 @@ look for it, and to mypy.
 
 **A second entry-point group** (`gain.annotation.wildcard_types`). Keeps the
 declaration out of the annotator class and lets a plugin opt in explicitly,
-which answers decision 2b's silent-acquisition objection. Rejected because it
+which answers decision 1's silent-acquisition objection. Rejected because it
 is still a plugin-API surface — versioned, documented and owed compatibility —
 carrying nine entries that GAIn writes for itself, and it splits one policy
 across two files that can disagree with no pin possible between them.
 
 **Keep the map and pin nothing** — gain#1329's state. Rejected: it is the
-status quo the issue was filed against, and the two silent drifts named above
-stay silent.
+status quo the issue was filed against, and the silent drift named above
+stays silent.
 
 **Pin by membership rather than by element zero.** Simpler, and tolerant of
 reordering. Rejected for the reason decision 4 gives: it would accept a map
@@ -207,3 +205,10 @@ entry naming a deprecated spelling.
   declaration, no change to how factories are registered.
 - Third-party annotators are outside the pin, and stay able to declare accepted
   resource types without acquiring a wildcard.
+- A **third** statement of the annotator-to-resource-type pairing still stands
+  unguarded, one package up: `web_api/web_annotation/editor/views.py`'s
+  `resource_default_annotators_mapping` holds the inverse relation, and the
+  editor's per-annotator templates state it again per configuration field. This
+  record does not close that — the pin here is core's, and what the editor
+  offers by default is a different question — but "the residual duplication is
+  nine lines" above is about `annotation_config`'s copy alone.

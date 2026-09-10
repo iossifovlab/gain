@@ -18,7 +18,6 @@ is GAIn's policy to state, not the plugin's, so an installed plugin must
 not fail GAIn's own pin.
 """
 # pylint: disable=W0621,C0116
-import importlib
 import sys
 from collections.abc import Iterable, Mapping
 from importlib.metadata import entry_points
@@ -27,6 +26,7 @@ import pytest
 from gain.annotation.annotation_config import AnnotationConfigParser
 from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.resource_types import (
+    GENE_SCORE_TYPE,
     LEGACY_FRAGMENT_SCORE_TYPE,
     PREFERRED_ALLELE_SCORE_TYPE,
     PREFERRED_FRAGMENT_SCORE_TYPE,
@@ -71,6 +71,12 @@ def _declared_by_entry_point() -> Declarations:
     ``None``, because the pin has something to say about it: a map entry
     naming it would promise a wildcard for an annotator with no
     resource-type concept.
+
+    Read from the entry points rather than through
+    ``get_available_annotator_types``, which answers the neighbouring
+    question of what this PROCESS can build: its registry is a mutable
+    process-global that ``register_annotator_factory`` adds to, and what
+    the map is policy about is what GAIn DECLARES.
     """
     declarations: Declarations = {}
     for entry in entry_points(group=ENTRY_POINT_GROUP):
@@ -80,7 +86,6 @@ def _declared_by_entry_point() -> Declarations:
         # then read from -- and a broken entry point should fail here,
         # loudly, rather than look like an annotator that declares nothing.
         entry.load()
-        importlib.import_module(entry.module)
         declared = _declaring_classes_in(entry.module)
         assert len(declared) <= 1, (
             f"'{entry.name}' resolves to {entry.module}, which defines more "
@@ -174,13 +179,29 @@ def _stale_entries(
     return violations
 
 
+def _violations_with(
+    declarations: Declarations, *,
+    types: Mapping[str, str] | None = None,
+    exempt: frozenset[str] | None = None,
+) -> list[str]:
+    """Run the pin with one constant replaced and the other left real.
+
+    So that each test below shows the mutation it is about and nothing
+    else -- naming the constant a test does NOT touch, in full, is what
+    made the seven of them hard to tell apart.
+    """
+    return _pin_violations(
+        declarations,
+        AnnotationConfigParser.WILDCARD_RESOURCE_TYPES
+        if types is None else types,
+        AnnotationConfigParser.WILDCARD_EXEMPT_ANNOTATORS
+        if exempt is None else exempt)
+
+
 def test_every_declaring_annotator_is_mapped_or_exempt(
     declarations: Declarations,
 ) -> None:
-    violations = _pin_violations(
-        declarations,
-        AnnotationConfigParser.WILDCARD_RESOURCE_TYPES,
-        AnnotationConfigParser.WILDCARD_EXEMPT_ANNOTATORS)
+    violations = _violations_with(declarations)
 
     assert not violations, violations
 
@@ -230,30 +251,24 @@ def test_the_gene_set_annotator_is_the_only_exemption() -> None:
 
 
 def test_the_wildcard_map_cannot_be_edited_in_place() -> None:
-    # As a local it was rebuilt per call, so an in-place edit could not
-    # outlive one parse. As a class attribute it would last the process,
-    # and a test that reached for `monkeypatch.setitem` would leave the
-    # parser corrupted for every test after it.
+    # Pins the CHOICE of `MappingProxyType`, which a revert to a plain
+    # dict would undo silently: a test reaching for `monkeypatch.setitem`
+    # would then leave the parser corrupted for every test after it.
     with pytest.raises(TypeError):
         AnnotationConfigParser.WILDCARD_RESOURCE_TYPES[  # type: ignore[index]
-            "position_score"] = "gene_score"
+            "position_score"] = GENE_SCORE_TYPE
 
 
 def test_a_map_value_naming_a_legacy_spelling_is_refused(
     declarations: Declarations,
 ) -> None:
-    # Behaviour-neutral for THIS pair as it stands -- search expands
-    # either fragment-score spelling into both -- and refused anyway: the
-    # map is meant to say what the annotator says, and search's
-    # equivalences are narrower than the spellings annotators accept, so
-    # the same entry written for a pair search does not relate would
-    # answer only half a repository.
+    # Worth a test even though it is behaviour-neutral for THIS pair as
+    # it stands -- search expands either fragment-score spelling into
+    # both. Refused anyway, for the reason `_pin_violations` gives above.
     broken = dict(AnnotationConfigParser.WILDCARD_RESOURCE_TYPES)
     broken["fragment_score_annotator"] = LEGACY_FRAGMENT_SCORE_TYPE
 
-    violations = _pin_violations(
-        declarations, broken,
-        AnnotationConfigParser.WILDCARD_EXEMPT_ANNOTATORS)
+    violations = _violations_with(declarations, types=broken)
 
     assert len(violations) == 1, violations
     assert "fragment_score_annotator" in violations[0]
@@ -270,8 +285,7 @@ def test_an_annotator_that_is_both_mapped_and_exempt_is_refused(
     broken = AnnotationConfigParser.WILDCARD_EXEMPT_ANNOTATORS | {
         "gene_score_annotator"}
 
-    violations = _pin_violations(
-        declarations, AnnotationConfigParser.WILDCARD_RESOURCE_TYPES, broken)
+    violations = _violations_with(declarations, exempt=broken)
 
     assert len(violations) == 1, violations
     assert "gene_score_annotator" in violations[0]
@@ -287,9 +301,7 @@ def test_a_declaring_annotator_missing_from_the_map_is_refused(
     broken = dict(AnnotationConfigParser.WILDCARD_RESOURCE_TYPES)
     del broken["gene_score_annotator"]
 
-    violations = _pin_violations(
-        declarations, broken,
-        AnnotationConfigParser.WILDCARD_EXEMPT_ANNOTATORS)
+    violations = _violations_with(declarations, types=broken)
 
     assert len(violations) == 1, violations
     assert "gene_score_annotator" in violations[0]
@@ -306,7 +318,7 @@ def test_an_annotator_moved_from_the_map_to_the_exemptions_is_accepted(
     exempt = AnnotationConfigParser.WILDCARD_EXEMPT_ANNOTATORS | {
         "gene_score_annotator"}
 
-    violations = _pin_violations(declarations, without, exempt)
+    violations = _violations_with(declarations, types=without, exempt=exempt)
 
     assert not violations, violations
 
@@ -320,9 +332,7 @@ def test_a_map_key_that_names_no_registered_annotator_is_refused(
     broken = dict(AnnotationConfigParser.WILDCARD_RESOURCE_TYPES)
     broken["np_score_annotator"] = PREFERRED_ALLELE_SCORE_TYPE
 
-    violations = _pin_violations(
-        declarations, broken,
-        AnnotationConfigParser.WILDCARD_EXEMPT_ANNOTATORS)
+    violations = _violations_with(declarations, types=broken)
 
     assert len(violations) == 1, violations
     assert "np_score_annotator" in violations[0]
@@ -338,9 +348,7 @@ def test_a_map_key_whose_annotator_takes_no_typed_resource_is_refused(
     broken = dict(AnnotationConfigParser.WILDCARD_RESOURCE_TYPES)
     broken["effect_annotator"] = PREFERRED_POSITION_SCORE_TYPE
 
-    violations = _pin_violations(
-        declarations, broken,
-        AnnotationConfigParser.WILDCARD_EXEMPT_ANNOTATORS)
+    violations = _violations_with(declarations, types=broken)
 
     assert len(violations) == 1, violations
     assert "effect_annotator" in violations[0]
@@ -356,8 +364,7 @@ def test_an_exemption_that_names_no_registered_annotator_is_refused(
     broken = AnnotationConfigParser.WILDCARD_EXEMPT_ANNOTATORS | {
         "np_score_annotator"}
 
-    violations = _pin_violations(
-        declarations, AnnotationConfigParser.WILDCARD_RESOURCE_TYPES, broken)
+    violations = _violations_with(declarations, exempt=broken)
 
     assert len(violations) == 1, violations
     assert "np_score_annotator" in violations[0]
