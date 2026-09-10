@@ -1749,3 +1749,30 @@ test('Back from a folder entered while filtered returns to the wider scope',
       .toHaveValue(BROWSE_ID_ONLY_TERM);
     await expect.poll(() => folderCount(page, 'scores')).toBe('(1)');
   });
+
+test('climbing to the root prunes the whole repository, box intact',
+  async ({ page }) => {
+    await openBrowseIndex(page, '#/hg38/scores/conservation');
+    await search(page, BROWSE_ID_ONLY_TERM);
+
+    await breadcrumbLink(page, 'All resources').click();
+
+    await expect.poll(() => hashOf(page)).toBe(`#/?q=${BROWSE_ID_ONLY_TERM}`);
+
+    /* The widest scope there is, and it is still a scope: `phylop`
+     * reaches one resource, so of the repository's several top-level
+     * folders only the one above it survives.
+     *
+     * This is where a folder-name assertion *is* the discriminating one,
+     * where climbing to `hg38` needed the count -- the fixture's other
+     * top-level folders have no match anywhere beneath them, so a tree
+     * that had dropped the query on the way up lists them all. */
+    await expect.poll(() => folderNames(page)).toEqual(['hg38']);
+    expect(BROWSE_TOP_LEVEL_FOLDERS.length).toBeGreaterThan(1);
+
+    /* And the box was not emptied to pay for it. Arriving at the root is
+     * not the same act as clearing the search, and the reader who climbs
+     * there is widening theirs rather than abandoning it. */
+    await expect(page.locator('#search-field'))
+      .toHaveValue(BROWSE_ID_ONLY_TERM);
+  });
