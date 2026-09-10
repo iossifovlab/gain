@@ -708,9 +708,8 @@
              * cannot drift: this is the only copy of that wording, and a
              * template that changes it keeps working with no second edit.
              */
-            const tablePlaceholder = searchFieldEl
-                ? searchFieldEl.getAttribute("placeholder")
-                : "";
+            const tablePlaceholder = (searchFieldEl
+                && searchFieldEl.getAttribute("placeholder")) || "";
 
             /**
              * Offer to search what a search from here would actually
@@ -723,10 +722,10 @@
              * cue that a search covers `hg38/scores` rather than
              * everything, and a breadcrumb reads as navigation.
              *
-             * `setAttribute` rather than the property, so what the box
-             * offers is visible in the DOM as well as to the renderer --
-             * the two would otherwise disagree, and the attribute is
-             * where anyone looking would look.
+             * Both spellings of this write the same place -- `placeholder`
+             * is a reflected attribute, so the property and the attribute
+             * are one value -- and it is set rather than interpolated
+             * because a folder name is untrusted repository content.
              */
             function renderPlaceholder() {
                 if (!searchFieldEl) return;
@@ -735,15 +734,33 @@
                         "placeholder", tablePlaceholder);
                     return;
                 }
-                // Folder names are untrusted repository content
-                // (iossifovlab/gain#467, iossifovlab/gain#528), and this
-                // is an attribute value rather than markup, so it is set
-                // rather than interpolated.
                 searchFieldEl.setAttribute(
                     "placeholder",
                     currentPath.length
-                        ? "Search under " + currentPath.join("/") + "…"
+                        ? "Search" + scopePhrase() + "…"
                         : "Search all resources…");
+            }
+
+            /**
+             * The folder the cues are talking about, as a phrase to hang
+             * off the end of a sentence.
+             *
+             * Empty at the root, where the scope is everything and there
+             * is no name to give it: "under all resources" is not
+             * English, and unqualified "resources" already means the
+             * whole repository. Shared by the two cues that word the root
+             * that way; the placeholder does not, because "Search…" with
+             * nothing after it says less than the box already said.
+             *
+             * Folder names are segments of resource ids, which are
+             * untrusted repository content (iossifovlab/gain#467,
+             * iossifovlab/gain#528) -- so what this returns is text for a
+             * text node, never markup.
+             */
+            function scopePhrase() {
+                return currentPath.length
+                    ? " under " + currentPath.join("/")
+                    : "";
             }
 
             /**
@@ -762,34 +779,33 @@
              * gives every folder in either tree its recursive count when
              * the tree is built.
              *
+             * The matched half arrives as `listed`, the folder the
+             * renderer has already resolved, rather than being resolved
+             * again here -- the second lookup would allocate a throwaway
+             * folder every time a filter matched nothing, and is one more
+             * place for "which tree is this resolved in?" to be answered
+             * differently.
+             *
              * Nothing at all when no filter is active. The unfiltered
              * listing already says how many resources are in the folder,
              * on the rows themselves, and a line reporting "3 of 3" under
              * every folder the reader walks through would be noise that
              * never changes.
              */
-            function renderStatus() {
+            function renderStatus(listed) {
                 if (!hvStatusEl) return;
                 if (listedSearch === null) {
                     hvStatusEl.style.display = "none";
                     hvStatusEl.textContent = "";
                     return;
                 }
-                const matched = listedFolder(currentPath).count;
+                // The denominator comes from the *full* tree, which is
+                // what makes it a denominator: taken from the pruned one
+                // it would be the numerator again.
                 const total = descend(currentPath).node.count;
-                // Named by folder, except at the root, where the scope is
-                // everything and there is no name to give it -- "under
-                // all resources" is not English, and unqualified
-                // "resources" already means the whole repository.
-                const scope = currentPath.length
-                    ? " under " + currentPath.join("/")
-                    : "";
-                // `textContent`: folder names are segments of resource
-                // ids, which are untrusted repository content
-                // (iossifovlab/gain#467, iossifovlab/gain#528).
                 hvStatusEl.textContent =
-                    matched + " of " + total + " resources" + scope
-                    + " match";
+                    listed.count + " of " + total + " resources"
+                    + scopePhrase() + " match";
                 hvStatusEl.style.display = "";
             }
 
@@ -861,16 +877,21 @@
              * true tells the reader their filter found an empty folder
              * rather than that they are standing in the wrong one.
              *
-             * The plain branch is unreachable as the tree stands, and is
-             * kept rather than asserted away. Folders exist only because
-             * some resource id put them there, so every folder in the
-             * full tree holds at least one resource, and `currentPath` is
-             * only ever assigned what `descend` reached in that tree --
-             * so with no filter there is nothing empty to render. What
-             * makes it worth keeping is that both halves of that argument
-             * are about things outside this function: a repository with
-             * no resources at all, or a listing built from anything other
-             * than ids, and the honest answer is already written.
+             * The plain branch is not reachable by *searching*: folders
+             * exist only because some resource id put them there, so
+             * every folder in the full tree holds at least one resource,
+             * and `currentPath` is only ever assigned what `descend`
+             * reached in that tree. Narrow a filter as far as it goes and
+             * the other branch is what draws.
+             *
+             * It is reached when there is nothing to list at all. The
+             * module that owns the search also populates `rowData`, and
+             * it imports sqlite-wasm from a CDN at its top level, so a
+             * blocked import leaves this module building its tree from an
+             * empty object: one root folder, no children, no resources,
+             * and no search to have filtered them. That is a page whose
+             * table is empty too, and "No resources" is what both should
+             * say -- it is not the moment to start describing a filter.
              */
             function emptyState() {
                 const empty = document.createElement("div");
@@ -879,9 +900,6 @@
                     empty.textContent = "No resources";
                     return empty;
                 }
-                const scope = currentPath.length
-                    ? " under " + currentPath.join("/")
-                    : "";
                 // A type chosen with no term is still a filter, and it has
                 // no term to quote -- naming it "''" would report an empty
                 // search rather than the one that ran.
@@ -894,7 +912,7 @@
                 // iossifovlab/gain#528) -- this node is the one place on
                 // the page where both meet.
                 empty.appendChild(document.createTextNode(
-                    "No resources" + scope + matching));
+                    "No resources" + scopePhrase() + matching));
                 // Nothing to widen to at the root: it is already every
                 // resource, and an offer to search what is being searched
                 // would be an invitation to click something that changes
@@ -1006,7 +1024,7 @@
                 // something about a listing that has been replaced. Both
                 // paths that change what is on screen -- a move, and a
                 // search coming back -- already come through here.
-                renderStatus();
+                renderStatus(node);
                 renderPlaceholder();
             }
 

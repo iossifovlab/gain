@@ -1296,6 +1296,16 @@ test('a tree still browses when the search index cannot be loaded', async ({
   expect(await folderNames(page)).toEqual([]);
   expect(errors).toEqual([]);
 
+  /* Empty with nothing to blame it on, and worded that way. This is the
+   * one route to a folder with nothing in it and no filter behind it:
+   * every folder in a repository that *has* resources exists because one
+   * of them put it there, so a filter is the only thing that can empty
+   * one. A page reaching for a search that is not there and describing
+   * this as "no matches" would be inventing a filter the reader never
+   * set (iossifovlab/gain#583). */
+  await expect(emptyState(page)).toHaveText('No resources');
+  await expect(treeStatus(page)).toBeHidden();
+
   /* And that the address machinery is alive, not merely that nothing
    * was thrown while it started up. A build that took the seam on trust
    * dies at module evaluation, which leaves the buttons inert and Back
@@ -1894,6 +1904,13 @@ test('a filtered tree counts the matches against the folder they are in',
      * no equal pair could show. */
     await openBrowseIndex(page, `#/hg38?q=${BROWSE_ID_ONLY_TERM}`, 1);
 
+    /* Visibility asserted separately, and it is not redundant: the line
+     * ships hidden and `toHaveText` reads `textContent`, which a hidden
+     * element has just as much as a shown one. A build that worded the
+     * status perfectly and never revealed it satisfies every other
+     * assertion in this file, including the ones below that watch it
+     * disappear. */
+    await expect(treeStatus(page)).toBeVisible();
     await expect(treeStatus(page))
       .toHaveText('1 of 3 resources under hg38 match');
   });
@@ -1929,6 +1946,7 @@ test('the tree says nothing about counts until something is filtered',
      * rendered at all". */
     await search(page, BROWSE_ID_ONLY_TERM);
 
+    await expect(treeStatus(page)).toBeVisible();
     await expect(treeStatus(page))
       .toHaveText('1 of 3 resources under hg38 match');
 
@@ -2015,25 +2033,38 @@ test('both cues follow the reader between folders', async ({ page }) => {
 test('leaving the tree gives the box back to the table', async ({ page }) => {
   /* The placeholder is the one cue on a control the two views share, so
    * it is the one that can be left describing a view the reader is no
-   * longer in -- a box offering to search `hg38/scores` above a table
-   * listing the whole repository. */
-  await openBrowseIndex(page, '#/hg38/scores');
+   * longer in -- a box offering to search `hg38` above a table listing
+   * the whole repository. */
+  await openBrowseIndex(page);
 
-  await expect(searchPlaceholder(page))
-    .toHaveAttribute('placeholder', 'Search under hg38/scores…');
+  /* The table's own wording, taken off the page before the tree has been
+   * entered. What this test is about is the box being handed back, not
+   * what the markup happens to say, so the value it is handed back to
+   * comes from the page rather than from a literal here. */
+  const tableWording = await searchPlaceholder(page).getAttribute('placeholder');
+  expect(tableWording).not.toBeNull();
 
-  await page.locator('#table-view-btn').click();
-
-  /* The table's own wording, and read from the page rather than written
-   * here: this test is about the box being handed back, not about what
-   * the markup happens to say. */
-  await expect(searchPlaceholder(page)).toHaveAttribute('placeholder', 'Search');
-
-  /* And back, to the folder the tree was left in. */
   await page.locator('#hierarchical-view-btn').click();
 
   await expect(searchPlaceholder(page))
-    .toHaveAttribute('placeholder', 'Search under hg38/scores…');
+    .toHaveAttribute('placeholder', 'Search all resources…');
+
+  await folderRow(page, 'hg38').click();
+
+  await expect(searchPlaceholder(page))
+    .toHaveAttribute('placeholder', 'Search under hg38…');
+
+  await page.locator('#table-view-btn').click();
+
+  await expect(searchPlaceholder(page))
+    .toHaveAttribute('placeholder', tableWording as string);
+
+  /* And back, to the folder the tree was left in -- the placeholder
+   * follows the restored folder rather than resetting to the root. */
+  await page.locator('#hierarchical-view-btn').click();
+
+  await expect(searchPlaceholder(page))
+    .toHaveAttribute('placeholder', 'Search under hg38…');
 });
 
 /** The message a folder shows when it has nothing to list. */
@@ -2053,7 +2084,17 @@ test('a filter that matched nothing here names what it looked in',
       `No resources under hg38 match '${BROWSE_SUMMARY_ONLY_TERM}'`);
   });
 
-/** A term no column in the browse fixture carries. */
+/**
+ * A term no column in the browse fixture carries.
+ *
+ * Local rather than mirrored from `fixtures.ts` like the `BROWSE_*`
+ * constants, and deliberately: those name things the fixture *has*, and
+ * are pinned Python-side so that retuning the data reddens there rather
+ * than hollowing out an assertion here. This one names an absence, which
+ * that arrangement cannot check -- and does not need to. A term that
+ * started matching something would empty no folder, so the tests below
+ * fail loudly instead of passing while proving less.
+ */
 const BROWSE_NO_MATCH_TERM = 'zzzunmatchable';
 
 test('at the root there is no narrower scope to blame', async ({ page }) => {
