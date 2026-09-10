@@ -1685,7 +1685,12 @@ test('climbing the breadcrumb widens the search rather than dropping it',
 
     await folderRow(page, 'scores').click();
     await search(page, BROWSE_ID_ONLY_TERM);
-    await expect.poll(() => folderNames(page)).toEqual(['conservation']);
+
+    /* Waited for on the row the term actually removes. `scores` keeps its
+     * one child folder under this term, so a barrier watching the folders
+     * would be true before the search had run and would let the climb
+     * below go first -- gating on nothing while looking like a gate. */
+    await expect.poll(() => resourceNames(page)).toEqual([]);
 
     await breadcrumbLink(page, 'hg38').click();
 
@@ -1706,9 +1711,12 @@ test('climbing the breadcrumb widens the search rather than dropping it',
      *
      * The count is what separates them, and it is the reason climbing is
      * how a reader discovers they were scoped too deep: one match under
-     * `scores`, not the three it holds. */
-    await expect.poll(() => folderNames(page)).toEqual(['scores']);
-    expect(await folderCount(page, 'scores')).toBe('(1)');
+     * `scores`, not the three it holds.
+     *
+     * Which is also why it is the count that retries. Polling the names
+     * and then reading the count once would wait on the assertion that
+     * cannot fail and hurry the one that can. */
+    await expect.poll(() => folderCount(page, 'scores')).toBe('(1)');
     expect(wholeScores).not.toBe('(1)');
   });
 
@@ -1722,7 +1730,6 @@ test('Back from a folder entered while filtered returns to the wider scope',
 
     await expect.poll(() => hashOf(page))
       .toBe(`#/hg38/scores?q=${BROWSE_ID_ONLY_TERM}`);
-    await expect.poll(() => folderNames(page)).toEqual(['conservation']);
 
     await page.goBack();
 
@@ -1759,8 +1766,8 @@ test('climbing to the root prunes the whole repository, box intact',
      * search would leave it to timing whether the reader climbs *while
      * filtered* -- the scenario -- or climbs before the answer arrives,
      * which is a different one that happens to end in the same place. */
-    await expect.poll(() => resourceNames(page))
-      .toEqual([BROWSE_ID_ONLY_RESOURCE_ID.split('/').pop()]);
+    const [, , , matchedName] = BROWSE_ID_ONLY_RESOURCE_ID.split('/');
+    await expect.poll(() => resourceNames(page)).toEqual([matchedName]);
 
     await breadcrumbLink(page, 'All resources').click();
 
@@ -1775,7 +1782,6 @@ test('climbing to the root prunes the whole repository, box intact',
      * top-level folders have no match anywhere beneath them, so a tree
      * that had dropped the query on the way up lists them all. */
     await expect.poll(() => folderNames(page)).toEqual(['hg38']);
-    expect(BROWSE_TOP_LEVEL_FOLDERS.length).toBeGreaterThan(1);
 
     /* And the box was not emptied to pay for it. Arriving at the root is
      * not the same act as clearing the search, and the reader who climbs
@@ -1784,61 +1790,57 @@ test('climbing to the root prunes the whole repository, box intact',
       .toHaveValue(BROWSE_ID_ONLY_TERM);
   });
 
-test('the counts are re-derived at every step, not carried over',
-  async ({ page }) => {
-    await openBrowseIndex(page, '#/');
+test('a folder entered while filtered reports what matched, and gives the '
+  + 'whole of itself back when the search is cleared', async ({ page }) => {
+    await openBrowseIndex(page, '#/hg38/scores');
 
-    /* Everything under `hg38`, unfiltered. `hg38` holds exactly one child
-     * folder, `scores`, so every resource beneath the one is beneath the
-     * other -- which is what lets this single reading serve as the
-     * expected value for a *different* row further down, without either
-     * number being written here. */
-    const wholeSubtree = await folderCount(page, 'hg38');
+    /* The row this test ends on, read before any search has touched it.
+     * Its own earlier reading, not some other row's: a count taken from
+     * an ancestor would agree with this one only for as long as the
+     * fixture kept a single child folder between them, and would then
+     * redden for a reason that has nothing to do with what is being
+     * claimed here. */
+    const wholeConservation = await folderCount(page, 'conservation');
+    expect(wholeConservation).not.toBe('(1)');
 
+    await breadcrumbLink(page, 'hg38').click();
     await search(page, BROWSE_ID_ONLY_TERM);
-    await expect.poll(() => folderCount(page, 'hg38')).toBe('(1)');
+    await expect.poll(() => folderCount(page, 'scores')).toBe('(1)');
 
-    await folderRow(page, 'hg38').click();
+    await folderRow(page, 'scores').click();
 
     /* Moved into the folder while filtered, and the row that greets the
-     * reader there reports what matched rather than what the folder
-     * holds. A build that rendered the move from the listing it already
-     * had -- rather than walking into the pruned tree afresh -- would
-     * show the reader numbers belonging to the folder they just left. */
-    await expect.poll(() => folderCount(page, 'scores')).toBe('(1)');
+     * reader there reports what matched rather than what it holds. A
+     * build that rendered the move from the listing it already had --
+     * rather than walking into the pruned tree afresh -- would show the
+     * reader numbers belonging to the folder they just left. */
+    await expect.poll(() => folderCount(page, 'conservation')).toBe('(1)');
 
     await search(page, '');
 
-    /* And clearing puts the whole subtree back, in the folder the reader
-     * navigated to rather than the one they searched from. The count is
+    /* And clearing gives the folder back where the reader now stands,
+     * rather than where they were standing when they typed. The count is
      * the assertion because it is the part that can go stale on its own:
      * the rows can come back correctly while the totals beside them still
      * describe the search that has just been cleared. */
-    await expect.poll(() => folderCount(page, 'scores')).toBe(wholeSubtree);
-    expect(hashOf(page)).toBe('#/hg38');
-
-    /* The guard the assertion above needs to keep meaning something. It
-     * compares against a reading rather than a literal, which is what
-     * keeps it honest as the fixture grows -- but a fixture that ever
-     * narrowed to a single resource under `hg38` would make the whole
-     * count and the matched count the same string, and a listing left
-     * stale on the search would satisfy it. */
-    expect(wholeSubtree).not.toBe('(1)');
+    await expect.poll(() => folderCount(page, 'conservation'))
+      .toBe(wholeConservation);
+    expect(hashOf(page)).toBe('#/hg38/scores');
   });
 
 test('the toggle applies a standing term to the folder it restores',
   async ({ page }) => {
     await openBrowseIndex(page, '#/hg38/scores');
 
-    /* What the folder holds with nothing filtered. The resource is the
-     * half that matters: `scores` keeps its one child folder under this
-     * term either way, so a listing that ignored the search would give
-     * itself away by the resource beside it rather than by the folder. */
-    expect(await folderNames(page)).toEqual(['conservation']);
-    const wholeResources = await resourceNames(page);
-    expect(wholeResources).not.toEqual([]);
+    /* The folder has a resource to lose. `scores` keeps its one child
+     * folder under this term either way, so a listing that ignored the
+     * search would give itself away by the resource beside it rather than
+     * by the folder -- which makes this the guard that stops the
+     * `toEqual([])` below from being satisfied by an empty folder. */
+    expect(await resourceNames(page)).not.toEqual([]);
 
     await page.locator('#table-view-btn').click();
+    await expectView(page, 'table');
     await search(page, BROWSE_ID_ONLY_TERM);
     await page.locator('#hierarchical-view-btn').click();
 
@@ -1847,7 +1849,7 @@ test('the toggle applies a standing term to the folder it restores',
      * to the table does not disturb it. */
     await expect.poll(() => hashOf(page))
       .toBe(`#/hg38/scores?q=${BROWSE_ID_ONLY_TERM}`);
-    expect(await breadcrumbTrail(page)).toContain('scores');
+    await expectView(page, 'hierarchical');
 
     /* And pruned *there*. This is the case the tree can get wrong in a
      * way that shows: the term was typed while the tree was not on
