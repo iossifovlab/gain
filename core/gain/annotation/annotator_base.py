@@ -111,14 +111,24 @@ class AnnotatorBase(Annotator):
     #:
     #: This is the ANNOTATOR's copy, not the only one: the wildcard
     #: expansion in ``annotation_config`` keys the same fact on annotator
-    #: NAME rather than class (gain#1266, and gain#1334 to remove it),
-    #: and the web editor states it again per configuration field.  What
-    #: is gone is the five different shapes it took inside the annotators.
+    #: NAME rather than class (gain#1266), and the web editor states it
+    #: again per configuration field.  What is gone is the five different
+    #: shapes it took inside the annotators.  The wildcard map stays a
+    #: separate statement on purpose -- whether a name expands a wildcard
+    #: is the annotation layer's policy, not a property of the annotator
+    #: (``docs/adr/0029-wildcard-expandability-is-parser-policy.md``,
+    #: gain#1334) -- and a test pins the two against each other.
     #:
-    #: A tuple rather than a set, for the reason
+    #: **The first element is the preferred spelling.**  A tuple rather
+    #: than a set for that reason, as
     #: :data:`~gain.genomic_resources.resource_types.FRAGMENT_SCORE_TYPES`
-    #: is one -- it is rendered into the refusal, preferred spelling
-    #: first.  Two annotators accept two spellings; each warns from the
+    #: is one: the order is rendered into the refusal, and
+    #: ``AnnotationConfigParser.WILDCARD_RESOURCE_TYPES`` is pinned
+    #: against element zero rather than against membership (why, in ADR
+    #: 0029).  So an annotator that comes to accept a further spelling
+    #: APPENDS it.
+    #:
+    #: Two annotators accept two spellings; each warns from the
     #: constructor that opens the resource, which still runs after this
     #: check passes the spelling through.
     #:
