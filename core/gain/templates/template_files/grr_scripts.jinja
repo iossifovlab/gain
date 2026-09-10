@@ -103,9 +103,35 @@
             return sortOrder === 'desc' ? sorted.reverse() : sorted;
         }
 
-        function applyRefreshData(ids) {
+        /**
+         * Show `ids`. `search` is what they answer, or null if nothing --
+         * an unfiltered listing of the whole repository.
+         *
+         * Passed in rather than read back out of the controls here,
+         * because the two are not the same thing at the one call that
+         * matters. The initial load hands over the whole repository
+         * *before* any search has run -- but a reader who followed a
+         * filtered link already has the term in the box by then, put
+         * there ahead of the index finishing so that the controls tell
+         * the truth during the wait. Reading the box would therefore
+         * announce every id in the repository as the answer to their
+         * query, and a listener that renders from the hit set would
+         * believe it.
+         *
+         * Nullable rather than an empty `{q: "", type: ""}`, so that
+         * "is anything filtered?" is decided here, where `doSearch`
+         * already decides it, instead of a second time by every listener
+         * -- across a `window` seam, where the two spellings could drift
+         * with nothing to catch them.
+         *
+         * `ids` unsorted, because the one listener sorts by name and this
+         * order is the table's column sort -- passing it on would be
+         * handing over a detail of a view the listener is not.
+         */
+        function applyRefreshData(ids, search) {
             lastIds = ids;
             refreshData(sortedIds(ids));
+            searchResults({ search, ids });
         }
 
         function UpdateStatus() {
@@ -164,7 +190,9 @@
                 option.textContent = type;
                 typeFilter.append(option);
             }
-            applyRefreshData(Array.from(window.all_ids))
+            // The unfiltered repository, and announced as exactly that --
+            // no search has run yet, whatever the box may already hold.
+            applyRefreshData(Array.from(window.all_ids), null)
 
             resolve(window.sqlite3)
         });
@@ -205,7 +233,7 @@
             const { q, type } = currentSearch();
             if (q === "" && type === "") {
                 window.last_error = null;
-                applyRefreshData(Array.from(window.all_ids))
+                applyRefreshData(Array.from(window.all_ids), null)
                 return;
             }
 
@@ -225,12 +253,16 @@
             window.last_error = null;
             try {
                 const displayIds = window.sqlite3.query(query).map((row) => row[0]);
-                applyRefreshData(displayIds);
+                applyRefreshData(displayIds, { q, type });
             }
             catch (error) {
                 window.last_error = error;
                 console.error("Error during search:", error);
-                applyRefreshData(Array.from(window.all_ids))
+                // Still this search, and still what it came to: a query
+                // that could not be run falls back to the whole
+                // repository, and both views have to show that rather
+                // than an empty answer.
+                applyRefreshData(Array.from(window.all_ids), { q, type })
             }
             finally {
                 $(".searching").hide()
@@ -251,6 +283,27 @@
          * module reaches for nothing in here except this.
          */
         let searchChanged = () => {};
+
+        /*
+         * Told what the last search matched, for whoever renders from the
+         * hit set rather than from the table.
+         *
+         * Separate from `searchChanged` above, and it has to be. That one
+         * announces *the reader touched a control*, synchronously, before
+         * the query it triggers has run -- which is what the address wants
+         * and is useless to anything that needs the answer. It also stays
+         * deliberately silent on the address-driven path (`apply` below),
+         * where announcing would be answering its own question.
+         *
+         * This one is the opposite on both counts: it fires when there is
+         * an answer, and it fires however the search was asked for -- so a
+         * reader who follows a filtered link is told the same thing as one
+         * who typed the term. Published from `applyRefreshData`, the one
+         * funnel every path already passes through, including the empty
+         * search that restores the whole repository and the malformed one
+         * that degrades to it.
+         */
+        let searchResults = () => {};
 
         window.grrSearch = {
             current: currentSearch,
@@ -295,6 +348,19 @@
             /** Be told when the reader changes either control. */
             onChange(listener) {
                 searchChanged = listener;
+            },
+
+            /**
+             * Be told what the last search matched.
+             *
+             * The listener is handed the search *together with* the ids it
+             * answered, rather than being left to read the controls back:
+             * by the time it runs, the controls are only the current state
+             * of the box, which a reader mid-word has already moved on
+             * from. What arrives here is a matched pair.
+             */
+            onResults(listener) {
+                searchResults = listener;
             },
         };
 
@@ -412,6 +478,9 @@
                 current: () => ({ q: "", type: "" }),
                 apply() {},
                 onChange() {},
+                // Never calls back, so the tree never prunes -- which is
+                // the right answer when there is no search to prune to.
+                onResults() {},
             };
 
             // Mirror gain.utils.helpers.convert_size so aggregated folder
@@ -452,42 +521,70 @@
                 };
             }
 
-            const root = makeNode("All resources", []);
-            for (const fullId of Object.keys(rowData)) {
-                const parts = fullId.split("/");
-                let node = root;
-                for (let i = 0; i < parts.length - 1; i++) {
-                    const seg = parts[i];
-                    if (!node.children[seg]) {
-                        node.children[seg] = makeNode(seg, parts.slice(0, i + 1));
+            /**
+             * The folder tree `ids` fold up into, counted and sized.
+             *
+             * Called for the whole repository once, and again for the hit
+             * set of every search -- which is what makes a pruned tree the
+             * *same* tree, built from fewer ids, rather than the full one
+             * with rows hidden. Two consequences worth having, both of
+             * which fall out rather than being arranged for.
+             *
+             * A folder exists here only if some id put it here, so a
+             * folder with no matching descendant is not pruned away: it is
+             * never built. Folder names are synthesized from ids and are
+             * never themselves searched, so "matching folder" is not a
+             * thing that has to be defined.
+             *
+             * And `aggregate` runs over the same reduced set, so the count
+             * and the size a folder reports are the *matched* count and
+             * the matched size for free -- there is no second traversal
+             * that could disagree with the rows underneath it.
+             */
+            function buildTree(ids) {
+                const root = makeNode("All resources", []);
+                for (const fullId of ids) {
+                    const parts = fullId.split("/");
+                    let node = root;
+                    for (let i = 0; i < parts.length - 1; i++) {
+                        const seg = parts[i];
+                        if (!node.children[seg]) {
+                            node.children[seg] = makeNode(seg, parts.slice(0, i + 1));
+                        }
+                        node = node.children[seg];
                     }
-                    node = node.children[seg];
+                    node.resources.push({
+                        name: parts[parts.length - 1], fullId, data: rowData[fullId],
+                    });
                 }
-                node.resources.push({
-                    name: parts[parts.length - 1], fullId, data: rowData[fullId],
-                });
+
+                // Precompute recursive resource count + total size for every folder.
+                (function aggregate(node) {
+                    let count = node.resources.length;
+                    let bytes = node.resources.reduce((s, r) => s + (r.data.sizeInBytes || 0), 0);
+                    for (const key of Object.keys(node.children)) {
+                        aggregate(node.children[key]);
+                        count += node.children[key].count;
+                        bytes += node.children[key].bytes;
+                    }
+                    node.count = count;
+                    node.bytes = bytes;
+                })(root);
+
+                return root;
             }
 
-            // Precompute recursive resource count + total size for every folder.
-            (function aggregate(node) {
-                let count = node.resources.length;
-                let bytes = node.resources.reduce((s, r) => s + (r.data.sizeInBytes || 0), 0);
-                for (const key of Object.keys(node.children)) {
-                    aggregate(node.children[key]);
-                    count += node.children[key].count;
-                    bytes += node.children[key].bytes;
-                }
-                node.count = count;
-                node.bytes = bytes;
-            })(root);
+            const root = buildTree(Object.keys(rowData));
 
             /**
-             * How far down `path` the tree actually goes.
+             * How far down `path` `tree` actually goes.
              *
              * Returns the deepest folder it could reach and the segments
-             * that reached it -- which is the whole answer, because the two
-             * callers want opposite halves of it: the renderer wants the
-             * folder, and the applier wants the path to put in the address.
+             * that reached it -- which is the whole answer, because the
+             * callers want different halves of it: the applier wants the
+             * path to put in the address, the renderer wants the folder,
+             * and `listedFolder` wants both, to tell "walked the whole
+             * path" from "stopped short".
              *
              * One walk rather than one per caller, so the rule for
              * resolving a segment to a child lives in one place. That rule
@@ -496,16 +593,26 @@
              * inherited, and a second copy of the walk is somewhere for the
              * next such rule to be applied to only half the callers.
              *
-             * Stopping short is ordinary rather than exceptional. Folders
-             * are a shape derived from the resource ids the page was
-             * generated with, and a repository is regenerated whenever its
-             * content changes, so an address routinely outlives the folder
-             * it names. Walking up leaves the reader on the deepest part of
-             * their address that still means something; "no surviving
-             * ancestor" is the root, the same answer with nothing left.
+             * Which is why the *tree* is a parameter rather than the walk
+             * being written out again over the pruned one. What differs
+             * between the callers is where they start and what they make
+             * of stopping short, and neither is a reason to resolve a
+             * segment twice in two places.
+             *
+             * Stopping short is ordinary rather than exceptional, and it
+             * means two different things. Against the full tree it is an
+             * address that has outlived the folder it names -- folders are
+             * a shape derived from the resource ids the page was generated
+             * with, and a repository is regenerated whenever its content
+             * changes -- and walking up leaves the reader on the deepest
+             * part of their address that still means something; "no
+             * surviving ancestor" is the root, the same answer with
+             * nothing left. Against a pruned tree it means the folder is
+             * real but holds no matches, which is not a walk-up at all;
+             * `listedFolder` is where that second reading lives.
              */
-            function descend(path) {
-                let node = root;
+            function descend(path, tree = root) {
+                let node = tree;
                 const reached = [];
                 for (const seg of path) {
                     const child = node.children[seg];
@@ -526,6 +633,34 @@
             const breadcrumbEl = document.getElementById("breadcrumb");
             const listEl = document.getElementById("hierarchical-list");
             let currentPath = [];
+
+            /**
+             * The tree the listing is drawn from: the whole repository,
+             * or what the current search matched.
+             *
+             * `root` rather than a null meaning "no search", so that there
+             * is one kind of thing here and the renderer has one shape.
+             * The two are not interchangeable and this is not a way of
+             * pretending they are -- an unfiltered listing is the tree
+             * built once at load, reporting the counts the repository
+             * actually has, and a filtered one is rebuilt from the hit set
+             * and reports the matched counts. Which of those is standing
+             * is exactly what assigning this decides.
+             *
+             * Held whole and unscoped -- the matches across the *whole*
+             * repository -- rather than narrowed to the folder showing,
+             * because a folder move does not re-run the search. It cannot:
+             * the answer has not changed, and re-querying on every step
+             * between folders is what `applySearch`'s guard exists to
+             * avoid. A hit set narrowed at the moment it arrived would
+             * therefore still be narrowed to the folder the reader was in
+             * when they typed, and every folder they moved to afterwards
+             * would show its matches scoped to somewhere they had left.
+             *
+             * So it is walked into where it is read instead, by
+             * `listedFolder`.
+             */
+            let listing = root;
 
             function renderBreadcrumb() {
                 breadcrumbEl.innerHTML = "";
@@ -558,14 +693,53 @@
                 });
             }
 
+            /**
+             * The folder at `path` in whatever tree is being listed.
+             *
+             * `descend` without its walk-up, which is the one thing about
+             * the full tree that must not carry over: walking up is right
+             * for an address naming a folder that no longer exists, and
+             * wrong for a folder that exists and simply has no matches in
+             * it. Doing it here would answer with some ancestor's matches,
+             * and the reader would be shown a list of things that are not
+             * in the folder they are looking at -- and, because the
+             * applier canonicalises the address to whatever was reached,
+             * would then rewrite the address to say so.
+             *
+             * An empty folder is that case. Not a null: `currentPath` is
+             * only ever assigned what `descend` reached in the full tree,
+             * so the folder is real, and what the reader should see is the
+             * "No resources" the renderer already draws for a folder with
+             * nothing in it -- rather than the renderer growing a second
+             * shape to handle an absence that is not one.
+             */
+            function listedFolder(path) {
+                const { node, reached } = descend(path, listing);
+                return reached.length === path.length
+                    ? node
+                    : makeNode(path[path.length - 1], path);
+            }
+
             function renderList() {
                 // Always a folder: `currentPath` is only ever assigned what
-                // `descend` reached, so there is no "no such folder" case
-                // left here to guard against. A guard would be worse than
-                // none -- the list has already been emptied by this point,
-                // so bailing would show an empty folder and say nothing,
-                // which is where a broken invariant would hide.
-                const { node } = descend(currentPath);
+                // `descend` reached in the full tree, and `listedFolder`
+                // answers a search with no hits here with an empty folder
+                // rather than with nothing -- so there is no "no such
+                // folder" case left here to guard against. A guard would be
+                // worse than none -- the list has already been emptied by
+                // this point, so bailing would show an empty folder and say
+                // nothing, which is where a broken invariant would hide.
+                //
+                // Note which tree that folder is resolved *in*. Where the
+                // reader is standing is settled against the full tree, by
+                // the applier; only what is listed comes from `listing`.
+                // Resolving the address itself against the pruned tree
+                // would turn a term that matched nothing here into a move
+                // -- the folder would cease to exist, `descend` would walk
+                // up, and `applyHash` would rewrite the address to wherever
+                // it landed (#579), so clearing the search would return the
+                // reader to an ancestor rather than to where they searched.
+                const node = listedFolder(currentPath);
                 listEl.innerHTML = "";
 
                 for (const folder of Object.values(node.children).sort(byName)) {
@@ -628,9 +802,6 @@
             const hierBtn = document.getElementById("hierarchical-view-btn");
             const tableWrapper = document.getElementById("table-wrapper");
             const hierWrapper = document.getElementById("hierarchical-wrapper");
-            const searchContainer = document.getElementById("search-container");
-            const searchField = document.getElementById("search-field");
-            const typeFilter = document.getElementById("type-filter");
             const statusEl = document.getElementById("status");
 
             function setView(view) {
@@ -640,10 +811,17 @@
                 tableWrapper.style.display = isHier ? "none" : "";
                 hierWrapper.style.display = isHier ? "" : "none";
                 if (statusEl) statusEl.style.display = isHier ? "none" : "";
-                // Search + type filter are table-view only.
-                searchField.disabled = isHier;
-                typeFilter.disabled = isHier;
-                searchContainer.classList.toggle("disabled", isHier);
+                // The search controls are left alone. They used to be
+                // disabled and dimmed here, because the tree could not
+                // answer a search; now it prunes to one (#581), so both
+                // views search and the controls belong to neither.
+                //
+                // `#status` still goes, and is not the same call. It
+                // reports how many resources matched *repository-wide*,
+                // which is the table's answer -- the tree's is the pruned
+                // listing itself, and showing the other number beside it
+                // would be showing two counts of different things.
+                //
                 // Which chrome to show, and nothing else. *What* the tree
                 // shows depends on resolving a folder, which the applier
                 // does -- so "is this the tree?" is asked in one place
@@ -977,6 +1155,42 @@
                 if (hash === location.hash) return;
                 history.replaceState(
                     null, "", hash || location.pathname + location.search);
+            });
+
+            // What the tree lists is decided here, and only here.
+            //
+            // Rebuilt rather than filtered in place: the hit set is what
+            // changed, and `buildTree` is the one thing that turns a set of
+            // ids into a listable tree. A search that matched nothing still
+            // builds -- an empty tree, whose every folder is absent because
+            // no id put it there.
+            //
+            // No search goes back to the tree built at load rather than
+            // rebuilding from every id, which would come to the same
+            // listing by a longer route. Not *quite* the same, in fact,
+            // and the difference is the reason to prefer the original: the
+            // rebuilt one reports counts and sizes recomputed from
+            // whatever ids the search index just handed over, where the
+            // tree from load reports the repository's own. They agree, and
+            // "they agree" is a thing that can stop being true.
+            //
+            // A query the index rejects is not that case. It falls back to
+            // every id, and arrives here *with* its search, so the tree
+            // rebuilds and lists everything -- the same answer the table
+            // shows, reached the same way.
+            searchControls.onResults(({ search, ids }) => {
+                const next = search ? buildTree(ids) : root;
+                // Every load ends with an unfiltered announcement, and for
+                // most of them that is the state already showing: the tree
+                // was rendered on the way in, or pre-rendered for the view
+                // toggle. Re-rendering it would rebuild the whole listing
+                // to arrive back where it started.
+                if (next === listing) return;
+                listing = next;
+                // The breadcrumb is untouched: the reader has not moved,
+                // and a search that redrew the trail would be saying they
+                // had.
+                renderList();
             });
 
             // `hashchange` only. A same-document fragment move fires
