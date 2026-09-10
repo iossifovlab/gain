@@ -1669,3 +1669,45 @@ test('toggling to the table shows matches from outside the folder',
     await expect(page.locator('#search-field'))
       .toHaveValue(BROWSE_SUMMARY_ONLY_TERM);
   });
+
+/* ---- Search scope follows the breadcrumb (#582) ---- */
+
+test('climbing the breadcrumb widens the search rather than dropping it',
+  async ({ page }) => {
+    await openBrowseIndex(page, '#/hg38');
+
+    /* What `scores` reports with nothing filtered, read off the page
+     * rather than written here -- the same reason the pruning tests
+     * above capture theirs: how many resources it holds is the browse
+     * fixture's business, and a literal would redden this the day one is
+     * added for an unrelated reason. */
+    const wholeScores = await folderCount(page, 'scores');
+
+    await folderRow(page, 'scores').click();
+    await search(page, BROWSE_ID_ONLY_TERM);
+    await expect.poll(() => folderNames(page)).toEqual(['conservation']);
+
+    await breadcrumbLink(page, 'hg38').click();
+
+    /* The term came back up with the reader. Climbing is a move like any
+     * other, and a move that dropped the query would not merely leave it
+     * unaddressed: the applier, reading an address that says "no
+     * search", would clear the box to match it. */
+    await expect.poll(() => hashOf(page)).toBe(`#/hg38?q=${BROWSE_ID_ONLY_TERM}`);
+    await expect(page.locator('#search-field'))
+      .toHaveValue(BROWSE_ID_ONLY_TERM);
+
+    /* And the wider scope is *pruned*, which is the half of this that
+     * the folder names cannot show. `hg38` holds exactly one child
+     * folder, `scores`, whether or not anything is filtered -- so a tree
+     * that had kept the term and gone on listing the whole repository
+     * would show this same single row, and a `folderNames` assertion
+     * here would pass either way.
+     *
+     * The count is what separates them, and it is the reason climbing is
+     * how a reader discovers they were scoped too deep: one match under
+     * `scores`, not the three it holds. */
+    await expect.poll(() => folderNames(page)).toEqual(['scores']);
+    expect(await folderCount(page, 'scores')).toBe('(1)');
+    expect(wholeScores).not.toBe('(1)');
+  });
