@@ -104,18 +104,25 @@
         }
 
         /**
-         * Show `ids`, which are the answer to `search`.
+         * Show `ids`. `search` is what they answer, or null if nothing --
+         * an unfiltered listing of the whole repository.
          *
-         * The search is passed in rather than read back out of the
-         * controls here, because the two are not the same thing at the
-         * one call that matters. The initial load hands over the whole
-         * repository *before* any search has run -- but a reader who
-         * followed a filtered link already has the term in the box by
-         * then, put there ahead of the index finishing so that the
-         * controls tell the truth during the wait. Reading the box would
-         * therefore announce every id in the repository as the answer to
-         * their query, and a listener that renders from the hit set would
+         * Passed in rather than read back out of the controls here,
+         * because the two are not the same thing at the one call that
+         * matters. The initial load hands over the whole repository
+         * *before* any search has run -- but a reader who followed a
+         * filtered link already has the term in the box by then, put
+         * there ahead of the index finishing so that the controls tell
+         * the truth during the wait. Reading the box would therefore
+         * announce every id in the repository as the answer to their
+         * query, and a listener that renders from the hit set would
          * believe it.
+         *
+         * Nullable rather than an empty `{q: "", type: ""}`, so that
+         * "is anything filtered?" is decided here, where `doSearch`
+         * already decides it, instead of a second time by every listener
+         * -- across a `window` seam, where the two spellings could drift
+         * with nothing to catch them.
          *
          * `ids` unsorted, because the one listener sorts by name and this
          * order is the table's column sort -- passing it on would be
@@ -124,7 +131,7 @@
         function applyRefreshData(ids, search) {
             lastIds = ids;
             refreshData(sortedIds(ids));
-            searchResults({ ...search, ids });
+            searchResults({ search, ids });
         }
 
         function UpdateStatus() {
@@ -185,7 +192,7 @@
             }
             // The unfiltered repository, and announced as exactly that --
             // no search has run yet, whatever the box may already hold.
-            applyRefreshData(Array.from(window.all_ids), { q: "", type: "" })
+            applyRefreshData(Array.from(window.all_ids), null)
 
             resolve(window.sqlite3)
         });
@@ -226,7 +233,7 @@
             const { q, type } = currentSearch();
             if (q === "" && type === "") {
                 window.last_error = null;
-                applyRefreshData(Array.from(window.all_ids), { q, type })
+                applyRefreshData(Array.from(window.all_ids), null)
                 return;
             }
 
@@ -570,12 +577,14 @@
             const root = buildTree(Object.keys(rowData));
 
             /**
-             * How far down `path` the tree actually goes.
+             * How far down `path` `tree` actually goes.
              *
              * Returns the deepest folder it could reach and the segments
-             * that reached it -- which is the whole answer, because the two
-             * callers want opposite halves of it: the renderer wants the
-             * folder, and the applier wants the path to put in the address.
+             * that reached it -- which is the whole answer, because the
+             * callers want different halves of it: the applier wants the
+             * path to put in the address, the renderer wants the folder,
+             * and `listedFolder` wants both, to tell "walked the whole
+             * path" from "stopped short".
              *
              * One walk rather than one per caller, so the rule for
              * resolving a segment to a child lives in one place. That rule
@@ -584,16 +593,26 @@
              * inherited, and a second copy of the walk is somewhere for the
              * next such rule to be applied to only half the callers.
              *
-             * Stopping short is ordinary rather than exceptional. Folders
-             * are a shape derived from the resource ids the page was
-             * generated with, and a repository is regenerated whenever its
-             * content changes, so an address routinely outlives the folder
-             * it names. Walking up leaves the reader on the deepest part of
-             * their address that still means something; "no surviving
-             * ancestor" is the root, the same answer with nothing left.
+             * Which is why the *tree* is a parameter rather than the walk
+             * being written out again over the pruned one. What differs
+             * between the callers is where they start and what they make
+             * of stopping short, and neither is a reason to resolve a
+             * segment twice in two places.
+             *
+             * Stopping short is ordinary rather than exceptional, and it
+             * means two different things. Against the full tree it is an
+             * address that has outlived the folder it names -- folders are
+             * a shape derived from the resource ids the page was generated
+             * with, and a repository is regenerated whenever its content
+             * changes -- and walking up leaves the reader on the deepest
+             * part of their address that still means something; "no
+             * surviving ancestor" is the root, the same answer with
+             * nothing left. Against a pruned tree it means the folder is
+             * real but holds no matches, which is not a walk-up at all;
+             * `listedFolder` is where that second reading lives.
              */
-            function descend(path) {
-                let node = root;
+            function descend(path, tree = root) {
+                let node = tree;
                 const reached = [];
                 for (const seg of path) {
                     const child = node.children[seg];
@@ -616,8 +635,17 @@
             let currentPath = [];
 
             /**
-             * The tree of what the current search matched, or null when
-             * there is no search running.
+             * The tree the listing is drawn from: the whole repository,
+             * or what the current search matched.
+             *
+             * `root` rather than a null meaning "no search", so that there
+             * is one kind of thing here and the renderer has one shape.
+             * The two are not interchangeable and this is not a way of
+             * pretending they are -- an unfiltered listing is the tree
+             * built once at load, reporting the counts the repository
+             * actually has, and a filtered one is rebuilt from the hit set
+             * and reports the matched counts. Which of those is standing
+             * is exactly what assigning this decides.
              *
              * Held whole and unscoped -- the matches across the *whole*
              * repository -- rather than narrowed to the folder showing,
@@ -629,9 +657,10 @@
              * when they typed, and every folder they moved to afterwards
              * would show its matches scoped to somewhere they had left.
              *
-             * So it is scoped where it is read instead, by `matchesUnder`.
+             * So it is walked into where it is read instead, by
+             * `listedFolder`.
              */
-            let matched = null;
+            let listing = root;
 
             function renderBreadcrumb() {
                 breadcrumbEl.innerHTML = "";
@@ -665,58 +694,55 @@
             }
 
             /**
-             * What `matched` holds beneath `path`, or null if nothing.
+             * The folder at `path` in whatever tree is being listed.
              *
-             * `descend`'s counterpart for the pruned tree, and pointedly
-             * *not* `descend` itself: that one walks up when a segment is
-             * missing, which is right for an address naming a folder that
-             * no longer exists and wrong for every folder that simply has
-             * no matches in it. Walking up here would answer with some
-             * ancestor's matches, and the reader would be shown a list of
-             * things that are not in the folder they are looking at.
+             * `descend` without its walk-up, which is the one thing about
+             * the full tree that must not carry over: walking up is right
+             * for an address naming a folder that no longer exists, and
+             * wrong for a folder that exists and simply has no matches in
+             * it. Doing it here would answer with some ancestor's matches,
+             * and the reader would be shown a list of things that are not
+             * in the folder they are looking at -- and, because the
+             * applier canonicalises the address to whatever was reached,
+             * would then rewrite the address to say so.
              *
-             * Null is that case, and the renderer reads it as the empty
-             * state -- "no resources", in the folder they are still in.
+             * An empty folder is that case. Not a null: `currentPath` is
+             * only ever assigned what `descend` reached in the full tree,
+             * so the folder is real, and what the reader should see is the
+             * "No resources" the renderer already draws for a folder with
+             * nothing in it -- rather than the renderer growing a second
+             * shape to handle an absence that is not one.
              */
-            function matchesUnder(path) {
-                let node = matched;
-                for (const seg of path) {
-                    node = node.children[seg];
-                    if (!node) return null;
-                }
-                return node;
+            function listedFolder(path) {
+                const { node, reached } = descend(path, listing);
+                return reached.length === path.length
+                    ? node
+                    : makeNode(path[path.length - 1], path);
             }
 
             function renderList() {
-                // The folder is resolved against the *full* tree even while
-                // a search is pruning what gets listed, and that separation
-                // is load-bearing rather than tidy.
+                // Always a folder: `currentPath` is only ever assigned what
+                // `descend` reached in the full tree, and `listedFolder`
+                // answers a search with no hits here with an empty folder
+                // rather than with nothing -- so there is no "no such
+                // folder" case left here to guard against. A guard would be
+                // worse than none -- the list has already been emptied by
+                // this point, so bailing would show an empty folder and say
+                // nothing, which is where a broken invariant would hide.
                 //
-                // `descend` walks up to the nearest surviving ancestor, and
-                // `applyHash` rewrites the address to wherever it landed
-                // (#579). Resolve against the pruned tree and a term that
-                // happens to match nothing here stops being a search and
-                // becomes a *move*: the folder ceases to exist, the walk-up
-                // lands somewhere else, and the address is rewritten to it
-                // -- so clearing the search would return the reader to an
-                // ancestor rather than to the folder they searched from.
-                //
-                // Always a folder, on that full tree: `currentPath` is only
-                // ever assigned what `descend` reached, so there is no "no
-                // such folder" case left here to guard against. A guard
-                // would be worse than none -- the list has already been
-                // emptied by this point, so bailing would show an empty
-                // folder and say nothing, which is where a broken invariant
-                // would hide.
-                const node = matched === null
-                    ? descend(currentPath).node
-                    : matchesUnder(currentPath);
+                // Note which tree that folder is resolved *in*. Where the
+                // reader is standing is settled against the full tree, by
+                // the applier; only what is listed comes from `listing`.
+                // Resolving the address itself against the pruned tree
+                // would turn a term that matched nothing here into a move
+                // -- the folder would cease to exist, `descend` would walk
+                // up, and `applyHash` would rewrite the address to wherever
+                // it landed (#579), so clearing the search would return the
+                // reader to an ancestor rather than to where they searched.
+                const node = listedFolder(currentPath);
                 listEl.innerHTML = "";
 
-                const folders = node ? Object.values(node.children) : [];
-                const resources = node ? node.resources : [];
-
-                for (const folder of folders.sort(byName)) {
+                for (const folder of Object.values(node.children).sort(byName)) {
                     const row = document.createElement("div");
                     row.className = "hv-row hv-folder";
                     row.innerHTML =
@@ -733,7 +759,7 @@
                     listEl.appendChild(row);
                 }
 
-                for (const res of [...resources].sort(byName)) {
+                for (const res of [...node.resources].sort(byName)) {
                     const d = res.data;
                     const meta = [
                         d.type,
@@ -757,7 +783,7 @@
                     listEl.appendChild(row);
                 }
 
-                if (!folders.length && !resources.length) {
+                if (!Object.keys(node.children).length && !node.resources.length) {
                     const empty = document.createElement("div");
                     empty.className = "hv-empty";
                     empty.textContent = "No resources";
@@ -1139,16 +1165,28 @@
             // builds -- an empty tree, whose every folder is absent because
             // no id put it there.
             //
-            // An empty search is not a hit set of everything, it is the
-            // absence of a filter, and the two would not render the same
-            // even though they list the same resources: a tree rebuilt from
-            // every id reports each folder's count and size afresh, where
-            // the full tree reports the ones it was built with at load. The
-            // numbers agree, but only the second is the repository's own
-            // answer rather than a coincidence, so the filter comes off
-            // entirely instead.
-            searchControls.onResults(({ q, type, ids }) => {
-                matched = (q === "" && type === "") ? null : buildTree(ids);
+            // No search goes back to the tree built at load rather than
+            // rebuilding from every id, which would come to the same
+            // listing by a longer route. Not *quite* the same, in fact,
+            // and the difference is the reason to prefer the original: the
+            // rebuilt one reports counts and sizes recomputed from
+            // whatever ids the search index just handed over, where the
+            // tree from load reports the repository's own. They agree, and
+            // "they agree" is a thing that can stop being true.
+            //
+            // A query the index rejects is not that case. It falls back to
+            // every id, and arrives here *with* its search, so the tree
+            // rebuilds and lists everything -- the same answer the table
+            // shows, reached the same way.
+            searchControls.onResults(({ search, ids }) => {
+                const next = search ? buildTree(ids) : root;
+                // Every load ends with an unfiltered announcement, and for
+                // most of them that is the state already showing: the tree
+                // was rendered on the way in, or pre-rendered for the view
+                // toggle. Re-rendering it would rebuild the whole listing
+                // to arrive back where it started.
+                if (next === listing) return;
+                listing = next;
                 // The breadcrumb is untouched: the reader has not moved,
                 // and a search that redrew the trail would be saying they
                 // had.
