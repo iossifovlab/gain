@@ -365,37 +365,39 @@
                 node.bytes = bytes;
             })(root);
 
-            function getNode(path) {
-                let node = root;
-                for (const seg of path) {
-                    if (!node.children[seg]) return null;
-                    node = node.children[seg];
-                }
-                return node;
-            }
-
             /**
-             * How much of `path` is actually there, as a path.
+             * How far down `path` the tree actually goes.
              *
-             * The folders exist only as a shape derived from the resource
-             * ids the page was generated with, so an address can outlive
-             * the folder it names -- a repository is regenerated whenever
-             * its content changes, which makes a stale bookmark ordinary
-             * rather than exceptional. Walking up instead of refusing
-             * leaves the reader on the deepest part of their address that
-             * still means something, and "no surviving ancestor" is the
-             * root, which is the same answer spelled with nothing left.
+             * Returns the deepest folder it could reach and the segments
+             * that reached it -- which is the whole answer, because the two
+             * callers want opposite halves of it: the renderer wants the
+             * folder, and the applier wants the path to put in the address.
+             *
+             * One walk rather than one per caller, so the rule for
+             * resolving a segment to a child lives in one place. That rule
+             * is not as dull as it looks: `children` is prototype-less
+             * precisely so this lookup cannot answer with something
+             * inherited, and a second copy of the walk is somewhere for the
+             * next such rule to be applied to only half the callers.
+             *
+             * Stopping short is ordinary rather than exceptional. Folders
+             * are a shape derived from the resource ids the page was
+             * generated with, and a repository is regenerated whenever its
+             * content changes, so an address routinely outlives the folder
+             * it names. Walking up leaves the reader on the deepest part of
+             * their address that still means something; "no surviving
+             * ancestor" is the root, the same answer with nothing left.
              */
-            function existingPrefix(path) {
+            function descend(path) {
                 let node = root;
-                const prefix = [];
+                const reached = [];
                 for (const seg of path) {
                     const child = node.children[seg];
                     if (!child) break;
                     node = child;
-                    prefix.push(seg);
+                    reached.push(seg);
                 }
-                return prefix;
+                return { node, reached };
             }
 
             // `localeCompare`, which is what the table's sorter uses. `<`
@@ -441,9 +443,14 @@
             }
 
             function renderList() {
-                const node = getNode(currentPath);
+                // Always a folder: `currentPath` is only ever assigned what
+                // `descend` reached, so there is no "no such folder" case
+                // left here to guard against. A guard would be worse than
+                // none -- the list has already been emptied by this point,
+                // so bailing would show an empty folder and say nothing,
+                // which is where a broken invariant would hide.
+                const { node } = descend(currentPath);
                 listEl.innerHTML = "";
-                if (!node) return;
 
                 for (const folder of Object.values(node.children).sort(byName)) {
                     const row = document.createElement("div");
@@ -510,7 +517,7 @@
             const typeFilter = document.getElementById("type-filter");
             const statusEl = document.getElementById("status");
 
-            function setView(view, path) {
+            function setView(view) {
                 const isHier = view === "hierarchical";
                 hierBtn.classList.toggle("active", isHier);
                 tableBtn.classList.toggle("active", !isHier);
@@ -521,7 +528,10 @@
                 searchField.disabled = isHier;
                 typeFilter.disabled = isHier;
                 searchContainer.classList.toggle("disabled", isHier);
-                if (isHier) navigateTo(path);
+                // Which chrome to show, and nothing else. *What* the tree
+                // shows depends on resolving a folder, which the applier
+                // does -- so "is this the tree?" is asked in one place
+                // rather than here and again on either side of the call.
             }
 
             // ---- Browse state lives in the URL hash ----
@@ -609,10 +619,16 @@
 
             /** Render what the current address says. The only applier. */
             function applyHash() {
-                const state = parseHash(location.hash);
-                const path = existingPrefix(state.path);
-                setView(state.view, path);
-                canonicalise(state.view, path);
+                const { view, path } = parseHash(location.hash);
+                setView(view);
+                // The table has no folder to resolve and no address of its
+                // own to canonicalise -- see `canonicalise` for why
+                // rewriting it would be actively wrong -- so this is where
+                // the tree's half of the work begins and ends.
+                if (view !== "hierarchical") return;
+                const { reached } = descend(path);
+                navigateTo(reached);
+                canonicalise(reached);
             }
 
             /**
@@ -634,16 +650,23 @@
              * Back still leads out of the page, and an address that could
              * not be followed cannot be returned to by going back to it.
              *
-             * Only for the hierarchical view. A fragment this page does not
-             * recognise belongs to whatever put it there -- someone's deep
-             * link into a section -- and the table view's canonical address
-             * is "", so canonicalising that one would silently delete it.
-             * Arriving at the table is not consent to discard it, which is
-             * the rule `goTo` already follows.
+             * Called for the hierarchical view only, which is why it takes
+             * no view: the table's canonical address is "", so rewriting
+             * *its* address would silently delete a fragment belonging to
+             * whatever put it there -- someone's deep link into a section.
+             * Arriving at the table is not consent to discard it, the same
+             * rule `goTo` follows.
+             *
+             * The boundary is really the `#/` namespace rather than the
+             * view, and this page claims all of it (#578): `#/docs/intro`
+             * is read as a tree path, salvages nothing, and is rewritten to
+             * `#/` -- where before this it was merely ignored. Narrowing
+             * that by skipping the rewrite when nothing was salvaged is not
+             * available, because `#/nonesuch/deeper` resolving to `#/` is
+             * exactly what the stale-path behaviour asks for.
              */
-            function canonicalise(view, path) {
-                if (view !== "hierarchical") return;
-                const hash = buildHash({ view, path });
+            function canonicalise(path) {
+                const hash = buildHash({ view: "hierarchical", path });
                 // Never "" for this view, so there is no "cannot express a
                 // bare path" case to handle as `goTo` has to.
                 if (hash !== location.hash) {
@@ -691,19 +714,13 @@
             // clicked, so that leaving the tree for the table and coming
             // back lands where the reader left rather than at the root.
             // `currentPath` is [] until the tree has been entered, which is
-            // why a first click on it addresses the root.
+            // why a first click on it addresses the root; it survives the
+            // visit to the table because only the hierarchical branch of
+            // the applier reassigns it.
             //
-            // What survives the visit to the table is `currentPath` itself:
-            // `setView` only reassigns it -- through `navigateTo` -- for the
-            // hierarchical view, so the table leg leaves it alone. The
-            // `path` handed to the table state is therefore inert today,
-            // `buildHash` returning "" for any non-hierarchical state
-            // without reading it. It is passed anyway so that both buttons
-            // build a whole state rather than one of them a partial one,
-            // which is what the slice adding the search term (#1331) will
-            // extend.
-            tableBtn.addEventListener("click", () => goTo(
-                { view: "table", path: currentPath }));
+            // The table button carries no folder, because the table has no
+            // address to put one in.
+            tableBtn.addEventListener("click", () => goTo({ view: "table" }));
             hierBtn.addEventListener("click", () => goTo(
                 { view: "hierarchical", path: currentPath }));
 

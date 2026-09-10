@@ -77,15 +77,22 @@ chr10  1          2        0.3
 #: others that must disappear -- a pruned tree with nothing to prune
 #: proves nothing.
 #:
-#: ``Zoo`` is capitalised on purpose, and sorts *last* here.  Comparing
-#: names as UTF-16 code units -- which is what ``<`` does, and what the
-#: tree did before iossifovlab/gain#579 -- puts every capitalised name
-#: ahead of every lowercase one, so it would come *first*; the table has
-#: always used ``localeCompare``, which puts it last.  The two views
-#: ordered a mixed-case repository differently (iossifovlab/gain#564),
-#: and a fixture whose names are all lowercase cannot tell the two
-#: comparators apart.
-BROWSE_TOP_LEVEL_FOLDERS = ("genomes", "hg19", "hg38", "Zoo")
+#: The capitalised one sorts *last* here, on purpose.  Comparing names as
+#: UTF-16 code units -- which is what ``<`` does, and what the tree did
+#: before iossifovlab/gain#579 -- puts every capitalised name ahead of
+#: every lowercase one, so it would come *first*; the table has always
+#: used ``localeCompare``, which puts it last.  The two views ordered a
+#: mixed-case repository differently (iossifovlab/gain#564), and a fixture
+#: whose names are all lowercase cannot tell the two comparators apart.
+#:
+#: The declared order is pinned on the TypeScript side, where the tree's
+#: own ordering is asserted: ``test_info_page_browse_fixture`` compares
+#: this tuple ``sorted()`` against the repository ``sorted()``, so what it
+#: pins is the membership, not the sequence written here.
+BROWSE_CAPITALISED_FOLDER = "Zoo"
+BROWSE_TOP_LEVEL_FOLDERS = (
+    "genomes", "hg19", "hg38", BROWSE_CAPITALISED_FOLDER,
+)
 
 #: A term that reaches its resource through the resource's ``summary``
 #: and through nothing else.
@@ -113,10 +120,6 @@ BROWSE_GENOME_RESOURCE_ID = "genomes/g984"
 #: than one row to work on.
 BROWSE_PHASTCONS_RESOURCE_ID = "hg38/scores/conservation/phastcons"
 BROWSE_COVERAGE_RESOURCE_ID = "hg38/scores/coverage"
-
-#: The capitalised top-level folder, named on its own because the tree's
-#: sort assertions are about this folder's *position*.
-BROWSE_CAPITALISED_FOLDER = "Zoo"
 
 #: Two resources sharing that folder, to settle the order of *resources*.
 #:

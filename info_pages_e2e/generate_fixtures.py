@@ -68,8 +68,8 @@ def build_browse_grr(repo_dir: pathlib.Path) -> None:
     statistics pass.  This fixture exists to be navigated and searched,
     and the repository index page is assembled from ``.CONTENTS`` and the
     search index -- both of which ``repo-index`` publishes from the
-    manifests the builders already wrote.  Computing histograms for five
-    resources whose statistics no assertion reads would only make every
+    manifests the builders already wrote.  Computing histograms for every
+    resource whose statistics no assertion reads would only make every
     run of this suite slower.
     """
     a_browse_repo(repo_dir)

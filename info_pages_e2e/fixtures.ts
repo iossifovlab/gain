@@ -43,18 +43,26 @@ export const COVERAGE_RESOURCE = 'scores/coverage';
 export const BROWSE_RESOURCE_COUNT = 7;
 
 /**
+ * The one capitalised top-level folder.
+ *
+ * Named, because the sort assertions are about *its* position: comparing
+ * names as UTF-16 code units puts every capitalised name ahead of every
+ * lowercase one, while `localeCompare` -- which the table has always used
+ * -- puts this one last. A repository of lowercase names cannot tell the
+ * two comparators apart, which is how the two views came to disagree
+ * (iossifovlab/gain#564).
+ */
+export const BROWSE_CAPITALISED_FOLDER = 'Zoo';
+
+/**
  * Its top-level folders, in the order the tree sorts them.
  *
- * `Zoo` is capitalised and belongs at the *end*: comparing names as
- * UTF-16 code units puts every capitalised name ahead of every lowercase
- * one, while `localeCompare` -- which the table has always used -- puts
- * it last. Listing it last is therefore an assertion about the
- * comparator, not a detail of spelling (iossifovlab/gain#564).
+ * The capitalised one belongs at the *end*, so this sequence is itself an
+ * assertion about the comparator rather than a detail of spelling.
  */
-export const BROWSE_TOP_LEVEL_FOLDERS = ['genomes', 'hg19', 'hg38', 'Zoo'];
-
-/** The capitalised top-level folder, whose *position* the tree sorts. */
-export const BROWSE_CAPITALISED_FOLDER = 'Zoo';
+export const BROWSE_TOP_LEVEL_FOLDERS = [
+  'genomes', 'hg19', 'hg38', BROWSE_CAPITALISED_FOLDER,
+];
 
 /**
  * The names of the two resources sharing that folder, unordered.

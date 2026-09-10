@@ -136,9 +136,16 @@ test('the hierarchical view lists the repository\'s top-level folders', async ({
    * build by scraping the rendered table with jQuery. So this is also
    * the assertion that fails if the vendored jQuery stops being served:
    * the scrape never runs, `rowData` stays empty, and the tree renders
-   * as an empty list rather than as an error. */
-  await expect(page.locator('#hierarchical-list .hv-folder .hv-name'))
-    .toHaveText(BROWSE_TOP_LEVEL_FOLDERS);
+   * as an empty list rather than as an error.
+   *
+   * *Which* folders, not in which order: the order is asserted once, by
+   * the test that is about the comparator. Pinning it here as well would
+   * quietly undo what that test goes to some trouble to buy -- it derives
+   * the expected order from the page rather than from this process, so
+   * that a collation difference between the two cannot fail it, and a
+   * second literal assertion of the order puts that failure right back. */
+  expect((await folderNames(page)).sort())
+    .toEqual([...BROWSE_TOP_LEVEL_FOLDERS].sort());
 });
 
 /*
@@ -280,9 +287,12 @@ test('the page opens in the view its address names', async ({ page }) => {
    * pre-render the tree on the way in -- there would be no point, since
    * showing it renders it -- so this load leans entirely on that render
    * happening, and a wrapper assertion alone would be equally happy with
-   * an empty one. */
-  await expect(page.locator('#hierarchical-list .hv-folder .hv-name'))
-    .toHaveText(BROWSE_TOP_LEVEL_FOLDERS);
+   * an empty one.
+   *
+   * Unordered, for the reason given where the folder list is first
+   * asserted: the order has one home, and it is not here. */
+  expect((await folderNames(page)).sort())
+    .toEqual([...BROWSE_TOP_LEVEL_FOLDERS].sort());
 });
 
 test('the page opens in the table view with no fragment at all', async ({
@@ -314,8 +324,7 @@ test('Forward re-enters the hierarchical view', async ({ page }) => {
 test('a fragment that names no browse state opens the table view', async ({
   page,
 }) => {
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(String(error)));
+  const errors = collectPageErrors(page);
 
   /* Not path-shaped, on purpose. A fragment *is* how things with no
    * interest in this page reach it -- a link into a section, a tracker's
@@ -348,8 +357,7 @@ test('coming back from a resource page returns to the folder it was '
   await page.goto(indexPageUrl() + '#/');
   await expectView(page, 'hierarchical');
 
-  await page.locator('#hierarchical-list .hv-folder')
-    .filter({ hasText: 'scores' }).click();
+  await folderRow(page, 'scores').click();
   await page.locator('#hierarchical-list .hv-link').click();
 
   await expect(page).toHaveURL(infoPageUrl(COVERAGE_RESOURCE));
@@ -475,14 +483,47 @@ test('a round trip through the tree leaves the column widths intact', async ({
  * contains it.
  */
 function folderRow(page: Page, name: string) {
-  return page.locator('#hierarchical-list .hv-folder').filter({
-    has: page.locator('.hv-name', { hasText: new RegExp(`^${escapeForRegExp(name)}$`) }),
-  });
+  return page.locator('#hierarchical-list .hv-folder')
+    .filter({ has: page.getByText(name, { exact: true }) });
 }
 
-/** `name` with every RegExp metacharacter made literal. */
-function escapeForRegExp(name: string): string {
-  return name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/**
+ * The breadcrumb link for `name`.
+ *
+ * Only the crumbs above the current folder are links -- the last one is a
+ * span -- so this locates something clickable by construction. Exact, for
+ * the same reason `folderRow` is: a substring match on a trail containing
+ * both `hg38` and `hg38_extra` would be answered by either.
+ */
+function breadcrumbLink(page: Page, name: string) {
+  return page.locator('#breadcrumb a.breadcrumb-item')
+    .filter({ has: page.getByText(name, { exact: true }) });
+}
+
+/** The folder names the tree shows, in the order it shows them. */
+function folderNames(page: Page): Promise<string[]> {
+  return page.locator('#hierarchical-list .hv-folder .hv-name')
+    .allTextContents();
+}
+
+/** The resource names the tree shows, in the order it shows them. */
+function resourceNames(page: Page): Promise<string[]> {
+  return page.locator('#hierarchical-list .hv-resource .hv-name')
+    .allTextContents();
+}
+
+/**
+ * The errors the page throws from now on.
+ *
+ * Attach before the navigation whose errors it is meant to catch; a
+ * listener added afterwards sees nothing. Handed back as a live array
+ * rather than asserted here, so each test says for itself at which point
+ * it expects the page to have stayed quiet.
+ */
+function collectPageErrors(page: Page): string[] {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(String(error)));
+  return errors;
 }
 
 /**
@@ -530,8 +571,7 @@ test('the page opens in the folder its address names', async ({ page }) => {
 test('a breadcrumb click pushes the folder it climbs to', async ({ page }) => {
   await openBrowseIndex(page, '#/hg38/scores');
 
-  await page.locator('#breadcrumb a.breadcrumb-item')
-    .filter({ hasText: 'hg38' }).click();
+  await breadcrumbLink(page, 'hg38').click();
 
   await expect.poll(() => hashOf(page)).toBe('#/hg38');
   await expect(breadcrumbTrail(page)).resolves.toEqual(
@@ -579,8 +619,7 @@ test('Back walks up the way you came and Forward re-descends', async ({
 
 test('a hash naming a folder that is gone opens its nearest surviving '
   + 'ancestor', async ({ page }) => {
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(String(error)));
+  const errors = collectPageErrors(page);
 
   /* The shape a bookmark takes after the folder it pointed at was
    * renamed away: the repository is regenerated whenever its content
@@ -653,8 +692,7 @@ test('the tree button stacks nothing once the address has been rewritten',
 
 test('a hash with no surviving ancestor opens the root, still as a tree',
   async ({ page }) => {
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(String(error)));
+  const errors = collectPageErrors(page);
 
   await openBrowseIndex(page, '#/nonesuch/deeper');
 
@@ -679,8 +717,7 @@ test('a hash with no surviving ancestor opens the root, still as a tree',
 for (const inherited of ['constructor', '__proto__', 'toString']) {
   test(`a hash naming the inherited property ${inherited} is not a folder`,
     async ({ page }) => {
-    const errors: string[] = [];
-    page.on('pageerror', (error) => errors.push(String(error)));
+    const errors = collectPageErrors(page);
 
     /* Reachable only since the folder path became addressable (#579):
      * before it, the path was built exclusively from folders that
@@ -739,8 +776,7 @@ test('a hash naming a resource rather than a folder opens its folder',
 
 test('a hash carrying a malformed escape opens the root without throwing',
   async ({ page }) => {
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(String(error)));
+  const errors = collectPageErrors(page);
 
   /* `%zz` is not a valid escape, and `decodeURIComponent` answers one by
    * throwing rather than by returning the text unchanged. The address bar
@@ -823,8 +859,7 @@ test('the tree orders names by locale, as the table does', async ({ page }) => {
    * (iossifovlab/gain#564) is invisible. */
   const folders = await bothOrders(page, BROWSE_TOP_LEVEL_FOLDERS);
   expect(folders.byCodeUnit).not.toEqual(folders.byLocale);
-  await expect(page.locator('#hierarchical-list .hv-folder .hv-name'))
-    .toHaveText(folders.byLocale);
+  expect(await folderNames(page)).toEqual(folders.byLocale);
 
   /* Then resources, which the tree sorts with the *same* comparator --
    * so they are asserted here rather than taken on trust from the
@@ -833,6 +868,5 @@ test('the tree orders names by locale, as the table does', async ({ page }) => {
 
   const resources = await bothOrders(page, BROWSE_ORDERING_RESOURCE_NAMES);
   expect(resources.byCodeUnit).not.toEqual(resources.byLocale);
-  await expect(page.locator('#hierarchical-list .hv-resource .hv-name'))
-    .toHaveText(resources.byLocale);
+  expect(await resourceNames(page)).toEqual(resources.byLocale);
 });
