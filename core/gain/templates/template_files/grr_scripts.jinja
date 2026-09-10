@@ -763,7 +763,14 @@
                 if (view !== "hierarchical") return;
                 const { reached } = descend(path);
                 navigateTo(reached);
-                canonicalise(reached);
+                // The search comes from the *address*, not from the
+                // controls: `applySearch` above has only started putting
+                // it into them -- it waits on the loaded index first -- so
+                // reading them here would rewrite the address to the
+                // search that is on its way out rather than the one
+                // arriving, and drop the query on every load that carries
+                // one.
+                canonicalise(reached, { q, type });
             }
 
             /**
@@ -822,8 +829,9 @@
              * available, because `#/nonesuch/deeper` resolving to `#/` is
              * exactly what the stale-path behaviour asks for.
              */
-            function canonicalise(path) {
-                const hash = buildHash({ view: "hierarchical", path });
+            function canonicalise(path, search) {
+                const hash = buildHash(
+                    { view: "hierarchical", path, ...search });
                 // Never "" for this view, so there is no "cannot express a
                 // bare path" case to handle as `goTo` has to.
                 if (hash !== location.hash) {
@@ -833,7 +841,18 @@
 
             /** Push `state` into the session history, then render it. */
             function goTo(state) {
-                const hash = buildHash(state);
+                // Every move carries the search along. Changing folder or
+                // view is not a reason to lose the term the reader typed,
+                // and while a move is being made the *controls* are what
+                // it currently is -- so it is read here, once, rather than
+                // passed in by each of the callers below, none of which
+                // has any business knowing about the search.
+                //
+                // Read here and not inside `buildHash`, which has to stay
+                // a pure function of its argument for the guard below to
+                // mean anything.
+                const hash = buildHash(
+                    { ...state, ...window.grrSearch.current() });
                 // Nothing to do when the address already means this. That
                 // stops the button already active from stacking a history
                 // entry that changes nothing -- Back would then appear not

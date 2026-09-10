@@ -976,3 +976,186 @@ test('an address carrying a term opens the table filtered by it', async ({
   await expect(page.locator('#search-field'))
     .toHaveValue(BROWSE_SUMMARY_ONLY_TERM);
 });
+
+test('an address carrying a type selects it once the options exist', async ({
+  page,
+}) => {
+  await openBrowseIndex(page, `#?type=${BROWSE_GENOME_TYPE}`, 1);
+
+  /* The dropdown's options are not in the markup: they are built from
+   * the loaded search index, alongside the id set. Selecting a value
+   * before that resolves picks nothing at all -- the option is not there
+   * yet -- and does it silently, leaving the control on "all" while the
+   * address says otherwise. This is the sharper half of applying a
+   * search from the address; the term alone would survive the race. */
+  await expect(page.locator('#type-filter')).toHaveValue(BROWSE_GENOME_TYPE);
+  await expect(visibleResourceIds(page)).toHaveText([
+    BROWSE_GENOME_RESOURCE_ID,
+  ]);
+});
+
+test('coming back from a resource page restores the filtered table', async ({
+  page,
+}) => {
+  /* The Coverage GRR, for the reason the folder test above gives: it is
+   * the only fixture with pages inside its resource directories, so it
+   * is the only one a table row can actually be clicked through to. */
+  await serveGrr(page, FIXTURE_GRR);
+  await page.goto(indexPageUrl());
+  const rows = await page.locator('#resource-table tbody tr').count();
+  await expect(page.locator('#status')).toHaveText(`${rows} resources`);
+
+  /* Reaches the score through its id and the genome through nothing. */
+  await search(page, 'coverage');
+  await expect(visibleResourceIds(page)).toHaveText([COVERAGE_RESOURCE]);
+
+  await visibleResourceIds(page).click();
+  await expect(page).toHaveURL(infoPageUrl(COVERAGE_RESOURCE));
+
+  await page.goBack();
+
+  /* A real reload -- the resource page is a different document -- so the
+   * search survives only because the history entry carried it in the
+   * address and the load path put it back. This is the whole point of
+   * the feature stated as one navigation: before it, opening a result
+   * and coming back handed the reader the unfiltered repository and an
+   * empty box, with no way back to what they had been looking at. */
+  await expect.poll(() => hashOf(page)).toBe('#?q=coverage');
+  await expect(page.locator('#search-field')).toHaveValue('coverage');
+  await expect(visibleResourceIds(page)).toHaveText([COVERAGE_RESOURCE]);
+});
+
+test('switching to the tree carries the term along', async ({ page }) => {
+  await openBrowseIndex(page);
+  await search(page, BROWSE_SUMMARY_ONLY_TERM);
+
+  await page.locator('#hierarchical-view-btn').click();
+
+  /* The view moved and the search came with it. A toggle that built its
+   * address from the view alone would drop the term here -- and then the
+   * applier, finding an address that says "no search", would clear the
+   * box to match, so the term is not merely unaddressed but gone. */
+  await expect.poll(() => hashOf(page))
+    .toBe(`#/?q=${BROWSE_SUMMARY_ONLY_TERM}`);
+  await expectView(page, 'hierarchical');
+  await expect(page.locator('#search-field'))
+    .toHaveValue(BROWSE_SUMMARY_ONLY_TERM);
+
+  /* And the tree is untouched by it. Pruning the tree to matches is
+   * iossifovlab/gain#581; this slice only carries the term, so a tree
+   * that had started filtering itself would be running ahead of the
+   * issue that decides what filtering there should mean. */
+  expect((await folderNames(page)).sort())
+    .toEqual([...BROWSE_TOP_LEVEL_FOLDERS].sort());
+});
+
+test('moving between folders keeps the term without searching again', async ({
+  page,
+}) => {
+  await openBrowseIndex(page, `#/?q=${BROWSE_SUMMARY_ONLY_TERM}`, 1);
+
+  /* Counted through the page's own handle on the loaded index, because
+   * re-running the search is invisible any other way: the rows the tree
+   * shows do not depend on it, so a build that re-searched on every
+   * folder move would look exactly like this one and merely cost a query
+   * and a re-render each time. The applier runs on every address change
+   * and not only on arrival, so this is a real hazard rather than a
+   * theoretical one. */
+  await page.evaluate(() => {
+    const win = window as any;
+    const query = win.sqlite3.query;
+    win.searchesIssued = 0;
+    win.sqlite3.query = (sql: string) => {
+      win.searchesIssued += 1;
+      return query(sql);
+    };
+  });
+
+  await folderRow(page, 'hg38').click();
+
+  await expect.poll(() => hashOf(page))
+    .toBe(`#/hg38?q=${BROWSE_SUMMARY_ONLY_TERM}`);
+  await expect(page.locator('#search-field'))
+    .toHaveValue(BROWSE_SUMMARY_ONLY_TERM);
+  expect(await page.evaluate(() => (window as any).searchesIssued)).toBe(0);
+});
+
+test('a malformed term in the address degrades, it does not throw', async ({
+  page,
+}) => {
+  const errors = collectPageErrors(page);
+
+  /* A lone double quote: FTS5 reads it as the start of a string that
+   * never ends. The page has always been able to receive one -- it is
+   * two keystrokes in the search box -- and answers it by logging,
+   * showing a message and falling back to the whole repository. Arriving
+   * from the address must reach that same path: a link is now a way to
+   * hand this page a query, and the one it cannot parse must not be the
+   * one that breaks the load. */
+  await openBrowseIndex(page, '#?q=%22');
+
+  await expect(page.locator('#status-error'))
+    .toHaveText(/Query failed due to syntax error/);
+  await expect(visibleResourceIds(page)).toHaveCount(BROWSE_RESOURCE_COUNT);
+  await expect(page.locator('#search-field')).toHaveValue('"');
+  expect(errors).toEqual([]);
+});
+
+/*
+ * Every character the address has to carry without altering it: the four
+ * FTS operators a reader may legitimately type (`"`, `*`, `:`, `-`), a
+ * space, and non-ASCII. `encodeURIComponent` leaves `*` and `-` alone and
+ * escapes the rest, and `URLSearchParams` -- the obvious-looking way to
+ * build a query string -- would spell the space `+` and hand the reader
+ * back a different term than they typed.
+ */
+const AWKWARD_TERM = '"phast*" -naïve:ünïcøde';
+
+test('a term of FTS operators and non-ASCII survives the round trip', async ({
+  page,
+}) => {
+  await openBrowseIndex(page);
+
+  await search(page, AWKWARD_TERM);
+  await expect.poll(() => hashOf(page)).not.toBe('');
+  const addressed = hashOf(page);
+
+  await page.reload();
+
+  /* Reloaded rather than merely re-read, so the term comes back out of
+   * the *address* and not out of the box it was typed into. Asserting
+   * the box before a reload would pass on a page that never encoded
+   * anything, since the value was already sitting there. */
+  await expect(page.locator('#search-field')).toHaveValue(AWKWARD_TERM);
+
+  /* And the address is the same one, not merely one that decodes alike:
+   * the parser and the builder have to agree on a single spelling, or
+   * `goTo`'s guard -- which compares them as strings -- stops matching. */
+  expect(hashOf(page)).toBe(addressed);
+});
+
+test('the toggle for the view already showing stacks nothing, term or not',
+  async ({ page }) => {
+    await openBrowseIndex(page);
+    await search(page, BROWSE_SUMMARY_ONLY_TERM);
+    await expect.poll(() => hashOf(page))
+      .toBe(`#?q=${BROWSE_SUMMARY_ONLY_TERM}`);
+    const entriesBefore = await page.evaluate(() => history.length);
+
+    await page.locator('#table-view-btn').click();
+
+    /* The same guard the view slice put in, asked again now that the
+     * state it compares has two more fields in it. It works by
+     * round-tripping the current address through the parser and back
+     * through the builder, so it only keeps working while those two
+     * agree about *every* field -- a builder that emitted the search in
+     * one order and a parser that returned it in another would compare
+     * unequal here and stack an entry that changes nothing, and Back
+     * would then appear not to work.
+     *
+     * Its old test covers the no-search case; this is the case that the
+     * search fields could newly break. */
+    expect(await page.evaluate(() => history.length)).toBe(entriesBefore);
+    await expect.poll(() => hashOf(page))
+      .toBe(`#?q=${BROWSE_SUMMARY_ONLY_TERM}`);
+  });
