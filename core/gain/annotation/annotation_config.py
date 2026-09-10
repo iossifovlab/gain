@@ -6,7 +6,7 @@ import math
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, TypedDict, overload
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, overload
 
 import yaml
 
@@ -604,6 +604,60 @@ class AnnotationConfigParser:
 
     WILDCARD_LIMIT = 500
 
+    #: The annotator names a wildcard ``resource_id`` is accepted for,
+    #: each mapped to the ONE canonical resource type it selects.
+    #:
+    #: Whether a name takes a wildcard at all is the annotation layer's
+    #: policy rather than a property of the annotator, which is why this
+    #: is a list written here and not something derived from what the
+    #: annotators declare
+    #: (``docs/adr/0028-wildcard-expandability-is-parser-policy.md``).
+    #: What keeps the two from drifting is a test rather than a
+    #: derivation: ``test_wildcard_annotator_map`` pins every value here
+    #: against the annotator's own ``ACCEPTED_RESOURCE_TYPES[0]``.
+    #:
+    #: Canonical, not every accepted spelling: a fragment score has two,
+    #: and either annotator name must find either of them, but which
+    #: spellings denote the same kind of resource is a fact about the
+    #: repository vocabulary. ``search_resources`` expands the type it is
+    #: given through ``equivalent_resource_types``, so tabulating the
+    #: expansion here too would be a second copy of that rule -- one that
+    #: a type acquiring a second spelling updates in the repository and
+    #: silently misses here, leaving a wildcard that matches nothing in a
+    #: repository that does hold the resources (gain#1266).
+    #:
+    #: The legacy keys are deprecated (gain#538) but warn nowhere near
+    #: here: a wildcard resolves against every resource in the repository,
+    #: so a warning would fire per candidate rather than per pipeline.
+    #: ``FragmentScoreAnnotator.__init__`` owns that.
+    WILDCARD_RESOURCE_TYPES: ClassVar[dict[str, str]] = {
+        "position_score": "position_score",
+        "position_score_annotator": "position_score",
+        "allele_score": PREFERRED_ALLELE_SCORE_TYPE,
+        "allele_score_annotator": PREFERRED_ALLELE_SCORE_TYPE,
+        "fragment_score": PREFERRED_FRAGMENT_SCORE_TYPE,
+        "fragment_score_annotator": PREFERRED_FRAGMENT_SCORE_TYPE,
+        "cnv_collection": PREFERRED_FRAGMENT_SCORE_TYPE,
+        "cnv_collection_annotator": PREFERRED_FRAGMENT_SCORE_TYPE,
+        "gene_score_annotator": "gene_score",
+    }
+
+    #: The annotators that declare ``ACCEPTED_RESOURCE_TYPES`` and still
+    #: take no wildcard.
+    #:
+    #: Named one at a time, with a reason, rather than by weakening the
+    #: pin above to "mapped, or not": an annotator missing from both is a
+    #: mistake, and a pin that cannot tell the two apart catches neither.
+    #:
+    #: ``gene_set_annotator`` is here because the two spellings it accepts
+    #: are deliberately *not* an equivalence group (see
+    #: :data:`~gain.genomic_resources.resource_types.GENE_SET_TYPES`), so
+    #: a wildcard keyed on either one could only ever answer half of a
+    #: repository's gene sets. Whether that should change is gain#1365.
+    WILDCARD_EXEMPT_ANNOTATORS: ClassVar[frozenset[str]] = frozenset({
+        "gene_set_annotator",
+    })
+
     @staticmethod
     def query_resources(
         annotator_type: str, resource_query: str, grr: GenomicResourceRepo,
@@ -629,33 +683,7 @@ class AnnotationConfigParser:
         wildcard selecting more than ``WILDCARD_LIMIT`` resources is
         refused rather than silently expanded into a pipeline of that size.
         """
-        # Maps an annotator name a user may type to the ONE canonical
-        # resource type it consumes.  Canonical, not every accepted
-        # spelling: a fragment score has two, and either annotator name
-        # must find either of them, but which spellings denote the same
-        # kind of resource is a fact about the repository vocabulary.
-        # `search_resources` expands the type it is given through
-        # `equivalent_resource_types`, so tabulating the expansion here
-        # too would be a second copy of that rule -- one that a type
-        # acquiring a second spelling updates in the repository and
-        # silently misses here, leaving a wildcard that matches nothing
-        # in a repository that does hold the resources (gain#1266).
-        #
-        # The legacy keys are deprecated (gain#538) but warn nowhere near
-        # here: this resolves a wildcard against every resource in the
-        # repository, so a warning would fire per candidate rather than per
-        # pipeline.  `FragmentScoreAnnotator.__init__` owns that.
-        annotator_resources_map = {
-            "position_score": "position_score",
-            "position_score_annotator": "position_score",
-            "allele_score": PREFERRED_ALLELE_SCORE_TYPE,
-            "allele_score_annotator": PREFERRED_ALLELE_SCORE_TYPE,
-            "fragment_score": PREFERRED_FRAGMENT_SCORE_TYPE,
-            "fragment_score_annotator": PREFERRED_FRAGMENT_SCORE_TYPE,
-            "cnv_collection": PREFERRED_FRAGMENT_SCORE_TYPE,
-            "cnv_collection_annotator": PREFERRED_FRAGMENT_SCORE_TYPE,
-            "gene_score_annotator": "gene_score",
-        }
+        wildcard_types = AnnotationConfigParser.WILDCARD_RESOURCE_TYPES
 
         # Before the query runs, because a retired annotator name is absent
         # from the map above and so matches nothing -- the reader would be
@@ -678,7 +706,7 @@ class AnnotationConfigParser:
         # sends the reader to a repository that is fine -- and a map to ONE
         # type gives the opposite accident, applying no type filter at all
         # and expanding a mistyped name across the whole repository.
-        if annotator_type not in annotator_resources_map:
+        if annotator_type not in wildcard_types:
             # Phrased without claiming the name is an annotator at all:
             # this refuses a misspelling and an annotator that names its
             # resource outright with one message, and telling the first
@@ -690,7 +718,7 @@ class AnnotationConfigParser:
             # message that exists to say what to write instead reads as a
             # recommendation to write it.
             accepted = sorted(
-                annotator_resources_map.keys() - LEGACY_ANNOTATOR_NAMES.keys(),
+                wildcard_types.keys() - LEGACY_ANNOTATOR_NAMES.keys(),
             )
             raise AnnotationConfigurationError(
                 f"No wildcard resource_id is accepted for annotator "
@@ -722,7 +750,7 @@ class AnnotationConfigParser:
         selected_resources: set[str] = set()
         result: list[str] = []
         for resource in grr.search_resources(
-            resource_type=annotator_resources_map[annotator_type],
+            resource_type=wildcard_types[annotator_type],
             resource_query=resource_query,
         ):
             # A group yields a shadowed id once per child that carries it
