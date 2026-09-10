@@ -993,10 +993,19 @@ Resource-specific fields (**type**: annotation_pipeline):
 
 
 
+.. _grr-position-scores:
+
 Position scores
 ^^^^^^^^^^^^^^^
 
 Position score resources (**type**: position_score) use a ``genomic_resource.yaml`` file with three resource-specific sections: ``table``, ``scores``, and (optionally) ``default_annotation``.
+
+.. note::
+
+   This section describes the YAML keys. The Python objects behind them — the
+   ``PositionScore`` class and the ``GenomicScoreDef`` each entry of the
+   ``scores`` block becomes — are described in
+   :doc:`development/resources/scores`.
 
 **table**
 """""""""""""""
@@ -1238,6 +1247,8 @@ should say so explicitly::
         na_values: ["", "."]
 
 
+.. _grr-allele-scores:
+
 Allele scores
 ^^^^^^^^^^^^^
 
@@ -1278,6 +1289,8 @@ a valid ``genomic_resource.yaml`` for an allele score resource:
 
     ... (scores, default_annotation, and meta sections follow) ...
 
+
+.. _grr-fragment-scores:
 
 Fragment scores
 ^^^^^^^^^^^^^^^
@@ -1450,8 +1463,19 @@ collection. For example, ``genes_per_gene_set`` describes the distribution of ge
 while ``gene_sets_per_gene`` describes how many sets each gene belongs to.
 
 
+.. _grr-histogram-configuration:
+
 Histogram configuration
 -------------------------
+
+.. note::
+
+   This section describes the ``histogram`` YAML keys, and the custom
+   ``plot_function`` hook below is the one Python example that belongs on
+   this page. The configuration and histogram *objects* these keys parse
+   into — ``NumberHistogram``, ``CategoricalHistogram``, ``NullHistogram``
+   and their configs — are described in
+   :doc:`development/resources/histograms`.
 
 Histograms provide a quick visual summary of how a score is distributed across
 the genome or across observed variants. Seeing the distribution is often as important

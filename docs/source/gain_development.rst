@@ -21,29 +21,31 @@ The chapters build bottom-up, substrate before the things that consume it:
    a short trace of what ``annotate_tabular`` does at runtime, and the project
    vocabulary. Every later chapter is a zoom on one box of that map, so if you
    arrived here from a search result, read the map first.
-2. Working with resources in Python — *planned* (:issue:`1143`).
+2. :doc:`development/resources_in_python` — the resource half of the declared
+   API: repositories and resources, reference genomes, gene models, the three
+   kinds of score, histograms, and the seam for adding a resource type.
 3. Annotators — *planned* (:issue:`1144`).
 4. :doc:`development/module_index` — the complete generated API tree, for when
    you already know the name you are looking for.
 
 .. attention::
 
-   **Draft marker D1 — the two unwritten chapters.** The numbered list above
-   names chapters 2 and 3 so the reader sees the shape of the guide, but the
-   ``toctree`` below deliberately leaves them out: a ``toctree`` entry for a
+   **Draft marker D1 — the one unwritten chapter.** The numbered list above
+   names chapter 3 so the reader sees the shape of the guide, but the
+   ``toctree`` below deliberately leaves it out: a ``toctree`` entry for a
    page that does not exist is a build warning, and a placeholder page that
    says "coming soon" would go live on the site the moment this merges.
    Decide which of the three you want here — (a) list-but-don't-link as now,
-   (b) stub pages that ship a one-paragraph placeholder, or (c) drop the two
-   lines from the list until :issue:`1143` and :issue:`1144` land. Option (a)
-   is the draft's choice because it publishes nothing that later has to be
-   unpublished.
+   (b) a stub page that ships a one-paragraph placeholder, or (c) drop the
+   line from the list until :issue:`1144` lands. Option (a) is the draft's
+   choice because it publishes nothing that later has to be unpublished.
 
 .. toctree::
    :maxdepth: 2
 
    development/architecture_overview
+   development/resources_in_python
    development/module_index
 
-.. Chapters 2 and 3 (gain#1143 "Working with resources in Python", gain#1144
-   "Annotators") slot in between the two entries above when they land.
+.. Chapter 3 (gain#1144 "Annotators") slots in between the resources chapter
+   and the module index when it lands.

@@ -40,7 +40,7 @@ queried directly in Python for custom analyses that are not part of a predefined
 The examples below illustrate three uses of the Python interface: inspecting chromosome lengths from a 
 reference genome, locating a gene and retrieving scores across its interval, and summarizing the number 
 of resources available for different genome builds. 
-`GAIn development page <https://iossifovlab.com/gaindocs/gain_development.html>`_ provides more detail on the 
+:doc:`development/resources_in_python` provides more detail on the
 Python methods available for different resource types.
 
 1: Chromosome lengths
