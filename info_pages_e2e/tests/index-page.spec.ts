@@ -1,8 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
 
 import {
+  BROWSE_CAPITALISED_FOLDER,
   BROWSE_ID_ONLY_RESOURCE_ID,
   BROWSE_ID_ONLY_TERM,
+  BROWSE_ORDERING_RESOURCE_NAMES,
   BROWSE_RESOURCE_COUNT,
   BROWSE_SUMMARY_ONLY_RESOURCE_ID,
   BROWSE_SUMMARY_ONLY_TERM,
@@ -634,4 +636,90 @@ test('a hash naming an inherited property name is not a folder', async ({
   expect(errors).toEqual([]);
   await expectView(page, 'hierarchical');
   await expect(breadcrumbTrail(page)).resolves.toEqual(['All resources']);
+});
+
+test('a hash carrying a malformed escape opens the root without throwing',
+  async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(String(error)));
+
+  /* `%zz` is not a valid escape, and `decodeURIComponent` answers one by
+   * throwing rather than by returning the text unchanged. The address bar
+   * is hand-editable and a fragment survives being mangled by whatever
+   * copied it, so this arrives without anyone having done anything exotic
+   * -- and an uncaught `URIError` here happens while the page is being
+   * applied, taking the whole view down with it. */
+  await openBrowseIndex(page, '#/%zz');
+
+  expect(errors).toEqual([]);
+  await expectView(page, 'hierarchical');
+  await expect(breadcrumbTrail(page)).resolves.toEqual(['All resources']);
+});
+
+test('browsing the table writes no fragment', async ({ page }) => {
+  await openBrowseIndex(page);
+  await expectView(page, 'table');
+
+  /* Searching and sorting are the table's own controls, and neither is
+   * addressable yet -- the search term lands in the hash in a later slice
+   * of this epic (iossifovlab/gain#1331). Until then they must leave the
+   * address alone rather than half-write it. */
+  await search(page, BROWSE_ID_ONLY_TERM);
+  await page.locator('#id-col-header').click();
+
+  await expect.poll(() => hashOf(page)).toBe('');
+  await expectView(page, 'table');
+});
+
+test('leaving the tree for the table and back returns to the same folder',
+  async ({ page }) => {
+  await openBrowseIndex(page, '#/hg38/scores');
+
+  await page.locator('#table-view-btn').click();
+  await expect.poll(() => hashOf(page)).toBe('');
+  await expectView(page, 'table');
+
+  await page.locator('#hierarchical-view-btn').click();
+
+  /* The folder, not the root. The view buttons carry the folder showing
+   * at the time they are clicked, so a round trip through the table is
+   * not a way of losing your place. */
+  await expect.poll(() => hashOf(page)).toBe('#/hg38/scores');
+  await expect(breadcrumbTrail(page)).resolves.toEqual(
+    ['All resources', 'hg38', 'scores']);
+});
+
+/** The two orders a mixed-case list of names can be put in. */
+function bothOrders(names: string[]): { byCodeUnit: string[], byLocale: string[] } {
+  return {
+    /* `sort()` with no comparator compares UTF-16 code units, which is
+     * what `<` did. */
+    byCodeUnit: [...names].sort(),
+    byLocale: [...names].sort((a, b) => a.localeCompare(b)),
+  };
+}
+
+test('the tree orders names by locale, as the table does', async ({ page }) => {
+  await openBrowseIndex(page, '#/');
+
+  /* Folders first. The guard above the assertion is the point of the
+   * capitalised name in the fixture: where the two comparators agree, a
+   * tree that sorted by code unit -- or a tree that never sorted at all,
+   * and merely happened to receive its folders in order -- passes an
+   * assertion like this one, and the divergence between the two views
+   * (iossifovlab/gain#564) is invisible. */
+  const folders = bothOrders(BROWSE_TOP_LEVEL_FOLDERS);
+  expect(folders.byCodeUnit).not.toEqual(folders.byLocale);
+  await expect(page.locator('#hierarchical-list .hv-folder .hv-name'))
+    .toHaveText(folders.byLocale);
+
+  /* Then resources, which the tree sorts with the *same* comparator --
+   * so they are asserted here rather than taken on trust from the
+   * folders having come out right. */
+  await folderRow(page, BROWSE_CAPITALISED_FOLDER).click();
+
+  const resources = bothOrders(BROWSE_ORDERING_RESOURCE_NAMES);
+  expect(resources.byCodeUnit).not.toEqual(resources.byLocale);
+  await expect(page.locator('#hierarchical-list .hv-resource .hv-name'))
+    .toHaveText(resources.byLocale);
 });

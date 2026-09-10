@@ -40,10 +40,30 @@ export const COVERAGE_RESOURCE = 'scores/coverage';
  */
 
 /** How many resources the browse GRR holds. */
-export const BROWSE_RESOURCE_COUNT = 5;
+export const BROWSE_RESOURCE_COUNT = 7;
 
-/** Its top-level folders, in the order the tree sorts them. */
-export const BROWSE_TOP_LEVEL_FOLDERS = ['genomes', 'hg19', 'hg38'];
+/**
+ * Its top-level folders, in the order the tree sorts them.
+ *
+ * `Zoo` is capitalised and belongs at the *end*: comparing names as
+ * UTF-16 code units puts every capitalised name ahead of every lowercase
+ * one, while `localeCompare` -- which the table has always used -- puts
+ * it last. Listing it last is therefore an assertion about the
+ * comparator, not a detail of spelling (iossifovlab/gain#564).
+ */
+export const BROWSE_TOP_LEVEL_FOLDERS = ['genomes', 'hg19', 'hg38', 'Zoo'];
+
+/** The capitalised top-level folder, whose *position* the tree sorts. */
+export const BROWSE_CAPITALISED_FOLDER = 'Zoo';
+
+/**
+ * The names of the two resources sharing that folder, unordered.
+ *
+ * Deliberately not in sorted order here: the tests derive both candidate
+ * orders from this pair, so the constant cannot quietly become the
+ * expected answer it is supposed to be tested against.
+ */
+export const BROWSE_ORDERING_RESOURCE_NAMES = ['alpha', 'Track'];
 
 /** A term carried by exactly one resource's summary, and by no id. */
 export const BROWSE_SUMMARY_ONLY_TERM = 'marmoset';

@@ -398,7 +398,12 @@
                 return prefix;
             }
 
-            const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+            // `localeCompare`, which is what the table's sorter uses. `<`
+            // and `>` compare UTF-16 code units, so every capitalised name
+            // sorted ahead of every lowercase one and a repository mixing
+            // the two was listed in one order by the table and another by
+            // the tree (gain#564).
+            const byName = (a, b) => a.name.localeCompare(b.name);
 
             const breadcrumbEl = document.getElementById("breadcrumb");
             const listEl = document.getElementById("hierarchical-list");

@@ -73,10 +73,19 @@ chr10  1          2        0.3
 
 
 #: The browse fixture's top-level folders, in the order the tree sorts
-#: them.  Three of them, so a search that matches inside one leaves two
-#: that must disappear -- a pruned tree with nothing to prune proves
-#: nothing.
-BROWSE_TOP_LEVEL_FOLDERS = ("genomes", "hg19", "hg38")
+#: them.  Several of them, so a search that matches inside one leaves
+#: others that must disappear -- a pruned tree with nothing to prune
+#: proves nothing.
+#:
+#: ``Zoo`` is capitalised on purpose, and sorts *last* here.  Comparing
+#: names as UTF-16 code units -- which is what ``<`` does, and what the
+#: tree did before iossifovlab/gain#579 -- puts every capitalised name
+#: ahead of every lowercase one, so it would come *first*; the table has
+#: always used ``localeCompare``, which puts it last.  The two views
+#: ordered a mixed-case repository differently (iossifovlab/gain#564),
+#: and a fixture whose names are all lowercase cannot tell the two
+#: comparators apart.
+BROWSE_TOP_LEVEL_FOLDERS = ("genomes", "hg19", "hg38", "Zoo")
 
 #: A term that reaches its resource through the resource's ``summary``
 #: and through nothing else.
@@ -105,6 +114,37 @@ BROWSE_GENOME_RESOURCE_ID = "genomes/g984"
 BROWSE_PHASTCONS_RESOURCE_ID = "hg38/scores/conservation/phastcons"
 BROWSE_COVERAGE_RESOURCE_ID = "hg38/scores/coverage"
 
+#: The capitalised top-level folder, named on its own because the tree's
+#: sort assertions are about this folder's *position*.
+BROWSE_CAPITALISED_FOLDER = "Zoo"
+
+#: Two resources sharing that folder, to settle the order of *resources*.
+#:
+#: A pair rather than one, and capitalised against lowercase, because the
+#: tree sorts folders and resources with the same comparator: without two
+#: resources in one folder, nothing pins that the comparator reached the
+#: resources too.  ``Track`` sorts after ``alpha`` by locale and before it
+#: by code unit, which is the same disagreement ``Zoo`` creates among the
+#: folders.
+#:
+#: No resource here carries a name needing URL-escaping, and none can: a
+#: resource id is matched against ``[a-zA-Z0-9/._-]+`` while a repository
+#: is enumerated (``_scan_path_for_resources``, via
+#: ``parse_resource_id_version``), so a directory with a space, a percent
+#: or a non-ASCII letter in it fails the *scan* -- the repository cannot
+#: be built at all, let alone published.  Every character the grammar does
+#: allow is unreserved in ``encodeURIComponent``, so percent-encoding a
+#: legal folder segment is the identity.  The page encodes anyway, because
+#: ids read from a remote ``.CONTENTS`` are untrusted content
+#: (iossifovlab/gain#467, iossifovlab/gain#528) rather than something this
+#: scanner vouched for -- but it is the *decoding* half that a reader can
+#: actually reach, by typing a fragment, and that is where
+#: ``info_pages_e2e`` pins it.
+BROWSE_ORDERING_RESOURCE_IDS = (
+    f"{BROWSE_CAPITALISED_FOLDER}/alpha",
+    f"{BROWSE_CAPITALISED_FOLDER}/Track",
+)
+
 #: Every resource the browse fixture carries.  The deepest id is four
 #: segments, so the tree has a folder inside a folder inside a folder to
 #: descend through and walk back up.
@@ -114,6 +154,7 @@ BROWSE_RESOURCE_IDS = (
     BROWSE_COVERAGE_RESOURCE_ID,
     BROWSE_SUMMARY_ONLY_RESOURCE_ID,
     BROWSE_GENOME_RESOURCE_ID,
+    *BROWSE_ORDERING_RESOURCE_IDS,
 )
 
 _BROWSE_SCORE_DATA = """
@@ -159,9 +200,14 @@ def _a_browse_score(summary: str) -> PositionScoreBuilder:
 def a_browse_repo(where: pathlib.Path) -> GenomicResourceRepo:
     """A repository shaped to be navigated rather than sorted.
 
-    Three top-level folders, a four-segment path to descend, two resource
+    Four top-level folders, a four-segment path to descend, two resource
     types, and the two search terms above -- one reaching its resource
     only through a summary, the other only through an id.
+
+    One of those folders is capitalised, and two resources share it under
+    names that disagree about their order: between them they make the
+    tree's sort order decidable, which a repository of lowercase names
+    cannot settle.
 
     The summaries are deliberately plain prose: each has to stay clear of
     both terms except for the one resource that carries it, and prose
@@ -195,5 +241,15 @@ def a_browse_repo(where: pathlib.Path) -> GenomicResourceRepo:
             .with_meta(summary=(
                 "Small reference genome the browse fixture is laid out "
                 "over.")))
+        .with_resource(
+            BROWSE_ORDERING_RESOURCE_IDS[0],
+            _a_browse_score(
+                "One of a pair sharing a folder, so that the order the "
+                "tree puts them in is decidable."))
+        .with_resource(
+            BROWSE_ORDERING_RESOURCE_IDS[1],
+            _a_browse_score(
+                "The other of that pair, capitalised, so the two orders "
+                "disagree."))
         .build_repo(where)
     )
