@@ -91,9 +91,9 @@ up as a ``NullHistogram`` rather than an exception.
 Configuration
 -------------
 
-The ``histogram:`` block of a score's ``scores:`` entry is a curator-facing
-YAML question, and its keys — bin counts, log scales, view ranges, value
-ordering, and the custom ``plot_function`` hook — are documented on
+The ``histogram:`` block of a score's ``scores:`` entry is written on the
+curator-facing YAML side: its keys — bin counts, log scales, view ranges,
+value ordering, and the custom ``plot_function`` hook — are documented on
 :ref:`grr-histogram-configuration`. That section also carries the one Python
 example that belongs on the user page: how to write a ``plot_function``.
 
