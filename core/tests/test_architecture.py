@@ -6,7 +6,8 @@ import importlib
 import os
 import pathlib
 import tomllib
-from collections.abc import Container, Iterator
+from collections.abc import Container, Iterator, Mapping
+from typing import NamedTuple
 
 import pytest
 from gain.annotation import pipeline_doc
@@ -435,7 +436,11 @@ def _module_level_defs(node: ast.AST) -> Iterator[ast.FunctionDef]:
 _BINDS_ITS_OWN_SCOPE = (ast.ClassDef, *_DEFERRED_BODIES)
 
 
-def _call_time_nodes(fn: ast.FunctionDef) -> Iterator[ast.AST]:
+#: A function as this file reads one, in both spellings of ``def``.
+_Function = ast.FunctionDef | ast.AsyncFunctionDef
+
+
+def _call_time_nodes(fn: _Function) -> Iterator[ast.AST]:
     """Every node under ``fn`` that *calling* it would execute.
 
     The body statements and whatever nesting runs with them, by the same
@@ -935,6 +940,567 @@ def test_the_pipeline_doc_template_is_bound_in_one_module() -> None:
     assert allowed == {
         py for py in allowed if py.is_file()
     }, f"the one permitted binder is not where the fence expects it: {allowed}"
+
+
+#: The getters that answer a ``_fetch_url``-derived url.  Per ADR 0023's
+#: gain#1106 amendment these carry the credential; ``get_url`` and
+#: ``get_public_url`` are ``self.url``-derived and carry nothing.
+CREDENTIAL_BEARING_GETTERS = frozenset({
+    "get_resource_url",
+    "get_resource_file_url",
+    "get_file_url",
+    "_get_file_url",
+})
+
+#: The one call that makes such a url safe to show.
+URL_REDACTOR = "_strip_url_userinfo"
+
+
+class _UrlMessageSite(NamedTuple):
+    """One place a credential-bearing url reaches a message.
+
+    Carries the line because one name routinely escapes twice from the
+    same function -- the ann_data display url reaches both a
+    ``logger.error`` and the ``ValueError`` raised after it -- and an
+    offender list naming the function alone reports those two as one
+    entry repeated, which reads as a bug in the fence rather than as two
+    sites to fix.
+    """
+
+    function: str
+    name: str
+    redacted: bool
+    line: int
+
+
+def _credential_url_message_sites(source: str) -> tuple[_UrlMessageSite, ...]:
+    """Every site in ``source`` where such a url reaches a message."""
+    sites: list[_UrlMessageSite] = []
+    for fn in ast.walk(ast.parse(source)):
+        if not isinstance(fn, _Function):
+            continue
+        tainted = _credential_bearing_names(fn)
+        for escape in _message_expressions(fn):
+            sites.extend(
+                _UrlMessageSite(fn.name, name, redacted, line)
+                for name, redacted, line
+                in _tainted_occurrences(escape, tainted))
+    return tuple(sites)
+
+
+def _tainted_occurrences(
+    node: ast.AST, tainted: Mapping[str, bool], *, redacted: bool = False,
+) -> Iterator[tuple[str, bool, int]]:
+    """Every tainted name under ``node``, and whether it is redacted there.
+
+    Descends rather than using :func:`ast.walk` because the question is
+    positional: the same name can be redacted in one half of a message and
+    raw in the other, and only an ancestor walk can tell the two apart.
+
+    A name answers redacted if it was redacted *either* where it was bound
+    or where it is used, so both callers get the same verdict from one
+    place rather than each folding the two halves for itself.
+    """
+    if isinstance(node, ast.Name) and node.id in tainted:
+        yield node.id, redacted or tainted[node.id], node.lineno
+        return
+    if isinstance(node, ast.Call) \
+            and _tail_name(node.func) in CREDENTIAL_BEARING_GETTERS:
+        # Called straight into the message, with nothing to name it, so
+        # the positional redaction is the only one it can have.
+        yield f"{_tail_name(node.func)}()", redacted, node.lineno
+        return
+    under = redacted or _is_redactor_call(node)
+    for child in ast.iter_child_nodes(node):
+        yield from _tainted_occurrences(child, tainted, redacted=under)
+
+
+def _is_redactor_call(node: ast.AST) -> bool:
+    """Is ``node`` the call that makes a credential-bearing url safe?"""
+    return (isinstance(node, ast.Call)
+            and _tail_name(node.func) == URL_REDACTOR)
+
+
+def _credential_bearing_names(fn: _Function) -> Mapping[str, bool]:
+    """Local names in ``fn`` bound to a credential-bearing url.
+
+    Answers each one with whether it is *redacted* rather than dropping
+    it: a name bound from the redactor still derives from a
+    credential-bearing url, and the anchor below reads exactly those
+    sites to prove the sweep can still see the getters.  Treating the
+    redactor as untainting would make the fence's own liveness check
+    unwritable.
+
+    Taint enters from one of the getters and then *travels*: the url is
+    routinely rebound before it is shown, and a rule that read only the
+    assignment from the getter would miss every such name while reporting
+    the empty offender list of a fence that works.
+
+    Run to a fixpoint rather than in one pass.  Bindings arrive in source
+    order, which is not the order they execute in: inside a loop a name
+    can be bound from one that is tainted further down, and a single pass
+    reads it before that taint exists.  Iterating until nothing changes
+    reaches it either way, and on this tree costs one extra pass over the
+    eighteen functions that hold any taint at all.
+
+    The read is therefore deliberately flow-insensitive: a name tainted
+    anywhere in the function is treated as tainted throughout it, which
+    can only over-report.
+    """
+    tainted: dict[str, bool] = {}
+    while True:
+        before = dict(tainted)
+        for targets, value in _name_bindings(fn):
+            # The same positional question the reporting asks, so where
+            # the redactor sits in the value cannot change the verdict:
+            # around the whole of it, around a getter inside an f-string,
+            # or around a name already redacted all answer redacted.  A
+            # value built from two urls is redacted only if both are.
+            marks = [redacted for _, redacted, _line
+                     in _tainted_occurrences(value, tainted)]
+            if not marks:
+                continue
+            for target in targets:
+                # A name bound in two places is as raw as its rawest
+                # binding -- the same conservatism as the fixpoint.
+                tainted[target] = all(marks) and tainted.get(target, True)
+        if tainted == before:
+            return tainted
+
+
+def _name_bindings(fn: _Function) -> Iterator[tuple[list[str], ast.expr]]:
+    """Every ``(names, value)`` in ``fn`` that binds a plain local name.
+
+    Three spellings bind one, and reading only the first is how a fence
+    like this goes quietly blind: ``x = e``, the annotated ``x: T = e``
+    -- which a package that annotates as heavily as this one writes
+    constantly -- and the walrus ``(x := e)``.
+
+    Deliberately NOT covered, because each binds through a form this
+    reader would have to model rather than merely recognise: unpacking
+    (``a, b = ...``), a ``for`` or ``with`` target, an augmented
+    ``x += ...``, and a store to an attribute or subscript
+    (``self._url = ...``), which is not a local name at all.  A
+    credential-bearing url bound one of those ways and then shown raw is
+    not seen -- the same class of gap as the three the fence's own
+    docstring lists, and recorded there with them.
+
+    Reads through :func:`_call_time_nodes`, the traversal the deprecation
+    rule above already uses, so this file keeps one rule for "what does
+    running this execute" rather than a second that would have to be
+    reconciled with it.  That rule stops at a nested ``def`` -- which the
+    sweep visits under its own name -- and at a ``lambda`` body, so a url
+    bound inside a lambda is one more shape this does not see.
+    """
+    for node in _call_time_nodes(fn):
+        if isinstance(node, ast.Assign):
+            yield [t.id for t in node.targets
+                   if isinstance(t, ast.Name)], node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            if isinstance(node.target, ast.Name):
+                yield [node.target.id], node.value
+        elif isinstance(node, ast.NamedExpr):
+            yield [node.target.id], node.value
+
+
+#: The log calls a credential can escape through.  ``logger`` and
+#: ``task_logger`` are the only receivers ``gain`` binds, and matching on
+#: the suffix covers a third *module-level name* without an edit here.
+#: It does not cover a third *shape*: a logger reached through an
+#: attribute or a call -- ``self.logger.error``,
+#: ``logging.getLogger(__name__).error`` -- is invisible to this rule.
+#: Neither spelling occurs in ``gain`` today, which is what makes the
+#: narrow match honest rather than lucky.  ``warnings.warn`` is left
+#: alone deliberately: it takes no url in this tree.
+#:
+#: ``trace`` and ``user_info`` are in the set because they are real
+#: methods here: ``utils.log_levels`` installs both on ``logging.Logger``
+#: at import, and thirteen sites in the package call them.  A stdlib-only
+#: list would leave those writing to a log this rule cannot see.
+LOG_LEVELS = frozenset({
+    "debug", "info", "warning", "warn", "error", "exception", "critical",
+    "trace", "user_info",
+})
+
+
+def _message_expressions(fn: _Function) -> Iterator[ast.AST]:
+    """Every expression in ``fn`` whose text can escape to a reader.
+
+    A log call is the worse of the two escapes, not a lesser one: ADR 0023
+    records that a raised error may or may not be rendered, while a
+    ``logger.warning`` writes the credential into a log that persists and
+    is shipped.  That is why the tabix index probe was the site the ADR
+    singled out.
+    """
+    for node in _call_time_nodes(fn):
+        if isinstance(node, ast.Raise) and node.exc is not None:
+            yield node.exc
+        elif isinstance(node, ast.Call) and _is_log_call(node):
+            yield node
+
+
+def _is_log_call(node: ast.Call) -> bool:
+    """Is this call one that writes to a log?"""
+    return (isinstance(node.func, ast.Attribute)
+            and node.func.attr in LOG_LEVELS
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id.lower().endswith("logger"))
+
+
+#: What makes a url reaching a message a leak, and what makes it safe.
+#: Table-driven for the reason ``WARNS_AT_IMPORT_CASES`` gives: extraction
+#: and judgement are separate jobs, and a bug in the judgement is invisible
+#: in an empty offender list.
+CREDENTIAL_URL_CASES = (
+    # The gain#1106 shape: assigned from a credential-bearing getter and
+    # interpolated into a raise, some lines below the assignment.
+    ("""
+def open_raw_file(self, resource, filename, mode="rt"):
+    filepath = self.get_resource_file_url(resource, filename)
+    if "w" in mode:
+        raise OSError(f"trying to open {filepath} for writing")
+""",
+     (("open_raw_file", "filepath", False),)),
+    # The same shape, redacted where it is shown -- how the tree spells
+    # the fix for the row above.
+    ("""
+def open_raw_file(self, resource, filename, mode="rt"):
+    filepath = self.get_resource_file_url(resource, filename)
+    if "w" in mode:
+        raise OSError(
+            f"trying to open {_strip_url_userinfo(filepath)} for writing")
+""",
+     (("open_raw_file", "filepath", True),)),
+    # Laundered through an intermediate name.  The ann_data resource
+    # spells its display url exactly this way, so a rule that reads only
+    # the assignment from the getter polices that site vacuously -- the
+    # trap this fence was measured against during triage.
+    ("""
+def _local_file_path(resource, file_name):
+    file_url = resource.get_file_url(file_name)
+    display_url = file_url
+    raise ValueError(f"cannot load the url {display_url}")
+""",
+     (("_local_file_path", "display_url", False),)),
+    # The same, redacted where it is bound rather than where it is shown.
+    # The name still derives from a credential-bearing url -- it is not
+    # untainted, it is *redacted*, and the fence has to say which, because
+    # the anchor below reads the redacted sites to prove it can still see
+    # them.
+    ("""
+def _local_file_path(resource, file_name):
+    file_url = resource.get_file_url(file_name)
+    display_url = _strip_url_userinfo(file_url)
+    raise ValueError(f"cannot load the url {display_url}")
+""",
+     (("_local_file_path", "display_url", True),)),
+    # A log call is the worse escape of the two, not a lesser one: ADR
+    # 0023 records that a raised error may or may not be rendered, while
+    # a warning writes the credential into a log that is shipped.
+    ("""
+def _validate_index_columns(self, resource, filename):
+    url = self._get_file_url(resource, filename)
+    logger.warning("declining %s", url)
+""",
+     (("_validate_index_columns", "url", False),)),
+    # No intermediate name at all.  The acceptance criterion is about a
+    # credential-bearing *expression* reaching a message, and a getter
+    # called in the message itself is the shortest way to write one.
+    ("""
+def open_raw_file(self, resource, filename):
+    raise OSError(
+        f"cannot open {self.get_resource_file_url(resource, filename)}")
+""",
+     (("open_raw_file", "get_resource_file_url()", False),)),
+    # A typed binding.  This package annotates heavily, so ``filepath: str
+    # = ...`` is at least as likely a spelling for a seventeenth site as
+    # the bare one -- and a reader that knows only ``ast.Assign`` is
+    # blind to it while reporting the empty offender list of a fence that
+    # works.
+    ("""
+def open_raw_file(self, resource, filename):
+    filepath: str = self.get_resource_file_url(resource, filename)
+    raise OSError(f"cannot open {filepath}")
+""",
+     (("open_raw_file", "filepath", False),)),
+    # Bound by a walrus, which is how a site that tests the url as it
+    # fetches it would spell the same thing.
+    ("""
+def open_raw_file(self, resource, filename):
+    if (filepath := self.get_resource_file_url(resource, filename)):
+        raise OSError(f"cannot open {filepath}")
+""",
+     (("open_raw_file", "filepath", False),)),
+    # A nested ``def`` is a function in its own right, and is reported as
+    # one.  The enclosing function must not report it a second time: the
+    # same site under two names, on one line, is exactly the "reads as a
+    # bug in the fence" that the site's line number exists to prevent.
+    ("""
+def outer(self, filename):
+    def inner():
+        url = self.get_file_url(filename)
+        raise OSError(f"cannot open {url}")
+""",
+     (("inner", "url", False),)),
+    # Redacted at the binding, with the redactor somewhere inside the
+    # expression rather than wrapped around the whole of it.  Judged by
+    # the same positional read as every other case, so that the fence can
+    # never tell an author to wrap a line that already wraps it.
+    ("""
+def probe(self, filename):
+    display = f"<{_strip_url_userinfo(self.get_file_url(filename))}>"
+    raise OSError(f"cannot open {display}")
+""",
+     (("probe", "display", True),)),
+    # ``get_resource_url``, the fourth getter.  It earns a row of its own
+    # because it is the override ADR 0023's amendment names as what makes
+    # ``open_raw_file``'s filepath tainted, and because without one no
+    # test in this file mentions it -- renaming it would empty that
+    # quarter of the rule in green.
+    ("""
+def _get_resource_file_state_path(self, resource, filename):
+    resource_url = self.get_resource_url(resource)
+    raise OSError(f"no state alongside {resource_url}")
+""",
+     (("_get_resource_file_state_path", "resource_url", False),)),
+    # A rebinding that reads its source from the previous turn of a loop.
+    # ``display`` is bound from ``url`` on a line *above* the line that
+    # taints ``url``, and only ever holds a value on a later iteration.
+    # One pass in source order never marks it; the fixpoint does.  This
+    # row is what keeps that loop from being untested defence.
+    ("""
+def probe(self, resource, names):
+    display = None
+    for name in names:
+        if display is not None:
+            raise OSError(f"cannot open {display}")
+        display = url
+        url = self.get_file_url(name)
+""",
+     (("probe", "display", False),)),
+    # A ``self.url``-derived getter is credential-free by construction,
+    # so showing one raw is not a finding.  Without this row the rule
+    # could widen to every getter that answers a url and still look
+    # right, at the cost of demanding redaction the ADR says is
+    # unnecessary -- and of the diagnostics that redaction costs.
+    ("""
+def _non_local_lock_message(self):
+    url = self.get_url()
+    raise NotImplementedError(f"locking is unsupported on {url}")
+""",
+     ()),
+    # Known gap: the taint arrives as a parameter, so a read of this
+    # function alone cannot see it.  ADR 0023's amendment names the two
+    # sites of this shape -- the publish-mode refusal and the
+    # corrupt-publish report -- as unredacted and unreachable with a
+    # credential today.  Pinned as a row so the gap stays a decision.
+    ("""
+def _publish_file(self, filepath, mode):
+    if "w" not in mode:
+        raise ValueError(f"publishing {filepath} needs a write mode")
+""",
+     ()),
+)
+
+
+@pytest.mark.parametrize(("source", "sites"), CREDENTIAL_URL_CASES)
+def test_what_counts_as_a_credential_url_reaching_a_message(
+    source: str, sites: tuple[tuple[str, str, bool], ...],
+) -> None:
+    """The rule the sweep applies, stated on its own.
+
+    Table-driven rather than by planting a module in the tree: the sweeps
+    here walk ``GAIN_SRC``, this suite runs under ``pytest -n 10``, and a
+    planted file would race them from another worker -- the reason
+    :func:`_imported_names` gives for the same split.
+
+    The two ``()`` rows are the ones that keep the rule honest.  A fence
+    that flags a ``self.url``-derived getter would demand redaction ADR
+    0023 says is unnecessary, and redaction is not free -- it costs the
+    diagnostics the ADR spends deliberately.  A fence that claimed the
+    parameter-derived shape would be claiming an analysis it does not do.
+    """
+    assert tuple(
+        (site.function, site.name, site.redacted)
+        for site in _credential_url_message_sites(source)
+    ) == sites
+
+
+#: Where the sweep must still find a *redacted* credential-bearing url.
+#: These are the two sites in the tree that this fence polices in the
+#: present tense, and naming both is what makes the rest of it checkable:
+#: if a getter is renamed, or the taint stops travelling through a
+#: rebinding, this set empties and the anchor goes red -- where the fence
+#: itself would go green and say nothing.
+#:
+#: A site legitimately refactored away needs an edit here.  That is the
+#: intent: the coverage claim in the fence's docstring changed, and it
+#: should be re-read rather than quietly weakened.
+ANCHORED_REDACTION_SITES = frozenset({
+    # The read-only protocol's write refusal (gain#1106).
+    "genomic_resources/fsspec_protocol.py: open_raw_file: filepath",
+    # The ann_data resource's display url (gain#608).
+    "genomic_resources/ann_data_resource.py: _local_file_path: display_url",
+})
+
+
+@functools.cache
+def _credential_url_sites() -> tuple[tuple[str, _UrlMessageSite], ...]:
+    """Every credential-bearing url reaching a message in ``gain``.
+
+    Scoped to the package, not the tree.  ``core/tests`` holds a
+    credential-leak suite that constructs authed urls and raises them on
+    purpose, so a sweep of the tests would report the very suite that
+    proves this rule.
+
+    Cached because both rules below ask for it.  The cache is worth less
+    than it looks: this suite runs under ``pytest -n 10``, where the two
+    rules routinely land on different workers and each pays for its own
+    sweep -- which is why the cheap part below matters more than the
+    cache does.
+
+    Only a file whose text names one of the getters can hold a finding:
+    taint originates nowhere else.  Four of the package's ~205 modules do,
+    so the substring test skips parsing the other 201 and takes the sweep
+    from ~700ms to ~80ms -- per worker, per run.  It is a filter on the
+    same names the analysis keys on, so it cannot hide a site the full
+    sweep would report.
+    """
+    found: list[tuple[str, _UrlMessageSite]] = []
+    for py in pathlib.Path(GAIN_SRC).rglob("*.py"):
+        source = py.read_text(encoding="utf8")
+        if not any(getter in source
+                   for getter in CREDENTIAL_BEARING_GETTERS):
+            continue
+        found.extend(
+            (str(py.relative_to(GAIN_SRC)), site)
+            for site in _credential_url_message_sites(source))
+    return tuple(found)
+
+
+def test_every_credential_bearing_getter_is_a_method_gain_defines() -> None:
+    """The names the rule keys on must still exist in the package.
+
+    The anchor below pins the two getters that have a live redaction
+    site.  The other two have none, so renaming one *in the package* --
+    with its call sites -- leaves this file naming a method that no
+    longer exists, and empties that quarter of the rule in green.  The
+    table rows cannot catch it: they are synthetic sources, and they go
+    on passing against a stale constant.
+
+    Asks only that each name is defined somewhere under ``gain``, which
+    is the whole of what a rename breaks, and covers a fifth getter added
+    later without another anchor.
+    """
+    defined = {
+        node.name
+        for py in pathlib.Path(GAIN_SRC).rglob("*.py")
+        for node in ast.walk(ast.parse(py.read_text(encoding="utf8")))
+        if isinstance(node, _Function)
+    }
+
+    missing = sorted(CREDENTIAL_BEARING_GETTERS - defined)
+    assert missing == [], (
+        f"CREDENTIAL_BEARING_GETTERS names methods gain no longer "
+        f"defines: {missing}. If one was renamed, rename it here too -- "
+        f"a stale name polices nothing and reports an empty offender "
+        f"list while doing it"
+    )
+
+
+def test_the_sweep_finds_the_redaction_sites_it_is_anchored_to() -> None:
+    """The sweep must still see the sites it is anchored to.
+
+    The other half of the fence: extraction, not judgement.  An offender
+    list is empty both when nothing leaks and when the sweep stopped
+    recognising the getters -- the first is the point of the rule below,
+    the second is a fence that polices nothing and says so in green.
+
+    Anchored on redaction sites rather than on leaks because the tree has
+    no leaks left, by construction: the rule below is the assertion that
+    there are none.
+    """
+    redacted = {
+        f"{module}: {site.function}: {site.name}"
+        for module, site in _credential_url_sites() if site.redacted
+    }
+
+    assert redacted >= ANCHORED_REDACTION_SITES, (
+        f"the anchored redaction sites are no longer found: "
+        f"{sorted(ANCHORED_REDACTION_SITES - redacted)}. Either a "
+        f"credential-bearing getter was renamed -- update "
+        f"CREDENTIAL_BEARING_GETTERS -- or the taint stopped travelling "
+        f"through a rebinding. An unanchored rule passes on an empty scan"
+    )
+
+
+def test_no_gain_module_interpolates_a_credential_url_unredacted() -> None:
+    """No ``gain`` module shows a ``_fetch_url``-derived url raw.
+
+    ADR 0023 makes redaction a property of the *handle*, which closes
+    every url that escapes through a read or a write.  Its gain#1106
+    amendment records the boundary: a message ``gain`` composes itself
+    escapes before any handle exists, so the handle cannot reach it and
+    the call site owns the redaction.  That left the one mechanism in
+    this family with no structural guard -- sixteen hand-written
+    ``_strip_url_userinfo`` calls that a seventeenth site can silently
+    forget, which is how gain#1106 arose.
+
+    The discriminator is the url's provenance, not its spelling:
+    ``_fetch_url``-derived carries the credential, ``self.url``-derived
+    does not.  ``CREDENTIAL_BEARING_GETTERS`` is that list.
+
+    **How much this polices today: two sites.**  The read-only protocol's
+    write refusal and the ann_data display url, both named in
+    ``ANCHORED_REDACTION_SITES``.  Every other ``_strip_url_userinfo``
+    call in the tree is either one of the shapes below or a
+    ``self.url``-derived url that needs no redaction at all.  The rule
+    exists for the seventeenth site, not for present-tense coverage, and
+    a reader should not take its green for more than that.
+
+    **What this does not catch.**  Two kinds of gap, both stated rather
+    than hidden.
+
+    *The taint does not reach this reader at all*, because it crosses a
+    boundary one function cannot see:
+
+    - *Through a helper.*  ``tmp_filepath =
+      self._get_file_publish_path(filepath)`` derives a credential-bearing
+      path from one, in a call this cannot follow.  The download loop
+      redacts it by hand.
+    - *Through a parameter.*  ``_publish_file`` receives an already
+      tainted ``filepath`` from its callers; its publish-mode refusal and
+      its corrupt-publish report interpolate it raw.  Both are safe by
+      protocol selection rather than by redaction -- ADR 0023 gives the
+      argument -- and neither is visible here.
+    - *Through an exception's text.*  ``_strip_url_userinfo(str(error))``
+      redacts a url that arrived inside a third-party message, never
+      through a url-valued name.
+
+    *The taint is bound by a spelling this reader does not model*: see
+    :func:`_name_bindings`, which recognises ``x = e``, ``x: T = e`` and
+    ``(x := e)`` and no other.  Unpacking, a ``for`` or ``with`` target,
+    an augmented assignment and a store to an attribute all bind a url
+    this rule then treats as clean.  That list is short only because
+    every one of them is a form to model rather than to recognise;
+    "reads one function at a time" is not the same claim as "sees
+    everything within one function".
+
+    Closing either kind is a larger change than the shape that has
+    actually cost this tree two issues -- gain#620 in part, and gain#1106
+    outright.
+    """
+    offenders = sorted(
+        f"{module}:{site.line}: {site.function}: {site.name}"
+        for module, site in _credential_url_sites() if not site.redacted
+    )
+    assert offenders == [], (
+        f"these sites show a credential-bearing url unredacted: "
+        f"{offenders}. A url from one of {sorted(CREDENTIAL_BEARING_GETTERS)} "
+        f"derives from the authed _fetch_url, and a message interpolating "
+        f"one escapes before any handle exists -- wrap it in "
+        f"{URL_REDACTOR}, as the sites around it do (ADR 0023, gain#1106)"
+    )
 
 
 @functools.cache
