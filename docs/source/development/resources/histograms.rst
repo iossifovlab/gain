@@ -38,11 +38,11 @@ class for each:
         NullHistogramConfig | CategoricalHistogramConfig | NumberHistogramConfig
     )
 
-They are what the annotating signatures are written in terms of, so a
-function documented as returning a ``Histogram`` returns one of the three
-concrete classes above. Because they are aliases there is nothing to
-``autoclass`` and no page anchor to link to — check ``type`` on the object,
-or match on the class, to find out which one you have.
+They are the names the type annotations use, so a function documented as
+returning a ``Histogram`` returns one of the three concrete classes above.
+Because they are aliases there is nothing to ``autoclass`` and no page anchor
+to link to — check ``type`` on the object, or match on the class, to find out
+which one you have.
 
 The null histogram is not an absence
 ------------------------------------
@@ -62,18 +62,31 @@ not branch; its
 :meth:`~gain.genomic_resources.histogram.NullHistogram.plot` draws nothing
 and the summary page renders the reason instead.
 
-This is why
-:func:`~gain.genomic_resources.histogram.load_histogram` never raises for a
-missing or malformed histogram: it returns an appropriately-explained
-``NullHistogram``.
+It is also what
+:func:`~gain.genomic_resources.histogram.load_histogram` returns instead of
+failing, for the cases it handles: a missing file, an unrecognised file
+extension, and a body that fails to deserialise each come back as an
+explained ``NullHistogram``. It is *not* a blanket guarantee — the YAML or
+JSON parse and the ``config``/``type`` lookups sit outside that handling, so
+a syntactically broken file or one missing its ``config`` key raises.
+
+Histograms are stored as ``.yaml`` on older resources and ``.json`` on newer
+ones, so prefer to let the score resolve the name rather than spelling it
+yourself:
 
 .. code-block:: python
 
     from gain.genomic_resources.histogram import load_histogram
 
     res = grr.get_resource("hg38/scores/phastCons100way")
-    hist = load_histogram(res, "statistics/histogram_phastCons100way.yaml")
-    print(hist.type, hist.values_domain())
+    hist = load_histogram(res, "statistics/histogram_phastCons100way.json")
+    print(hist.type, hist.values_domain())     # number_histogram [0, 1]
+
+``ScoreResource.get_histogram_filename(score_id)`` is that resolver: it
+returns the ``.yaml`` name when the resource's manifest carries one and the
+``.json`` name otherwise. Passing a name the resource does not have is not an
+error — it is exactly the "file not found" case above, so the mistake shows
+up as a ``NullHistogram`` rather than an exception.
 
 Configuration
 -------------
@@ -91,9 +104,13 @@ default comes from when the YAML says nothing:
 #. ``parse_scoredef_config`` reads the ``scores:`` block and produces one
    :class:`~gain.genomic_resources.score_def.GenomicScoreDef` per entry.
 #. For each entry, ``build_histogram_config`` reads that entry's
-   ``histogram:`` key and returns the matching ``*HistogramConfig`` —
-   or, when the key is absent, ``default_config`` on the class the score's
-   value type implies.
+   ``histogram:`` key and returns the matching ``*HistogramConfig``. When
+   the key is absent it returns ``None`` — it does *not* substitute a
+   default.
+#. The default is chosen later, at statistics-build time, by
+   ``build_default_histogram_conf`` from the score's value type. That is
+   why an unconfigured score still gets a histogram, and why which kind it
+   gets depends on the declared ``value_type`` rather than on the data.
 #. The statistics build uses the config to construct the histogram, fills it
    with :meth:`~gain.genomic_resources.histogram.NumberHistogram.add_value`
    or the vectorised
@@ -109,20 +126,37 @@ number histograms with different bin edges cannot be added — so the
 configuration is fixed before the build starts, not derived from the data as
 it arrives.
 
-Truncation
-----------
+Cardinality, and truncation
+---------------------------
 
 :class:`~gain.genomic_resources.histogram.CategoricalHistogram` counts one
-bucket per distinct value, so it needs a bound:
-``UNIQUE_VALUES_LIMIT`` caps how many it will track, and
+bucket per distinct value, and two separate mechanisms keep that from
+getting out of hand. They are easy to confuse, so it is worth separating
+them.
+
+**The cardinality limit is a refusal, not a cap.** Past
+``UNIQUE_VALUES_LIMIT`` (100), ``add_value`` raises ``HistogramError`` and
+the statistics build replaces the whole histogram with a ``NullHistogram``
+carrying that message — nothing is kept and nothing is truncated. The limit
+applies only when the score was *not* explicitly configured as categorical:
+see :meth:`~gain.genomic_resources.histogram.CategoricalHistogramConfig.default_config`
+for why the flag that gates it, ``enforce_type``, reads backwards from its
+name.
+
+**Truncation is about what gets written and drawn**, and applies to a
+histogram that was built successfully.
+:attr:`~gain.genomic_resources.histogram.CategoricalHistogram.display_values`
+is the ordered subset the summary page draws, controlled by the
+configuration's ``displayed_values_count``, ``displayed_values_percent`` and
+``value_order`` keys, and
+:meth:`~gain.genomic_resources.histogram.CategoricalHistogram.serialize_truncated`
+writes that subset as a small sidecar alongside the full histogram. Because
+the sidecar also carries
 :attr:`~gain.genomic_resources.histogram.CategoricalHistogram.unique_values`
 and
-:attr:`~gain.genomic_resources.histogram.CategoricalHistogram.total_count`
-are reported *across* truncation, so a truncated histogram still tells you
-how much it did not keep.
-:attr:`~gain.genomic_resources.histogram.CategoricalHistogram.display_values`
-is the ordered subset the summary page draws, which the configuration's
-``displayed_values_count`` and ``value_order`` keys control.
+:attr:`~gain.genomic_resources.histogram.CategoricalHistogram.total_count`,
+a histogram loaded from one still reports the totals of the full data even
+though its own counts are the truncated set.
 
 API
 ---

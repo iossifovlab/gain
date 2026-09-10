@@ -8,11 +8,13 @@ it names. In Python that tree is a
 directory it serves is a
 :class:`~gain.genomic_resources.repository.GenomicResource`.
 
-A ``GenomicResource`` is deliberately *untyped*: it knows the resource's id,
-version, config and files, and nothing about what kind of thing the resource
-is. Turning one into a reference genome or a score is the job of the typed
-builders described in the following chapters — which is why every one of them
-takes a repository and an id rather than a bare path.
+A ``GenomicResource`` is deliberately *generic*: it can tell you the
+resource's declared type through
+:meth:`~gain.genomic_resources.repository.GenomicResource.get_type`, but it
+has no behaviour specific to any of them — it reads config and files and
+stops there. Turning one into a reference genome or a score is the job of the
+typed builders described in the following pages, which is why every one of
+them takes a repository and an id rather than a bare path.
 
 Opening a repository
 --------------------
@@ -37,8 +39,9 @@ a definition dictionary instead builds exactly the repository it describes:
     })
 
 The definition dictionary is the same structure the ``.grr_definition.yaml``
-file holds; :doc:`/grr` documents its keys and the repository types
-(``directory``, ``url``, ``s3``, ``group``, ``cached``) that are available.
+file holds. :doc:`/grr` documents its keys, the repository types available,
+and the ``cache_dir`` key — caching is a key any type can carry, not a type
+of its own.
 
 Finding a resource
 ------------------
@@ -56,8 +59,14 @@ configuration uses, so a script can pin the resource it was written against:
 
 .. code-block:: python
 
-    res = grr.get_resource("hg38/scores/phastCons100way", version_constraint=">=1.0")
+    res = grr.get_resource("hg38/scores/phastCons100way", version_constraint=">=0")
     print(res.get_full_id(), res.get_type())
+
+A constraint nothing satisfies is a lookup failure, not a silently older
+resource — ``get_resource`` raises and ``find_resource`` returns ``None``,
+the same way they treat an unknown id. Check the resource's actual version
+before pinning: many published resources are still at ``0``, so a plausible
+looking ``>=1.0`` will simply fail to resolve.
 
 To go the other way — from a property to the resources that have it — use
 :meth:`~gain.genomic_resources.repository.GenomicResourceRepo.search_resources`,
@@ -88,7 +97,7 @@ local directory, an HTTP mirror or an S3 bucket:
 
 .. code-block:: python
 
-    with res.open_raw_file("statistics/histogram_phastCons100way.yaml") as infile:
+    with res.open_raw_file("statistics/histogram_phastCons100way.json") as infile:
         print(infile.read())
 
 :meth:`~gain.genomic_resources.repository.GenomicResource.open_raw_file` is
@@ -110,8 +119,10 @@ cached or mirrored repository compares against when it decides whether its
 copy is stale.
 
 :meth:`~gain.genomic_resources.repository.GenomicResource.get_manifest`
-returns it, *building* one if the resource has none; the build reads every
-file, so on a remote repository it is expensive.
+returns it, *building* one if the resource has none. The build reads every
+file, so where it is possible at all it is expensive — and it needs a
+read-write protocol, so on a read-only mount a resource with no stored
+manifest fails here rather than building one.
 :meth:`~gain.genomic_resources.repository.GenomicResource.get_loaded_manifest`
 is the cheap counterpart — it returns the stored manifest or ``None``, and
 never builds one.

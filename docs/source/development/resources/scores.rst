@@ -43,14 +43,23 @@ The lifecycle
 
 A score holds an open table — a tabix file, a bigWig, or a VCF — so it is
 built closed. :meth:`~gain.genomic_resources.genomic_scores.GenomicScore.open`
-returns the score, so it chains; the context-manager form is the one to
-prefer, and :meth:`~gain.genomic_resources.genomic_scores.GenomicScore.is_open`
-reports the state:
+opens it and returns it, so the call chains, and
+:meth:`~gain.genomic_resources.genomic_scores.GenomicScore.is_open` reports
+the state.
+
+**Entering the context manager does not open the score.** ``__enter__``
+returns the score unchanged; what the ``with`` block gives you is the
+guaranteed :meth:`~gain.genomic_resources.genomic_scores.GenomicScore.close`
+on the way out. So call ``open()`` explicitly and let ``with`` manage the
+closing:
 
 .. code-block:: python
 
-    with build_score_from_resource_id("hg38/scores/phastCons100way", grr) as score:
+    with build_score_from_resource_id("hg38/scores/phastCons100way", grr).open() as score:
         print(score.get_scores_at_position("chr21", 5_030_000))
+
+Omitting the ``.open()`` raises ``ValueError: genomic score <id> is not
+open`` on the first read.
 
 This is stated once here and holds for all three kinds. Reading from a closed
 score is an error, not an implicit open — a score that opened itself on first
