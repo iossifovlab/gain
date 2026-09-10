@@ -431,7 +431,9 @@
                         el.addEventListener("click", (e) => {
                             e.preventDefault();
                             goTo({
-                                view: "hierarchical", path: crumb.path });
+                                view: "hierarchical",
+                                path: crumb.path,
+                            });
                         });
                     }
                     breadcrumbEl.appendChild(el);
@@ -453,8 +455,10 @@
                         + '<span class="hv-count">(' + folder.count + ")</span>"
                         + "</div>"
                         + '<span class="hv-size">' + escapeHtml(formatSize(folder.bytes)) + "</span>";
-                    row.addEventListener("click", () => goTo(
-                        { view: "hierarchical", path: folder.path }));
+                    row.addEventListener("click", () => goTo({
+                        view: "hierarchical",
+                        path: folder.path,
+                    }));
                     listEl.appendChild(row);
                 }
 
@@ -587,7 +591,16 @@
                 // round: the segments are resource id fragments, which are
                 // untrusted repository content (gain#467, gain#528), and
                 // encoding the joined string would escape the separators
-                // along with everything else. Going per segment is also
+                // along with everything else.
+                //
+                // Every character a resource id may legally carry is
+                // unreserved here, so for a repository this scanner built
+                // the encoding is the identity: enumerating one matches its
+                // ids against `[a-zA-Z0-9/._-]+` and refuses the rest. It
+                // is kept for the ids this page did *not* vet -- a remote
+                // `.CONTENTS` is read verbatim -- and because that grammar
+                // widening should not silently become a way to write the
+                // separator. Going per segment is also
                 // what makes a name containing "/" impossible to spell --
                 // it comes back as one folder, not two.
                 return HIERARCHICAL_HASH
