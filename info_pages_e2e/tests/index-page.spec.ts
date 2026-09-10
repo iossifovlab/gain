@@ -553,6 +553,22 @@ function resourceNames(page: Page): Promise<string[]> {
 }
 
 /**
+ * The recursive resource count a folder row reports, as rendered.
+ *
+ * Read as the text including its brackets rather than parsed to a
+ * number, so that a row which had stopped rendering the count at all is
+ * a failure here rather than a `NaN` compared against a `NaN`.
+ */
+function folderCount(page: Page, name: string): Promise<string> {
+  return folderRow(page, name).locator('.hv-count').innerText();
+}
+
+/** The aggregated size a folder row reports, as rendered. */
+function folderSize(page: Page, name: string): Promise<string> {
+  return folderRow(page, name).locator('.hv-size').innerText();
+}
+
+/**
  * The errors the page throws from now on.
  *
  * Attach before the navigation whose errors it is meant to catch; a
@@ -1385,4 +1401,227 @@ test('a term prunes the tree to the folders containing a match', async ({
    * all four; a tree that emptied itself on any search at all would list
    * none. Only pruning gives exactly this one. */
   await expect.poll(() => folderNames(page)).toEqual(['hg38']);
+});
+
+test('a pruned folder reports the matched count and the matched size',
+  async ({ page }) => {
+    await openBrowseIndex(page, '#/');
+
+    /* What `hg38` reports unfiltered, read off the page rather than
+     * written here: how many resources it holds is the browse fixture's
+     * business, and a literal would redden this test the day one is
+     * added for some other reason. It is captured only to be shown
+     * different afterwards. */
+    const wholeCount = await folderCount(page, 'hg38');
+
+    await search(page, BROWSE_ID_ONLY_TERM);
+
+    /* One match beneath it, so it reports one -- not the three it holds.
+     * This is the assertion that separates a pruned tree from a filtered
+     * *listing*: a build that hid the non-matching rows but kept each
+     * folder's own totals would show `hg38` here with the count it had
+     * before, promising two resources that are not underneath it. */
+    await expect.poll(() => folderCount(page, 'hg38')).toBe('(1)');
+    expect(wholeCount).not.toBe('(1)');
+
+    const matchedSize = await folderSize(page, 'hg38');
+
+    /* And the size is the size of what matched. Derived rather than
+     * asserted as a literal, and derived from the *other* renderer: with
+     * `phylop` the only resource left under `hg38`, the folder's
+     * aggregate has to come to exactly that one resource's own size --
+     * which the page prints from the value the generator put in the row,
+     * not from the arithmetic under test.
+     *
+     * So this fails both if the aggregate still totals the whole folder
+     * and if `formatSize` has drifted from the `convert_size` it mirrors
+     * -- the two are only ever compared where a folder holds exactly one
+     * resource, and pruning is what arranges that. */
+    await folderRow(page, 'hg38').click();
+    await folderRow(page, 'scores').click();
+    await folderRow(page, 'conservation').click();
+
+    await expect(page.locator('#hierarchical-list .hv-resource .hv-size'))
+      .toHaveText(matchedSize);
+  });
+
+test('a match far below the current folder stays reachable through it',
+  async ({ page }) => {
+    await openBrowseIndex(page, '#/hg38');
+    await search(page, BROWSE_ID_ONLY_TERM);
+
+    /* Two levels down from here, so the folders between have to survive
+     * the pruning or the match cannot be got at. That is the whole claim,
+     * and it is only decidable below this first step: `hg38` holds
+     * nothing but `scores` either way, so seeing `scores` here says
+     * nothing yet. */
+    await expect.poll(() => folderNames(page)).toEqual(['scores']);
+
+    await folderRow(page, 'scores').click();
+
+    /* Here it starts to discriminate. Unfiltered, `scores` shows the
+     * `conservation` folder *and* the `coverage` resource sitting beside
+     * it; the term reaches neither `coverage` nor anything under it, so
+     * only the folder that leads onward is left. A build that kept the
+     * intermediate folders by simply not pruning them would still list
+     * `coverage` here. */
+    await expect.poll(() => folderNames(page)).toEqual(['conservation']);
+    expect(await resourceNames(page)).toEqual([]);
+
+    await folderRow(page, 'conservation').click();
+
+    /* And at the bottom, the match alone -- `phastcons` shares this
+     * folder with it and is gone. */
+    await expect.poll(() => resourceNames(page)).toEqual(['phylop']);
+  });
+
+test('a resource matching only its summary is found in the tree', async ({
+  page,
+}) => {
+  await openBrowseIndex(page, '#/');
+
+  await search(page, BROWSE_SUMMARY_ONLY_TERM);
+
+  /* The term appears in no id anywhere in the fixture -- pinned by
+   * `test_info_page_browse_fixture.py` -- so nothing about this resource's
+   * *address* can lead the tree to it. Only the full-text index can, and
+   * that is the point: the tree does not match ids for itself, it prunes
+   * to the hit set the table's own search returned, so both views answer
+   * one query with one set of semantics.
+   *
+   * A tree that had grown its own matcher over the folder names it
+   * already has would find nothing here and show an empty repository. */
+  const [top, mid, name] = BROWSE_SUMMARY_ONLY_RESOURCE_ID.split('/');
+
+  await expect.poll(() => folderNames(page)).toEqual([top]);
+
+  await folderRow(page, top).click();
+  await folderRow(page, mid).click();
+
+  await expect.poll(() => resourceNames(page)).toEqual([name]);
+});
+
+test('a type chosen on its own prunes the tree to that type', async ({
+  page,
+}) => {
+  await openBrowseIndex(page, '#/');
+
+  await filterByType(page, BROWSE_GENOME_TYPE);
+
+  /* One resource carries this type, in `genomes`. */
+  const [genomeFolder] = BROWSE_GENOME_RESOURCE_ID.split('/');
+  await expect.poll(() => folderNames(page)).toEqual([genomeFolder]);
+
+  await filterByType(page, BROWSE_SCORE_TYPE);
+
+  /* Then the other way, which is what makes the first half mean
+   * something. A filter that returned everything would pass the
+   * assertion above only if `genomes` were the whole repository, and a
+   * filter that returned nothing would fail it -- but a filter stuck on
+   * one answer is only visible by asking for the complement and getting
+   * a different one. Every folder except `genomes` holds scores. */
+  await expect.poll(async () => (await folderNames(page)).sort())
+    .toEqual(BROWSE_TOP_LEVEL_FOLDERS
+      .filter((folder) => folder !== genomeFolder).sort());
+});
+
+test('clearing the search restores the folder it was searched from', async ({
+  page,
+}) => {
+  await openBrowseIndex(page, '#/hg38/scores');
+
+  /* The whole folder as it stands, captured to be compared against
+   * itself later. Restoring is the claim, so the expected values have to
+   * come from before the search rather than from this file -- a literal
+   * would let a restore that rebuilt something *similar* pass. */
+  const wholeFolders = await folderNames(page);
+  const wholeResources = await resourceNames(page);
+  const wholeCount = await folderCount(page, 'conservation');
+
+  await search(page, BROWSE_ID_ONLY_TERM);
+  await expect.poll(() => resourceNames(page)).toEqual([]);
+
+  await search(page, '');
+
+  /* Everything back, including the counts. The counts matter separately
+   * from the rows: a build that dropped the filter but kept rendering
+   * from the tree it built for the search would list the whole folder
+   * again while still reporting the *matched* totals beside it. */
+  await expect.poll(() => folderNames(page)).toEqual(wholeFolders);
+  expect(await resourceNames(page)).toEqual(wholeResources);
+  expect(await folderCount(page, 'conservation')).toBe(wholeCount);
+
+  /* And in the folder it was searched from, not at the root. */
+  expect(hashOf(page)).toBe('#/hg38/scores');
+});
+
+test('a term matching nothing here empties the folder without leaving it',
+  async ({ page }) => {
+    await openBrowseIndex(page, '#/hg38');
+
+    /* `marmoset`'s one match lives under `hg19`, so there is nothing to
+     * show in `hg38` -- which is the case that decides whether pruning is
+     * a filter or a move.
+     *
+     * The tree resolves an address by walking up to the nearest folder
+     * that still exists, and rewrites the address to wherever it lands
+     * (iossifovlab/gain#579). Were the folder resolved against the pruned
+     * tree, `hg38` would not be in it, the walk-up would land at the root,
+     * and the reader would be moved out of the folder they searched from
+     * by a term that merely matched nothing in it. */
+    await search(page, BROWSE_SUMMARY_ONLY_TERM);
+
+    await expect(page.locator('#hierarchical-list .hv-empty')).toBeVisible();
+    expect(await folderNames(page)).toEqual([]);
+    expect(await resourceNames(page)).toEqual([]);
+
+    /* Still here: the address, and the trail that says where here is. */
+    expect(hashOf(page)).toBe(`#/hg38?q=${BROWSE_SUMMARY_ONLY_TERM}`);
+    expect(await breadcrumbTrail(page)).toContain('hg38');
+
+    /* And clearing it gives the folder back rather than an ancestor,
+     * which is what the reader loses if the walk-up ever runs here. */
+    await search(page, '');
+
+    await expect.poll(() => folderNames(page)).toEqual(['scores']);
+    expect(hashOf(page)).toBe('#/hg38');
+  });
+
+test('an address carrying a term opens the tree already pruned', async ({
+  page,
+}) => {
+  /* The count is overridden because this load passes through the whole
+   * repository on its way to the filtered answer, and waiting for seven
+   * would match on the way past. */
+  await openBrowseIndex(page, `#/?q=${BROWSE_ID_ONLY_TERM}`, 1);
+
+  await expectView(page, 'hierarchical');
+
+  /* The other half of the seam, and the half that is easy to leave out.
+   * A tree told about searches by the *controls* -- "the reader typed
+   * something" -- is never told about this one: nobody typed it, the
+   * address applied it. Such a build passes every test above, because
+   * every one of them types, and opens this shared link unpruned. */
+  await expect.poll(() => folderNames(page)).toEqual(['hg38']);
+});
+
+test('a malformed term leaves the tree browsable', async ({ page }) => {
+  const errors = collectPageErrors(page);
+
+  /* The same lone double quote the table degrades on, arriving at the
+   * tree. FTS5 rejects it, the search falls back to the whole repository,
+   * and the tree has to fall back with it -- listing everything is the
+   * honest answer to a query that could not be run, and is what the
+   * reader sees in the other view.
+   *
+   * What this rules out is a tree that took the failure for an empty hit
+   * set: the fallback reaches it through exactly the same call as a real
+   * result, so it is one `catch` away from pruning the repository down to
+   * nothing and reporting it as "no resources". */
+  await openBrowseIndex(page, '#/?q=%22');
+
+  await expect(page.locator('#search-field')).toHaveValue('"');
+  await expect.poll(async () => (await folderNames(page)).sort())
+    .toEqual([...BROWSE_TOP_LEVEL_FOLDERS].sort());
+  expect(errors).toEqual([]);
 });
