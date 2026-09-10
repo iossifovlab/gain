@@ -429,6 +429,55 @@ def test_calc_histogram_number(inmemory_repo: GenomicResourceRepo) -> None:
     assert histogram.max_value == 3.0
 
 
+def test_calc_histogram_number_over_a_boolean_column(
+    tmp_path: pathlib.Path,
+) -> None:
+    """gain#1338: a True/False column builds a 0/1 histogram, not a null one.
+
+    This is the one route that reaches ``NumberHistogram.add_value`` with a
+    numpy scalar: ``_build_histograms`` folds ``GeneScore.get_values()`` --
+    literally ``list(df[score_id].values)`` off ``pd.read_csv`` -- straight
+    in, with no value-type gate.  A boolean column arrives as ``np.bool_``,
+    which is not an ``np.integer``, so the allow-list refused it and
+    nullified the score.
+
+    The number histogram is authored here rather than inferred: a ``bool``
+    gets a ``NullHistogramConfig`` by default
+    (``build_default_histogram_conf``), so declaring one is what puts a
+    boolean column in front of ``add_value`` at all.  Once there it folds as
+    the 0/1 it holds, the way ``add_batch`` bins a boolean array.
+    """
+    repo = (
+        a_grr()
+        .with_resource(
+            "genes",
+            a_gene_score()
+            .with_score("gs_flag", "bool")
+            .with_histogram({
+                "type": "number",
+                "number_of_bins": 2,
+                "x_log_scale": False,
+                "y_log_scale": False,
+            })
+            .with_data(textwrap.dedent("""
+                gene  gs_flag
+                g1    True
+                g2    False
+                g3    True
+            """)),
+        )
+        .build_repo(tmp_path)
+    )
+    res = repo.get_resource("genes")
+
+    histogram = GeneScoreImplementation._build_histograms(res)["gs_flag"]
+
+    assert isinstance(histogram, NumberHistogram), \
+        getattr(histogram, "reason", histogram)
+    assert histogram.bars[0] == 1, "False folds as 0"
+    assert histogram.bars[1] == 2, "True folds as 1"
+
+
 def test_calc_histogram_categorical() -> None:
     repo = build_inmemory_test_repository({
         "CatScore": {

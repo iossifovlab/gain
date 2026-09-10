@@ -1,6 +1,8 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import logging
 import pathlib
+import re
+from decimal import Decimal
 from typing import Any
 
 import numpy as np
@@ -60,6 +62,96 @@ def test_number_histogram_still_skips_nan_after_stating_the_refusal() -> None:
     histogram.add_value(np.nan)
 
     assert histogram.bars.sum() == 0
+
+
+@pytest.mark.parametrize(
+    "value", [np.float32(0.5), np.float16(0.5), np.int64(3)])
+def test_number_histogram_folds_a_numpy_scalar_as_its_python_value(
+    value: Any,
+) -> None:
+    """numpy's own scalars fold as the Python value they hold.
+
+    ``np.float32`` and ``np.float16`` are not ``float`` -- only
+    ``np.float64`` subclasses it -- so the allow-list below the nan skip
+    refused them as non-numeric and nullified the score, while the same
+    class's ``add_batch`` folded them happily (gain#1338).  ``np.int64`` is
+    here as the one numpy scalar that allow-list already accepted: the
+    normalization must not disturb it.
+    """
+    from_numpy = _a_number_histogram()
+    from_python = _a_number_histogram()
+
+    from_numpy.add_value(value)
+    from_python.add_value(value.item())
+
+    assert from_python.bars.sum() == 1, "two empty histograms match trivially"
+    assert np.array_equal(from_numpy.bars, from_python.bars)
+    assert from_numpy.min_value == from_python.min_value
+    assert from_numpy.max_value == from_python.max_value
+
+
+def test_number_histogram_folds_numpy_bool_as_zero_and_one() -> None:
+    """``np.bool_`` is a number to numpy, and folds as the 0/1 it holds.
+
+    ``np.bool_`` is not an ``np.integer``, so the allow-list refused it --
+    while ``_NUMBER_HISTOGRAM_VALUE_TYPES`` admits a ``"bool"`` score and
+    ``add_batch`` bins one as 0/1 (gain#1338).
+    """
+    histogram = _a_number_histogram()
+    numpy_true, numpy_false = np.bool_(1), np.bool_(0)
+
+    histogram.add_value(numpy_true)
+    histogram.add_value(numpy_false)
+
+    assert histogram.bars[1] == 1, "True folds as 1"
+    assert histogram.bars[0] == 1, "False folds as 0"
+    assert histogram.min_value == 0
+    assert histogram.max_value == 1
+
+
+@pytest.mark.parametrize(
+    ("value", "type_name"),
+    [
+        # Refused by the type gate: ``np.isnan`` accepts all of these.
+        (0.5 + 0j, "complex"),
+        (np.complex128(0.5), "numpy.complex128"),
+        (np.array(0.5), "numpy.ndarray"),
+        # A 1-element array, unlike the 2-element one that raises ValueError
+        # from the truthiness of ``np.isnan(...)`` above and escapes the
+        # scan's per-value ``except TypeError`` -- that is gain#1337, and it
+        # is this line whoever fixes it will be editing.
+        (np.array([0.5]), "numpy.ndarray"),
+        # Refused earlier, by the ``np.isnan`` re-wording (gain#1312).
+        # Here to pin that BOTH refusal routes carry the shared wording.
+        (np.str_("aaa"), "numpy.str_"),
+        (Decimal("0.5"), "decimal.Decimal"),
+    ],
+)
+def test_number_histogram_refuses_a_non_number_naming_what_it_was_given(
+    value: Any, type_name: str,
+) -> None:
+    """Admitting numpy's numeric scalars must not admit everything numpy has.
+
+    This is the boundary gain#1338 had to hold.  Dropping the type check in
+    favour of "whatever ``np.isnan`` accepts" -- the twin ``MinMaxValue``'s
+    rule -- would let ``np.complex128`` through to be binned by its REAL
+    PART alone (numpy only warns), and would fold a 0-d array.
+
+    ``np.complex128`` is the row that pins the wording of the refusal and
+    not just its existence: it is the only value here that is normalized
+    before being refused, so it is the one that catches a refusal reporting
+    the ``complex`` it became instead of the ``np.complex128`` the caller
+    handed over.
+    """
+    histogram = _a_number_histogram()
+
+    with pytest.raises(
+        TypeError,
+        match=rf"non numerical value.*{re.escape(type_name)}",
+    ):
+        histogram.add_value(value)
+
+    assert histogram.bars.sum() == 0, "a refused value folds nothing"
 
 
 def test_histogram_simple_input() -> None:

@@ -6,23 +6,34 @@ from gain.genomic_resources.histogram import (
 )
 
 
-def _lin_config() -> NumberHistogramConfig:
+def _a_config(lo: float, hi: float, nbins: int) -> NumberHistogramConfig:
     return NumberHistogramConfig.from_dict({
         "type": "number",
-        "view_range": {"min": 0, "max": 10},
-        "number_of_bins": 10,
+        "view_range": {"min": lo, "max": hi},
+        "number_of_bins": nbins,
         "x_log_scale": False,
         "y_log_scale": False,
     })
+
+
+def _lin_config() -> NumberHistogramConfig:
+    return _a_config(0, 10, 10)
 
 
 def _reference(
     config: NumberHistogramConfig,
     values: np.ndarray, weights: np.ndarray,
 ) -> NumberHistogram:
+    """Fold each value AS STORED, without laundering its dtype.
+
+    This deliberately does not coerce with ``float(value)``: that would hide
+    the question the narrow-dtype tests exist to ask, since a real caller
+    hands ``add_value`` the numpy scalar its column holds and that is only a
+    Python ``float`` when the column is float64.
+    """
     hist = NumberHistogram(config)
     for value, weight in zip(values, weights, strict=True):
-        hist.add_value(float(value), int(weight))
+        hist.add_value(value, int(weight))
     return hist
 
 
@@ -47,6 +58,96 @@ def test_add_batch_matches_add_value_loop_linear() -> None:
     batched.add_batch(values, weights)
 
     _assert_same(batched, ref)
+
+
+#: How far either side of a bin edge the float32 grid is walked.
+_ULPS_EACH_SIDE = 3
+
+
+def _straddling_bin_edges(config: NumberHistogramConfig) -> np.ndarray:
+    """The float32 grid immediately around every bin edge of a config.
+
+    Derived rather than hand-picked, because this is the ONLY place the two
+    arms can disagree at all.  A bin index is a truncation, so the arms
+    differ exactly where float32 rounds a value to the far side of an edge
+    that float64 keeps on the near side -- a few ULPs wide, and nowhere else.
+    Uniform draws never land there: 200 random configs of them agree even
+    when ``add_value`` bins the raw numpy scalar.
+
+    The edges come from the histogram's own ``bins`` rather than a second
+    spelling of ``linspace``, so this cannot drift from what it is probing.
+    """
+    edges = NumberHistogram(config).bins.astype(np.float32)
+    walked = edges.copy()
+    for _ in range(_ULPS_EACH_SIDE):
+        walked = np.nextafter(walked, -np.inf, dtype=np.float32)
+
+    grid = [walked]
+    for _ in range(2 * _ULPS_EACH_SIDE):
+        walked = np.nextafter(walked, np.inf, dtype=np.float32)
+        grid.append(walked)
+
+    values = np.concatenate(grid)
+    lo, hi = config.view_range
+    in_view = (values >= lo) & (values <= hi)
+    return values[in_view]
+
+
+def test_add_batch_matches_add_value_loop_float32_at_bin_edges() -> None:
+    """A float32 column folds identically through both arms (gain#1338).
+
+    ``(44, 106)`` over 27 bins is a config where the disagreement is real:
+    numpy 2 keeps ``np.float32 - <python float>`` in float32, and
+    60.074073791503906 -- one of the edge neighbours this generates -- bins
+    to 7 that way against 6 in the float64 ``add_batch`` uses.  So this
+    fails against the allow-list that refused float32 outright AND against a
+    widening that admits the scalar but bins it without normalizing.
+    """
+    config = _a_config(44.0, 106.0, 27)
+    values = _straddling_bin_edges(config)
+    weights = np.arange(1, len(values) + 1)
+
+    ref = _reference(config, values, weights)
+    batched = NumberHistogram(config)
+    batched.add_batch(values, weights)
+
+    assert ref.bars.sum() > 0, "the fixture must fold something"
+    _assert_same(batched, ref)
+
+
+def test_add_batch_matches_add_value_loop_bool() -> None:
+    """A boolean column folds identically through both arms (gain#1338)."""
+    config = _lin_config()
+    values = np.array([True, False, True, True])
+    weights = np.array([1, 2, 3, 4])
+
+    ref = _reference(config, values, weights)
+    batched = NumberHistogram(config)
+    batched.add_batch(values, weights)
+
+    _assert_same(batched, ref)
+
+
+def test_add_batch_matches_add_value_loop_float32_edge_fuzz() -> None:
+    """The float32 agreement is not one lucky range.
+
+    Every config's own bin edges, not uniform draws -- a fuzz that samples
+    uniformly passes even when the two arms disagree, so it would pin
+    nothing.
+    """
+    rng = np.random.default_rng(1338)
+    for _ in range(50):
+        lo = float(rng.integers(-50, 50))
+        config = _a_config(
+            lo, lo + float(rng.integers(1, 100)), int(rng.integers(1, 40)))
+        values = _straddling_bin_edges(config)
+        weights = rng.integers(1, 10_000, size=len(values))
+
+        ref = _reference(config, values, weights)
+        batched = NumberHistogram(config)
+        batched.add_batch(values, weights)
+
+        _assert_same(batched, ref)
 
 
 def _log_config() -> NumberHistogramConfig:
