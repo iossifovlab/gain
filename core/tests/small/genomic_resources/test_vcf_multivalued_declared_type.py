@@ -31,6 +31,7 @@ from gain.genomic_resources.genomic_scores import (
     build_score_from_resource,
 )
 from gain.genomic_resources.testing import (
+    build_filesystem_test_protocol,
     build_filesystem_test_resource,
     setup_directories,
     setup_vcf,
@@ -147,12 +148,30 @@ _MANY_NUMBER_HIST_WITH_CNT = textwrap.dedent("""
 #: reason the moment one was added.
 _JOINED_TEXT_REPORT = "reads '|'-joined text"
 
-#: The three ways a resource can reach a field's definition.  Named so a
-#: failure says which route drifted.
+#: The ways a resource can reach a field's definition AND still construct.
+#: Named so a failure says which route drifted.
+#:
+#: ``_TYPED_BLOCK`` -- restating each field's own ``Type=`` -- is deliberately
+#: NOT here since gain#1336: on a joined field that restatement is the
+#: contradiction the build now refuses, so it cannot be a route to a
+#: definition.  It is exercised on its own in
+#: :func:`test_restating_a_numeric_header_type_on_a_joined_field_is_refused`,
+#: which is where the fixture's numeric joined entries are still pinned.
 _ROUTES = [
     pytest.param("", id="header-only"),
     pytest.param(_UNTYPED_BLOCK, id="named-without-type"),
-    pytest.param(_TYPED_BLOCK, id="named-restating-header-type"),
+]
+
+#: The joined fields ``_TYPED_BLOCK`` states a NUMBER for, paired with that
+#: number.  ``TAGS`` is excluded because its header type IS ``str``, so
+#: restating it claims nothing the join cannot produce and stays legal --
+#: that half is pinned by
+#: :func:`test_restating_str_on_a_joined_field_still_constructs`.  Derived
+#: from the same mapping ``_TYPED_BLOCK`` is, so a fixture edit cannot leave
+#: this exercising nothing.
+_JOINED_NUMERIC_TYPES = [
+    (field, _HEADER_TYPES[field])
+    for field in _JOINED_FIELDS if _HEADER_TYPES[field] != "str"
 ]
 
 
@@ -213,25 +232,26 @@ def _declared(score: AlleleScore, field: str) -> str | None:
     return score.score_definitions[field].value_type
 
 
-def test_a_stated_type_does_not_restore_the_numeric_declaration(
+def test_a_stated_type_the_join_cannot_produce_is_refused(
     tmp_path: pathlib.Path,
 ) -> None:
     """The field from the report, under an author restating its own type.
 
-    gain#1233 already stopped a stated ``type:`` from displacing the join,
-    so this entry reads ``'1|2'`` -- but it went on DECLARING ``int``,
-    because the type still followed the config.  A resource cannot talk its
-    way back into a number histogram over joined text.
+    gain#1233 stopped a stated ``type:`` from displacing the join and
+    gain#1259 stopped it from displacing the DECLARATION, leaving the entry
+    discarded with a warning.  gain#1336 stops discarding it: an entry that
+    claims a joined field holds integers is a contradiction between the
+    config and the header, and a contradiction is refused rather than
+    reinterpreted.
 
-    The route matrix below covers this field through ``_TYPED_BLOCK`` too.
-    This one is kept because that block is DERIVED from ``_HEADER_TYPES``:
-    edit that mapping and the matrix would stop exercising ``type: int`` on
-    ``MANY`` without any test going red.  Here the pairing is written out,
-    so it cannot drift.
+    The route matrix below no longer covers this field through
+    ``_TYPED_BLOCK``, because that block does not construct at all now; the
+    pairing is written out here so it cannot drift out of the fixture.
     """
-    score = _vcf_score(tmp_path, _MANY_TYPED_INT)
+    with pytest.raises(ValueError, match="MANY") as excinfo:
+        _vcf_score(tmp_path, _MANY_TYPED_INT)
 
-    assert _declared(score, "MANY") == "str"
+    assert "int" in str(excinfo.value)
 
 
 @pytest.mark.parametrize("scores_block", _ROUTES)
@@ -289,22 +309,87 @@ def test_a_scalar_field_still_takes_a_config_type_the_header_denies(
     assert _declared(score, "CNT") == "float"
 
 
-def test_a_stated_type_the_join_cannot_produce_is_reported(
-    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+@pytest.mark.parametrize(("field", "header_type"), _JOINED_NUMERIC_TYPES)
+def test_restating_a_numeric_header_type_on_a_joined_field_is_refused(
+    tmp_path: pathlib.Path, field: str, header_type: str,
 ) -> None:
-    """An overridden ``type:`` is not silently discarded.
+    """Every joined shape whose ``Type=`` is a number, restated by the config.
 
-    The author of this resource believes ``MANY`` reads integers; every
-    consumer will be told ``str``.  Ignoring a stated type without a word is
-    how the misconception survives to be reported again, so the report names
-    the field, what it declared and what it will actually hold.
+    This is what an author documenting the file naturally writes -- the
+    ``type:`` the ``##INFO`` line itself declares -- and on a joined field it
+    is exactly the contradiction gain#1336 refuses: the header says the
+    elements are integers, the field reads the ``|``-join of them, and no
+    stated number describes that.
+
+    ``TWO`` is here because a fix keyed on ``Number == "."`` would leave a
+    fixed arity above one constructing; ``FMANY`` because a fix keyed on
+    ``Type=Integer`` would leave ``Float`` constructing.
     """
-    with caplog.at_level("WARNING"):
-        _vcf_score(tmp_path, _MANY_TYPED_INT)
+    block = textwrap.dedent(f"""
+        scores:
+        - id: {field}
+          name: {field}
+          type: {header_type}
+    """)
 
-    assert "MANY" in caplog.text
-    assert "type: int" in caplog.text
-    assert _JOINED_TEXT_REPORT in caplog.text
+    with pytest.raises(ValueError, match=field) as excinfo:
+        _vcf_score(tmp_path, block)
+
+    assert f"type: {header_type}" in str(excinfo.value)
+    assert _JOINED_TEXT_REPORT in str(excinfo.value)
+
+
+def test_restating_str_on_a_joined_field_still_constructs(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The fence on the refusal: ``str`` is not a contradiction.
+
+    ``TAGS`` is ``Number=.``/``Type=String``, so restating ``type: str``
+    claims exactly what the join produces.  This is the shape every
+    multi-valued entry in the deployed GRRs actually carries (ClinVar's
+    twenty, dbSNP's ``CAF``/``TOPMED``), and a refusal that reached it would
+    fail every deployed VCF resource rather than none.
+    """
+    block = textwrap.dedent("""
+        scores:
+        - id: TAGS
+          name: TAGS
+          type: str
+    """)
+
+    score = _vcf_score(tmp_path, block)
+
+    assert _declared(score, "TAGS") == "str"
+
+
+def test_the_refusal_names_the_resource_it_came_from(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The half the warning this replaces could not do (gain#1283).
+
+    A ``repo-repair`` over a repository builds many resources; a message
+    naming only the field leaves the reader grepping for which one owns it.
+    The parse is handed a resource id for this line alone, so the id has to
+    survive into the message -- a test on the field name alone would pass
+    with the threading removed.
+    """
+    repo = tmp_path / "repo"
+    resource = repo / "a_named_vcf_resource"
+    setup_directories(resource, {
+        "genomic_resource.yaml": textwrap.dedent("""
+            type: allele_score
+            table:
+                filename: data.vcf.gz
+        """) + _MANY_TYPED_INT,
+    })
+    setup_vcf(resource / "data.vcf.gz", _VCF)
+    # Through a PROTOCOL rather than ``build_filesystem_test_resource``,
+    # which hands back ``get_resource("")`` -- an id of "" cannot show that
+    # the id reached the message.
+    proto = build_filesystem_test_protocol(repo)
+
+    with pytest.raises(ValueError, match="a_named_vcf_resource"):
+        build_score_from_resource(proto.get_resource("a_named_vcf_resource"))
 
 
 def test_stating_str_on_a_joined_field_is_not_reported(
@@ -398,33 +483,55 @@ def test_a_resource_with_a_joined_field_builds_its_statistics(
     assert histogram["values"] == {"1|2": 1}
 
 
-def test_an_explicit_number_histogram_on_a_joined_field_still_builds(
+def test_repo_repair_fails_only_the_contradicting_resource(
     tmp_path: pathlib.Path,
 ) -> None:
-    """gain#1285: the crash gain#1259 left reachable through the CONFIG.
+    """The refusal's blast radius, over a repository of two resources.
 
-    Declaring ``str`` fixed the DEFAULT histogram for a joined field, and a
-    resource that configures ``histogram: {type: number}`` explicitly walks
-    straight back onto the min/max scan that ``np.isnan`` aborts -- the
-    stated ``type:`` is discarded either way, so gain#1259's advice does not
-    reach this.  It is the histogram config, not the type, that selects the
-    crashing path.
+    gain#1285's shape -- a joined field under an EXPLICIT
+    ``histogram: {type: number}`` -- used to be nullified per score, so the
+    resource kept the rest of its statistics.  gain#1336 refuses the
+    CONFIG instead, at construction, so the resource does not build at all:
+    its ``scores:`` entry states ``type: int`` on a joined field, and that
+    is a contradiction whatever the histogram says.
 
-    Asserted through a full ``repo-repair``, like its gain#1259 sibling
-    above, because the cost was never the exception itself: the resource
-    ended with NO statistics at all.  So the scalar field's histogram is
-    what the assertion turns on -- one un-histogrammable score must not take
-    the rest of the resource down with it -- while the joined field's own
-    histogram is suppressed, exactly as a deliberately-disabled one is.
+    What must NOT widen with it is the run.  ``repo-repair`` over a
+    repository holding a bad resource and a good one has to name the bad one
+    and still build the good one -- a refusal that aborted the whole run
+    would make one wrong line of YAML cost every other resource its
+    statistics, which is worse than the warning it replaces.
     """
-    resource = _repaired_vcf_resource(tmp_path, _MANY_NUMBER_HIST_WITH_CNT)
+    repo = tmp_path / "repo"
+    bad = repo / "contradicting"
+    setup_directories(bad, {
+        "genomic_resource.yaml": textwrap.dedent("""
+            type: allele_score
+            table:
+                filename: data.vcf.gz
+        """) + _MANY_NUMBER_HIST_WITH_CNT,
+    })
+    setup_vcf(bad / "data.vcf.gz", _VCF)
 
-    statistics = resource / "statistics"
-    assert not (statistics / "histogram_MANY.json").exists(), (
-        "a number histogram over joined text was built rather than refused"
+    good = repo / "agreeing"
+    setup_directories(good, {
+        "genomic_resource.yaml": textwrap.dedent("""
+            type: allele_score
+            table:
+                filename: data.vcf.gz
+        """) + _UNTYPED_BLOCK,
+    })
+    setup_vcf(good / "data.vcf.gz", _VCF)
+
+    with pytest.raises(SystemExit):
+        cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
+
+    assert not (bad / "statistics" / "histogram_MANY.json").exists(), (
+        "the contradicting resource built statistics rather than being "
+        "refused"
     )
-    scalar = json.loads((statistics / "histogram_CNT.json").read_text())
-    assert scalar["config"]["type"] == "number", (
-        "the scalar field lost its histogram too; one score configured with "
-        "a histogram it cannot feed must not cost the resource the rest"
+    built = json.loads(
+        (good / "statistics" / "histogram_CNT.json").read_text())
+    assert built["config"]["type"] == "number", (
+        "the valid resource lost its statistics; one resource's refused "
+        "config must not cost the rest of the repository its build"
     )

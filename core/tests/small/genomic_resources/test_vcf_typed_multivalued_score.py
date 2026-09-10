@@ -14,8 +14,19 @@ Python tuple repr ``"('a', 'b')"`` -- silently -- for a fixed-arity ``String``.
 
 The contract these tests hold: a stated ``type:`` selects the parser only for
 the shapes that reach it as a scalar (``Number`` of ``0``, ``1``, ``A`` or
-``R``).  Every other shape keeps the header's join, so an entry that restates
-the header's type reads exactly what the header-only resource reads.
+``R``).  Every other shape keeps the header's join, so an entry that states
+the type its field can actually hold reads exactly what the header-only
+resource reads.
+
+**What a joined field may state changed in gain#1336.**  A tuple-shaped field
+reads ``|``-joined text, so ``str`` is the only type it can hold; an entry
+claiming a numeric one is now refused at construction rather than discarded
+with a warning, and that refusal is pinned in
+``test_vcf_multivalued_declared_type``.  So the joined fields here state
+``str`` -- which is not a weaker test of gain#1233 but the sharper half of
+it: ``str`` is the parser that does not raise on a tuple, and handing it one
+read the repr ``"('a', 'b')"`` silently.  The numeric shapes stay in the
+fixture under ``str`` for exactly that reason.
 """
 import pathlib
 import textwrap
@@ -71,10 +82,20 @@ _HEADER_TYPES = {
 _SCALAR_FIELDS = ["RV", "CNT", "PA", "PR"]
 _TUPLE_FIELDS = ["MANY", "FMANY", "TAGS", "TWO", "PAIR"]
 
-#: A ``scores:`` block naming every field and restating the header's own type.
+#: The type each field may legally STATE.  A scalar shape holds what its
+#: header declares, so restating it is what an author documenting the file
+#: writes.  A tuple shape holds the ``|``-join of its elements whatever its
+#: ``Type=`` says, so ``str`` is the only type it may state -- gain#1336
+#: refuses any other, which is why this is not simply ``_HEADER_TYPES``.
+_STATEABLE_TYPES = {
+    field: ("str" if field in _TUPLE_FIELDS else value_type)
+    for field, value_type in _HEADER_TYPES.items()
+}
+
+#: A ``scores:`` block naming every field and stating the type it may hold.
 _TYPED_BLOCK = "scores:\n" + "".join(
     f"- id: {field}\n  name: {field}\n  type: {value_type}\n"
-    for field, value_type in _HEADER_TYPES.items())
+    for field, value_type in _STATEABLE_TYPES.items())
 
 #: The same block with no ``type:`` at all -- the gain#1221 shape, which reads
 #: the header's type and the header's parser.
@@ -111,17 +132,21 @@ def _read(
     return scores
 
 
-def test_an_unbounded_integer_field_typed_int_reads_the_joined_text(
+def test_an_unbounded_integer_field_typed_str_reads_the_joined_text(
     tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The row from the report: ``MANY=1,2`` under ``type: int``.
+    """The row from the report: ``MANY=1,2``, now under ``type: str``.
 
-    ``int((1, 2))`` raises, and ``parse_value`` turns a failed parse into a
-    logged non-value rather than an exception, so the defect was a ``None``
-    per row plus one ``unable to parse`` line per row.  Both halves are
-    asserted: a fix that silenced the log while still reading nothing would
-    pass the log check alone, and one that read the value while still
-    logging would pass the value check alone.
+    gain#1233 found this field under ``type: int``: ``int((1, 2))`` raises,
+    and ``parse_value`` turns a failed parse into a logged non-value, so the
+    defect was a ``None`` per row plus one ``unable to parse`` line per row.
+    That config is refused outright since gain#1336, so the shape is pinned
+    here under the type it may state.  The fence is unchanged and still
+    load-bearing: ``str`` is a parser that does NOT raise on a tuple, so a
+    definition that took it from the config would read ``"(1, 2)"`` here
+    with no exception and no log.  Both halves are asserted: a regression
+    that silenced the log while reading the repr would pass a log check
+    alone.
     """
     score = _vcf_score(tmp_path, _TYPED_BLOCK)
 
@@ -132,13 +157,15 @@ def test_an_unbounded_integer_field_typed_int_reads_the_joined_text(
     assert "unable to parse" not in caplog.text
 
 
-def test_an_unbounded_float_field_typed_float_reads_the_joined_text(
+def test_an_unbounded_float_field_typed_str_reads_the_joined_text(
     tmp_path: pathlib.Path,
 ) -> None:
-    """``float`` fails on a tuple exactly as ``int`` does.
+    """The ``Type=Float`` sibling of the shape above.
 
-    The defect was never about the integer parser: it is every parser that
-    cannot take a tuple, so the numeric sibling is pinned too.
+    The defect was never about one parser: it is every parser handed a
+    tuple, so the second numeric element type is pinned too.  Its ``Type=``
+    is what must stop mattering once the field joins, and stating ``str``
+    over a ``Type=Float`` header is the config that says so.
     """
     score = _vcf_score(tmp_path, _TYPED_BLOCK)
 
@@ -147,14 +174,15 @@ def test_an_unbounded_float_field_typed_float_reads_the_joined_text(
     assert value == "1.5|2.5"
 
 
-def test_a_fixed_arity_integer_field_typed_int_reads_the_joined_text(
+def test_a_fixed_arity_integer_field_typed_str_reads_the_joined_text(
     tmp_path: pathlib.Path,
 ) -> None:
     """``Number=2`` is a tuple too -- the shape is not only ``Number=.``.
 
     pysam decodes any arity above one to a tuple, so a field whose header
-    FIXES its arity fails the same way an unbounded one does.  A fix keyed
-    on ``Number == "."`` alone would leave this reading ``None``.
+    FIXES its arity joins the same way an unbounded one does.  A rule keyed
+    on ``Number == "."`` alone would leave this reading its parser's take on
+    a tuple rather than the join.
     """
     score = _vcf_score(tmp_path, _TYPED_BLOCK)
 
@@ -328,18 +356,20 @@ def _declared_types(score: AlleleScore, fields: list[str]) -> list[str | None]:
     ids=["scalar-shapes-first-alt", "scalar-shapes-second-alt",
          "tuple-shapes"],
 )
-def test_restating_the_header_type_reads_what_the_header_only_resource_reads(
+def test_stating_a_holdable_type_reads_what_the_header_only_resource_reads(
     tmp_path: pathlib.Path, pos: int, fields: list[str], alt: str,
 ) -> None:
     """The contract in one line, over every field shape at once.
 
     The tests above each name what the defect emitted for one shape.  This
-    one pins the rule they follow from -- restating a field's own type
-    changes nothing -- by reading the same VCF three ways: through no
-    ``scores:`` block, through a block naming every field without a
-    ``type:`` (gain#1221's shape), and through one restating every header
-    type.  All three must agree, so neither side can drift alone.  The
-    per-allele shapes are compared at both ALT indices.
+    one pins the rule they follow from -- stating the type a field can
+    actually hold changes nothing -- by reading the same VCF three ways:
+    through no ``scores:`` block, through a block naming every field
+    without a ``type:`` (gain#1221's shape), and through one stating every
+    field's holdable type (``_STATEABLE_TYPES``: the header's own for a
+    scalar, ``str`` for a joined shape).  All three must agree, so no side
+    can drift alone.  The per-allele shapes are compared at both ALT
+    indices.
     """
     header_only = _vcf_score(tmp_path / "header_only")
     untyped = _vcf_score(tmp_path / "untyped", _UNTYPED_BLOCK)

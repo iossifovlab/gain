@@ -334,6 +334,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             scoredefs = parse_vcf_scoredefs(
                 cast(dict[str, Any], self.table.header),
                 config_scoredefs,
+                resource_id=self.resource_id,
                 merge=merge)
         elif config_scoredefs is None:
             raise ValueError("No scores configured and not using a VCF")
