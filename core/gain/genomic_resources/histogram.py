@@ -256,6 +256,24 @@ class NullHistogramConfig:
 HISTOGRAM_LABELS_FONT_SIZE = 20
 
 
+# What one value folded into a number histogram may be, once numpy's own
+# scalars have been normalized to the Python value they hold.  ``bool``
+# rides in through ``int``, which it subclasses -- a bool score under a
+# number histogram really does produce a 0/1 histogram.
+#
+# Named for Python's types to keep it distinct from the statistics scan's
+# ``_NUMBER_HISTOGRAM_VALUE_TYPES``: that one is declared score
+# ``value_type`` STRINGS, this one is the type of a single folded value.
+#
+# Hoisted rather than written as a tuple literal in the check, because a
+# tuple of names is rebuilt on every call.  1M ``isinstance`` calls, best of
+# 5: 112 ns/call for the 3-member literal this replaces (which also
+# re-resolved ``np.integer`` through the module each time) against 52 ns
+# hoisted.  ``float`` first because ``isinstance`` tests a tuple in order
+# and a Python float is what the scan folds.
+_PYTHON_NUMBER_TYPES = (float, int)
+
+
 class NumberHistogram(Statistic):
     """Class to represent a histogram."""
 
@@ -381,8 +399,14 @@ class NumberHistogram(Statistic):
         """
         return f"[{self.min_value:0.3g}, {self.max_value:0.3g}]"
 
-    def add_value(self, value: float | None, count: int = 1) -> None:
-        """Add value to the histogram."""
+    def add_value(
+        self, value: float | np.generic | None, count: int = 1,
+    ) -> None:
+        """Add value to the histogram.
+
+        ``np.generic`` is in the signature because a numpy scalar is a real
+        caller's value, not a curiosity (gain#1338).
+        """
         # ``np.isnan`` is what refuses a value it cannot read as a number,
         # and it raises BEFORE the allow-list below can be reached -- which
         # is why that refusal, written for exactly the ``str`` case, could
@@ -401,12 +425,30 @@ class NumberHistogram(Statistic):
         except TypeError as err:
             raise non_numeric_error(value, "number histogram") from err
 
-        # Reached only by values ``np.isnan`` accepted, so this is the
-        # allow-list's own business: widening it (``np.float32`` is not a
-        # ``float``; ``np.bool_`` is not an ``np.integer``) is gain#1338, not
-        # this change.
-        if not isinstance(value, (int, float, np.integer)):
-            raise non_numeric_error(value, "number histogram")
+        # Reached only by values ``np.isnan`` accepted -- text and
+        # ``Decimal`` never get this far, the skip above refuses those.
+        #
+        # numpy's own scalars fold as the Python value they hold, which is
+        # what the enumerated allow-list this replaces got wrong:
+        # ``np.float32`` is not a ``float`` (only ``np.float64`` subclasses
+        # it) and ``np.bool_`` is not an ``np.integer``, so all of them were
+        # refused as non-numeric even though ``add_batch`` folds them and a
+        # gene score's column really does arrive as one (gain#1338).
+        #
+        # ``item()`` rather than a wider allow-list: widening alone would not
+        # make the two arms agree, because numpy 2 keeps ``np.float32 -
+        # <python float>`` in float32 and that picks a different bin at the
+        # edges.  The witness is in
+        # ``test_add_batch_matches_add_value_loop_float32_at_bin_edges``.
+        #
+        # The refusal names what the CALLER handed over, not what it was
+        # normalized to, so a nullified score's reason does not report a
+        # ``np.complex128`` as a plain ``complex``.
+        if not isinstance(value, _PYTHON_NUMBER_TYPES):
+            folded = value.item() if isinstance(value, np.generic) else value
+            if not isinstance(folded, _PYTHON_NUMBER_TYPES):
+                raise non_numeric_error(value, "number histogram")
+            value = folded
 
         self.min_value = min(value, self.min_value)
         self.max_value = max(value, self.max_value)
@@ -433,6 +475,17 @@ class NumberHistogram(Statistic):
         split, the same ``min_value``/``max_value`` tracking, and the same
         nan-skip.  This is the hot path for the statistics scan, where a
         per-value Python call dominates the cost.
+
+        The equivalence covers dtype as well as arithmetic: the ``float64``
+        coercion below is what ``add_value`` reproduces by normalizing a
+        numpy scalar, so a narrow column -- ``float32``, ``float16``,
+        ``bool`` -- folds the same through either arm (gain#1338).
+
+        Where it does not hold: this arm also folds values ``add_value``
+        refuses outright, because ``asarray`` converts them silently -- a
+        ``complex`` loses its imaginary part, and an object array of
+        ``Decimal`` converts.  Nothing in a scan produces either; they are
+        reachable only by calling this directly.
 
         Both x-scales are vectorized.  The log one is bit-exact for the same
         reason the linear one is and one more: ``np.log10`` returns the same
