@@ -2082,6 +2082,21 @@ test('a filter that matched nothing here names what it looked in',
 
     await expect(emptyState(page)).toContainText(
       `No resources under hg38 match '${BROWSE_SUMMARY_ONLY_TERM}'`);
+
+    /* The count stays, and it says something the message does not: the
+     * message carries the term, the count carries what the term was
+     * matched against. "0 of 3" is how the reader learns this folder was
+     * small enough to be the wrong place to look, rather than large
+     * enough that the term was too narrow.
+     *
+     * Pinned as a pair because the two are worded independently. Nothing
+     * stops one being reworded later, and if "under hg38" drifts in one
+     * and not the other the page contradicts itself in adjacent lines --
+     * which is what this assertion is here to make loud, rather than the
+     * redundancy two reviewers reasonably read it as. */
+    await expect(treeStatus(page)).toBeVisible();
+    await expect(treeStatus(page))
+      .toHaveText('0 of 3 resources under hg38 match');
   });
 
 /**

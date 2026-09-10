@@ -686,19 +686,6 @@
 
             const hvStatusEl = document.getElementById("hv-status");
 
-            /**
-             * Whether the tree is the view showing.
-             *
-             * Two of the cues here belong to the tree and one -- the
-             * placeholder -- is on a control the two views share, so it
-             * has to know which of them it is currently speaking for.
-             * Recorded by `setView`, the one place that decides it, rather
-             * than re-read from the address: the address is parsed there
-             * already, and a second reading is a second thing to keep
-             * agreeing with the first.
-             */
-            let inHierarchicalView = false;
-
             const searchFieldEl = document.getElementById("search-field");
 
             /*
@@ -726,10 +713,17 @@
              * is a reflected attribute, so the property and the attribute
              * are one value -- and it is set rather than interpolated
              * because a folder name is untrusted repository content.
+             *
+             * Which view is showing arrives as an argument rather than
+             * being read back from the buttons or kept in a flag beside
+             * them. The applier has just parsed it out of the address, and
+             * anything else here would be a second answer to a question
+             * already settled -- one that has to be kept agreeing with the
+             * first.
              */
-            function renderPlaceholder() {
+            function renderPlaceholder(isHierarchical) {
                 if (!searchFieldEl) return;
-                if (!inHierarchicalView) {
+                if (!isHierarchical) {
                     searchFieldEl.setAttribute(
                         "placeholder", tablePlaceholder);
                     return;
@@ -809,6 +803,41 @@
                 hvStatusEl.style.display = "";
             }
 
+            /**
+             * A link that moves the page rather than leaving it.
+             *
+             * The shape is a contract, not three lines that happen to sit
+             * together: `href="#"` so it is a real link to keyboard and
+             * screen reader, `preventDefault` so the bare fragment is
+             * never what gets followed, and `goTo` so the move is pushed
+             * and rendered the one way every move on this page is. Get one
+             * of the three wrong and the link either navigates twice or
+             * strands the reader on `#`.
+             *
+             * Written out twice before this -- the breadcrumb's crumbs and
+             * the empty state's way out of a scope -- which is once more
+             * than a contract survives being copied.
+             *
+             * `href` is the bare fragment rather than the address `goTo`
+             * will build, so opening in a new tab lands on the page rather
+             * than on the state. That is the breadcrumb's existing bargain
+             * and this does not change it: the address `goTo` builds folds
+             * in the live search controls, and an `href` fixed at render
+             * time would promise a state that a reader who kept typing is
+             * no longer being taken to.
+             */
+            function navLink(text, className, state) {
+                const el = document.createElement("a");
+                el.textContent = text;
+                el.className = className;
+                el.href = "#";
+                el.addEventListener("click", (e) => {
+                    e.preventDefault();
+                    goTo(state);
+                });
+                return el;
+            }
+
             function renderBreadcrumb() {
                 breadcrumbEl.innerHTML = "";
                 const crumbs = [{ name: "All resources", path: [] }];
@@ -822,19 +851,19 @@
                         sep.textContent = "/";
                         breadcrumbEl.appendChild(sep);
                     }
+                    // The folder showing is named but not linked: it is
+                    // where the reader already is, so a link on it would
+                    // offer a move that changes nothing.
                     const isLast = i === crumbs.length - 1;
-                    const el = document.createElement(isLast ? "span" : "a");
-                    el.textContent = crumb.name;
-                    el.className = "breadcrumb-item" + (isLast ? " current" : "");
-                    if (!isLast) {
-                        el.href = "#";
-                        el.addEventListener("click", (e) => {
-                            e.preventDefault();
-                            goTo({
-                                view: "hierarchical",
-                                path: crumb.path,
-                            });
-                        });
+                    let el;
+                    if (isLast) {
+                        el = document.createElement("span");
+                        el.textContent = crumb.name;
+                        el.className = "breadcrumb-item current";
+                    } else {
+                        el = navLink(
+                            crumb.name, "breadcrumb-item",
+                            { view: "hierarchical", path: crumb.path });
                     }
                     breadcrumbEl.appendChild(el);
                 });
@@ -941,15 +970,9 @@
              * listing behind it answered.
              */
             function widenLink() {
-                const widen = document.createElement("a");
-                widen.className = "hv-widen";
-                widen.href = "#";
-                widen.textContent = "Search all resources instead";
-                widen.addEventListener("click", (e) => {
-                    e.preventDefault();
-                    goTo({ view: "hierarchical", path: [] });
-                });
-                return widen;
+                return navLink(
+                    "Search all resources instead", "hv-widen",
+                    { view: "hierarchical", path: [] });
             }
 
             function renderList() {
@@ -1025,7 +1048,6 @@
                 // paths that change what is on screen -- a move, and a
                 // search coming back -- already come through here.
                 renderStatus(node);
-                renderPlaceholder();
             }
 
             function navigateTo(path) {
@@ -1043,16 +1065,6 @@
 
             function setView(view) {
                 const isHier = view === "hierarchical";
-                inHierarchicalView = isHier;
-                // The placeholder is the one cue on a control the table
-                // shares, so it is restored here rather than left to the
-                // tree's own rendering: leaving the tree does not go
-                // through `renderList`, and the applier returns for the
-                // table before any folder is resolved. A box still
-                // offering to search `hg38/scores` over a table listing
-                // the repository would be the same misdescription this
-                // change exists to remove, pointing the other way.
-                renderPlaceholder();
                 hierBtn.classList.toggle("active", isHier);
                 tableBtn.classList.toggle("active", !isHier);
                 tableWrapper.style.display = isHier ? "none" : "";
@@ -1230,24 +1242,38 @@
             /** Render what the current address says. The only applier. */
             function applyHash() {
                 const state = parseHash(location.hash);
+                const isHier = state.view === "hierarchical";
                 setView(state.view);
                 applySearch(state);
                 // The table has no folder to resolve and no address of its
                 // own to canonicalise -- see `canonicalise` for why
-                // rewriting it would be actively wrong -- so this is where
-                // the tree's half of the work begins and ends.
-                if (state.view !== "hierarchical") return;
-                const { reached } = descend(state.path);
-                navigateTo(reached);
-                // Canonicalised from the state the *address* gave, with
-                // only the folder replaced by the one actually reached.
-                // The controls are not consulted: `applySearch` above has
-                // only started putting the search into them -- it waits on
-                // the loaded index first -- so reading them here would
-                // rewrite the address to the search on its way out rather
-                // than the one arriving, and drop the query on every load
-                // that carries one.
-                canonicalise({ ...state, path: reached });
+                // rewriting it would be actively wrong -- so the tree's
+                // half of the work begins and ends in here.
+                if (isHier) {
+                    const { reached } = descend(state.path);
+                    navigateTo(reached);
+                    // Canonicalised from the state the *address* gave, with
+                    // only the folder replaced by the one actually reached.
+                    // The controls are not consulted: `applySearch` above
+                    // has only started putting the search into them -- it
+                    // waits on the loaded index first -- so reading them
+                    // here would rewrite the address to the search on its
+                    // way out rather than the one arriving, and drop the
+                    // query on every load that carries one.
+                    canonicalise({ ...state, path: reached });
+                }
+                // Last, and from here rather than from the two functions
+                // above, because this is the one place that knows a move
+                // has finished. The scope the box offers is not settled
+                // until the folder is -- an address can name a folder that
+                // no longer exists, and what the reader should be offered
+                // is the one they were actually left in.
+                //
+                // Keeping it here also means a search *arriving* does not
+                // touch it. That path re-renders the listing without moving
+                // anyone, so the scope it would recompute is the one
+                // already showing.
+                renderPlaceholder(isHier);
             }
 
             /**
