@@ -57,16 +57,24 @@ Two conventions run through all of them.
 
 **Opening is explicit.** A reference genome and a genomic score hold file
 handles, so they are built closed and must be opened before they will answer
-a query — ``genome.open()`` and ``score.open()`` both return the object, so
-the call chains. Both are context managers, which is the form to prefer.
+a query — ``genome.open()`` and ``score.open()`` both open the object and
+return it, so the call chains.
+
+Both are also context managers, but **entering one does not open it**:
+``__enter__`` returns the object unchanged, and the ``with`` block's
+contribution is the guaranteed ``close()`` on the way out. The spelling that
+does both is therefore ``with builder(...).open() as obj:`` — keep the
+``.open()``.
+
 Gene models are the exception that proves the rule: they are loaded wholly
 into memory by :meth:`~gain.genomic_resources.gene_models.GeneModels.load`
 and hold nothing to close.
 
-**The repository is the only thing that knows about ids.** The typed objects
-above never re-enter the repository; once built, they read their own files.
-That is why a builder needs the repository handed to it, and why closing the
-repository is separate from closing the objects built through it.
+**The repository is the only thing that resolves ids.** Once built, a typed
+object never looks a resource id up again — it reads its own resource's
+files, through that resource's protocol. That is why a builder needs the
+repository handed to it, and why closing the repository is separate from
+closing the objects built through it.
 
 .. toctree::
    :maxdepth: 2

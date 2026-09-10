@@ -74,12 +74,13 @@ for the *transcript's* orientation, so which end of the interval they fall on
 depends on ``strand``.
 
 The exon list is :class:`~gain.genomic_resources.gene_models.Exon` objects.
-An exon's :attr:`~gain.genomic_resources.gene_models.Exon.frame` is the
-reading frame the effect-annotation engine needs, and it is not populated by
-parsing alone — a resource whose source format does not carry frames has
-``None`` there until
+An exon's ``frame`` is the reading frame the effect-annotation engine needs,
+and it is not populated by parsing alone: ``None`` means "not computed yet",
+*not* "non-coding" (a non-coding exon has ``-1``). A resource whose source
+format carries no frames holds ``None`` until
 :meth:`~gain.genomic_resources.gene_models.TranscriptModel.update_frames`
-computes them.
+fills them in. ``Exon``'s three coordinates are described in its class
+documentation below rather than as separate entries.
 
 API
 ---

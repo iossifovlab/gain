@@ -158,12 +158,17 @@ class CategoricalHistogramConfig:
 
     @staticmethod
     def default_config() -> CategoricalHistogramConfig:
-        """The config used when a score declares no ``histogram`` block.
+        """The config for a score that declares no categorical ``histogram``.
 
-        Type enforcement is off in the default: a score that was never
-        configured as categorical may still carry mixed value types, and
-        refusing those would turn an unconfigured score into a build
-        failure rather than a histogram.
+        ``enforce_type=False`` here does NOT relax value-type checking --
+        :meth:`CategoricalHistogram.add_value` refuses a non-``str``/``int``
+        value either way.  What the flag gates is
+        :attr:`CategoricalHistogram.UNIQUE_VALUES_LIMIT`, and it reads
+        backwards: it is the *default* config that enforces the limit, so a
+        score nobody declared categorical cannot silently histogram
+        thousands of distinct values.  A curator who writes an explicit
+        ``categorical`` block has asserted the score really is categorical,
+        and that config carries no limit.
         """
         return CategoricalHistogramConfig(enforce_type=False)
 
@@ -690,9 +695,8 @@ class NullHistogram(Statistic):
     def plot(self, _outfile: IO, _score_id: str) -> None:
         """Draw nothing, leaving ``outfile`` untouched.
 
-        The summary page renders :attr:`reason` in place of the image; see
-        the template gate, which is what keeps a skipped image from
-        dangling.
+        The caller is expected to render ``reason`` in place of the image,
+        rather than to link an image file this never wrote.
         """
         return
 
@@ -852,12 +856,18 @@ class CategoricalHistogram(Statistic):
 
     @property
     def raw_values(self) -> dict[str | int, int]:
-        """Every counted value with its count, untruncated and unordered.
+        """Every counted value with its count, unordered.
 
-        This is the histogram's full content, as distinct from
+        This is the histogram's own content, as distinct from
         :attr:`display_values`, which is the ordered subset the summary
         page draws.  A custom ``plot_function`` receives the histogram
         itself and so can read either.
+
+        Note that on a histogram loaded back from a truncated sidecar
+        (:meth:`serialize_truncated`) the counter holds only the values
+        that sidecar carried, so this returns the truncated set --
+        :attr:`unique_values` and :attr:`total_count` are the ones that
+        still describe the full data.
         """
         return dict(self._counter)
 

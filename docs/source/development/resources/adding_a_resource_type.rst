@@ -39,9 +39,10 @@ resource whose statistics are already current.
 
 The concrete
 :attr:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.files`
-property should report every file the implementation reads. The repository
-uses it to decide what a resource actually consists of, so a file left out of
-it may not be published or mirrored.
+property should report every file the implementation reads. A caching or
+mirroring repository builds its fetch list from it, so a file left out is a
+file that may be missing from a cached copy. (Publishing works off the
+resource's manifest instead, so it is unaffected.)
 
 Registering
 -----------
