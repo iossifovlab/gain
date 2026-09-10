@@ -189,8 +189,9 @@ def test_workers_that_took_turns_are_not_reported_as_concurrent() -> None:
 
 
 #: Setup cost of the slow payloads, an order of magnitude above the per-pass
-#: cost so the two are impossible to confuse in a throughput figure -- and no
-#: larger, since every one of these seconds is paid on every CI run.
+#: cost so the two are impossible to confuse -- and large enough that the gap
+#: the throughput test bounds clears fork and scheduling noise. No larger,
+#: since every one of these seconds is paid on every CI run.
 SETUP_SECONDS = 0.2
 PASS_SECONDS = 0.02
 
@@ -219,14 +220,28 @@ def test_throughput_excludes_the_setup_the_barrier_waits_for() -> None:
     at each thread count. Charging it to the throughput figure would compare
     the arms on how fast they *load*, which is not the question -- and the
     error is invisible, because a plausible number still comes out.
+
+    Asserted as a relation between the numbers the harness reports, never as
+    an absolute rate: the timed work here is 40 ms of `time.sleep`, so a rate
+    budget over it is really a wall-clock budget on a shared machine, and
+    every scheduling delay the workers meet lands in its denominator. That is
+    #1380 -- it flaked on loaded agents while measuring nothing about ONNX.
     """
     workers, passes = 2, 2
 
     result = harness.run_probe(_slow_setup_payload, workers=workers,
                                passes=passes)
 
-    setup_inclusive_rate = workers * passes / (SETUP_SECONDS + PASS_SECONDS)
-    assert result.passes_per_second > setup_inclusive_rate * 2
+    # Which denominator the rate uses is the whole claim.
+    assert result.passes_per_second == pytest.approx(
+        workers * passes / result.timed_seconds)
+    # And the window is the setup narrower than the wall clock. That
+    # difference is `(barrier - wall_start) + (wall_end - last worker)`:
+    # neither term contains the timed window, so it does not widen when the
+    # window does, and its floor is the child's `time.sleep(SETUP_SECONDS)`,
+    # which cannot return early, on the same monotonic clock the parent
+    # reads. The 0.8 is slack for fork cost and clock granularity.
+    assert result.wall_seconds - result.timed_seconds > SETUP_SECONDS * 0.8
     # The setup is still real time the run took, and stays visible as such.
     assert result.wall_seconds > SETUP_SECONDS
 
