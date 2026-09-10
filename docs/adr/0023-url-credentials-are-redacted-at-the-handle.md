@@ -9,7 +9,8 @@
 [#1078](https://github.com/iossifovlab/gain/issues/1078),
 [#1106](https://github.com/iossifovlab/gain/issues/1106),
 [#1314](https://github.com/iossifovlab/gain/issues/1314),
-[#1333](https://github.com/iossifovlab/gain/issues/1333)
+[#1333](https://github.com/iossifovlab/gain/issues/1333),
+[#1339](https://github.com/iossifovlab/gain/issues/1339)
 
 ## Context
 
@@ -284,12 +285,12 @@ that call.
 Everything above is about `user:pass@` **userinfo**, which is what
 `_strip_url_userinfo` and therefore `_url_carries_userinfo` recognise. An
 **s3** GRR is a different shape: `_get_file_url` hands pysam a *presigned*
-url, whose `X-Amz-Credential`/`X-Amz-Signature` live in the query string. The
-predicate is False for it, so there is no verbosity bracket, and the redactor
-would not strip those parameters even if there were. A failing s3 open can
-therefore still put a time-limited signature into the ERROR log. Closing that
-needs a second notion of what a credential in a url looks like, not a wider
-application of this one. Tracked as gain#1339.
+url, whose signature lives in the query string. The predicate is False for it,
+so there is no verbosity bracket, and the redactor would not strip those
+parameters even if there were. A failing s3 open can therefore still put a
+time-limited signature into the ERROR log. Closing that needs a second notion
+of what a credential in a url looks like, not a wider application of this one.
+Tracked as gain#1339 — **and closed by the amendment below.**
 
 (*The gain#1333 amendment defines that second notion and applies it on the
 bigwig path only — the paragraph above still describes the three pysam opens
@@ -429,3 +430,97 @@ Failures on **reads** through an already-open bigwig handle are out of scope
 here, as the pysam equivalent is above, and for a weaker reason: unlike the
 htslib read path, libBigWig's was not measured. If it names urls too, that is
 a new finding rather than a widening of this one.
+
+## Amendment — gain#1339: the redactor the wider predicate was waiting for
+
+**Date:** 2026-09-10
+
+The gain#1314 amendment named the shape it did not cover: an **s3** GRR is
+handed a *presigned* url, whose credential is a query parameter rather than
+`user:pass@` userinfo. The gain#1333 amendment then built the predicate that
+recognises it, `_url_carries_credential`, and deliberately applied it on the
+libBigWig path only — saying in terms that handing it to `_open_htslib_file`
+without a redactor to go with it would trade away htslib's diagnostics and
+buy nothing, because the exception text, which is the channel that reaches
+the ERROR log, would still carry the signature.
+
+This is that redactor, and the gate widening it makes safe.
+
+It was **live, not latent**: htslib reads a presigned s3 url perfectly well
+(measured — a presigned tabix open fetches rows), and a failing open is
+precisely when the url gets printed.
+
+**Decided.**
+
+- `_strip_url_query` drops the `?query` of any url embedded in a string.
+- `_strip_url_credentials` composes it with `_strip_url_userinfo` and is what
+  every redaction path now runs, so a url carrying both shapes loses both.
+- `_open_htslib_file` now gates on `_url_carries_credential` — the same
+  predicate `_open_libbigwig_file` uses, reused rather than copied, which is
+  why gain#1333 left it a module-level function.
+
+The **order** inside `_strip_url_credentials` is load-bearing and is not
+symmetry: userinfo goes first, because a password may itself contain `?`, and
+stripping the query first cuts `https://alice:p?w@host/f.gz` down to
+`https://alice:p` — half the password kept and the host, which is what says
+*which* GRR failed, gone.
+
+`_strip_url_userinfo` itself is unchanged and stays narrower, because the
+*display*-url callers want exactly it: a display url keeps its query string,
+which on a stored (unsigned) url is part of the address rather than a secret.
+
+Three helpers were **renamed** with the concept, so the sections above name
+functions that no longer exist under those names:
+`_run_redacting_userinfo` → `_run_redacting_url_credentials`,
+`_error_without_userinfo` → `_error_without_url_credentials`, and
+`_rebuild_error_without_userinfo` → `_rebuild_error_without_url_credentials`.
+Their behaviour is otherwise unchanged — in particular the rebuild still
+preserves retryability, which is half of what this ADR decided.
+
+**The whole query string goes, not a list of parameter names.** botocore emits
+two presigned spellings — `AWSAccessKeyId`/`Signature`/`Expires` and
+`X-Amz-Credential`/`X-Amz-Signature`/friends — and which one a deployment gets
+is a property of its endpoint and region, not of anything GAIn configures.
+GAIn passes no `signature_version`, and the default against a custom endpoint
+is the *older* of the two. A redactor written from the newer spelling alone —
+which is the one the issue text quoted — passes the common shape straight
+through. Both are pinned in the tests for that reason. Nothing downstream
+reads a query string off a GRR file url, so there is no diagnostic value to
+weigh against dropping it. This is the same argument the gain#1333 amendment
+makes for testing the query whole rather than by name, reached independently
+from the redactor's side.
+
+**Where the presigned shape can reach, channel by channel.** The issue asked
+whether it reaches any interpolation site beyond the four library opens. It
+does not. A presigned url exists only as the return of `_get_file_url`, and
+that method has exactly four callers — `open_tabix_file`, `open_vcf_file`,
+`open_fasta_file`, `open_bigwig_file`. Every other url in the tree derives
+from `get_resource_file_url`/`_fetch_url`, and `_fetch_url_form` rebuilds
+`scheme://netloc/path`, which cannot carry a query string at all.
+
+That is what makes the handful of log lines still redacting an error message
+with the narrow `_strip_url_userinfo` — two in `cached_repository` and two in
+`fsspec_protocol` — safe today. They are safe by *reachability*, not because
+narrower is what they want, so a future path that carries a presigned url to
+one of them has to widen it. Tracked as gain#1370, and recorded here rather
+than left to inference, because this section is where a coverage claim of
+this ADR belongs.
+
+**What this does NOT cover.** The returned handle's later reads are unchanged
+(above). The htslib bracket is still **not serialised** while the verbosity
+level is process-global, and this amendment makes gain#1360 materially more
+reachable rather than less: every s3 GRR is presigned, where before only a
+url-authed GRR entered that bracket at all. The fd 2 equivalent is already
+serialised on `_STDERR_SUPPRESSION_LOCK` (gain#1333); the verbosity one is
+not, and a lock around a library open should be decided on its own evidence
+rather than folded into a redaction fix.
+
+**A deeper alternative, recorded because it was measured rather than
+imagined.** htslib has S3 support compiled in and resolves credentials from
+the same ambient chain botocore already uses, so handing it `s3://bucket/key`
+instead of a signed url would mean no presigned url existed for the three
+pysam opens at all — nothing to redact, and gain#1360 unreachable for s3. It
+is not done here: it cannot help `open_bigwig_file` (libBigWig has no s3), it
+splits authentication across two configuration surfaces that must be kept in
+agreement, and it is currently proved only as far as the TLS handshake on
+this host. Tracked as gain#1371.

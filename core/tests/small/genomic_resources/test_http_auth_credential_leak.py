@@ -35,7 +35,10 @@ from gain.genomic_resources.genomic_position_table.table_tabix import (
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
 )
-from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository import (
+    GR_MANIFEST_FILE_NAME,
+    GenomicResource,
+)
 from gain.genomic_resources.repository_factory import (
     _REPO_DEFINITION_ADAPTER,
     HttpRepoDefinition,
@@ -2341,3 +2344,404 @@ def test_fasta_open_still_hands_pysam_the_credential(
     proto.open_fasta_file(resource, _FASTA_FILE_NAME)
 
     assert _SECRET in opened.call_args.args[0]
+
+
+# ---------------------------------------------------------------------------
+# gain#1339 — the s3 shape. ``_get_file_url`` does not hand pysam the stored
+# url for an s3 GRR: it hands ``filesystem.sign(url)``, a PRESIGNED url whose
+# credential lives in the query string. gain#1314's remedies both key off
+# ``user:pass@`` userinfo, which a presigned url does not carry, so neither
+# channel it closed was closed for s3.
+# ---------------------------------------------------------------------------
+
+#: A presigned query string in each of the two shapes botocore actually
+#: emits. Which one you get is a property of the endpoint and region, NOT of
+#: anything GAIn configures -- it passes no ``signature_version``, and the
+#: default against a custom endpoint is the OLDER of the two. That is why the
+#: redactor drops the whole query string rather than a list of parameter
+#: names: a name-keyed redactor written from the SigV4 spelling alone would
+#: leak the shape most deployments actually produce.
+_SIGV2_QUERY = (
+    f"AWSAccessKeyId=alice&Signature={_SIGNATURE}&Expires=1789022041")
+_SIGV4_QUERY = (
+    "X-Amz-Algorithm=AWS4-HMAC-SHA256"
+    "&X-Amz-Credential=alice%2F20260910%2Fus-east-1%2Fs3%2Faws4_request"
+    "&X-Amz-Date=20260910T063222Z&X-Amz-Expires=100"
+    f"&X-Amz-SignedHeaders=host&X-Amz-Signature={_SIGNATURE}"
+)
+
+
+def _a_refused_s3_protocol(
+    proto_id: str, *, query: str | None = _SIGV2_QUERY,
+) -> tuple[FsspecReadOnlyProtocol, GenomicResource]:
+    """An s3 protocol whose presigned urls point at a refused port.
+
+    ``build_fsspec_protocol`` cannot serve this arrangement: building an s3
+    filesystem CONNECTS, so it cannot be pointed at a dead endpoint the way
+    ``_a_refused_protocol`` points an http one. The filesystem is injected
+    instead -- ADR 0021 names it as the protocol's real contract boundary --
+    and ``sign`` is the single thing scripted on it, because it is the one
+    thing an s3 GRR does here that an http one does not.
+
+    ``FaultyFileSystem`` rather than a bare ``MagicMock``, and that is not
+    only for consistency with the rest of this suite. A ``MagicMock``'s
+    ``read`` never returns empty, so ANY path that reads through it -- the
+    unindexed VCF branch consults the manifest, and ``yaml``'s encoding
+    sniffer loops until the buffer is the size of memory -- hangs instead of
+    failing. This filesystem is a real ``AbstractFileSystem`` over
+    ``MemoryFileSystem``, so a read that is not scripted returns real bytes
+    or a real error.
+
+    ``query=None`` is the ANONYMOUS s3 GRR: ``sign`` on a filesystem with no
+    credentials returns the url with no query string at all. It is a real
+    configuration, not a hypothetical, and it is why the predicate cannot
+    simply ask whether the scheme is s3.
+    """
+    def presign(url: str, **_kwargs: object) -> str:
+        # What s3fs does in one line: the s3:// url becomes an https url on
+        # the endpoint, with the credential appended as query parameters.
+        signed = f"https://127.0.0.1:1/{url.removeprefix('s3://')}"
+        return signed if query is None else f"{signed}?{query}"
+
+    filesystem = FaultyFileSystem()
+    filesystem.sign = presign  # type: ignore[method-assign]
+    # A refused endpoint serves no ``.MANIFEST`` either, and the empty
+    # ``MemoryFileSystem`` underneath would answer a manifest read with a
+    # bare ``FileNotFoundError`` for a path this test never wrote. Scripted
+    # explicitly so the arrangement states it.
+    filesystem.fail_open("*", FileNotFoundError(GR_MANIFEST_FILE_NAME))
+    proto = FsspecReadOnlyProtocol(
+        proto_id, "s3://bucket/path", filesystem=filesystem)
+    return proto, GenomicResource("sub/res", (1, 0), proto, {})
+
+
+def _a_presigned_url(filename: str, *, query: str = _SIGV2_QUERY) -> str:
+    """The url ``_a_refused_s3_protocol`` signs for ``filename``.
+
+    Saves a test reaching into ``_get_file_url`` to find out.
+    """
+    return (
+        f"https://127.0.0.1:1/bucket/path/sub/res(1.0)/{filename}?{query}")
+
+
+#: Both presigned spellings, run through every leak fence. Parametrised
+#: rather than covered by one representative shape because the two are not
+#: interchangeable to a redactor: they share no parameter name, so an
+#: implementation that recognises either one by name passes for it and leaks
+#: the other.
+_PRESIGNED_SHAPES = pytest.mark.parametrize(
+    "query", [_SIGV2_QUERY, _SIGV4_QUERY], ids=["sigv2", "sigv4"])
+
+
+@_PRESIGNED_SHAPES
+def test_s3_tabix_open_failure_does_not_leak_presigned_signature(
+    query: str, capfd: pytest.CaptureFixture[str],
+) -> None:
+    proto, resource = _a_refused_s3_protocol("i1339-tabix", query=query)
+
+    with pytest.raises(OSError) as excinfo:
+        proto.open_tabix_file(
+            resource, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+    # Pinned WHOLE, and the pin is what proves the ACCESS KEY ID went with the
+    # signature: both are query parameters, so an assertion that the message
+    # equals the query-free url is the one assertion that covers every
+    # parameter the signer might add, named or not.
+    assert str(excinfo.value) == (
+        "could not open file "
+        f"`https://127.0.0.1:1/bucket/path/sub/res(1.0)/{_TABIX_FILE_NAME}`")
+    _assert_no_credential_escaped(excinfo.value)
+    # The second channel, and the one no redaction of the raised error can
+    # reach: htslib writes ``[E::hts_open_format] Failed to open file
+    # "<url>"`` to fd 2 itself. gain#1314 closes it by bracketing the open at
+    # verbosity 0, but only for urls its predicate calls credential-bearing --
+    # and a presigned url was not one, so this channel stayed wide open for
+    # every s3 GRR. Asserted at FD level: the write comes from C, and
+    # ``capsys``, which only replaces ``sys.stderr``, never sees it.
+    assert _SIGNATURE not in capfd.readouterr().err
+
+
+def test_s3_tabix_open_still_hands_pysam_the_presigned_url(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # The fence that no leak test can stand in for. Redacting the url before
+    # handing it over reads as the tidier fix, leaves every assertion above
+    # GREEN -- a credential-free url produces a clean message for the wrong
+    # reason -- and breaks every authed s3 read in production, because the
+    # signature IS the authorisation. Both urls carry it: htslib fetches the
+    # index over the same presigned transport.
+    proto, resource = _a_refused_s3_protocol("i1339-tabix-cred")
+    opened = mocker.patch.object(pysam, "TabixFile")
+
+    proto.open_tabix_file(
+        resource, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+    assert _SIGNATURE in opened.call_args.args[0]
+    assert _SIGNATURE in opened.call_args.kwargs["index"]
+
+
+def test_anonymous_s3_tabix_open_keeps_htslib_diagnostics(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # An anonymous s3 GRR signs nothing: ``sign`` hands back the url with no
+    # query string. It has no credential to protect, so it must keep htslib's
+    # account of why the open failed -- the same bargain gain#1314 struck for
+    # unauthed http, and the reason the predicate asks what the url CARRIES
+    # rather than what its scheme is. Keying on ``scheme == "s3"`` passes
+    # every leak test in this section and silences this one.
+    proto, resource = _a_refused_s3_protocol("i1339-anon", query=None)
+
+    with pytest.raises(OSError):
+        proto.open_tabix_file(
+            resource, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+    assert "[E::hts_open_format]" in capfd.readouterr().err
+
+
+def test_anonymous_s3_tabix_open_raises_the_librarys_own_error(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # Nothing to redact must mean nothing touched: with no query string there
+    # is no rebuild, so the library's own error propagates with its type, its
+    # traceback and its chain intact. Asserted on IDENTITY, because a rebuild
+    # carrying an identical message satisfies any assertion on the message.
+    proto, resource = _a_refused_s3_protocol("i1339-anon-plain", query=None)
+    planted = OSError(
+        "could not open file "
+        f"`https://127.0.0.1:1/bucket/path/sub/res(1.0)/{_TABIX_FILE_NAME}`")
+    mocker.patch.object(pysam, "TabixFile", side_effect=planted)
+
+    with pytest.raises(OSError) as excinfo:
+        proto.open_tabix_file(
+            resource, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+    assert excinfo.value is planted
+
+
+# What the redactor must make of a message a library hands back. One table
+# rather than a function per shape, because every row is the same
+# arrangement -- plant this message on the open, assert that one -- and the
+# interesting content IS the pairs.
+#
+# The delimiter rows exist because the redactor acts on a url embedded in
+# someone else's prose and the libraries disagree on how to fence it: pysam
+# writes backticks, htslib's stderr writes double quotes. A pattern that ran
+# to whitespace would eat the closing delimiter along with the query, so the
+# delimiter and the text after it are pinned as carefully as the secret's
+# absence.
+_REDACTED_MESSAGES = [
+    pytest.param(
+        # Both shapes on one url -- a presigned url derived from an endpoint
+        # that itself carries userinfo. Dropping either alone still leaks, so
+        # the two redactors have to compose rather than choose.
+        f"could not open file `https://alice:{_SECRET}@host/f.gz"
+        f"?Signature={_SIGNATURE}`",
+        "could not open file `https://host/f.gz`",
+        id="userinfo-and-query"),
+    pytest.param(
+        # The redactors do not commute. A password may itself contain ``?``;
+        # strip the query FIRST and the url is cut there, keeping half the
+        # password and deleting the host -- so the message both leaks and
+        # stops naming which GRR failed.
+        f"could not open file `https://alice:{_SECRET}?x@host/f.gz`",
+        "could not open file `https://host/f.gz`",
+        id="password-containing-question-mark"),
+    pytest.param(
+        # The substitution must be global. Both of a tabix open's urls are
+        # presigned -- htslib fetches the index over the same signed
+        # transport -- so a message naming two must lose both.
+        f"copy `https://host/a.gz?Signature={_SIGNATURE}1` -> "
+        f"`https://host/b.gz?Signature={_SIGNATURE}2` failed",
+        "copy `https://host/a.gz` -> `https://host/b.gz` failed",
+        id="two-urls"),
+    *(
+        pytest.param(
+            f"could not open file {opened}https://host/f.gz"
+            f"?Signature={_SIGNATURE}{closed} : Connection refused",
+            f"could not open file {opened}https://host/f.gz{closed}"
+            " : Connection refused",
+            id=f"delimiter-{name}")
+        for name, opened, closed in [
+            ("backtick", "`", "`"),
+            ("double-quote", '"', '"'),
+            ("single-quote", "'", "'"),
+            ("angle", "<", ">"),
+        ]
+    ),
+]
+
+
+@pytest.mark.parametrize(("planted", "expected"), _REDACTED_MESSAGES)
+def test_s3_open_failure_redacts_the_message(
+    planted: str, expected: str, mocker: pytest_mock.MockerFixture,
+) -> None:
+    proto, resource = _a_refused_s3_protocol("i1339-messages")
+    mocker.patch.object(pysam, "TabixFile", side_effect=OSError(planted))
+
+    with pytest.raises(OSError) as excinfo:
+        proto.open_tabix_file(
+            resource, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+    assert str(excinfo.value) == expected
+    _assert_no_credential_escaped(excinfo.value)
+
+
+def test_s3_open_failure_keeps_a_query_free_url_whole(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # A url with no query string comes through untouched even when the
+    # message around it contains a ``?`` -- which is what keeps the message
+    # able to say WHICH resource failed.
+    #
+    # Scoped deliberately: the ``?`` here is separated from the url by the
+    # closing backtick. A url ending in a BARE ``?`` is a different case, and
+    # the redactor does consume it -- ``_url_carries_credentials`` answers
+    # True for ``https://host/f.gz?``, so the bracket would fire for a url
+    # carrying nothing. That shape is unreachable: every url this predicate
+    # sees comes from ``_get_file_url``, which either signs (a query) or
+    # returns a ``_fetch_url``-derived url, and ``_fetch_url_form`` rebuilds
+    # ``scheme://netloc/path`` and so cannot carry a ``?`` at all.
+    proto, resource = _a_refused_s3_protocol("i1339-noquery")
+    planted = OSError(
+        "could not open file `https://host/f.gz`: is it there? no")
+    mocker.patch.object(pysam, "TabixFile", side_effect=planted)
+
+    with pytest.raises(OSError) as excinfo:
+        proto.open_tabix_file(
+            resource, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+    # Identity, not equality: with nothing to redact there must be no rebuild
+    # at all, so the traceback and chain survive.
+    assert excinfo.value is planted
+
+
+def test_failed_presigned_open_does_not_silence_the_next_one(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # The verbosity level is PROCESS-global, so a bracket that does not
+    # restore turns one presigned open into permanent silence for every
+    # htslib user after it. gain#1314 pins this for the userinfo shape; the
+    # widened predicate brings a second way into the bracket, and it needs the
+    # same guarantee. Asserted on the consequence, not on ``set_verbosity``
+    # calls, so it stays true if the mechanism changes.
+    signed, signed_res = _a_refused_s3_protocol("i1339-restore-fail")
+    anon, anon_res = _a_refused_s3_protocol(
+        "i1339-restore-fail-anon", query=None)
+
+    with pytest.raises(OSError):
+        signed.open_tabix_file(
+            signed_res, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+    capfd.readouterr()
+
+    with pytest.raises(OSError):
+        anon.open_tabix_file(
+            anon_res, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+    assert "[E::hts_open_format]" in capfd.readouterr().err
+
+
+def test_successful_presigned_open_does_not_silence_the_next_one(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # The same guarantee on the path that does not raise -- restoring only
+    # where the open failed would leave every successful presigned read
+    # silencing htslib for good, which on an s3 GRR is every read.
+    signed, signed_res = _a_refused_s3_protocol("i1339-restore-ok")
+    anon, anon_res = _a_refused_s3_protocol(
+        "i1339-restore-ok-anon", query=None)
+
+    with unittest.mock.patch.object(pysam, "TabixFile"):
+        signed.open_tabix_file(
+            signed_res, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+    capfd.readouterr()
+
+    with pytest.raises(OSError):
+        anon.open_tabix_file(
+            anon_res, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+    assert "[E::hts_open_format]" in capfd.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("index_filename", "index_exists"),
+    [(None, False), (f"{_VCF_FILE_NAME}.tbi", True)],
+    ids=["unindexed", "indexed"])
+def test_s3_vcf_open_failure_does_not_leak_presigned_signature(
+    index_filename: str | None, index_exists: bool,
+    capfd: pytest.CaptureFixture[str], mocker: pytest_mock.MockerFixture,
+) -> None:
+    # Both of this method's routes to pysam, for the same reason gain#1314
+    # pins both: the indexed open a configured table takes, and the early
+    # return for a file that ships no index at all.
+    proto, resource = _a_refused_s3_protocol(f"i1339-vcf-{index_exists}")
+    mocker.patch.object(
+        proto.filesystem, "exists", return_value=index_exists)
+
+    with pytest.raises(OSError) as excinfo:
+        proto.open_vcf_file(resource, _VCF_FILE_NAME, index_filename)
+
+    assert str(excinfo.value) == (
+        "[Errno 111] Could not open variant file: Connection refused: "
+        f"'https://127.0.0.1:1/bucket/path/sub/res(1.0)/{_VCF_FILE_NAME}'")
+    _assert_no_credential_escaped(excinfo.value)
+    assert _SIGNATURE not in capfd.readouterr().err
+
+
+def test_s3_fasta_open_failure_does_not_leak_presigned_signature(
+    tmp_path: pathlib.Path,
+    capfd: pytest.CaptureFixture[str], mocker: pytest_mock.MockerFixture,
+) -> None:
+    # Only the data file stays remote and reaches htslib with a signed url;
+    # the two small indexes are copied local first and pysam is handed those
+    # paths. They have to be REAL files: pysam stats both before it opens
+    # anything, so a stand-in path fails the precondition and the method never
+    # reaches the url this test is about. Built for real and handed over in
+    # the order the method copies them -- ``.fai`` then ``.gzi``.
+    resource_dir = tmp_path / "sub" / "res(1.0)"
+    setup_genome_bgz(resource_dir / _FASTA_FILE_NAME, """
+        >chr1
+        NNACCCAAAC
+        GGGCCTTCCN
+    """)
+    proto, resource = _a_refused_s3_protocol("i1339-fasta")
+    mocker.patch.object(proto.filesystem, "exists", return_value=True)
+    mocker.patch.object(
+        FsspecReadOnlyProtocol, "_copy_resource_file_to_local",
+        side_effect=[
+            str(resource_dir / f"{_FASTA_FILE_NAME}.fai"),
+            str(resource_dir / f"{_FASTA_FILE_NAME}.gzi"),
+        ])
+
+    with pytest.raises(OSError) as excinfo:
+        proto.open_fasta_file(resource, _FASTA_FILE_NAME)
+
+    assert str(excinfo.value) == (
+        "error when opening file "
+        f"`https://127.0.0.1:1/bucket/path/sub/res(1.0)/{_FASTA_FILE_NAME}`")
+    _assert_no_credential_escaped(excinfo.value)
+    assert _SIGNATURE not in capfd.readouterr().err
+
+
+def test_s3_bigwig_open_failure_does_not_leak_presigned_signature(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # ``open_bigwig_file`` takes the widened REDACTION and still no bracket:
+    # libBigWig is not htslib and ``pysam.set_verbosity`` cannot reach it, so
+    # its own stderr line stays gain#1333's -- for the presigned url exactly
+    # as for the userinfo one. The message is planted because pyBigWig's own
+    # error carries no url today; the wrapper is what keeps a future one, or a
+    # failure from any layer in between, from carrying the signature out.
+    proto, resource = _a_refused_s3_protocol("i1339-bw")
+    mocker.patch.object(
+        pyBigWig, "open",
+        side_effect=RuntimeError(
+            f"Couldn't open {_a_presigned_url(_BIGWIG_FILE_NAME)} "
+            "for reading"))
+
+    with pytest.raises(RuntimeError) as excinfo:
+        proto.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
+
+    assert str(excinfo.value) == (
+        "Couldn't open https://127.0.0.1:1/bucket/path/sub/res(1.0)/"
+        f"{_BIGWIG_FILE_NAME} for reading")
+    _assert_no_credential_escaped(excinfo.value)

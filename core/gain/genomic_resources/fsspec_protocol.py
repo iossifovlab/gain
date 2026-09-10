@@ -269,6 +269,78 @@ def _strip_url_userinfo(text: str) -> str:
     return _URL_USERINFO_RE.sub(lambda match: match.group("scheme"), text)
 
 
+# Matches the ``?query`` of any url embedded in a string, keeping the url up
+# to the ``?``. The credential of a PRESIGNED url lives there (gain#1339).
+#
+# The url body and the query both stop at whitespace OR at one of the
+# delimiters a library actually wraps a url in, because the whole point is to
+# act on a url embedded in a longer diagnostic message: pysam writes
+# ``file `<url>` `` and htslib's stderr writes ``file "<url>"``. Stopping at
+# whitespace alone would swallow those closing delimiters.
+#
+# The set is those two plus ``'`` and ``>``; it is deliberately NOT every
+# character that could follow a url. A message spelling one as ``URL(<url>)``
+# or ``<url>, retrying`` still loses its ``)`` or ``,`` to the query match.
+# That over-deletes -- it never leaks -- and adding closers on speculation
+# would start eating characters that are legal IN a query string. Only the
+# CLOSING half of a bracket pair is needed: a match starts at the scheme, so
+# an opening ``<`` is never inside either span.
+#
+# The scheme repeat is BOUNDED. Unbounded, the engine restarts a scan at
+# every alphanumeric position and runs to the end before failing on ``://``,
+# which is quadratic in the length of the message: a 6 KB error string -- an
+# aiohttp message carrying a response body is that big -- costs ~48 ms per
+# substitution against ~0.35 ms bounded, for identical output.
+_URL_QUERY_RE = re.compile(
+    r"(?P<url>[a-zA-Z][a-zA-Z0-9+.\-]{0,15}://[^\s?`\"'>]*)\?[^\s`\"'>]*")
+
+
+def _strip_url_query(text: str) -> str:
+    """Strip the ``?query`` from every url embedded in ``text``.
+
+    The counterpart of :func:`_strip_url_userinfo` for the OTHER place a url
+    can carry a secret. An s3 GRR does not hand out its stored url: it hands
+    out ``filesystem.sign(url)``, a presigned url that is a bearer credential
+    for as long as it lives, and every part of that credential is a query
+    parameter.
+
+    The WHOLE query string goes, rather than a list of known-secret parameter
+    names -- botocore emits two presigned spellings and a name list written
+    from one passes the other through. The host and path, which say *which*
+    GRR failed, are kept. ADR 0023's gain#1339 amendment has the argument.
+    """
+    return _URL_QUERY_RE.sub(lambda match: match.group("url"), text)
+
+
+def _strip_url_credentials(text: str) -> str:
+    """Strip every url credential this module recognises from ``text``.
+
+    The union of the two redactors, and the one every redaction path should
+    reach for: a url can carry userinfo AND a query-string signature at the
+    same time, and dropping only one of them still leaks.
+
+    **The order is load-bearing.** Userinfo goes first because a password may
+    itself contain ``?``; strip the query first and
+    ``https://alice:p?w@host/f.gz`` becomes ``https://alice:p`` -- half the
+    password kept and the host, which is what says *which* GRR failed, gone.
+    Userinfo-first yields ``https://host/f.gz``.
+
+    :func:`_strip_url_userinfo` stays separate and narrower because the
+    *display*-url callers want exactly it: a display url keeps its query
+    string, which on a stored (unsigned) url is part of the address rather
+    than a secret. That argument covers display urls only; ADR 0023's
+    gain#1339 amendment records why the few log lines still using the narrow
+    redactor on a *message* are safe (reachability) rather than right.
+    """
+    # Neither pattern can match without its literal, so this is an
+    # equivalence rather than a fast path -- and it is the common case: a GRR
+    # that is neither url-authed nor s3 carries no credential at all, and
+    # every open asks the predicate below whether it does.
+    if "@" not in text and "?" not in text:
+        return text
+    return _strip_url_query(_strip_url_userinfo(text))
+
+
 def _display_url(url: str) -> str:
     """Return the credential-free ``scheme://netloc/path`` form of a url.
 
@@ -297,7 +369,7 @@ def _fetch_url_form(url: str) -> str:
     return f"{scheme}://{parsed.netloc}{parsed.path}"
 
 
-def _rebuild_error_without_userinfo(
+def _rebuild_error_without_url_credentials(
         exc: BaseException, redacted: str) -> BaseException:
     """Rebuild ``exc`` carrying the ``redacted`` message instead of its own.
 
@@ -331,8 +403,12 @@ def _rebuild_error_without_userinfo(
         return OSError(redacted)
 
 
-def _error_without_userinfo(exc: BaseException) -> BaseException:
-    """Return a userinfo-free rebuild of ``exc``, or ``exc`` if it has none.
+def _error_without_url_credentials(exc: BaseException) -> BaseException:
+    """Return a credential-free rebuild of ``exc``, or ``exc`` if it has none.
+
+    "Credential" is whatever :func:`_strip_url_credentials` recognises --
+    ``user:pass@`` userinfo and a presigned url's query string alike -- so a
+    message carrying both loses both, in one rebuild.
 
     Returning ``exc`` itself is what every failure carrying no credential
     wants -- the common unauthenticated case -- because a rebuild always
@@ -342,27 +418,31 @@ def _error_without_userinfo(exc: BaseException) -> BaseException:
     whether anything was redacted.
     """
     message = str(exc)
-    redacted = _strip_url_userinfo(message)
+    redacted = _strip_url_credentials(message)
     if redacted == message:
         return exc
-    return _rebuild_error_without_userinfo(exc, redacted)
+    return _rebuild_error_without_url_credentials(exc, redacted)
 
 
-def _run_redacting_userinfo[T](fn: Callable[[], T]) -> T:
-    """Run ``fn``, re-raising any failure with its url userinfo stripped.
+def _run_redacting_url_credentials[T](fn: Callable[[], T]) -> T:
+    """Run ``fn``, re-raising any failure with its url credentials stripped.
 
     On a fetch failure fsspec/aiohttp embed the credential-bearing fetch url
     verbatim in the raised message (e.g. ``FileNotFoundError(url)``). Rebuild
-    the error with the url userinfo stripped and raise it OUTSIDE the
+    the error with the url's credentials stripped and raise it OUTSIDE the
     ``except`` block so no credential-bearing ``__context__``/``__cause__``
-    survives a chain walk. A failure whose message carries no userinfo (the
+    survives a chain walk. A failure whose message carries no credential (the
     common non-authed case) is propagated unchanged.
+
+    Both shapes are stripped here, not just userinfo: an s3 GRR is handed a
+    presigned url whose signature is a query parameter, and it reaches this
+    guard by exactly the same routes (gain#1339).
     """
     reraise: BaseException | None = None
     try:
         return fn()
     except Exception as exc:
-        reraise = _error_without_userinfo(exc)
+        reraise = _error_without_url_credentials(exc)
         if reraise is exc:
             # Nothing was redacted. Propagate in place, so the original
             # traceback and any chain it already carries survive.
@@ -373,9 +453,10 @@ def _run_redacting_userinfo[T](fn: Callable[[], T]) -> T:
 def _url_carries_userinfo(url: str) -> bool:
     """Whether ``url`` embeds ``user:pass@`` userinfo.
 
-    Defined as "the redactor would change it", so that this predicate and
-    ``_strip_url_userinfo`` cannot come to disagree about what counts as a
-    credential.
+    Defined as "the narrow redactor would change it", so that this predicate
+    and ``_strip_url_userinfo`` cannot come to disagree about what counts as
+    userinfo. It is the userinfo half of ``_url_carries_credential``, which is
+    the predicate a caller asking "is there a secret in here" wants.
     """
     return _strip_url_userinfo(url) != url
 
@@ -386,21 +467,28 @@ def _open_htslib_file[T](url: str, open_: Callable[[], T]) -> T:
     ``open_tabix_file``, ``open_vcf_file`` and ``open_fasta_file`` hand pysam
     a url STRING rather than a handle, so ADR 0023's ``_RedactingFile`` never
     sees them -- the library owns the transport, and GAIn composes none of the
-    messages, so ``_strip_url_userinfo`` on an f-string has nothing to act on
-    either. Both channels the credential escapes through are closed here
-    (gain#1314).
+    messages, so redacting an f-string has nothing to act on either. Both
+    channels the credential escapes through are closed here (gain#1314).
+
+    The credential may be ``user:pass@`` userinfo or, for an s3 GRR whose url
+    is presigned, a query-string signature. ``_url_carries_credential`` --
+    gain#1333's predicate, shared rather than copied -- is what makes those
+    one case rather than two, and gain#1339 is what made it safe to gate on
+    here: the bracket alone would have silenced htslib for an s3 GRR while
+    the rebuilt exception still carried the signature.
 
     The error pysam raises embeds the url verbatim, and it is an ``OSError``
     -- in ``RESOURCE_ERRORS``, so ``report_resource_failure`` writes its text
     to the log at ERROR, where it persists and is shipped.
 
     htslib *additionally* writes the url to fd 2 itself, which no redaction of
-    the raised exception can reach, so an authed open is bracketed at
-    verbosity 0. That silences htslib's own diagnostics for the duration of
+    the raised exception can reach, so a credential-bearing open is bracketed
+    at verbosity 0. That silences htslib's own diagnostics for the duration of
     the open, which is a genuine loss of detail -- and it is spent only where
-    it buys something. An unauthed GRR, which is every deployment today, keeps
-    them. The scoping mirrors the type demotion of ADR 0023, likewise paid by
-    exactly the configuration it protects.
+    it buys something. A GRR that hands over no credential keeps them,
+    including an ANONYMOUS s3 one, whose ``sign`` returns the url with no
+    query string at all. The scoping mirrors the type demotion of ADR 0023,
+    likewise paid by exactly the configuration it protects.
 
     The previous level is restored rather than assumed: this module sets 1 at
     import, but a caller may have lowered it already
@@ -411,20 +499,26 @@ def _open_htslib_file[T](url: str, open_: Callable[[], T]) -> T:
     ``ThreadedTaskExecutor``, and opening a pipeline opens the tabix and VCF
     tables in it exactly as it opens the bigwig ones. Tracked as gain#1360;
     the equivalent hazard on fd 2 is why ``_open_libbigwig_file`` takes
-    ``_STDERR_SUPPRESSION_LOCK``.
+    ``_STDERR_SUPPRESSION_LOCK``. gain#1339 widened who reaches it -- every
+    s3 GRR is presigned, where before only a url-authed one qualified -- so
+    that issue is more reachable than when it was filed, not less.
 
     Named for htslib rather than for libraries in general because the
     silencing half is ``pysam``-specific: libBigWig has no verbosity control
     to bracket, so ``open_bigwig_file`` goes through ``_open_libbigwig_file``
-    instead. ADR 0023's gain#1314 amendment records what the predicate leaves
-    uncovered (s3 presigned urls, gain#1339) and why the returned handle's
-    later reads are not in scope.
+    instead.
+
+    What this does NOT cover, per ADR 0023's gain#1339 amendment: the
+    returned handle's later reads. The s3 presigned shape, which the gain#1314
+    amendment listed here as an open gap, is covered -- the predicate above
+    recognises it and the redactor strips it. Read the gain#1339 amendment
+    rather than the gain#1314 one for the current coverage claim.
     """
-    if not _url_carries_userinfo(url):
-        return _run_redacting_userinfo(open_)
+    if not _url_carries_credential(url):
+        return _run_redacting_url_credentials(open_)
     saved_verbosity = pysam.set_verbosity(0)
     try:
-        return _run_redacting_userinfo(open_)
+        return _run_redacting_url_credentials(open_)
     finally:
         pysam.set_verbosity(saved_verbosity)
 
@@ -479,8 +573,8 @@ def _open_libbigwig_file[T](url: str, open_: Callable[[], T]) -> T:
     ``[urlOpen]`` line -- which names the url verbatim -- goes nowhere. Only
     a url that carries a credential is suppressed; anything else keeps its
     diagnostics. A url with no credential is passed to
-    ``_run_redacting_userinfo`` and nothing else, so the common path costs no
-    syscalls.
+    ``_run_redacting_url_credentials`` and nothing else, so the common path
+    costs no syscalls.
 
     It has to be the file descriptor, not ``sys.stderr`` or
     ``contextlib.redirect_stderr``: libBigWig writes with its own ``fprintf``
@@ -498,7 +592,7 @@ def _open_libbigwig_file[T](url: str, open_: Callable[[], T]) -> T:
     serialisation costs.
     """
     if not _url_carries_credential(url):
-        return _run_redacting_userinfo(open_)
+        return _run_redacting_url_credentials(open_)
     with _STDERR_SUPPRESSION_LOCK:
         try:
             saved_stderr = os.dup(_STDERR_FILENO)
@@ -507,14 +601,14 @@ def _open_libbigwig_file[T](url: str, open_: Callable[[], T]) -> T:
             # to put back, so the open runs unsuppressed rather than failing
             # -- a read that worked before this guard existed must not start
             # raising because of it.
-            return _run_redacting_userinfo(open_)
+            return _run_redacting_url_credentials(open_)
         try:
             devnull = os.open(os.devnull, os.O_WRONLY)
             try:
                 os.dup2(devnull, _STDERR_FILENO)
             finally:
                 os.close(devnull)
-            return _run_redacting_userinfo(open_)
+            return _run_redacting_url_credentials(open_)
         finally:
             os.dup2(saved_stderr, _STDERR_FILENO)
             os.close(saved_stderr)
@@ -539,12 +633,12 @@ _OPTIONAL_REDACTED_OPS = frozenset({
 def _redacting_call(bound: Callable[..., Any]) -> Callable[..., Any]:
     """Wrap one bound method of an inner handle in the redaction guard."""
     def call(*args: Any, **kwargs: Any) -> Any:
-        return _run_redacting_userinfo(lambda: bound(*args, **kwargs))
+        return _run_redacting_url_credentials(lambda: bound(*args, **kwargs))
     return call
 
 
 class _RedactingFile:
-    """A file handle whose failures carry no url userinfo.
+    """A file handle whose failures carry no url credentials.
 
     ``_open_fsspec_file`` redacts the open. Everything the caller then does
     with the handle -- ``read``, a bounded ``read(n)``, ``readline``,
@@ -574,41 +668,41 @@ class _RedactingFile:
         self._inner = inner
 
     def read(self, *args: Any, **kwargs: Any) -> Any:
-        return _run_redacting_userinfo(
+        return _run_redacting_url_credentials(
             lambda: self._inner.read(*args, **kwargs))
 
     def readline(self, *args: Any, **kwargs: Any) -> Any:
-        return _run_redacting_userinfo(
+        return _run_redacting_url_credentials(
             lambda: self._inner.readline(*args, **kwargs))
 
     def readlines(self, *args: Any, **kwargs: Any) -> Any:
-        return _run_redacting_userinfo(
+        return _run_redacting_url_credentials(
             lambda: self._inner.readlines(*args, **kwargs))
 
     def seek(self, *args: Any, **kwargs: Any) -> Any:
         # Seeking a remote file is I/O: fsspec's cached readers fetch the
         # block the new offset lands in.
-        return _run_redacting_userinfo(
+        return _run_redacting_url_credentials(
             lambda: self._inner.seek(*args, **kwargs))
 
     def tell(self, *args: Any, **kwargs: Any) -> Any:
-        return _run_redacting_userinfo(
+        return _run_redacting_url_credentials(
             lambda: self._inner.tell(*args, **kwargs))
 
     def write(self, *args: Any, **kwargs: Any) -> Any:
-        return _run_redacting_userinfo(
+        return _run_redacting_url_credentials(
             lambda: self._inner.write(*args, **kwargs))
 
     def flush(self, *args: Any, **kwargs: Any) -> Any:
-        return _run_redacting_userinfo(
+        return _run_redacting_url_credentials(
             lambda: self._inner.flush(*args, **kwargs))
 
     def writelines(self, *args: Any, **kwargs: Any) -> Any:
-        return _run_redacting_userinfo(
+        return _run_redacting_url_credentials(
             lambda: self._inner.writelines(*args, **kwargs))
 
     def truncate(self, *args: Any, **kwargs: Any) -> Any:
-        return _run_redacting_userinfo(
+        return _run_redacting_url_credentials(
             lambda: self._inner.truncate(*args, **kwargs))
 
     def close(self, *args: Any, **kwargs: Any) -> Any:
@@ -616,7 +710,7 @@ class _RedactingFile:
         # is as able to surface the fetch url as any read. Every write site in
         # this tree reaches that through ``__exit__`` rather than here, which
         # is why ``__exit__`` is wrapped too and not merely delegated.
-        return _run_redacting_userinfo(
+        return _run_redacting_url_credentials(
             lambda: self._inner.close(*args, **kwargs))
 
     def __iter__(self) -> _RedactingFile:
@@ -627,14 +721,14 @@ class _RedactingFile:
         return self
 
     def __next__(self) -> Any:
-        return _run_redacting_userinfo(lambda: next(self._inner))
+        return _run_redacting_url_credentials(lambda: next(self._inner))
 
     def __enter__(self) -> _RedactingFile:
         # The inner handle's own ``__enter__`` answers itself -- that is what
         # every file object does -- and the ``with`` body must be handed THIS
         # object rather than that one, or every read in the body would run
         # unredacted and the wrapper would buy nothing.
-        _run_redacting_userinfo(self._inner.__enter__)
+        _run_redacting_url_credentials(self._inner.__enter__)
         return self
 
     def __exit__(self, *exc_info: Any) -> Any:
@@ -643,7 +737,7 @@ class _RedactingFile:
         # takes -- ``with ... as outfile:``, never a bare ``close()``. The
         # return value decides whether the block's own exception is
         # suppressed, so it must be passed through untouched.
-        return _run_redacting_userinfo(
+        return _run_redacting_url_credentials(
             lambda: self._inner.__exit__(*exc_info))
 
     def __getattr__(self, name: str) -> Any:
@@ -1349,14 +1443,14 @@ class FsspecReadOnlyProtocol(
     ) -> str | bytes:
         """Open+read a fetch-url file, redacting any credential on failure.
 
-        ``_run_redacting_userinfo``'s guarantee, covering both the open and
-        the read.
+        ``_run_redacting_url_credentials``'s guarantee, covering both the
+        open and the read.
         """
         def open_and_read() -> str | bytes:
             with self.filesystem.open(
                     filepath, mode, compression=compression) as infile:
                 return cast("str | bytes", infile.read())
-        return _run_redacting_userinfo(open_and_read)
+        return _run_redacting_url_credentials(open_and_read)
 
     def load_contents(self) -> list[dict[str, Any]]:
         """Load the content JSON of the repository."""
@@ -1525,8 +1619,8 @@ class FsspecReadOnlyProtocol(
         type -- an ``aiohttp.ClientResponseError`` (an HTTP 5xx, which fsspec
         does not translate) needs ``request_info`` and ``history``. It comes
         back an ``OSError``, or a ``RetryableCopyError`` where the original
-        was transient, which ``_rebuild_error_without_userinfo`` preserves so
-        that redaction cannot change a retry decision. Safe here for the
+        was transient, which ``_rebuild_error_without_url_credentials``
+        preserves so redaction cannot change a retry decision. Safe here for the
         reason ``_copy_resource_file_to_local`` sets out: no retry or
         control-flow decision on this path keys off the type.
 
@@ -1573,12 +1667,13 @@ class FsspecReadOnlyProtocol(
             compression: str | None) -> IO:
         """Open ``filepath`` on the filesystem, redacting a failing url.
 
-        ``_run_redacting_userinfo``'s guarantee, covering the open AND every
-        subsequent operation on the returned handle: it comes back wrapped in
-        a ``_RedactingFile`` (gain#1078). A caller that opens and reads in one
-        place may still use ``_read_fetch_file``, which says so in one call.
+        ``_run_redacting_url_credentials``'s guarantee, covering the open AND
+        every subsequent operation on the returned handle: it comes back
+        wrapped in a ``_RedactingFile`` (gain#1078). A caller that opens and
+        reads in one place may still use ``_read_fetch_file``, which says so
+        in one call.
         """
-        opened = _run_redacting_userinfo(lambda: cast(
+        opened = _run_redacting_url_credentials(lambda: cast(
             IO,
             self.filesystem.open(
                 filepath, mode=mode,
@@ -1722,8 +1817,8 @@ class FsspecReadOnlyProtocol(
                 resource, compressed_index_filename, tmpdir)
             # Only this branch needs the guard: ``file_url`` is the one url
             # that stays remote and reaches htslib, and the ``file`` branch
-            # above hands pysam a bare filesystem path, which cannot carry
-            # userinfo.
+            # above hands pysam a bare filesystem path, which can carry
+            # neither userinfo nor a signed query string.
             return _open_htslib_file(
                 file_url,
                 lambda: pysam.FastaFile(  # pylint: disable=no-member
@@ -1745,7 +1840,7 @@ class FsspecReadOnlyProtocol(
         decision on this path keys off the exception type -- unlike
         ``copy_resource_file``, whose retry loop does. That loop is no longer
         a reason to redact late anywhere: since gain#1078 the rebuild
-        preserves retryability (see ``_rebuild_error_without_userinfo``).
+        preserves retryability (see ``_rebuild_error_without_url_credentials``).
 
         One type test is reachable, ``report_resource_failure``'s
         ``RESOURCE_ERRORS`` check, and the rebuild helps there rather than
@@ -1777,7 +1872,7 @@ class FsspecReadOnlyProtocol(
         # descriptor is what has to be taken away (gain#1333). The redaction
         # rides along: pyBigWig's own exception carries no url today, which
         # makes that half a guard against a future one rather than a fix for a
-        # live leak; it costs nothing, because a message with no userinfo is
+        # live leak; it costs nothing, because a message with no credential is
         # propagated untouched.
         return _open_libbigwig_file(
             file_url,
@@ -2524,7 +2619,7 @@ class FsspecReadWriteProtocol(
             # this the one write path in the protocol still able to surface
             # the fetch url, which is exactly the shape gain#1078 closed
             # everywhere else. See ADR 0023.
-            handle = cast("IO", _RedactingFile(_run_redacting_userinfo(
+            handle = cast("IO", _RedactingFile(_run_redacting_url_credentials(
                 lambda: self.filesystem.open(
                     tmp_filepath, mode, **open_kwargs))))
             with handle as outfile:
@@ -2711,11 +2806,11 @@ class FsspecReadWriteProtocol(
         #
         # gain#1078 made the reads under this loop redact too, so "earlier"
         # now happens on every attempt. The rule it relied on has been made
-        # structural instead: ``_rebuild_error_without_userinfo`` preserves
-        # retryability, rebuilding a transient failure it cannot reconstruct
-        # as ``RetryableCopyError`` rather than ``OSError``. The retry budget
-        # survives redaction wherever redaction happens.
-        raise _error_without_userinfo(last_error)
+        # structural instead: ``_rebuild_error_without_url_credentials``
+        # preserves retryability, rebuilding a transient failure it cannot
+        # reconstruct as ``RetryableCopyError`` rather than ``OSError``. The
+        # retry budget survives redaction wherever redaction happens.
+        raise _error_without_url_credentials(last_error)
 
     def _download_resource_file(
             self,
