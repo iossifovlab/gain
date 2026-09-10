@@ -81,6 +81,24 @@ export const BROWSE_SUMMARY_ONLY_RESOURCE_ID = 'hg19/legacy/allele_frequencies';
 export const BROWSE_ID_ONLY_TERM = 'phylop';
 export const BROWSE_ID_ONLY_RESOURCE_ID = 'hg38/scores/conservation/phylop';
 
+/**
+ * The genome, which is the fixture's *second* resource type.
+ *
+ * It is there so the type filter has something to narrow to: a
+ * repository of one type cannot tell a filter that works from one that
+ * returns everything. One resource carries this type and six carry
+ * `BROWSE_SCORE_TYPE`, so either direction of the filter is decidable.
+ *
+ * Unlike the search terms above, the two type names are not pinned by
+ * `test_info_page_browse_fixture.py` -- nothing there reads them. They
+ * do not need to be: a type renamed upstream makes `selectOption` throw
+ * on an option that is not there, which is a red test rather than a
+ * quietly weaker one.
+ */
+export const BROWSE_GENOME_RESOURCE_ID = 'genomes/g984';
+export const BROWSE_GENOME_TYPE = 'genome';
+export const BROWSE_SCORE_TYPE = 'position_score';
+
 /** Where a generated resource's info page lands on disk. */
 function infoPagePath(grrDir: string, resourceId: string): string {
   return path.join(grrDir, ...resourceId.split('/'), 'index.html');

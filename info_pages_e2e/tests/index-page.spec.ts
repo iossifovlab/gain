@@ -2,10 +2,13 @@ import { expect, test, type Page } from '@playwright/test';
 
 import {
   BROWSE_CAPITALISED_FOLDER,
+  BROWSE_GENOME_RESOURCE_ID,
+  BROWSE_GENOME_TYPE,
   BROWSE_ID_ONLY_RESOURCE_ID,
   BROWSE_ID_ONLY_TERM,
   BROWSE_ORDERING_RESOURCE_NAMES,
   BROWSE_RESOURCE_COUNT,
+  BROWSE_SCORE_TYPE,
   BROWSE_SUMMARY_ONLY_RESOURCE_ID,
   BROWSE_SUMMARY_ONLY_TERM,
   BROWSE_TOP_LEVEL_FOLDERS,
@@ -43,17 +46,23 @@ function visibleResourceIds(page: Page) {
  * true on arrival -- the rows are server-rendered, and the search box is
  * shown synchronously whether or not the database ever loads.
  */
-async function openBrowseIndex(page: Page, hash = ''): Promise<void> {
+async function openBrowseIndex(
+  page: Page, hash = '', resources = BROWSE_RESOURCE_COUNT,
+): Promise<void> {
   await serveGrr(page, FIXTURE_BROWSE_GRR);
   await page.goto(indexPageUrl() + hash);
+  /* `resources` is the count to wait *for*, which an address carrying a
+   * search has to override. Such a load passes through the unfiltered
+   * count on its way to the filtered one -- the rows are server-rendered
+   * and the search is applied afterwards -- so waiting for the whole
+   * repository would match on the way past and hand the test a page that
+   * has not searched yet. The filtered count cannot be reached early. */
   /* Read as text, never as visibility. The hierarchical view hides this
    * element, so an address naming the tree would make a `toBeVisible`
    * wait hang forever on a page that had loaded perfectly. The status is
    * written with jQuery's `.text()`, which does not care that the
    * element is hidden, so the signal survives being out of sight. */
-  await expect(page.locator('#status')).toHaveText(
-    `${BROWSE_RESOURCE_COUNT} resources`,
-  );
+  await expect(page.locator('#status')).toHaveText(`${resources} resources`);
 }
 
 /** Type a term into the search box and run the search. */
@@ -791,15 +800,19 @@ test('a hash carrying a malformed escape opens the root without throwing',
   await expect(breadcrumbTrail(page)).resolves.toEqual(['All resources']);
 });
 
-test('browsing the table writes no fragment', async ({ page }) => {
+test('sorting the table writes no fragment', async ({ page }) => {
   await openBrowseIndex(page);
   await expectView(page, 'table');
 
-  /* Searching and sorting are the table's own controls, and neither is
-   * addressable yet -- the search term lands in the hash in a later slice
-   * of this epic (iossifovlab/gain#1331). Until then they must leave the
-   * address alone rather than half-write it. */
-  await search(page, BROWSE_ID_ONLY_TERM);
+  /* Sorting is the table's other control, and it stayed unaddressable
+   * when the search stopped being so (iossifovlab/gain#1331): the column
+   * and direction are not part of the browse state, so a sort must leave
+   * the address exactly as it found it rather than half-write one.
+   *
+   * The pair with the search tests is the point. Both controls writing
+   * the address and neither writing it are each self-consistent and each
+   * wrong; only asserting them apart pins that the page distinguishes
+   * them. */
   await page.locator('#id-col-header').click();
 
   await expect.poll(() => hashOf(page)).toBe('');
@@ -869,4 +882,97 @@ test('the tree orders names by locale, as the table does', async ({ page }) => {
   const resources = await bothOrders(page, BROWSE_ORDERING_RESOURCE_NAMES);
   expect(resources.byCodeUnit).not.toEqual(resources.byLocale);
   expect(await resourceNames(page)).toEqual(resources.byLocale);
+});
+
+/* ---- The search state lives in the URL hash (#1331) ---- */
+
+test('a term searched in the table view is put in the address', async ({
+  page,
+}) => {
+  await openBrowseIndex(page);
+
+  await search(page, BROWSE_SUMMARY_ONLY_TERM);
+
+  await expect.poll(() => hashOf(page))
+    .toBe(`#?q=${BROWSE_SUMMARY_ONLY_TERM}`);
+});
+
+test('typing a term leaves no history entry behind it', async ({ page }) => {
+  await openBrowseIndex(page);
+  const entriesBefore = await page.evaluate(() => history.length);
+
+  /* Typed a key at a time, not `fill`ed: the debounce is what makes this
+   * worth asserting. A term this long pushed rather than replaced would
+   * put up to eight entries between the reader and wherever they came
+   * from, and Back would crawl back through the term one keystroke at a
+   * time instead of leaving the page. */
+  await page.locator('#search-field')
+    .pressSequentially(BROWSE_SUMMARY_ONLY_TERM);
+
+  await expect.poll(() => hashOf(page))
+    .toBe(`#?q=${BROWSE_SUMMARY_ONLY_TERM}`);
+  expect(await page.evaluate(() => history.length)).toBe(entriesBefore);
+});
+
+test('the chosen type joins the term in the address', async ({ page }) => {
+  await openBrowseIndex(page);
+
+  await search(page, BROWSE_SUMMARY_ONLY_TERM);
+  await page.locator('#type-filter').selectOption(BROWSE_SCORE_TYPE);
+
+  /* Both fields, in a fixed order. One search having one spelling is
+   * what lets `goTo`'s guard compare addresses as strings at all. */
+  await expect.poll(() => hashOf(page))
+    .toBe(`#?q=${BROWSE_SUMMARY_ONLY_TERM}&type=${BROWSE_SCORE_TYPE}`);
+});
+
+test('a type chosen on its own is the whole query', async ({ page }) => {
+  await openBrowseIndex(page);
+
+  await page.locator('#type-filter').selectOption(BROWSE_GENOME_TYPE);
+
+  await expect.poll(() => hashOf(page)).toBe(`#?type=${BROWSE_GENOME_TYPE}`);
+
+  /* That the address says so is half of it; the table has to have
+   * actually narrowed. The genome is the fixture's one non-score, so
+   * this row set is only reachable by filtering on the type. */
+  await expect(visibleResourceIds(page)).toHaveText([
+    BROWSE_GENOME_RESOURCE_ID,
+  ]);
+});
+
+test('clearing both controls takes the query out of the address', async ({
+  page,
+}) => {
+  await openBrowseIndex(page);
+  await search(page, BROWSE_SUMMARY_ONLY_TERM);
+  await page.locator('#type-filter').selectOption(BROWSE_SCORE_TYPE);
+  await expect.poll(() => hashOf(page)).not.toBe('');
+
+  await search(page, '');
+  await page.locator('#type-filter').selectOption('all');
+
+  /* Not `#?`, and not a bare `#` either: an emptied search leaves the
+   * address exactly as an unfiltered table found it, so that arriving
+   * with no search and clearing one are the same address rather than two
+   * that render alike. */
+  await expect.poll(() => hashOf(page)).toBe('');
+  await expect(visibleResourceIds(page)).toHaveCount(BROWSE_RESOURCE_COUNT);
+});
+
+test('an address carrying a term opens the table filtered by it', async ({
+  page,
+}) => {
+  await openBrowseIndex(page, `#?q=${BROWSE_SUMMARY_ONLY_TERM}`, 1);
+
+  /* The filtered rows and the filled box are both asserted. A page that
+   * ran the search without putting the term in the control shows the
+   * right rows above a box the reader cannot edit their way out of; one
+   * that filled the box without searching shows the term over the whole
+   * repository. Either alone passes half of this. */
+  await expect(visibleResourceIds(page)).toHaveText([
+    BROWSE_SUMMARY_ONLY_RESOURCE_ID,
+  ]);
+  await expect(page.locator('#search-field'))
+    .toHaveValue(BROWSE_SUMMARY_ONLY_TERM);
 });

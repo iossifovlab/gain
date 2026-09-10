@@ -213,8 +213,72 @@
             }
         }
 
-        $("#type-filter").on("change", (e) => {
+        /*
+         * The seam between the search and the module that owns the
+         * address.
+         *
+         * The two are separate ES modules, so neither can see the other's
+         * bindings; `window` is the only bridge this page has, and it
+         * already carries several (`dbLoaded`, `rowData`, `all_ids`).
+         * This is the first that has to work in *both* directions -- the
+         * address is built from what the controls hold, and the controls
+         * are filled from what the address says -- so it is one named
+         * object rather than three more bare properties, and the other
+         * module reaches for nothing in here except this.
+         *
+         * The empty string is "no type filter" across the seam, rather
+         * than the "all" the markup gives the option: it makes "is
+         * anything filtering?" the same question for both fields, and it
+         * keeps the dropdown's sentinel from having to be spelled in the
+         * address.
+         */
+        const searchChangeListeners = [];
+
+        window.grrSearch = {
+            /** What the controls hold right now. */
+            current() {
+                return {
+                    q: $("#search-field").val().trim(),
+                    type: $("#type-filter").val() === "all"
+                        ? "" : $("#type-filter").val(),
+                };
+            },
+
+            /** Put a search into the controls and run it. */
+            async apply({ q, type }) {
+                // Awaited because the type options are built from the
+                // loaded index: setting the dropdown before that resolves
+                // selects nothing at all -- the option is not there yet --
+                // and does it silently. The term alone would not need the
+                // wait, but filling one control and not the other leaves
+                // the page showing a search nobody asked for.
+                await window.dbLoaded;
+                $("#search-field").val(q);
+                $("#type-filter").val(type === "" ? "all" : type);
+                await doSearch();
+            },
+
+            /** Call `listener` when the reader changes either control. */
+            onChange(listener) {
+                searchChangeListeners.push(listener);
+            },
+        };
+
+        /*
+         * Run what the controls now say, and tell the address about it.
+         *
+         * Every *reader-driven* entry point goes through here, and
+         * `apply` deliberately does not: it is the address talking to the
+         * controls, so announcing the change back would be answering its
+         * own question.
+         */
+        function searchFromControls() {
             doSearch();
+            for (const listener of searchChangeListeners) listener();
+        }
+
+        $("#type-filter").on("change", (e) => {
+            searchFromControls();
         })
 
         function debounce(func, wait, immediate) {
@@ -232,11 +296,11 @@
             };
         };
 
-        var debouncedSearch = debounce(doSearch, 400, false);
+        var debouncedSearch = debounce(searchFromControls, 400, false);
 
         $("#search-field").on("keydown", (e) => {
           if (e.key === "Enter") {
-            doSearch();
+            searchFromControls();
           }
           else {
             debouncedSearch();
@@ -543,28 +607,63 @@
             // arrive through the same path instead of three of them being
             // special cases of the fourth.
             //
-            // The state is a record rather than a bare view string because
-            // it is about to carry more: the folder path is #579 and the
-            // search term a later slice of the same epic, and both extend
-            // these two functions rather than re-reading the hash
-            // somewhere else.
+            // The state is a record rather than a bare view string
+            // because it carries more than the view: the folder path
+            // (#579) and the search term and type filter (#1331), each of
+            // which extends these two functions rather than re-reading the
+            // hash somewhere else.
 
             const HIERARCHICAL_HASH = "#/";
 
             /** The browse state a fragment addresses. */
             function parseHash(hash) {
+                // The search is split off before anything else looks at
+                // the fragment, because the path is split on "/" and would
+                // otherwise resolve a folder literally named
+                // "scores?q=phast". The first "?" is unambiguously the
+                // separator: `encodeURIComponent` escapes a "?" inside a
+                // segment to "%3F", so a raw one cannot have come from a
+                // folder name.
+                const cut = hash.indexOf("?");
+                const address = cut < 0 ? hash : hash.slice(0, cut);
+                const search = cut < 0 ? "" : hash.slice(cut + 1);
+                const { q, type } = parseSearch(search);
                 // Anything unrecognised reads as the default rather than
                 // raising: a hand-edited or stale link must still open the
                 // page, and a fragment is also how something with no
                 // interest in this page at all -- a link into the docs, a
                 // tracker's leftovers -- ends up in the address.
-                if (!hash.startsWith(HIERARCHICAL_HASH)) {
-                    return { view: "table", path: [] };
+                if (!address.startsWith(HIERARCHICAL_HASH)) {
+                    return { view: "table", path: [], q, type };
                 }
                 return {
                     view: "hierarchical",
-                    path: parsePath(hash.slice(HIERARCHICAL_HASH.length)),
+                    path: parsePath(address.slice(HIERARCHICAL_HASH.length)),
+                    q,
+                    type,
                 };
+            }
+
+            /** The search a fragment's query part names. */
+            function parseSearch(encodedSearch) {
+                const search = { q: "", type: "" };
+                for (const pair of encodedSearch.split("&")) {
+                    if (pair === "") continue;
+                    const eq = pair.indexOf("=");
+                    if (eq < 0) continue;
+                    const name = pair.slice(0, eq);
+                    if (!(name in search)) continue;
+                    try {
+                        search[name] = decodeURIComponent(pair.slice(eq + 1));
+                    } catch {
+                        // Malformed escape ("%zz"), which a hand-edited or
+                        // truncated address can carry. The field is left
+                        // empty rather than the load abandoned -- the same
+                        // choice `parsePath` makes, for the same reason.
+                        search[name] = "";
+                    }
+                }
+                return search;
             }
 
             /** The folder segments a fragment's path names, outermost first. */
@@ -594,9 +693,44 @@
                 return segments;
             }
 
-            /** The fragment addressing a state; "" for the default view. */
+            /**
+             * The fragment addressing a state; "" for the bare default.
+             *
+             * A pure function of what it is handed, and it has to stay
+             * one. `goTo`'s no-op guard works by round-tripping the
+             * *current* address through the parser and back through here
+             * and comparing; a build that read the live controls instead
+             * of its argument would stop reproducing the address it was
+             * given, and the guard would push entries that change nothing
+             * -- the exact symptom it exists to prevent. Callers read the
+             * controls and put the answer in the state.
+             */
             function buildHash(state) {
-                if (state.view !== "hierarchical") return "";
+                const search = buildSearch(state);
+                if (state.view !== "hierarchical") {
+                    // The table's address is the query alone, so with no
+                    // search there is nothing to say and the fragment goes
+                    // away entirely.
+                    return search === "" ? "" : "#?" + search;
+                }
+                return buildPath(state) + (search === "" ? "" : "?" + search);
+            }
+
+            /** The query part addressing a state's search; "" when unset. */
+            function buildSearch(state) {
+                const pairs = [];
+                // A fixed order, so that one search has one address: the
+                // round trip above compares strings, and two spellings of
+                // the same state would make the guard miss.
+                if (state.q) pairs.push("q=" + encodeURIComponent(state.q));
+                if (state.type) {
+                    pairs.push("type=" + encodeURIComponent(state.type));
+                }
+                return pairs.join("&");
+            }
+
+            /** The path part addressing a hierarchical state. */
+            function buildPath(state) {
                 // Encoded per segment and then joined, never the other way
                 // round: the segments are resource id fragments, which are
                 // untrusted repository content (gain#467, gain#528), and
@@ -619,8 +753,9 @@
 
             /** Render what the current address says. The only applier. */
             function applyHash() {
-                const { view, path } = parseHash(location.hash);
+                const { view, path, q, type } = parseHash(location.hash);
                 setView(view);
+                applySearch(q, type);
                 // The table has no folder to resolve and no address of its
                 // own to canonicalise -- see `canonicalise` for why
                 // rewriting it would be actively wrong -- so this is where
@@ -629,6 +764,28 @@
                 const { reached } = descend(path);
                 navigateTo(reached);
                 canonicalise(reached);
+            }
+
+            /**
+             * Put the address's search into the controls, if it is news.
+             *
+             * The applier runs on every address change, not only on the
+             * way in: `goTo` calls it after pushing, and Back and Forward
+             * reach it through `hashchange`. Applying unconditionally
+             * would therefore re-run the search on every move between
+             * folders, which is a query and a re-render for an answer the
+             * page is already showing.
+             *
+             * Comparing against what the controls hold is also what makes
+             * the arriving load apply exactly once, without a separate
+             * "have I done this yet?" flag: after the first application
+             * the controls agree with the address, so the next call is a
+             * no-op by the same test.
+             */
+            function applySearch(q, type) {
+                const current = window.grrSearch.current();
+                if (current.q === q && current.type === type) return;
+                window.grrSearch.apply({ q, type });
             }
 
             /**
@@ -723,6 +880,30 @@
             tableBtn.addEventListener("click", () => goTo({ view: "table" }));
             hierBtn.addEventListener("click", () => goTo(
                 { view: "hierarchical", path: currentPath }));
+
+            // Editing a control *replaces* the current entry rather than
+            // pushing one. The search is debounced, so pushing would leave
+            // a six-letter term as six Back stops between the reader and
+            // wherever they came from -- Back has to lead out of the
+            // search, not crawl back through it a keystroke at a time.
+            //
+            // `replaceState` fires neither `hashchange` nor `popstate`,
+            // which is what makes this cheap: writing the address here
+            // cannot re-enter the applier and re-run the search that has
+            // just run. That is load-bearing rather than incidental.
+            //
+            // The rest of the state is read back out of the address, so
+            // that a search typed while the tree is showing keeps the
+            // folder it was typed in.
+            window.grrSearch.onChange(() => {
+                const hash = buildHash({
+                    ...parseHash(location.hash),
+                    ...window.grrSearch.current(),
+                });
+                if (hash === location.hash) return;
+                history.replaceState(
+                    null, "", hash || location.pathname + location.search);
+            });
 
             // `hashchange` only. A same-document fragment move fires
             // `popstate` as well, and listening to both would apply every
