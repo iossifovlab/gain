@@ -322,7 +322,18 @@
             }
 
             function makeNode(name, path) {
-                return { name, path, children: {}, resources: [], count: 0, bytes: 0 };
+                // `children` has no prototype, so the only names in it are
+                // folders that were put there. A plain `{}` answers
+                // `children["constructor"]` -- and `"toString"`, and
+                // `"__proto__"` -- out of `Object.prototype`, which since
+                // the folder path became addressable (#579) is a name a
+                // reader can put in the URL: the lookup would accept a
+                // folder that does not exist and then hand the renderer a
+                // function to read children off.
+                return {
+                    name, path, children: Object.create(null),
+                    resources: [], count: 0, bytes: 0,
+                };
             }
 
             const root = makeNode("All resources", []);
@@ -354,16 +365,47 @@
                 node.bytes = bytes;
             })(root);
 
-            function getNode(path) {
+            /**
+             * How far down `path` the tree actually goes.
+             *
+             * Returns the deepest folder it could reach and the segments
+             * that reached it -- which is the whole answer, because the two
+             * callers want opposite halves of it: the renderer wants the
+             * folder, and the applier wants the path to put in the address.
+             *
+             * One walk rather than one per caller, so the rule for
+             * resolving a segment to a child lives in one place. That rule
+             * is not as dull as it looks: `children` is prototype-less
+             * precisely so this lookup cannot answer with something
+             * inherited, and a second copy of the walk is somewhere for the
+             * next such rule to be applied to only half the callers.
+             *
+             * Stopping short is ordinary rather than exceptional. Folders
+             * are a shape derived from the resource ids the page was
+             * generated with, and a repository is regenerated whenever its
+             * content changes, so an address routinely outlives the folder
+             * it names. Walking up leaves the reader on the deepest part of
+             * their address that still means something; "no surviving
+             * ancestor" is the root, the same answer with nothing left.
+             */
+            function descend(path) {
                 let node = root;
+                const reached = [];
                 for (const seg of path) {
-                    if (!node.children[seg]) return null;
-                    node = node.children[seg];
+                    const child = node.children[seg];
+                    if (!child) break;
+                    node = child;
+                    reached.push(seg);
                 }
-                return node;
+                return { node, reached };
             }
 
-            const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+            // `localeCompare`, which is what the table's sorter uses. `<`
+            // and `>` compare UTF-16 code units, so every capitalised name
+            // sorted ahead of every lowercase one and a repository mixing
+            // the two was listed in one order by the table and another by
+            // the tree (gain#564).
+            const byName = (a, b) => a.name.localeCompare(b.name);
 
             const breadcrumbEl = document.getElementById("breadcrumb");
             const listEl = document.getElementById("hierarchical-list");
@@ -390,7 +432,10 @@
                         el.href = "#";
                         el.addEventListener("click", (e) => {
                             e.preventDefault();
-                            navigateTo(crumb.path);
+                            goTo({
+                                view: "hierarchical",
+                                path: crumb.path,
+                            });
                         });
                     }
                     breadcrumbEl.appendChild(el);
@@ -398,9 +443,14 @@
             }
 
             function renderList() {
-                const node = getNode(currentPath);
+                // Always a folder: `currentPath` is only ever assigned what
+                // `descend` reached, so there is no "no such folder" case
+                // left here to guard against. A guard would be worse than
+                // none -- the list has already been emptied by this point,
+                // so bailing would show an empty folder and say nothing,
+                // which is where a broken invariant would hide.
+                const { node } = descend(currentPath);
                 listEl.innerHTML = "";
-                if (!node) return;
 
                 for (const folder of Object.values(node.children).sort(byName)) {
                     const row = document.createElement("div");
@@ -412,7 +462,10 @@
                         + '<span class="hv-count">(' + folder.count + ")</span>"
                         + "</div>"
                         + '<span class="hv-size">' + escapeHtml(formatSize(folder.bytes)) + "</span>";
-                    row.addEventListener("click", () => navigateTo(folder.path));
+                    row.addEventListener("click", () => goTo({
+                        view: "hierarchical",
+                        path: folder.path,
+                    }));
                     listEl.appendChild(row);
                 }
 
@@ -475,7 +528,10 @@
                 searchField.disabled = isHier;
                 typeFilter.disabled = isHier;
                 searchContainer.classList.toggle("disabled", isHier);
-                if (isHier) navigateTo(currentPath);
+                // Which chrome to show, and nothing else. *What* the tree
+                // shows depends on resolving a folder, which the applier
+                // does -- so "is this the tree?" is asked in one place
+                // rather than here and again on either side of the call.
             }
 
             // ---- Browse state lives in the URL hash ----
@@ -502,19 +558,120 @@
                 // page, and a fragment is also how something with no
                 // interest in this page at all -- a link into the docs, a
                 // tracker's leftovers -- ends up in the address.
+                if (!hash.startsWith(HIERARCHICAL_HASH)) {
+                    return { view: "table", path: [] };
+                }
                 return {
-                    view: hash === HIERARCHICAL_HASH ? "hierarchical" : "table",
+                    view: "hierarchical",
+                    path: parsePath(hash.slice(HIERARCHICAL_HASH.length)),
                 };
+            }
+
+            /** The folder segments a fragment's path names, outermost first. */
+            function parsePath(encodedPath) {
+                const segments = [];
+                for (const encoded of encodedPath.split("/")) {
+                    // An empty segment names no folder -- a trailing or a
+                    // doubled slash -- so it is dropped rather than looked
+                    // up as a child called "".
+                    if (encoded === "") continue;
+                    let segment;
+                    try {
+                        segment = decodeURIComponent(encoded);
+                    } catch {
+                        // `decodeURIComponent` throws on a malformed escape
+                        // ("%zz"), which a hand-edited or truncated address
+                        // can carry. What decoded so far is kept and the
+                        // rest abandoned, which leaves a shorter path --
+                        // and a path naming a folder that is not there is
+                        // what the walk-up already exists for, since
+                        // folders come and go between regenerations. One
+                        // route for a path that cannot be followed, not two.
+                        return segments;
+                    }
+                    segments.push(segment);
+                }
+                return segments;
             }
 
             /** The fragment addressing a state; "" for the default view. */
             function buildHash(state) {
-                return state.view === "hierarchical" ? HIERARCHICAL_HASH : "";
+                if (state.view !== "hierarchical") return "";
+                // Encoded per segment and then joined, never the other way
+                // round: the segments are resource id fragments, which are
+                // untrusted repository content (gain#467, gain#528), and
+                // encoding the joined string would escape the separators
+                // along with everything else.
+                //
+                // Every character a resource id may legally carry is
+                // unreserved here, so for a repository this scanner built
+                // the encoding is the identity: enumerating one matches its
+                // ids against `[a-zA-Z0-9/._-]+` and refuses the rest. It
+                // is kept for the ids this page did *not* vet -- a remote
+                // `.CONTENTS` is read verbatim -- and because that grammar
+                // widening should not silently become a way to write the
+                // separator. Going per segment is also
+                // what makes a name containing "/" impossible to spell --
+                // it comes back as one folder, not two.
+                return HIERARCHICAL_HASH
+                    + state.path.map(encodeURIComponent).join("/");
             }
 
             /** Render what the current address says. The only applier. */
             function applyHash() {
-                setView(parseHash(location.hash).view);
+                const { view, path } = parseHash(location.hash);
+                setView(view);
+                // The table has no folder to resolve and no address of its
+                // own to canonicalise -- see `canonicalise` for why
+                // rewriting it would be actively wrong -- so this is where
+                // the tree's half of the work begins and ends.
+                if (view !== "hierarchical") return;
+                const { reached } = descend(path);
+                navigateTo(reached);
+                canonicalise(reached);
+            }
+
+            /**
+             * Make the address agree with what was just rendered.
+             *
+             * A walked-up path, a dropped empty segment and a decoded
+             * escape all leave the address saying something other than the
+             * folder now on screen, and that costs twice over. The URL the
+             * reader can copy out of the bar names a folder they are not
+             * looking at. And `goTo`'s no-op guard compares *parsed*
+             * addresses, knowing nothing about any of this, so it sees a
+             * difference where there is none on screen: the button for the
+             * view already showing would push an entry that changes
+             * nothing, and the Back after it would appear to do nothing --
+             * the exact symptom that guard exists to prevent.
+             *
+             * `replaceState`, so the resolved address takes the place of
+             * the one it resolves rather than being stacked on top of it:
+             * Back still leads out of the page, and an address that could
+             * not be followed cannot be returned to by going back to it.
+             *
+             * Called for the hierarchical view only, which is why it takes
+             * no view: the table's canonical address is "", so rewriting
+             * *its* address would silently delete a fragment belonging to
+             * whatever put it there -- someone's deep link into a section.
+             * Arriving at the table is not consent to discard it, the same
+             * rule `goTo` follows.
+             *
+             * The boundary is really the `#/` namespace rather than the
+             * view, and this page claims all of it (#578): `#/docs/intro`
+             * is read as a tree path, salvages nothing, and is rewritten to
+             * `#/` -- where before this it was merely ignored. Narrowing
+             * that by skipping the rewrite when nothing was salvaged is not
+             * available, because `#/nonesuch/deeper` resolving to `#/` is
+             * exactly what the stale-path behaviour asks for.
+             */
+            function canonicalise(path) {
+                const hash = buildHash({ view: "hierarchical", path });
+                // Never "" for this view, so there is no "cannot express a
+                // bare path" case to handle as `goTo` has to.
+                if (hash !== location.hash) {
+                    history.replaceState(null, "", hash);
+                }
             }
 
             /** Push `state` into the session history, then render it. */
@@ -553,8 +710,19 @@
                 applyHash();
             }
 
+            // The tree button carries the folder showing at the time it is
+            // clicked, so that leaving the tree for the table and coming
+            // back lands where the reader left rather than at the root.
+            // `currentPath` is [] until the tree has been entered, which is
+            // why a first click on it addresses the root; it survives the
+            // visit to the table because only the hierarchical branch of
+            // the applier reassigns it.
+            //
+            // The table button carries no folder, because the table has no
+            // address to put one in.
             tableBtn.addEventListener("click", () => goTo({ view: "table" }));
-            hierBtn.addEventListener("click", () => goTo({ view: "hierarchical" }));
+            hierBtn.addEventListener("click", () => goTo(
+                { view: "hierarchical", path: currentPath }));
 
             // `hashchange` only. A same-document fragment move fires
             // `popstate` as well, and listening to both would apply every
