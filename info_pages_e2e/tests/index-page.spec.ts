@@ -332,7 +332,8 @@ test('a fragment that names no browse state opens the table view', async ({
   expect(errors).toEqual([]);
 });
 
-test('coming back from a resource page returns to the tree', async ({
+test('coming back from a resource page returns to the folder it was '
+  + 'opened from', async ({
   page,
 }) => {
   /* The Coverage GRR, not the browse one. This is the only test here
@@ -356,9 +357,16 @@ test('coming back from a resource page returns to the tree', async ({
   /* A real reload, not a fragment move -- the resource page is a
    * different document. So this is the *load* path being asserted, and
    * the history entry having carried the fragment with it: the page has
-   * no other memory of where the reader was. */
-  await expect.poll(() => hashOf(page)).toBe('#/');
+   * no other memory of where the reader was.
+   *
+   * The folder, not the root. Before iossifovlab/gain#579 the descent
+   * into `scores` wrote nothing to the address, so the entry this
+   * returns to was the `#/` the page was opened at and the reader landed
+   * a level above the resource they had just been reading. */
+  await expect.poll(() => hashOf(page)).toBe('#/scores');
   await expectView(page, 'hierarchical');
+  await expect(breadcrumbTrail(page)).resolves.toEqual(
+    ['All resources', 'scores']);
 });
 
 test('two GRRs sharing an origin do not share a browse view', async ({
@@ -451,4 +459,55 @@ test('a round trip through the tree leaves the column widths intact', async ({
    * equally broken. */
   expect(before).not.toContain('0px');
   expect(await columnWidths(page)).toEqual(before);
+});
+
+/* ---- The browsed folder lives in the URL hash (#579) ---- */
+
+/**
+ * The folder row with exactly this name.
+ *
+ * Matched on the name element rather than with `hasText` on the row,
+ * because a row's text also carries its resource count and its size --
+ * so a substring match is answered by any row whose *size* happens to
+ * spell the folder being looked for, and the folder names this suite
+ * navigates include one that is mostly punctuation.
+ */
+function folderRow(page: Page, name: string) {
+  return page.locator('#hierarchical-list .hv-folder').filter({
+    has: page.locator('.hv-name', { hasText: new RegExp(`^${escapeForRegExp(name)}$`) }),
+  });
+}
+
+/** `name` with every RegExp metacharacter made literal. */
+function escapeForRegExp(name: string): string {
+  return name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The breadcrumb trail, outermost crumb first.
+ *
+ * `allTextContents` rather than `allInnerTexts`, which collapses runs of
+ * whitespace -- a folder whose name carries a space would then be
+ * reported under a name it does not have, and one of the names this
+ * suite navigates is there precisely to prove spaces survive.
+ *
+ * The separators are excluded by selecting the crumbs themselves, so the
+ * result is the trail and not the trail interleaved with "/".
+ */
+function breadcrumbTrail(page: Page): Promise<string[]> {
+  return page.locator('#breadcrumb .breadcrumb-item').allTextContents();
+}
+
+test('drilling into a folder puts it in the URL hash', async ({ page }) => {
+  await openBrowseIndex(page, '#/');
+  await expectView(page, 'hierarchical');
+
+  await folderRow(page, 'hg38').click();
+
+  await expect.poll(() => hashOf(page)).toBe('#/hg38');
+  /* The tree moved too, and not only the address: a folder click that
+   * wrote the hash without rendering would pass on the assertion above
+   * alone. `scores` is a child of `hg38` and not a top-level folder, so
+   * seeing it is what says the descent happened. */
+  await expect(folderRow(page, 'scores')).toBeVisible();
 });

@@ -412,7 +412,8 @@
                         + '<span class="hv-count">(' + folder.count + ")</span>"
                         + "</div>"
                         + '<span class="hv-size">' + escapeHtml(formatSize(folder.bytes)) + "</span>";
-                    row.addEventListener("click", () => navigateTo(folder.path));
+                    row.addEventListener("click", () => goTo(
+                        { view: "hierarchical", path: folder.path }));
                     listEl.appendChild(row);
                 }
 
@@ -464,7 +465,7 @@
             const typeFilter = document.getElementById("type-filter");
             const statusEl = document.getElementById("status");
 
-            function setView(view) {
+            function setView(view, path) {
                 const isHier = view === "hierarchical";
                 hierBtn.classList.toggle("active", isHier);
                 tableBtn.classList.toggle("active", !isHier);
@@ -475,7 +476,7 @@
                 searchField.disabled = isHier;
                 typeFilter.disabled = isHier;
                 searchContainer.classList.toggle("disabled", isHier);
-                if (isHier) navigateTo(currentPath);
+                if (isHier) navigateTo(path);
             }
 
             // ---- Browse state lives in the URL hash ----
@@ -502,19 +503,60 @@
                 // page, and a fragment is also how something with no
                 // interest in this page at all -- a link into the docs, a
                 // tracker's leftovers -- ends up in the address.
+                if (!hash.startsWith(HIERARCHICAL_HASH)) {
+                    return { view: "table", path: [] };
+                }
                 return {
-                    view: hash === HIERARCHICAL_HASH ? "hierarchical" : "table",
+                    view: "hierarchical",
+                    path: parsePath(hash.slice(HIERARCHICAL_HASH.length)),
                 };
+            }
+
+            /** The folder segments a fragment's path names, outermost first. */
+            function parsePath(encodedPath) {
+                const segments = [];
+                for (const encoded of encodedPath.split("/")) {
+                    // An empty segment names no folder -- a trailing or a
+                    // doubled slash -- so it is dropped rather than looked
+                    // up as a child called "".
+                    if (encoded === "") continue;
+                    let segment;
+                    try {
+                        segment = decodeURIComponent(encoded);
+                    } catch {
+                        // `decodeURIComponent` throws on a malformed escape
+                        // ("%zz"), which a hand-edited or truncated address
+                        // can carry. What decoded so far is kept and the
+                        // rest abandoned, which leaves a shorter path --
+                        // and a path naming a folder that is not there is
+                        // what the walk-up already exists for, since
+                        // folders come and go between regenerations. One
+                        // route for a path that cannot be followed, not two.
+                        return segments;
+                    }
+                    segments.push(segment);
+                }
+                return segments;
             }
 
             /** The fragment addressing a state; "" for the default view. */
             function buildHash(state) {
-                return state.view === "hierarchical" ? HIERARCHICAL_HASH : "";
+                if (state.view !== "hierarchical") return "";
+                // Encoded per segment and then joined, never the other way
+                // round: the segments are resource id fragments, which are
+                // untrusted repository content (gain#467, gain#528), and
+                // encoding the joined string would escape the separators
+                // along with everything else. Going per segment is also
+                // what makes a name containing "/" impossible to spell --
+                // it comes back as one folder, not two.
+                return HIERARCHICAL_HASH
+                    + state.path.map(encodeURIComponent).join("/");
             }
 
             /** Render what the current address says. The only applier. */
             function applyHash() {
-                setView(parseHash(location.hash).view);
+                const state = parseHash(location.hash);
+                setView(state.view, state.path);
             }
 
             /** Push `state` into the session history, then render it. */
@@ -553,8 +595,15 @@
                 applyHash();
             }
 
-            tableBtn.addEventListener("click", () => goTo({ view: "table" }));
-            hierBtn.addEventListener("click", () => goTo({ view: "hierarchical" }));
+            // Both carry the folder, so that leaving the tree for the table
+            // and coming back lands where the reader left rather than at the
+            // root. `currentPath` is the folder showing now -- [] until the
+            // tree has been entered, which is why a first click on the tree
+            // button addresses the root.
+            tableBtn.addEventListener("click", () => goTo(
+                { view: "table", path: currentPath }));
+            hierBtn.addEventListener("click", () => goTo(
+                { view: "hierarchical", path: currentPath }));
 
             // `hashchange` only. A same-document fragment move fires
             // `popstate` as well, and listening to both would apply every
