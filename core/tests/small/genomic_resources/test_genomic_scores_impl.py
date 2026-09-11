@@ -49,6 +49,7 @@ from gain.genomic_resources.testing.builders import (
     PositionScoreBuilder,
     a_grr,
     a_position_score,
+    a_reference_genome,
     a_vcf_info_score,
 )
 from gain.task_graph.cli_tools import task_graph_run
@@ -438,6 +439,52 @@ def test_get_chrom_regions_inmemory_splits_on_the_tables_own_length() -> None:
     assert regions_for(1001, 1000) == [("1", 1, 1000), ("1", 1001, 2000)]
     assert regions_for(2500, 1000) == [
         ("1", 1, 1000), ("1", 1001, 2000), ("1", 2001, 3000)]
+
+
+def test_get_chrom_regions_splits_on_the_genome_where_it_lists_the_contig(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The label's genome reaches the resolver, and the table answers the rest.
+
+    What this seam proves is the plumbing: the ``reference_genome`` label
+    is resolved through the cached genome and handed to the resolver, so
+    chr1 splits on the genome's exact 3000 rather than the probe's 4000
+    (the tabix pin above), and chrM -- unknown to the genome -- on the
+    probe's bound.  The per-contig fallthrough rule itself is pinned at
+    the resolver, in test_score_chrom_lengths.  Measured on the caller
+    before the rung moved into the resolver (gain#1418), then required to
+    hold after.
+    """
+    repo = (
+        a_grr()
+        .with_resource(
+            "genome", a_reference_genome().with_chromosome("chr1", "A" * 3000))
+        .with_resource(
+            "score",
+            a_position_score()
+            .with_score("score", "float")
+            .with_data("""
+                chrom  pos_begin  score
+                chr1   10         0.1
+                chr1   2500       0.2
+                chrM   40         0.3
+            """)
+            .with_tabix()
+            .with_labels(reference_genome="genome"))
+        .build_repo(tmp_path)
+    )
+    impl = build_score_implementation_from_resource(
+        repo.get_resource("score"))
+    impl.score.open()
+
+    regions = impl._get_chrom_regions(1000, grr=repo)
+
+    assert [(r.chrom, r.start, r.stop) for r in regions] == [
+        ("chr1", 1, 1000),
+        ("chr1", 1001, 2000),
+        ("chr1", 2001, 3000),
+        ("chrM", 1, 48),
+    ]
 
 
 @pytest.mark.parametrize(

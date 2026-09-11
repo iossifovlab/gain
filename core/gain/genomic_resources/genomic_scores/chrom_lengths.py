@@ -11,9 +11,11 @@ here keeps three things apart: the number, its provenance, and the
 when the number is absent.  The score's methods expose the ``int`` view only.
 
 The ladder the epic (gain#1412) settles is genome label → bigWig header →
-tabix estimate, applied per contig of the score.  This module answers the
-table rungs live; the genome rung (gain#1418) and the stored
-``statistics/chrom_lengths.json`` (gain#1419) are later slices.
+tabix estimate, applied per contig of the score.  This module answers every
+rung live: the genome rung from the ``ReferenceGenome`` a caller with a GRR
+hands in (the statistics build does; the score's own methods have none, so
+they resolve through the table alone), the rest through the table.  The
+stored ``statistics/chrom_lengths.json`` (gain#1419) is a later slice.
 """
 
 from __future__ import annotations
@@ -62,18 +64,27 @@ class ChromLength:
 
 def derive_chrom_length(
     score: GenomicScore, chrom: str,
-    ref_genome: ReferenceGenome | None = None,  # ruff: ignore[unused-function-argument]
+    ref_genome: ReferenceGenome | None = None,
 ) -> ChromLength:
     """Resolve one contig of ``score`` through the ladder.
 
-    ``ref_genome`` is accepted for the genome rung, which is not yet
-    implemented (gain#1418); today every contig is answered by the table,
-    and the source is whatever the backend declares its lengths to be.
-    Raises ``ValueError`` when the score is not open or does not carry
-    ``chrom`` -- a bad question, as opposed to an absent answer -- in the
-    TABLE's words, since it is the table that refuses; the score's methods
-    screen first and word both refusals as every other score read does.
+    ``ref_genome`` is the top rung: a contig it lists is answered with its
+    true length, tagged ``REFERENCE_GENOME``, and the table is never asked.
+    A contig it does not list -- or no genome at all -- falls through to
+    the table, whose source is whatever the backend declares its lengths
+    to be.  Raises ``ValueError`` when the score is not open or does not
+    carry ``chrom`` -- a bad question, as opposed to an absent answer -- in
+    the TABLE's words, since it is the table that refuses; the genome rung
+    sits behind the table's own screen so that a contig only the genome
+    knows is refused the same way.  The score's methods screen first and
+    word both refusals as every other score read does.
     """
+    if (ref_genome is not None
+            and score.table.has_chromosome(chrom)
+            and chrom in ref_genome.get_all_chrom_lengths()):
+        return ChromLength(
+            length=ref_genome.get_chrom_length(chrom),
+            source=ChromLengthSource.REFERENCE_GENOME, extent=None)
     length = score.table.find_chromosome_length(chrom)
     if isinstance(length, ContigExtent):
         return ChromLength(length=None, source=None, extent=length)
@@ -90,8 +101,8 @@ def derive_chrom_lengths(
     The universe is the score's contigs -- ``get_all_chromosomes()`` --
     never the whole genome; a whole-reference denominator is a property of
     the genome and belongs to coverage (gain#1041).  Keyed by contig so
-    the consumers that split regions (gain#1418) and persist the answer
-    (gain#1419) look up by name; the dict keeps table order.
+    the consumers that split regions (the statistics build) and persist
+    the answer (gain#1419) look up by name; the dict keeps table order.
 
     Not memoised: on a tabix score every call re-runs the probe per contig,
     which is the cost gain#1419 takes out of the read path by storing this

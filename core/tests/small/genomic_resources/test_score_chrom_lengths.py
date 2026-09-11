@@ -6,7 +6,9 @@ The three ``GenomicScore`` methods mirror ``ReferenceGenome``'s
 ``ValueError``.  Underneath them, ``derive_chrom_lengths`` keeps the
 tri-state answer the statistics region splitter needs (gain#509) -- a length,
 or the ``ContigExtent`` reason there is none -- and the source of each length
-is whatever the backend declares its lengths to be.
+is whatever the backend declares its lengths to be.  A caller holding a
+``ReferenceGenome`` hands it to the resolver, which answers every contig the
+genome lists from it first, exactly, and per contig (gain#1418).
 """
 
 import pathlib
@@ -28,9 +30,14 @@ from gain.genomic_resources.genomic_scores.chrom_lengths import (
     derive_chrom_length,
     derive_chrom_lengths,
 )
+from gain.genomic_resources.reference_genome import (
+    ReferenceGenome,
+    build_reference_genome_from_resource,
+)
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
     a_position_score,
+    a_reference_genome,
     a_vcf_info_score,
 )
 
@@ -270,6 +277,103 @@ def test_derive_chrom_lengths_reports_a_proven_empty_contig(
         length=None, source=None, extent=ContigExtent.EMPTY)
 
 
+def _a_genome_listing(
+    tmp_path: pathlib.Path, **lengths: int,
+) -> ReferenceGenome:
+    """A genome carrying exactly the named contigs at the given lengths."""
+    builder = a_reference_genome()
+    for chrom, length in lengths.items():
+        builder = builder.with_chromosome(chrom, "A" * length)
+    return build_reference_genome_from_resource(
+        builder.build_resource(tmp_path / "genome"))
+
+
+def test_derive_chrom_lengths_answers_from_the_genome_where_it_lists_the_contig(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The genome rung is exact and comes first, per contig (gain#1418).
+
+    chr1 is answered by the genome -- its true 3000, not the probe's bound
+    past 2500 -- and says so.  chrM is carried by the score but not by the
+    genome, and falls through to the table for that contig alone: the
+    genome does not veto a contig it merely does not know.
+    """
+    score = _a_tabix_score(tmp_path / "score", rows="""
+        chrom  pos_begin  score
+        chr1   10         0.1
+        chr1   2500       0.2
+        chrM   40         0.3
+    """).open()
+    genome = _a_genome_listing(tmp_path, chr1=3000)
+
+    resolved = derive_chrom_lengths(score, genome)
+
+    assert resolved["chr1"] == ChromLength(
+        length=3000, source=ChromLengthSource.REFERENCE_GENOME, extent=None)
+    # 48 is the probe's bound for a lone row at 40, as the region-split pin
+    # in test_genomic_scores_impl measures for the same rows.
+    assert resolved["chrM"] == ChromLength(
+        length=48, source=ChromLengthSource.TABIX_ESTIMATE, extent=None)
+
+
+def test_the_genome_widens_no_contig_universe(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A genome usually lists far more contigs than a score carries, in its
+    # own order.  The answer is keyed by the SCORE's contigs, in the
+    # TABLE's order -- chr3 is not added, chr2 is not moved ahead of chr1
+    # -- because a whole-reference denominator is coverage's business
+    # (gain#1041) and a consumer splitting regions walks the table.
+    score = _a_tabix_score(tmp_path / "score", rows="""
+        chrom  pos_begin  score
+        chr1   10         0.1
+        chr2   40         0.3
+    """).open()
+    genome = _a_genome_listing(tmp_path, chr3=100, chr2=500, chr1=3000)
+
+    resolved = derive_chrom_lengths(score, genome)
+
+    assert list(resolved) == ["chr1", "chr2"]
+
+
+def test_a_contig_the_genome_lacks_still_reports_why_it_has_no_length(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The fallthrough is per contig and keeps the table's tri-state answer:
+    # 'kept' is the genome's, 'empty' -- unknown to the genome, proven
+    # empty by the table -- is still EMPTY, not an error and not a length.
+    score = _a_score_with_an_empty_mapped_contig(tmp_path / "score").open()
+    genome = _a_genome_listing(tmp_path, kept=200)
+
+    resolved = derive_chrom_lengths(score, genome)
+
+    assert resolved["kept"] == ChromLength(
+        length=200, source=ChromLengthSource.REFERENCE_GENOME, extent=None)
+    assert resolved["empty"] == ChromLength(
+        length=None, source=None, extent=ContigExtent.EMPTY)
+
+
+def test_the_genome_answers_no_question_the_table_would_refuse(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A bad question is refused in the table's words, genome or not.
+
+    The genome lists chr2 and the score does not carry it; the genome
+    lists chr1 and the score is closed.  Both would be answerable off the
+    genome alone, and neither may be: the resolver's refusals are the
+    table's, and a genome must not turn a contig the score has no data
+    for into a length.
+    """
+    score = _a_tabix_score(tmp_path / "score")
+    genome = _a_genome_listing(tmp_path, chr1=3000, chr2=500)
+
+    with pytest.raises(ValueError, match="not open"):
+        derive_chrom_length(score, "chr1", genome)
+    score.open()
+    with pytest.raises(ValueError, match="chr2"):
+        derive_chrom_length(score, "chr2", genome)
+
+
 def test_get_all_chrom_lengths_holds_resolved_contigs_in_table_order(
     tmp_path: pathlib.Path, mocker: pytest_mock.MockFixture,
 ) -> None:
@@ -328,7 +432,7 @@ def test_each_backends_source_and_its_exactness(
 
 
 def test_a_reference_genome_length_is_exact() -> None:
-    # Not producible by a score in this slice (gain#1418 adds the rung), so
+    # Not producible by the score's own methods, which hold no genome, so
     # the member is asserted directly: it is the one source that beats a
     # bigWig header, and a caller filtering on exactness must keep it.
     assert ChromLengthSource.REFERENCE_GENOME.is_exact
