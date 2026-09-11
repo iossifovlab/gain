@@ -74,14 +74,14 @@ EXPECTED_GLYPHS = frozenset({
 })
 
 #: Every origin the browse page *loads* from: jQuery from Google's CDN,
-#: the sqlite-wasm module from jsDelivr, the stylesheets from Google
-#: Fonts, and the host serving the font files those point at.  Ordinary
+#: the stylesheets from Google Fonts, and the host serving the font
+#: files those point at.  The sqlite-wasm module is no longer among
+#: them: it ships inside the repository (gain#1335).  Ordinary
 #: hyperlinks are deliberately not counted -- the page links to the
 #: SQLite FTS docs beside its search box, and a page that grows another
 #: such link has not grown a third party it loads code from.
 BROWSE_ORIGINS = frozenset({
     "ajax.googleapis.com",
-    "cdn.jsdelivr.net",
     "fonts.googleapis.com",
     "fonts.gstatic.com",
 })
