@@ -37,15 +37,6 @@ const JQUERY_URL =
   `https://ajax.googleapis.com/ajax/libs/jquery/${JQUERY_VERSION}/jquery.min.js`;
 const JQUERY_DIR = 'jquery';
 
-/*
- * sqlite-wasm is deliberately not here. The index page imports it from
- * the repository's own `.static/` (iossifovlab/gain#1335), so it is
- * served like any other file of the generated GRR -- by the resolver
- * below, out of the fixture -- and the suite has nothing to vendor for
- * it. The bytes the browser runs are the bytes gain published, which is
- * the thing a published GRR promises.
- */
-
 /** Where `npm ci` unpacks the vendored package. */
 const NODE_MODULES = path.join(__dirname, 'node_modules');
 

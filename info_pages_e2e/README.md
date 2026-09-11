@@ -46,19 +46,16 @@ than skipping (`global-setup.ts`).
 
 `serving.ts` answers every request the page under test makes by reading
 a file, and aborts anything it does not recognise. Two things are
-served: the generated GRR, and the one package the templates still load
-from a CDN — jQuery, vendored as a `devDependency` at the same pinned
-version the template names, so `npm ci` puts it on disk.
+served: the generated GRR, and whatever the templates still load from a
+CDN — today jQuery alone, vendored as a `devDependency` at the same
+pinned version the template names, so `npm ci` puts it on disk.
 
-sqlite-wasm needs nothing from the suite. Since iossifovlab/gain#1335
-the index page imports it from the repository's own
-`.static/sqlite-wasm-<version>/`, which `repo-index` publishes into the
-fixture along with the page, so the module and the `sqlite3.wasm` it
-locates beside itself are answered out of the generated GRR like any
-other file of it. The bytes the browser runs are the bytes gain
-published — which is what the suite is here to test. The
-"refuses every request" spec pins that both files were asked for from
-the GRR origin and served.
+Everything a page loads from the repository itself — including what
+`repo-index` publishes under `.static/`, such as the sqlite-wasm the
+search runs on (iossifovlab/gain#1335) — is answered out of the
+generated fixture like any other file of the GRR, and needs nothing
+vendored here. The "refuses every request" spec pins that the search
+engine's files were asked for from the GRR origin and served.
 
 The GRR is served from a **virtual origin**, `https://grr.test/`.
 Nothing listens on a socket; the origin exists only inside Playwright's
