@@ -6,7 +6,6 @@
   "scripts": {},
   "devDependencies": {
     "@playwright/test": "1.62.1",
-    "@sqlite.org/sqlite-wasm": "3.51.2-build6",
     "@types/node": "^22.13.10",
     "jquery": "3.7.1",
     "typescript": "^5.8.2"

@@ -194,7 +194,7 @@ test('the hierarchical view lists the repository\'s top-level folders', async ({
  * what it permits and then checked it permitted that would pass however
  * wide the helper had been opened.
  */
-const SERVED_HOSTS = ['grr.test', 'ajax.googleapis.com', 'cdn.jsdelivr.net'];
+const SERVED_HOSTS = ['grr.test', 'ajax.googleapis.com'];
 
 test('the harness refuses every request it does not serve itself', async ({
   page,
@@ -222,6 +222,19 @@ test('the harness refuses every request it does not serve itself', async ({
     (url) => !failed.has(url) && !SERVED_HOSTS.includes(new URL(url).host),
   );
   expect(letThrough).toEqual([]);
+
+  /* The search engine came from the repository, and all of it did. The
+   * page imports `index.mjs` from the GRR's own `.static/`, and the
+   * module then locates `sqlite3.wasm` beside itself -- so a published
+   * repository serves the search with no CDN in the picture
+   * (iossifovlab/gain#1335). Both files, by name: the module loading
+   * while the wasm failed would leave the search dead and this list
+   * one entry short. */
+  const engine = requested.filter((url) => url.includes('/.static/'));
+  expect(engine.map((url) => new URL(url).pathname.split('/').pop()).sort())
+    .toEqual(['index.mjs', 'sqlite3.wasm']);
+  expect(engine.every((url) => new URL(url).host === 'grr.test')).toBe(true);
+  expect(engine.filter((url) => failed.has(url))).toEqual([]);
 });
 
 /* ---- The browse view lives in the URL hash (#578) ---- */
