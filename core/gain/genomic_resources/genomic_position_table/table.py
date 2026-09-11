@@ -57,7 +57,7 @@ class ContigExtent(enum.Enum):
     length is what SPLITTING a contig needs, not what READING one needs.
     """
 
-    def refusal(self, chrom: str, contigs: Iterable[str]) -> str:
+    def refusal(self, chrom: str, contigs: list[str]) -> str:
         """The message for a caller that has no use for this member.
 
         The one home of the two wordings, for
@@ -74,10 +74,55 @@ class ContigExtent(enum.Enum):
         if self is ContigExtent.EMPTY:
             return (
                 f"contig {chrom} has no records in the table's contigs: "
-                f"{list(contigs)}")
+                f"{contigs}")
         return (
             f"could not determine the length of contig {chrom} "
-            f"in the table's contigs: {list(contigs)}")
+            f"in the table's contigs: {contigs}")
+
+
+class ChromLengthSource(enum.Enum):
+    """Where a contig's length was read from, and so how far to trust it.
+
+    Three of the members are what a backend's :meth:`find_chromosome_length`
+    measures, and every backend names its own in ``chrom_length_source`` --
+    a fact about the FORMAT, declared on the class the way ``yields_records``
+    and ``supports_value_arrays`` are, so no caller has to know which
+    backends exist.  The fourth, :attr:`REFERENCE_GENOME`, no table
+    produces: it is the genome rung of the score layer's ladder
+    (gain#1412), and lives here beside the other three so that the one
+    vocabulary answers "where did this length come from" for every rung.
+
+    Only :attr:`REFERENCE_GENOME` and :attr:`BIGWIG` are exact.  Callers
+    ask :attr:`is_exact` rather than enumerating members, so a new source
+    needs no edits at the call sites.
+    """
+
+    REFERENCE_GENOME = "reference_genome"
+    """A reference genome's index: the contig's true length."""
+
+    BIGWIG = "bigwig"
+    """The bigWig header, which carries an exact size for every contig."""
+
+    TABIX_ESTIMATE = "tabix_estimate"
+    """The tabix index probe: an upper bound, guaranteed LARGER than the
+    actual length, never the length itself."""
+
+    TABLE_EXTENT = "table_extent"
+    """The in-memory backend's ``max(pos_end) + 1``: how far the rows reach,
+    which is an extent of the data rather than a length of the contig."""
+
+    @property
+    def is_exact(self) -> bool:
+        """Whether a length from this source is the contig's true length.
+
+        A caller that needs a true denominator -- a coverage fraction --
+        may only trust an exact source; a bound or an extent would put the
+        fraction off by whatever the probe over-shot or the rows fell short.
+        """
+        return self in (
+            ChromLengthSource.REFERENCE_GENOME,
+            ChromLengthSource.BIGWIG,
+        )
 
 
 class GenomicPositionTable(abc.ABC):
@@ -123,12 +168,26 @@ class GenomicPositionTable(abc.ABC):
     # claim and behaviour disagree in either direction.
     supports_value_arrays: ClassVar[bool] = False
 
-    # Whether :meth:`find_chromosome_length` answers are EXACT contig
-    # lengths (an ``int``, or a raise) rather than probed upper bounds.
-    # A caller that needs a true denominator -- e.g. a coverage fraction
-    # -- may only trust a backend that declares this; the tabix probe's
-    # answer is guaranteed LARGER than the actual length and stays False.
-    chrom_lengths_are_exact: ClassVar[bool] = False
+    # What :meth:`find_chromosome_length` MEASURES on this backend -- a
+    # header's exact size, an index probe's upper bound, the rows' extent.
+    # Declared, not defaulted: a backend that has not said is refused with
+    # an AttributeError the first time a length's provenance is asked, so a
+    # new format cannot silently inherit a label (and, through
+    # :attr:`chrom_lengths_are_exact`, a trust level) that is not its own.
+    # It used to be the bool alone (#776); the bool is now derived from
+    # this, so the two cannot disagree (gain#1413).
+    chrom_length_source: ClassVar[ChromLengthSource]
+
+    @property
+    def chrom_lengths_are_exact(self) -> bool:
+        """Whether :meth:`find_chromosome_length` answers EXACT lengths.
+
+        A caller that needs a true denominator -- e.g. a coverage fraction
+        -- may only trust a backend for which this holds; the tabix probe's
+        answer is guaranteed LARGER than the actual length.  Read off
+        :attr:`chrom_length_source` rather than declared beside it.
+        """
+        return self.chrom_length_source.is_exact
 
     CHROM = "chrom"
     POS_BEGIN = "pos_begin"

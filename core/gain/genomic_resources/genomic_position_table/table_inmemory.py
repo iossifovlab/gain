@@ -13,7 +13,7 @@ from .record import (
     build_tabular_parser,
     sort_key,
 )
-from .table import ContigExtent, GenomicPositionTable
+from .table import ChromLengthSource, ContigExtent, GenomicPositionTable
 
 
 class InmemoryGenomicPositionTable(GenomicPositionTable):
@@ -61,6 +61,12 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
 
     # This backend yields and stores records rather than line adapters.
     yields_records: ClassVar[bool] = True
+
+    # A length from this backend is ``max(pos_end) + 1`` over the rows it
+    # holds (see :meth:`find_chromosome_length`): how far the data reaches,
+    # not how long the contig is.
+    chrom_length_source: ClassVar[ChromLengthSource] = \
+        ChromLengthSource.TABLE_EXTENT
 
     FORMAT_DEF: ClassVar[dict] = {
         # parameters are <column separator>, <strip_chars>, <space replacement>

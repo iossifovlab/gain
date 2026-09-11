@@ -1682,6 +1682,40 @@ def test_chrom_mapping_add_prefix_reads_back(tmp_path: pathlib.Path) -> None:
         score.get_scores_at_position("1", 10)
 
 
+@pytest.mark.parametrize(("tabix", "expected_contigs"), [
+    # The in-memory backend lists every mapped name, the empty one included;
+    # a tabix index only carries contigs that HAVE records, so the mapping
+    # onto file contig 99 maps nothing there (see ContigExtent).
+    pytest.param(False, ["kept", "empty"], id="inmemory"),
+    pytest.param(True, ["kept"], id="tabix"),
+])
+def test_chrom_mapping_file_is_shipped_and_reads_back(
+    tabix: bool,
+    expected_contigs: list[str],
+    tmp_path: pathlib.Path,
+) -> None:
+    builder = (
+        a_position_score()
+        .with_data("""
+            chrom  pos_begin  score
+            1      10         0.1
+        """)
+        .with_chrom_mapping_file(kept="1", empty="99")
+    )
+    if tabix:
+        builder = builder.with_tabix()
+    res = builder.build_resource(tmp_path)
+
+    # The file the config names is really there, in the table's two-column
+    # shape, and the table reads the mapping out of it: the contigs are the
+    # mapped names, in the file's order.
+    assert (tmp_path / "chrom_map.txt").read_text() == (
+        "chrom\tfile_chrom\nkept\t1\nempty\t99\n")
+    score = PositionScore(res).open()
+    assert score.get_all_chromosomes() == expected_contigs
+    assert score.get_scores_at_position("kept", 10) == (0.1,)
+
+
 def test_bigwig_score_reads_back(tmp_path: pathlib.Path) -> None:
     res = (
         a_bigwig_score()

@@ -7,6 +7,7 @@ import numpy as np
 
 from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_position_table.table import (
+    ChromLengthSource,
     ContigExtent,
     GenomicPositionTable,
 )
@@ -177,7 +178,8 @@ class BigWigTable(GenomicPositionTable):
     # The header carries an exact size for every contig it lists (see
     # :meth:`find_chromosome_length`), so lengths from this backend can
     # serve as true denominators.
-    chrom_lengths_are_exact: ClassVar[bool] = True
+    chrom_length_source: ClassVar[ChromLengthSource] = \
+        ChromLengthSource.BIGWIG
 
     # Serves the bulk column-array read; see get_region_value_arrays below.
     supports_value_arrays: ClassVar[bool] = True

@@ -717,28 +717,39 @@ values)`` tuple per record, at the record's own extent -- so a caller migrates
 by renaming the call.  A call to ``fetch_region_segments`` is an
 ``AttributeError``.
 
-**New export ``InmemoryGenomicPositionTable``, and a new method
-``ContigExtent.refusal(chrom, contigs)``** (gain#1413).  The score layer's
-``GenomicScore.get_chrom_length`` names which backend answered a length, and
-so needs the in-memory class where it already had the bigWig one -- exported
-here rather than deep-imported, so every backend class the score layer
-dispatches on comes through the one facade.  ``refusal`` is the one home of
-the two "no length" messages: ``get_chromosome_length`` raised them inline,
-and the score's method refuses the same two facts and must say them the same
-way.  Both are additive; nothing existing changed.
+**New export ``ChromLengthSource``, a new obligation on backend authors, and
+a new method ``ContigExtent.refusal(chrom, contigs)``** (gain#1413).
+
+``ChromLengthSource`` names what a length IS -- a header's exact size, an
+index probe's upper bound, the rows' extent, or (the one member no table
+produces) a reference genome's -- and carries ``is_exact``.  It is exported
+because the score layer's ``GenomicScore.get_chrom_length_source`` answers
+with it, and lives here rather than in the score layer because three of its
+four members are facts about a FORMAT: each backend now declares its own as
+the class attribute ``chrom_length_source``, the way it declares
+``yields_records``.  The obligation: the base class gives it NO default, so
+a backend that has not said is refused with an ``AttributeError`` the first
+time a length's provenance is asked, rather than inheriting a label -- and a
+trust level -- that is not its own.  ``chrom_lengths_are_exact`` is
+**unchanged in name, type and meaning** for its readers (``coverage.py``),
+but is now a property derived from the declaration instead of a second
+``ClassVar`` beside it, so the two cannot disagree.
+
+``refusal`` is the one home of the two "no length" messages:
+``get_chromosome_length`` raised them inline, and the score's method refuses
+the same two facts and must say them the same way.
 """
 from .line import LineBuffer
-from .table import ContigExtent
+from .table import ChromLengthSource, ContigExtent
 from .table_bigwig import BigWigTable
-from .table_inmemory import InmemoryGenomicPositionTable
 from .table_tabix import TabixGenomicPositionTable
 from .table_vcf import VCFGenomicPositionTable
 from .utils import build_genomic_position_table
 
 __all__ = [
     "BigWigTable",
+    "ChromLengthSource",
     "ContigExtent",
-    "InmemoryGenomicPositionTable",
     "LineBuffer",
     "TabixGenomicPositionTable",
     "VCFGenomicPositionTable",

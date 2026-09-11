@@ -361,14 +361,14 @@ def test_the_package_exports_only_what_still_exists() -> None:
     # cannot interpret that method's answer without being able to import the
     # enum and compare against its members.
     #
-    # ``InmemoryGenomicPositionTable`` is the other addition (gain#1413): the
-    # score layer names which backend answered a contig's length, and every
-    # backend class it dispatches on should come through this one facade
-    # rather than one of them by deep import.
+    # ``ChromLengthSource`` is the other addition (gain#1413), for the same
+    # reason: it is what ``GenomicScore.get_chrom_length_source`` answers
+    # with, and it lives in this package because each backend declares its
+    # own member as ``chrom_length_source``.
     assert gpt.__all__ == [
         "BigWigTable",
+        "ChromLengthSource",
         "ContigExtent",
-        "InmemoryGenomicPositionTable",
         "LineBuffer",
         "TabixGenomicPositionTable",
         "VCFGenomicPositionTable",
