@@ -278,9 +278,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         ref_genome = self._get_reference_genome_cached(grr, ref_genome_id)
         # The ladder -- genome label first, then whatever the table can say
         # -- is the score layer's (gain#1412), asked once per contig of the
-        # score.  This caller only consumes the record: the number when
-        # there is one, and otherwise the reason, because the two reasons
-        # get opposite treatment below (gain#509).
+        # score; this caller only consumes the record.
         for chrom, resolved in derive_chrom_lengths(
                 self.score, ref_genome).items():
             if resolved.extent is ContigExtent.EMPTY:

@@ -916,13 +916,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         here; a tabix score answers the probe's upper bound, an in-memory
         score how far its rows reach.
 
-        Answered live through the table on every call, not memoised: on a
-        tabix score that is the index probe each time.  The score holds no
-        GRR, so the ladder's genome rung is out of its reach -- a caller
-        with a genome asks :func:`~.chrom_lengths.derive_chrom_lengths`
-        directly, as the statistics build does.  gain#1419 stores that
-        answer at repair, which is what brings the genome's exact lengths
-        to this method and takes the probe out of this path.
+        Answered live through the table alone on every call, not memoised:
+        on a tabix score that is the index probe each time.  The score
+        holds no genome -- see :mod:`.chrom_lengths` for the ladder and who
+        supplies its top rung.  gain#1419 stores the answer at repair and
+        takes the probe out of this path.
         """
         return self._resolve_chrom_length(chrom)[0]
 

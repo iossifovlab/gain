@@ -444,16 +444,16 @@ def test_get_chrom_regions_inmemory_splits_on_the_tables_own_length() -> None:
 def test_get_chrom_regions_splits_on_the_genome_where_it_lists_the_contig(
     tmp_path: pathlib.Path,
 ) -> None:
-    """The genome rung answers per contig, and the table answers the rest.
+    """The label's genome reaches the resolver, and the table answers the rest.
 
-    A ``reference_genome`` label supplies the exact length of every contig
-    the genome lists, so chr1 splits on its 3000 and not on the tabix probe's
-    bound (which, for rows at 10 and 2500, would reach 4000 -- see the tabix
-    pinning above).  chrM is carried by the score but not by the genome, and
-    falls through to the probe FOR THAT CONTIG ONLY: the genome does not
-    veto a contig it merely does not know.  Measured on the caller before
-    the rung moved into the resolver (gain#1418), then required to hold
-    after.
+    What this seam proves is the plumbing: the ``reference_genome`` label
+    is resolved through the cached genome and handed to the resolver, so
+    chr1 splits on the genome's exact 3000 rather than the probe's 4000
+    (the tabix pin above), and chrM -- unknown to the genome -- on the
+    probe's bound.  The per-contig fallthrough rule itself is pinned at
+    the resolver, in test_score_chrom_lengths.  Measured on the caller
+    before the rung moved into the resolver (gain#1418), then required to
+    hold after.
     """
     repo = (
         a_grr()
