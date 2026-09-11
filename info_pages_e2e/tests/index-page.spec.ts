@@ -173,10 +173,9 @@ test('the hierarchical view lists the repository\'s top-level folders', async ({
   await page.locator('#hierarchical-view-btn').click();
 
   /* The tree is folded up from `window.rowData`, which the templates
-   * build by scraping the rendered table. So this is also the assertion
-   * that fails if the scrape throws before it runs: `rowData` stays
-   * empty, and the tree renders as an empty list rather than as an
-   * error.
+   * build by scraping the rendered table -- an empty scrape renders as
+   * an empty list, not as an error, so this is the assertion that
+   * notices one.
    *
    * *Which* folders, not in which order: the order is asserted once, by
    * the test that is about the comparator. Pinning it here as well would
@@ -215,22 +214,16 @@ test('the harness refuses every request it does not serve itself', async ({
   expect(fonts.filter((url) => !failed.has(url))).toEqual([]);
 
   /* And the fonts are the *only* thing asked for off the GRR's origin.
-   * A script the page needed from a CDN would be aborted too and so
-   * would pass the checks around this one -- while leaving the page
-   * without whatever that script did (iossifovlab/gain#1399). */
+   * Asked for, not let through: a script the page needed from a CDN
+   * would be aborted like the fonts and leave the page without whatever
+   * that script did. The Jenkins stage runs this suite under
+   * `docker run --network none`, so a page that grew a dependency on
+   * the network would hang there; failing here instead is the whole
+   * point of aborting rather than allowing. */
   const offOrigin = requested.filter(
     (url) => !SERVED_HOSTS.includes(new URL(url).host),
   );
   expect(offOrigin).toEqual(fonts);
-
-  /* Nothing else got through either. The Jenkins stage runs this suite
-   * under `docker run --network none`, so a page that grew a dependency
-   * on the network would hang there; failing here instead is the whole
-   * point of aborting rather than allowing. */
-  const letThrough = requested.filter(
-    (url) => !failed.has(url) && !SERVED_HOSTS.includes(new URL(url).host),
-  );
-  expect(letThrough).toEqual([]);
 
   /* The search engine came from the repository, and all of it did: the
    * page imports `index.mjs` from the GRR's own `.static/`, and the
@@ -253,12 +246,19 @@ test('the harness refuses every request it does not serve itself', async ({
 /**
  * Chromium asks before a page may read or write the clipboard, and a
  * headless run has nobody to answer, so the permission is granted up
- * front. Reading it back through `navigator.clipboard` in the page is
- * the only way to see what the click put there: Playwright has no
- * clipboard of its own.
+ * front.
  */
 test.describe('copying a resource id', () => {
   test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
+
+  /**
+   * What the clipboard holds, read through the page: Playwright has no
+   * clipboard of its own, so this is the only way to see what a click
+   * put there.
+   */
+  function clipboardText(page: Page): Promise<string> {
+    return page.evaluate(() => navigator.clipboard.readText());
+  }
 
   /** The copy icon in the row of the resource with this id. */
   function copyIconOf(page: Page, id: string) {
@@ -282,8 +282,7 @@ test.describe('copying a resource id', () => {
      * reports it. */
     await expect(copyIconOf(page, BROWSE_SUMMARY_ONLY_RESOURCE_ID))
       .toHaveText('content_copy');
-    expect(await page.evaluate(() => navigator.clipboard.readText()))
-      .toBe(BROWSE_ID_ONLY_RESOURCE_ID);
+    expect(await clipboardText(page)).toBe(BROWSE_ID_ONLY_RESOURCE_ID);
   });
 
   test('the icon copies the id its row shows after a search', async ({
@@ -305,8 +304,7 @@ test.describe('copying a resource id', () => {
 
     await expect(copyIconOf(page, BROWSE_ID_ONLY_RESOURCE_ID))
       .toHaveText('check');
-    expect(await page.evaluate(() => navigator.clipboard.readText()))
-      .toBe(BROWSE_ID_ONLY_RESOURCE_ID);
+    expect(await clipboardText(page)).toBe(BROWSE_ID_ONLY_RESOURCE_ID);
   });
 });
 
