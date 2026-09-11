@@ -285,6 +285,29 @@ test.describe('copying a resource id', () => {
     expect(await page.evaluate(() => navigator.clipboard.readText()))
       .toBe(BROWSE_ID_ONLY_RESOURCE_ID);
   });
+
+  test('the icon copies the id its row shows after a search', async ({
+    page,
+  }) => {
+    await openBrowseIndex(page);
+    /* A search does not remove rows: it rewrites the ones it keeps, so
+     * the one row left showing is the table's first, now carrying a
+     * resource it did not carry on arrival. The click handlers were
+     * bound to the icons once, on arrival -- this is the assertion that
+     * the rewrite keeps the icon that was bound, rather than replacing
+     * it with one that nothing listens to. */
+    await search(page, BROWSE_ID_ONLY_TERM);
+    await expect(visibleResourceIds(page)).toHaveText([
+      BROWSE_ID_ONLY_RESOURCE_ID,
+    ]);
+
+    await copyIconOf(page, BROWSE_ID_ONLY_RESOURCE_ID).click();
+
+    await expect(copyIconOf(page, BROWSE_ID_ONLY_RESOURCE_ID))
+      .toHaveText('check');
+    expect(await page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(BROWSE_ID_ONLY_RESOURCE_ID);
+  });
 });
 
 /* ---- The browse view lives in the URL hash (#578) ---- */
