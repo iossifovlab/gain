@@ -3355,12 +3355,13 @@ def build_local_resource(
 def _basic_auth_header(user: str, password: str) -> str:
     """Return the ``Authorization`` header value for HTTP Basic auth.
 
-    The credential is encoded as UTF-8, per RFC 7617.
+    The credential is encoded as UTF-8, per RFC 7617, which also forbids
+    a ``:`` in the user -- raises ``ValueError`` on one.
     """
-    # Encoded here, not by aiohttp: ``aiohttp.BasicAuth`` and the
-    # session-level ``auth`` parameter are both deprecated for removal in
-    # aiohttp 4.0, and the helper that replaces them only exists from 3.14
-    # (#1395). A plain session header needs neither.
+    if ":" in user:
+        raise ValueError(
+            'A ":" is not allowed in the HTTP basic auth user (RFC 7617)')
+    # Encoded here so that no aiohttp auth helper is needed (#1395).
     token = base64.b64encode(f"{user}:{password}".encode()).decode("ascii")
     return f"Basic {token}"
 
@@ -3393,7 +3394,11 @@ def _build_filesystem(
         }
         user = kwargs.get("user")
         password = kwargs.get("password")
-        if user is not None and password is not None:
+        # aiohttp refuses a request that carries credentials both in the url
+        # userinfo and in an ``Authorization`` header, so a url that already
+        # embeds them is left to authenticate on its own.
+        if (user is not None and password is not None
+                and not _url_carries_userinfo(url)):
             client_kwargs["headers"] = {
                 "Authorization": _basic_auth_header(user, password),
             }
