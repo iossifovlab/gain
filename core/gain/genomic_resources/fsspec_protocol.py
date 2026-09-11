@@ -469,6 +469,12 @@ def _url_carries_userinfo(url: str) -> bool:
 #: htslib silent -- every ``[E::...]`` line from every later tabix, VCF and
 #: fasta open discarded -- for the rest of the process's life (gain#1360).
 #:
+#: This is not a theoretical pool. ``web_api``'s pipeline cache builds and
+#: opens pipelines on a ``ThreadedTaskExecutor`` (8 loaders by default);
+#: building a pipeline constructs its VCF tables, each of which brackets its
+#: header load, and opening it brackets every credentialed tabix, VCF and
+#: fasta open in it.
+#:
 #: Re-entrant, because the brackets nest on one thread:
 #: ``VCFGenomicPositionTable._load_vcf_header`` brackets the header open, and
 #: for a credential-bearing url that open enters ``_open_htslib_file``'s own
@@ -493,10 +499,11 @@ def _htslib_silenced() -> Generator[None]:
     """Run the body at htslib verbosity 0, restoring the previous level.
 
     The previous level is restored rather than assumed: this module sets 1
-    at import, but a caller may have lowered it already -- the brackets
-    nest, see ``_HTSLIB_VERBOSITY_LOCK``. Every ``pysam.set_verbosity(0)``
-    bracket in the open path goes through here, so that there is exactly one
-    place that takes the lock.
+    at import, but a caller may have lowered it already, because the
+    brackets nest (see ``_HTSLIB_VERBOSITY_LOCK``, which is also why this
+    serialises). Every ``pysam.set_verbosity(0)`` bracket in the open path
+    goes through here, so that there is exactly one place that takes the
+    lock.
     """
     with _HTSLIB_VERBOSITY_LOCK:
         saved_verbosity = pysam.set_verbosity(0)
@@ -535,16 +542,10 @@ def _open_htslib_file[T](url: str, open_: Callable[[], T]) -> T:
     query string at all. The scoping mirrors the type demotion of ADR 0023,
     likewise paid by exactly the configuration it protects.
 
-    The bracket is ``_htslib_silenced``, which restores the previous level
-    rather than assuming it -- this module sets 1 at import, but a caller may
-    have lowered it already (``VCFGenomicPositionTable._load_vcf_header``
-    does, and its bracket encloses this one) -- and which serialises on
-    ``_HTSLIB_VERBOSITY_LOCK``, because the level is PROCESS-global and
-    opens here ARE driven from a thread pool: ``web_api``'s pipeline cache
-    builds and opens pipelines on a ``ThreadedTaskExecutor``, and opening a
-    pipeline opens the tabix and VCF tables in it exactly as it opens the
-    bigwig ones (gain#1360). The equivalent hazard on fd 2 is why
-    ``_open_libbigwig_file`` takes ``_STDERR_SUPPRESSION_LOCK``.
+    The bracket is ``_htslib_silenced`` -- see it for why it restores rather
+    than assumes, and ``_HTSLIB_VERBOSITY_LOCK`` for why it serialises and
+    which pool drives these opens (gain#1360). The equivalent hazard on fd 2
+    is why ``_open_libbigwig_file`` takes ``_STDERR_SUPPRESSION_LOCK``.
 
     Named for htslib rather than for libraries in general because the
     silencing half is ``pysam``-specific: libBigWig has no verbosity control

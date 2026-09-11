@@ -4,13 +4,10 @@ import errno
 import gzip
 import hashlib
 import io
-import itertools
 import logging
 import os
 import pathlib
 import textwrap
-import threading
-import time
 import traceback
 import typing
 import unittest.mock
@@ -62,6 +59,8 @@ from pydantic import ValidationError
 from .conftest import (
     BASIC_RESOURCE_ID,
     BASIC_RESOURCE_LAYOUT,
+    RunInThreads,
+    overlap_two_opens,
     serving_http,
 )
 
@@ -2233,67 +2232,20 @@ def test_concurrent_authed_bigwig_opens_do_not_strand_stderr(
     silently discarded, and nothing raised to say so. A worse outcome than
     the credential leak the suppression exists to close.
 
-    The interleaving is FORCED rather than raced for. Thread two is started
-    only once thread one is known to be inside the window, and thread one is
-    held there until thread two has entered it too -- so thread two saves the
-    null device, and sleeps long enough on the way out to restore it last.
-    Left to chance this reproduces only sometimes: whether fd 2 ends up
-    stranded depends on which thread happens to restore last, so the same
-    test passed and then failed on consecutive runs before it was pinned this
-    way.
-
-    Thread one's wait is bounded because on CORRECT code thread two never
-    enters the window at all -- it blocks on the lock, which is the fix --
-    so the wait must end by itself rather than deadlock. It is kept short by
-    waiting for thread two to REACH the open first: once that is known, the
-    only remaining gap is the microseconds thread two would need to get
-    inside were it not blocked, so the bound covers scheduling jitter rather
-    than thread start-up. Waiting for entry directly would have to cover both
-    and would be paid in full on every green run.
+    The interleaving is FORCED rather than raced for -- ``overlap_two_opens``
+    says how, and why the bound on the wait is what it is. Asserted on the
+    consequence: a later plain open still writes to fd 2.
     """
     authed, resource = _a_refused_protocol("i1333-bw-threads")
-    first_inside = threading.Event()
-    second_started = threading.Event()
-    second_inside = threading.Event()
-    counter = itertools.count()
-
-    def fake_open(*_args: typing.Any, **_kwargs: typing.Any) -> None:
-        if next(counter) == 0:
-            first_inside.set()
-            assert second_started.wait(timeout=10.0), "second thread stalled"
-            second_inside.wait(timeout=0.25)
-        else:
-            second_inside.set()
-            # Outlast the first thread's restore, so this one -- holding the
-            # null device as its "previous" -- is the one that restores last.
-            time.sleep(0.1)
 
     # Restored unconditionally: a REGRESSION here strands fd 2, which would
     # otherwise take the rest of the suite's stderr down with it and report as
     # a cascade of unrelated failures somewhere else entirely.
     saved_stderr = os.dup(2)
     try:
-        def work(*, second: bool = False) -> None:
-            if second:
-                # Set BEFORE the call, so the wait above covers only the gap
-                # between reaching the open and being inside it.
-                second_started.set()
-            authed.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
-
-        # The real ``pyBigWig.open`` is restored before the probe below,
-        # which needs libBigWig to actually write.
-        with unittest.mock.patch.object(
-                pyBigWig, "open", side_effect=fake_open):
-            first = threading.Thread(target=work, daemon=True)
-            first.start()
-            assert first_inside.wait(timeout=5.0), "first thread never opened"
-            second = threading.Thread(
-                target=work, kwargs={"second": True}, daemon=True)
-            second.start()
-            first.join(timeout=30.0)
-            second.join(timeout=30.0)
-            assert not first.is_alive()
-            assert not second.is_alive()
+        overlap_two_opens(
+            pyBigWig, "open",
+            lambda: authed.open_bigwig_file(resource, _BIGWIG_FILE_NAME))
         capfd.readouterr()
 
         plain, plain_res = _a_refused_protocol(
@@ -2695,60 +2647,24 @@ def test_concurrent_credentialed_htslib_opens_do_not_strand_verbosity(
     open is discarded for the rest of the process's life, with nothing
     raised to say so.
 
-    The interleaving is FORCED rather than raced for, exactly as
+    The interleaving is FORCED rather than raced for, by
+    ``overlap_two_opens``, exactly as
     ``test_concurrent_authed_bigwig_opens_do_not_strand_stderr`` forces the
-    fd 2 one: thread two is started only once thread one is known to be
-    inside the bracket, and outlasts it, so that on the unserialised helper
-    thread two restores last. On correct code thread two never enters the
-    bracket at all -- it blocks on the lock -- so thread one's wait is
-    bounded and ends by itself. Asserted on the consequence -- a later
-    credential-free open still emits its diagnostic -- not on
-    ``set_verbosity`` calls, so it stays true if the mechanism changes.
+    fd 2 one. Asserted on the consequence -- a later credential-free open
+    still emits its diagnostic -- not on ``set_verbosity`` calls, so it
+    stays true if the mechanism changes.
     """
     authed, resource = _a_refused_protocol("i1360-tabix-threads")
-    first_inside = threading.Event()
-    second_started = threading.Event()
-    second_inside = threading.Event()
-    counter = itertools.count()
-
-    def fake_open(*_args: typing.Any, **_kwargs: typing.Any) -> None:
-        if next(counter) == 0:
-            first_inside.set()
-            assert second_started.wait(timeout=10.0), "second thread stalled"
-            second_inside.wait(timeout=0.25)
-        else:
-            second_inside.set()
-            # Outlast the first thread's restore, so this one -- holding 0
-            # as its "previous" level -- is the one that restores last.
-            time.sleep(0.1)
 
     # Restored unconditionally: a REGRESSION here strands the level at 0,
     # which would silence htslib for the rest of the suite and report as
     # unrelated ``capfd`` failures somewhere else entirely.
     saved_verbosity = pysam.set_verbosity(1)
     try:
-        def work(*, second: bool = False) -> None:
-            if second:
-                # Set BEFORE the call, so the wait above covers only the gap
-                # between reaching the open and being inside it.
-                second_started.set()
-            authed.open_tabix_file(
-                resource, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
-
-        # The real ``pysam.TabixFile`` is restored before the probe below,
-        # which needs htslib to actually write.
-        with unittest.mock.patch.object(
-                pysam, "TabixFile", side_effect=fake_open):
-            first = threading.Thread(target=work, daemon=True)
-            first.start()
-            assert first_inside.wait(timeout=5.0), "first thread never opened"
-            second = threading.Thread(
-                target=work, kwargs={"second": True}, daemon=True)
-            second.start()
-            first.join(timeout=30.0)
-            second.join(timeout=30.0)
-            assert not first.is_alive()
-            assert not second.is_alive()
+        overlap_two_opens(
+            pysam, "TabixFile",
+            lambda: authed.open_tabix_file(
+                resource, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi"))
         capfd.readouterr()
 
         plain, plain_res = _a_refused_protocol(
@@ -2764,6 +2680,7 @@ def test_concurrent_credentialed_htslib_opens_do_not_strand_verbosity(
 
 def test_credentialed_vcf_header_load_nests_the_brackets_without_deadlock(
     capfd: pytest.CaptureFixture[str], mocker: pytest_mock.MockerFixture,
+    run_in_threads: RunInThreads,
 ) -> None:
     """The two verbosity brackets nest on one thread, and must not deadlock.
 
@@ -2783,29 +2700,18 @@ def test_credentialed_vcf_header_load_nests_the_brackets_without_deadlock(
     mocker.patch.object(
         pysam, "VariantFile", return_value=unittest.mock.MagicMock())
 
-    # The outcome is captured, not inferred from the thread having ended: a
-    # constructor that RAISES before the inner bracket also ends the thread,
-    # never touches the level, and leaves the probe below speaking -- a
-    # green run that guards nothing. Only a built table proves both
-    # brackets were entered and unwound.
-    outcome: list[VCFGenomicPositionTable | BaseException] = []
-
-    def construct() -> None:
-        try:
-            outcome.append(VCFGenomicPositionTable(
-                resource, {"filename": _VCF_FILE_NAME, "format": "vcf_info"}))
-        except BaseException as exc:  # ruff: ignore[blind-except] - reported, not swallowed
-            outcome.append(exc)
-
     saved_verbosity = pysam.set_verbosity(1)
     try:
-        worker = threading.Thread(target=construct, daemon=True)
-        worker.start()
-        worker.join(timeout=10.0)
-        assert not worker.is_alive(), "nested brackets deadlocked"
-        assert outcome and isinstance(outcome[0], VCFGenomicPositionTable), (
-            f"construction did not reach the nested bracket: {outcome!r}")
-        mocker.stopall()
+        results, errors = run_in_threads(
+            lambda: VCFGenomicPositionTable(
+                resource, {"filename": _VCF_FILE_NAME, "format": "vcf_info"}),
+            threads_count=1, timeout=10.0)
+        # A constructor that RAISES before the inner bracket also ends the
+        # thread, never touches the level, and leaves the probe below
+        # speaking -- a green run that guards nothing. Only a built table
+        # proves both brackets were entered and unwound.
+        assert not errors, errors
+        assert isinstance(results[0], VCFGenomicPositionTable)
         capfd.readouterr()
 
         plain, plain_res = _a_refused_protocol(

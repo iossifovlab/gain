@@ -1,11 +1,8 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,too-many-lines
 import copy
 import gc
-import itertools
 import pathlib
 import textwrap
-import threading
-import time
 import unittest.mock
 from collections.abc import Generator
 from typing import Any, Self, cast
@@ -14,7 +11,6 @@ import gain.genomic_resources.genomic_position_table as gpt
 import pysam
 import pytest
 import pytest_mock
-from gain.genomic_resources.fsspec_protocol import build_fsspec_protocol
 from gain.genomic_resources.genomic_position_table import (
     TabixGenomicPositionTable,
     VCFGenomicPositionTable,
@@ -62,6 +58,8 @@ from gain.genomic_resources.testing.builders import (
     a_position_score,
     a_vcf_info_score,
 )
+
+from tests.small.genomic_resources.conftest import overlap_two_opens
 
 
 @pytest.fixture
@@ -2300,7 +2298,7 @@ chr1   5   .  A   T   .    .      A=1
 
 
 def test_concurrent_vcf_header_loads_do_not_strand_htslib_verbosity(
-        tmp_path: pathlib.Path,
+        vcf_res: GenomicResource,
         capfd: pytest.CaptureFixture[str]) -> None:
     """Two VCF tables built at once must not leave htslib silent for good.
 
@@ -2313,90 +2311,32 @@ def test_concurrent_vcf_header_loads_do_not_strand_htslib_verbosity(
     The verbosity level is process-global. Left unserialised, the second
     constructor saves the first one's 0 as its "previous" level and restores
     *that*, so every later ``[E::...]`` line from htslib is discarded for the
-    rest of the process's life. Asserted on the consequence -- a later open
-    on a plain url still emits its diagnostic -- not on ``set_verbosity``
-    calls.
-
-    The interleaving is FORCED rather than raced for: the second constructor
-    is started only once the first is known to be inside the bracket, and
-    outlasts it. On correct code the second never enters the bracket -- it
-    blocks on the lock -- so the first one's wait is bounded and ends by
-    itself.
+    rest of the process's life. The interleaving is FORCED rather than raced
+    for, by ``overlap_two_opens``; asserted on the consequence -- a later
+    open on a plain url still emits its diagnostic -- not on
+    ``set_verbosity`` calls.
     """
-    setup_directories(
-        tmp_path, {
-            "genomic_resource.yaml": textwrap.dedent("""
-                tabix_table:
-                    filename: data.vcf.gz
-                    format: vcf_info
-            """),
-        })
-    setup_vcf(
-        tmp_path / "data.vcf.gz",
-        textwrap.dedent("""
-##fileformat=VCFv4.1
-##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">
-##contig=<ID=chr1>
-#CHROM POS ID REF ALT QUAL FILTER INFO
-chr1   5   .  A   T   .    .      A=1
-    """),
-    )
-    res = build_filesystem_test_resource(tmp_path)
-    assert res.config is not None
-
-    first_inside = threading.Event()
-    second_started = threading.Event()
-    second_inside = threading.Event()
-    counter = itertools.count()
-
-    def fake_open(*_args: Any, **_kwargs: Any) -> unittest.mock.MagicMock:
-        if next(counter) == 0:
-            first_inside.set()
-            assert second_started.wait(timeout=10.0), "second thread stalled"
-            second_inside.wait(timeout=0.25)
-        else:
-            second_inside.set()
-            # Outlast the first constructor's restore, so this one --
-            # holding 0 as its "previous" level -- restores last.
-            time.sleep(0.1)
-        return unittest.mock.MagicMock()
+    assert vcf_res.config is not None
+    table_definition = vcf_res.config["tabix_table"]
 
     # Restored unconditionally: a REGRESSION here strands the level at 0,
     # which would silence htslib for the rest of the suite and report as
     # unrelated ``capfd`` failures somewhere else entirely.
     saved_verbosity = pysam.set_verbosity(1)
     try:
-        def work(*, second: bool = False) -> None:
-            if second:
-                second_started.set()
-            assert res.config is not None
-            build_genomic_position_table(res, res.config["tabix_table"])
-
-        # The real ``pysam.VariantFile`` is restored before the probe below,
-        # which needs htslib to actually write.
-        with unittest.mock.patch.object(
-                pysam, "VariantFile", side_effect=fake_open):
-            first = threading.Thread(target=work, daemon=True)
-            first.start()
-            assert first_inside.wait(timeout=5.0), "first thread never opened"
-            second = threading.Thread(
-                target=work, kwargs={"second": True}, daemon=True)
-            second.start()
-            first.join(timeout=30.0)
-            second.join(timeout=30.0)
-            assert not first.is_alive()
-            assert not second.is_alive()
+        # The stand-in handle has to survive ``with vcf_file:`` and a
+        # ``.header.info`` read; the header's content is never looked at.
+        overlap_two_opens(
+            pysam, "VariantFile",
+            lambda: build_genomic_position_table(vcf_res, table_definition),
+            fake_result=unittest.mock.MagicMock())
         capfd.readouterr()
 
         # A plain url whose host refuses the connection: the open reaches
         # htslib and fails there, which is what makes it write. A missing
         # LOCAL path never gets that far -- pysam stats it first.
-        proto = build_fsspec_protocol(
-            "i1360-vcf-threads-plain", "https://127.0.0.1:1/path")
         with pytest.raises(OSError):
-            proto.open_tabix_file(
-                GenomicResource("sub/res", (1, 0), proto, {}),
-                "data.txt.gz", "data.txt.gz.tbi")
+            pysam.TabixFile("https://127.0.0.1:1/path/data.txt.gz")
 
         assert "[E::hts_open_format]" in capfd.readouterr().err
     finally:
