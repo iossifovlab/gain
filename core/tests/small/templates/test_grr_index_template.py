@@ -26,23 +26,9 @@ now the reading-the-source tests above are all that stands behind them.
 """
 from __future__ import annotations
 
-from collections.abc import Iterator
-
-import gain.templates as templates_module
-import pytest
 from gain.genomic_resources.repository import version_tuple_to_string
 from gain.templates import get_template
 from gain.utils.helpers import convert_size
-
-
-@pytest.fixture(autouse=True)
-def reset_template_caches() -> Iterator[None]:
-    """Reset singleton caches before and after each test."""
-    templates_module._state.env = None
-    templates_module._state.provider_cache = None
-    yield
-    templates_module._state.env = None
-    templates_module._state.provider_cache = None
 
 
 def _render_browse_page() -> str:

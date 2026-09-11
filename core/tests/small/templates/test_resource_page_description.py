@@ -16,61 +16,44 @@ on a live page.
 """
 from __future__ import annotations
 
-import pathlib
 import textwrap
-from collections.abc import Iterator
+from collections.abc import Callable
 
-import gain.templates as templates_module
 import pytest
 from gain.genomic_resources.implementations.basic_resource_impl import (
     BasicResourceImplementation,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing import (
-    build_filesystem_test_repository,
-    setup_directories,
-)
 
-
-@pytest.fixture(autouse=True)
-def reset_template_caches() -> Iterator[None]:
-    """Reset singleton caches before and after each test."""
-    templates_module._state.env = None
-    templates_module._state.provider_cache = None
-    yield
-    templates_module._state.env = None
-    templates_module._state.provider_cache = None
+_TABLE = textwrap.dedent("""
+    | category | meaning |
+    |---|---|
+    | 1 | high confidence |
+""")
 
 
 @pytest.fixture
 def resource_with_a_table_description(
-    tmp_path: pathlib.Path,
+    basic_resource_described_by: Callable[[str], GenomicResource],
 ) -> GenomicResource:
-    """A resource describing itself with a table, as SFARI's do.
+    """A resource describing itself with a table, as SFARI's do."""
+    return basic_resource_described_by(_TABLE)
 
-    It carries an explicit ``summary`` even though the test never looks
-    at one: a resource with no summary displays its *description* in the
-    summary cell instead (gain#1008), as plain text rather than rendered
-    Markdown.  Without the summary here, the raw ``| category |`` row
-    would reach the page through that cell and the assertion below that
-    it does *not* survive as literal text would fail for a reason that
-    has nothing to do with the dialect.
+
+def test_the_description_reaches_the_page_once(
+    resource_with_a_table_description: GenomicResource,
+) -> None:
+    """Rendered in its own cell, and nowhere else.
+
+    The fence around the fixture's declared summary: a resource without
+    one shows its description *again*, raw, in the summary cell
+    (gain#1008), and the dialect assertion below would then be reading
+    two copies.
     """
-    setup_directories(tmp_path, {"one": {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: basic
-            meta:
-              summary: scores for genes
-              description: |
-                | category | meaning |
-                |---|---|
-                | 1 | high confidence |
-        """),
-        "data.txt": "alabala",
-    }})
-    resource = build_filesystem_test_repository(tmp_path).get_resource("one")
-    assert resource is not None
-    return resource
+    page = BasicResourceImplementation(
+        resource_with_a_table_description).get_info()
+
+    assert page.count("high confidence") == 1
 
 
 def test_a_table_in_the_description_reaches_the_resource_page(

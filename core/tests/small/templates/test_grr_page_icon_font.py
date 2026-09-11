@@ -40,12 +40,10 @@ python:3.12-slim, which has no JS runtime.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-import gain.templates as templates_module
 import pytest
 from gain.templates import get_template
 
@@ -122,16 +120,6 @@ _MODULE_IMPORT = re.compile(r"\bfrom\s+[\"'](https?://[^\"']+)[\"']")
 #: Tags whose ``href`` makes the browser fetch something.  ``<a>`` is
 #: pointedly absent; ``src`` is a subresource on whatever carries it.
 _FETCHING_HREF_TAGS = frozenset({"link"})
-
-
-@pytest.fixture(autouse=True)
-def reset_template_caches() -> Iterator[None]:
-    """Reset singleton caches before and after each test."""
-    templates_module._state.env = None
-    templates_module._state.provider_cache = None
-    yield
-    templates_module._state.env = None
-    templates_module._state.provider_cache = None
 
 
 class _LinkReader(HTMLParser):

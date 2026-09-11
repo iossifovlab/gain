@@ -31,11 +31,9 @@ from __future__ import annotations
 
 import pathlib
 import textwrap
-from collections.abc import Iterator
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
-import gain.templates as templates_module
 import pytest
 from gain.gene_scores.implementations.gene_scores_impl import (
     GeneScoreImplementation,
@@ -48,16 +46,6 @@ ALLOWED_ORIGINS = {"fonts.googleapis.com", "fonts.gstatic.com"}
 
 #: The only glyphs the sorter draws.
 ICON_NAMES = ("arrow_downward", "arrow_upward", "unfold_more")
-
-
-@pytest.fixture(autouse=True)
-def reset_template_caches() -> Iterator[None]:
-    """Reset singleton caches before and after each test."""
-    templates_module._state.env = None
-    templates_module._state.provider_cache = None
-    yield
-    templates_module._state.env = None
-    templates_module._state.provider_cache = None
 
 
 class _PageReader(HTMLParser):

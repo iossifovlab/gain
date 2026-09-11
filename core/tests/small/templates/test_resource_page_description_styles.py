@@ -35,32 +35,16 @@ rule a page has reaches its description.
 """
 from __future__ import annotations
 
-import pathlib
 import textwrap
-from collections.abc import Iterator
+from collections.abc import Callable
 
-import gain.templates as templates_module
 import pytest
 from gain.genomic_resources.implementations.basic_resource_impl import (
     BasicResourceImplementation,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing import (
-    build_filesystem_test_repository,
-    setup_directories,
-)
 
 from tests.small.templates.page_css import rules_in
-
-
-@pytest.fixture(autouse=True)
-def reset_template_caches() -> Iterator[None]:
-    """Reset singleton caches before and after each test."""
-    templates_module._state.env = None
-    templates_module._state.provider_cache = None
-    yield
-    templates_module._state.env = None
-    templates_module._state.provider_cache = None
 
 
 def description_shadow_root(page: str) -> str:
@@ -122,42 +106,26 @@ def assert_shared_with_page(
 
 @pytest.fixture
 def resource_with_a_rich_description(
-    tmp_path: pathlib.Path,
+    basic_resource_described_by: Callable[[str], GenomicResource],
 ) -> GenomicResource:
     """A resource describing itself the way the SFARI gene scores do.
 
     A heading, prose carrying a link, a list and a table -- the shapes a
     GRR author actually writes, each of which the page styles when it
     renders it outside the shadow root.
-
-    It carries an explicit ``summary`` even though no test here reads
-    one: a resource with no summary displays its *description* in the
-    summary cell instead (gain#1008), which would put a second, plainer
-    copy of this markup on the page and make the assertions below
-    ambiguous about which copy they found.
     """
-    setup_directories(tmp_path, {"one": {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: basic
-            meta:
-              summary: scores for genes
-              description: |
-                ### Score definitions
+    return basic_resource_described_by(textwrap.dedent("""
+        ### Score definitions
 
-                Curated by [SFARI](https://gene.sfari.org/), who publish
+        Curated by [SFARI](https://gene.sfari.org/), who publish
 
-                - the categories
-                - the evidence behind them
+        - the categories
+        - the evidence behind them
 
-                | category | meaning |
-                |---|---|
-                | 1 | high confidence |
-        """),
-        "data.txt": "alabala",
-    }})
-    resource = build_filesystem_test_repository(tmp_path).get_resource("one")
-    assert resource is not None
-    return resource
+        | category | meaning |
+        |---|---|
+        | 1 | high confidence |
+    """))
 
 
 @pytest.fixture
