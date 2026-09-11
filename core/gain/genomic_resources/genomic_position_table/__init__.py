@@ -409,7 +409,9 @@ table (``get_all_records()``).
 
 **``GenomicScore.fetch_region`` is gone; use ``fetch_region_segment_scores``.**
 (The replacement was named ``fetch_region_values`` when this entry was
-written; the rename is its own entry below.)  There
+written; the rename is its own entry below, and gain#844 has since removed
+both names in favour of ``fetch_region_segments`` -- see the end of this
+ledger.)  There
 were two of them and they meant opposite things: on ``PositionScore``
 ``fetch_region`` was a pure alias of ``fetch_region_values``, while on
 ``AlleleScore`` it was the real read and ``fetch_region_values`` the adapter
@@ -514,7 +516,8 @@ Unlike ``fetch_region`` above, the old name is NOT gone yet: no in-tree and no
 known cross-repo caller used it, but the published
 ``docs/source/python_interface.rst`` showed it to external readers, so it
 stays as a thin forwarder raising ``DeprecationWarning`` until gain#730 -- a
-dated removal, per the precedent of gain#343 -- deletes it.
+dated removal, per the precedent of gain#343 -- deletes it.  (gain#844 did,
+ahead of that date; see the end of this ledger.)
 
 The return type narrowed with the rename: the values slot was
 ``list[ScoreValue] | None`` and no code path could yield ``None`` there --
@@ -681,6 +684,28 @@ though nothing it can catch does.  ``get_file_chromosomes()``,
 still refuse in each backend's own words.  ``has_chromosome`` follows
 ``get_chromosomes()`` here as it does everywhere -- it is derived from it, so
 on these two backends it now refuses in the base class's words too.
+
+**``GenomicScore.fetch_region_segment_scores`` and its alias
+``fetch_region_values`` are gone; use ``fetch_region_segments``** (gain#844,
+closing the gain#730 removal too).  Both were deprecated forwarders since
+gain#827 -- the first was exactly ``clip_to_region(fetch_region_segments(...),
+pos_begin, pos_end)``, and the second forwarded to the first -- and both raised
+``DeprecationWarning`` on every call.  The one stated reason to keep the names,
+the getting-started guide teaching them (gain#1383), went with this change:
+``docs/source/python_interface.rst`` now reads through
+``fetch_region_segments`` and clips in the loop.
+
+What a migrating caller has to know: ``fetch_region_segments`` reports each
+record at its OWN extent, so a record straddling the window's edge comes back
+whole.  A caller that held the clipped spans composes
+``genomic_scores.records.clip_to_region`` over the stream, or clips per
+position in its own loop; a caller that only ever unpacked ``(begin, end,
+values)`` over a window wider than the table sees no difference.  An allele
+score never clipped -- its read answers a point at the record's position
+either way -- so the override that only differed in its warning text is
+gone with the base method.  There is no forwarder and no warning, the
+gain#1268 pattern: the names are removed outright, and a call to either is an
+``AttributeError``.
 """
 from .line import LineBuffer
 from .table import ContigExtent

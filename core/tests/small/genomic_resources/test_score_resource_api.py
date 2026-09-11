@@ -48,8 +48,8 @@ ALLOWED_PUBLIC_METHODS = {
 FORBIDDEN_ON_BASE = {
     "open", "close", "is_open", "__enter__", "__exit__",
     "fetch_records", "fetch_region", "fetch_region_segments",
-    # The deprecated clipped read and its alias -- still live public
-    # methods until gain#844 / gain#730 delete them, so still pinned here.
+    # The clipped read and its alias, removed by gain#844 -- pinned like
+    # ``fetch_region`` above so the names cannot come back on the base.
     "fetch_region_segment_scores", "fetch_region_values",
     "fetch_allele_scores", "fetch_fragment_scores",
     # Both contig accessors: the ordered list, and the membership predicate

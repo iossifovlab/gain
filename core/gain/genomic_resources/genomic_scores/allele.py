@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import copy
 import enum
-import warnings
 from collections.abc import Callable, Generator, Iterator, Sequence
 from dataclasses import dataclass
 from itertools import chain
@@ -57,7 +56,6 @@ from .aggregation import (
     resolve_aggregation_queries,
 )
 from .base import (
-    _SEGMENT_SCORES_DEPRECATION,
     DEFAULT_VALUE_ARRAYS_BATCH_SIZE,
     GenomicScore,
 )
@@ -384,32 +382,6 @@ class AlleleScore(GenomicScore):
         scores_schema = schema["scores"]["schema"]["schema"]
         scores_schema["aggregator"] = AGGREGATOR_SCHEMA
         return schema
-
-    def fetch_region_segment_scores(
-        self,
-        chrom: str,
-        pos_begin: int | None = None,
-        pos_end: int | None = None,
-        scores: list[str] | None = None,
-    ) -> Generator[
-            tuple[int, int, list[ScoreValue]], None, None]:
-        """Yield ``(pos, pos, values)`` per allele record of the region.
-
-        .. deprecated::
-            Use :meth:`~.base.GenomicScore.fetch_region_segments` -- for this
-            kind the very same read.  An allele read collapses each record to
-            a point and
-            holds no window opinion, so unlike the base method there is no
-            clip to preserve here; the two names differ only in the
-            warning.  Removal is tracked as gain#844.
-        """
-        warnings.warn(
-            _SEGMENT_SCORES_DEPRECATION
-            + "For an allele score the two are the same read.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.fetch_region_segments(chrom, pos_begin, pos_end, scores)
 
     def _score_segments(
         self,

@@ -32,7 +32,6 @@ mapping.
 
 from __future__ import annotations
 
-import warnings
 from abc import abstractmethod
 from collections.abc import Generator, Iterator, Sequence
 from types import TracebackType
@@ -97,7 +96,6 @@ from .aggregation import (
 )
 from .records import (
     RecordArrays,
-    clip_to_region,
 )
 from .value_extraction import (
     resolve_score_indices,
@@ -118,14 +116,6 @@ logger = logging.getLogger(__name__)
 # enough that the per-batch numpy overhead disappears against the per-row work
 # it replaces, small enough that one batch's arrays stay comfortably in cache.
 DEFAULT_VALUE_ARRAYS_BATCH_SIZE = 100_000
-
-
-# The shared core of every fetch_region_segment_scores deprecation warning
-# (the base method and the AlleleScore override); gain#844 removes the name.
-_SEGMENT_SCORES_DEPRECATION = (
-    "GenomicScore.fetch_region_segment_scores is deprecated; use "
-    "fetch_region_segments. This name is retained until gain#844 "
-    "removes it. ")
 
 
 class GenomicScore(ScoreResource[GenomicScoreDef]):
@@ -1122,71 +1112,6 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         return self.region_values_from_records(
             self.fetch_records(
                 chrom, pos_begin, pos_end, score_filter=score_filter),
-            chrom, pos_begin, pos_end, scores)
-
-    def fetch_region_segment_scores(
-        self,
-        chrom: str,
-        pos_begin: int | None = None,
-        pos_end: int | None = None,
-        scores: list[str] | None = None,
-    ) -> Generator[
-            tuple[int, int, list[ScoreValue]], None, None]:
-        """Yield ``(begin, end, values)`` per record, clipped to the region.
-
-        .. deprecated::
-            Use :meth:`fetch_region_segments` instead -- the same read,
-            reporting each record's own extent instead of reshaping it to
-            the queried window.  Retained because published callers hold
-            the clipped spans (``docs/source/python_interface.rst``);
-            removal is tracked as gain#844.
-
-        The body is the worked example of composing the region transducer:
-        the unclipped segment stream, with :func:`~.records.clip_to_region`
-        deciding what a partial overlap means.
-        """
-        warnings.warn(
-            _SEGMENT_SCORES_DEPRECATION
-            + "The replacement reports each record's own extent instead "
-            "of clipping it to the queried window.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return clip_to_region(
-            self.fetch_region_segments(chrom, pos_begin, pos_end, scores),
-            pos_begin, pos_end)
-
-    def fetch_region_values(
-        self,
-        chrom: str,
-        pos_begin: int | None = None,
-        pos_end: int | None = None,
-        scores: list[str] | None = None,
-    ) -> Generator[
-            tuple[int, int, list[ScoreValue]], None, None]:
-        """Yield ``(begin, end, values)`` per record touching the region.
-
-        .. deprecated::
-            Use :meth:`fetch_region_segments` -- note it reports each
-            record's own extent, where this alias yields the record
-            clipped to the queried window (compose
-            :func:`~.records.clip_to_region` over it where the clipped spans
-            matter).  Retained as a thin compatibility alias only because the
-            published
-            ``docs/source/python_interface.rst`` showed this name to
-            external readers; no in-tree or known cross-repo caller
-            remains.  Removal is tracked as gain#730.
-        """
-        warnings.warn(
-            "GenomicScore.fetch_region_values is deprecated; use "
-            "fetch_region_segments (unclipped; compose clip_to_region "
-            "over it for the clipped spans this alias yields). It is "
-            "retained only for readers of the published documentation, "
-            "until gain#730 removes it.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.fetch_region_segment_scores(
             chrom, pos_begin, pos_end, scores)
 
     @classmethod
