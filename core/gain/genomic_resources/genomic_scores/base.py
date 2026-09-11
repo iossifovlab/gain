@@ -52,7 +52,6 @@ from gain.genomic_resources.bigwig_scores import (
 )
 from gain.genomic_resources.genomic_position_table import (
     BigWigTable,
-    ContigExtent,
     VCFGenomicPositionTable,
     build_genomic_position_table,
 )
@@ -915,7 +914,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         be trusted is a separate question, answered by
         :meth:`get_chrom_length_source` -- only a bigWig header (or, once
         gain#1418 lands, a genome) is exact; a tabix score answers the
-        probe's upper bound.
+        probe's upper bound, an in-memory score how far its rows reach.
+
+        Answered live through the table on every call, not memoised: on a
+        tabix score that is the index probe each time.  gain#1419 stores
+        the answer at repair and takes the probe out of this path.
         """
         return self._resolve_chrom_length(chrom)[0]
 
@@ -929,7 +932,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         needs to know WHY it is absent reads
         :func:`~.chrom_lengths.derive_chrom_lengths` instead.
 
-        Raises ``ValueError`` on a score that is not open.
+        Every contig is resolved live on every call -- on a tabix score,
+        one index probe per contig, unmemoised (see
+        :meth:`get_chrom_length`).  Raises ``ValueError`` on a score that
+        is not open.
         """
         return {
             chrom: resolved.length
@@ -950,23 +956,18 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """The length and source behind the two reads, refused when absent.
 
         Three refusals, all ``ValueError``: a score that is not open and a
-        contig it does not carry, in the words every region read uses; and
-        a contig it carries but has no length for, in the words
-        :meth:`GenomicPositionTable.get_chromosome_length` uses for the same
-        two facts -- an EMPTY contig is usually a ``chrom_mapping`` naming
-        something the file does not carry, an UNDETERMINED one is a probe
-        that could not answer, and an operator acts on them differently.
+        contig it does not carry, in the words the shared region-read
+        screen uses; and a contig it carries but has no length for, in the
+        words :meth:`GenomicPositionTable.get_chromosome_length` uses for
+        the same two facts -- the member's own
+        :meth:`~gain.genomic_resources.genomic_position_table.ContigExtent.refusal`,
+        so the two callers cannot drift apart.
         """
         self._require_open_and_known_chrom(chrom)
         resolved = derive_chrom_length(self, chrom)
-        if resolved.extent is ContigExtent.EMPTY:
+        if resolved.extent is not None:
             raise ValueError(
-                f"contig {chrom} has no records in the table's contigs: "
-                f"{self.get_all_chromosomes()}")
-        if resolved.extent is ContigExtent.UNDETERMINED:
-            raise ValueError(
-                f"could not determine the length of contig {chrom} "
-                f"in the table's contigs: {self.get_all_chromosomes()}")
+                resolved.extent.refusal(chrom, self.get_all_chromosomes()))
         # The record's two shapes: no extent means both are set.
         assert resolved.length is not None
         assert resolved.source is not None
