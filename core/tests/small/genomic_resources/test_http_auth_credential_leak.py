@@ -32,6 +32,9 @@ from gain.genomic_resources.fsspec_protocol import (
 from gain.genomic_resources.genomic_position_table.table_tabix import (
     TabixGenomicPositionTable,
 )
+from gain.genomic_resources.genomic_position_table.table_vcf import (
+    VCFGenomicPositionTable,
+)
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
 )
@@ -2674,6 +2677,133 @@ def test_successful_presigned_open_does_not_silence_the_next_one(
             anon_res, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
 
     assert "[E::hts_open_format]" in capfd.readouterr().err
+
+
+def test_concurrent_credentialed_htslib_opens_do_not_strand_verbosity(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Overlapping verbosity brackets must not leave htslib silent for good.
+
+    The htslib verbosity level is PROCESS-global, and these opens ARE driven
+    from a thread pool: ``web_api``'s pipeline cache builds and opens
+    pipelines on a ``ThreadedTaskExecutor``, and opening a pipeline opens the
+    tabix and VCF tables in it (gain#1360).
+
+    Two brackets that overlap strand the level. The second thread saves the
+    FIRST thread's 0 as its "previous" level and restores *that* on the way
+    out, so every ``[E::...]`` line from every later tabix, VCF and fasta
+    open is discarded for the rest of the process's life, with nothing
+    raised to say so.
+
+    The interleaving is FORCED rather than raced for, exactly as
+    ``test_concurrent_authed_bigwig_opens_do_not_strand_stderr`` forces the
+    fd 2 one: thread two is started only once thread one is known to be
+    inside the bracket, and outlasts it, so that on the unserialised helper
+    thread two restores last. On correct code thread two never enters the
+    bracket at all -- it blocks on the lock -- so thread one's wait is
+    bounded and ends by itself. Asserted on the consequence -- a later
+    credential-free open still emits its diagnostic -- not on
+    ``set_verbosity`` calls, so it stays true if the mechanism changes.
+    """
+    authed, resource = _a_refused_protocol("i1360-tabix-threads")
+    first_inside = threading.Event()
+    second_started = threading.Event()
+    second_inside = threading.Event()
+    counter = itertools.count()
+
+    def fake_open(*_args: typing.Any, **_kwargs: typing.Any) -> None:
+        if next(counter) == 0:
+            first_inside.set()
+            assert second_started.wait(timeout=10.0), "second thread stalled"
+            second_inside.wait(timeout=0.25)
+        else:
+            second_inside.set()
+            # Outlast the first thread's restore, so this one -- holding 0
+            # as its "previous" level -- is the one that restores last.
+            time.sleep(0.1)
+
+    # Restored unconditionally: a REGRESSION here strands the level at 0,
+    # which would silence htslib for the rest of the suite and report as
+    # unrelated ``capfd`` failures somewhere else entirely.
+    saved_verbosity = pysam.set_verbosity(1)
+    try:
+        def work(*, second: bool = False) -> None:
+            if second:
+                # Set BEFORE the call, so the wait above covers only the gap
+                # between reaching the open and being inside it.
+                second_started.set()
+            authed.open_tabix_file(
+                resource, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+        # The real ``pysam.TabixFile`` is restored before the probe below,
+        # which needs htslib to actually write.
+        with unittest.mock.patch.object(
+                pysam, "TabixFile", side_effect=fake_open):
+            first = threading.Thread(target=work, daemon=True)
+            first.start()
+            assert first_inside.wait(timeout=5.0), "first thread never opened"
+            second = threading.Thread(
+                target=work, kwargs={"second": True}, daemon=True)
+            second.start()
+            first.join(timeout=30.0)
+            second.join(timeout=30.0)
+            assert not first.is_alive()
+            assert not second.is_alive()
+        capfd.readouterr()
+
+        plain, plain_res = _a_refused_protocol(
+            "i1360-tabix-threads-plain", authed=False)
+        with pytest.raises(OSError):
+            plain.open_tabix_file(
+                plain_res, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+        assert "[E::hts_open_format]" in capfd.readouterr().err
+    finally:
+        pysam.set_verbosity(saved_verbosity)
+
+
+def test_credentialed_vcf_header_load_nests_the_brackets_without_deadlock(
+    capfd: pytest.CaptureFixture[str], mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The two verbosity brackets nest on one thread, and must not deadlock.
+
+    ``VCFGenomicPositionTable._load_vcf_header`` brackets its header open,
+    and for a credential-bearing url that open enters ``_open_htslib_file``'s
+    own bracket -- same thread, one inside the other. A serialisation that
+    is not re-entrant hangs right there, on every credentialed VCF score,
+    which is why the lock is an ``RLock`` (gain#1360). Run on a daemon
+    thread with a bounded join, so a regression reports as a failure rather
+    than as a test that never returns; and the consequence is asserted too:
+    once both brackets have unwound, htslib is back to speaking.
+    """
+    _, resource = _a_refused_protocol("i1360-vcf-nested")
+    # The sidecar's existence is asserted before the open, over fsspec --
+    # which would hit the refused host first. Only the open is under test.
+    mocker.patch.object(resource, "file_exists", return_value=True)
+    mocker.patch.object(
+        pysam, "VariantFile", return_value=unittest.mock.MagicMock())
+
+    saved_verbosity = pysam.set_verbosity(1)
+    try:
+        worker = threading.Thread(
+            target=VCFGenomicPositionTable,
+            args=(resource, {"filename": _VCF_FILE_NAME, "format": "vcf_info"}),
+            daemon=True)
+        worker.start()
+        worker.join(timeout=10.0)
+        assert not worker.is_alive(), "nested brackets deadlocked"
+        mocker.stopall()
+        capfd.readouterr()
+
+        plain, plain_res = _a_refused_protocol(
+            "i1360-vcf-nested-plain", authed=False)
+        with pytest.raises(OSError):
+            plain.open_tabix_file(
+                plain_res, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
+
+        assert "[E::hts_open_format]" in capfd.readouterr().err
+    finally:
+        pysam.set_verbosity(saved_verbosity)
 
 
 @pytest.mark.parametrize(

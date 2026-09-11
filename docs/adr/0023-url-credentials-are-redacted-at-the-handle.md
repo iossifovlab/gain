@@ -524,3 +524,62 @@ is not done here: it cannot help `open_bigwig_file` (libBigWig has no s3), it
 splits authentication across two configuration surfaces that must be kept in
 agreement, and it is currently proved only as far as the TLS handshake on
 this host. Tracked as gain#1371.
+
+## Amendment — gain#1360: the verbosity bracket is serialised
+
+**Date:** 2026-09-11
+
+The gain#1339 amendment left the htslib verbosity bracket **not serialised**
+and said the lock should be decided on its own evidence. This is that
+evidence, and the lock.
+
+**Two brackets, not one, and the second was never gated.** gain#1360 was
+filed against `_open_htslib_file` alone, with the severity "gated on
+userinfo, no deployment configures one — latent". That was a snapshot of
+gain#1333's knowledge. `VCFGenomicPositionTable._load_vcf_header` has
+bracketed its header open at verbosity 0 since long before any of this —
+on every url, credentialed or not, because a header-only sidecar makes
+htslib log a spurious `[E::idx_find_and_load]` while probing for an index
+it does not ship — and it runs from the table's *constructor*, which `GenomicScore`
+reaches while building, which `load_pipeline_from_yaml` reaches while
+building the pipeline, which `web_api`'s pipeline cache runs on its
+`ThreadedTaskExecutor` (8 loaders by default). Two pipelines that each carry
+a VCF-backed score, built concurrently on a plain public GRR, are enough:
+the second constructor saves the first one's 0 as its "previous" level and
+restores it last, and htslib is silent for the life of the process. That is
+reachable on gainweb as deployed, not latent. Reproduced at triage by
+forcing the interleaving, for all three shapes: a userinfo url, a presigned
+url, and the ungated header load.
+
+**One bracket, one lock, re-entrant.** Both sites now go through a single
+`_htslib_silenced()` context manager in the fsspec protocol module, which
+takes `_HTSLIB_VERBOSITY_LOCK` around the save/lower/restore. It is an
+`RLock`, and it has to be: `_load_vcf_header`'s bracket encloses
+`open_vcf_file`, which for a credential-bearing url enters
+`_open_htslib_file`'s bracket on the same thread. A plain `Lock` deadlocks
+there — on every credentialed VCF score, which is every VCF score on an s3
+GRR after gain#1339 — and the nesting test pins that: it runs the
+construction on a daemon thread with a bounded join, so the regression
+reports as a failure rather than a hung suite. With re-entry the inner
+bracket saves and restores 0, which is harmless.
+
+**Separate from `_STDERR_SUPPRESSION_LOCK`.** fd 2 and the verbosity level
+are independent globals; one lock for both would serialise credentialed
+bigwig opens against VCF header loads and buy nothing for it.
+
+**What it costs.** Credentialed tabix/VCF/fasta opens and *all* VCF header
+loads serialise, each holding the lock across a network open. Accepted on
+the same grounds as the fd 2 lock: it is the open, not the read, so the
+score-scan hot path is untouched. The gates are unchanged — this amendment
+serialises, it does not re-scope.
+
+**Tests.** Forced interleavings, not races, in the shape gain#1333 set:
+thread two is admitted only once thread one is known to be inside the
+bracket and is made to leave last, and the assertion is on the consequence —
+a later credential-free open still writes `[E::hts_open_format]` to fd 2 —
+never on `set_verbosity` calls. One through `open_tabix_file` on a
+credentialed url, one through `build_genomic_position_table` on a plain
+filesystem VCF resource, one same-thread nesting on a credentialed url.
+Each was mutation-proved: with the lock swapped for a plain `Lock` only the
+nesting test goes red; with the lock removed only the two interleaving tests
+do.
