@@ -35,14 +35,13 @@ rule a page has reaches its description.
 """
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import pytest
 from gain.genomic_resources.implementations.basic_resource_impl import (
     BasicResourceImplementation,
 )
 from gain.genomic_resources.repository import GenomicResource
 
+from tests.small.templates.conftest import basic_resource_described_by
 from tests.small.templates.page_css import rules_in
 
 
@@ -68,9 +67,7 @@ def declared_for(markup: str, selector: str) -> list[str]:
     would also reach the element -- ``#resource-table th``,
     ``.scrollable-table-container td`` -- are deliberately left out: what
     is compared is the rule a bare element gets on each side of the shadow
-    boundary, not the full cascade any one element resolves to.  The
-    figure-width test reads the same sheet the other way -- whole selector
-    list, later rule winning -- because it models a cascade, not a copy.
+    boundary, not the full cascade any one element resolves to.
 
     Declarations come back as ``property: value`` strings, sorted, because
     this is used to compare two sheets and neither the order rules were
@@ -104,9 +101,7 @@ def assert_shared_with_page(
 
 
 @pytest.fixture
-def resource_with_a_rich_description(
-    basic_resource_described_by: Callable[[str], GenomicResource],
-) -> GenomicResource:
+def resource_with_a_rich_description() -> GenomicResource:
     """A resource describing itself the way the SFARI gene scores do.
 
     A heading, prose carrying a link, a list and a table -- the shapes a

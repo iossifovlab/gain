@@ -1,23 +1,21 @@
-"""Fixtures every template test shares.
+"""What every template test shares.
 
 The template engine is a process-wide singleton, so each test starts and
-ends with it reset; and the ``type: basic`` resource carrying a Markdown
-description that two modules build is defined here once, with the one
-non-obvious thing about it written down once.
+ends with it reset.  The helpers are imported by their dotted path, as
+``tests.small.templates.conftest``: the ``type: basic`` resource carrying
+a Markdown description that two modules render, and the entry-point stub
+the provider tests register templates through.
 """
 from __future__ import annotations
 
-import pathlib
 import textwrap
 from collections.abc import Callable, Iterator
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing import (
-    build_filesystem_test_repository,
-    setup_directories,
-)
+from gain.genomic_resources.testing import build_inmemory_test_resource
 from gain.templates import reset_caches
 
 
@@ -29,11 +27,8 @@ def reset_template_caches() -> Iterator[None]:
     reset_caches()
 
 
-@pytest.fixture
-def basic_resource_described_by(
-    tmp_path: pathlib.Path,
-) -> Callable[[str], GenomicResource]:
-    """Build a ``type: basic`` resource carrying the given description.
+def basic_resource_described_by(description: str) -> GenomicResource:
+    """A ``type: basic`` resource carrying the given description.
 
     The description is taken as a triple-quoted literal reads: common
     indentation and the blank first line are dropped, so what the
@@ -49,19 +44,27 @@ def basic_resource_described_by(
     found, failing or passing for a reason that has nothing to do with
     what it is about.
     """
-    def build(description: str) -> GenomicResource:
-        setup_directories(tmp_path, {"one": {
-            "genomic_resource.yaml": yaml.safe_dump({
-                "type": "basic",
-                "meta": {
-                    "summary": "scores for genes",
-                    "description": textwrap.dedent(description).lstrip("\n"),
-                },
-            }),
-            "data.txt": "alabala",
-        }})
-        resource = build_filesystem_test_repository(tmp_path) \
-            .get_resource("one")
-        assert resource is not None
-        return resource
-    return build
+    return build_inmemory_test_resource({
+        "genomic_resource.yaml": yaml.safe_dump({
+            "type": "basic",
+            "meta": {
+                "summary": "scores for genes",
+                "description": textwrap.dedent(description).lstrip("\n"),
+            },
+        }),
+        "data.txt": "alabala",
+    })
+
+
+def make_entry_point(
+    name: str, provider: Callable[[], dict[str, str]],
+) -> MagicMock:
+    """An entry point in the ``gain.templates.providers`` group.
+
+    What ``gain.templates`` asks of one: a ``name`` and a ``load()``
+    returning the provider, a callable giving template name to source.
+    """
+    entry_point = MagicMock()
+    entry_point.name = name
+    entry_point.load.return_value = provider
+    return entry_point

@@ -22,22 +22,17 @@ warned about.
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import gain.templates as templates_module
 import pytest
 from gain.templates import get_template
 
+from tests.small.templates.conftest import make_entry_point
+
 #: Unique to this file, so an assertion cannot be satisfied by text the
 #: template ships itself (the false-signal lesson of gain#558).
 MARKER = "gainglobal751"
-
-
-def _make_ep(name: str, provider_fn):
-    ep = MagicMock()
-    ep.name = name
-    ep.load.return_value = provider_fn
-    return ep
 
 
 def test_a_template_renders_markdown_without_the_caller_supplying_it() -> None:
@@ -51,7 +46,7 @@ def test_a_template_renders_markdown_without_the_caller_supplying_it() -> None:
     def doc_plugin():
         return {"plugin_doc.jinja": "{{ markdown(text)|safe }}"}
 
-    ep = _make_ep("doc_plugin", doc_plugin)
+    ep = make_entry_point("doc_plugin", doc_plugin)
 
     with patch("gain.templates.entry_points", return_value=[ep]):
         page = get_template("plugin_doc.jinja").render(

@@ -133,8 +133,7 @@ def _declarations(page: str, selector: str) -> dict[str, str]:
     Matched on the whole selector list, so ``td, th { ... }`` answers
     for neither ``td`` nor ``th``: what is modelled is the cascade a rule
     written *for* this selector resolves to, not every rule that happens
-    to reach the element.  The description-styles test reads the same
-    sheet the other way, on purpose.
+    to reach the element.
     """
     matches = [
         rule.declarations for rule in rules_in(page)

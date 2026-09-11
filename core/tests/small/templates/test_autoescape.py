@@ -9,9 +9,11 @@ histogram image URL.
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from gain.templates import get_template
+
+from tests.small.templates.conftest import make_entry_point
 
 
 def test_histogram_url_query_separator_survives_in_markdown() -> None:
@@ -45,9 +47,7 @@ def test_a_plugin_supplied_template_is_autoescaped_too() -> None:
     def provider() -> dict[str, str]:
         return {"plugin_page.jinja": "<p>{{ value }}</p>"}
 
-    entry_point = MagicMock()
-    entry_point.name = "plugin"
-    entry_point.load.return_value = provider
+    entry_point = make_entry_point("plugin", provider)
 
     with patch(
         "gain.templates.entry_points", return_value=[entry_point],

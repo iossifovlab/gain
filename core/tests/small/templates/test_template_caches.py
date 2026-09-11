@@ -8,11 +8,13 @@ provider registered after the reset is seen.
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from gain.templates import get_jinja_env, get_template, reset_caches
 from jinja2 import TemplateNotFound
+
+from tests.small.templates.conftest import make_entry_point
 
 
 def test_the_environment_is_rebuilt_after_a_reset() -> None:
@@ -34,11 +36,9 @@ def test_a_provider_registered_after_a_reset_is_seen() -> None:
     with patch("gain.templates.entry_points", return_value=[]), \
             pytest.raises(TemplateNotFound):
         get_template("late.jinja")
-    ep = MagicMock()
-    ep.name = "late"
-    ep.load.return_value = lambda: {"late.jinja": "late {{ v }}"}
+    late = make_entry_point("late", lambda: {"late.jinja": "late {{ v }}"})
 
     reset_caches()
 
-    with patch("gain.templates.entry_points", return_value=[ep]):
+    with patch("gain.templates.entry_points", return_value=[late]):
         assert get_template("late.jinja").render(v="one") == "late one"
