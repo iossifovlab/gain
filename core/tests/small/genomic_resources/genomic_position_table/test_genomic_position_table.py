@@ -2254,16 +2254,27 @@ def test_vcf_record_carries_the_mapped_contig(
         assert record[PAYLOAD][VARIANT].contig == "chr1"
 
 
-def test_vcf_header_load_silences_htslib_index_probe(
+def test_vcf_header_load_reads_the_sidecar_without_handing_htslib_a_filename(
         tmp_path: pathlib.Path,
-        mocker: pytest_mock.MockerFixture) -> None:
-    """Loading an index-less VCF header must not leak htslib stderr noise.
+        mocker: pytest_mock.MockerFixture,
+        capfd: pytest.CaptureFixture[str]) -> None:
+    """The header sidecar is read through a handle, never opened by name.
 
     Real VCF ``allele_score`` resources (e.g. dbSNP) ship a header-only
-    ``*.header.vcf.gz`` with no accompanying ``.tbi``.  Opening it makes
-    htslib auto-probe for an index and log ``[E::idx_find_and_load]`` to
-    stderr.  ``_load_vcf_header`` only reads ``header.info`` and never
-    fetches, so it must bracket the open with ``pysam.set_verbosity(0)``.
+    ``*.header.vcf.gz`` with no accompanying ``.tbi``.  Handing that FILENAME
+    to ``pysam.VariantFile`` makes htslib auto-probe for an index and log
+    ``[E::idx_find_and_load]`` to fd 2 -- which used to be silenced with a
+    ``set_verbosity(0)`` bracket around the open, on every url, from the
+    constructor, serialised on a process-global lock (gain#1360).  Reading the
+    sidecar's ``##`` lines through ``open_raw_file`` and building the header
+    with ``pysam.VariantHeader.add_line`` hands htslib no filename, so there
+    is no probe to silence and no bracket to take (gain#1406).
+
+    Three things pinned, at the constructor: the sidecar never reaches
+    ``open_vcf_file``; fd 2 (``capfd``, not ``capsys`` -- htslib writes from
+    C) stays clean without any bracket; and the metadata the score defs are
+    built from is what the by-name open produced, across every ``Number``
+    shape ``parse_vcf_scoredefs`` distinguishes.
     """
     setup_directories(
         tmp_path, {
@@ -2278,9 +2289,12 @@ def test_vcf_header_load_silences_htslib_index_probe(
         textwrap.dedent("""
 ##fileformat=VCFv4.1
 ##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">
+##INFO=<ID=R1,Number=R,Type=Float,Description="Per allele">
+##INFO=<ID=C,Number=.,Type=String,Description="Score C">
+##INFO=<ID=F,Number=0,Type=Flag,Description="A flag">
 ##contig=<ID=chr1>
 #CHROM POS ID REF ALT QUAL FILTER INFO
-chr1   5   .  A   T   .    .      A=1
+chr1   5   .  A   T   .    .      A=1;R1=0.5,0.7;C=x;F
     """),
     )
     # setup_vcf indexes the header; real score resources ship it without an
@@ -2290,17 +2304,25 @@ chr1   5   .  A   T   .    .      A=1
     res = build_filesystem_test_resource(tmp_path)
     assert res.config is not None
 
-    spy = mocker.spy(pysam, "set_verbosity")
+    open_vcf_file = mocker.spy(GenomicResource, "open_vcf_file")
+    capfd.readouterr()
 
-    with build_genomic_position_table(
-        res, res.config["tabix_table"],
-    ) as tab:
-        assert isinstance(tab, VCFGenomicPositionTable)
-        # the header was read despite the missing index
-        assert "A" in set(tab.header.keys())
+    tab = build_genomic_position_table(res, res.config["tabix_table"])
 
-    # the header open is bracketed by set_verbosity(0) ... set_verbosity(prev)
-    assert mocker.call(0) in spy.call_args_list
+    assert isinstance(tab, VCFGenomicPositionTable)
+    assert [
+        call.args[1] for call in open_vcf_file.call_args_list
+    ] == [], "the header sidecar must not be opened by name"
+    assert capfd.readouterr().err == ""
+    assert sorted(
+        (key, value.number, value.type, value.description)
+        for key, value in tab.header.items()
+    ) == [
+        ("A", 1, "Integer", "Score A"),
+        ("C", ".", "String", "Score C"),
+        ("F", 0, "Flag", "A flag"),
+        ("R1", "R", "Float", "Per allele"),
+    ]
 
 
 def test_concurrent_vcf_header_loads_do_not_strand_htslib_verbosity(
@@ -2349,117 +2371,23 @@ def test_concurrent_vcf_header_loads_do_not_strand_htslib_verbosity(
         pysam.set_verbosity(saved_verbosity)
 
 
-class _CloseSpyingVariantFile:
-    """Stand-in for a ``pysam.VariantFile`` whose ``close`` can be spied on.
-
-    ``pysam.VariantFile`` is a Cython extension type and an *immutable* one:
-    ``mocker.spy(pysam.VariantFile, "close")`` dies with ``TypeError: cannot
-    set 'close' attribute of immutable type``.  So the spy goes on a
-    pure-Python delegate, injected at the single seam the table opens the
-    sidecar through (``GenomicResource.open_vcf_file``).
-
-    It forwards everything to the real file, including a ``__exit__`` that
-    closes -- which is precisely what ``pysam.HTSFile.__exit__`` does.
-    """
-
-    def __init__(self, wrapped: pysam.VariantFile) -> None:
-        self.wrapped = wrapped
-
-    def __getattr__(self, name: str) -> object:
-        return getattr(self.wrapped, name)
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(self, *_exc_info: object) -> bool:
-        self.close()
-        return False
-
-    def close(self) -> None:
-        self.wrapped.close()
-
-
-def test_vcf_header_load_closes_the_header_file(
-    vcf_res: GenomicResource,
-    mocker: pytest_mock.MockerFixture,
-) -> None:
-    """``_load_vcf_header`` must *close* the sidecar it opens.
-
-    The method reads ``header.info`` out of the ``*.header.vcf.gz`` file and
-    hands the metadata on; the file itself has no further use.  It shuts it
-    explicitly (``with vcf_file:``) rather than dropping the last reference and
-    leaving the descriptor to refcount finalisation -- the deliberate choice
-    this test exists to pin.
-
-    Nothing else can pin it.  The close is invisible to every functional test:
-    the metadata survives it (see the next test), so a version that retained
-    the file forever would return byte-identical results and pass the whole
-    suite.  Hence the spy.
-    """
-    assert vcf_res.config is not None
-    assert vcf_res.config["tabix_table"]["filename"] == "data.vcf.gz"
-    # The sidecar `_load_vcf_header` derives from that table filename, matched
-    # here EXACTLY: a substring test (`".header." in filename`) would also wrap
-    # a main table that happened to carry `.header.` in its own name, and spy
-    # on the wrong file.  If the derivation ever changes, no file is wrapped
-    # and the `len(header_files) == 1` assertion below fails -- loudly.
-    header_filename = "data.header.vcf.gz"
-
-    header_files: list[_CloseSpyingVariantFile] = []
-    real_open_vcf_file = GenomicResource.open_vcf_file
-
-    def open_vcf_file(
-        resource: GenomicResource,
-        filename: str,
-        index_filename: str | None = None,
-    ) -> object:
-        vcf_file = real_open_vcf_file(resource, filename, index_filename)
-        if filename != header_filename:
-            return vcf_file
-        # the sidecar is handed over *open* -- so the `is_open` check at the
-        # bottom is about the close, and not vacuously true
-        assert bool(vcf_file.is_open)
-        spied = _CloseSpyingVariantFile(vcf_file)
-        header_files.append(spied)
-        return spied
-
-    mocker.patch.object(
-        GenomicResource, "open_vcf_file",
-        autospec=True, side_effect=open_vcf_file)
-    close_spy = mocker.spy(_CloseSpyingVariantFile, "close")
-
-    table = build_genomic_position_table(
-        vcf_res, vcf_res.config["tabix_table"])
-    assert isinstance(table, VCFGenomicPositionTable)
-    # the header metadata was read, so the file really was opened and used
-    assert sorted(table.header.keys()) == ["A", "B", "C", "D"]
-
-    # exactly one header sidecar was opened, ...
-    assert len(header_files) == 1
-    # ... `_load_vcf_header` closed it before handing the metadata back, ...
-    close_spy.assert_called_once_with(header_files[0])
-    # ... and it is shut for real -- not merely asked to shut.  (pysam's
-    # `is_open` is a `CallableValue`, not a bool; read its truth value.)
-    assert bool(header_files[0].wrapped.is_open) is False
-
-
-def test_vcf_header_metadata_outlives_the_closed_header_file(
+def test_vcf_header_metadata_outlives_the_header_read(
     vcf_res: GenomicResource,
 ) -> None:
-    """``table.header`` must stay readable once the header file is closed.
+    """``table.header`` must stay readable once the sidecar handle is closed.
 
     ``header.info`` is a ``pysam.VariantHeaderMetadata`` -- a *view*, not a
-    copy.  Closing the file it came from would be a use-after-free if the view
-    borrowed the underlying ``bcf_hdr_t`` from the ``htsFile``.  It does not:
-    the metadata holds a strong reference to its ``pysam.VariantHeader``, which
-    owns the header struct and frees it only on its own collection.  That is
-    what licenses ``_load_vcf_header`` to close the file it opens, and it is
-    load-bearing well beyond ``__init__``: ``GenomicScore._build_scoredefs``
-    autogenerates one score def per INFO field from this metadata, long after
-    the table is constructed.
+    copy.  ``_load_vcf_header`` builds a ``pysam.VariantHeader`` from the
+    sidecar's ``##`` lines inside a ``with`` on the ``open_raw_file`` handle,
+    and returns the view once that handle is shut.  The view holds a strong
+    reference to the header it was taken from, which owns the ``bcf_hdr_t``
+    and frees it only on its own collection -- so nothing the constructor let
+    go of is borrowed.  That is load-bearing well beyond ``__init__``:
+    ``GenomicScore._build_scoredefs`` autogenerates one score def per INFO
+    field from this metadata, long after the table is constructed.
 
-    So read *every* field the score defs are built from, with the file closed
-    and the heap churned underneath the view.
+    So read *every* field the score defs are built from, with the handle
+    closed and the heap churned underneath the view.
     """
     assert vcf_res.config is not None
 
@@ -2470,14 +2398,14 @@ def test_vcf_header_metadata_outlives_the_closed_header_file(
         ("D", ".", "String", "Score D"),
     ]
 
-    # `_load_vcf_header` closes the sidecar before it returns (`with
-    # vcf_file:`), so by construction the file behind this metadata is already
+    # `_load_vcf_header` leaves its `with` on the sidecar handle before it
+    # returns, so by construction the handle behind this metadata is already
     # shut -- there is no live handle to it anywhere in this test.
     table = build_genomic_position_table(
         vcf_res, vcf_res.config["tabix_table"])
     assert isinstance(table, VCFGenomicPositionTable)
 
-    # The view onto the closed file's header still answers, correctly.
+    # The view onto the header still answers, correctly.
     def read_everything() -> list[tuple]:
         meta = table.header
         assert len(meta) == len(expected)
