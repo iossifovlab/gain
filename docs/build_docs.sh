@@ -29,23 +29,6 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-# The architecture overview includes CONTEXT.md's vocabulary by two sentinel
-# comments (`.. include:: :start-after:/:end-before:`). A missing sentinel
-# makes docutils log a CRITICAL error, which `-W` below now fails the build
-# on -- but check the sentinels here anyway, before anything is deleted or
-# built: this names the missing sentinel and the page that needs it, which
-# -W alone would not, and it refuses before the apidoc tree is deleted
-# (gain#1142; the check predates -W, gain#1220).
-for sentinel in "published-on-docs-site: start" "published-on-docs-site: end"; do
-    if ! grep -q -F -- "<!-- ${sentinel} -->" CONTEXT.md; then
-        echo "build_docs.sh: CONTEXT.md is missing the sentinel" \
-             "'<!-- ${sentinel} -->' that docs/source/development/" \
-             "architecture_overview.rst slices the vocabulary by;" \
-             "refusing to build a site without its vocabulary." >&2
-        exit 1
-    fi
-done
-
 # `sphinx_last_updated_by_git` shells out to git for each page's date. In CI
 # the checkout is bind-mounted into a container whose uid does not own it, so
 # git refuses the repository outright:
@@ -104,9 +87,7 @@ SPHINX_APIDOC_OPTIONS="members,undoc-members,show-inheritance,no-index" \
 # `-W` alone is enough: since Sphinx 8.1 it no longer stops at the first
 # warning but finishes the build and then exits non-zero, so one run reports
 # every problem. `--keep-going` is a hidden no-op in the pinned Sphinx 9.1.0
-# and is deliberately not passed. The deliberate suppression in conf.py
-# (`suppress_warnings = ["myst.header"]`, gain#1142) is honoured by -W --
-# suppressed warnings are never raised.
+# and is deliberately not passed.
 #
 # The previous run's tarball goes too, so a failed build leaves nothing
 # behind for a later step to mistake for this run's output.

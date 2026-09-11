@@ -17,21 +17,17 @@ this side of that line is Python.
 
 The chapters build bottom-up, substrate before the things that consume it:
 
-1. :doc:`development/architecture_overview` — the map of GAIn's object model,
-   a short trace of what ``annotate_tabular`` does at runtime, and the project
-   vocabulary. Every later chapter is a zoom on one box of that map, so if you
-   arrived here from a search result, read the map first.
-2. :doc:`development/resources_in_python` — the resource half of the declared
+1. :doc:`development/resources_in_python` — the resource half of the declared
    API: repositories and resources, reference genomes, gene models, the three
    kinds of score, histograms, and the seam for adding a resource type.
-3. Annotators — *planned* (:issue:`1144`).
-4. :doc:`development/module_index` — the complete generated API tree, for when
+2. Annotators — *planned* (:issue:`1144`).
+3. :doc:`development/module_index` — the complete generated API tree, for when
    you already know the name you are looking for.
 
 .. attention::
 
    **Draft marker D1 — the one unwritten chapter.** The numbered list above
-   names chapter 3 so the reader sees the shape of the guide, but the
+   names chapter 2 so the reader sees the shape of the guide, but the
    ``toctree`` below deliberately leaves it out: a ``toctree`` entry for a
    page that does not exist is a build warning, and a placeholder page that
    says "coming soon" would go live on the site the moment this merges.
@@ -43,9 +39,8 @@ The chapters build bottom-up, substrate before the things that consume it:
 .. toctree::
    :maxdepth: 2
 
-   development/architecture_overview
    development/resources_in_python
    development/module_index
 
-.. Chapter 3 (gain#1144 "Annotators") slots in between the resources chapter
+.. Chapter 2 (gain#1144 "Annotators") slots in between the resources chapter
    and the module index when it lands.
