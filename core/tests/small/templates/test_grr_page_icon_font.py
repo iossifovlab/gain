@@ -74,12 +74,11 @@ EXPECTED_GLYPHS = frozenset({
 
 #: Every origin the browse page *loads* from: the stylesheets from
 #: Google Fonts, and the host serving the font files those point at.
-#: The page loads no script from anywhere but its own repository -- the
-#: sqlite-wasm module ships inside it (gain#1335), and the script block
-#: is plain DOM (gain#1399).  Ordinary hyperlinks are deliberately not
-#: counted -- the page links to the SQLite FTS docs beside its search
-#: box, and a page that grows another such link has not grown a third
-#: party it loads code from.
+#: The page loads no script from anywhere but its own repository; the
+#: sqlite-wasm module ships inside it.  Ordinary hyperlinks are
+#: deliberately not counted -- the page links to the SQLite FTS docs
+#: beside its search box, and a page that grows another such link has
+#: not grown a third party it loads code from.
 BROWSE_ORIGINS = frozenset({
     "fonts.googleapis.com",
     "fonts.gstatic.com",

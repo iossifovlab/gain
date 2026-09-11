@@ -45,15 +45,14 @@ than skipping (`global-setup.ts`).
 ## How the pages reach the browser
 
 `serving.ts` answers every request the page under test makes by reading
-a file out of the generated GRR, and aborts anything else. Nothing is
-vendored: the pages load no script from a CDN (the sqlite-wasm the
-search runs on is published under `.static/` by `repo-index`,
-iossifovlab/gain#1335, and the index page's script block is plain DOM,
-iossifovlab/gain#1399), so `node_modules` holds the toolchain and
-nothing the browser sees. The "refuses every request" spec pins both
-halves: the search engine's files were asked for from the GRR origin and
-served, and the only requests off that origin were the Google Fonts
-stylesheets, aborted.
+a file out of the generated GRR, and aborts anything else. Everything a
+page loads -- the sqlite-wasm the search runs on, published under
+`.static/` by `repo-index`, included -- is a file of the GRR, so nothing
+is vendored here: `node_modules` holds the toolchain and nothing the
+browser sees. The "refuses every request" spec pins both halves: the
+search engine's files were asked for from the GRR origin and served, and
+the only requests off that origin were the Google Fonts stylesheets,
+aborted.
 
 The GRR is served from a **virtual origin**, `https://grr.test/`.
 Nothing listens on a socket; the origin exists only inside Playwright's

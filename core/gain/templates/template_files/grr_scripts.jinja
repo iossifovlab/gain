@@ -51,19 +51,24 @@
             return parseFloat(value) * multiplier;
         }
 
+        // The table's rows, looked up once: a search hides and rewrites
+        // them, it never adds or removes one.
+        const tableRows = document.querySelectorAll(".contents > tbody > tr");
+
         const rowData = {}
-        document.querySelectorAll(".contents > tbody > tr").forEach((row) => {
+        tableRows.forEach((row) => {
             const id = row.getAttribute("id");
-            const children = row.querySelectorAll("td");
-            const sizeStr = children[3].textContent.trim();
+            const cells = row.cells;
+            const link = cells[1].querySelector("a");
+            const sizeStr = cells[3].textContent.trim();
             rowData[id] = {
-                "type": children[0].textContent.trim(),
-                "id": children[1].getElementsByTagName("a")[0].textContent.trim(),
-                "version": children[2].textContent.trim(),
+                "type": cells[0].textContent.trim(),
+                "id": link.textContent.trim(),
+                "version": cells[2].textContent.trim(),
                 "size": sizeStr,
                 "sizeInBytes": parseSizeToBytes(sizeStr),
-                "summary": children[4].textContent.trim(),
-                "url": children[1].getElementsByTagName("a")[0].getAttribute("href").trim(),
+                "summary": cells[4].textContent.trim(),
+                "url": link.getAttribute("href").trim(),
             };
         });
         window.rowData = rowData;
@@ -156,18 +161,17 @@
             }
             window.currentIds = ids;
 
-            const rows = document.querySelectorAll(".contents > tbody > tr");
-            rows.forEach((row) => { row.style.display = "none"; });
+            tableRows.forEach((row) => { row.style.display = "none"; });
             for (const [index, rowId] of ids.entries()) {
-                let row = rows[index];
+                let row = tableRows[index];
                 let rowData = window.rowData[rowId];
-                let cells = row.querySelectorAll(":scope > td");
+                let cells = row.cells;
                 cells[0].textContent = rowData.type;
                 cells[1].title = rowData.id;
                 const link = cells[1].querySelector("a");
                 link.setAttribute("href", rowData.url);
                 link.textContent = rowData.id;
-                cells[1].querySelector(":scope > div > span").className = `material-symbols-outlined copy-icon ${rowData.id}`;
+                cells[1].querySelector(".copy-icon").className = `material-symbols-outlined copy-icon ${rowData.id}`;
                 cells[2].textContent = rowData.version;
                 cells[3].textContent = rowData.size;
                 cells[4].textContent = rowData.summary;
@@ -178,18 +182,25 @@
             UpdateStatus();
         }
 
+        // Looked up once. All three are static markup that nothing
+        // replaces, and between them they are read on every keystroke
+        // that settles, every folder move and every step of Back and
+        // Forward.
+        const searchField = document.getElementById("search-field");
+        const typeControl = document.getElementById("type-filter");
+        const searching = document.querySelector(".searching");
+
         window.dbLoaded = new Promise(async (resolve) => {
             await initializeSQLite()
             const all_ids_result = await window.sqlite3.query("SELECT full_id FROM contents;")
             window.all_ids = new Set(all_ids_result.map((row) => row[0]))
             const all_types_result = await window.sqlite3.query("SELECT DISTINCT type FROM contents ORDER BY type ASC;")
-            const typeFilter = document.getElementById("type-filter");
             for (const row of all_types_result) {
                 const type = row[0];
                 const option = document.createElement("option");
                 option.value = type;
                 option.textContent = type;
-                typeFilter.append(option);
+                typeControl.append(option);
             }
             // The unfiltered repository, and announced as exactly that --
             // no search has run yet, whatever the box may already hold.
@@ -198,33 +209,24 @@
             resolve(window.sqlite3)
         });
 
-        document.querySelectorAll(".loading").forEach((el) => { el.style.display = "none"; });
+        document.querySelector(".loading").style.display = "none";
 
         document.getElementById("search-container").style.display = "";
-
-        // Looked up once. Both are static markup that nothing replaces,
-        // and between them they are read on every keystroke that settles,
-        // every folder move and every step of Back and Forward.
-        const searchField = document.getElementById("search-field");
-        const typeControl = document.getElementById("type-filter");
 
         /**
          * What the search controls hold.
          *
          * The one reader of the two of them, so that "no type filter" has
-         * a single spelling. Two other spellings exist and both arrive
-         * here: the markup's own "all" option, and a select with nothing
-         * selected -- which is what an address naming a type this
-         * repository does not have leaves behind, since assigning a
-         * select's `value` sets `selectedIndex` to -1 rather than
-         * refusing. Neither escapes this function, so nothing downstream
-         * has to know they exist.
+         * a single spelling. The markup's own "all" option is the other
+         * spelling, and it does not escape this function, so nothing
+         * downstream has to know it exists. (A select with nothing
+         * selected reads as "" already.)
          */
         function currentSearch() {
             const type = typeControl.value;
             return {
                 q: searchField.value.trim(),
-                type: (typeControl.selectedIndex === -1 || type === "all") ? "" : type,
+                type: type === "all" ? "" : type,
             };
         }
 
@@ -237,7 +239,7 @@
                 return;
             }
 
-            document.querySelectorAll(".searching").forEach((el) => { el.style.display = ""; });
+            searching.style.display = "";
 
             let query = "";
             if (q !== "" && type !== "") {
@@ -265,7 +267,7 @@
                 applyRefreshData(Array.from(window.all_ids), { q, type })
             }
             finally {
-                document.querySelectorAll(".searching").forEach((el) => { el.style.display = "none"; });
+                searching.style.display = "none";
             }
         }
 
@@ -407,7 +409,7 @@
            document.querySelectorAll('.copy-icon').forEach(i => i.textContent = 'content_copy')
         });
         
-        document.querySelectorAll(".copy-icon").forEach((icon) => icon.addEventListener("click", (e) => {
+        const copyResourceId = (e) => {
           navigator.clipboard.writeText(e.target.classList[2]).then(
             () => {
               // reset all icons
@@ -418,7 +420,8 @@
               }, 3000);
             }
           )
-        }));
+        };
+        document.querySelectorAll(".copy-icon").forEach((icon) => icon.addEventListener("click", copyResourceId));
 
         const sortableColumns = {
             'id-col-header': 'id',

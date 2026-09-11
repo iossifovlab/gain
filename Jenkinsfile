@@ -789,9 +789,8 @@ pipeline {
                                     """
                                     // `--network none` is an assertion, not
                                     // a precaution: the suite answers every
-                                    // request from disk -- the generated
-                                    // fixtures -- and aborts anything
-                                    // else, so a test
+                                    // request from the generated fixtures
+                                    // and aborts anything else, so a test
                                     // that grew a dependency on the network
                                     // must fail here rather than pass
                                     // slowly. It also stops the sort
