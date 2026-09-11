@@ -464,15 +464,15 @@
              * The search, reached through the seam it publishes -- or a
              * stand-in for it.
              *
-             * The module that owns the search imports sqlite-wasm from a
-             * CDN at its top level, so a blocked or missing import means
-             * that module never evaluates and never publishes anything.
-             * Before the search became addressable, nothing here touched
-             * it, and such a failure still left a browsable tree and a
-             * working Back and Forward over an empty table. Standing in
-             * for the seam keeps that true, where reaching for it
-             * directly would take the whole address machinery down with
-             * the CDN.
+             * The module that owns the search imports sqlite-wasm at its
+             * top level (from the repository's own `.static/`), so a
+             * blocked or missing import means that module never
+             * evaluates and never publishes anything. Before the search
+             * became addressable, nothing here touched it, and such a
+             * failure still left a browsable tree and a working Back and
+             * Forward over an empty table. Standing in for the seam
+             * keeps that true, where reaching for it directly would take
+             * the whole address machinery down with the import.
              */
             const searchControls = window.grrSearch || {
                 current: () => ({ q: "", type: "" }),
@@ -915,8 +915,8 @@
              *
              * It is reached when there is nothing to list at all. The
              * module that owns the search also populates `rowData`, and
-             * it imports sqlite-wasm from a CDN at its top level, so a
-             * blocked import leaves this module building its tree from an
+             * it imports sqlite-wasm at its top level, so a blocked or
+             * missing import leaves this module building its tree from an
              * empty object: one root folder, no children, no resources,
              * and no search to have filtered them. That is a page whose
              * table is empty too, and "No resources" is what both should

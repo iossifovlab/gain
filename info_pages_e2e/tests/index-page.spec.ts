@@ -1288,10 +1288,13 @@ test('a tree still browses when the search index cannot be loaded', async ({
    * merely comes up empty.
    *
    * Before the search was addressable, the module that owns the address
-   * touched none of it, and a CDN this page could not reach still left a
-   * browsable tree and a working Back and Forward over an empty table.
+   * touched none of it, and a module this page could not load still left
+   * a browsable tree and a working Back and Forward over an empty table.
    * Consulting the seam put that at risk: reaching for it directly makes
-   * the whole address machinery die with the CDN. */
+   * the whole address machinery die with the import. (The module now
+   * ships inside the repository, iossifovlab/gain#1335; the route filter
+   * matches its `.static/sqlite-wasm-<version>/` path as it matched the
+   * CDN one.) */
   await page.route(
     (url) => url.href.includes('sqlite-wasm'),
     (route) => route.abort(),

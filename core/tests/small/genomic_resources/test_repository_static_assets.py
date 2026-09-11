@@ -107,6 +107,27 @@ def test_republishing_an_unchanged_repository_leaves_the_files_alone(
     assert rewritten == []
 
 
+def test_a_published_file_that_differs_is_replaced(
+    settled_repo: pathlib.Path,
+) -> None:
+    """Skipping is for identical bytes only.
+
+    The counterpart of the mtime test above, and the one that keeps its
+    skip honest: a publisher that skipped on *existence* would pass that
+    test and leave a truncated or stale module in place for good.
+    """
+    forget_static_assets(settled_repo)
+    cli_manage(["repo-index", "-R", str(settled_repo)])
+    module = published_dir(settled_repo) / "index.mjs"
+    module.write_bytes(b"not the module")
+
+    cli_manage(["repo-index", "-R", str(settled_repo)])
+
+    vendored = dict(sqlite_wasm_files())
+    assert module.read_bytes() == vendored[
+        f".static/sqlite-wasm-{SQLITE_WASM_VERSION}/index.mjs"]
+
+
 def test_the_static_directory_is_not_a_resource(
     settled_repo: pathlib.Path,
 ) -> None:

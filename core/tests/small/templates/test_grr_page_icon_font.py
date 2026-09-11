@@ -115,8 +115,10 @@ _SORT_STATE_GLYPH = re.compile(
     r"\b(?:none|asc|desc)\s*:\s*['\"]" + _GLYPH + r"['\"]",
 )
 
-#: ``import sqlite3 from "https://cdn.jsdelivr.net/…"`` -- an ES module
-#: specifier, which reaches an origin without being an ``src``.
+#: ``import x from "https://…"`` -- an ES module specifier, which reaches
+#: an origin without being an ``src``.  The page's one such import is
+#: relative today (sqlite-wasm ships inside the repository, gain#1335);
+#: this keeps counting so that an absolute one cannot come back unseen.
 _MODULE_IMPORT = re.compile(r"\bfrom\s+[\"'](https?://[^\"']+)[\"']")
 
 #: Tags whose ``href`` makes the browser fetch something.  ``<a>`` is
@@ -195,8 +197,9 @@ def external_origins(page: str) -> frozenset[str]:
     Attribute URLs are not the whole story: the search database's
     sqlite-wasm arrives through a bare ES module specifier, which is a
     string inside a ``<script type="module">`` rather than an ``src``.
-    Counting only markup would leave a CDN out of a set this module
-    claims is exhaustive.
+    Counting only markup would leave a module's origin out of a set this
+    module claims is exhaustive -- as it did while that import named a
+    CDN.
     """
     fetched = [
         url for url in read_page(page).urls
