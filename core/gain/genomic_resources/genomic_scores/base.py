@@ -912,13 +912,17 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         Mirrors :meth:`ReferenceGenome.get_chrom_length` in name and
         contract: an ``int`` or a ``ValueError``.  How far the number is to
         be trusted is a separate question, answered by
-        :meth:`get_chrom_length_source` -- only a bigWig header (or, once
-        gain#1418 lands, a genome) is exact; a tabix score answers the
-        probe's upper bound, an in-memory score how far its rows reach.
+        :meth:`get_chrom_length_source` -- only a bigWig header is exact
+        here; a tabix score answers the probe's upper bound, an in-memory
+        score how far its rows reach.
 
         Answered live through the table on every call, not memoised: on a
-        tabix score that is the index probe each time.  gain#1419 stores
-        the answer at repair and takes the probe out of this path.
+        tabix score that is the index probe each time.  The score holds no
+        GRR, so the ladder's genome rung is out of its reach -- a caller
+        with a genome asks :func:`~.chrom_lengths.derive_chrom_lengths`
+        directly, as the statistics build does.  gain#1419 stores that
+        answer at repair, which is what brings the genome's exact lengths
+        to this method and takes the probe out of this path.
         """
         return self._resolve_chrom_length(chrom)[0]
 

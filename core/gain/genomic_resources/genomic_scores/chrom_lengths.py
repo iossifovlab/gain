@@ -11,9 +11,11 @@ here keeps three things apart: the number, its provenance, and the
 when the number is absent.  The score's methods expose the ``int`` view only.
 
 The ladder the epic (gain#1412) settles is genome label → bigWig header →
-tabix estimate, applied per contig of the score.  This module answers the
-table rungs live; the genome rung (gain#1418) and the stored
-``statistics/chrom_lengths.json`` (gain#1419) are later slices.
+tabix estimate, applied per contig of the score.  This module answers every
+rung live: the genome rung from the ``ReferenceGenome`` a caller with a GRR
+hands in (the statistics build does; the score's own methods have none, so
+they resolve through the table alone), the rest through the table.  The
+stored ``statistics/chrom_lengths.json`` (gain#1419) is a later slice.
 """
 
 from __future__ import annotations
@@ -77,12 +79,12 @@ def derive_chrom_length(
     knows is refused the same way.  The score's methods screen first and
     word both refusals as every other score read does.
     """
-    if ref_genome is not None and score.table.has_chromosome(chrom):
-        genome_length = ref_genome.get_all_chrom_lengths().get(chrom)
-        if genome_length is not None:
-            return ChromLength(
-                length=genome_length,
-                source=ChromLengthSource.REFERENCE_GENOME, extent=None)
+    if (ref_genome is not None
+            and score.table.has_chromosome(chrom)
+            and chrom in ref_genome.get_all_chrom_lengths()):
+        return ChromLength(
+            length=ref_genome.get_chrom_length(chrom),
+            source=ChromLengthSource.REFERENCE_GENOME, extent=None)
     length = score.table.find_chromosome_length(chrom)
     if isinstance(length, ContigExtent):
         return ChromLength(length=None, source=None, extent=length)
@@ -99,8 +101,8 @@ def derive_chrom_lengths(
     The universe is the score's contigs -- ``get_all_chromosomes()`` --
     never the whole genome; a whole-reference denominator is a property of
     the genome and belongs to coverage (gain#1041).  Keyed by contig so
-    the consumers that split regions (gain#1418) and persist the answer
-    (gain#1419) look up by name; the dict keeps table order.
+    the consumers that split regions (the statistics build) and persist
+    the answer (gain#1419) look up by name; the dict keeps table order.
 
     Not memoised: on a tabix score every call re-runs the probe per contig,
     which is the cost gain#1419 takes out of the read path by storing this

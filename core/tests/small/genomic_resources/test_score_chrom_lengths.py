@@ -6,7 +6,9 @@ The three ``GenomicScore`` methods mirror ``ReferenceGenome``'s
 ``ValueError``.  Underneath them, ``derive_chrom_lengths`` keeps the
 tri-state answer the statistics region splitter needs (gain#509) -- a length,
 or the ``ContigExtent`` reason there is none -- and the source of each length
-is whatever the backend declares its lengths to be.
+is whatever the backend declares its lengths to be.  A caller holding a
+``ReferenceGenome`` hands it to the resolver, which answers every contig the
+genome lists from it first, exactly, and per contig (gain#1418).
 """
 
 import pathlib
@@ -423,7 +425,7 @@ def test_each_backends_source_and_its_exactness(
 
 
 def test_a_reference_genome_length_is_exact() -> None:
-    # Not producible by a score in this slice (gain#1418 adds the rung), so
+    # Not producible by the score's own methods, which hold no genome, so
     # the member is asserted directly: it is the one source that beats a
     # bigWig header, and a caller filtering on exactness must keep it.
     assert ChromLengthSource.REFERENCE_GENOME.is_exact
