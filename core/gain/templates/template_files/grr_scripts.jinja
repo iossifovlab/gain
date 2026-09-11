@@ -1,4 +1,3 @@
-    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
     <script type="module">
         import sqlite3 from "./{{ sqlite_wasm_path }}/index.mjs";
 
@@ -53,9 +52,9 @@
         }
 
         const rowData = {}
-        $(".contents > tbody > tr").each((index, row) => {
-            const id = $(row).attr("id");
-            const children = $(row).find("td");
+        document.querySelectorAll(".contents > tbody > tr").forEach((row) => {
+            const id = row.getAttribute("id");
+            const children = row.querySelectorAll("td");
             const sizeStr = children[3].textContent.trim();
             rowData[id] = {
                 "type": children[0].textContent.trim(),
@@ -64,9 +63,9 @@
                 "size": sizeStr,
                 "sizeInBytes": parseSizeToBytes(sizeStr),
                 "summary": children[4].textContent.trim(),
-                "url": $(children[1].getElementsByTagName("a")[0]).attr("href").trim(),
+                "url": children[1].getElementsByTagName("a")[0].getAttribute("href").trim(),
             };
-        })
+        });
         window.rowData = rowData;
 
         let sortColumn = 'none'; // 'none' | 'id' | 'type' | 'version' | 'summary'
@@ -135,17 +134,17 @@
         }
 
         function UpdateStatus() {
-            const status = $(`#status`);
-            const statusError = $(`#status-error`);
+            const status = document.getElementById("status");
+            const statusError = document.getElementById("status-error");
             if (window.last_error) {
-                statusError.show();
-                statusError.text(`Query failed due to syntax error, debugging information is in the console.`);
+                statusError.style.display = "";
+                statusError.textContent = `Query failed due to syntax error, debugging information is in the console.`;
             }
             else {
-                statusError.text("");
-                statusError.hide();
+                statusError.textContent = "";
+                statusError.style.display = "none";
             }
-            status.text(`${window.currentIds.length} resources`);
+            status.textContent = `${window.currentIds.length} resources`;
         }
 
         function refreshData(ids) {
@@ -157,21 +156,23 @@
             }
             window.currentIds = ids;
 
-            const rows = $(".contents > tbody > tr")
-            rows.hide();
+            const rows = document.querySelectorAll(".contents > tbody > tr");
+            rows.forEach((row) => { row.style.display = "none"; });
             for (const [index, rowId] of ids.entries()) {
-                let row = $(rows[index]);
+                let row = rows[index];
                 let rowData = window.rowData[rowId];
-                let cells = row.children("td");
+                let cells = row.querySelectorAll("td");
                 cells[0].textContent = rowData.type;
                 cells[1].title = rowData.id;
-                $(cells[1]).find("a").attr("href", rowData.url).text(rowData.id);
-                $(cells[1]).children("div").children("span")[0].className = `material-symbols-outlined copy-icon ${rowData.id}`;
+                const link = cells[1].querySelector("a");
+                link.setAttribute("href", rowData.url);
+                link.textContent = rowData.id;
+                cells[1].querySelector(":scope > div > span").className = `material-symbols-outlined copy-icon ${rowData.id}`;
                 cells[2].textContent = rowData.version;
                 cells[3].textContent = rowData.size;
                 cells[4].textContent = rowData.summary;
                 cells[4].title = rowData.summary;
-                row.show();
+                row.style.display = "";
             }
 
             UpdateStatus();
@@ -182,7 +183,7 @@
             const all_ids_result = await window.sqlite3.query("SELECT full_id FROM contents;")
             window.all_ids = new Set(all_ids_result.map((row) => row[0]))
             const all_types_result = await window.sqlite3.query("SELECT DISTINCT type FROM contents ORDER BY type ASC;")
-            const typeFilter = $("#type-filter");
+            const typeFilter = document.getElementById("type-filter");
             for (const row of all_types_result) {
                 const type = row[0];
                 const option = document.createElement("option");
@@ -197,34 +198,33 @@
             resolve(window.sqlite3)
         });
 
-        $(".loading").hide()
+        document.querySelectorAll(".loading").forEach((el) => { el.style.display = "none"; });
 
-        $("#search-container").show()
+        document.getElementById("search-container").style.display = "";
 
         // Looked up once. Both are static markup that nothing replaces,
         // and between them they are read on every keystroke that settles,
         // every folder move and every step of Back and Forward.
-        const searchField = $("#search-field");
-        const typeControl = $("#type-filter");
+        const searchField = document.getElementById("search-field");
+        const typeControl = document.getElementById("type-filter");
 
         /**
          * What the search controls hold.
          *
          * The one reader of the two of them, so that "no type filter" has
          * a single spelling. Two other spellings exist and both arrive
-         * here: the markup's own "all" option, and the `null` jQuery
-         * answers for a select with nothing selected -- which is what an
-         * address naming a type this repository does not have leaves
-         * behind, since `val()` sets `selectedIndex` to -1 rather than
+         * here: the markup's own "all" option, and a select with nothing
+         * selected -- which is what an address naming a type this
+         * repository does not have leaves behind, since assigning a
+         * select's `value` sets `selectedIndex` to -1 rather than
          * refusing. Neither escapes this function, so nothing downstream
-         * has to know they exist, and the SQL below cannot end up asking
-         * for a type called "null".
+         * has to know they exist.
          */
         function currentSearch() {
-            const type = typeControl.val();
+            const type = typeControl.value;
             return {
-                q: searchField.val().trim(),
-                type: (type === null || type === "all") ? "" : type,
+                q: searchField.value.trim(),
+                type: (typeControl.selectedIndex === -1 || type === "all") ? "" : type,
             };
         }
 
@@ -237,7 +237,7 @@
                 return;
             }
 
-            $(".searching").show()
+            document.querySelectorAll(".searching").forEach((el) => { el.style.display = ""; });
 
             let query = "";
             if (q !== "" && type !== "") {
@@ -265,7 +265,7 @@
                 applyRefreshData(Array.from(window.all_ids), { q, type })
             }
             finally {
-                $(".searching").hide()
+                document.querySelectorAll(".searching").forEach((el) => { el.style.display = "none"; });
             }
         }
 
@@ -316,7 +316,7 @@
                 // the whole of the download rather than only after it --
                 // which is exactly when a reader who followed a filtered
                 // link is looking at them.
-                searchField.val(q);
+                searchField.value = q;
                 // The type cannot: its options are built from the loaded
                 // index, so selecting one before that resolves selects
                 // nothing at all, and does it silently.
@@ -330,9 +330,9 @@
                 // application is abandoned rather than written over the
                 // top of theirs. Two applications racing each other sort
                 // themselves out the same way, for the same reason.
-                if (searchField.val().trim() !== q) return;
-                typeControl.val(type === "" ? "all" : type);
-                if (typeControl.val() === null) {
+                if (searchField.value.trim() !== q) return;
+                typeControl.value = type === "" ? "all" : type;
+                if (typeControl.selectedIndex === -1) {
                     // The address named a type this repository does not
                     // have -- a stale link, or a hand-edited one. Selected
                     // nothing at all, which would leave the dropdown blank
@@ -340,7 +340,7 @@
                     // back to searching every type, the same salvage the
                     // folder path makes when it walks up to an ancestor
                     // that still exists.
-                    typeControl.val("all");
+                    typeControl.value = "all";
                 }
                 await doSearch();
             },
@@ -377,7 +377,7 @@
             searchChanged();
         }
 
-        typeControl.on("change", searchFromControls)
+        typeControl.addEventListener("change", searchFromControls);
 
         function debounce(func, wait, immediate) {
             var timeout;
@@ -396,7 +396,7 @@
 
         var debouncedSearch = debounce(searchFromControls, 400, false);
 
-        searchField.on("keydown", (e) => {
+        searchField.addEventListener("keydown", (e) => {
           if (e.key === "Enter") {
             searchFromControls();
           }
@@ -407,7 +407,7 @@
            document.querySelectorAll('.copy-icon').forEach(i => i.textContent = 'content_copy')
         });
         
-        $(".copy-icon").on("click", (e) => {
+        document.querySelectorAll(".copy-icon").forEach((icon) => icon.addEventListener("click", (e) => {
           navigator.clipboard.writeText(e.target.classList[2]).then(
             () => {
               // reset all icons
@@ -418,7 +418,7 @@
               }, 3000);
             }
           )
-        });
+        }));
 
         const sortableColumns = {
             'id-col-header': 'id',

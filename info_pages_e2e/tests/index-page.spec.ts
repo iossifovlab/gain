@@ -49,8 +49,8 @@ function visibleResourceIds(page: Page) {
  * Read as text, never as visibility. The hierarchical view hides this
  * element, so an address naming the tree would make a `toBeVisible` wait
  * hang forever on a page that had loaded perfectly. The status is written
- * with jQuery's `.text()`, which does not care that the element is
- * hidden, so the signal survives being out of sight.
+ * to `textContent`, which does not care that the element is hidden, so
+ * the signal survives being out of sight.
  *
  * @param resources - the count to wait *for*. An address carrying a
  * search has to override it: such a load passes through the unfiltered
@@ -173,10 +173,10 @@ test('the hierarchical view lists the repository\'s top-level folders', async ({
   await page.locator('#hierarchical-view-btn').click();
 
   /* The tree is folded up from `window.rowData`, which the templates
-   * build by scraping the rendered table with jQuery. So this is also
-   * the assertion that fails if the vendored jQuery stops being served:
-   * the scrape never runs, `rowData` stays empty, and the tree renders
-   * as an empty list rather than as an error.
+   * build by scraping the rendered table. So this is also the assertion
+   * that fails if the scrape throws before it runs: `rowData` stays
+   * empty, and the tree renders as an empty list rather than as an
+   * error.
    *
    * *Which* folders, not in which order: the order is asserted once, by
    * the test that is about the comparator. Pinning it here as well would
@@ -194,7 +194,7 @@ test('the hierarchical view lists the repository\'s top-level folders', async ({
  * what it permits and then checked it permitted that would pass however
  * wide the helper had been opened.
  */
-const SERVED_HOSTS = ['grr.test', 'ajax.googleapis.com'];
+const SERVED_HOSTS = ['grr.test'];
 
 test('the harness refuses every request it does not serve itself', async ({
   page,
@@ -213,6 +213,15 @@ test('the harness refuses every request it does not serve itself', async ({
   const fonts = requested.filter((url) => url.includes('fonts.googleapis.com'));
   expect(fonts.length).toBeGreaterThan(0);
   expect(fonts.filter((url) => !failed.has(url))).toEqual([]);
+
+  /* And the fonts are the *only* thing asked for off the GRR's origin.
+   * A script the page needed from a CDN would be aborted too and so
+   * would pass the checks around this one -- while leaving the page
+   * without whatever that script did (iossifovlab/gain#1399). */
+  const offOrigin = requested.filter(
+    (url) => !SERVED_HOSTS.includes(new URL(url).host),
+  );
+  expect(offOrigin).toEqual(fonts);
 
   /* Nothing else got through either. The Jenkins stage runs this suite
    * under `docker run --network none`, so a page that grew a dependency
