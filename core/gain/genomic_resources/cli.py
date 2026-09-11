@@ -452,11 +452,11 @@ def _do_resource_manifest_command(
     if not bool(manifest_update):
         logger.debug(
             "manifest of <%s> is up to date",
-            res.get_genomic_resource_id_version())
+            res.get_full_id())
     else:
         msg = (
             f"manifest of "
-            f"<{res.get_genomic_resource_id_version()}> "
+            f"<{res.get_full_id()}> "
             f"should be updated; "
             f"entries to update in manifest "
             f"{sorted(manifest_update.entries_to_update)}"

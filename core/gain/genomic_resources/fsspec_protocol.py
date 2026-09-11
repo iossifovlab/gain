@@ -1409,7 +1409,7 @@ class FsspecReadOnlyProtocol(
         validate_resource_id(resource.resource_id)
         return os.path.join(
             self._fetch_url,
-            resource.get_genomic_resource_id_version())
+            resource.get_full_id())
 
     def get_public_url(self) -> str:
         return self.public_url
@@ -2293,7 +2293,7 @@ class FsspecReadWriteProtocol(
 
     def scan_resource_entries(self, resource: GenomicResource) -> ResourceScan:
         """Scan the resource and return what was found."""
-        resource_path = resource.get_genomic_resource_id_version()
+        resource_path = resource.get_full_id()
 
         result = Manifest()
         unreadable: dict[str, str] = {}
