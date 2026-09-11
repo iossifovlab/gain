@@ -33,9 +33,9 @@ function columnHeader(page: Page, name: string) {
 }
 
 test.beforeEach(async ({ page }) => {
-  /* `serveGrr` answers out of the generated GRR and the two vendored
-   * packages, and aborts everything else -- the Google Fonts stylesheet
-   * this page links for the sort indicator's glyphs included. Keeping
+  /* `serveGrr` answers out of the generated GRR and aborts everything
+   * else -- the Google Fonts stylesheet this page links for the sort
+   * indicator's glyphs included. Keeping
    * that rule in one place is what stops the two specs from disagreeing
    * about what "offline" means. */
   await serveGrr(page, FIXTURE_GRR);

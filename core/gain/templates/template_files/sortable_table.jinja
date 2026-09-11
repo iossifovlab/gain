@@ -6,12 +6,11 @@
    neither is untouched, so the script does nothing at all on the
    resource pages that have no sortable table.
 
-   Not built on `grr_scripts.jinja`'s sorter.  It is jQuery-shaped, and
-   that include pulls jQuery from a third origin -- but the reason it
-   cannot be shared is deeper than the dependency: it sorts a DATA MODEL
-   (an id list against a JS-side row map, feeding a virtualized render
-   and a tree view), where this sorts DOM rows in place on keys the
-   server already computed.  There is no common part to lift out.
+   Not built on `grr_scripts.jinja`'s sorter, because the two have no
+   common part to lift out: it sorts a DATA MODEL (an id list against a
+   JS-side row map, feeding a virtualized render and a tree view),
+   where this sorts DOM rows in place on keys the server already
+   computed.
 
    That sorter is also deliberately three-state, because the GRR index's
    unsorted order is the repository's own meaningful listing order.

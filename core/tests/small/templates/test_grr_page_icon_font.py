@@ -72,15 +72,15 @@ EXPECTED_GLYPHS = frozenset({
     "unfold_more",
 })
 
-#: Every origin the browse page *loads* from: jQuery from Google's CDN,
-#: the stylesheets from Google Fonts, and the host serving the font
-#: files those point at.  The sqlite-wasm module ships inside the
-#: repository (gain#1335), so no origin of its own.  Ordinary
-#: hyperlinks are deliberately not counted -- the page links to the
-#: SQLite FTS docs beside its search box, and a page that grows another
-#: such link has not grown a third party it loads code from.
+#: Every origin the browse page *loads* from: the stylesheets from
+#: Google Fonts, and the host serving the font files those point at.
+#: The page loads no script from anywhere but its own repository -- the
+#: sqlite-wasm module ships inside it (gain#1335), and the script block
+#: is plain DOM (gain#1399).  Ordinary hyperlinks are deliberately not
+#: counted -- the page links to the SQLite FTS docs beside its search
+#: box, and a page that grows another such link has not grown a third
+#: party it loads code from.
 BROWSE_ORIGINS = frozenset({
-    "ajax.googleapis.com",
     "fonts.googleapis.com",
     "fonts.gstatic.com",
 })

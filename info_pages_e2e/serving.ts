@@ -25,63 +25,6 @@ import type { Page } from '@playwright/test';
 export const GRR_ORIGIN = 'https://grr.test/';
 
 /**
- * The jQuery the templates load, and where `npm ci` puts our copy.
- *
- * `grr_scripts.jinja` loads jQuery from Google's CDN, and all three of
- * its module blocks use `$` -- including the row scrape that builds
- * `window.rowData`, which the tree view is built from. Aborting it does
- * not merely lose the fonts: it empties the tree.
- */
-const JQUERY_VERSION = '3.7.1';
-const JQUERY_URL =
-  `https://ajax.googleapis.com/ajax/libs/jquery/${JQUERY_VERSION}/jquery.min.js`;
-const JQUERY_DIR = 'jquery';
-
-/** Where `npm ci` unpacks the vendored package. */
-const NODE_MODULES = path.join(__dirname, 'node_modules');
-
-/**
- * What must be installed, and at which version, for the URL above to be
- * answered honestly.
- *
- * These bytes are served *at the CDN URL*, so the installed version has
- * to be the version the URL names. Exact pins stop a range drifting but
- * not a deliberate bump: move jquery to 3.8.0 and the suite serves
- * 3.8.0's bytes at a URL claiming 3.7.1 -- every test green, testing a
- * library the published page never loads. Invisible in a diff of either
- * file alone, which is why it is checked rather than commented.
- */
-const VENDORED = [
-  { dir: JQUERY_DIR, version: JQUERY_VERSION },
-];
-
-/**
- * Why the vendored package cannot be served, if it cannot.
- *
- * Checked in `global-setup.ts` rather than per test: without it the
- * symptom is four specs reporting an empty tree and an empty status
- * line, which looks exactly like a broken template.
- */
-export function vendoringProblems(): string[] {
-  return VENDORED.flatMap(({ dir, version }) => {
-    const manifest = path.join(NODE_MODULES, dir, 'package.json');
-    if (!fs.existsSync(manifest)) {
-      return [`${dir} is not installed (${manifest} is missing) -- run 'npm ci'`];
-    }
-    const installed = JSON.parse(fs.readFileSync(manifest, 'utf8')).version;
-    if (installed !== version) {
-      return [
-        `${dir} is installed at ${installed}, but this suite serves it at a `
-        + `URL naming ${version}. Update the constant in serving.ts and the `
-        + 'URL in core/gain/templates/template_files/grr_scripts.jinja, or '
-        + 'pin the package back.',
-      ];
-    }
-    return [];
-  });
-}
-
-/**
  * ``relative`` resolved under ``root``, or null if it escapes.
  *
  * `path.resolve` follows `..` out of the directory it was given, and a
@@ -107,24 +50,13 @@ function addressOf(url: string): string {
   return url.split('?')[0];
 }
 
-/** The file a vendored-CDN request is answered from, or null. */
-function resolveVendored(address: string): string | null {
-  if (address === JQUERY_URL) {
-    return resolveUnder(
-      path.join(NODE_MODULES, JQUERY_DIR), 'dist/jquery.min.js');
-  }
-  return null;
-}
-
 /** The file a request is answered from, or null if nothing may answer it. */
 function resolveRequest(url: string, grrDir: string): string | null {
   const address = addressOf(url);
 
-  if (address.startsWith(GRR_ORIGIN)) {
-    return resolveUnder(
-      grrDir, decodeURIComponent(address.slice(GRR_ORIGIN.length)));
-  }
-  return resolveVendored(address);
+  if (!address.startsWith(GRR_ORIGIN)) return null;
+  return resolveUnder(
+    grrDir, decodeURIComponent(address.slice(GRR_ORIGIN.length)));
 }
 
 /**
@@ -140,7 +72,7 @@ function resolveSubPathRequest(
   url: string, grrDirs: Map<string, string>,
 ): string | null {
   const address = addressOf(url);
-  if (!address.startsWith(GRR_ORIGIN)) return resolveVendored(address);
+  if (!address.startsWith(GRR_ORIGIN)) return null;
 
   const relative = address.slice(GRR_ORIGIN.length);
   const slash = relative.indexOf('/');
@@ -198,12 +130,12 @@ async function routeThrough(
 }
 
 /**
- * Answer every request this page makes out of `grrDir` and `node_modules`.
+ * Answer every request this page makes out of `grrDir`.
  *
  * The single definition of what the harness allows, shared by every spec:
- * the generated GRR, the one vendored CDN package (jQuery), and nothing else.
- * Anything unrecognised is aborted -- the Google Fonts stylesheet the
- * pages link, and any dependency on the network a page grows later.
+ * the generated GRR, and nothing else. Anything off that origin is
+ * aborted -- the Google Fonts stylesheets the pages link, and any
+ * dependency on the network a page grows later.
  *
  * That abort is the point rather than a precaution. The Jenkins stage
  * runs the suite under `docker run --network none`, so a page that

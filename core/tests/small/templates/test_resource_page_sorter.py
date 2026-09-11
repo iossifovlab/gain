@@ -105,12 +105,10 @@ def test_the_sorter_ships_inert_on_a_page_with_no_sortable_table(
 
 
 def test_a_resource_page_loads_no_jquery(gene_score_page: str) -> None:
-    """One Array.sort() does not justify a CDN and a third origin.
+    """One Array.sort() does not justify a library.
 
-    ``grr_scripts.jinja`` has a sorter already, but it is jQuery-shaped
-    and that include pulls jQuery from ajax.googleapis.com.  Resource
-    pages are jQuery-free, and the hard part -- parsing and ordering --
-    is already done in Python by ``data-sort-value``.
+    Resource pages are jQuery-free, and the hard part -- parsing and
+    ordering -- is already done in Python by ``data-sort-value``.
     """
     assert "jquery" not in gene_score_page.lower()
 
