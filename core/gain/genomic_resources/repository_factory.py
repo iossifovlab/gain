@@ -184,7 +184,7 @@ class HttpRepoDefinition(_RepoDefinitionBase):
         # too (``__repr_args__`` only covers repr/str). The field stays a plain
         # ``str`` so attribute access (``.password``) and the raw definition
         # dict — which is what the auth build path in fsspec_protocol.py reads
-        # to construct ``aiohttp.BasicAuth`` — still see the real value.
+        # to build the ``Authorization`` header — still see the real value.
         return "***" if value is not None else None
 
     @field_serializer("url")

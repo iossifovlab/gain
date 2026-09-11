@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import abc
 import asyncio
+import base64
 import copy
 import datetime
 import gzip
@@ -3264,6 +3265,19 @@ def build_local_resource(
     return GenomicResource(".", (0, ), proto, config)
 
 
+def _basic_auth_header(user: str, password: str) -> str:
+    """Return the ``Authorization`` header value for HTTP Basic auth.
+
+    The credential is encoded as UTF-8, per RFC 7617.
+    """
+    # Encoded here, not by aiohttp: ``aiohttp.BasicAuth`` and the
+    # session-level ``auth`` parameter are both deprecated for removal in
+    # aiohttp 4.0, and the helper that replaces them only exists from 3.14
+    # (#1395). A plain session header needs neither.
+    token = base64.b64encode(f"{user}:{password}".encode()).decode("ascii")
+    return f"Basic {token}"
+
+
 def _build_filesystem(
     url: str, **kwargs: Any,
 ) -> fsspec.AbstractFileSystem:
@@ -3293,7 +3307,9 @@ def _build_filesystem(
         user = kwargs.get("user")
         password = kwargs.get("password")
         if user is not None and password is not None:
-            client_kwargs["auth"] = aiohttp.BasicAuth(user, password)
+            client_kwargs["headers"] = {
+                "Authorization": _basic_auth_header(user, password),
+            }
         return HTTPFileSystem(client_kwargs=client_kwargs)
     if parsed_url.scheme == "s3":
         from s3fs.core import S3FileSystem
