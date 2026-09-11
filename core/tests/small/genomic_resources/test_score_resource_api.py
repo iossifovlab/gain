@@ -47,7 +47,9 @@ ALLOWED_PUBLIC_METHODS = {
 # Listed explicitly so a regression reads as intent, not a set-difference.
 FORBIDDEN_ON_BASE = {
     "open", "close", "is_open", "__enter__", "__exit__",
-    "fetch_records", "fetch_region", "fetch_region_segments",
+    "fetch_records", "fetch_region", "fetch_region_segments_scores",
+    # The unclipped read's previous name, before gain#1397 renamed it.
+    "fetch_region_segments",
     # The clipped read and its alias, removed by gain#844 -- pinned like
     # ``fetch_region`` above so the names cannot come back on the base.
     "fetch_region_segment_scores", "fetch_region_values",

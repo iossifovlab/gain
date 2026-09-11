@@ -334,8 +334,9 @@ def test_a_bad_aggregator_is_refused_before_the_region_is_read(
 ) -> None:
     """The orchestrator builds every aggregator BEFORE it fetches.
 
-    ``fetch_region_segments`` is not lazy -- its not-open and unknown-contig
-    guards run when it is CALLED, not on the first ``next()`` -- so building
+    ``fetch_region_segments_scores`` is not lazy -- its not-open and
+    unknown-contig guards run when it is CALLED, not on the first ``next()``
+    -- so building
     the aggregators after the fetch would let a region complaint mask a
     misspelled aggregator.  An annotation config with a typo would then
     surface only once someone queried a contig the resource covers.

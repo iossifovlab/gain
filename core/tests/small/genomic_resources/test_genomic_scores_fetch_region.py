@@ -112,7 +112,7 @@ def test_position_score_fetch_region(
 ) -> None:
 
     score_lines = list(
-        position_score.fetch_region_segments(
+        position_score.fetch_region_segments_scores(
             "chr1", begin, end, scores=scores))
 
     assert len(score_lines) == len(expected)
@@ -133,7 +133,7 @@ def test_position_score_fetch_region_does_not_check_consistency(
     # read yields both without a word: since gain#588 the consistency of a
     # position score's records is the statistics scan's question, and the
     # test below asks it of the same two regions.
-    assert len(list(position_score.fetch_region_segments(
+    assert len(list(position_score.fetch_region_segments_scores(
         chrom, begin, end))) \
         == 2
 
@@ -275,7 +275,8 @@ def test_np_score_fetch_regions(
     assert np_score is not None
 
     score_lines = list(
-        np_score.fetch_region_segments("chr1", begin, end, scores=scores))
+        np_score.fetch_region_segments_scores(
+            "chr1", begin, end, scores=scores))
     assert len(score_lines) == len(expected)
     assert score_lines == expected
 
@@ -409,7 +410,7 @@ def test_np_score2_fetch_regions(
     assert np_score2 is not None
 
     score_lines = list(
-        np_score2.fetch_region_segments(
+        np_score2.fetch_region_segments_scores(
             "chr1", begin, end, scores=scores))
     assert len(score_lines) == len(expected)
     assert score_lines == expected
@@ -529,7 +530,7 @@ def test_allele_score_fetch_regions(
     assert allele_score is not None
 
     score_lines = list(
-        allele_score.fetch_region_segments(
+        allele_score.fetch_region_segments_scores(
             "chr1", begin, end, scores=scores))
     assert len(score_lines) == len(expected)
     assert score_lines == expected
@@ -677,19 +678,19 @@ def test_reading_an_allele_score_going_backwards_raises_nothing(
 
     monkeypatch.setattr(score, "fetch_records", out_of_order)
 
-    assert list(score.fetch_region_segments("chr1", 1, 30)) == [
+    assert list(score.fetch_region_segments_scores("chr1", 1, 30)) == [
         (20, 20, [0.2]),
         (10, 10, [0.1]),
     ]
 
 
-def test_fetch_region_segments_reports_a_straddling_records_true_extent(
+def test_fetch_region_segments_scores_reports_a_straddling_records_true_extent(
     position_score: PositionScore,
 ) -> None:
     # The records at (11, 13) and (21, 23) both straddle an edge of the
     # queried window [12, 22]; the segment read reports their own spans,
     # not the window's.
-    assert list(position_score.fetch_region_segments(
+    assert list(position_score.fetch_region_segments_scores(
         "chr1", 12, 22, scores=["s1"])) == [
         (11, 13, [1.0]),
         (21, 23, [2.0]),
@@ -704,7 +705,7 @@ def test_clip_to_region_over_the_segment_read_reshapes_to_the_window(
     # composition): the straddling records above come back reshaped to the
     # window.
     assert list(clip_to_region(
-        position_score.fetch_region_segments(
+        position_score.fetch_region_segments_scores(
             "chr1", 12, 22, scores=["s1"]),
         12, 22)) == [
         (12, 13, [1.0]),
@@ -732,8 +733,8 @@ def test_an_allele_segment_read_answers_at_the_record_position(
     score = build_allele_score_from_resource(resource)
     score.open()
 
-    assert list(score.fetch_region_segments(
+    assert list(score.fetch_region_segments_scores(
         "chr1", 15, 25, scores=["s"])) == [(10, 10, [0.1])]
     assert not list(clip_to_region(
-        score.fetch_region_segments("chr1", 15, 25, scores=["s"]),
+        score.fetch_region_segments_scores("chr1", 15, 25, scores=["s"]),
         15, 25))

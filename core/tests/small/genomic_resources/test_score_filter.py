@@ -163,7 +163,7 @@ def test_the_segment_read_keeps_only_the_records_the_filter_accepts(
     """A filter reaches the segment read, not only the record read.
 
     On a POSITION score deliberately.  The parameter is
-    :meth:`~.base.GenomicScore.fetch_region_segments`'s, so what it must
+    :meth:`~.base.GenomicScore.fetch_region_segments_scores`'s, so what it must
     not be is fragment-only -- the fragment plane reaches the same
     composition through the same method.
 
@@ -174,9 +174,10 @@ def test_the_segment_read_keeps_only_the_records_the_filter_accepts(
     with position_score.open() as score:
         score_filter = score.compile_filter("freq > 0.15")
 
-        filtered = list(score.fetch_region_segments(
+        filtered = list(score.fetch_region_segments_scores(
             "1", 10, 12, ["freq"], score_filter=score_filter))
-        unfiltered = list(score.fetch_region_segments("1", 10, 12, ["freq"]))
+        unfiltered = list(
+            score.fetch_region_segments_scores("1", 10, 12, ["freq"]))
 
     assert [begin for begin, _end, _values in filtered] == [11, 12]
     assert [begin for begin, _end, _values in unfiltered] == [10, 11, 12]
@@ -213,7 +214,7 @@ def test_the_segment_read_refuses_a_filter_of_a_different_score(
         foreign = score.compile_filter("freq > 0.15")
 
         with pytest.raises(ScoreFilterError) as excinfo:
-            list(other_score.fetch_region_segments(
+            list(other_score.fetch_region_segments_scores(
                 "1", 10, 10, ["freq"], score_filter=foreign))
 
     assert "compiled against" in str(excinfo.value)
