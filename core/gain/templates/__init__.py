@@ -67,6 +67,14 @@ Unlike ``render_markdown`` it is imported at module scope: the module it
 comes from imports only ``re``, so there is no start-up cost to defer,
 and ``gain.utils`` is where it deliberately lives so that the template
 layer can reach it without importing ``genomic_resources``.
+
+The third global, ``sqlite_wasm_path``, is the repository-relative
+directory the index page imports its search engine from -- the same
+directory ``build_index_info`` publishes the vendored sqlite-wasm files
+to (``gain.templates.static_assets``, gain#1335).  A global rather than
+a render kwarg for the same reason as ``markdown``: the page has more
+than one render site, the tests among them, and none of them should be
+able to render an import that points somewhere the publisher did not.
 """
 from __future__ import annotations
 
@@ -83,6 +91,7 @@ from jinja2 import (
     TemplateNotFound,
 )
 
+from gain.templates.static_assets import sqlite_wasm_path
 from gain.utils.chromosome_order import natural_chromosome_key
 
 if TYPE_CHECKING:
@@ -152,6 +161,7 @@ def get_jinja_env() -> Environment:
         )
         env.globals["markdown"] = render_markdown
         env.globals["natural_chromosome_key"] = natural_chromosome_key
+        env.globals["sqlite_wasm_path"] = sqlite_wasm_path()
         # Published last, so no caller can reach a half-configured
         # environment: assigning first and installing the globals after
         # leaves a window where the singleton renders UndefinedError.
