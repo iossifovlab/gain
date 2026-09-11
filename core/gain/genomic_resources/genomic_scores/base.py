@@ -96,7 +96,6 @@ from .aggregation import (
     resolve_aggregator_requests,
 )
 from .chrom_lengths import (
-    ChromLength,
     ChromLengthSource,
     derive_chrom_length,
     derive_chrom_lengths,
@@ -918,9 +917,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         gain#1418 lands, a genome) is exact; a tabix score answers the
         probe's upper bound.
         """
-        length = self._resolve_chrom_length(chrom).length
-        assert length is not None
-        return length
+        return self._resolve_chrom_length(chrom)[0]
 
     def get_all_chrom_lengths(self) -> dict[str, int]:
         """The lengths of the contigs this score can answer for, in table order.
@@ -945,12 +942,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         Same refusals as :meth:`get_chrom_length`.
         """
-        source = self._resolve_chrom_length(chrom).source
-        assert source is not None
-        return source
+        return self._resolve_chrom_length(chrom)[1]
 
-    def _resolve_chrom_length(self, chrom: str) -> ChromLength:
-        """The record behind the two length reads, refused when lengthless.
+    def _resolve_chrom_length(
+        self, chrom: str,
+    ) -> tuple[int, ChromLengthSource]:
+        """The length and source behind the two reads, refused when absent.
 
         Three refusals, all ``ValueError``: a score that is not open and a
         contig it does not carry, in the words every region read uses; and
@@ -970,7 +967,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             raise ValueError(
                 f"could not determine the length of contig {chrom} "
                 f"in the table's contigs: {self.get_all_chromosomes()}")
-        return resolved
+        # The record's two shapes: no extent means both are set.
+        assert resolved.length is not None
+        assert resolved.source is not None
+        return resolved.length, resolved.source
 
     def region_values_from_records(
         self,
