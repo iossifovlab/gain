@@ -801,38 +801,41 @@ class _RedactingFile:
 def _scan_for_resources(
     content_dict: dict, parent_id: list[str],
 ) -> Generator[tuple[str, tuple[int, ...], dict], None, None]:
-    name = "/".join(parent_id)
-    id_ver = parse_gr_id_version_token(name)
-    if isinstance(content_dict, dict) and id_ver and \
-            GR_CONF_FILE_NAME in content_dict and \
+    if not parent_id and GR_CONF_FILE_NAME in content_dict and \
             not isinstance(content_dict[GR_CONF_FILE_NAME], dict):
-        # resource found
-        resource_id, version = id_ver
-        yield "/".join([*parent_id, resource_id]), version, content_dict
+        # The repository root is itself a resource, published under the
+        # empty id. Only the root can reach here with a config of its own:
+        # the recursion below descends into a directory only when it has
+        # none.
+        yield "", (0,), content_dict
         return
 
     for name, content in content_dict.items():
-        id_ver = parse_gr_id_version_token(name)
-        if isinstance(content, dict) and id_ver and \
-                GR_CONF_FILE_NAME in content and \
+        curr_id = [*parent_id, name]
+        curr_id_path = "/".join(curr_id)
+        if not isinstance(content, dict):
+            logger.warning("file <%s> is not used.", curr_id_path)
+            continue
+        try:
+            resource_id, version = parse_gr_id_version_token(name)
+        except ValueError:
+            logger.warning(
+                "skipping directory <%s> -- its name is not a well-formed "
+                "resource id", escape_unsafe_characters(curr_id_path))
+            continue
+        if GR_CONF_FILE_NAME in content and \
                 not isinstance(content[GR_CONF_FILE_NAME], dict):
             # resource found
-            resource_id, version = id_ver
             yield "/".join([*parent_id, resource_id]), version, content
-        else:
-            curr_id = [*parent_id, name]
-            curr_id_path = "/".join(curr_id)
-            if not isinstance(content, dict):
-                logger.warning("file <%s> is not used.", curr_id_path)
-                continue
-            if not is_gr_id_token(name):
-                logger.warning(
-                    "directory <%s> has a name <%s> that is not a "
-                    "valid Genomic Resource Id Token.", curr_id_path, name)
-                continue
+            continue
+        if not is_gr_id_token(name):
+            logger.warning(
+                "directory <%s> has a name <%s> that is not a "
+                "valid Genomic Resource Id Token.", curr_id_path, name)
+            continue
 
-            # scan children
-            yield from _scan_for_resources(content, curr_id)
+        # scan children
+        yield from _scan_for_resources(content, curr_id)
 
 
 def _scan_for_resource_files(
@@ -2054,9 +2057,13 @@ class FsspecReadWriteProtocol(
 
         if GR_CONF_FILE_NAME in content:
             res_path = "/".join(path_array)
-            resource_id, version = parse_gr_id_version_token(res_path)
-            if resource_id is None:
-                logger.error("bad resource id/version: %s", res_path)
+            try:
+                resource_id, version = parse_gr_id_version_token(res_path)
+            except ValueError:
+                logger.warning(
+                    "repo %s: skipping directory <%s> -- its name is not "
+                    "a well-formed resource id",
+                    self.proto_id, escape_unsafe_characters(res_path))
                 return
             yield resource_id, version, res_path
         else:
