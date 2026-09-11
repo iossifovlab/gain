@@ -15,6 +15,7 @@ run are the bytes this gain version was tested with (gain#1335).
 | `version.txt`  | The npm package version, one line. The single source of truth: the published directory name and the page's import are both derived from it |
 | `index.mjs`    | `dist/index.mjs` of the npm package, unmodified — the ES module |
 | `sqlite3.wasm` | `dist/sqlite3.wasm` of the npm package, unmodified — the engine |
+| `LICENSE`      | The Apache License 2.0 text. The npm tarball declares the licence in its `package.json` but ships no copy of the text; redistributing the code asks for one (§4(a)), so it is kept here |
 
 The module locates the wasm through `import.meta.url`, so the two must
 sit in the same directory, published and vendored alike. The package's
@@ -27,7 +28,9 @@ thread with an in-memory database and never installs an OPFS VFS.
 - Package: [`@sqlite.org/sqlite-wasm`](https://www.npmjs.com/package/@sqlite.org/sqlite-wasm),
   the npm distribution of [SQLite Wasm](https://sqlite.org/wasm).
 - Licence: Apache-2.0 (the package's `package.json` and README), on top
-  of SQLite's public-domain source.
+  of SQLite's public-domain source. Text in `LICENSE` beside this file;
+  the tarball itself carries none (checked with `npm pack --dry-run`
+  at `3.51.2-build6`: README, `package.json` and six `dist/` files).
 - Version: see `version.txt`.
 - SHA-256 at vendoring:
   - `index.mjs` `044a5844df842a96908eb9aa5542896ae6df174c23866f2c8573ded2ea5df9a2`
