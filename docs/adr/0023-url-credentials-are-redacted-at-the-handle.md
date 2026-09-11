@@ -660,16 +660,27 @@ reaches fd 2, where the old bracket discarded it. (Its
 **Behavioural delta.** The sidecar's bytes come through fsspec rather than
 htslib's `hFILE` on the direct `http` and `s3` protocols — as the tabix base
 class's header bytes already do; on the caching protocol both routes refresh
-the file first. Two shapes are **refused that the by-name open was not
-strict about**, both naming the resource, the sidecar and the line: a `##`
-line pysam cannot parse — htslib logged it (silenced) and *skipped* it,
-`add_line` raises a bare `ValueError("Invalid header line")` and the
-constructor re-raises it named; and a line that is neither `##` nor the
-`#CHROM` line, which htslib tolerated. And one shape is refused that the
-by-name open also refused, as `ValueError: invalid file`: an empty sidecar,
-or one with no `##` line at all — without the guard, a loop that stops at
-the first non-`##` line hands back an empty header and a table with no
-scores, silently; the sibling tabix header read refuses that for the same
-reason (gain#364). None of the three shapes occurs in a published sidecar
+the file first. Two refusals, both `MalformedResourceError` (so the
+statistics scan attributes them to the resource by type, as it does every
+other refusal of a resource's own content) naming the resource, the sidecar
+and the line. One is **stricter than the by-name open**: a line before
+`#CHROM` that pysam cannot parse — a `##` line with no `=`, or a blank line
+— was logged by htslib (silenced) and *skipped*; `add_line` raises a bare
+`ValueError("Invalid header line")` and the constructor re-raises it named.
+The other reproduces what the by-name open refused as `ValueError: invalid
+file`: an empty sidecar, or one with no `##` line at all — without the
+guard, the handle read would return an empty header from an empty file. (A
+sidecar with `##fileformat` but no `##INFO` passes both routes with no
+scores; neither refuses it.) Neither shape occurs in a published sidecar
 (the ClinVar and dbSNP ones under the seqpipe GRRs were checked; both
 routes produce equal `info` maps on each).
+
+**Cost.** `VariantHeader.add_line` re-syncs the header on every call, ~27 µs
+a line against ~0.7 µs a line for htslib's one-shot parse: ~+2 ms per VCF
+table construction on the 84-line dbSNP sidecar, once per pipeline build,
+on the loader pool, not on the read path. On the caching protocol the net
+is smaller still, since the handle read refreshes the sidecar twice where
+the by-name open refreshed it four times (its own, plus the probe for the
+index it never has). Feeding htslib the redacted bytes through a pipe fd
+would keep both invariants (no filename, no bracket) at a tenth of the cost,
+at the price of the named per-line refusal; not taken at this size.
