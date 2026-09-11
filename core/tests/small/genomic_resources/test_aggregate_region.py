@@ -1,7 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """``GenomicScore.aggregate_region``: a region reduced to one value per score.
 
-The aggregating counterpart of ``fetch_region_segments``.  What these
+The aggregating counterpart of ``fetch_region_segments_scores``.  What these
 pin is mostly its agreement with things that already exist -- the annotators,
 and
 the per-type weighting rule ``GenomicScore.record_weight`` states -- because a
@@ -91,7 +91,7 @@ def test_a_record_the_query_clips_to_nothing_is_not_aggregated(
 ) -> None:
     """A record with no part inside the window never reaches an aggregator.
 
-    ``fetch_region_segments`` deliberately yields an out-of-region record
+    ``fetch_region_segments_scores`` deliberately yields an out-of-region record
     through (gain#553, ADR 0008), at its own extent.  The clip that removes
     it again is ``PositionScore._aggregation_segments``, and since #1087 it
     is the only statement of that rule -- the annotator's read composes the
@@ -114,7 +114,7 @@ def test_a_record_the_query_clips_to_nothing_is_not_aggregated(
         yield (17, 17, [5.5])
         yield (10, 14, [1.0])
 
-    monkeypatch.setattr(wide, "fetch_region_segments", outside)
+    monkeypatch.setattr(wide, "fetch_region_segments_scores", outside)
 
     with wide:
         assert wide.aggregate_region("1", 10, 16, ["s", ("s", "max")]) == [

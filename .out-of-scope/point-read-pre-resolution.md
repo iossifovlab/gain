@@ -13,7 +13,7 @@ refusal is unaffected — the plane's `_region_read_defs` calls the same
 `_resolve_score_defs` per read, so the resolution this entry declines to
 hoist out of the call is still inside it. It is now performed *twice* per
 point read, once in `get_scores_at_position` and once again inside
-`fetch_region_segments`; that duplication is a plain waste and is not what
+`fetch_region_segments_scores`; that duplication is a plain waste and is not what
 this entry refuses, which is caching the result ACROSS calls.)
 
 ## Why this is out of scope

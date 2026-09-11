@@ -1364,7 +1364,7 @@ def test_build_genomic_score_from_resource_id() -> None:
     score = build_score_from_resource_id("example_score", grr)
     score.open()
     assert score is not None
-    assert list(score.fetch_region_segments("1", 10, None, ["s1"])) == [
+    assert list(score.fetch_region_segments_scores("1", 10, None, ["s1"])) == [
         (10, 10, [0.02])]
 
 
@@ -1518,19 +1518,19 @@ def test_get_histogram_image_public_url() -> None:
     assert url != score.get_histogram_image_url("score")
 
 
-def test_fetch_region_segments_requires_open() -> None:
+def test_fetch_region_segments_scores_requires_open() -> None:
     score = build_score_from_resource(build_simple_position_score_resource())
 
     with pytest.raises(ValueError, match="is not open"):
-        score.fetch_region_segments("1", 10, 10)
+        score.fetch_region_segments_scores("1", 10, 10)
 
 
-def test_fetch_region_segments_checks_available_chromosomes() -> None:
+def test_fetch_region_segments_scores_checks_available_chromosomes() -> None:
     score = build_score_from_resource(build_simple_position_score_resource())
     score.open()
 
     with pytest.raises(ValueError, match="not among the available"):
-        score.fetch_region_segments("2", 10, 10)
+        score.fetch_region_segments_scores("2", 10, 10)
 
 
 def test_segment_path_refuses_a_backwards_record(
@@ -1562,7 +1562,7 @@ def test_segment_path_refuses_a_backwards_record(
     ).open()
 
     with pytest.raises(OSError) as excinfo:
-        list(score.fetch_region_segments("1", 1, 100))
+        list(score.fetch_region_segments_scores("1", 1, 100))
     assert str(excinfo.value) == (
         "The resource record 1:6-3 has a region with end 3 smaller than the "
         "beginning 6.")
@@ -1590,7 +1590,7 @@ def test_allele_point_path_refuses_a_backwards_record(
     # The whole message here too, and for the same reason -- this site passes
     # the allele nucleotides as well, so it has five chances to transpose.
     with pytest.raises(OSError) as excinfo:
-        list(score.fetch_region_segments("1", 1, 100))
+        list(score.fetch_region_segments_scores("1", 1, 100))
     assert str(excinfo.value) == (
         "The resource record 1:6-3 A->G has a region with end 3 smaller than "
         "the beginning 6.")
@@ -1758,11 +1758,11 @@ def test_bigwig_position_score_fetch_records(
         lines[1], "score") == pytest.approx(0.2)
 
 
-def test_bigwig_position_score_fetch_region_segments(
+def test_bigwig_position_score_fetch_region_segments_scores(
     bigwig_position_score: GenomicScore,
 ) -> None:
     result = list(
-        bigwig_position_score.fetch_region_segments(
+        bigwig_position_score.fetch_region_segments_scores(
             "chr1", 1, 20, ["score"]),
     )
     assert len(result) == 2

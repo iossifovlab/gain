@@ -197,7 +197,8 @@ def _open_scan_close(build: object, tmp_path: pathlib.Path) -> weakref.ref:
     with score.open():
         # exercise the fetch path: some retention is only established once a
         # backend has parsed and buffered something
-        list(score.fetch_region_segments(chrom, pos_begin, pos_end, None))
+        list(score.fetch_region_segments_scores(
+            chrom, pos_begin, pos_end, None))
     ref = weakref.ref(score.table)
     del score
     return ref
@@ -730,8 +731,9 @@ def _read_region(
     ``(VariantRecord, allele index)`` pair -- and two reads of the same file
     hand back two different such objects, which compare unequal (or, for the
     proxies, not at all).  What the payload MEANS is instead compared through
-    ``fetch_region_segments``, the read the score layer actually performs:
-    it resolves each score value out of the payload, so identical values are
+    ``fetch_region_segments_scores``, the read the score layer actually
+    performs: it resolves each score value out of the payload, so identical
+    values are
     identical payload reads.
     """
     chrom, pos_begin, pos_end = region
@@ -740,7 +742,7 @@ def _read_region(
         for record in score.table.get_records_in_region(
             chrom, pos_begin, pos_end)
     ]
-    values = list(score.fetch_region_segments(
+    values = list(score.fetch_region_segments_scores(
         chrom, pos_begin, pos_end, None))
     return records, values
 
@@ -1075,7 +1077,7 @@ def test_an_inmemory_scan_in_flight_when_close_lands_raises(
     indistinguishable from a complete one at the call site.
 
     Consuming a scan lazily outside the block that opened the table is easy to
-    write by accident -- ``gen = score.fetch_region_segments(
+    write by accident -- ``gen = score.fetch_region_segments_scores(
         ...)`` inside a
     ``with``, ``list(gen)`` after it -- and the in-memory backend is the one
     that can answer such a read at all, having the records in hand rather
@@ -1160,7 +1162,7 @@ def test_a_bigwig_fetch_in_flight_when_close_lands_raises(
     """A fetch straddling close() must fail loudly, not come back short.
 
     Consuming a fetch lazily outside the block that opened the table is easy
-    to write by accident -- ``gen = score.fetch_region_segments(
+    to write by accident -- ``gen = score.fetch_region_segments_scores(
         ...)`` inside a
     ``with``, ``list(gen)`` after it.  Whatever the fetch does then, it must
     not be *silently* short: a truncated score list is indistinguishable from

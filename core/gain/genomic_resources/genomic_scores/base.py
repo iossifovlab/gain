@@ -226,7 +226,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         - _score_segments(): what a region's raw records mean for this kind.
           ``region_values_from_records`` is the request resolution followed
-          by it, ``fetch_region_segments`` is THAT applied to
+          by it, ``fetch_region_segments_scores`` is THAT applied to
           ``fetch_records``, and the statistics scan is it applied to
           ``validate_records(score, fetch_records(...))`` -- so a kind states
           its reading once and every consumer gets it (ADR 0008).  Override
@@ -914,7 +914,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         The region read expressed as a function OF a record stream, which is
         what lets the two consumers of a region differ by what they COMPOSE
-        rather than by a flag: :meth:`fetch_region_segments` is this
+        rather than by a flag: :meth:`fetch_region_segments_scores` is this
         applied to :meth:`fetch_records`, and the statistics scan is this
         applied to
         ``validate_records(score, fetch_records(...))``.  Neither can quietly
@@ -1057,7 +1057,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             yield (rec_begin, rec_end, [
                 extract(record, score_def) for score_def in score_defs])
 
-    def fetch_region_segments(
+    def fetch_region_segments_scores(
         self,
         chrom: str,
         pos_begin: int | None = None,
@@ -1202,7 +1202,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     ) -> list[ScoreValue]:
         """Reduce a region to one value per requested score.
 
-        The aggregating counterpart of :meth:`fetch_region_segments`,
+        The aggregating counterpart of :meth:`fetch_region_segments_scores`,
         which it is built on: that method yields one entry per record, this
         one folds
         those entries into a single value per request.
@@ -1241,7 +1241,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             resource_id=self.resource_id,
         )
         # Built BEFORE the fetch, because the fetch is not lazy: the
-        # not-open and unknown-contig guards of fetch_region_segments run
+        # not-open and unknown-contig guards of fetch_region_segments_scores run
         # when it is CALLED, not on the first next().  An aggregator built
         # afterwards would have a misspelled name reported only for the
         # regions a resource happens to cover, so `mediann` would be a
@@ -1268,7 +1268,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """The segment stream this kind's aggregating reads consume.
 
         The records as this kind means them, which for everything but a
-        position score is :meth:`fetch_region_segments` unchanged: a kind
+        position score is :meth:`fetch_region_segments_scores` unchanged: a kind
         that counts a record ONCE counts it wherever the point it collapses
         to falls, window or not (see
         test_an_allele_point_outside_the_window_still_aggregates_once).
@@ -1281,7 +1281,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         Underscored by a criterion rather than by a list of callers, as
         :meth:`_score_segments` is: the hooks that are part of the read API
-        are asked for by name (``fetch_region_segments`` IS
+        are asked for by name (``fetch_region_segments_scores`` IS
         :meth:`region_values_from_records`; the scan calls
         :meth:`record_weight` by name, and reads the kind's validation rule
         by dispatching on its class), while
@@ -1291,4 +1291,5 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         the criterion because the census of those reads is not stable: it
         was one until gain#1087 gave the annotators' read the same stream.
         """
-        return self.fetch_region_segments(chrom, pos_begin, pos_end, scores)
+        return self.fetch_region_segments_scores(
+            chrom, pos_begin, pos_end, scores)

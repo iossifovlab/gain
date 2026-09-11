@@ -227,7 +227,7 @@ class AlleleScore(GenomicScore):
         get_allele_scores_in_region_agg: Reduce the alleles of a region to
         one value per query -- and their keys -- in one walk, telling
         the same two answers apart
-        fetch_region_segments: Iterate over allele scores in a
+        fetch_region_segments_scores: Iterate over allele scores in a
         genomic region
         substitutions_mode: Check if operating in SUBSTITUTIONS mode
         alleles_mode: Check if operating in ALLELES mode
@@ -261,7 +261,7 @@ class AlleleScore(GenomicScore):
         """An allele line counts once.
 
         Several records share a position -- one per ref/alt pair -- and
-        each weighs 1.  Structurally so: :meth:`fetch_region_segments`
+        each weighs 1.  Structurally so: :meth:`fetch_region_segments_scores`
         yields ``(pos, pos, values)``, collapsing the record to a point
         however wide an optional ``pos_end`` column reaches, so a span
         weight would not merely be a different choice, it would disagree

@@ -75,7 +75,7 @@ class PositionScore(GenomicScore):
         ...     # Fetch scores at a specific position
         ...     values = score.get_scores_at_position("chr1", 12345)
         ...     # Fetch scores across a region
-        ...     region = score.fetch_region_segments(
+        ...     region = score.fetch_region_segments_scores(
         ...         "chr1", 10000, 20000)
         ...     for pos_begin, pos_end, scores in region:
         ...         print(f"{pos_begin}-{pos_end}: {scores}")
@@ -96,7 +96,7 @@ class PositionScore(GenomicScore):
 
     Key Methods:
         get_scores_at_position: Get score values at a specific position
-        fetch_region_segments: Iterate over score segments in a
+        fetch_region_segments_scores: Iterate over score segments in a
         genomic region, each at its record's own extent
         get_scores_in_region_agg: Reduce a genomic region to one value per
         aggregation query, weighing each record by the bases it covers
@@ -214,7 +214,8 @@ class PositionScore(GenomicScore):
         score_defs: list[GenomicScoreDef],
     ) -> Generator[
             tuple[int, int, list[ScoreValue]], None, None]:
-        """:meth:`~.base.GenomicScore.fetch_region_segments`, pre-resolved.
+        """:meth:`~.base.GenomicScore.fetch_region_segments_scores`,
+        pre-resolved.
 
         The same read, from the same records, through the same per-kind
         transform (:meth:`~.base.GenomicScore._score_segments`) -- entered

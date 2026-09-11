@@ -262,7 +262,7 @@ class FragmentScore(GenomicScore):
         """Stream ``(begin, end, values)`` for the fragments over a region.
 
         **Private to the fragment plane.**
-        :meth:`~.base.GenomicScore.fetch_region_segments` through
+        :meth:`~.base.GenomicScore.fetch_region_segments_scores` through
         :func:`_tupled`, and not a read to reach for directly; it keeps its
         name because it had one, not because the name is an invitation.  It
         diverges from the internals beside it (``_score_segments``,
@@ -319,7 +319,7 @@ class FragmentScore(GenomicScore):
         runs when the generator is released, so a caller holding a reference
         to a ``close()``-ed generator still holds the read open.
         """
-        return _tupled(self.fetch_region_segments(
+        return _tupled(self.fetch_region_segments_scores(
             chrom, start, stop, scores, score_filter=score_filter))
 
     # -- The logical read plane (#1123) -------------------------------------
@@ -439,7 +439,7 @@ class FragmentScore(GenomicScore):
             "min_region_overlap_fraction", min_region_overlap_fraction)
         self._guard_overlap_fraction(
             "min_fragment_overlap_fraction", min_fragment_overlap_fraction)
-        rows = self.fetch_region_segments(
+        rows = self.fetch_region_segments_scores(
             chrom, start, end, scores, score_filter=score_filter)
         if (min_region_overlap_fraction is None
                 and min_fragment_overlap_fraction is None):

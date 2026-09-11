@@ -376,7 +376,7 @@ def fold_region_segments(
     """Fold one region read into one value per request.
 
     ``segments`` is a stream of ``(left, right, values)`` as
-    :meth:`~.base.GenomicScore.fetch_region_segments` yields it, with
+    :meth:`~.base.GenomicScore.fetch_region_segments_scores` yields it, with
     ``values`` positional and parallel to ``score_ids`` -- the list the
     caller derived (:func:`request_score_ids`) to name what it fetched,
     handed on here so the fold indexes exactly the columns the fetch

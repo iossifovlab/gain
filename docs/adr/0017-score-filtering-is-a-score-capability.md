@@ -60,7 +60,8 @@ whole read family, and neither is settled here.
 > take none, and threading it through them remains unsettled.
 
 > **Amendment (2026-09-09, gain#1272).**
-> `GenomicScore.fetch_region_segments` takes `score_filter` as well. This is
+> `GenomicScore.fetch_region_segments_scores` (named `fetch_region_segments`
+> when this was written) takes `score_filter` as well. This is
 > the record read's filter reaching one frame further, not a second
 > mechanism: that method *is* `region_values_from_records` composed over
 > `fetch_records`, so the parameter travels to `fetch_records` and is

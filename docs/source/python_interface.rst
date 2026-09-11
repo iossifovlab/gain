@@ -139,7 +139,7 @@ combined to extract and visualize signal over a biologically meaningful region.
 
     xs = []
     ys = []
-    for pos_begin, pos_end, values in score.fetch_region_segments(chrom, start, end):
+    for pos_begin, pos_end, values in score.fetch_region_segments_scores(chrom, start, end):
         for p in range(max(pos_begin, start), min(pos_end, end) + 1):
             xs.append(p)
             ys.append(values[0])
@@ -153,7 +153,7 @@ combined to extract and visualize signal over a biologically meaningful region.
     plt.tight_layout()
     plt.savefig(f"{GENE_NAME}_phastCons100way.png", dpi=150)
 
-``fetch_region_segments`` yields one ``(pos_begin, pos_end, values)`` tuple per
+``fetch_region_segments_scores`` yields one ``(pos_begin, pos_end, values)`` tuple per
 record of the resource that touches the queried region, at that record's own
 extent -- a record straddling either end of the gene comes back whole, which is
 why the inner loop clips each segment to ``[start, end]`` before plotting.

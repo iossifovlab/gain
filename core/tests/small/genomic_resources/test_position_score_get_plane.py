@@ -368,7 +368,7 @@ def test_a_segment_straddling_a_bin_boundary_splits_at_it(
         ]
 
 
-# The plane rides `fetch_region_segments`, so it must answer
+# The plane rides `fetch_region_segments_scores`, so it must answer
 # identically off
 # every backend a position score realizes onto.  One dataset (10-13: 0.2,
 # 16: 0.8), three realizations; a bigWig stores float32, hence approx.
@@ -506,7 +506,7 @@ def test_a_record_outside_the_region_is_dropped_not_counted(
 
     Stubbed at ``_fetch_segments_for_defs``, which is the segment source
     the plane reads from since gain#1282 -- the same stream
-    ``fetch_region_segments`` composes, entered with the definitions the
+    ``fetch_region_segments_scores`` composes, entered with the definitions the
     read already resolved rather than with ids to resolve again.
     """
     def outside(
