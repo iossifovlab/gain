@@ -72,7 +72,7 @@ from gain.genomic_resources.repository import (
 )
 from gain.templates import get_template
 from gain.templates.markdown_support import render_markdown as markdown
-from gain.templates.static_assets import sqlite_wasm_files
+from gain.templates.static_assets import repository_static_files
 from gain.utils.helpers import convert_size
 
 # Silence the spurious "[W::hts_idx_load3] The index file is older than the
@@ -3265,12 +3265,13 @@ class FsspecReadWriteProtocol(
     def _publish_static_assets(self) -> None:
         """Publish the files the index page loads from the repository.
 
-        The search engine the page runs on ships with gain and is
-        published into every repository beside the page, so a
-        repository carries everything its page needs (gain#1335).
-        Through :meth:`publish_repository_file`, so each file lands in a
-        single move or not at all; the names are constants of gain's
-        own, which is that seam's condition.
+        What gain ships for the page -- the search engine it runs on,
+        today -- is published into every repository beside the page, so
+        a repository carries everything its page needs (gain#1335).
+        Which files is ``gain.templates.static_assets``' business; this
+        names none.  Through :meth:`publish_repository_file`, so each
+        file lands in a single move or not at all; the names are
+        constants of gain's own, which is that seam's condition.
 
         Skipped when the published bytes already match.  The page beside
         them is rewritten every run, but the page changes with the
@@ -3279,14 +3280,28 @@ class FsspecReadWriteProtocol(
         repositories the published GRRs live in, a change to notice on
         every run.
         """
-        for filename, content in sqlite_wasm_files():
-            filepath = os.path.join(self.url, filename)
-            if self.filesystem.exists(filepath):
-                with self.filesystem.open(filepath, "rb") as infile:
-                    if infile.read() == content:
-                        continue
+        for filename, content in repository_static_files():
+            if self._published_bytes(filename) == content:
+                continue
             with self.publish_repository_file(filename) as outfile:
                 outfile.write(content)
+
+    def _published_bytes(self, filename: str) -> bytes | None:
+        """The bytes of one of the repository's own artifacts, or None.
+
+        One read rather than exists + open + read -- on an object store
+        each of those is a round trip -- and a redacted one, so a
+        mid-read failure on an authed url does not surface the
+        credential (ADR 0023).  None for an artifact never published;
+        the redaction rebuilds an error under its own type, so the
+        not-found case is still recognisable after it.
+        """
+        filepath = os.path.join(self.url, filename)
+        try:
+            return cast(bytes, _run_redacting_url_credentials(
+                lambda: self.filesystem.cat_file(filepath)))
+        except FileNotFoundError:
+            return None
 
 
 def build_local_resource(

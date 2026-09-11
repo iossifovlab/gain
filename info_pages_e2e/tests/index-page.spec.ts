@@ -223,17 +223,19 @@ test('the harness refuses every request it does not serve itself', async ({
   );
   expect(letThrough).toEqual([]);
 
-  /* The search engine came from the repository, and all of it did. The
+  /* The search engine came from the repository, and all of it did: the
    * page imports `index.mjs` from the GRR's own `.static/`, and the
-   * module then locates `sqlite3.wasm` beside itself -- so a published
-   * repository serves the search with no CDN in the picture
-   * (iossifovlab/gain#1335). Both files, by name: the module loading
-   * while the wasm failed would leave the search dead and this list
-   * one entry short. */
+   * module then locates `sqlite3.wasm` beside itself
+   * (iossifovlab/gain#1335). Both files, by name and host -- the module
+   * loading while the wasm failed would leave the search dead and this
+   * list one entry short. */
   const engine = requested.filter((url) => url.includes('/.static/'));
-  expect(engine.map((url) => new URL(url).pathname.split('/').pop()).sort())
-    .toEqual(['index.mjs', 'sqlite3.wasm']);
-  expect(engine.every((url) => new URL(url).host === 'grr.test')).toBe(true);
+  const hostAndName = (url: string) => {
+    const { host, pathname } = new URL(url);
+    return `${host}${pathname.slice(pathname.lastIndexOf('/'))}`;
+  };
+  expect(engine.map(hostAndName).sort())
+    .toEqual(['grr.test/index.mjs', 'grr.test/sqlite3.wasm']);
   expect(engine.filter((url) => failed.has(url))).toEqual([]);
 });
 
@@ -1291,10 +1293,8 @@ test('a tree still browses when the search index cannot be loaded', async ({
    * touched none of it, and a module this page could not load still left
    * a browsable tree and a working Back and Forward over an empty table.
    * Consulting the seam put that at risk: reaching for it directly makes
-   * the whole address machinery die with the import. (The module now
-   * ships inside the repository, iossifovlab/gain#1335; the route filter
-   * matches its `.static/sqlite-wasm-<version>/` path as it matched the
-   * CDN one.) */
+   * the whole address machinery die with the import. The route filter
+   * matches the module's `.static/sqlite-wasm-<version>/` path. */
   await page.route(
     (url) => url.href.includes('sqlite-wasm'),
     (route) => route.abort(),

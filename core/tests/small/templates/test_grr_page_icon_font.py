@@ -48,6 +48,7 @@ from urllib.parse import parse_qs, urlparse
 import gain.templates as templates_module
 import pytest
 from gain.templates import get_template
+from gain.templates.static_assets import SQLITE_WASM_PATH
 
 #: The class the icon font styles.  An element carrying it renders its
 #: own text as a glyph.
@@ -75,8 +76,8 @@ EXPECTED_GLYPHS = frozenset({
 
 #: Every origin the browse page *loads* from: jQuery from Google's CDN,
 #: the stylesheets from Google Fonts, and the host serving the font
-#: files those point at.  The sqlite-wasm module is no longer among
-#: them: it ships inside the repository (gain#1335).  Ordinary
+#: files those point at.  The sqlite-wasm module ships inside the
+#: repository (gain#1335), so no origin of its own.  Ordinary
 #: hyperlinks are deliberately not counted -- the page links to the
 #: SQLite FTS docs beside its search box, and a page that grows another
 #: such link has not grown a third party it loads code from.
@@ -115,11 +116,11 @@ _SORT_STATE_GLYPH = re.compile(
     r"\b(?:none|asc|desc)\s*:\s*['\"]" + _GLYPH + r"['\"]",
 )
 
-#: ``import x from "https://…"`` -- an ES module specifier, which reaches
-#: an origin without being an ``src``.  The page's one such import is
-#: relative today (sqlite-wasm ships inside the repository, gain#1335);
-#: this keeps counting so that an absolute one cannot come back unseen.
-_MODULE_IMPORT = re.compile(r"\bfrom\s+[\"'](https?://[^\"']+)[\"']")
+#: ``import x from "<specifier>"`` -- an ES module specifier, which can
+#: reach an origin without being an ``src``.  Any specifier, so the same
+#: match serves both the relative import the page carries and the
+#: origin count that must notice an absolute one.
+_MODULE_IMPORT = re.compile(r"\bimport\s+\w+\s+from\s+[\"']([^\"']+)[\"']")
 
 #: Tags whose ``href`` makes the browser fetch something.  ``<a>`` is
 #: pointedly absent; ``src`` is a subresource on whatever carries it.
@@ -198,17 +199,13 @@ def external_origins(page: str) -> frozenset[str]:
     sqlite-wasm arrives through a bare ES module specifier, which is a
     string inside a ``<script type="module">`` rather than an ``src``.
     Counting only markup would leave a module's origin out of a set this
-    module claims is exhaustive -- as it did while that import named a
-    CDN.
+    module claims is exhaustive.
     """
     fetched = [
-        url for url in read_page(page).urls
+        url for url in read_page(page).urls + _MODULE_IMPORT.findall(page)
         if urlparse(url).scheme in ("http", "https")
     ]
-    return frozenset(
-        urlparse(url).hostname or ""
-        for url in fetched + _MODULE_IMPORT.findall(page)
-    )
+    return frozenset(urlparse(url).hostname or "" for url in fetched)
 
 
 @pytest.fixture
@@ -292,6 +289,24 @@ def test_the_browse_page_loads_from_no_new_third_party(
     other CDN should have to change this list on purpose.
     """
     assert external_origins(browse_page) == BROWSE_ORIGINS
+
+
+def test_the_browse_page_imports_sqlite_wasm_from_inside_the_repository(
+    browse_page: str,
+) -> None:
+    """One import, relative, naming the vendored version's directory.
+
+    Relative, because an inline module script resolves its specifiers
+    against the document's base URL -- the same rule the search index's
+    own ``fetch()`` relies on to follow the repository under whatever
+    host and sub-path it is served at (gain#129).  The version is in
+    the directory name because that is what the module's own
+    ``import.meta.url`` lookup of ``sqlite3.wasm`` follows; see
+    ``gain.templates.static_assets``.
+    """
+    assert _MODULE_IMPORT.findall(browse_page) == [
+        f"./{SQLITE_WASM_PATH}/index.mjs",
+    ]
 
 
 def test_the_about_page_loads_from_no_new_third_party(

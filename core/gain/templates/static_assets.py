@@ -13,16 +13,18 @@ The version is in the published *directory name*, not a query string:
 the module locates its ``sqlite3.wasm`` through ``import.meta.url``, so
 a ``?v=`` on the import would never reach the wasm, and a gain upgrade
 must not run a browser's cached module against a new wasm.
-``version.txt`` beside the vendored files is the single source of truth
-(``VERSION`` would be the natural name, but the repository ignores that
-name everywhere, a leftover of versioneer's build artifact) -- the
-directory name and the page's import are both derived from it here, so
-a bump is one edit.
+``version.txt`` beside the vendored files is the single source of
+truth -- the directory name and the page's import are both derived from
+it here, so a bump is one edit.
 
-The directory is dot-prefixed on purpose.  The repository scanner
-passes over every dot-prefixed root entry, so nothing under
-``.static/`` can be read as a resource, collide with a resource id, or
-be listed in ``.CONTENTS``.
+The directory is dot-prefixed on purpose.  A resource id can never
+start with a dot, so nothing under ``.static/`` can collide with one,
+and the repository scanner passes over every dot-prefixed entry.
+
+:func:`repository_static_files` is the registry the publisher iterates:
+it names no asset, so the next thing the page should load from the
+repository rather than a CDN (a font, say) is added here and reaches
+every repository without the publisher changing.
 """
 from __future__ import annotations
 
@@ -44,18 +46,14 @@ _SQLITE_WASM_FILES = ("index.mjs", "sqlite3.wasm")
 SQLITE_WASM_VERSION: str = (_SQLITE_WASM_DIR / "version.txt").read_text(
     encoding="utf8").strip()
 
-
-def sqlite_wasm_path() -> str:
-    """The directory sqlite-wasm is published to, relative to the root.
-
-    Forward slashes, no leading ``./``: it is a URL path segment for the
-    page as much as a repository path for the publisher, and both join
-    it themselves.
-    """
-    return f".static/sqlite-wasm-{SQLITE_WASM_VERSION}"
+#: The directory sqlite-wasm is published to, relative to the repository
+#: root.  Forward slashes, no leading ``./``: it is a URL path for the
+#: page as much as a repository path for the publisher, and both join
+#: it themselves.
+SQLITE_WASM_PATH: str = f".static/sqlite-wasm-{SQLITE_WASM_VERSION}"
 
 
-def sqlite_wasm_files() -> Iterator[tuple[str, bytes]]:
+def repository_static_files() -> Iterator[tuple[str, bytes]]:
     """Each file to publish: its repository-relative path, and its bytes.
 
     The bytes are read on every call rather than cached: the publisher
@@ -64,6 +62,6 @@ def sqlite_wasm_files() -> Iterator[tuple[str, bytes]]:
     """
     for name in _SQLITE_WASM_FILES:
         yield (
-            f"{sqlite_wasm_path()}/{name}",
+            f"{SQLITE_WASM_PATH}/{name}",
             (_SQLITE_WASM_DIR / name).read_bytes(),
         )
