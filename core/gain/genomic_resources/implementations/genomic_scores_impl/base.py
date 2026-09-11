@@ -13,6 +13,9 @@ from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     build_score_from_resource,
 )
+from gain.genomic_resources.genomic_scores.chrom_lengths import (
+    derive_chrom_lengths,
+)
 from gain.genomic_resources.reference_genome import (
     ReferenceGenome,
     build_reference_genome_from_resource,
@@ -273,43 +276,25 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         ref_genome_id = read_resource_id_label(
             self.resource, "reference_genome")
         ref_genome = self._get_reference_genome_cached(grr, ref_genome_id)
-        for chrom in self.score.get_all_chromosomes():
-            # Resolved afresh for every contig, never inherited from the
-            # previous one.  Two different things can leave it unset, and they
-            # get opposite treatment below: a contig PROVEN to hold no records
-            # is skipped, a contig whose length merely could not be DETERMINED
-            # is scanned whole.
-            chrom_length: int | ContigExtent
-            if ref_genome is not None and chrom in ref_genome.chromosomes:
-                chrom_length = ref_genome.get_chrom_length(chrom)
-            else:
-                # Asked of the table itself, which is the only thing that knows
-                # how its format answers.  This used to be an isinstance ladder
-                # over the concrete backends, reaching past the abstraction into
-                # a pysam handle and the tabix probe to re-derive per backend
-                # what each already implements -- so a new backend could not be
-                # added without editing it, and the else-branch turned that
-                # omission into an assertion failure (gain#509).
-                #
-                # The step is left at the table's own default.  The ladder used
-                # to seed the tabix probe at ITS default (half the table's),
-                # which sounds like a behaviour change and measurably is not:
-                # the probe brackets the length on the geometric ladder
-                # {step * 2^k}, and 50M and 100M generate the same ladder, so
-                # both seeds find the same bracket and the same bound.
-                chrom_length = self.score.table.find_chromosome_length(chrom)
-                if chrom_length is ContigExtent.EMPTY:
-                    # PROVEN to hold no records -- only a backend holding the
-                    # whole file can say this (e.g. a chrom_mapping onto a file
-                    # contig with no data rows).  There is nothing to scan and
-                    # nothing to validate, and an unbounded region here would
-                    # cost a table open per empty contig -- hundreds of them for
-                    # a mapping that covers hg38's alts.  INFO, not WARNING:
-                    # there is nothing for an operator to fix.
-                    logger.info(
-                        "contig %s holds no records; not scanned", chrom)
-                    continue
-            if chrom_length is ContigExtent.UNDETERMINED:
+        # The ladder -- genome label first, then whatever the table can say
+        # -- is the score layer's (gain#1412), asked once per contig of the
+        # score.  This caller only consumes the record: the number when
+        # there is one, and otherwise the reason, because the two reasons
+        # get opposite treatment below (gain#509).
+        for chrom, resolved in derive_chrom_lengths(
+                self.score, ref_genome).items():
+            if resolved.extent is ContigExtent.EMPTY:
+                # PROVEN to hold no records -- only a backend holding the
+                # whole file can say this (e.g. a chrom_mapping onto a file
+                # contig with no data rows).  There is nothing to scan and
+                # nothing to validate, and an unbounded region here would
+                # cost a table open per empty contig -- hundreds of them for
+                # a mapping that covers hg38's alts.  INFO, not WARNING:
+                # there is nothing for an operator to fix.
+                logger.info(
+                    "contig %s holds no records; not scanned", chrom)
+                continue
+            if resolved.extent is ContigExtent.UNDETERMINED:
                 # The length could not be determined for a contig that may well
                 # hold records -- skipping it would leave them out of the
                 # statistics AND out of the ordering checks the scan performs on
@@ -324,10 +309,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 regions.append(Region(chrom))
                 continue
 
+            # The record's two shapes: no extent means the length is set.
+            assert resolved.length is not None
             regions.extend(
                 split_into_regions(
                     chrom,
-                    chrom_length,
+                    resolved.length,
                     region_size,
                 ),
             )
