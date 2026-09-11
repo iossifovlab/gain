@@ -99,6 +99,7 @@ from .chrom_lengths import (
     ChromLength,
     ChromLengthSource,
     derive_chrom_length,
+    derive_chrom_lengths,
 )
 from .records import (
     RecordArrays,
@@ -920,6 +921,24 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         length = self._resolve_chrom_length(chrom).length
         assert length is not None
         return length
+
+    def get_all_chrom_lengths(self) -> dict[str, int]:
+        """The lengths of the contigs this score can answer for, in table order.
+
+        Mirrors :meth:`ReferenceGenome.get_all_chrom_lengths`.  A contig
+        the score carries but has no length for -- one proven empty, or one
+        the tabix probe could not bracket -- is simply absent, where
+        :meth:`get_chrom_length` asked about it would raise; a caller that
+        needs to know WHY it is absent reads
+        :func:`~.chrom_lengths.derive_chrom_lengths` instead.
+
+        Raises ``ValueError`` on a score that is not open.
+        """
+        return {
+            chrom: resolved.length
+            for chrom, resolved in derive_chrom_lengths(self).items()
+            if resolved.length is not None
+        }
 
     def get_chrom_length_source(self, chrom: str) -> ChromLengthSource:
         """Where :meth:`get_chrom_length` read ``chrom``'s length from.
