@@ -42,6 +42,7 @@ from gain.genomic_resources.genomic_scores import (
     PositionScore,
 )
 from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     build_filesystem_test_resource,
@@ -2260,12 +2261,8 @@ def test_vcf_header_load_reads_the_sidecar_without_handing_htslib_a_filename(
     Real VCF ``allele_score`` resources (e.g. dbSNP) ship a header-only
     ``*.header.vcf.gz`` with no accompanying ``.tbi``.  Handing that FILENAME
     to ``pysam.VariantFile`` makes htslib auto-probe for an index and log
-    ``[E::idx_find_and_load]`` to fd 2 -- which used to be silenced with a
-    ``set_verbosity(0)`` bracket around the open, on every url, from the
-    constructor, serialised on a process-global lock (gain#1360).  Reading the
-    sidecar's ``##`` lines through ``open_raw_file`` and building the header
-    with ``pysam.VariantHeader.add_line`` hands htslib no filename, so there
-    is no probe to silence and no bracket to take (gain#1406).
+    ``[E::idx_find_and_load]`` to fd 2, which then has to be silenced
+    (gain#1406; ADR 0023).
 
     Three things pinned, at the constructor: the sidecar never reaches
     ``open_vcf_file``; fd 2 (``capfd``, not ``capsys`` -- htslib writes from
@@ -2273,17 +2270,9 @@ def test_vcf_header_load_reads_the_sidecar_without_handing_htslib_a_filename(
     built from is what the by-name open produced, across every ``Number``
     shape ``parse_vcf_scoredefs`` distinguishes.
     """
-    setup_directories(
-        tmp_path, {
-            "genomic_resource.yaml": textwrap.dedent("""
-                tabix_table:
-                    filename: data.vcf.gz
-                    format: vcf_info
-            """),
-        })
-    setup_vcf(
-        tmp_path / "data.vcf.gz",
-        textwrap.dedent("""
+    res = (
+        a_vcf_info_score()
+        .with_data(textwrap.dedent("""
 ##fileformat=VCFv4.1
 ##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">
 ##INFO=<ID=R1,Number=R,Type=Float,Description="Per allele">
@@ -2292,24 +2281,19 @@ def test_vcf_header_load_reads_the_sidecar_without_handing_htslib_a_filename(
 ##contig=<ID=chr1>
 #CHROM POS ID REF ALT QUAL FILTER INFO
 chr1   5   .  A   T   .    .      A=1;R1=0.5,0.7;C=x;F
-    """),
+        """))
+        .without_header_index()
+        .build_resource(tmp_path)
     )
-    # setup_vcf indexes the header; real score resources ship it without an
-    # index, so drop the .tbi to exercise the header-only path.
-    (tmp_path / "data.header.vcf.gz.tbi").unlink()
-
-    res = build_filesystem_test_resource(tmp_path)
     assert res.config is not None
 
     open_vcf_file = mocker.spy(GenomicResource, "open_vcf_file")
     capfd.readouterr()
 
-    tab = build_genomic_position_table(res, res.config["tabix_table"])
+    tab = build_genomic_position_table(res, res.config["table"])
 
     assert isinstance(tab, VCFGenomicPositionTable)
-    assert [
-        call.args[1] for call in open_vcf_file.call_args_list
-    ] == [], "the header sidecar must not be opened by name"
+    open_vcf_file.assert_not_called()
     assert capfd.readouterr().err == ""
     assert sorted(
         (key, value.number, value.type, value.description)
@@ -2336,7 +2320,7 @@ chr1   5   .  A   T   .    .      A=1;R1=0.5,0.7;C=x;F
             "\n"
             '##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">\n'
             "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
-            "not a VCF header line: ''",
+            "cannot parse: ''",
             id="blank-line-between"),
         pytest.param(
             "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
@@ -2351,44 +2335,18 @@ def test_vcf_header_load_refuses_a_broken_sidecar_naming_the_resource(
         tmp_path: pathlib.Path, sidecar: str, complaint: str) -> None:
     """A sidecar that is not a VCF header is refused, naming the resource.
 
-    The sidecar is parsed line by line through ``VariantHeader.add_line``
-    (gain#1406).  What that leaves to this method is everything the by-name
-    open used to refuse *as a file* -- ``ValueError: invalid file`` for an
-    empty sidecar or one with no ``##`` line at all -- and the one thing
-    pysam does refuse per line, as a bare ``ValueError("Invalid header
-    line")`` naming no file and no resource.  A loop that stopped at the
-    first non-``##`` line and returned what it had would construct a table
-    with NO scores from an empty sidecar, silently; the sibling tabix header
-    read refuses that shape for the same reason (gain#364), and the refusal
-    for a filename with no ``.vcf`` in it sets the bar for what the message
-    carries (gain#348).
+    Two refusals, each reproducing one the by-name open made without naming
+    anything: an empty sidecar or one with no ``##`` line was htslib's
+    ``invalid file``; a line pysam cannot parse is its bare ``ValueError``
+    ("Invalid header line").  Raised as a ``MalformedResourceError`` so
+    the statistics scan attributes it to the resource by type, and with
+    the resource, the sidecar and the line in the message (gain#1406).
     """
-    setup_directories(tmp_path, {
-        "grr.yaml": f"""
-            id: test_grr
-            type: directory
-            directory: {tmp_path!s}""",
-        "one_score": {
-            "genomic_resource.yaml": textwrap.dedent("""
-                tabix_table:
-                    filename: data.vcf.gz
-                    format: vcf_info
-            """),
-        },
-    })
-    setup_vcf(
-        tmp_path / "one_score" / "data.vcf.gz",
-        textwrap.dedent("""
-##fileformat=VCFv4.1
-##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">
-##contig=<ID=chr1>
-#CHROM POS ID REF ALT QUAL FILTER INFO
-chr1   5   .  A   T   .    .      A=1
-    """),
-    )
-    # setup_vcf writes the sidecar through pysam, which cannot emit a header
-    # it would not parse, so the broken one is written by hand over it -- as
-    # bgzf, the shape a shipped sidecar has.
+    a_grr().with_resource("one_score", a_vcf_info_score()).realize_all(
+        tmp_path)
+    # The builder writes the sidecar through pysam, which cannot emit a
+    # header it would not parse, so the broken one is written by hand over
+    # it -- as bgzf, the shape a shipped sidecar has.
     with pysam.BGZFile(
             str(tmp_path / "one_score" / "data.header.vcf.gz"), "wb") as out:
         out.write(sidecar.encode())
@@ -2396,8 +2354,8 @@ chr1   5   .  A   T   .    .      A=1
     res = build_filesystem_test_repository(tmp_path).get_resource("one_score")
     assert res.config is not None
 
-    with pytest.raises(ValueError) as exc_info:
-        build_genomic_position_table(res, res.config["tabix_table"])
+    with pytest.raises(MalformedResourceError) as exc_info:
+        build_genomic_position_table(res, res.config["table"])
 
     message = str(exc_info.value)
     assert "one_score" in message
@@ -2408,20 +2366,20 @@ chr1   5   .  A   T   .    .      A=1
 def test_vcf_header_metadata_outlives_the_header_read(
     vcf_res: GenomicResource,
 ) -> None:
-    """``table.header`` must stay readable once the sidecar handle is closed.
+    """``table.header`` must stay readable once its ``VariantHeader`` is gone.
 
     ``header.info`` is a ``pysam.VariantHeaderMetadata`` -- a *view*, not a
-    copy.  ``_load_vcf_header`` builds a ``pysam.VariantHeader`` from the
-    sidecar's ``##`` lines inside a ``with`` on the ``open_raw_file`` handle,
-    and returns the view once that handle is shut.  The view holds a strong
-    reference to the header it was taken from, which owns the ``bcf_hdr_t``
-    and frees it only on its own collection -- so nothing the constructor let
-    go of is borrowed.  That is load-bearing well beyond ``__init__``:
+    copy.  ``_load_vcf_header`` builds a ``pysam.VariantHeader`` as a local
+    and returns only the view; if the view merely borrowed the
+    ``bcf_hdr_t`` the local owned, every read after the constructor returned
+    would be a use-after-free.  It does not: the view holds a strong
+    reference to its header, which frees the struct only on its own
+    collection.  That is load-bearing well beyond ``__init__``:
     ``GenomicScore._build_scoredefs`` autogenerates one score def per INFO
     field from this metadata, long after the table is constructed.
 
-    So read *every* field the score defs are built from, with the handle
-    closed and the heap churned underneath the view.
+    So read *every* field the score defs are built from, with the local long
+    gone and the heap churned underneath the view.
     """
     assert vcf_res.config is not None
 
@@ -2432,9 +2390,8 @@ def test_vcf_header_metadata_outlives_the_header_read(
         ("D", ".", "String", "Score D"),
     ]
 
-    # `_load_vcf_header` leaves its `with` on the sidecar handle before it
-    # returns, so by construction the handle behind this metadata is already
-    # shut -- there is no live handle to it anywhere in this test.
+    # `_load_vcf_header`'s `VariantHeader` is a local, so by construction
+    # the only reference to it left is the view's own.
     table = build_genomic_position_table(
         vcf_res, vcf_res.config["tabix_table"])
     assert isinstance(table, VCFGenomicPositionTable)

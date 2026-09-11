@@ -476,14 +476,9 @@ def _url_carries_userinfo(url: str) -> bool:
 #: opening a pipeline brackets every credentialed tabix, VCF and fasta open
 #: in it.
 #:
-#: Not re-entrant, and it need not be: the one bracket left is
-#: ``_open_htslib_file``'s, around a bare pysam constructor that enters no
-#: bracket of its own. It was an ``RLock`` while
-#: ``VCFGenomicPositionTable._load_vcf_header`` bracketed its header open
-#: too, on every url, from the constructor -- for a credential-bearing url
-#: that open entered this bracket a second time on the same thread. That
-#: bracket is gone: the sidecar is read through a handle now, so no filename
-#: reaches htslib and there is nothing to silence (gain#1406).
+#: Not re-entrant: the only bracket is ``_open_htslib_file``'s, around a
+#: bare pysam constructor that enters no bracket of its own (ADR 0023's
+#: gain#1406 amendment records the second bracket this used to nest with).
 #:
 #: Separate from ``_STDERR_SUPPRESSION_LOCK`` on purpose: fd 2 and the
 #: verbosity level are independent globals, and sharing one lock would
@@ -1821,9 +1816,7 @@ class FsspecReadOnlyProtocol(
                 resource, filename)
             if not resource.file_exists(index_filename):
                 # Nothing resolved: a file that ships no index at all still
-                # opens, unindexed (gain#596).  The VCF header sidecar used
-                # to be the case that came through here; since gain#1406
-                # the table reads it through a handle instead.
+                # opens, unindexed (gain#596).
                 return _open_htslib_file(
                     file_url,
                     lambda: pysam.VariantFile(  # pylint: disable=no-member

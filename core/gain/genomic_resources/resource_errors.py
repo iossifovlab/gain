@@ -92,6 +92,22 @@ def score_configuration_error(
         f"Invalid configuration: {resource_id}: score {score_id!r} {detail}")
 
 
+def vcf_header_file_error(
+    resource_id: str, header_filename: str, detail: str,
+) -> MalformedResourceError:
+    """Refuse a VCF table whose ``*.header.vcf.gz`` sidecar is not a header.
+
+    The sidecar is read line by line (gain#1406), and two things can be
+    wrong with it: no ``##`` line at all, or a line pysam cannot parse --
+    each phrased by its raise site as ``detail``. What is shared is the
+    ADDRESS, the resource and the file, built here for the reason
+    :func:`score_configuration_error` gives.
+    """
+    return MalformedResourceError(
+        f"<{resource_id}> is malformed: its header file {header_filename} "
+        f"{detail}")
+
+
 def inverted_span_error(
     chrom: str, pos_begin: int, pos_end: int,
     ref: str | None, alt: str | None,

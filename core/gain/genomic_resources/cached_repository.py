@@ -271,9 +271,7 @@ class CachingProtocol(ReadOnlyRepositoryProtocol):
             # A file that carries NO index must keep reaching the local
             # open with no index name at all: that open refuses an index it
             # is asked for by name and cannot find (gain#596), and a
-            # resolved guess is not a request.  (The VCF header sidecar was
-            # the motivating case; since gain#1406 the table reads it
-            # through a handle and it no longer comes through here.)
+            # resolved guess is not a request.
             if not self.file_exists(resource, resolved):
                 return self.local_protocol.open_vcf_file(resource, filename)
             index_filename = resolved
