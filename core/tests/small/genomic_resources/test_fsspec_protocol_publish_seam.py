@@ -303,9 +303,17 @@ def test_publishing_carries_the_encoding_to_the_staged_open(
         call for call in opened.call_args_list
         if str(call.args[0]).endswith(".part")
     ]
-    assert len(staged) == 2, "about.html and the index page both stage"
-    for call in staged:
+    # The index page's sqlite-wasm stages through the same seam, in
+    # binary (gain#1335); an encoding on those would be a bug of the
+    # opposite kind, so the split is asserted rather than filtered out.
+    text = [call for call in staged if "t" in call.args[1]]
+    binary = [call for call in staged if "b" in call.args[1]]
+    assert len(text) == 2, "about.html and the index page both stage"
+    assert len(binary) == 2, "index.mjs and sqlite3.wasm both stage"
+    for call in text:
         assert call.kwargs.get("encoding") == "utf8"
+    for call in binary:
+        assert "encoding" not in call.kwargs
 
 
 def test_a_failing_staged_open_does_not_leak_url_credentials(

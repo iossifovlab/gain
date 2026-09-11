@@ -27,9 +27,17 @@ be listed in ``.CONTENTS``.
 from __future__ import annotations
 
 from importlib.resources import files
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 #: Where the vendored files live in the package.
 _SQLITE_WASM_DIR = files("gain.templates") / "static" / "sqlite-wasm"
+
+#: The two files the browser needs, and the only two: the module, and
+#: the wasm it locates beside itself through ``import.meta.url``.
+_SQLITE_WASM_FILES = ("index.mjs", "sqlite3.wasm")
 
 #: The ``@sqlite.org/sqlite-wasm`` npm version the vendored files came
 #: from.  Read once at import; the file is one line.
@@ -45,3 +53,17 @@ def sqlite_wasm_path() -> str:
     it themselves.
     """
     return f".static/sqlite-wasm-{SQLITE_WASM_VERSION}"
+
+
+def sqlite_wasm_files() -> Iterator[tuple[str, bytes]]:
+    """Each file to publish: its repository-relative path, and its bytes.
+
+    The bytes are read on every call rather than cached: the publisher
+    runs once per ``repo-info``, and 1.2 MB held for the life of every
+    process that imports the templates is the wrong trade.
+    """
+    for name in _SQLITE_WASM_FILES:
+        yield (
+            f"{sqlite_wasm_path()}/{name}",
+            (_SQLITE_WASM_DIR / name).read_bytes(),
+        )
