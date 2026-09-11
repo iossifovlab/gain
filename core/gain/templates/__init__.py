@@ -97,6 +97,19 @@ class _TemplateCache:
 
 _state = _TemplateCache()
 
+
+def reset_caches() -> None:
+    """Forget the built environment and the merged provider templates.
+
+    Both are process-wide and built on first use, so a test that
+    registers a template provider, or patches what one returns, needs
+    the next call to build afresh -- this is the one way to ask for that
+    without reaching into the cache itself.
+    """
+    _state.env = None
+    _state.provider_cache = None
+
+
 MARKDOWN_TEMPLATES = frozenset({
     "gene_score_help.jinja",
     "genomic_score_help.jinja",
