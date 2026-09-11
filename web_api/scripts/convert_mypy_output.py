@@ -4,12 +4,6 @@ import re
 import sys
 from dataclasses import dataclass
 
-SEVERITY_MAP_PYLINT = {
-    "information": "C",
-    "warning": "W",
-    "error": "E",
-}
-
 
 @dataclass
 class MypyError:

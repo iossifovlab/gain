@@ -182,10 +182,10 @@ def ensemble_predict(
     default, so passing it is the same call Keras received when the backend
     named no chunk size at all.
     """
-    return np.mean([
+    return cast(np.ndarray, np.mean([
         models[m].predict(x, batch_size=batch_size, verbose=0)
         for m in range(5)
-    ], axis=0)
+    ], axis=0))
 
 
 def time_pass(
@@ -209,6 +209,12 @@ def measure_timing(
     reps: int,
 ) -> list[dict[str, Any]]:
     """Sweep every (width, batch size) pair, interleaved across ``reps``."""
+    # pylint: disable=import-outside-toplevel
+    # Deferred on purpose, here and in the two child functions below: the
+    # parent never predicts in `rss`/`production` mode, and `spawn`
+    # re-imports this module in every child, so a module-level import would
+    # load TensorFlow into each process at bootstrap whether or not it runs
+    # a model.
     from spliceai_annotator.spliceai_backend_tensorflow import (
         spliceai_load_models,
     )
@@ -311,6 +317,8 @@ def _rss_child(
     width: int, batch_size: int, rows: int, queue: multiprocessing.Queue,
 ) -> None:
     """Load an ensemble, run one pass, report this process's peak RSS."""
+    # pylint: disable=import-outside-toplevel
+    # Deferred: see `measure_timing`.
     from spliceai_annotator.spliceai_backend_tensorflow import (
         spliceai_load_models,
     )
@@ -362,6 +370,8 @@ def _production_child(
     the body as it stood before #427 -- the same ensemble mean with no chunk
     size named, which is what makes Keras fall back to 32.
     """
+    # pylint: disable=import-outside-toplevel
+    # Deferred: see `measure_timing`.
     from spliceai_annotator import spliceai_backend_tensorflow as backend
 
     models = backend.spliceai_load_models()
@@ -470,6 +480,7 @@ def format_table(results: list[dict[str, Any]], column: str) -> str:
 
 
 def main() -> None:
+    """Parse the command line, run the chosen mode, print its table."""
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
