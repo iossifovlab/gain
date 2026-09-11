@@ -5,11 +5,6 @@ This chapter is the in-depth description of the *resource* half of GAIn's
 declared API: the objects you get back when you open a repository and ask it
 for something, and the objects those hand you in turn.
 
-It is the zoom on the "Resource path" box of the
-:doc:`architecture_overview` map. If you have not read that page, read it
-first — it says how repositories, resources and the protocol layer fit
-together, and this chapter assumes that shape.
-
 Where the line falls
 --------------------
 

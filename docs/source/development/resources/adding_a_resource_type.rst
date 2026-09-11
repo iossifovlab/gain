@@ -7,10 +7,8 @@ that type, compute its statistics, and render its HTML summary page — and
 implementations are discovered through a Python entry-point group. A package
 installed alongside GAIn can add a type without any change to GAIn itself.
 
-This is one of the extension seams named on the
-:doc:`../architecture_overview` map. It is the seam for a new *kind of
-resource*; adding a new annotator is a different seam, with its own
-entry-point group.
+This is the extension seam for a new *kind of resource*; adding a new
+annotator is a different seam, with its own entry-point group.
 
 The interface
 -------------
