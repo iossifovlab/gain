@@ -105,6 +105,28 @@ def derive_chrom_length(
         length=length, source=_table_source(score.table), extent=None)
 
 
+def derive_chrom_lengths(
+    score: GenomicScore,
+    ref_genome: ReferenceGenome | None = None,
+) -> dict[str, ChromLength]:
+    """Resolve every contig of ``score``, in the table's order.
+
+    The universe is the score's contigs -- ``get_all_chromosomes()`` --
+    never the whole genome; a whole-reference denominator is a property of
+    the genome and belongs to coverage (gain#1041).  Keyed by contig so
+    the consumers that split regions (gain#1418) and persist the answer
+    (gain#1419) look up by name; the dict keeps table order.
+
+    Not memoised: on a tabix score every call re-runs the probe per contig,
+    which is the cost gain#1419 takes out of the read path by storing this
+    at repair.  Raises ``ValueError`` on a score that is not open.
+    """
+    return {
+        chrom: derive_chrom_length(score, chrom, ref_genome)
+        for chrom in score.get_all_chromosomes()
+    }
+
+
 def _table_source(table: GenomicPositionTable) -> ChromLengthSource:
     """Name what ``find_chromosome_length`` on ``table`` measures.
 
