@@ -310,23 +310,30 @@ def test_derive_chrom_lengths_answers_from_the_genome_where_it_lists_the_contig(
 
     assert resolved["chr1"] == ChromLength(
         length=3000, source=ChromLengthSource.REFERENCE_GENOME, extent=None)
+    # 48 is the probe's bound for a lone row at 40, as the region-split pin
+    # in test_genomic_scores_impl measures for the same rows.
     assert resolved["chrM"] == ChromLength(
-        length=score.table.find_chromosome_length("chrM"),
-        source=ChromLengthSource.TABIX_ESTIMATE, extent=None)
+        length=48, source=ChromLengthSource.TABIX_ESTIMATE, extent=None)
 
 
 def test_the_genome_widens_no_contig_universe(
     tmp_path: pathlib.Path,
 ) -> None:
-    # A genome usually lists far more contigs than a score carries.  The
-    # answer is keyed by the SCORE's contigs, in the table's order: a
-    # whole-reference denominator is coverage's business (gain#1041).
-    score = _a_tabix_score(tmp_path / "score").open()
-    genome = _a_genome_listing(tmp_path, chr2=500, chr1=3000)
+    # A genome usually lists far more contigs than a score carries, in its
+    # own order.  The answer is keyed by the SCORE's contigs, in the
+    # TABLE's order -- chr3 is not added, chr2 is not moved ahead of chr1
+    # -- because a whole-reference denominator is coverage's business
+    # (gain#1041) and a consumer splitting regions walks the table.
+    score = _a_tabix_score(tmp_path / "score", rows="""
+        chrom  pos_begin  score
+        chr1   10         0.1
+        chr2   40         0.3
+    """).open()
+    genome = _a_genome_listing(tmp_path, chr3=100, chr2=500, chr1=3000)
 
     resolved = derive_chrom_lengths(score, genome)
 
-    assert list(resolved) == ["chr1"]
+    assert list(resolved) == ["chr1", "chr2"]
 
 
 def test_a_contig_the_genome_lacks_still_reports_why_it_has_no_length(
