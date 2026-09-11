@@ -2237,9 +2237,12 @@ def test_cached_open_vcf_file_opens_a_file_that_ships_no_index(
 
     This protocol resolves the index it refreshes and hands the name down to
     the local open, which refuses an index it is asked for by name and
-    cannot find.  A VCF header sidecar -- the shape real score resources
-    ship, unindexed -- has no index to hand down, and passing the resolved
-    guess anyway would turn "there is no index" into a hard failure.
+    cannot find.  A file with no index has none to hand down, and passing
+    the resolved guess anyway would turn "there is no index" into a hard
+    failure.  The VCF header sidecar is the realistic unindexed file to open
+    here -- the shape real score resources ship -- though the table itself
+    no longer opens it by name (gain#1406); the rule this pins is
+    ``open_vcf_file``'s, for any unindexed file.
     """
     source_dir = tmp_path / "grr_source"
     (

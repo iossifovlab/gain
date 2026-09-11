@@ -625,8 +625,9 @@ at all: no probe, no line on fd 2, nothing to silence. Verified at triage
 and pinned by test: the resulting `info` map is equal to the one the by-name
 open produced across every `Number` shape `parse_vcf_scoredefs`
 distinguishes (`1`, `R`, `.`, `0`/Flag), and fd 2 stays clean *without* a
-bracket — the test goes red on exactly that line when the by-name route is
-restored unbracketed.
+bracket — with the by-name route restored unbracketed and the test's
+"never reached `open_vcf_file`" assertion removed, the `capfd` assertion
+alone goes red on exactly that line.
 
 By this ADR's own rule (the gain#1314 amendment: *is there a handle GAIn
 holds?*) that moves the header load from the third escape — a url handed to
@@ -650,14 +651,25 @@ survives.
 bracketing only `open_vcf_file`'s unindexed branch — the shape the
 gain#1360 amendment named — would also have un-nested the brackets, at the
 price of silencing every unindexed VCF open. The handle read silences
-nothing anywhere: the sidecar's diagnostics are *kept*, since htslib's
-header parser still writes its `[W::bcf_hdr_register_hrec]` warnings for a
-declaration missing `Number` or `Type`, which the old bracket discarded.
+nothing anywhere: what htslib's header parser writes at the verbosity this
+module sets — `[E::bcf_hdr_parse_line]` for a line it cannot parse — now
+reaches fd 2, where the old bracket discarded it. (Its
+`[W::bcf_hdr_register_hrec]` warnings for a declaration missing `Number` or
+`Type` are level-3 lines; neither route ever wrote them at level 1.)
 
 **Behavioural delta.** The sidecar's bytes come through fsspec rather than
 htslib's `hFILE` on the direct `http` and `s3` protocols — as the tabix base
 class's header bytes already do; on the caching protocol both routes refresh
-the file first. A `##` line pysam cannot parse now fails in `add_line`
-rather than in an htslib open, as a bare `ValueError("Invalid header line")`;
-the constructor re-raises it naming the resource, the sidecar and the line,
-the way the no-`.vcf`-in-the-filename refusal already does.
+the file first. Two shapes are **refused that the by-name open was not
+strict about**, both naming the resource, the sidecar and the line: a `##`
+line pysam cannot parse — htslib logged it (silenced) and *skipped* it,
+`add_line` raises a bare `ValueError("Invalid header line")` and the
+constructor re-raises it named; and a line that is neither `##` nor the
+`#CHROM` line, which htslib tolerated. And one shape is refused that the
+by-name open also refused, as `ValueError: invalid file`: an empty sidecar,
+or one with no `##` line at all — without the guard, a loop that stops at
+the first non-`##` line hands back an empty header and a table with no
+scores, silently; the sibling tabix header read refuses that for the same
+reason (gain#364). None of the three shapes occurs in a published sidecar
+(the ClinVar and dbSNP ones under the seqpipe GRRs were checked; both
+routes produce equal `info` maps on each).

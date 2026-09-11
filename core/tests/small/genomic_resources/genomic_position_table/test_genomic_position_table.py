@@ -1,7 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,too-many-lines
 import copy
 import gc
-import gzip
 import pathlib
 import textwrap
 from collections.abc import Generator
@@ -2317,16 +2316,46 @@ chr1   5   .  A   T   .    .      A=1;R1=0.5,0.7;C=x;F
     ]
 
 
-def test_vcf_header_load_refuses_an_unparseable_line_naming_the_resource(
-        tmp_path: pathlib.Path) -> None:
-    """A ``##`` line pysam cannot parse fails construction, naming the resource.
+@pytest.mark.parametrize(
+    ("sidecar", "complaint"),
+    [
+        pytest.param(
+            "##fileformat=VCFv4.1\n"
+            "##notakeyvalue\n"
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
+            "cannot parse: '##notakeyvalue'",
+            id="unparseable"),
+        pytest.param(
+            "##fileformat=VCFv4.1\n"
+            "\n"
+            '##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">\n'
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
+            "not a VCF header line: ''",
+            id="blank-line-between"),
+        pytest.param(
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
+            "no '##' header lines",
+            id="chrom-line-only"),
+        pytest.param(
+            "",
+            "no '##' header lines",
+            id="empty"),
+    ])
+def test_vcf_header_load_refuses_a_broken_sidecar_naming_the_resource(
+        tmp_path: pathlib.Path, sidecar: str, complaint: str) -> None:
+    """A sidecar that is not a VCF header is refused, naming the resource.
 
     The sidecar is parsed line by line through ``VariantHeader.add_line``
-    (gain#1406), which raises a bare ``ValueError("Invalid header line")``
-    -- no file, no resource.  Raised as-is from the constructor that would
-    leave a pipeline build failing on a line of text with nothing to say
-    which of its resources shipped it; the existing refusal for a filename
-    with no ``.vcf`` in it already sets the bar (gain#348).
+    (gain#1406).  What that leaves to this method is everything the by-name
+    open used to refuse *as a file* -- ``ValueError: invalid file`` for an
+    empty sidecar or one with no ``##`` line at all -- and the one thing
+    pysam does refuse per line, as a bare ``ValueError("Invalid header
+    line")`` naming no file and no resource.  A loop that stopped at the
+    first non-``##`` line and returned what it had would construct a table
+    with NO scores from an empty sidecar, silently; the sibling tabix header
+    read refuses that shape for the same reason (gain#364), and the refusal
+    for a filename with no ``.vcf`` in it sets the bar for what the message
+    carries (gain#348).
     """
     setup_directories(tmp_path, {
         "grr.yaml": f"""
@@ -2351,13 +2380,12 @@ def test_vcf_header_load_refuses_an_unparseable_line_naming_the_resource(
 chr1   5   .  A   T   .    .      A=1
     """),
     )
-    # setup_vcf writes the sidecar through pysam, which cannot emit a line it
-    # would not parse, so the broken one is written by hand over it.
-    with gzip.open(tmp_path / "one_score" / "data.header.vcf.gz", "wt") as out:
-        out.write(
-            "##fileformat=VCFv4.1\n"
-            "##notakeyvalue\n"
-            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+    # setup_vcf writes the sidecar through pysam, which cannot emit a header
+    # it would not parse, so the broken one is written by hand over it -- as
+    # bgzf, the shape a shipped sidecar has.
+    with pysam.BGZFile(
+            str(tmp_path / "one_score" / "data.header.vcf.gz"), "wb") as out:
+        out.write(sidecar.encode())
 
     res = build_filesystem_test_repository(tmp_path).get_resource("one_score")
     assert res.config is not None
@@ -2368,7 +2396,7 @@ chr1   5   .  A   T   .    .      A=1
     message = str(exc_info.value)
     assert "one_score" in message
     assert "data.header.vcf.gz" in message
-    assert "##notakeyvalue" in message
+    assert complaint in message
 
 
 def test_vcf_header_metadata_outlives_the_header_read(

@@ -1080,9 +1080,9 @@ class VcfInfoScoreBuilder(MetaMixin):
         The realize path indexes the sidecar because it bgzips it the same
         way as the data file; real score resources (dbSNP is the canonical
         one) ship it unindexed, and the table reads its INFO metadata
-        without ever needing an index.  Use this to realize that shape --
-        a file whose index resolution must resolve to NOTHING and still
-        open.
+        through a handle, never resolving an index for it (gain#1406).  Use
+        this to realize that shape -- and, opened by name, a file whose
+        index resolution must resolve to NOTHING and still open (gain#596).
         """
         return dataclasses.replace(self, header_index=False)
 
