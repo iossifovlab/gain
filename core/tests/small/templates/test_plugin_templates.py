@@ -2,19 +2,14 @@
 """Tests for third-party plugin template registration via entry points."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import gain.templates as templates_module
 import jinja2
 import pytest
 from gain.templates import get_template
 
-
-def _make_ep(name: str, provider_fn):
-    ep = MagicMock()
-    ep.name = name
-    ep.load.return_value = provider_fn
-    return ep
+from tests.small.templates.conftest import make_entry_point
 
 
 class TestPluginTemplateRegistration:
@@ -22,7 +17,7 @@ class TestPluginTemplateRegistration:
         def my_plugin():
             return {"my_plugin.jinja": "Hello {{ name }}!"}
 
-        ep = _make_ep("my_plugin", my_plugin)
+        ep = make_entry_point("my_plugin", my_plugin)
         with patch("gain.templates.entry_points", return_value=[ep]):
             result = get_template("my_plugin.jinja").render(name="world")
 
@@ -35,7 +30,10 @@ class TestPluginTemplateRegistration:
         def plugin_b():
             return {"plugin_b.jinja": "B: {{ v }}"}
 
-        eps = [_make_ep("plugin_a", plugin_a), _make_ep("plugin_b", plugin_b)]
+        eps = [
+            make_entry_point("plugin_a", plugin_a),
+            make_entry_point("plugin_b", plugin_b),
+        ]
 
         with patch("gain.templates.entry_points", return_value=eps):
             result_a = get_template("plugin_a.jinja").render(v="x")
@@ -60,7 +58,7 @@ class TestPluginTemplateRegistration:
             call_count += 1
             return {"cached.jinja": "content"}
 
-        ep = _make_ep("p", counting_plugin)
+        ep = make_entry_point("p", counting_plugin)
         with patch("gain.templates.entry_points", return_value=[ep]):
             get_template("cached.jinja")
             get_template("cached.jinja")
@@ -74,7 +72,7 @@ class TestPluginTemplateRegistration:
         def sneaky_plugin():
             return {builtin_name: "OVERRIDDEN"}
 
-        ep = _make_ep("sneaky", sneaky_plugin)
+        ep = make_entry_point("sneaky", sneaky_plugin)
         with patch("gain.templates.entry_points", return_value=[ep]):
             env = templates_module.get_jinja_env()
             source, _, _ = env.loader.get_source(env, builtin_name)
@@ -89,8 +87,8 @@ class TestPluginNameCollisions:
         source = "Shared: {{ x }}"
 
         eps = [
-            _make_ep("p1", lambda: {"shared.jinja": source}),
-            _make_ep("p2", lambda: {"shared.jinja": source}),
+            make_entry_point("p1", lambda: {"shared.jinja": source}),
+            make_entry_point("p2", lambda: {"shared.jinja": source}),
         ]
 
         with patch("gain.templates.entry_points", return_value=eps):
@@ -101,8 +99,8 @@ class TestPluginNameCollisions:
     def test_conflicting_content_raises_value_error(self):
         """Conflicting content for the same name raises ValueError."""
         eps = [
-            _make_ep("p1", lambda: {"conflict.jinja": "Version A"}),
-            _make_ep("p2", lambda: {"conflict.jinja": "Version B"}),
+            make_entry_point("p1", lambda: {"conflict.jinja": "Version A"}),
+            make_entry_point("p2", lambda: {"conflict.jinja": "Version B"}),
         ]
 
         with (
@@ -114,8 +112,10 @@ class TestPluginNameCollisions:
     def test_conflict_error_names_the_offending_provider(self):
         """ValueError message names the provider that caused the conflict."""
         eps = [
-            _make_ep("first_plugin", lambda: {"dupe.jinja": "Original"}),
-            _make_ep("second_plugin", lambda: {"dupe.jinja": "Different"}),
+            make_entry_point(
+                "first_plugin", lambda: {"dupe.jinja": "Original"}),
+            make_entry_point(
+                "second_plugin", lambda: {"dupe.jinja": "Different"}),
         ]
 
         with (
