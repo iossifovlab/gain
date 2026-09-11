@@ -90,14 +90,30 @@ WORKDIR is `/workspace/core`, and `gain` is `core/gain`.
 
 ```bash
 # Ruff linting (fast, primary linter)
-cd core && ruff check --fix .
+cd core && ruff check --fix . ../scripts
 
 # Type checking (slow)
-cd core && mypy --config-file ../mypy.ini gain
+cd core && mypy --config-file ../mypy.ini gain ../scripts
 
 # Pylint (CI runs this too — see below)
-cd core && pylint --rcfile=../pylintrc gain
+cd core && pylint --rcfile=../pylintrc gain ../scripts
 ```
+
+**`scripts/` directories are linted too, by all three.** A
+project's `scripts/` is a sibling of its package, so naming
+only the package (`mypy spliceai_annotator`) skips it while
+`ruff check .` does not — CI adds `scripts` to the mypy and
+pylint targets of every project that has one (#1327). The
+repo-root `scripts/` belongs to no project, so the `core`
+stage carries it, as `../scripts` above. For the other
+projects the CI-matching local run is the package *and*
+`scripts`, from the project directory:
+`cd spliceai_annotator && mypy spliceai_annotator scripts`,
+`pylint --rcfile=pylintrc spliceai_annotator scripts`. Run
+mypy from the project directory specifically: there the
+package resolves as source, whereas from anywhere else it
+resolves to the installed distribution, which ships no
+`py.typed` and reports `import-untyped` instead.
 
 Config: `ruff.toml` (line-length: 80, target: py312),
 `mypy.ini`, `pylintrc` — all at the **repo root**, hence
@@ -146,8 +162,8 @@ no `core/mypy.ini`) and silently falls back to defaults
 looser than the ones CI enforces.
 
 **CI runs three Python linters, not two.** The `Jenkinsfile`
-lint stage runs **ruff + mypy + pylint** on each package
-(plus eslint + stylelint for `web_ui`), and any finding from
+lint stage runs **ruff + mypy + pylint** on each package and
+its `scripts/` (plus eslint + stylelint for `web_ui`), and any finding from
 any of them marks the build **UNSTABLE**. Running only
 `ruff` + `mypy` locally is *not* enough to predict the lint
 stage — always run `pylint --rcfile=../pylintrc gain` from

@@ -21,6 +21,7 @@ def runProject(Map args) {
     String mypyExtra      = args.mypyExtra ?: ''               // e.g. "--config-file /workspace/mypy.ini"
     String pytestArgs     = args.pytestArgs ?: ''              // e.g. "-n auto"
     String dockerRunExtra = args.dockerRunExtra ?: ''          // extra flags for `docker run` (network, -v, -e, ...)
+    String lintExtra      = args.lintExtra ?: ''               // paths outside the project dir that ruff/mypy/pylint also cover, e.g. "/workspace/scripts"
     String distName       = name.replace('_', '-')
     String distPkg        = args.distPkg ?: "gain-${distName}" // PyPI-style name, e.g. "gain-demo-annotator"
     String imageTag       = "gain-${distName}-ci:${env.CI_TAG}"
@@ -57,8 +58,21 @@ def runProject(Map args) {
             ${imageTag} \\
             sh -c '
                 set +e
-                ruff check --output-format=junit --output-file=/reports/ruff.xml .
-                mypy ${mypyExtra} ${mypyTarget} --junit-xml=/reports/mypy.xml
+                # The scripts/ dir of a project is a sibling of its
+                # package, so the package-name targets mypy and pylint
+                # get below would skip it while the `.` ruff gets does
+                # cover it (#1327). Add it explicitly whenever it
+                # exists; both tools take a bare directory next to a
+                # package name. Keep these comments apostrophe-free:
+                # this whole block is one single-quoted sh -c string.
+                scripts_dir=
+                if [ -d scripts ]; then
+                    scripts_dir=scripts
+                fi
+                ruff check --output-format=junit --output-file=/reports/ruff.xml \\
+                    . ${lintExtra}
+                mypy ${mypyExtra} ${mypyTarget} \$scripts_dir ${lintExtra} \\
+                    --junit-xml=/reports/mypy.xml
                 # Prefer a per-project pylintrc when one exists (e.g. web_api
                 # ships its own to load pylint_django). Falls back to the
                 # repo-root pylintrc otherwise.
@@ -69,7 +83,8 @@ def runProject(Map args) {
                 pylint --rcfile="\$pylint_rcfile" \\
                        --load-plugins=pylint_junit \\
                        --output-format=pylint_junit.JUnitReporter \\
-                       --exit-zero ${pkg} > /reports/pylint.xml
+                       --exit-zero ${pkg} \$scripts_dir ${lintExtra} \\
+                       > /reports/pylint.xml
                 pytest ${pytestArgs} \\
                     --junitxml=/reports/pytest.xml \\
                     --cov=${pkg} --cov-branch \\
@@ -487,6 +502,10 @@ pipeline {
                                             tests: 'tests',
                                             mypyTarget: 'gain',
                                             mypyExtra: '--config-file /workspace/mypy.ini',
+                                            // The repo-root scripts/ belongs to no
+                                            // project, so no WORKDIR-relative `.`
+                                            // reaches it; core lints it (#1327).
+                                            lintExtra: '/workspace/scripts',
                                             pytestArgs: '-n 5 --enable-http-testing --enable-s3-testing --ignore=tests/integration',
                                             dockerRunExtra:
                                                 '--network "$COMPOSE_NETWORK" ' +

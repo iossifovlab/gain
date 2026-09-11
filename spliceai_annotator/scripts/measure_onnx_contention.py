@@ -73,7 +73,7 @@ import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from multiprocessing import synchronize
-from typing import Any, NamedTuple, cast
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -399,9 +399,7 @@ def one_hot_window(width: int, rows: int, seed: int) -> np.ndarray:
     Called in the worker, before the barrier, so its cost is never timed.
     """
     # pylint: disable=import-outside-toplevel
-    # The ignore: the annotator ships no py.typed marker, so mypy resolves
-    # this to the installed distribution and declines to analyze it.
-    from spliceai_annotator import utils  # type: ignore[import-untyped]
+    from spliceai_annotator import utils
 
     rng = np.random.default_rng(seed)
     return np.stack([
@@ -460,11 +458,11 @@ class OnnxEnsemblePayload:
         # pylint: disable=import-outside-toplevel
         # Deferred on purpose: importing this at module scope would load ONNX
         # Runtime into the *parent*, which `run_probe` refuses to fork.
-        # The ignore below: the annotator ships no py.typed marker, so mypy
-        # resolves this to the installed distribution and declines to analyze
-        # it. CI's mypy target is the package itself, not scripts/, so this
-        # only matters when checking this file by hand.
-        import spliceai_annotator.spliceai_backend_onnx as backend  # type: ignore[import-untyped]
+        # No `type: ignore` here: CI runs mypy from the project directory,
+        # where the annotator resolves as source (#1327). Checked from
+        # anywhere else it resolves to the installed distribution, which
+        # ships no py.typed marker -- run it the way CI does.
+        import spliceai_annotator.spliceai_backend_onnx as backend
 
         # Read by `spliceai_session_options` when it opens each session, so
         # setting it here -- before any session exists -- is what the shipped
@@ -479,7 +477,7 @@ class OnnxEnsemblePayload:
         window = one_hot_window(self.width, self.rows, self.seed)
 
         def run_once() -> np.ndarray:
-            return cast(np.ndarray, backend.spliceai_predict(models, window))
+            return backend.spliceai_predict(models, window)
 
         return run_once
 

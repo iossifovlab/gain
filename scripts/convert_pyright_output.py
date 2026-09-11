@@ -19,7 +19,7 @@ def _convert_to_pylint(diag: dict) -> str:
     return f"{path}:{line}: [{severity}{ttype}] {text}".replace("\n", "")
 
 
-def main(filepath: str):
+def main(filepath: str) -> None:
     if not (raw := pathlib.Path(filepath).read_text()):
         return
     report = json.loads(raw)
