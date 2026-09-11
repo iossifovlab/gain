@@ -4,7 +4,6 @@ import gc
 import gzip
 import pathlib
 import textwrap
-import unittest.mock
 from collections.abc import Generator
 from typing import Any, Self, cast
 
@@ -59,8 +58,6 @@ from gain.genomic_resources.testing.builders import (
     a_position_score,
     a_vcf_info_score,
 )
-
-from tests.small.genomic_resources.conftest import overlap_two_opens
 
 
 @pytest.fixture
@@ -2378,52 +2375,6 @@ chr1   5   .  A   T   .    .      A=1
     assert "one_score" in message
     assert "data.header.vcf.gz" in message
     assert "##notakeyvalue" in message
-
-
-def test_concurrent_vcf_header_loads_do_not_strand_htslib_verbosity(
-        vcf_res: GenomicResource,
-        capfd: pytest.CaptureFixture[str]) -> None:
-    """Two VCF tables built at once must not leave htslib silent for good.
-
-    The bracket above is unconditional -- every VCF table with a header
-    sidecar takes it, on any url -- and it runs from the CONSTRUCTOR, which
-    ``web_api``'s pipeline cache reaches on its ``ThreadedTaskExecutor`` while
-    building a pipeline. Two pipelines that each carry a VCF-backed score,
-    built concurrently on a plain public GRR, are enough (gain#1360).
-
-    The verbosity level is process-global. Left unserialised, the second
-    constructor saves the first one's 0 as its "previous" level and restores
-    *that*, so every later ``[E::...]`` line from htslib is discarded for the
-    rest of the process's life. The interleaving is FORCED rather than raced
-    for, by ``overlap_two_opens``; asserted on the consequence -- a later
-    open on a plain url still emits its diagnostic -- not on
-    ``set_verbosity`` calls.
-    """
-    assert vcf_res.config is not None
-    table_definition = vcf_res.config["tabix_table"]
-
-    # Restored unconditionally: a REGRESSION here strands the level at 0,
-    # which would silence htslib for the rest of the suite and report as
-    # unrelated ``capfd`` failures somewhere else entirely.
-    saved_verbosity = pysam.set_verbosity(1)
-    try:
-        # The stand-in handle has to survive ``with vcf_file:`` and a
-        # ``.header.info`` read; the header's content is never looked at.
-        overlap_two_opens(
-            pysam, "VariantFile",
-            lambda: build_genomic_position_table(vcf_res, table_definition),
-            fake_result=unittest.mock.MagicMock())
-        capfd.readouterr()
-
-        # A plain url whose host refuses the connection: the open reaches
-        # htslib and fails there, which is what makes it write. A missing
-        # LOCAL path never gets that far -- pysam stats it first.
-        with pytest.raises(OSError):
-            pysam.TabixFile("https://127.0.0.1:1/path/data.txt.gz")
-
-        assert "[E::hts_open_format]" in capfd.readouterr().err
-    finally:
-        pysam.set_verbosity(saved_verbosity)
 
 
 def test_vcf_header_metadata_outlives_the_header_read(

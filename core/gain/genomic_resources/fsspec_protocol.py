@@ -20,7 +20,7 @@ import uuid
 from collections.abc import Callable, Generator, Iterable
 from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import asdict, dataclass
-from threading import Event, Lock, RLock, get_ident
+from threading import Event, Lock, get_ident
 from typing import (
     IO,
     Any,
@@ -471,29 +471,30 @@ def _url_carries_userinfo(url: str) -> bool:
 #: htslib silent -- every ``[E::...]`` line from every later tabix, VCF and
 #: fasta open discarded -- for the rest of the process's life (gain#1360).
 #:
-#: This is not a theoretical pool. ``web_api``'s pipeline cache builds and
-#: opens pipelines on a ``ThreadedTaskExecutor`` (8 loaders by default);
-#: building a pipeline constructs its VCF tables, each of which brackets its
-#: header load, and opening it brackets every credentialed tabix, VCF and
-#: fasta open in it.
+#: This is not a theoretical pool. ``web_api``'s pipeline cache opens
+#: pipelines on a ``ThreadedTaskExecutor`` (8 loaders by default), and
+#: opening a pipeline brackets every credentialed tabix, VCF and fasta open
+#: in it.
 #:
-#: Re-entrant, because the brackets nest on one thread:
-#: ``VCFGenomicPositionTable._load_vcf_header`` brackets the header open, and
-#: for a credential-bearing url that open enters ``_open_htslib_file``'s own
-#: bracket. A plain ``Lock`` would deadlock there; with re-entry the inner
-#: bracket saves and restores 0, which is harmless.
+#: Not re-entrant, and it need not be: the one bracket left is
+#: ``_open_htslib_file``'s, around a bare pysam constructor that enters no
+#: bracket of its own. It was an ``RLock`` while
+#: ``VCFGenomicPositionTable._load_vcf_header`` bracketed its header open
+#: too, on every url, from the constructor -- for a credential-bearing url
+#: that open entered this bracket a second time on the same thread. That
+#: bracket is gone: the sidecar is read through a handle now, so no filename
+#: reaches htslib and there is nothing to silence (gain#1406).
 #:
 #: Separate from ``_STDERR_SUPPRESSION_LOCK`` on purpose: fd 2 and the
 #: verbosity level are independent globals, and sharing one lock would
-#: serialise credentialed bigwig opens against VCF header loads for nothing.
+#: serialise credentialed bigwig opens against credentialed htslib opens for
+#: nothing.
 #:
-#: The cost is that credentialed tabix/VCF/fasta opens and all VCF header
-#: loads serialise, each holding the lock across a network open -- and a
-#: header load on the caching protocol holds it across the sidecar's refresh
-#: and index resolution too, since its bracket encloses the whole
-#: ``open_vcf_file`` call. Accepted for the same reason as the fd 2 lock: it
-#: is the open, not the read, so it is not the score-scan hot path.
-_HTSLIB_VERBOSITY_LOCK = RLock()
+#: The cost is that credentialed tabix/VCF/fasta opens serialise, each
+#: holding the lock across a network open. Accepted for the same reason as
+#: the fd 2 lock: it is the open, not the read, so it is not the score-scan
+#: hot path, and it is paid only by a GRR whose url carries a credential.
+_HTSLIB_VERBOSITY_LOCK = Lock()
 
 
 @contextmanager
@@ -501,11 +502,10 @@ def _htslib_silenced() -> Generator[None]:
     """Run the body at htslib verbosity 0, restoring the previous level.
 
     The previous level is restored rather than assumed: this module sets 1
-    at import, but a caller may have lowered it already, because the
-    brackets nest (see ``_HTSLIB_VERBOSITY_LOCK``, which is also why this
-    serialises). Every ``pysam.set_verbosity(0)`` bracket in the open path
-    goes through here, so that there is exactly one place that takes the
-    lock.
+    at import, but the application may have set something else since.
+    Every ``pysam.set_verbosity(0)`` bracket in the open path goes through
+    here, so that there is exactly one place that takes the lock (see
+    ``_HTSLIB_VERBOSITY_LOCK`` for why it serialises).
     """
     with _HTSLIB_VERBOSITY_LOCK:
         saved_verbosity = pysam.set_verbosity(0)
