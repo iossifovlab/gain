@@ -25,9 +25,8 @@ from typing import TYPE_CHECKING
 from gain.genomic_resources.genomic_position_table import (
     BigWigTable,
     ContigExtent,
-)
-from gain.genomic_resources.genomic_position_table.table_inmemory import (
     InmemoryGenomicPositionTable,
+    TabixGenomicPositionTable,
 )
 
 if TYPE_CHECKING:
@@ -59,11 +58,14 @@ class ChromLengthSource(enum.Enum):
     def is_exact(self) -> bool:
         """Whether a length from this source is the contig's true length.
 
-        For the table-derived members this agrees, by construction, with
-        the backend's ``chrom_lengths_are_exact`` flag, which is what
-        coverage's ``resolve_chrom_lengths`` reads today; the two must keep
-        classifying alike so that moving that caller onto this API
-        (gain#1414) changes no denominator.
+        For the table-derived members this must agree with the backend's
+        ``chrom_lengths_are_exact`` flag, which is what coverage's
+        ``resolve_chrom_lengths`` reads today: the two classify alike so
+        that moving that caller onto this API (gain#1414) changes no
+        denominator.  Nothing derives one from the other -- the agreement
+        is pinned per backend by
+        ``test_a_table_sources_exactness_is_its_backends``, and a backend
+        :func:`_table_source` does not know is refused rather than labelled.
         """
         return self in (
             ChromLengthSource.REFERENCE_GENOME,
@@ -96,7 +98,9 @@ def derive_chrom_length(
     ``ref_genome`` is accepted for the genome rung, which is not yet
     implemented (gain#1418); today every contig is answered by the table.
     Raises ``ValueError`` when the score is not open or does not carry
-    ``chrom`` -- a bad question, as opposed to an absent answer.
+    ``chrom`` -- a bad question, as opposed to an absent answer -- in the
+    TABLE's words, since it is the table that refuses; the score's methods
+    screen first and word both refusals as every other score read does.
     """
     length = score.table.find_chromosome_length(chrom)
     if isinstance(length, ContigExtent):
@@ -134,10 +138,21 @@ def _table_source(table: GenomicPositionTable) -> ChromLengthSource:
     :mod:`.base` already routes value extraction -- because the label is a
     fact about how each format answers, and only the score layer holds the
     vocabulary for it.  The length itself is still asked of the table.
+
+    Every arm is explicit and the fall-through raises: a backend this
+    ladder has not met would otherwise be labelled by whichever arm came
+    last, and its ``is_exact`` could then silently disagree with the flag
+    the backend declares.  The cost is the one gain#509 objected to -- a
+    fifth backend must edit this -- but here the edit is one line naming
+    what the backend's length IS, which no fallback can guess.
     """
     if isinstance(table, BigWigTable):
         return ChromLengthSource.BIGWIG
     if isinstance(table, InmemoryGenomicPositionTable):
         return ChromLengthSource.TABLE_EXTENT
-    # Tabix and VCF alike: both probe an index (gain#509).
-    return ChromLengthSource.TABIX_ESTIMATE
+    if isinstance(table, TabixGenomicPositionTable):
+        # The VCF backend included: it inherits the tabix probe (gain#509).
+        return ChromLengthSource.TABIX_ESTIMATE
+    raise NotImplementedError(
+        f"{type(table).__name__} does not say what its chromosome lengths "
+        f"measure; add it to ChromLengthSource's ladder")

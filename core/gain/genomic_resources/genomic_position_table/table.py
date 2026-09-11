@@ -57,6 +57,28 @@ class ContigExtent(enum.Enum):
     length is what SPLITTING a contig needs, not what READING one needs.
     """
 
+    def refusal(self, chrom: str, contigs: Iterable[str]) -> str:
+        """The message for a caller that has no use for this member.
+
+        The one home of the two wordings, for
+        :meth:`GenomicPositionTable.get_chromosome_length` and for the score
+        layer's ``get_chrom_length``, which refuses the same two facts and
+        must say them the same way (gain#1413).  Named apart rather than
+        collapsed into one "no length" message because an operator reading
+        a failed statistics build acts on them differently: an empty contig
+        is usually a ``chrom_mapping`` naming something the file does not
+        carry, an undetermined length is a probe that could not answer for a
+        contig that may well hold records.  Both name the contig asked about
+        and the contigs the table does have.
+        """
+        if self is ContigExtent.EMPTY:
+            return (
+                f"contig {chrom} has no records in the table's contigs: "
+                f"{list(contigs)}")
+        return (
+            f"could not determine the length of contig {chrom} "
+            f"in the table's contigs: {list(contigs)}")
+
 
 class GenomicPositionTable(abc.ABC):
     """Abstraction over genomic scores table."""
@@ -726,23 +748,15 @@ class GenomicPositionTable(abc.ABC):
         this behaviour by implementing the hook alone.
         """
         length = self.find_chromosome_length(chrom, step)
-        # The two members are named apart rather than collapsed into one "no
-        # length" message, because they are different facts about the resource
-        # and an operator reading a failed statistics build acts on them
-        # differently: an empty contig is usually a chrom_mapping naming
-        # something the file does not carry, while an undetermined length is a
-        # probe that could not answer for a contig that may well hold records.
-        # Both name the contig asked about and the contigs the table does have
-        # -- reads that are safe here, because the hook has already refused a
-        # closed table.
-        if length is ContigExtent.EMPTY:
-            raise ValueError(
-                f"contig {chrom} has no records in the table's contigs: "
-                f"{self.get_chromosomes()}")
-        if length is ContigExtent.UNDETERMINED:
-            raise ValueError(
-                f"could not determine the length of contig {chrom} "
-                f"in the table's contigs: {self.get_chromosomes()}")
+        # The member words its own refusal (see ContigExtent.refusal for why
+        # the two are named apart).  The contig list it names is a read that
+        # is safe here, because the hook has already refused a closed table.
+        # A ValueError, not the TypeError the isinstance rule suggests: the
+        # member is the hook's fair answer to a fair question, not a type
+        # the caller got wrong.
+        if isinstance(length, ContigExtent):
+            raise ValueError(  # ruff: ignore[type-check-without-type-error]
+                length.refusal(chrom, self.get_chromosomes()))
         return length
 
     # Memoised PER INSTANCE, and deliberately not with functools.cache: that

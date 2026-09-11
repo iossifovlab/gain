@@ -716,10 +716,21 @@ Signature, return type and meaning are unchanged -- one ``(begin, end,
 values)`` tuple per record, at the record's own extent -- so a caller migrates
 by renaming the call.  A call to ``fetch_region_segments`` is an
 ``AttributeError``.
+
+**New export ``InmemoryGenomicPositionTable``, and a new method
+``ContigExtent.refusal(chrom, contigs)``** (gain#1413).  The score layer's
+``GenomicScore.get_chrom_length`` names which backend answered a length, and
+so needs the in-memory class where it already had the bigWig one -- exported
+here rather than deep-imported, so every backend class the score layer
+dispatches on comes through the one facade.  ``refusal`` is the one home of
+the two "no length" messages: ``get_chromosome_length`` raised them inline,
+and the score's method refuses the same two facts and must say them the same
+way.  Both are additive; nothing existing changed.
 """
 from .line import LineBuffer
 from .table import ContigExtent
 from .table_bigwig import BigWigTable
+from .table_inmemory import InmemoryGenomicPositionTable
 from .table_tabix import TabixGenomicPositionTable
 from .table_vcf import VCFGenomicPositionTable
 from .utils import build_genomic_position_table
@@ -727,6 +738,7 @@ from .utils import build_genomic_position_table
 __all__ = [
     "BigWigTable",
     "ContigExtent",
+    "InmemoryGenomicPositionTable",
     "LineBuffer",
     "TabixGenomicPositionTable",
     "VCFGenomicPositionTable",
