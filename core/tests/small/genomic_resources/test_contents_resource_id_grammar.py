@@ -40,6 +40,7 @@ from gain.genomic_resources.repository import (
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     build_inmemory_test_protocol,
+    setup_directories,
 )
 
 from tests.small.genomic_resources.conftest import captured_warnings
@@ -204,6 +205,15 @@ def test_the_two_id_grammars_accept_the_same_characters(
         == accepted_by_scan, resource_id
 
 
+def _lay_down_resources(
+    root: pathlib.Path, resource_ids: list[str],
+) -> pathlib.Path:
+    """Write one basic resource per id under ``root`` and return it."""
+    setup_directories(
+        root, {rid: {GR_CONF_FILE_NAME: _CONFIG_TEXT} for rid in resource_ids})
+    return root
+
+
 def _remote_with_real_resources(
     tmp_path: pathlib.Path, resource_ids: list[str],
 ) -> pathlib.Path:
@@ -212,13 +222,28 @@ def _remote_with_real_resources(
     Caching copies the files and verifies them against the manifest, so
     a fixture that gets cached needs the resources to be there.
     """
-    remote_root = tmp_path / "remote"
-    for resource_id in resource_ids:
-        resource_dir = remote_root / resource_id
-        resource_dir.mkdir(parents=True)
-        (resource_dir / GR_CONF_FILE_NAME).write_text(_CONFIG_TEXT)
+    remote_root = _lay_down_resources(tmp_path / "remote", resource_ids)
     _write_contents(remote_root, resource_ids)
     return remote_root
+
+
+def _cached_root_of(
+    tmp_path: pathlib.Path, resource_ids: list[str],
+) -> pathlib.Path:
+    """Cache a remote carrying ``resource_ids`` and return the cache's root.
+
+    The root is the directory the cache holds for that one remote -- an
+    ordinary GRR, which is what the tests below open it as.
+    """
+    remote_repo = GenomicResourceProtocolRepo(
+        build_filesystem_test_protocol(
+            _remote_with_real_resources(tmp_path, resource_ids),
+            repair=False, read_only=True))
+    cache_dir = tmp_path / "cache"
+    cache_resources(
+        GenomicResourceCachedRepo(remote_repo, str(cache_dir)), None)
+    cached_root, = [path for path in cache_dir.iterdir() if path.is_dir()]
+    return cached_root
 
 
 def test_a_wider_contents_id_no_longer_poisons_a_local_cache(
@@ -232,78 +257,61 @@ def test_a_wider_contents_id_no_longer_poisons_a_local_cache(
     is the half a scan cannot: the wider id is refused where it enters
     and never reaches the disk at all.
     """
-    remote_root = _remote_with_real_resources(
-        tmp_path, ["has space/x", "good_one"])
-    remote_repo = GenomicResourceProtocolRepo(
-        build_filesystem_test_protocol(
-            remote_root, repair=False, read_only=True))
-    cache_dir = tmp_path / "cache"
+    cached_root = _cached_root_of(tmp_path, ["has space/x", "good_one"])
 
-    cache_resources(
-        GenomicResourceCachedRepo(remote_repo, str(cache_dir)), None)
-
-    cached_root, = [path for path in cache_dir.iterdir() if path.is_dir()]
     assert sorted(
         path.name for path in cached_root.iterdir()
         if not path.name.startswith(".")
     ) == ["good_one"]
 
 
-def _directory_with_resources(
-    tmp_path: pathlib.Path, resource_ids: list[str],
-) -> pathlib.Path:
-    """A directory GRR to be enumerated by *scanning*, not from a file.
-
-    No ``.CONTENTS`` is written: a scan is the only enumeration a
-    read-write protocol has, and it is what runs over a directory a
-    curator is repairing or a cache someone opened directly.
-    """
-    root = tmp_path / "scanned"
-    for resource_id in resource_ids:
-        resource_dir = root / resource_id
-        resource_dir.mkdir(parents=True)
-        (resource_dir / GR_CONF_FILE_NAME).write_text(_CONFIG_TEXT)
-    return root
-
-
 def _scanned_ids(root: pathlib.Path) -> list[str]:
+    """Enumerate ``root`` by *scanning* it, not from a ``.CONTENTS``.
+
+    A scan is the only enumeration a read-write protocol has, and it is
+    what runs over a directory a curator is repairing or a cache someone
+    opened directly.
+    """
     proto = build_filesystem_test_protocol(root, repair=False)
     return sorted(res.resource_id for res in proto.get_all_resources())
 
 
+@pytest.mark.parametrize("malformed", [
+    pytest.param("has space", id="a-resource"),
+    pytest.param("bad dir/inner", id="a-folder-with-a-resource-beneath"),
+])
 def test_a_malformed_directory_is_skipped_by_the_scan(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, malformed: str,
 ) -> None:
     """One bad directory must not cost the scan its healthy resources.
 
     The same principle the ``.CONTENTS`` path already follows (gain#467):
     the two enumeration paths agree in consequence, not only in grammar.
+    A resource under a bad folder goes with it -- its full path is its
+    id, and that path carries the bad segment.
     """
-    root = _directory_with_resources(tmp_path, ["has space", "good_one"])
+    root = _lay_down_resources(
+        tmp_path / "scanned", [malformed, "good_one"])
 
     assert _scanned_ids(root) == ["good_one"]
-
-
-def _the_one_warning(caplog: pytest.LogCaptureFixture) -> str:
-    """Every warning the scan emitted, which must be exactly one.
-
-    Not filtered on wording: a second warning for the same directory
-    under different words is what this exists to catch.
-    """
-    warning, = captured_warnings(caplog)
-    return warning
 
 
 def test_a_skipped_directory_is_reported_once_by_name(
     tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Skipped silently, the resource just goes missing with no lead."""
-    root = _directory_with_resources(tmp_path, ["has space", "good_one"])
+    """Skipped silently, the resource just goes missing with no lead.
+
+    Every warning is counted, not only those under one wording: a
+    second warning for the same directory in other words is what the
+    one-element unpack exists to catch.
+    """
+    root = _lay_down_resources(
+        tmp_path / "scanned", ["has space", "good_one"])
 
     with caplog.at_level(logging.WARNING, logger=_PROTOCOL_LOGGER):
         assert _scanned_ids(root) == ["good_one"]
 
-    warning = _the_one_warning(caplog)
+    warning, = captured_warnings(caplog)
     assert "has space" in warning
     assert "carries < >" in warning
 
@@ -334,34 +342,21 @@ def test_an_embedded_repository_skips_a_malformed_directory_too(
 
     assert served == ["good_one"]
     bad_name, = malformed
-    assert bad_name in _the_one_warning(caplog)
-
-
-def test_a_malformed_directory_is_skipped_with_everything_beneath_it(
-    tmp_path: pathlib.Path,
-) -> None:
-    """A resource under a bad folder has no id it could be served by.
-
-    Its full path is the id, and that path carries the bad segment; a
-    scan that descended anyway would have to either raise on the child
-    or serve it under a name the grammar refuses.
-    """
-    root = _directory_with_resources(
-        tmp_path, ["bad dir/inner", "good_one"])
-
-    assert _scanned_ids(root) == ["good_one"]
+    warning, = captured_warnings(caplog)
+    assert bad_name in warning
 
 
 def test_a_skipped_directory_name_is_escaped_in_the_report(
     tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The name is outside the safe class by definition; the log is not."""
-    root = _directory_with_resources(tmp_path, ["bad\x1bname", "good_one"])
+    root = _lay_down_resources(
+        tmp_path / "scanned", ["bad\x1bname", "good_one"])
 
     with caplog.at_level(logging.WARNING, logger=_PROTOCOL_LOGGER):
         assert _scanned_ids(root) == ["good_one"]
 
-    warning = _the_one_warning(caplog)
+    warning, = captured_warnings(caplog)
     assert "\x1b" not in warning
     assert "bad\\x1bname" in warning
 
@@ -378,16 +373,7 @@ def test_a_cache_poisoned_before_the_grammar_agreed_is_readable_again(
     Opened as the ordinary GRR it is, the cache used to be
     unenumerable for good; now it serves what is healthy in it.
     """
-    remote_root = _remote_with_real_resources(tmp_path, ["good_one"])
-    remote_repo = GenomicResourceProtocolRepo(
-        build_filesystem_test_protocol(
-            remote_root, repair=False, read_only=True))
-    cache_dir = tmp_path / "cache"
-    cache_resources(
-        GenomicResourceCachedRepo(remote_repo, str(cache_dir)), None)
-    cached_root, = [path for path in cache_dir.iterdir() if path.is_dir()]
-    poisoned = cached_root / "has space" / "x"
-    poisoned.mkdir(parents=True)
-    (poisoned / GR_CONF_FILE_NAME).write_text(_CONFIG_TEXT)
+    cached_root = _cached_root_of(tmp_path, ["good_one"])
+    _lay_down_resources(cached_root, ["has space/x"])
 
     assert _scanned_ids(cached_root) == ["good_one"]
