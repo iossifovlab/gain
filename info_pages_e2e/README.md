@@ -45,17 +45,20 @@ than skipping (`global-setup.ts`).
 ## How the pages reach the browser
 
 `serving.ts` answers every request the page under test makes by reading
-a file, and aborts anything it does not recognise. Three things are
-served: the generated GRR, and the two packages the templates load from
-a CDN — jQuery and sqlite-wasm, vendored as `devDependencies` at the
-same pinned versions the templates name, so `npm ci` puts them on disk.
+a file, and aborts anything it does not recognise. Two things are
+served: the generated GRR, and the one package the templates still load
+from a CDN — jQuery, vendored as a `devDependency` at the same pinned
+version the template names, so `npm ci` puts it on disk.
 
-sqlite-wasm is matched by URL *prefix* rather than by the one URL
-`grr_scripts.jinja` imports. `dist/index.mjs` locates its `sqlite3.wasm`
-through `import.meta.url`, and fulfilling the module at its CDN address
-leaves that address as the module's own URL — so the wasm is a second
-request to the same origin. Allowing only the imported URL loads the
-module and then starves it, and the page swallows the failure.
+sqlite-wasm needs nothing from the suite. Since iossifovlab/gain#1335
+the index page imports it from the repository's own
+`.static/sqlite-wasm-<version>/`, which `repo-index` publishes into the
+fixture along with the page, so the module and the `sqlite3.wasm` it
+locates beside itself are answered out of the generated GRR like any
+other file of it. The bytes the browser runs are the bytes gain
+published — which is what the suite is here to test. The
+"refuses every request" spec pins that both files were asked for from
+the GRR origin and served.
 
 The GRR is served from a **virtual origin**, `https://grr.test/`.
 Nothing listens on a socket; the origin exists only inside Playwright's

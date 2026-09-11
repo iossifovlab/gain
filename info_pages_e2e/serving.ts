@@ -37,28 +37,23 @@ const JQUERY_URL =
   `https://ajax.googleapis.com/ajax/libs/jquery/${JQUERY_VERSION}/jquery.min.js`;
 const JQUERY_DIR = 'jquery';
 
-/**
- * The sqlite-wasm build the templates import, as a *prefix*.
- *
- * A prefix rather than the one URL the template names, because
- * `dist/index.mjs` locates its `sqlite3.wasm` through `import.meta.url`.
- * Fulfilling the module at its CDN address leaves that address as the
- * module's own URL, so the wasm is a second request to the same origin.
- * Allowing only the imported URL loads the module and then starves it.
+/*
+ * sqlite-wasm is deliberately not here. The index page imports it from
+ * the repository's own `.static/` (iossifovlab/gain#1335), so it is
+ * served like any other file of the generated GRR -- by the resolver
+ * below, out of the fixture -- and the suite has nothing to vendor for
+ * it. The bytes the browser runs are the bytes gain published, which is
+ * the thing a published GRR promises.
  */
-const SQLITE_VERSION = '3.51.2-build6';
-const SQLITE_URL_PREFIX =
-  `https://cdn.jsdelivr.net/npm/@sqlite.org/sqlite-wasm@${SQLITE_VERSION}/`;
-const SQLITE_DIR = '@sqlite.org/sqlite-wasm';
 
-/** Where `npm ci` unpacks the two vendored packages. */
+/** Where `npm ci` unpacks the vendored package. */
 const NODE_MODULES = path.join(__dirname, 'node_modules');
 
 /**
- * What must be installed, and at which version, for the URLs above to be
+ * What must be installed, and at which version, for the URL above to be
  * answered honestly.
  *
- * These bytes are served *at the CDN URLs*, so the installed version has
+ * These bytes are served *at the CDN URL*, so the installed version has
  * to be the version the URL names. Exact pins stop a range drifting but
  * not a deliberate bump: move jquery to 3.8.0 and the suite serves
  * 3.8.0's bytes at a URL claiming 3.7.1 -- every test green, testing a
@@ -67,13 +62,12 @@ const NODE_MODULES = path.join(__dirname, 'node_modules');
  */
 const VENDORED = [
   { dir: JQUERY_DIR, version: JQUERY_VERSION },
-  { dir: SQLITE_DIR, version: SQLITE_VERSION },
 ];
 
 /**
- * Why the vendored packages cannot be served, if they cannot.
+ * Why the vendored package cannot be served, if it cannot.
  *
- * Checked in `global-setup.ts` rather than per test: without them the
+ * Checked in `global-setup.ts` rather than per test: without it the
  * symptom is four specs reporting an empty tree and an empty status
  * line, which looks exactly like a broken template.
  */
@@ -127,11 +121,6 @@ function resolveVendored(address: string): string | null {
   if (address === JQUERY_URL) {
     return resolveUnder(
       path.join(NODE_MODULES, JQUERY_DIR), 'dist/jquery.min.js');
-  }
-  if (address.startsWith(SQLITE_URL_PREFIX)) {
-    return resolveUnder(
-      path.join(NODE_MODULES, SQLITE_DIR),
-      address.slice(SQLITE_URL_PREFIX.length));
   }
   return null;
 }
@@ -221,7 +210,7 @@ async function routeThrough(
  * Answer every request this page makes out of `grrDir` and `node_modules`.
  *
  * The single definition of what the harness allows, shared by every spec:
- * the generated GRR, the two vendored CDN packages, and nothing else.
+ * the generated GRR, the one vendored CDN package (jQuery), and nothing else.
  * Anything unrecognised is aborted -- the Google Fonts stylesheet the
  * pages link, and any dependency on the network a page grows later.
  *
