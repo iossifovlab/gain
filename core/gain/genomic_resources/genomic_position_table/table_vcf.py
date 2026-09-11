@@ -5,6 +5,7 @@ from typing import ClassVar
 
 import pysam
 
+from gain.genomic_resources.fsspec_protocol import _htslib_silenced
 from gain.genomic_resources.repository import GenomicResource
 from gain.utils.fs_utils import find_ci
 
@@ -216,12 +217,12 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
         # The header file is opened only to read `header.info`; it is never
         # fetched. Header-only resources (e.g. dbSNP) ship no index, so htslib
         # would log a spurious `[E::idx_find_and_load]` while auto-probing for
-        # one on open. Silence htslib for the duration of the open.
-        saved_verbosity = pysam.set_verbosity(0)
-        try:
+        # one on open. Silence htslib for the duration of the open -- through
+        # the shared, serialised bracket: this runs from the constructor,
+        # which web_api's pipeline cache reaches from a thread pool, and the
+        # level is process-global (gain#1360).
+        with _htslib_silenced():
             vcf_file = self.genomic_resource.open_vcf_file(header_filename)
-        finally:
-            pysam.set_verbosity(saved_verbosity)
         with vcf_file:
             return vcf_file.header.info
 
