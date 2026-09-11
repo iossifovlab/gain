@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,too-many-lines
 import copy
 import gc
+import gzip
 import pathlib
 import textwrap
 import unittest.mock
@@ -2323,6 +2324,60 @@ chr1   5   .  A   T   .    .      A=1;R1=0.5,0.7;C=x;F
         ("F", 0, "Flag", "A flag"),
         ("R1", "R", "Float", "Per allele"),
     ]
+
+
+def test_vcf_header_load_refuses_an_unparseable_line_naming_the_resource(
+        tmp_path: pathlib.Path) -> None:
+    """A ``##`` line pysam cannot parse fails construction, naming the resource.
+
+    The sidecar is parsed line by line through ``VariantHeader.add_line``
+    (gain#1406), which raises a bare ``ValueError("Invalid header line")``
+    -- no file, no resource.  Raised as-is from the constructor that would
+    leave a pipeline build failing on a line of text with nothing to say
+    which of its resources shipped it; the existing refusal for a filename
+    with no ``.vcf`` in it already sets the bar (gain#348).
+    """
+    setup_directories(tmp_path, {
+        "grr.yaml": f"""
+            id: test_grr
+            type: directory
+            directory: {tmp_path!s}""",
+        "one_score": {
+            "genomic_resource.yaml": textwrap.dedent("""
+                tabix_table:
+                    filename: data.vcf.gz
+                    format: vcf_info
+            """),
+        },
+    })
+    setup_vcf(
+        tmp_path / "one_score" / "data.vcf.gz",
+        textwrap.dedent("""
+##fileformat=VCFv4.1
+##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">
+##contig=<ID=chr1>
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      A=1
+    """),
+    )
+    # setup_vcf writes the sidecar through pysam, which cannot emit a line it
+    # would not parse, so the broken one is written by hand over it.
+    with gzip.open(tmp_path / "one_score" / "data.header.vcf.gz", "wt") as out:
+        out.write(
+            "##fileformat=VCFv4.1\n"
+            "##notakeyvalue\n"
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+
+    res = build_filesystem_test_repository(tmp_path).get_resource("one_score")
+    assert res.config is not None
+
+    with pytest.raises(ValueError) as exc_info:
+        build_genomic_position_table(res, res.config["tabix_table"])
+
+    message = str(exc_info.value)
+    assert "one_score" in message
+    assert "data.header.vcf.gz" in message
+    assert "##notakeyvalue" in message
 
 
 def test_concurrent_vcf_header_loads_do_not_strand_htslib_verbosity(
