@@ -5,7 +5,8 @@ The three ``GenomicScore`` methods mirror ``ReferenceGenome``'s
 ``get_chrom_length`` / ``get_all_chrom_lengths``: an ``int`` or a
 ``ValueError``.  Underneath them, ``derive_chrom_lengths`` keeps the
 tri-state answer the statistics region splitter needs (gain#509) -- a length,
-or the ``ContigExtent`` reason there is none.
+or the ``ContigExtent`` reason there is none -- and the source of each length
+is whatever the backend declares its lengths to be.
 """
 
 import pathlib
@@ -14,9 +15,9 @@ from types import SimpleNamespace
 
 import pytest
 import pytest_mock
-from gain.genomic_resources.genomic_position_table import ContigExtent
-from gain.genomic_resources.genomic_position_table.table import (
-    GenomicPositionTable,
+from gain.genomic_resources.genomic_position_table import (
+    ChromLengthSource,
+    ContigExtent,
 )
 from gain.genomic_resources.genomic_scores import (
     GenomicScore,
@@ -24,114 +25,90 @@ from gain.genomic_resources.genomic_scores import (
 )
 from gain.genomic_resources.genomic_scores.chrom_lengths import (
     ChromLength,
-    ChromLengthSource,
     derive_chrom_length,
     derive_chrom_lengths,
 )
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME
-from gain.genomic_resources.testing import (
-    build_inmemory_test_resource,
-    convert_to_tab_separated,
-)
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
-    a_grr,
     a_position_score,
     a_vcf_info_score,
 )
 
-# One score per backend, each carrying ``chr1``.  The tabix one has rows far
+from .genomic_position_table.test_genomic_position_table import (
+    _OnlyFindsLengths,
+)
+from .genomic_position_table.test_table_lifetime import (
+    _concrete_backends_in_the_tree,
+)
+
+# One score per backend, each carrying ``chr1``.  The tabix rows are far
 # enough apart (10 and 2500) that the probe's bound is visibly a bound.
+_TABIX_ROWS = """
+    chrom  pos_begin  score
+    chr1   10         0.1
+    chr1   2500       0.2
+"""
 
 
 def _an_inmemory_score(tmp_path: pathlib.Path) -> GenomicScore:
-    builder = (
+    return build_score_from_resource(
         a_position_score()
-        .with_score("score", "float")
         .with_data("""
             chrom  pos_begin  pos_end  score
             chr1   10         20       0.1
             chr1   30         45       0.2
         """)
-    )
-    repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
-    return build_score_from_resource(repo.get_resource("pos"))
+        .build_resource(tmp_path))
 
 
-def _a_tabix_score(tmp_path: pathlib.Path) -> GenomicScore:
-    builder = (
-        a_position_score()
-        .with_score("score", "float")
-        .with_data("""
-            chrom  pos_begin  score
-            chr1   10         0.1
-            chr1   2500       0.2
-        """)
-        .with_tabix()
-    )
-    repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
-    return build_score_from_resource(repo.get_resource("pos"))
+def _a_tabix_score(
+    tmp_path: pathlib.Path, rows: str = _TABIX_ROWS,
+) -> GenomicScore:
+    return build_score_from_resource(
+        a_position_score().with_data(rows).with_tabix()
+        .build_resource(tmp_path))
 
 
 def _a_vcf_score(tmp_path: pathlib.Path) -> GenomicScore:
-    builder = a_vcf_info_score().with_data("""
-##fileformat=VCFv4.1
-##INFO=<ID=scoreA,Number=1,Type=Float,Description="score A">
-#CHROM POS ID REF ALT QUAL FILTER INFO
-chr1   10  .  A   T   .    .      scoreA=0.1
-""")
-    repo = a_grr().with_resource("vcf", builder).build_repo(tmp_path)
-    return build_score_from_resource(repo.get_resource("vcf"))
+    return build_score_from_resource(
+        a_vcf_info_score().build_resource(tmp_path))
 
 
 def _a_bigwig_score(tmp_path: pathlib.Path) -> GenomicScore:
-    builder = (
-        a_bigwig_score()
-        .with_score("bw", "float")
-        .with_data("""
-            chr1  0   10  0.11
-        """)
-        .with_chrom_lens({"chr1": 1000})
-    )
-    repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
-    return build_score_from_resource(repo.get_resource("bw"))
+    # The builder's default header lists chr1 at 1000, well past its rows.
+    return build_score_from_resource(
+        a_bigwig_score().build_resource(tmp_path))
 
 
-def _a_score_with_an_empty_mapped_contig() -> GenomicScore:
+def _a_score_with_an_empty_mapped_contig(
+    tmp_path: pathlib.Path,
+) -> GenomicScore:
     # 'kept' maps onto a file contig with rows, 'empty' onto one with none.
     # Only the in-memory backend, holding the whole file, can PROVE a listed
     # contig empty (gain#509).
-    res = build_inmemory_test_resource({
-        GR_CONF_FILE_NAME: """
-            type: position_score
-            table:
-                filename: data.mem
-                chrom_mapping:
-                    filename: chrom_map.txt
-            scores:
-                - id: score
-                  name: score
-                  type: float
-        """,
-        "data.mem": convert_to_tab_separated("""
-            chrom pos_begin score
-            chr1  10        0.1
-        """),
-        "chrom_map.txt": convert_to_tab_separated("""
-            chrom   file_chrom
-            kept    chr1
-            empty   chr99
-        """),
-    })
-    return build_score_from_resource(res)
+    return build_score_from_resource(
+        a_position_score()
+        .with_data("""
+            chrom  pos_begin  score
+            chr1   10         0.1
+        """)
+        .with_chrom_mapping_file(kept="chr1", empty="chr99")
+        .build_resource(tmp_path))
 
 
-# Where the probe lives (gain#509): the one branch that can fail to determine
-# a length for a contig that demonstrably HAS records.
-_TABIX_PROBE = (
-    "gain.genomic_resources.genomic_position_table.table_tabix"
-    ".get_chromosome_length_tabix"
-)
+def _the_probe_fails_for(
+    mocker: pytest_mock.MockFixture, chrom: str,
+) -> None:
+    """Make the tabix probe answer nothing for ``chrom``, and 100 otherwise.
+
+    Patched where the probe lives (gain#509): the one branch that can fail
+    to determine a length for a contig that demonstrably HAS records.
+    """
+    mocker.patch(
+        "gain.genomic_resources.genomic_position_table.table_tabix"
+        ".get_chromosome_length_tabix",
+        side_effect=lambda _file, fchrom, _step: (
+            None if fchrom == chrom else 100))
 
 
 def test_tabix_score_answers_the_probes_bound_as_an_estimate(
@@ -142,11 +119,10 @@ def test_tabix_score_answers_the_probes_bound_as_an_estimate(
     length = score.get_chrom_length("chr1")
 
     # The table's own probe answers an upper bound, never the exact length;
-    # the score passes that bound through and says what it is.
+    # the score passes that bound through and says so.
     assert length == score.table.find_chromosome_length("chr1")
     assert length >= 2500
-    assert score.get_chrom_length_source("chr1") \
-        is ChromLengthSource.TABIX_ESTIMATE
+    assert not score.get_chrom_length_source("chr1").is_exact
 
 
 def test_bigwig_score_answers_the_header_length_exactly(
@@ -154,10 +130,9 @@ def test_bigwig_score_answers_the_header_length_exactly(
 ) -> None:
     score = _a_bigwig_score(tmp_path).open()
 
-    # The header's 1000, not the rows' 10: a bigWig header carries the exact
+    # The header's 1000, not the rows' 20: a bigWig header carries the exact
     # size of every contig it lists, which is why the source is exact.
     assert score.get_chrom_length("chr1") == 1000
-    assert score.get_chrom_length_source("chr1") is ChromLengthSource.BIGWIG
     assert score.get_chrom_length_source("chr1").is_exact
 
 
@@ -167,12 +142,9 @@ def test_inmemory_score_answers_the_extent_of_its_rows(
     score = _an_inmemory_score(tmp_path).open()
 
     # ``max(pos_end) + 1``: how far the rows reach, which says nothing about
-    # how long the contig is -- so the source is named for what it is and
-    # is not exact.
+    # how long the contig is -- so the source is not exact.
     assert score.get_chrom_length("chr1") == 46
-    source = score.get_chrom_length_source("chr1")
-    assert source is ChromLengthSource.TABLE_EXTENT
-    assert not source.is_exact
+    assert not score.get_chrom_length_source("chr1").is_exact
 
 
 # Both the length and its source refuse the same questions, in the same
@@ -181,14 +153,24 @@ def test_inmemory_score_answers_the_extent_of_its_rows(
 _LENGTH_READS = ["get_chrom_length", "get_chrom_length_source"]
 
 
-@pytest.mark.parametrize("read", _LENGTH_READS)
-def test_a_closed_score_refuses_a_length(
-    read: str, tmp_path: pathlib.Path,
+@pytest.mark.parametrize("read", [
+    pytest.param(
+        lambda score: score.get_chrom_length("chr1"), id="get_chrom_length"),
+    pytest.param(
+        lambda score: score.get_chrom_length_source("chr1"),
+        id="get_chrom_length_source"),
+    pytest.param(
+        lambda score: score.get_all_chrom_lengths(),
+        id="get_all_chrom_lengths"),
+    pytest.param(derive_chrom_lengths, id="derive_chrom_lengths"),
+])
+def test_a_closed_score_refuses_every_length_read(
+    read: Callable[[GenomicScore], object], tmp_path: pathlib.Path,
 ) -> None:
     score = _a_tabix_score(tmp_path)
 
     with pytest.raises(ValueError, match="is not open"):
-        getattr(score, read)("chr1")
+        read(score)
 
 
 @pytest.mark.parametrize("read", _LENGTH_READS)
@@ -203,8 +185,10 @@ def test_a_contig_the_score_does_not_carry_is_refused(
 
 
 @pytest.mark.parametrize("read", _LENGTH_READS)
-def test_a_contig_proven_empty_is_refused_as_such(read: str) -> None:
-    score = _a_score_with_an_empty_mapped_contig().open()
+def test_a_contig_proven_empty_is_refused_as_such(
+    read: str, tmp_path: pathlib.Path,
+) -> None:
+    score = _a_score_with_an_empty_mapped_contig(tmp_path).open()
 
     # A ValueError, not the extent: the int view has nothing to answer, and
     # the message says WHICH kind of nothing, since an operator acts on an
@@ -219,7 +203,7 @@ def test_a_contig_of_undeterminable_length_is_refused_as_such(
     read: str, tmp_path: pathlib.Path, mocker: pytest_mock.MockFixture,
 ) -> None:
     score = _a_tabix_score(tmp_path).open()
-    mocker.patch(_TABIX_PROBE, return_value=None)
+    _the_probe_fails_for(mocker, "chr1")
 
     with pytest.raises(
             ValueError,
@@ -237,7 +221,7 @@ def test_the_score_refuses_a_lengthless_contig_in_the_tables_words(
     same thing for the same contig, so the two cannot drift apart.
     """
     score = _a_tabix_score(tmp_path).open()
-    mocker.patch(_TABIX_PROBE, return_value=None)
+    _the_probe_fails_for(mocker, "chr1")
 
     with pytest.raises(ValueError) as from_the_table:
         score.table.get_chromosome_length("chr1")
@@ -256,23 +240,12 @@ def test_derive_chrom_lengths_keeps_the_reason_a_contig_has_no_length(
     first, read the second whole (gain#509) -- so the resolver hands both
     through as the extent rather than collapsing them into a raise.
     """
-    builder = (
-        a_position_score()
-        .with_score("score", "float")
-        .with_data("""
-            chrom  pos_begin  score
-            chr2   40         0.3
-            chr1   10         0.1
-        """)
-        .with_tabix()
-    )
-    repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
-    score = build_score_from_resource(repo.get_resource("pos")).open()
-    # The probe fails for chr1 only.
-    mocker.patch(
-        _TABIX_PROBE,
-        side_effect=lambda _file, chrom, _step: (
-            None if chrom == "chr1" else 100))
+    score = _a_tabix_score(tmp_path, rows="""
+        chrom  pos_begin  score
+        chr2   40         0.3
+        chr1   10         0.1
+    """).open()
+    _the_probe_fails_for(mocker, "chr1")
 
     resolved = derive_chrom_lengths(score)
 
@@ -284,8 +257,10 @@ def test_derive_chrom_lengths_keeps_the_reason_a_contig_has_no_length(
         length=None, source=None, extent=ContigExtent.UNDETERMINED)
 
 
-def test_derive_chrom_lengths_reports_a_proven_empty_contig() -> None:
-    score = _a_score_with_an_empty_mapped_contig().open()
+def test_derive_chrom_lengths_reports_a_proven_empty_contig(
+    tmp_path: pathlib.Path,
+) -> None:
+    score = _a_score_with_an_empty_mapped_contig(tmp_path).open()
 
     resolved = derive_chrom_lengths(score)
 
@@ -295,35 +270,16 @@ def test_derive_chrom_lengths_reports_a_proven_empty_contig() -> None:
         length=None, source=None, extent=ContigExtent.EMPTY)
 
 
-def test_derive_chrom_lengths_refuses_a_closed_score(
-    tmp_path: pathlib.Path,
-) -> None:
-    score = _a_tabix_score(tmp_path)
-
-    with pytest.raises(ValueError, match="is not open"):
-        derive_chrom_lengths(score)
-
-
 def test_get_all_chrom_lengths_holds_resolved_contigs_in_table_order(
     tmp_path: pathlib.Path, mocker: pytest_mock.MockFixture,
 ) -> None:
-    builder = (
-        a_position_score()
-        .with_score("score", "float")
-        .with_data("""
-            chrom  pos_begin  score
-            chr3   40         0.3
-            chr1   10         0.1
-            chr2   20         0.2
-        """)
-        .with_tabix()
-    )
-    repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
-    score = build_score_from_resource(repo.get_resource("pos")).open()
-    mocker.patch(
-        _TABIX_PROBE,
-        side_effect=lambda _file, chrom, _step: (
-            None if chrom == "chr1" else 100))
+    score = _a_tabix_score(tmp_path, rows="""
+        chrom  pos_begin  score
+        chr3   40         0.3
+        chr1   10         0.1
+        chr2   20         0.2
+    """).open()
+    _the_probe_fails_for(mocker, "chr1")
 
     lengths = score.get_all_chrom_lengths()
 
@@ -333,45 +289,42 @@ def test_get_all_chrom_lengths_holds_resolved_contigs_in_table_order(
     assert list(lengths.items()) == [("chr3", 100), ("chr2", 100)]
 
 
-def test_get_all_chrom_lengths_refuses_a_closed_score(
-    tmp_path: pathlib.Path,
-) -> None:
-    score = _a_tabix_score(tmp_path)
-
-    with pytest.raises(ValueError, match="is not open"):
-        score.get_all_chrom_lengths()
-
-
-@pytest.mark.parametrize(("build", "expected_source"), [
+@pytest.mark.parametrize(("build", "expected_source", "expected_exact"), [
     pytest.param(
-        _an_inmemory_score, ChromLengthSource.TABLE_EXTENT, id="inmemory"),
+        _an_inmemory_score, ChromLengthSource.TABLE_EXTENT, False,
+        id="inmemory"),
     pytest.param(
-        _a_tabix_score, ChromLengthSource.TABIX_ESTIMATE, id="tabix"),
+        _a_tabix_score, ChromLengthSource.TABIX_ESTIMATE, False,
+        id="tabix"),
     pytest.param(
-        _a_vcf_score, ChromLengthSource.TABIX_ESTIMATE, id="vcf"),
+        _a_vcf_score, ChromLengthSource.TABIX_ESTIMATE, False,
+        id="vcf"),
     pytest.param(
-        _a_bigwig_score, ChromLengthSource.BIGWIG, id="bigwig"),
+        _a_bigwig_score, ChromLengthSource.BIGWIG, True,
+        id="bigwig"),
 ])
-def test_a_table_sources_exactness_is_its_backends(
+def test_each_backends_source_and_its_exactness(
     build: Callable[[pathlib.Path], GenomicScore],
     expected_source: ChromLengthSource,
+    expected_exact: bool,
     tmp_path: pathlib.Path,
 ) -> None:
-    """``is_exact`` and ``chrom_lengths_are_exact`` must classify alike.
+    """What each backend declares its lengths to be, and whether to trust them.
 
-    Coverage's ``resolve_chrom_lengths`` trusts a table's lengths as a
-    denominator on the backend flag today; gain#1414 moves it onto the
-    source's ``is_exact``.  That is only behaviour-preserving while the two
-    agree for every backend, so the agreement is pinned here for each one
-    -- and so is the member itself, since the flag alone cannot tell a VCF
-    labelled ``TABLE_EXTENT`` from one labelled ``TABIX_ESTIMATE``.
+    The member is pinned per backend because the exactness alone cannot
+    tell a VCF labelled ``TABLE_EXTENT`` from one labelled
+    ``TABIX_ESTIMATE``; the exactness is pinned as a literal because it is
+    what coverage's ``resolve_chrom_lengths`` -- through the table's
+    ``chrom_lengths_are_exact``, now derived from the same declaration --
+    trusts a denominator on, and gain#1414 moves it onto ``is_exact``.
     """
     score = build(tmp_path).open()
 
     source = score.get_chrom_length_source("chr1")
 
     assert source is expected_source
-    assert source.is_exact == score.table.chrom_lengths_are_exact
+    assert source.is_exact is expected_exact
+    assert score.table.chrom_lengths_are_exact is expected_exact
 
 
 def test_a_reference_genome_length_is_exact() -> None:
@@ -381,18 +334,28 @@ def test_a_reference_genome_length_is_exact() -> None:
     assert ChromLengthSource.REFERENCE_GENOME.is_exact
 
 
-def test_a_backend_the_ladder_has_not_met_is_refused_not_labelled(
-    mocker: pytest_mock.MockFixture,
-) -> None:
-    """A fifth backend must say what its length measures, not inherit a label.
+def test_every_backend_in_the_tree_declares_its_chrom_length_source() -> None:
+    """The declaration is an obligation on every concrete backend.
 
-    The fall-through of a type ladder is where a new backend would silently
-    pick up whichever member came last -- and with it an ``is_exact`` that
-    need not match the flag the backend declares.
+    Swept from the backend package rather than listed by name, so a fifth
+    backend is held to it the moment it exists (the sweep's own vacuity
+    guard is ``test_the_backend_sweep_walks_the_backend_package``).
     """
-    table = mocker.Mock(spec=GenomicPositionTable)
-    table.find_chromosome_length.return_value = 10
-    score = SimpleNamespace(table=table)
+    undeclared = [
+        klass.__name__
+        for klass in _concrete_backends_in_the_tree()
+        if not isinstance(
+            getattr(klass, "chrom_length_source", None), ChromLengthSource)
+    ]
 
-    with pytest.raises(NotImplementedError, match="Mock"):
+    assert undeclared == [], (
+        f"backend(s) {undeclared} do not declare chrom_length_source; say "
+        f"what find_chromosome_length measures on that format")
+
+
+def test_a_backend_that_has_not_declared_its_source_is_refused() -> None:
+    """No default: a silent inherited label would carry a trust level too."""
+    score = SimpleNamespace(table=_OnlyFindsLengths(10))
+
+    with pytest.raises(AttributeError, match="chrom_length_source"):
         derive_chrom_length(score, "chr1")  # type: ignore[arg-type]

@@ -131,6 +131,7 @@ def write_grr_definition(
 # The tabix table filename used when a table score is realized as tabix
 # (``.txt.gz`` + ``.tbi``) instead of the plain ``.txt`` default.
 _TABIX_FILENAME = "data.txt.gz"
+_CHROM_MAPPING_FILENAME = "chrom_map.txt"
 
 # The ``header_mode`` values a table score may declare.  ``"file"`` is the
 # backend default and the builder's default realize path: the authored header
@@ -177,6 +178,10 @@ class _TableScoreBuilder(MetaMixin):
     # is the SECOND name that makes two indices possible.
     keep_conventional_index: bool = False
     chrom_mapping: dict[str, Any] | None = None
+    # The ``chrom -> file_chrom`` rows of a mapping FILE, realized beside
+    # the data as ``_CHROM_MAPPING_FILENAME``; see
+    # :meth:`with_chrom_mapping_file`.
+    chrom_mapping_rows: tuple[tuple[str, str], ...] | None = None
     zero_based: bool = False
     header_mode: str | None = None
     # Suppresses the ``header_mode:`` key while keeping everything else the
@@ -275,9 +280,25 @@ class _TableScoreBuilder(MetaMixin):
         """Emit a ``chrom_mapping:`` block in the ``table:`` config.
 
         Keys are passed through verbatim, e.g.
-        ``with_chrom_mapping(add_prefix="chr")``.
+        ``with_chrom_mapping(add_prefix="chr")``.  For a mapping shipped as
+        a FILE use :meth:`with_chrom_mapping_file`, which writes it too.
         """
         return dataclasses.replace(self, chrom_mapping=dict(mapping))
+
+    def with_chrom_mapping_file(self, **file_chrom_by_chrom: str) -> Self:
+        """Ship a ``chrom -> file_chrom`` mapping file the config points at.
+
+        ``with_chrom_mapping_file(kept="chr1", empty="chr99")`` realizes a
+        two-column ``chrom\\tfile_chrom`` file beside the data and emits
+        ``chrom_mapping: {filename: ...}`` for it.  A chromosome mapped onto
+        a file contig the data does not carry is the way to author a
+        listed-but-empty contig -- the shape the in-memory backend answers
+        ``ContigExtent.EMPTY`` for (gain#509).
+        """
+        return dataclasses.replace(
+            self,
+            chrom_mapping={"filename": _CHROM_MAPPING_FILENAME},
+            chrom_mapping_rows=tuple(file_chrom_by_chrom.items()))
 
     def with_zero_based(self) -> Self:
         """Emit ``zero_based: true`` in the ``table:`` config.
@@ -493,11 +514,13 @@ class _TableScoreBuilder(MetaMixin):
         # that do not write it into the file still resolve their indices
         # from it.
         write_header = self._effective_header_mode() == "file"
+        sidecars = self._render_chrom_mapping_file()
         if self.tabix:
-            setup_directories(
-                resource_dir,
-                {GR_CONF_FILE_NAME: self._render_config(
-                    scores, _TABIX_FILENAME, data)})
+            setup_directories(resource_dir, {
+                GR_CONF_FILE_NAME: self._render_config(
+                    scores, _TABIX_FILENAME, data),
+                **sidecars,
+            })
             _realize_tabix_table(
                 resource_dir / _TABIX_FILENAME, data,
                 write_header=write_header, csi=self.csi,
@@ -509,7 +532,18 @@ class _TableScoreBuilder(MetaMixin):
                 GR_CONF_FILE_NAME: self._render_config(
                     scores, _DATA_FILENAME, data),
                 _DATA_FILENAME: convert_to_tab_separated(file_data),
+                **sidecars,
             })
+
+    def _render_chrom_mapping_file(self) -> dict[str, str]:
+        """The mapping file :meth:`with_chrom_mapping_file` ships, if any."""
+        if self.chrom_mapping_rows is None:
+            return {}
+        lines = ["chrom\tfile_chrom"]
+        lines.extend(
+            f"{chrom}\t{file_chrom}"
+            for chrom, file_chrom in self.chrom_mapping_rows)
+        return {_CHROM_MAPPING_FILENAME: "\n".join(lines) + "\n"}
 
     def _effective_header_mode(self) -> str:
         """Return the header mode the realized DATA is authored for.

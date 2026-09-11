@@ -31,7 +31,7 @@ from .record import (
     TabularParser,
     build_tabular_parser,
 )
-from .table import ContigExtent, GenomicPositionTable
+from .table import ChromLengthSource, ContigExtent, GenomicPositionTable
 
 PysamFile = pysam.TabixFile | pysam.VariantFile
 logger = logging.getLogger(__name__)
@@ -71,6 +71,12 @@ class TabixGenomicPositionTable(GenomicPositionTable):
     # subclasses this one and yields records too (with a payload of its own),
     # so it inherits the claim as-is -- see VCFGenomicPositionTable.
     yields_records: ClassVar[bool] = True
+
+    # A length from this backend is the index probe's upper bound (see
+    # :meth:`find_chromosome_length`), never the contig's true length.  The
+    # VCF backend inherits the probe, and so this claim with it.
+    chrom_length_source: ClassVar[ChromLengthSource] = \
+        ChromLengthSource.TABIX_ESTIMATE
 
     # Serves the bulk column-array read; see get_region_value_arrays below.
     # NOT inherited in spirit by the VCF backend, which sets it back to False.

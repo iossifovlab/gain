@@ -932,10 +932,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         needs to know WHY it is absent reads
         :func:`~.chrom_lengths.derive_chrom_lengths` instead.
 
-        Every contig is resolved live on every call -- on a tabix score,
-        one index probe per contig, unmemoised (see
-        :meth:`get_chrom_length`).  Raises ``ValueError`` on a score that
-        is not open.
+        Every contig is resolved live on every call, at the cost
+        :meth:`get_chrom_length` names, times the contig count.  Raises
+        ``ValueError`` on a score that is not open.
         """
         return {
             chrom: resolved.length
