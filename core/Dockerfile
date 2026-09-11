@@ -66,6 +66,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY test_fixtures/ ./test_fixtures/
 
 COPY core/ ./core/
+# The repo-root scripts/ belongs to no project; the core CI stage lints
+# it (#1327), so this image is the one that has to carry it.
+COPY scripts/ ./scripts/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --package gain-core --group dev --frozen
