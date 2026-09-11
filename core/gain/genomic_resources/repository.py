@@ -396,20 +396,13 @@ def malformed_resource_id_reason(resource_id: str) -> str | None:
     Containment is the *other* rule an id is held to, and the two are
     separate: :func:`uncontained_resource_id_reason` asks whether the id
     escapes the repository, this one whether GAIn can process it at all.
-    Both run where a ``.CONTENTS`` is read.  A scan runs neither: it
-    parses each candidate path with :func:`parse_gr_id_version_token`
-    and so enforces the character half by construction, refusing a
-    directory named outside the grammar by failing the whole enumeration.
-
-    That is the disagreement this closes, and it was not cosmetic.  An id
-    read from a remote ``.CONTENTS`` used to be checked for containment
-    only, so a wider one was served, cached to local disk under that
-    name, and then raised on by every later scan of that cache -- costing
-    the cache every healthy resource in it (gain#1352).  Refusing where
-    the id enters turns that into a warned skip.
-
-    What the two paths agree on afterwards is the *grammar*, not the
-    consequence: a scan still raises where this drops.
+    Both run where a ``.CONTENTS`` is read, and an id refused by either
+    is dropped with a warning, the rest of the ``.CONTENTS`` still
+    served.  A scan runs neither: it parses each candidate path with
+    :func:`parse_gr_id_version_token`, which enforces the same character
+    class by construction, and a directory the parse refuses is skipped
+    with a warning the same way.  The two enumeration paths agree on
+    both the grammar and its consequence.
 
     The empty segment is the one refusal here the scan grammar does
     *not* also make -- ``/`` is inside its character class, so ``a//b``
@@ -532,13 +525,12 @@ _GR_ID_WITH_VERSION_TOKEN_RE = re.compile(
 
 
 def parse_gr_id_version_token(token: str) -> tuple[str, tuple[int, ...]]:
-    """Parse genomic resource ID with version.
+    """Parse a genomic resource id with an optional version suffix.
 
-    Genomic Resource Id Version Token is a Genomic Resource Id Token with
-    an optional version appened. If present, the version suffix has the
-    form "(3.3.2)". The default version is (0).
-    Returns None if s in not a Genomic Resource Id Version. Otherwise
-    returns token,version tupple
+    The suffix has the form ``(3.3.2)``; without one the version is
+    ``(0,)``.  The empty token names the repository root.  Returns the
+    ``(resource_id, version)`` tuple, and raises :class:`ValueError` on
+    a token outside the resource id grammar.
     """
     if token == "":
         return "", (0, )
@@ -563,13 +555,12 @@ _RESOURCE_ID_WITH_VERSION_PATH_RE = re.compile(
 def parse_resource_id_version(
     resource_path: str,
 ) -> tuple[str, tuple[int, ...] | None]:
-    """Parse genomic resource id and version path into Id, Version tuple.
+    """Parse a resource path into an ``(resource_id, version)`` tuple.
 
-    An optional version (0,) appened if needed. If present, the version suffix
-    has the form "(3.3.2)". The default version is (0,).
-    Returns tuple (None, None) if the path does not match the
-    resource_id/version requirements. Otherwise returns tuple
-    (resource_id, version).
+    Like :func:`parse_gr_id_version_token`, but a path without a
+    version suffix yields ``None`` for the version rather than ``(0,)``,
+    so a caller can tell "unversioned" from "version 0".  Raises
+    :class:`ValueError` on a path outside the resource id grammar.
     """
     if resource_path == "":
         return "", None
