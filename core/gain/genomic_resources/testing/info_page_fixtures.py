@@ -139,14 +139,11 @@ BROWSE_COVERAGE_RESOURCE_ID = "hg38/scores/coverage"
 #: does allow is unreserved in ``encodeURIComponent``, so percent-encoding
 #: a legal folder segment is the identity.
 #:
-#: The page encodes anyway, because that grammar is not checked everywhere:
-#: a resource id read from a remote ``.CONTENTS`` is validated only for
-#: containment, so an id this scanner would have refused can still reach a
-#: published page, and ids are untrusted repository content in any case
-#: (iossifovlab/gain#467, iossifovlab/gain#528).  Pinning the *encoding*
-#: half therefore needs a ``.CONTENTS``-built fixture rather than this one;
-#: the *decoding* half is reachable from any address a reader can type, and
-#: that is what ``info_pages_e2e`` asserts.
+#: The page encodes anyway, but no fixture can exercise it: a page is
+#: built only by the scanning protocol, and a remote ``.CONTENTS`` -- the
+#: one other way a wider id could enter -- now drops it at enumeration
+#: too (iossifovlab/gain#1352).  What ``info_pages_e2e`` asserts is the
+#: *decoding* half, reachable from any address a reader can type.
 BROWSE_ORDERING_RESOURCE_IDS = (
     f"{BROWSE_CAPITALISED_FOLDER}/alpha",
     f"{BROWSE_CAPITALISED_FOLDER}/Track",

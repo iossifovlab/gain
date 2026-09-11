@@ -63,6 +63,7 @@ from gain.genomic_resources.repository import (
     escape_unsafe_characters,
     is_generated_info_page,
     is_gr_id_token,
+    malformed_resource_id_reason,
     parse_gr_id_version_token,
     resolve_tabix_index_filename_for_read,
     uncontained_resource_id_reason,
@@ -1526,18 +1527,25 @@ class FsspecReadOnlyProtocol(
             # root. Dropped with a warning rather than raised on: one
             # poisoned entry must not cost the repository its healthy
             # resources (gain#467).
-            reason = uncontained_resource_id_reason(entry["id"])
+            # Malformedness is the second, separate rule, dropped the
+            # same way: an id a scan would have refused must not enter
+            # here either (gain#1352).
+            resource_id = entry["id"]
+            reason = (
+                uncontained_resource_id_reason(resource_id)
+                or malformed_resource_id_reason(resource_id)
+            )
             if reason is not None:
                 logger.warning(
                     "repo %s: dropping resource <%s> from %s -- "
                     "its id %s",
-                    self.proto_id, escape_unsafe_characters(entry["id"]),
+                    self.proto_id, escape_unsafe_characters(resource_id),
                     GR_CONTENTS_FILE_NAME, reason)
                 continue
             version = tuple(map(int, entry["version"].split(".")))
             manifest = Manifest.from_manifest_entries(entry["manifest"])
             resource = self.build_genomic_resource(
-                entry["id"], version, config=entry["config"],
+                resource_id, version, config=entry["config"],
                 manifest=manifest)
             logger.debug(
                 "repo %s loaded resource %s",
