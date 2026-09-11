@@ -571,11 +571,12 @@ def _open_libbigwig_file[T](url: str, open_: Callable[[], T]) -> T:
     """Run a pyBigWig open that is handed the credential-bearing ``url``.
 
     Runs ``open_`` with fd 2 pointed at the null device, so libBigWig's
-    ``[urlOpen]`` line -- which names the url verbatim -- goes nowhere. Only
-    a url that carries a credential is suppressed; anything else keeps its
-    diagnostics. A url with no credential is passed to
-    ``_run_redacting_url_credentials`` and nothing else, so the common path
-    costs no syscalls.
+    diagnostics -- which name the url verbatim: ``[urlOpen] Couldn't open
+    <url>`` from the no-curl PyPI wheel, ``[bwOpen] bwg->cl is NULL (<url>)``
+    from a curl-enabled build -- go nowhere. Only a url that carries a
+    credential is suppressed; anything else keeps its diagnostics. A url
+    with no credential is passed to ``_run_redacting_url_credentials`` and
+    nothing else, so the common path costs no syscalls.
 
     It has to be the file descriptor, not ``sys.stderr`` or
     ``contextlib.redirect_stderr``: libBigWig writes with its own ``fprintf``

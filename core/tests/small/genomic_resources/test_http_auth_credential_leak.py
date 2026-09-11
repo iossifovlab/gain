@@ -1785,6 +1785,23 @@ _BIGWIG_FILE_NAME = "data.bw"
 _SIGNATURE = "Ns1gNaTuReDoNoTlOg%3D"
 
 
+def _libbigwig_refused_open_line(url: str) -> str:
+    """The ``[urlOpen]`` line libBigWig writes when it cannot open ``url``.
+
+    Its wording is a property of the pyBigWig BUILD, not of gain. The PyPI
+    wheel is compiled ``NOCURL`` (``pyBigWig.remote == 0``): it takes every
+    url for a local path, and the failed ``fopen`` is reported naming the
+    url. A build with libcurl (``remote == 1``: conda-forge, and the sdist
+    that ``python:3.14-slim`` compiles because 0.3.25 ships no cp314 wheel)
+    takes the curl branch and reports ``curl_easy_strerror`` instead, naming
+    no url. Only the prefix is pinned on that branch: the strerror text is
+    libcurl's and has been reworded across its releases (gain#1392).
+    """
+    if pyBigWig.remote:  # pylint: disable=I1101
+        return "[urlOpen] curl_easy_perform received an error: "
+    return f"[urlOpen] Couldn't open {url} for reading"
+
+
 def _a_refused_protocol(
     proto_id: str, *, authed: bool = True,
 ) -> tuple[FsspecRepositoryProtocol, GenomicResource]:
@@ -2081,10 +2098,8 @@ def test_bigwig_open_without_a_credential_keeps_libbigwig_diagnostics(
     with pytest.raises(RuntimeError):
         proto.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
 
-    assert (
-        "[urlOpen] Couldn't open "
-        f"https://127.0.0.1:1/path/sub/res(1.0)/{_BIGWIG_FILE_NAME} "
-        "for reading"
+    assert _libbigwig_refused_open_line(
+        f"https://127.0.0.1:1/path/sub/res(1.0)/{_BIGWIG_FILE_NAME}",
     ) in capfd.readouterr().err
 
 
@@ -2102,8 +2117,7 @@ def test_bigwig_open_on_an_anonymous_s3_url_keeps_libbigwig_diagnostics(
     with pytest.raises(RuntimeError):
         proto.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
 
-    assert f"[urlOpen] Couldn't open {bare_url} for reading" in (
-        capfd.readouterr().err)
+    assert _libbigwig_refused_open_line(bare_url) in capfd.readouterr().err
 
 
 def test_bigwig_open_on_a_file_scheme_path_keeps_libbigwig_diagnostics(
