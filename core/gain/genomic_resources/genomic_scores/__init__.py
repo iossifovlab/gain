@@ -19,6 +19,9 @@ and decomposing the class itself (gain#1027) has since added two more:
   :meth:`~.base.GenomicScore.open` takes about how a record's cell becomes a
   value: which extractor reads the payload, and which payload column each
   score def is addressed to
+- :mod:`.chrom_lengths` (gain#1413) -- the resolver behind
+  :meth:`~.base.GenomicScore.get_chrom_length` and its siblings: a length
+  per contig with its source, or the ``ContigExtent`` reason there is none
 
 **This module is a permanent facade, not a deprecation shim.**  It
 re-exports every name the pre-split module DEFINED, so each
