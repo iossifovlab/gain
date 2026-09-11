@@ -239,6 +239,45 @@ test('the harness refuses every request it does not serve itself', async ({
   expect(engine.filter((url) => failed.has(url))).toEqual([]);
 });
 
+/* ---- Copy-to-clipboard ---- */
+
+/**
+ * Chromium asks before a page may read or write the clipboard, and a
+ * headless run has nobody to answer, so the permission is granted up
+ * front. Reading it back through `navigator.clipboard` in the page is
+ * the only way to see what the click put there: Playwright has no
+ * clipboard of its own.
+ */
+test.describe('copying a resource id', () => {
+  test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
+
+  /** The copy icon in the row of the resource with this id. */
+  function copyIconOf(page: Page, id: string) {
+    return page
+      .locator('#resource-table td.id-cell', {
+        has: page.getByRole('link', { name: id, exact: true }),
+      })
+      .locator('.copy-icon');
+  }
+
+  test('clicking the icon copies the id and shows a check', async ({
+    page,
+  }) => {
+    await openBrowseIndex(page);
+
+    await copyIconOf(page, BROWSE_ID_ONLY_RESOURCE_ID).click();
+
+    await expect(copyIconOf(page, BROWSE_ID_ONLY_RESOURCE_ID))
+      .toHaveText('check');
+    /* The other icons keep their glyph: only the row that was copied
+     * reports it. */
+    await expect(copyIconOf(page, BROWSE_SUMMARY_ONLY_RESOURCE_ID))
+      .toHaveText('content_copy');
+    expect(await page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(BROWSE_ID_ONLY_RESOURCE_ID);
+  });
+});
+
 /* ---- The browse view lives in the URL hash (#578) ---- */
 
 /** The fragment the page is currently addressed by, `''` when bare. */
