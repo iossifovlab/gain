@@ -1820,8 +1820,10 @@ class FsspecReadOnlyProtocol(
             index_filename = resolve_tabix_index_filename_for_read(
                 resource, filename)
             if not resource.file_exists(index_filename):
-                # Nothing resolved: a file that ships no index at all -- a
-                # VCF header sidecar, say -- still opens, unindexed.
+                # Nothing resolved: a file that ships no index at all still
+                # opens, unindexed (gain#596).  The VCF header sidecar used
+                # to be the case that came through here; since gain#1406
+                # the table reads it through a handle instead.
                 return _open_htslib_file(
                     file_url,
                     lambda: pysam.VariantFile(  # pylint: disable=no-member

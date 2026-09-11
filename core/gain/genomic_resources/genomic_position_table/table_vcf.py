@@ -172,14 +172,19 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
         used to be handed to ``pysam.VariantFile`` as a filename, and because
         htslib probes for an index on every by-name open -- and a header-only
         sidecar ships none -- that logged a spurious ``[E::idx_find_and_load]``
-        which had to be silenced with a ``set_verbosity(0)`` bracket: on every
-        url, credentialed or not, from this constructor, serialised on a
+        which had to be silenced with a verbosity-0 bracket: on every url,
+        credentialed or not, from this constructor, serialised on a
         process-global lock (gain#1360).  Reading the ``##`` lines off
         ``open_raw_file`` -- the route the tabix base class already takes for
         its own header -- and feeding them to ``pysam.VariantHeader.add_line``
         hands htslib no filename at all, so there is no probe, nothing to
         silence and no bracket (gain#1406).  Under ADR 0023 that makes the
         sidecar a first escape, redacted by the handle, rather than a third.
+
+        What the handle read is stricter about: a ``##`` line htslib could
+        not parse was *logged and skipped* by the by-name open (and the log
+        line was silenced with the rest); here it refuses construction,
+        naming the resource and the line.  No published sidecar has one.
 
         The metadata outlives the handle it is read from: a
         ``pysam.VariantHeaderMetadata`` is a *view*, and it holds a strong
@@ -205,12 +210,27 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
         header_filename = filename[:idx] + ".header" + filename[idx:]
         assert self.genomic_resource.file_exists(header_filename), \
             "VCF tables must have an accompanying *.header.vcf.gz file!"
+        # The refusals below do what the by-name open used to do as a side
+        # effect of htslib parsing the file -- an empty sidecar, or one with
+        # no ``##`` line at all, was ``ValueError: invalid file``.  A loop that
+        # merely stopped at the first non-``##`` line would construct a table
+        # with NO scores from such a sidecar, silently; the sibling tabix
+        # header read refuses that shape for the same reason (gain#364).
+        what = (
+            f"the header file {header_filename} of resource "
+            f"<{self.genomic_resource.get_full_id()}>")
         header = pysam.VariantHeader()
+        header_lines = 0
         with self.genomic_resource.open_raw_file(
                 header_filename, compression="gzip") as infile:
             for line in infile:
-                if not line.startswith("##"):
+                if line.startswith("#") and not line.startswith("##"):
+                    # the ``#CHROM`` line: the meta-information is over
                     break
+                if not line.startswith("##"):
+                    raise ValueError(
+                        f"{what} has a line that is not a VCF header line: "
+                        f"{line.rstrip()!r}")
                 try:
                     header.add_line(line.rstrip("\n"))
                 except ValueError as error:
@@ -218,10 +238,12 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
                     # from a constructor a pipeline build reaches, that names
                     # neither the resource nor the line.
                     raise ValueError(
-                        f"the header file {header_filename} of resource "
-                        f"<{self.genomic_resource.get_full_id()}> has a "
-                        f"line pysam cannot parse: {line.rstrip()!r}",
+                        f"{what} has a line pysam cannot parse: "
+                        f"{line.rstrip()!r}",
                     ) from error
+                header_lines += 1
+        if header_lines == 0:
+            raise ValueError(f"{what} has no '##' header lines")
         return header.info
 
     def open(self) -> VCFGenomicPositionTable:
