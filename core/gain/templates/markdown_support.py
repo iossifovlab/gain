@@ -128,11 +128,13 @@ def _rescue_bogus_tag(match: re.Match[str]) -> str:
 
 def _escape_bogus_tags(html: str) -> str:
     """Escape bogus tag openers everywhere outside raw-text elements."""
-    out = []
+    out: list[str] = []
     pos = 0
     for raw in _RAW_TEXT_ELEMENT.finditer(html):
-        out.append(_TAG_OPENER.sub(_rescue_bogus_tag, html[pos:raw.start()]))
-        out.append(raw.group(0))
+        out.extend((
+            _TAG_OPENER.sub(_rescue_bogus_tag, html[pos:raw.start()]),
+            raw.group(0),
+        ))
         pos = raw.end()
     out.append(_TAG_OPENER.sub(_rescue_bogus_tag, html[pos:]))
     return "".join(out)

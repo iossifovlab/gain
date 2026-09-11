@@ -147,7 +147,7 @@ class _ProviderLoader(BaseLoader):
     """Jinja2 loader that reads templates from entry-point provider dicts."""
 
     def get_source(
-        self, environment: Environment, template: str,  # noqa: ARG002
+        self, environment: Environment, template: str,  # ruff: ignore[unused-method-argument]
     ) -> tuple[str, None, Callable[[], bool]]:
         source = _get_provider_templates().get(template)
         if source is None:
@@ -170,7 +170,10 @@ def get_jinja_env() -> Environment:
                 PackageLoader("gain.templates", "template_files"),
                 _ProviderLoader(),
             ]),
-            autoescape=_autoescape,
+            # Not `False`: a callable that escapes everything except the
+            # Markdown-emitting templates, which produce HTML on purpose
+            # (`_autoescape` above; pinned by tests/small/templates).
+            autoescape=_autoescape,  # ruff: ignore[jinja2-autoescape-false]
         )
         env.globals["markdown"] = render_markdown
         env.globals["natural_chromosome_key"] = natural_chromosome_key
