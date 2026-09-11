@@ -211,7 +211,17 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
             for line in infile:
                 if not line.startswith("##"):
                     break
-                header.add_line(line.rstrip("\n"))
+                try:
+                    header.add_line(line.rstrip("\n"))
+                except ValueError as error:
+                    # pysam's own message is a bare "Invalid header line" --
+                    # from a constructor a pipeline build reaches, that names
+                    # neither the resource nor the line.
+                    raise ValueError(
+                        f"the header file {header_filename} of resource "
+                        f"<{self.genomic_resource.get_full_id()}> has a "
+                        f"line pysam cannot parse: {line.rstrip()!r}",
+                    ) from error
         return header.info
 
     def open(self) -> VCFGenomicPositionTable:
