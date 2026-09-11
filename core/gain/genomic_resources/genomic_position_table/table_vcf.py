@@ -218,9 +218,8 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
         # fetched. Header-only resources (e.g. dbSNP) ship no index, so htslib
         # would log a spurious `[E::idx_find_and_load]` while auto-probing for
         # one on open. Silence htslib for the duration of the open -- through
-        # the shared, serialised bracket: this runs from the constructor,
-        # which web_api's pipeline cache reaches from a thread pool, and the
-        # level is process-global (gain#1360).
+        # the shared, serialised bracket, since this runs from the
+        # constructor on a thread pool (gain#1360; see the lock it takes).
         with _htslib_silenced():
             vcf_file = self.genomic_resource.open_vcf_file(header_filename)
         with vcf_file:

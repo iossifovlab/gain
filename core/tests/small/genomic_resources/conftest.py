@@ -4,6 +4,7 @@ import contextlib
 import functools
 import gzip
 import http.server
+import itertools
 import logging
 import os
 import pathlib
@@ -194,6 +195,85 @@ def run_in_threads() -> RunInThreads:
         return results, errors
 
     return run
+
+
+def overlap_two_opens(
+    target: object, attr: str, work: Callable[[], Any],
+    *, fake_result: Any = None,
+) -> None:
+    """Run ``work`` on two threads whose library opens are forced to overlap.
+
+    For a process-global save/suppress/restore bracket around a library open
+    -- fd 2 for libBigWig, htslib's verbosity level for pysam -- two brackets
+    that overlap strand the global: the second thread saves the FIRST one's
+    suppressed value as its "previous" and restores *that* last. ``target.attr``
+    (``pyBigWig.open``, ``pysam.TabixFile``, ...) is patched for the duration
+    with a stand-in that returns ``fake_result`` and choreographs the two
+    calls; ``work`` is whatever reaches that open. The patch is undone before
+    returning, so the caller's probe gets the real library.
+
+    The interleaving is FORCED rather than raced for. Thread two is started
+    only once thread one is known to be inside the open, and thread one is
+    held there until thread two has entered it too -- so thread two saves
+    the suppressed value -- and thread two then waits for thread one to
+    RETURN before it leaves, so it is the one that restores last. Left to
+    chance this reproduces only sometimes: which thread restores last is a
+    scheduling accident, and the same test passed and then failed on
+    consecutive runs before it was pinned this way.
+
+    Thread one's wait is bounded because on CORRECT code thread two never
+    enters the open at all -- it blocks on the lock, which is the fix -- so
+    the wait must end by itself rather than deadlock. It is kept short by
+    waiting for thread two to REACH the call first: once that is known, the
+    only remaining gap is the microseconds thread two would need to get
+    inside were it not blocked, so the bound covers scheduling jitter rather
+    than thread start-up. Waiting for entry directly would have to cover
+    both and would be paid in full on every green run.
+
+    Asserts only that both threads finished; what the overlap did to the
+    global is for the caller to assert, on the consequence.
+    """
+    first_inside = threading.Event()
+    first_done = threading.Event()
+    second_started = threading.Event()
+    second_inside = threading.Event()
+    counter = itertools.count()
+
+    def fake_open(*_args: Any, **_kwargs: Any) -> Any:
+        if next(counter) == 0:
+            first_inside.set()
+            assert second_started.wait(timeout=10.0), "second thread stalled"
+            second_inside.wait(timeout=0.25)
+        else:
+            second_inside.set()
+            # Outlast the first thread's restore, so this one -- holding the
+            # suppressed value as its "previous" -- is the one that restores
+            # last. Immediate on correct code, where the first is long done.
+            first_done.wait(timeout=10.0)
+        return fake_result
+
+    def run(*, second: bool = False) -> None:
+        if second:
+            # Set BEFORE the call, so the wait above covers only the gap
+            # between reaching the open and being inside it.
+            second_started.set()
+        try:
+            work()
+        finally:
+            if not second:
+                first_done.set()
+
+    with mock.patch.object(target, attr, side_effect=fake_open):
+        first = threading.Thread(target=run, daemon=True)
+        first.start()
+        assert first_inside.wait(timeout=5.0), "first thread never opened"
+        second = threading.Thread(
+            target=run, kwargs={"second": True}, daemon=True)
+        second.start()
+        first.join(timeout=30.0)
+        second.join(timeout=30.0)
+        assert not first.is_alive()
+        assert not second.is_alive()
 
 
 #: Resource ids of the small repository ``setup_small_repo`` lays out, and
