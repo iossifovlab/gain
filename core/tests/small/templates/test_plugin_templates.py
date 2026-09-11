@@ -10,16 +10,6 @@ import pytest
 from gain.templates import get_template
 
 
-@pytest.fixture(autouse=True)
-def reset_template_caches():
-    """Reset singleton caches before and after each test."""
-    templates_module._state.env = None
-    templates_module._state.provider_cache = None
-    yield
-    templates_module._state.env = None
-    templates_module._state.provider_cache = None
-
-
 def _make_ep(name: str, provider_fn):
     ep = MagicMock()
     ep.name = name

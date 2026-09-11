@@ -9,22 +9,9 @@ histogram image URL.
 """
 from __future__ import annotations
 
-from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
-import gain.templates as templates_module
-import pytest
 from gain.templates import get_template
-
-
-@pytest.fixture(autouse=True)
-def reset_template_caches() -> Iterator[None]:
-    """Reset singleton caches before and after each test."""
-    templates_module._state.env = None
-    templates_module._state.provider_cache = None
-    yield
-    templates_module._state.env = None
-    templates_module._state.provider_cache = None
 
 
 def test_histogram_url_query_separator_survives_in_markdown() -> None:

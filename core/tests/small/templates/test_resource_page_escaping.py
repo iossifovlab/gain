@@ -19,10 +19,8 @@ from __future__ import annotations
 
 import pathlib
 import textwrap
-from collections.abc import Iterator
 from html.parser import HTMLParser
 
-import gain.templates as templates_module
 import pytest
 from gain.gene_scores.implementations.gene_scores_impl import (
     GeneScoreImplementation,
@@ -40,16 +38,6 @@ from gain.genomic_resources.testing import (
 from gain.genomic_resources.testing.builders import GeneScoreBuilder
 
 PAYLOAD = "onload=gainxss604()"
-
-
-@pytest.fixture(autouse=True)
-def reset_template_caches() -> Iterator[None]:
-    """Reset singleton caches before and after each test."""
-    templates_module._state.env = None
-    templates_module._state.provider_cache = None
-    yield
-    templates_module._state.env = None
-    templates_module._state.provider_cache = None
 
 
 class _AttributeNameCollector(HTMLParser):
