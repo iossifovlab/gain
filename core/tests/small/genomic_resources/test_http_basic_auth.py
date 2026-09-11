@@ -16,15 +16,26 @@ _TEST_CONTENT = "hello world\n"
 
 
 class _BasicAuthHTTPHandler(QuietHTTPRequestHandler):
-    """SimpleHTTPRequestHandler that requires HTTP Basic authentication."""
+    """SimpleHTTPRequestHandler that requires HTTP Basic authentication.
+
+    The credential is decoded as UTF-8, per RFC 7617; subclasses override
+    ``expected_user`` / ``expected_password`` to accept other credentials.
+    """
+
+    expected_user = _TEST_USER
+    expected_password = _TEST_PASSWORD
 
     def _is_authorized(self) -> bool:
         auth = self.headers.get("Authorization", "")
         if not auth.startswith("Basic "):
             return False
-        credentials = base64.b64decode(auth[6:]).decode()
+        try:
+            credentials = base64.b64decode(auth[6:]).decode("utf-8")
+        except UnicodeDecodeError:
+            return False
         username, _, password = credentials.partition(":")
-        return username == _TEST_USER and password == _TEST_PASSWORD
+        return (username == self.expected_user
+                and password == self.expected_password)
 
     def _send_401(self) -> None:
         self.send_response(401)
@@ -122,3 +133,51 @@ def test_http_url_userinfo_wrong_password_401(auth_server: str) -> None:
     with pytest.raises(Exception), proto.filesystem.open(  # ruff: ignore[assert-raises-exception]
             f"{proto._fetch_url}/{_TEST_FILE}", "rt") as f:
         f.read()
+
+
+def test_http_basic_auth_does_not_need_aiohttp_basic_auth(
+    auth_server: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Credentialed reads work without ``aiohttp.BasicAuth`` (gone in 4.0).
+
+    The credential travels as an ``Authorization: Basic …`` session header
+    the protocol builds itself, so the auth path survives the removal of
+    ``aiohttp.BasicAuth`` (deprecated since aiohttp 3.14).
+    """
+    monkeypatch.delattr("aiohttp.BasicAuth")
+    proto = build_fsspec_protocol(
+        f"auth-no-basicauth:{auth_server}", auth_server,
+        user=_TEST_USER, password=_TEST_PASSWORD,
+    )
+    with proto.filesystem.open(
+            f"{auth_server}/{_TEST_FILE}", "rt") as f:
+        assert f.read() == _TEST_CONTENT
+
+
+_UNICODE_USER = "tëstüser"
+_UNICODE_PASSWORD = "pässwörd"  # ruff: ignore[hardcoded-password-string]
+
+
+class _UnicodeBasicAuthHTTPHandler(_BasicAuthHTTPHandler):
+    expected_user = _UNICODE_USER
+    expected_password = _UNICODE_PASSWORD
+
+
+@pytest.fixture
+def unicode_auth_server(tmp_path: pathlib.Path) -> Generator[str, None, None]:
+    (tmp_path / _TEST_FILE).write_text(_TEST_CONTENT)
+    with serving_http(tmp_path, _UnicodeBasicAuthHTTPHandler) as base_url:
+        yield base_url
+
+
+def test_http_basic_auth_non_ascii_credentials_are_utf8(
+    unicode_auth_server: str,
+) -> None:
+    """Non-ASCII credentials reach the server UTF-8 encoded (RFC 7617)."""
+    proto = build_fsspec_protocol(
+        f"auth-utf8:{unicode_auth_server}", unicode_auth_server,
+        user=_UNICODE_USER, password=_UNICODE_PASSWORD,
+    )
+    with proto.filesystem.open(
+            f"{unicode_auth_server}/{_TEST_FILE}", "rt") as f:
+        assert f.read() == _TEST_CONTENT

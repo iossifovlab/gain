@@ -261,9 +261,10 @@ def test_model_dump_json_masks_credentials() -> None:
 
 
 def test_attribute_access_returns_real_credentials() -> None:
-    # The auth-building path (build_fsspec_protocol -> aiohttp.BasicAuth) reads
-    # the real credentials via attribute/dict access, NOT via model_dump(), so
-    # masking the dump must not touch the plaintext value stored on the model.
+    # The auth-building path (build_fsspec_protocol -> ``Authorization``
+    # header) reads the real credentials via attribute/dict access, NOT via
+    # model_dump(), so masking the dump must not touch the plaintext value
+    # stored on the model.
     definition = HttpRepoDefinition(
         type="http", url="https://grr.example.com",
         user="alice", password=_SECRET)
@@ -458,7 +459,7 @@ def test_build_scheme_mismatch_does_not_leak_url_credential(
 
 # ---------------------------------------------------------------------------
 # Finding 11 — credentials embedded in a repo url's userinfo
-# (``scheme://user:pass@host``) are a functional aiohttp BasicAuth config, but
+# (``scheme://user:pass@host``) are a functional HTTP Basic auth config, but
 # they escape verbatim through the protocol's DISPLAY/IDENTITY url, which is
 # never redacted. ``get_url()``/``get_public_url()`` (and everything that
 # serializes them: the web_annotation JSON response, the persisted about.html
