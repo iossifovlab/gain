@@ -5,7 +5,6 @@ from typing import ClassVar
 
 import pysam
 
-from gain.genomic_resources.fsspec_protocol import _htslib_silenced
 from gain.genomic_resources.repository import GenomicResource
 from gain.utils.fs_utils import find_ci
 
@@ -169,32 +168,24 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
         reading (``variant.header.info``), so nothing is carried alongside a
         record.
 
-        **The returned metadata outlives the file it is read from.**  A
-        ``pysam.VariantHeaderMetadata`` is a *view*, not a copy, so closing the
-        file under it would be a use-after-free if the view borrowed the
-        ``bcf_hdr_t`` from the ``htsFile``.  It does not: the view holds a
-        strong reference to its ``pysam.VariantHeader``, which owns the header
-        struct and frees it only when *it* is collected -- so the header
-        survives the file, and closing the file is safe.  That is what lets this
-        method hand the metadata out and shut the file behind it, rather than
-        leaving the descriptor to refcount finalisation.
+        **The sidecar is read through a handle, never opened by name.**  It
+        used to be handed to ``pysam.VariantFile`` as a filename, and because
+        htslib probes for an index on every by-name open -- and a header-only
+        sidecar ships none -- that logged a spurious ``[E::idx_find_and_load]``
+        which had to be silenced with a ``set_verbosity(0)`` bracket: on every
+        url, credentialed or not, from this constructor, serialised on a
+        process-global lock (gain#1360).  Reading the ``##`` lines off
+        ``open_raw_file`` -- the route the tabix base class already takes for
+        its own header -- and feeding them to ``pysam.VariantHeader.add_line``
+        hands htslib no filename at all, so there is no probe, nothing to
+        silence and no bracket (gain#1406).  Under ADR 0023 that makes the
+        sidecar a first escape, redacted by the handle, rather than a third.
 
-        Both halves are pinned, in test_genomic_position_table.py:
-        test_vcf_header_metadata_outlives_the_closed_header_file pins that the
-        metadata survives the close (that this is not a use-after-free), and
-        test_vcf_header_load_closes_the_header_file pins the close itself.  The
-        latter has to spy on it: closing is invisible to every functional test
-        -- *because* the metadata outlives it, a version that retained the file
-        forever would return byte-identical results.
-
-        The close is deliberate, and it is not free: ``VariantFile.close()``
-        raises ``OSError`` when ``hts_close`` fails, where the implicit
-        refcount-driven ``__dealloc__`` it replaces would have swallowed that
-        error.  The sidecar is a small read-only bgzf file, so a failing close
-        is effectively unreachable here -- but on a closing file this *is* a
-        newly reachable exception, and it is preferred to relying on
-        finalisation: an exception raised between the open and the return keeps
-        the frame -- and so the file -- alive.
+        The metadata outlives the handle it is read from: a
+        ``pysam.VariantHeaderMetadata`` is a *view*, and it holds a strong
+        reference to the ``pysam.VariantHeader`` built here, which owns the
+        header struct and frees it only when *it* is collected.  Pinned by
+        test_vcf_header_metadata_outlives_the_header_read.
         """
         assert self.definition.get("header_mode", "file") == "file"
         filename = self.definition.filename
@@ -214,16 +205,14 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
         header_filename = filename[:idx] + ".header" + filename[idx:]
         assert self.genomic_resource.file_exists(header_filename), \
             "VCF tables must have an accompanying *.header.vcf.gz file!"
-        # The header file is opened only to read `header.info`; it is never
-        # fetched. Header-only resources (e.g. dbSNP) ship no index, so htslib
-        # would log a spurious `[E::idx_find_and_load]` while auto-probing for
-        # one on open. Silence htslib for the duration of the open -- through
-        # the shared, serialised bracket, since this runs from the
-        # constructor on a thread pool (gain#1360; see the lock it takes).
-        with _htslib_silenced():
-            vcf_file = self.genomic_resource.open_vcf_file(header_filename)
-        with vcf_file:
-            return vcf_file.header.info
+        header = pysam.VariantHeader()
+        with self.genomic_resource.open_raw_file(
+                header_filename, compression="gzip") as infile:
+            for line in infile:
+                if not line.startswith("##"):
+                    break
+                header.add_line(line.rstrip("\n"))
+        return header.info
 
     def open(self) -> VCFGenomicPositionTable:
         self.pysam_file = self.genomic_resource.open_vcf_file(
