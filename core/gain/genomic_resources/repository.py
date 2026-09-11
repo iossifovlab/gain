@@ -586,13 +586,6 @@ def parse_resource_id_version(
     return token, version
 
 
-def version_string_to_suffix(version: str) -> str:
-    """Transform version string into resource ID version suffix."""
-    if version == "0":
-        return ""
-    return f"({version})"
-
-
 def version_tuple_to_string(version: tuple[int, ...]) -> str:
     """Convert version tuple to string representation.
 
