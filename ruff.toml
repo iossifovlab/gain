@@ -30,8 +30,20 @@ exclude = [
     "venv",
     # Custom values
     "old",
-    "*tmp*",
-    "*temp*",
+    # Scratch directories and files.  These used to be the substring globs
+    # `*tmp*` / `*temp*`, which also matched every path component merely
+    # containing the letters -- `templates`, `test_editor_template_...`,
+    # `..._untemplated_...` -- so `ruff check .` silently skipped the
+    # gain.templates package, its test package and two web_api tests
+    # (gain#1408).  Ruff applies `exclude` to each path component during
+    # discovery, so anchor on the whole name: a directory literally called
+    # tmp/temp, a `.tmp`/`.temp` file, or a `_tmp`/`_temp` suffix.
+    "tmp",
+    "temp",
+    "*.tmp",
+    "*.temp",
+    "*_tmp",
+    "*_temp",
     "data-hg19*",
     "docs",
     "migrations",
@@ -131,7 +143,7 @@ preview = true
 "setup.py" = ["implicit-namespace-package"]  # INP001
 # RUF067 (`non-empty-init-module`), new in ruff 0.16's preview set, wants
 # every `__init__.py` to hold nothing but docstrings and re-exports.  These
-# four hold deliberate code and moving it is an API change, not a lint fix:
+# five hold deliberate code and moving it is an API change, not a lint fix:
 #
 #   core/gain/__init__.py            the hatch-vcs `__version__` fallback and
 #                                    the log-level side-effect import
@@ -141,13 +153,19 @@ preview = true
 #   genomic_resources/testing/__init__.py
 #                                    816 lines of test-data builders that the
 #                                    whole suite imports from this path
+#   templates/__init__.py            the Jinja environment singleton, its
+#                                    loaders and the template-provider entry
+#                                    point plumbing that `gain.templates`
+#                                    exposes as its public surface (invisible
+#                                    to ruff until gain#1408 fixed `exclude`)
 #
-# Scoped to the four rather than ignored globally, so a NEW `__init__.py`
+# Scoped to the five rather than ignored globally, so a NEW `__init__.py`
 # that starts accumulating logic is still reported.  Revisiting them is
 # tracked separately -- see the PR that introduced this block.
 "core/gain/__init__.py" = ["non-empty-init-module"]                    # RUF067
 "core/gain/genomic_resources/__init__.py" = ["non-empty-init-module"]  # RUF067
 "core/gain/genomic_resources/testing/__init__.py" = ["non-empty-init-module"]  # RUF067
+"core/gain/templates/__init__.py" = ["non-empty-init-module"]          # RUF067
 "spliceai_annotator/spliceai_annotator/__init__.py" = ["non-empty-init-module"]  # RUF067
 # The fixture generator for the info_pages_e2e Playwright project: a
 # standalone script in a Node project, run by hand and by that project's
