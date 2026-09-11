@@ -1126,11 +1126,18 @@ class GenomicResource:
         return self.resource_id
 
     def get_full_id(self) -> str:
-        """Return genomic resource ID with version."""
-        version = ""
-        if self.get_version_str() != "0":
-            version = f"({self.get_version_str()})"
-        return f"{self.resource_id}{version}"
+        """Return a string combining resource ID and version.
+
+        Returns a string of the form aa/bb/cc(3.2) for a genomic resource
+        with id aa/bb/cc and version 3.2. If the version is 0 the string
+        will be aa/bb/cc.
+
+        This is also the resource's path component under a repository's
+        url: a protocol addresses the resource's directory by joining this
+        string onto the repository root, so the suffix is part of *where*
+        a versioned resource is stored, not merely of how it is displayed.
+        """
+        return f"{self.resource_id}{version_tuple_to_suffix(self.version)}"
 
     def get_config(self) -> dict[str, Any]:
         """Return the resource configuration.
@@ -1284,17 +1291,6 @@ class GenomicResource:
     def get_version_str(self) -> str:
         """Return version string of the form '3.1'."""
         return version_tuple_to_string(self.version)
-
-    def get_genomic_resource_id_version(self) -> str:
-        """Return a string combining resource ID and version.
-
-        Returns a string of the form aa/bb/cc(3.2) for a genomic resource with
-        id aa/bb/cc and version 3.2.
-        If the version is 0 the string will be aa/bb/cc.
-
-        Returns the same string as :meth:`get_full_id`.
-        """
-        return f"{self.resource_id}{version_tuple_to_suffix(self.version)}"
 
     def file_exists(self, filename: str) -> bool:
         """Check if filename exists in this resource."""
@@ -1927,7 +1923,7 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
         validate_resource_id(resource.resource_id)
         return os.path.join(
             self.url,
-            resource.get_genomic_resource_id_version())
+            resource.get_full_id())
 
     def get_resource_file_url(
             self, resource: GenomicResource, filename: str) -> str:

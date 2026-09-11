@@ -423,3 +423,33 @@ def test_content_file_omits_a_manifest_less_dvc_directory_output(
         for record in caplog.records
         if record.levelno >= logging.WARNING
     )
+
+
+def test_scanning_a_versioned_resource_reads_its_versioned_directory(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """A scan addresses the resource by id *and version*, not by id alone.
+
+    A versioned resource lives under the directory its suffix names --
+    ``one(1.2)``, not ``one`` -- so the path a scan is given has to carry
+    the suffix. Dropping it does not raise: the scan reads a directory
+    that is not this resource's, and the resource manifests as empty.
+
+    Stated here as its own case because the suite's existing cover for
+    this is incidental. Dropping the suffix does redden some seventy
+    tests, the shared fixture GRR carrying two versioned resources, but
+    they report it as a missing file deep inside whatever they were
+    really testing -- ``KeyError: 'genes.gtf'`` -- which names neither
+    the version suffix nor the scan.
+    """
+    path = tmp_path_factory.mktemp("scan_versioned_resource")
+    setup_directories(path, {
+        "one(1.2)": {GR_CONF_FILE_NAME: "", "data.txt": "alabala"},
+    })
+    proto = build_filesystem_test_protocol(path, repair=False)
+    resource = proto.get_resource("one(1.2)")
+    assert resource.version == (1, 2)
+
+    scan = proto.scan_resource_entries(resource)
+
+    assert set(scan.manifest.entries) == {GR_CONF_FILE_NAME, "data.txt"}

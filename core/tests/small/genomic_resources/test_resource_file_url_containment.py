@@ -373,7 +373,7 @@ def test_containment_holds_on_http_scheme(grr_scheme: str) -> None:
 # ---------------------------------------------------------------------------
 # The resource id is the OTHER operand of the same join (gain#467).
 #
-# ``get_resource_url`` joins ``resource.get_genomic_resource_id_version()``
+# ``get_resource_url`` joins ``resource.get_full_id()``
 # onto the repository url.  On the remote path that id is read verbatim out
 # of the repository's ``.CONTENTS.json.gz``, which is fetched from an
 # untrusted GRR -- so containing only the file name leaves the escape open

@@ -272,7 +272,7 @@ def _make_effect_annotator(
     annotator = object.__new__(VEPEffectAnnotator)
 
     genome_resource = mocker.MagicMock()
-    genome_resource.get_genomic_resource_id_version.return_value = \
+    genome_resource.get_full_id.return_value = \
         "hg38/genomes/GRCh38-hg38"
     genome_resource.get_config.return_value = {"filename": genome_filename}
 

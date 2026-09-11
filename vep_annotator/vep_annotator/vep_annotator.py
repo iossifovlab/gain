@@ -459,7 +459,7 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
 
         genome_filepath = Path(
             "/grr",
-            self.genome_resource.get_genomic_resource_id_version(),
+            self.genome_resource.get_full_id(),
             self.genome_filename,
         )
 

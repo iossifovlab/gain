@@ -147,7 +147,7 @@ def test_tree_treats_version_zero_as_unversioned() -> None:
     string "0" for an unversioned resource — truthy in JS, so a bare
     truthiness check labels the majority of resources "v0". Version 0
     means *absent* by this codebase's own convention, which is why
-    get_genomic_resource_id_version() omits it from the id.
+    get_full_id() omits it from the id.
 
     The version_tuple_to_string assertion below is the contract the JS
     depends on — if it changes, the JS needs changing with it.

@@ -52,8 +52,8 @@ into something safe.
 
 The resource **id** is contained by the same construction, because it is the
 *other* operand of the very same join: `get_resource_url` joins
-`resource.get_genomic_resource_id_version()` onto the repository url, and on
-the remote path that id is read verbatim out of the repository's
+`resource.get_full_id()` onto the repository url, and on the remote path
+that id is read verbatim out of the repository's
 `.CONTENTS.json.gz`. Containing only the file name left every consequence
 listed above reachable through its sibling — a `.CONTENTS` carrying
 `id: ../../ESCAPED/evil` read outside the GRR root and, through the caching
