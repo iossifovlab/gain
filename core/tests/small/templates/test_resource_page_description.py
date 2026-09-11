@@ -16,7 +16,6 @@ on a live page.
 """
 from __future__ import annotations
 
-import textwrap
 from collections.abc import Callable
 
 import pytest
@@ -25,11 +24,11 @@ from gain.genomic_resources.implementations.basic_resource_impl import (
 )
 from gain.genomic_resources.repository import GenomicResource
 
-_TABLE = textwrap.dedent("""
+_TABLE = """
     | category | meaning |
     |---|---|
     | 1 | high confidence |
-""")
+"""
 
 
 @pytest.fixture
@@ -53,6 +52,7 @@ def test_the_description_reaches_the_page_once(
     page = BasicResourceImplementation(
         resource_with_a_table_description).get_info()
 
+    assert "<td>high confidence</td>" in page
     assert page.count("high confidence") == 1
 
 

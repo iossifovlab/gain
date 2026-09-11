@@ -1,13 +1,14 @@
 """Fixtures every template test shares.
 
 The template engine is a process-wide singleton, so each test starts and
-ends with it reset; and a ``type: basic`` resource carrying a Markdown
-description is built here once, with the one non-obvious thing about it
-written down once.
+ends with it reset; and the ``type: basic`` resource carrying a Markdown
+description that two modules build is defined here once, with the one
+non-obvious thing about it written down once.
 """
 from __future__ import annotations
 
 import pathlib
+import textwrap
 from collections.abc import Callable, Iterator
 
 import pytest
@@ -34,6 +35,11 @@ def basic_resource_described_by(
 ) -> Callable[[str], GenomicResource]:
     """Build a ``type: basic`` resource carrying the given description.
 
+    The description is taken as a triple-quoted literal reads: common
+    indentation and the blank first line are dropped, so what the
+    resource carries is the Markdown as written, starting at its first
+    line -- as a YAML ``|`` block would have stored it.
+
     The resource carries an explicit ``summary`` even though no test
     reads one: a resource with no summary displays its *description* in
     the summary cell instead (gain#1008), as plain text rather than
@@ -49,7 +55,7 @@ def basic_resource_described_by(
                 "type": "basic",
                 "meta": {
                     "summary": "scores for genes",
-                    "description": description,
+                    "description": textwrap.dedent(description).lstrip("\n"),
                 },
             }),
             "data.txt": "alabala",

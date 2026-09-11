@@ -1,4 +1,4 @@
-# pylint: disable=C0114,C0116,W0212,W0621
+# pylint: disable=C0114,C0116,W0621
 """The statistics figures on a score's info page share the page's width.
 
 ``.page-content`` is 1200px wide with 40px of padding, so a page-flow
@@ -100,6 +100,11 @@ def _blanket_image_cap(page: str) -> str:
     field embeds a second, shadow-DOM stylesheet with its own ``img``
     rule, which the page's cascade never reaches and which no assertion
     here is about.  :func:`rules_in` reads the first ``<style>`` only.
+
+    Each selector of a rule's list is a candidate on its own, so a rule
+    such as ``figure img, .x img { max-width: 100% }`` would count as
+    two caps and fail the check below -- rightly, since two selectors
+    with two specificities are two caps to reason about.
     """
     matches = [
         selector
