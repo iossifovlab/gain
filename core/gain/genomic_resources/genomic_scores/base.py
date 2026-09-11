@@ -52,6 +52,7 @@ from gain.genomic_resources.bigwig_scores import (
 )
 from gain.genomic_resources.genomic_position_table import (
     BigWigTable,
+    ContigExtent,
     VCFGenomicPositionTable,
     build_genomic_position_table,
 )
@@ -93,6 +94,11 @@ from .aggregation import (
     fold_region_segments,
     request_score_ids,
     resolve_aggregator_requests,
+)
+from .chrom_lengths import (
+    ChromLength,
+    ChromLengthSource,
+    derive_chrom_length,
 )
 from .records import (
     RecordArrays,
@@ -900,6 +906,52 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """
         self._require_open()
         return self.table.has_chromosome(chrom)
+
+    def get_chrom_length(self, chrom: str) -> int:
+        """The length of ``chrom`` as far as this score can tell.
+
+        Mirrors :meth:`ReferenceGenome.get_chrom_length` in name and
+        contract: an ``int`` or a ``ValueError``.  How far the number is to
+        be trusted is a separate question, answered by
+        :meth:`get_chrom_length_source` -- only a bigWig header (or, once
+        gain#1418 lands, a genome) is exact; a tabix score answers the
+        probe's upper bound.
+        """
+        length = self._resolve_chrom_length(chrom).length
+        assert length is not None
+        return length
+
+    def get_chrom_length_source(self, chrom: str) -> ChromLengthSource:
+        """Where :meth:`get_chrom_length` read ``chrom``'s length from.
+
+        Same refusals as :meth:`get_chrom_length`.
+        """
+        source = self._resolve_chrom_length(chrom).source
+        assert source is not None
+        return source
+
+    def _resolve_chrom_length(self, chrom: str) -> ChromLength:
+        """The record behind the two length reads, refused when lengthless.
+
+        Three refusals, all ``ValueError``: a score that is not open and a
+        contig it does not carry, in the words every region read uses; and
+        a contig it carries but has no length for, in the words
+        :meth:`GenomicPositionTable.get_chromosome_length` uses for the same
+        two facts -- an EMPTY contig is usually a ``chrom_mapping`` naming
+        something the file does not carry, an UNDETERMINED one is a probe
+        that could not answer, and an operator acts on them differently.
+        """
+        self._require_open_and_known_chrom(chrom)
+        resolved = derive_chrom_length(self, chrom)
+        if resolved.extent is ContigExtent.EMPTY:
+            raise ValueError(
+                f"contig {chrom} has no records in the table's contigs: "
+                f"{self.get_all_chromosomes()}")
+        if resolved.extent is ContigExtent.UNDETERMINED:
+            raise ValueError(
+                f"could not determine the length of contig {chrom} "
+                f"in the table's contigs: {self.get_all_chromosomes()}")
+        return resolved
 
     def region_values_from_records(
         self,
