@@ -480,9 +480,11 @@ def _url_carries_userinfo(url: str) -> bool:
 #: serialise credentialed bigwig opens against VCF header loads for nothing.
 #:
 #: The cost is that credentialed tabix/VCF/fasta opens and all VCF header
-#: loads serialise, each holding the lock across a network open. Accepted
-#: for the same reason as the fd 2 lock: it is the open, not the read, so it
-#: is not the score-scan hot path.
+#: loads serialise, each holding the lock across a network open -- and a
+#: header load on the caching protocol holds it across the sidecar's refresh
+#: and index resolution too, since its bracket encloses the whole
+#: ``open_vcf_file`` call. Accepted for the same reason as the fd 2 lock: it
+#: is the open, not the read, so it is not the score-scan hot path.
 _HTSLIB_VERBOSITY_LOCK = RLock()
 
 

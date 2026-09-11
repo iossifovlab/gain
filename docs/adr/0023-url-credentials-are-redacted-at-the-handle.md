@@ -508,7 +508,8 @@ this ADR belongs.
 
 **What this does NOT cover.** The returned handle's later reads are unchanged
 (above). The htslib bracket is still **not serialised** while the verbosity
-level is process-global, and this amendment makes gain#1360 materially more
+level is process-global (superseded by the gain#1360 amendment below, which
+serialises it), and this amendment makes gain#1360 materially more
 reachable rather than less: every s3 GRR is presigned, where before only a
 url-authed GRR entered that bracket at all. The fd 2 equivalent is already
 serialised on `_STDERR_SUPPRESSION_LOCK` (gain#1333); the verbosity one is
@@ -534,9 +535,10 @@ and said the lock should be decided on its own evidence. This is that
 evidence, and the lock.
 
 **Two brackets, not one, and the second was never gated.** gain#1360 was
-filed against `_open_htslib_file` alone, with the severity "gated on
-userinfo, no deployment configures one — latent". That was a snapshot of
-gain#1333's knowledge. `VCFGenomicPositionTable._load_vcf_header` has
+filed against `_open_htslib_file` alone, and rated latent rather than live
+on the grounds that its bracket was gated on userinfo and no deployment
+configures a url-authed GRR. That was a snapshot of gain#1333's knowledge.
+`VCFGenomicPositionTable._load_vcf_header` has
 bracketed its header open at verbosity 0 since long before any of this —
 on every url, credentialed or not, because a header-only sidecar makes
 htslib log a spurious `[E::idx_find_and_load]` while probing for an index
@@ -557,21 +559,39 @@ takes `_HTSLIB_VERBOSITY_LOCK` around the save/lower/restore. It is an
 `RLock`, and it has to be: `_load_vcf_header`'s bracket encloses
 `open_vcf_file`, which for a credential-bearing url enters
 `_open_htslib_file`'s bracket on the same thread. A plain `Lock` deadlocks
-there — on every credentialed VCF score, which is every VCF score on an s3
-GRR after gain#1339 — and the nesting test pins that: it runs the
-construction on a daemon thread with a bounded join, so the regression
-reports as a failure rather than a hung suite. With re-entry the inner
-bracket saves and restores 0, which is harmless.
+there — on every credentialed VCF score, which after gain#1339 is every VCF
+score on a credentialed s3 GRR (an anonymous one signs nothing and never
+enters the bracket) — and the nesting test pins that: it runs the
+construction on a daemon thread with a bounded join and asserts the table
+was actually built, so the regression reports as *that test's* failure
+rather than a hang. (The stuck thread still owns the lock afterwards, so
+later brackets in the same process block behind it — a test-run cost of
+the regression, not something the test can release on another thread's
+behalf.) With re-entry the inner bracket saves and restores 0, which is
+harmless.
+
+**The nesting could have been removed instead, and was not.** The
+`[E::idx_find_and_load]` line that `_load_vcf_header` exists to silence is
+written on the *unindexed* branch of `open_vcf_file` — the one a sidecar
+that ships no index takes — so bracketing there would leave the header load
+with no bracket of its own, and a plain `Lock` would do. It is not done
+here because it re-scopes the silencing: every unindexed VCF open would
+lose its diagnostics, not just the header load, and this amendment
+serialises rather than re-scopes. It remains the cheaper shape if a future
+change wants the lock non-reentrant.
 
 **Separate from `_STDERR_SUPPRESSION_LOCK`.** fd 2 and the verbosity level
 are independent globals; one lock for both would serialise credentialed
 bigwig opens against VCF header loads and buy nothing for it.
 
 **What it costs.** Credentialed tabix/VCF/fasta opens and *all* VCF header
-loads serialise, each holding the lock across a network open. Accepted on
-the same grounds as the fd 2 lock: it is the open, not the read, so the
-score-scan hot path is untouched. The gates are unchanged — this amendment
-serialises, it does not re-scope.
+loads serialise, each holding the lock across a network open — and, for a
+header load on the caching protocol, across the sidecar's refresh and the
+index resolution that `open_vcf_file` performs before the open, since the
+bracket encloses the whole call. Accepted on the same grounds as the fd 2
+lock: it is table construction and open, not the read, so the score-scan
+hot path is untouched. The gates are unchanged — this amendment serialises,
+it does not re-scope.
 
 **Tests.** Forced interleavings, not races, in the shape gain#1333 set:
 thread two is admitted only once thread one is known to be inside the
@@ -582,4 +602,5 @@ credentialed url, one through `build_genomic_position_table` on a plain
 filesystem VCF resource, one same-thread nesting on a credentialed url.
 Each was mutation-proved: with the lock swapped for a plain `Lock` only the
 nesting test goes red; with the lock removed only the two interleaving tests
-do.
+do; and with the constructor made to raise before the inner bracket, the
+nesting test goes red rather than passing on a thread that merely ended.

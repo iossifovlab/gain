@@ -2783,15 +2783,28 @@ def test_credentialed_vcf_header_load_nests_the_brackets_without_deadlock(
     mocker.patch.object(
         pysam, "VariantFile", return_value=unittest.mock.MagicMock())
 
+    # The outcome is captured, not inferred from the thread having ended: a
+    # constructor that RAISES before the inner bracket also ends the thread,
+    # never touches the level, and leaves the probe below speaking -- a
+    # green run that guards nothing. Only a built table proves both
+    # brackets were entered and unwound.
+    outcome: list[VCFGenomicPositionTable | BaseException] = []
+
+    def construct() -> None:
+        try:
+            outcome.append(VCFGenomicPositionTable(
+                resource, {"filename": _VCF_FILE_NAME, "format": "vcf_info"}))
+        except BaseException as exc:  # ruff: ignore[blind-except] - reported, not swallowed
+            outcome.append(exc)
+
     saved_verbosity = pysam.set_verbosity(1)
     try:
-        worker = threading.Thread(
-            target=VCFGenomicPositionTable,
-            args=(resource, {"filename": _VCF_FILE_NAME, "format": "vcf_info"}),
-            daemon=True)
+        worker = threading.Thread(target=construct, daemon=True)
         worker.start()
         worker.join(timeout=10.0)
         assert not worker.is_alive(), "nested brackets deadlocked"
+        assert outcome and isinstance(outcome[0], VCFGenomicPositionTable), (
+            f"construction did not reach the nested bracket: {outcome!r}")
         mocker.stopall()
         capfd.readouterr()
 
