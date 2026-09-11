@@ -59,9 +59,10 @@ class _BasicAuthHTTPHandler(QuietHTTPRequestHandler):
 @contextlib.contextmanager
 def _auth_http_server(
     serve_dir: pathlib.Path,
+    handler_cls: type[_BasicAuthHTTPHandler] = _BasicAuthHTTPHandler,
 ) -> Generator[str, None, None]:
     """Spin up a localhost HTTP server requiring Basic auth over `serve_dir`."""
-    with serving_http(serve_dir, _BasicAuthHTTPHandler) as base_url:
+    with serving_http(serve_dir, handler_cls) as base_url:
         yield base_url
 
 
@@ -126,6 +127,32 @@ def test_http_url_userinfo_auth_still_reads(auth_server: str) -> None:
     assert _TEST_PASSWORD not in proto.get_url()
 
 
+def test_http_url_userinfo_and_kwargs_together_still_reads(
+    auth_server: str,
+) -> None:
+    """URL-embedded userinfo alongside user/password kwargs still reads.
+
+    aiohttp refuses a request that carries credentials both in the url and
+    as an ``Authorization`` header, so the url's credential is the one
+    that travels when both are given.
+    """
+    url = _userinfo_url(auth_server, _TEST_USER, _TEST_PASSWORD)
+    proto = build_fsspec_protocol(
+        f"auth-both:{url}", url, user=_TEST_USER, password=_TEST_PASSWORD)
+    with proto.filesystem.open(
+            f"{proto._fetch_url}/{_TEST_FILE}", "rt") as f:
+        assert f.read() == _TEST_CONTENT
+
+
+def test_http_basic_auth_colon_in_user_is_rejected(auth_server: str) -> None:
+    """A ``:`` in the user is refused up front (RFC 7617 §2)."""
+    with pytest.raises(ValueError, match='":"'):
+        build_fsspec_protocol(
+            f"auth-colon:{auth_server}", auth_server,
+            user="al:ice", password=_TEST_PASSWORD,
+        )
+
+
 def test_http_url_userinfo_wrong_password_401(auth_server: str) -> None:
     """A wrong URL-embedded password still reaches the server and 401s."""
     url = _userinfo_url(auth_server, _TEST_USER, "wrongpass")
@@ -166,7 +193,7 @@ class _UnicodeBasicAuthHTTPHandler(_BasicAuthHTTPHandler):
 @pytest.fixture
 def unicode_auth_server(tmp_path: pathlib.Path) -> Generator[str, None, None]:
     (tmp_path / _TEST_FILE).write_text(_TEST_CONTENT)
-    with serving_http(tmp_path, _UnicodeBasicAuthHTTPHandler) as base_url:
+    with _auth_http_server(tmp_path, _UnicodeBasicAuthHTTPHandler) as base_url:
         yield base_url
 
 
