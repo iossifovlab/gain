@@ -134,8 +134,8 @@ BROWSE_COVERAGE_RESOURCE_ID = "hg38/scores/coverage"
 #: this way can: ``_scan_path_for_resources`` parses each candidate path
 #: with ``parse_gr_id_version_token``, which matches it against
 #: ``[a-zA-Z0-9/._-]+``, so a directory with a space, a percent or a
-#: non-ASCII letter in it fails the *scan* -- the repository cannot be
-#: enumerated at all, let alone published.  Every character that grammar
+#: non-ASCII letter in it is skipped by the *scan* with a warning -- it
+#: is never published.  Every character that grammar
 #: does allow is unreserved in ``encodeURIComponent``, so percent-encoding
 #: a legal folder segment is the identity.
 #:

@@ -227,9 +227,10 @@ def test_a_wider_contents_id_no_longer_poisons_a_local_cache(
     """The damage the disagreement actually did, and the reason for the rule.
 
     Caching the whole repository copied the wider id to local disk under
-    that name -- and a cache directory is an ordinary GRR, so the next
-    scan of it raised ``unexpected value for resource ID and version``
-    and the cache lost every healthy resource in it, not just the one.
+    that name.  A cache directory is an ordinary GRR, and a scan of one
+    holding such a directory skips it (gain#1386) -- so what this pins
+    is the half a scan cannot: the wider id is refused where it enters
+    and never reaches the disk at all.
     """
     remote_root = _remote_with_real_resources(
         tmp_path, ["has space/x", "good_one"])
@@ -242,9 +243,9 @@ def test_a_wider_contents_id_no_longer_poisons_a_local_cache(
         GenomicResourceCachedRepo(remote_repo, str(cache_dir)), None)
 
     cached_root, = [path for path in cache_dir.iterdir() if path.is_dir()]
-    rescanned = build_filesystem_test_protocol(cached_root, repair=False)
     assert sorted(
-        res.resource_id for res in rescanned.get_all_resources()
+        path.name for path in cached_root.iterdir()
+        if not path.name.startswith(".")
     ) == ["good_one"]
 
 
@@ -283,11 +284,14 @@ def test_a_malformed_directory_is_skipped_by_the_scan(
     assert _scanned_ids(root) == ["good_one"]
 
 
-def _skip_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
-    return [
-        message for message in captured_warnings(caplog)
-        if "skipping directory" in message
-    ]
+def _the_one_warning(caplog: pytest.LogCaptureFixture) -> str:
+    """Every warning the scan emitted, which must be exactly one.
+
+    Not filtered on wording: a second warning for the same directory
+    under different words is what this exists to catch.
+    """
+    warning, = captured_warnings(caplog)
+    return warning
 
 
 def test_a_skipped_directory_is_reported_once_by_name(
@@ -299,19 +303,29 @@ def test_a_skipped_directory_is_reported_once_by_name(
     with caplog.at_level(logging.WARNING, logger=_PROTOCOL_LOGGER):
         assert _scanned_ids(root) == ["good_one"]
 
-    skipped = _skip_warnings(caplog)
-    assert len(skipped) == 1
-    assert "has space" in skipped[0]
+    warning = _the_one_warning(caplog)
+    assert "has space" in warning
+    assert "carries < >" in warning
 
 
+@pytest.mark.parametrize("malformed", [
+    pytest.param(
+        {"has space": {GR_CONF_FILE_NAME: _CONFIG_TEXT}},
+        id="a-resource"),
+    pytest.param(
+        {"bad dir": {"inner": {GR_CONF_FILE_NAME: _CONFIG_TEXT}}},
+        id="a-folder-with-a-resource-beneath"),
+])
 def test_an_embedded_repository_skips_a_malformed_directory_too(
-    caplog: pytest.LogCaptureFixture,
+    malformed: dict[str, Any], caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The in-memory scan is the second scan, and it has to agree."""
-    content = {
-        "has space": {GR_CONF_FILE_NAME: _CONFIG_TEXT},
-        "good_one": {GR_CONF_FILE_NAME: _CONFIG_TEXT},
-    }
+    """The in-memory scan is the second scan, and it has to agree.
+
+    It parses a name on the way down rather than a path at the resource,
+    which is why the folder case is its own parameter: that is the
+    site where a bad name stops the descent.
+    """
+    content = {**malformed, "good_one": {GR_CONF_FILE_NAME: _CONFIG_TEXT}}
 
     with caplog.at_level(logging.WARNING, logger=_PROTOCOL_LOGGER):
         proto = build_inmemory_test_protocol(content)
@@ -319,9 +333,8 @@ def test_an_embedded_repository_skips_a_malformed_directory_too(
             res.resource_id for res in proto.get_all_resources())
 
     assert served == ["good_one"]
-    skipped = _skip_warnings(caplog)
-    assert len(skipped) == 1
-    assert "has space" in skipped[0]
+    bad_name, = malformed
+    assert bad_name in _the_one_warning(caplog)
 
 
 def test_a_malformed_directory_is_skipped_with_everything_beneath_it(
@@ -348,9 +361,9 @@ def test_a_skipped_directory_name_is_escaped_in_the_report(
     with caplog.at_level(logging.WARNING, logger=_PROTOCOL_LOGGER):
         assert _scanned_ids(root) == ["good_one"]
 
-    skipped, = _skip_warnings(caplog)
-    assert "\x1b" not in skipped
-    assert "bad\\x1bname" in skipped
+    warning = _the_one_warning(caplog)
+    assert "\x1b" not in warning
+    assert "bad\\x1bname" in warning
 
 
 def test_a_cache_poisoned_before_the_grammar_agreed_is_readable_again(
@@ -360,8 +373,9 @@ def test_a_cache_poisoned_before_the_grammar_agreed_is_readable_again(
 
     A cache filled before the ``.CONTENTS`` grammar was narrowed holds
     the wider-named directory on disk already.  Laid down by hand here,
-    because caching can no longer produce it -- that is what the test
-    above pins.  Opened as the ordinary GRR it is, the cache used to be
+    because caching can no longer produce it -- that is what
+    ``test_a_wider_contents_id_no_longer_poisons_a_local_cache`` pins.
+    Opened as the ordinary GRR it is, the cache used to be
     unenumerable for good; now it serves what is healthy in it.
     """
     remote_root = _remote_with_real_resources(tmp_path, ["good_one"])

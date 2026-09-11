@@ -814,14 +814,17 @@ def _scan_for_resources(
         curr_id = [*parent_id, name]
         curr_id_path = "/".join(curr_id)
         if not isinstance(content, dict):
-            logger.warning("file <%s> is not used.", curr_id_path)
+            logger.warning(
+                "file <%s> is not used.",
+                escape_unsafe_characters(curr_id_path))
             continue
         try:
             resource_id, version = parse_gr_id_version_token(name)
         except ValueError:
             logger.warning(
-                "skipping directory <%s> -- its name is not a well-formed "
-                "resource id", escape_unsafe_characters(curr_id_path))
+                "skipping directory <%s> -- its name %s",
+                escape_unsafe_characters(curr_id_path),
+                malformed_resource_id_reason(name))
             continue
         if GR_CONF_FILE_NAME in content and \
                 not isinstance(content[GR_CONF_FILE_NAME], dict):
@@ -2057,13 +2060,17 @@ class FsspecReadWriteProtocol(
 
         if GR_CONF_FILE_NAME in content:
             res_path = "/".join(path_array)
+            # The whole path is parsed here, at the resource, not segment
+            # by segment on the way down -- so a malformed folder is walked
+            # and each resource under it is reported and skipped by its
+            # own full path, rather than the folder once.
             try:
                 resource_id, version = parse_gr_id_version_token(res_path)
             except ValueError:
                 logger.warning(
-                    "repo %s: skipping directory <%s> -- its name is not "
-                    "a well-formed resource id",
-                    self.proto_id, escape_unsafe_characters(res_path))
+                    "repo %s: skipping directory <%s> -- its path %s",
+                    self.proto_id, escape_unsafe_characters(res_path),
+                    malformed_resource_id_reason(res_path))
                 return
             yield resource_id, version, res_path
         else:

@@ -520,10 +520,6 @@ def is_safe_repo_id(repo_id: str) -> bool:
     return not ntpath.splitdrive(repo_id)[0]
 
 
-_GR_ID_WITH_VERSION_TOKEN_RE = re.compile(
-    r"([a-zA-Z0-9._-]+)(?:\(([0-9]\d*(?:\.\d+)*)\))?")
-
-
 def parse_gr_id_version_token(token: str) -> tuple[str, tuple[int, ...]]:
     """Parse a genomic resource id with an optional version suffix.
 
@@ -567,7 +563,7 @@ def parse_resource_id_version(
 
     match = _RESOURCE_ID_WITH_VERSION_PATH_RE.fullmatch(resource_path)
     if not match:
-        raise ValueError(f"unexpeced resource path: {resource_path}")
+        raise ValueError(f"unexpected resource path: {resource_path}")
     token = match[1]
     version_string = match[2]
     if version_string:
