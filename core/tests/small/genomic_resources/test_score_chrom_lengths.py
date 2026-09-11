@@ -313,6 +313,58 @@ def test_derive_chrom_lengths_answers_from_the_genome_where_it_lists_the_contig(
         source=ChromLengthSource.TABIX_ESTIMATE, extent=None)
 
 
+def test_the_genome_widens_no_contig_universe(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A genome usually lists far more contigs than a score carries.  The
+    # answer is keyed by the SCORE's contigs, in the table's order: a
+    # whole-reference denominator is coverage's business (gain#1041).
+    score = _a_tabix_score(tmp_path / "score").open()
+    genome = _a_genome_listing(tmp_path, chr2=500, chr1=3000)
+
+    resolved = derive_chrom_lengths(score, genome)
+
+    assert list(resolved) == ["chr1"]
+
+
+def test_a_contig_the_genome_lacks_still_reports_why_it_has_no_length(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The fallthrough is per contig and keeps the table's tri-state answer:
+    # 'kept' is the genome's, 'empty' -- unknown to the genome, proven
+    # empty by the table -- is still EMPTY, not an error and not a length.
+    score = _a_score_with_an_empty_mapped_contig(tmp_path / "score").open()
+    genome = _a_genome_listing(tmp_path, kept=200)
+
+    resolved = derive_chrom_lengths(score, genome)
+
+    assert resolved["kept"] == ChromLength(
+        length=200, source=ChromLengthSource.REFERENCE_GENOME, extent=None)
+    assert resolved["empty"] == ChromLength(
+        length=None, source=None, extent=ContigExtent.EMPTY)
+
+
+def test_the_genome_answers_no_question_the_table_would_refuse(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A bad question is refused in the table's words, genome or not.
+
+    The genome lists chr2 and the score does not carry it; the genome
+    lists chr1 and the score is closed.  Both would be answerable off the
+    genome alone, and neither may be: the resolver's refusals are the
+    table's, and a genome must not turn a contig the score has no data
+    for into a length.
+    """
+    score = _a_tabix_score(tmp_path / "score")
+    genome = _a_genome_listing(tmp_path, chr1=3000, chr2=500)
+
+    with pytest.raises(ValueError, match="not open"):
+        derive_chrom_length(score, "chr1", genome)
+    score.open()
+    with pytest.raises(ValueError, match="chr2"):
+        derive_chrom_length(score, "chr2", genome)
+
+
 def test_get_all_chrom_lengths_holds_resolved_contigs_in_table_order(
     tmp_path: pathlib.Path, mocker: pytest_mock.MockFixture,
 ) -> None:
