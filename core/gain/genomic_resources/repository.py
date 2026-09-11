@@ -169,6 +169,15 @@ GR_ENCODING = "utf-8"
 
 _GR_ID_TOKEN_RE = re.compile(r"[a-zA-Z0-9._-]+")
 
+#: Every character a resource id may be spelled with, as the body of a
+#: regex character class.  One definition, composed into both the
+#: pattern that accepts an id and the one that names what a malformed
+#: one carries, so the two cannot drift apart -- they used to be written
+#: out separately, and a rule whose single source of truth is a test is
+#: a rule waiting to disagree with itself (gain#1352).  ``-`` stays last:
+#: anywhere else it would read as a range.
+RESOURCE_ID_CHARACTER_CLASS = "a-zA-Z0-9/._-"
+
 #: Separators a resource path is split on before its segments are
 #: scanned. A backslash is a path separator on Windows and in several
 #: fsspec backends, so it counts as one here.
@@ -373,6 +382,57 @@ def validate_resource_id(resource_id: str) -> None:
             f"resource id <{escape_unsafe_characters(resource_id)}> {reason}")
 
 
+#: The complement of :data:`RESOURCE_ID_CHARACTER_CLASS`: what a
+#: well-formed id may *not* carry.  Spelled as the complement, rather
+#: than reusing the pattern that accepts, so that a refusal can name the
+#: single character it tripped on -- a warning that says which character
+#: is worth the second regex.
+_MALFORMED_ID_CHARACTER_RE = re.compile(f"[^{RESOURCE_ID_CHARACTER_CLASS}]")
+
+
+def malformed_resource_id_reason(resource_id: str) -> str | None:
+    """Return why ``resource_id`` is not a well-formed id, or ``None``.
+
+    Containment is the *other* rule an id is held to, and the two are
+    separate: :func:`uncontained_resource_id_reason` asks whether the id
+    escapes the repository, this one whether GAIn can process it at all.
+    Both run where a ``.CONTENTS`` is read.  A scan runs neither: it
+    parses each candidate path with :func:`parse_gr_id_version_token`
+    and so enforces the character half by construction, refusing a
+    directory named outside the grammar by failing the whole enumeration.
+
+    That is the disagreement this closes, and it was not cosmetic.  An id
+    read from a remote ``.CONTENTS`` used to be checked for containment
+    only, so a wider one was served, cached to local disk under that
+    name, and then raised on by every later scan of that cache -- costing
+    the cache every healthy resource in it (gain#1352).  Refusing where
+    the id enters turns that into a warned skip.
+
+    What the two paths agree on afterwards is the *grammar*, not the
+    consequence: a scan still raises where this drops.
+
+    The empty segment is the one refusal here the scan grammar does
+    *not* also make -- ``/`` is inside its character class, so ``a//b``
+    matches it -- and a filesystem cannot offer such a directory anyway,
+    having no empty name.  Only a hand-written ``.CONTENTS`` can.
+
+    ``""`` is exempt because it names the repository root, a supported
+    resource in its own right that is published under exactly that id.
+    ``"."``, the other spelling of the root, needs no exemption: it
+    carries no refused character and splits into no empty segment.
+    """
+    if not resource_id:
+        return None
+    match = _MALFORMED_ID_CHARACTER_RE.search(resource_id)
+    if match is not None:
+        return (
+            f"carries <{escape_unsafe_characters(match.group())}>, "
+            f"which a resource id may not contain")
+    if "" in _RESOURCE_NAME_SEPARATOR.split(resource_id):
+        return "carries an empty segment"
+    return None
+
+
 def report_uncontained_manifest_entries(
     resource_id: str, manifest: Manifest,
 ) -> None:
@@ -497,7 +557,7 @@ def parse_gr_id_version_token(token: str) -> tuple[str, tuple[int, ...]]:
 
 
 _RESOURCE_ID_WITH_VERSION_PATH_RE = re.compile(
-    r"([a-zA-Z0-9/._-]+)(?:\(([0-9]\d*(?:\.\d+)*)\))?")
+    rf"([{RESOURCE_ID_CHARACTER_CLASS}]+)(?:\(([0-9]\d*(?:\.\d+)*)\))?")
 
 
 def parse_resource_id_version(

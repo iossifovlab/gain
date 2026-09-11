@@ -961,21 +961,20 @@
             /** The path part addressing a folder. */
             function buildPath(path) {
                 // Encoded per segment and then joined, never the other way
-                // round: the segments are resource id fragments, which are
-                // untrusted repository content (gain#467, gain#528), and
-                // encoding the joined string would escape the separators
-                // along with everything else.
+                // round: encoding the joined string would escape the
+                // separators along with everything else.
                 //
                 // Every character a resource id may legally carry is
-                // unreserved here, so for a repository this scanner built
-                // the encoding is the identity: enumerating one matches its
-                // ids against `[a-zA-Z0-9/._-]+` and refuses the rest. It
-                // is kept for the ids this page did *not* vet -- a remote
-                // `.CONTENTS` is read verbatim -- and because that grammar
-                // widening should not silently become a way to write the
-                // separator. Going per segment is also
-                // what makes a name containing "/" impossible to spell --
-                // it comes back as one folder, not two.
+                // unreserved here, so the encoding is the identity for
+                // every id that can reach this page: both enumeration
+                // paths hold an id to `[a-zA-Z0-9/._-]` and refuse the
+                // rest -- a scan by parsing the path, a remote
+                // `.CONTENTS` by dropping the entry (gain#1352) -- and a
+                // page is built only by the scanning one anyway. It is
+                // kept because that grammar widening should not silently
+                // become a way to write the separator. Going per segment
+                // is also what makes a name containing "/" impossible to
+                // spell -- it comes back as one folder, not two.
                 return HIERARCHICAL_HASH
                     + path.map(encodeURIComponent).join("/");
             }
