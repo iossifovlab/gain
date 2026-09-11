@@ -1,4 +1,4 @@
-# pylint: disable=W0621,C0114,C0115,C0116,W0212,W0613
+# pylint: disable=W0621,C0114,C0115,C0116,W0613
 """Escaping tests for the GRR browse page rows (grr_index.jinja).
 
 Every value in a browse-page row comes out of the GRR: the resource id,

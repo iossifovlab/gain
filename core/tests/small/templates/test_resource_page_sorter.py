@@ -1,4 +1,4 @@
-# pylint: disable=W0621,C0114,C0115,C0116,W0212,W0613
+# pylint: disable=W0621,C0114,C0115,C0116,W0613
 """What every resource page pays for carrying the table sorter.
 
 ``sortable_table.jinja`` is included from ``resource_template.jinja``,

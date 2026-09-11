@@ -1,4 +1,4 @@
-# pylint: disable=W0621,C0114,C0115,C0116,W0212,W0613
+# pylint: disable=W0621,C0114,C0115,C0116,W0613
 """What the GRR browse and about pages pay for their icon font.
 
 The unsubsetted Material Symbols family is a ~3.8 MB woff2 -- one

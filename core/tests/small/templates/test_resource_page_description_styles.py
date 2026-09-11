@@ -35,7 +35,6 @@ rule a page has reaches its description.
 """
 from __future__ import annotations
 
-import textwrap
 from collections.abc import Callable
 
 import pytest
@@ -114,7 +113,7 @@ def resource_with_a_rich_description(
     GRR author actually writes, each of which the page styles when it
     renders it outside the shadow root.
     """
-    return basic_resource_described_by(textwrap.dedent("""
+    return basic_resource_described_by("""
         ### Score definitions
 
         Curated by [SFARI](https://gene.sfari.org/), who publish
@@ -125,7 +124,7 @@ def resource_with_a_rich_description(
         | category | meaning |
         |---|---|
         | 1 | high confidence |
-    """))
+    """)
 
 
 @pytest.fixture

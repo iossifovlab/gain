@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.small.templates.page_css import Rule, rules_in
+from tests.small.templates.page_css import Rule, declarations_in, rules_in
 
 
 def test_a_selector_list_comes_back_split() -> None:
@@ -91,3 +91,21 @@ def test_only_whitespace_spanning_lines_is_folded_out_of_a_value() -> None:
         ("font-family", "Georgia, serif"),
         ("list-style-type", "'-  '"),
     ])]
+
+
+@pytest.mark.parametrize("block", [
+    "max-width: min(100%, 800px); display: block",
+    "max-width: min(100%, 800px); display: block;",
+])
+def test_a_style_attribute_reads_the_same_with_or_without_a_final_semicolon(
+    block: str,
+) -> None:
+    """An element's own ``style`` is a declaration block, not a sheet.
+
+    The templates spell the same inline cap both ways, so a consumer
+    reading it as declarations rather than as a string sees one value.
+    """
+    assert declarations_in(block) == [
+        ("max-width", "min(100%, 800px)"),
+        ("display", "block"),
+    ]
