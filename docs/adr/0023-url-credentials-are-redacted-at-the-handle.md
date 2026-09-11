@@ -604,3 +604,60 @@ Each was mutation-proved: with the lock swapped for a plain `Lock` only the
 nesting test goes red; with the lock removed only the two interleaving tests
 do; and with the constructor made to raise before the inner bracket, the
 nesting test goes red rather than passing on a thread that merely ended.
+
+## Amendment — gain#1406: the header sidecar is read through a handle
+
+**Date:** 2026-09-11
+
+The gain#1360 amendment named "the cheaper shape if a future change wants
+the lock non-reentrant" and did not take it. This is that change — by a
+different route than the one named there, and a strictly better one.
+
+**The second bracket had no reason to exist.** `_load_vcf_header` opened the
+`*.header.vcf.gz` sidecar by name — `pysam.VariantFile(url)` — purely to
+read `header.info`. The `[E::idx_find_and_load]` it silenced was htslib's
+index probe on that by-name open, which a header-only sidecar cannot
+satisfy. Read the sidecar's `##` lines through a **handle** instead —
+`open_raw_file(…, compression="gzip")`, the route `TabixGenomicPositionTable`
+already takes for its own header — and build the metadata with
+`pysam.VariantHeader()` + `add_line(line)`, and no filename reaches htslib
+at all: no probe, no line on fd 2, nothing to silence. Verified at triage
+and pinned by test: the resulting `info` map is equal to the one the by-name
+open produced across every `Number` shape `parse_vcf_scoredefs`
+distinguishes (`1`, `R`, `.`, `0`/Flag), and fd 2 stays clean *without* a
+bracket — the test goes red on exactly that line when the by-name route is
+restored unbracketed.
+
+By this ADR's own rule (the gain#1314 amendment: *is there a handle GAIn
+holds?*) that moves the header load from the third escape — a url handed to
+a library, needing a bracket and a lock — to the first, which
+`_RedactingFile` closes structurally with no help from the call site.
+
+**What falls out.** One bracket left, `_open_htslib_file`'s, gated on
+`_url_carries_credential` and wrapped around a bare pysam constructor that
+enters no bracket of its own. Nothing nests, so `_HTSLIB_VERBOSITY_LOCK` is
+a plain `Lock`. The lock is now paid **only by credentialed opens** — the
+bargain `_STDERR_SUPPRESSION_LOCK` already makes — where the gain#1360
+amendment charged it to every VCF header load in the process, on a plain
+public GRR, each holding it across the sidecar's refresh and index
+resolution. The table module no longer imports a private name from the
+protocol module. The same-thread nesting test and the forced overlap of two
+header loads are deleted with the mechanism they pinned; the forced overlap
+through `open_tabix_file` on a credentialed url stays, for the bracket that
+survives.
+
+**The narrower alternative, and why not.** Keeping `VariantFile` and
+bracketing only `open_vcf_file`'s unindexed branch — the shape the
+gain#1360 amendment named — would also have un-nested the brackets, at the
+price of silencing every unindexed VCF open. The handle read silences
+nothing anywhere: the sidecar's diagnostics are *kept*, since htslib's
+header parser still writes its `[W::bcf_hdr_register_hrec]` warnings for a
+declaration missing `Number` or `Type`, which the old bracket discarded.
+
+**Behavioural delta.** The sidecar's bytes come through fsspec rather than
+htslib's `hFILE` on the direct `http` and `s3` protocols — as the tabix base
+class's header bytes already do; on the caching protocol both routes refresh
+the file first. A `##` line pysam cannot parse now fails in `add_line`
+rather than in an htslib open, as a bare `ValueError("Invalid header line")`;
+the constructor re-raises it naming the resource, the sidecar and the line,
+the way the no-`.vcf`-in-the-filename refusal already does.
