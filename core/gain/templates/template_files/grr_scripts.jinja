@@ -161,7 +161,7 @@
             for (const [index, rowId] of ids.entries()) {
                 let row = rows[index];
                 let rowData = window.rowData[rowId];
-                let cells = row.querySelectorAll("td");
+                let cells = row.querySelectorAll(":scope > td");
                 cells[0].textContent = rowData.type;
                 cells[1].title = rowData.id;
                 const link = cells[1].querySelector("a");
