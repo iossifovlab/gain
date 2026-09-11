@@ -70,19 +70,25 @@ def rules_in(markup: str) -> list[Rule]:
     return [
         Rule(
             [selector.strip() for selector in selectors.split(",")],
-            _declarations_in(body),
+            declarations_in(body),
         )
         for selectors, body in _CSS_RULE.findall(
             _CSS_COMMENT.sub("", stylesheet))
     ]
 
 
-def _declarations_in(body: str) -> list[tuple[str, str]]:
-    """A declaration block as ``(property, value)`` pairs, in source order."""
+def declarations_in(block: str) -> list[tuple[str, str]]:
+    """A declaration block as ``(property, value)`` pairs, in source order.
+
+    A block, not a sheet: the body of one rule, or an element's own
+    ``style`` attribute.  The trap :func:`rules_in` guards against -- raw
+    CSS handed to the rule regex -- does not exist here, because a block
+    has no braces to misread.
+    """
     return [
         (property_.strip(), _LINE_WRAP.sub(" ", value).strip())
         for property_, _, value in (
-            declaration.partition(":") for declaration in body.split(";")
+            declaration.partition(":") for declaration in block.split(";")
         )
         if property_.strip()
     ]

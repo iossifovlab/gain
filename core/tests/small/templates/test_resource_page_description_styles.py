@@ -36,7 +36,6 @@ rule a page has reaches its description.
 from __future__ import annotations
 
 import pathlib
-import re
 import textwrap
 from collections.abc import Iterator
 
@@ -51,13 +50,7 @@ from gain.genomic_resources.testing import (
     setup_directories,
 )
 
-#: One rule of a stylesheet: everything up to ``{`` is the selector list,
-#: everything to the matching ``}`` is the declarations.  Adequate because
-#: the sheets read here are flat -- no ``@media``, no nesting -- and a
-#: test that needed more would be reading the wrong thing.
-_CSS_RULE = re.compile(r"([^{}]+)\{([^{}]*)\}")
-
-_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+from tests.small.templates.page_css import rules_in
 
 
 @pytest.fixture(autouse=True)
@@ -83,15 +76,8 @@ def description_shadow_root(page: str) -> str:
     return page[opening:page.index("</template>", opening)]
 
 
-def declarations_in(markup: str, selector: str) -> list[str]:
+def declared_for(markup: str, selector: str) -> list[str]:
     """Return what ``markup``'s first ``<style>`` declares for ``selector``.
-
-    Extraction and reading are one step on purpose.  Handing raw markup to
-    the rule reader would quietly make it part of the first rule's
-    selector list -- everything between one ``}`` and the next ``{`` reads
-    as a selector -- and that goes wrong silently, for one rule only.
-    There is no caller that wants the sheet without reading it, so there
-    is no way to make that mistake.
 
     Rules are matched on the selector appearing in the rule's selector
     *list*, so ``td, th { ... }`` answers for ``td`` and for ``th`` alike,
@@ -99,28 +85,21 @@ def declarations_in(markup: str, selector: str) -> list[str]:
     would also reach the element -- ``#resource-table th``,
     ``.scrollable-table-container td`` -- are deliberately left out: what
     is compared is the rule a bare element gets on each side of the shadow
-    boundary, not the full cascade any one element resolves to.
+    boundary, not the full cascade any one element resolves to.  The
+    figure-width test reads the same sheet the other way -- whole selector
+    list, later rule winning -- because it models a cascade, not a copy.
 
-    Declarations come back normalized and sorted, because this is used to
-    compare two sheets and neither the order rules were written in nor the
-    indentation they were written at is part of what a reader gets.  The
-    normalization folds only whitespace that spans lines: a CSS value can
-    carry significant spaces inside quotes -- the list marker is
-    ``'-  '``, two of them -- and collapsing those would make this report
-    a value no sheet contains.
+    Declarations come back as ``property: value`` strings, sorted, because
+    this is used to compare two sheets and neither the order rules were
+    written in nor the indentation they were written at is part of what a
+    reader gets.
     """
-    opening = markup.index("<style>") + len("<style>")
-    stylesheet = markup[opening:markup.index("</style>", opening)]
-
-    declarations: list[str] = []
-    for selectors, body in _CSS_RULE.findall(_CSS_COMMENT.sub("", stylesheet)):
-        if selector not in [s.strip() for s in selectors.split(",")]:
-            continue
-        declarations.extend(
-            re.sub(r"\s*\n\s*", " ", declaration).strip()
-            for declaration in body.split(";") if declaration.strip()
-        )
-    return sorted(declarations)
+    return sorted(
+        f"{property_}: {value}"
+        for rule in rules_in(markup)
+        if selector in rule.selectors
+        for property_, value in rule.declarations
+    )
 
 
 def assert_shared_with_page(
@@ -132,12 +111,12 @@ def assert_shared_with_page(
     the equality pins that it arrives from the same rule the page reads,
     so a copy that later falls behind the shared sheet fails here.
     """
-    declared = declarations_in(shadow_root, selector)
+    declared = declared_for(shadow_root, selector)
     for declaration in declarations:
-        assert declaration in declared, \
-            f"the description's {selector} does not declare {declaration}: " \
-            f"{declared}"
-    assert declared == declarations_in(page, selector), \
+        assert declaration in declared, (
+            f"the description's {selector} does not declare {declaration}: "
+            f"{declared}")
+    assert declared == declared_for(page, selector), \
         f"the description and the page disagree about {selector}"
 
 

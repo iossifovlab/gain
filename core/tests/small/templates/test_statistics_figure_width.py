@@ -49,6 +49,8 @@ from gain.genomic_resources.testing.builders import (
     an_allele_score,
 )
 
+from tests.small.templates.page_css import declarations_in, rules_in
+
 FIGURE_CLASS = "statistics-figure"
 
 _Builder = Callable[[pathlib.Path], GenomicResource]
@@ -93,56 +95,27 @@ def _blanket_image_cap(page: str) -> str:
 
     Found by what the rule does rather than by how it is spelled, so the
     tests about how it is spelled have something to say.
+
+    Read from the page's own stylesheet, deliberately: the description
+    field embeds a second, shadow-DOM stylesheet with its own ``img``
+    rule, which the page's cascade never reaches and which no assertion
+    here is about.  :func:`rules_in` reads the first ``<style>`` only.
     """
     matches = [
-        selector for selector, declarations in _rules(page)
-        if selector.endswith("img") and declarations.get("max-width") == "100%"
+        selector
+        for rule in rules_in(page)
+        for selector in rule.selectors
+        if selector.endswith("img")
+        and dict(rule.declarations).get("max-width") == "100%"
     ]
     assert len(matches) == 1, \
         f"expected exactly one blanket image cap, got {len(matches)}"
     return matches[0]
 
 
-def _stylesheet(page: str) -> str:
-    """The page's own stylesheet -- the ``<style>`` element in its head.
-
-    Scoped deliberately: the description field embeds a second, shadow-DOM
-    stylesheet with its own ``img`` rule, which the page's cascade never
-    reaches and which no assertion here is about.
-    """
-    match = re.search(r"<style>(.*?)</style>", page, re.DOTALL)
-    assert match is not None, "the page carries no stylesheet"
-    return re.sub(r"/\*.*?\*/", "", match.group(1), flags=re.DOTALL)
-
-
-def _parse_declarations(body: str) -> dict[str, str]:
-    """A declaration block, as property -> value."""
-    return {
-        property_.strip(): value.strip()
-        for property_, _, value in (
-            declaration.partition(":") for declaration in body.split(";")
-        )
-        if property_.strip()
-    }
-
-
 def _inline(image: dict[str, str]) -> dict[str, str]:
     """An element's own ``style`` attribute, as declarations."""
-    return _parse_declarations(image.get("style", ""))
-
-
-def _rules(page: str) -> list[tuple[str, dict[str, str]]]:
-    """The page stylesheet's rules, as ``(selector, declarations)``.
-
-    Flat by assumption: a resource page's stylesheet has no at-rules, so
-    nothing here nests.  Wrap one rule in an ``@media`` block and this
-    reads the two as separate rules with a stray selector between them.
-    """
-    return [
-        (selector.strip(), _parse_declarations(body))
-        for selector, body in re.findall(
-            r"([^{}]+)\{([^{}]*)\}", _stylesheet(page))
-    ]
+    return dict(declarations_in(image.get("style", "")))
 
 
 def _declarations(page: str, selector: str) -> dict[str, str]:
@@ -151,10 +124,16 @@ def _declarations(page: str, selector: str) -> dict[str, str]:
     Folded in document order, later winning, as the cascade resolves
     rules of equal specificity: a resource page states ``table`` twice,
     once in the base styles and once in the per-type ones.
+
+    Matched on the whole selector list, so ``td, th { ... }`` answers
+    for neither ``td`` nor ``th``: what is modelled is the cascade a rule
+    written *for* this selector resolves to, not every rule that happens
+    to reach the element.  The description-styles test reads the same
+    sheet the other way, on purpose.
     """
     matches = [
-        declarations for found, declarations in _rules(page)
-        if found == selector
+        rule.declarations for rule in rules_in(page)
+        if rule.selectors == [selector]
     ]
     assert matches, f"the page's stylesheet says nothing about {selector}"
     folded: dict[str, str] = {}
