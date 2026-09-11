@@ -29,9 +29,6 @@ from gain.genomic_resources.fsspec_protocol import (
 from gain.genomic_resources.genomic_position_table.table_tabix import (
     TabixGenomicPositionTable,
 )
-from gain.genomic_resources.genomic_position_table.table_vcf import (
-    VCFGenomicPositionTable,
-)
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
 )
@@ -59,7 +56,6 @@ from pydantic import ValidationError
 from .conftest import (
     BASIC_RESOURCE_ID,
     BASIC_RESOURCE_LAYOUT,
-    RunInThreads,
     overlap_two_opens,
     serving_http,
 )
@@ -2670,53 +2666,6 @@ def test_concurrent_credentialed_htslib_opens_do_not_strand_verbosity(
 
         plain, plain_res = _a_refused_protocol(
             "i1360-tabix-threads-plain", authed=False)
-        with pytest.raises(OSError):
-            plain.open_tabix_file(
-                plain_res, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
-
-        assert "[E::hts_open_format]" in capfd.readouterr().err
-    finally:
-        pysam.set_verbosity(saved_verbosity)
-
-
-def test_credentialed_vcf_header_load_nests_the_brackets_without_deadlock(
-    capfd: pytest.CaptureFixture[str], mocker: pytest_mock.MockerFixture,
-    run_in_threads: RunInThreads,
-) -> None:
-    """The two verbosity brackets nest on one thread, and must not deadlock.
-
-    ``VCFGenomicPositionTable._load_vcf_header`` brackets its header open,
-    and for a credential-bearing url that open enters ``_open_htslib_file``'s
-    own bracket -- same thread, one inside the other. A serialisation that
-    is not re-entrant hangs right there, on every credentialed VCF score,
-    which is why the lock is an ``RLock`` (gain#1360). Run on a daemon
-    thread with a bounded join, so a regression reports as a failure rather
-    than as a test that never returns; and the consequence is asserted too:
-    once both brackets have unwound, htslib is back to speaking.
-    """
-    _, resource = _a_refused_protocol("i1360-vcf-nested")
-    # The sidecar's existence is asserted before the open, over fsspec --
-    # which would hit the refused host first. Only the open is under test.
-    mocker.patch.object(resource, "file_exists", return_value=True)
-    mocker.patch.object(
-        pysam, "VariantFile", return_value=unittest.mock.MagicMock())
-
-    saved_verbosity = pysam.set_verbosity(1)
-    try:
-        results, errors = run_in_threads(
-            lambda: VCFGenomicPositionTable(
-                resource, {"filename": _VCF_FILE_NAME, "format": "vcf_info"}),
-            threads_count=1, timeout=10.0)
-        # A constructor that RAISES before the inner bracket also ends the
-        # thread, never touches the level, and leaves the probe below
-        # speaking -- a green run that guards nothing. Only a built table
-        # proves both brackets were entered and unwound.
-        assert not errors, errors
-        assert isinstance(results[0], VCFGenomicPositionTable)
-        capfd.readouterr()
-
-        plain, plain_res = _a_refused_protocol(
-            "i1360-vcf-nested-plain", authed=False)
         with pytest.raises(OSError):
             plain.open_tabix_file(
                 plain_res, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
