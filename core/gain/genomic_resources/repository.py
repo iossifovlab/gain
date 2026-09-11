@@ -167,16 +167,19 @@ GR_GENERATED_INFO_PAGES = frozenset({
 
 GR_ENCODING = "utf-8"
 
-_GR_ID_TOKEN_RE = re.compile(r"[a-zA-Z0-9._-]+")
-
 #: Every character a resource id may be spelled with, as the body of a
-#: regex character class.  One definition, composed into both the
-#: pattern that accepts an id and the one that names what a malformed
-#: one carries, so the two cannot drift apart -- they used to be written
-#: out separately, and a rule whose single source of truth is a test is
-#: a rule waiting to disagree with itself (gain#1352).  ``-`` stays last:
-#: anywhere else it would read as a range.
+#: regex character class.  One definition, composed into the pattern
+#: that accepts an id, the one that names what a malformed one carries
+#: and the one that accepts a single segment, so the three cannot drift
+#: apart -- they used to be written out separately, and a rule whose
+#: single source of truth is a test is a rule waiting to disagree with
+#: itself (gain#1352).  ``-`` stays last: anywhere else it would read as
+#: a range.
 RESOURCE_ID_CHARACTER_CLASS = "a-zA-Z0-9/._-"
+
+#: One segment of a resource id: the class without its separator.
+_GR_ID_TOKEN_RE = re.compile(
+    f"[{RESOURCE_ID_CHARACTER_CLASS.replace('/', '')}]+")
 
 #: Separators a resource path is split on before its segments are
 #: scanned. A backslash is a path separator on Windows and in several

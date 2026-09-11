@@ -798,18 +798,16 @@ class _RedactingFile:
         return attr
 
 
+def _is_resource_content(content: dict) -> bool:
+    """Whether an in-memory directory holds a resource's config file."""
+    return GR_CONF_FILE_NAME in content and \
+        not isinstance(content[GR_CONF_FILE_NAME], dict)
+
+
 def _scan_for_resources(
     content_dict: dict, parent_id: list[str],
 ) -> Generator[tuple[str, tuple[int, ...], dict], None, None]:
-    if not parent_id and GR_CONF_FILE_NAME in content_dict and \
-            not isinstance(content_dict[GR_CONF_FILE_NAME], dict):
-        # The repository root is itself a resource, published under the
-        # empty id. Only the root can reach here with a config of its own:
-        # the recursion below descends into a directory only when it has
-        # none.
-        yield "", (0,), content_dict
-        return
-
+    """Yield ``(id, version, content)`` for every resource under a folder."""
     for name, content in content_dict.items():
         curr_id = [*parent_id, name]
         curr_id_path = "/".join(curr_id)
@@ -826,15 +824,15 @@ def _scan_for_resources(
                 escape_unsafe_characters(curr_id_path),
                 malformed_resource_id_reason(name))
             continue
-        if GR_CONF_FILE_NAME in content and \
-                not isinstance(content[GR_CONF_FILE_NAME], dict):
-            # resource found
+        if _is_resource_content(content):
             yield "/".join([*parent_id, resource_id]), version, content
             continue
         if not is_gr_id_token(name):
+            # Parsed, so what is left is a version suffix or a separator
+            # -- and a folder that is not a resource can carry neither.
             logger.warning(
-                "directory <%s> has a name <%s> that is not a "
-                "valid Genomic Resource Id Token.", curr_id_path, name)
+                "skipping directory <%s> -- its name is not a resource "
+                "id token", escape_unsafe_characters(curr_id_path))
             continue
 
         # scan children
@@ -891,7 +889,14 @@ def build_inmemory_protocol(
         raise TypeError(
             f"protocol {proto_id!r} over memory://{root_path} is not "
             f"read-write, so it cannot hold an embedded repository")
-    for rid, rver, rcontent in _scan_for_resources(content, []):
+    resources: Iterable[tuple[str, tuple[int, ...], dict]]
+    if _is_resource_content(content):
+        # The repository root is itself a resource, published under the
+        # empty id.
+        resources = [("", (0,), content)]
+    else:
+        resources = _scan_for_resources(content, [])
+    for rid, rver, rcontent in resources:
         resource = GenomicResource(rid, rver, proto)
         for fname, fcontent in _scan_for_resource_files(rcontent, []):
             mode = "wt"
