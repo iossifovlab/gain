@@ -62,18 +62,27 @@ class ChromLength:
 
 def derive_chrom_length(
     score: GenomicScore, chrom: str,
-    ref_genome: ReferenceGenome | None = None,  # ruff: ignore[unused-function-argument]
+    ref_genome: ReferenceGenome | None = None,
 ) -> ChromLength:
     """Resolve one contig of ``score`` through the ladder.
 
-    ``ref_genome`` is accepted for the genome rung, which is not yet
-    implemented (gain#1418); today every contig is answered by the table,
-    and the source is whatever the backend declares its lengths to be.
-    Raises ``ValueError`` when the score is not open or does not carry
-    ``chrom`` -- a bad question, as opposed to an absent answer -- in the
-    TABLE's words, since it is the table that refuses; the score's methods
-    screen first and word both refusals as every other score read does.
+    ``ref_genome`` is the top rung: a contig it lists is answered with its
+    true length, tagged ``REFERENCE_GENOME``, and the table is never asked.
+    A contig it does not list -- or no genome at all -- falls through to
+    the table, whose source is whatever the backend declares its lengths
+    to be.  Raises ``ValueError`` when the score is not open or does not
+    carry ``chrom`` -- a bad question, as opposed to an absent answer -- in
+    the TABLE's words, since it is the table that refuses; the genome rung
+    sits behind the table's own screen so that a contig only the genome
+    knows is refused the same way.  The score's methods screen first and
+    word both refusals as every other score read does.
     """
+    if ref_genome is not None and score.table.has_chromosome(chrom):
+        genome_length = ref_genome.get_all_chrom_lengths().get(chrom)
+        if genome_length is not None:
+            return ChromLength(
+                length=genome_length,
+                source=ChromLengthSource.REFERENCE_GENOME, extent=None)
     length = score.table.find_chromosome_length(chrom)
     if isinstance(length, ContigExtent):
         return ChromLength(length=None, source=None, extent=length)

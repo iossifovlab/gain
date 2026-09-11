@@ -28,9 +28,14 @@ from gain.genomic_resources.genomic_scores.chrom_lengths import (
     derive_chrom_length,
     derive_chrom_lengths,
 )
+from gain.genomic_resources.reference_genome import (
+    ReferenceGenome,
+    build_reference_genome_from_resource,
+)
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
     a_position_score,
+    a_reference_genome,
     a_vcf_info_score,
 )
 
@@ -268,6 +273,44 @@ def test_derive_chrom_lengths_reports_a_proven_empty_contig(
     assert resolved["kept"].source is ChromLengthSource.TABLE_EXTENT
     assert resolved["empty"] == ChromLength(
         length=None, source=None, extent=ContigExtent.EMPTY)
+
+
+def _a_genome_listing(
+    tmp_path: pathlib.Path, **lengths: int,
+) -> ReferenceGenome:
+    """A genome carrying exactly the named contigs at the given lengths."""
+    builder = a_reference_genome()
+    for chrom, length in lengths.items():
+        builder = builder.with_chromosome(chrom, "A" * length)
+    return build_reference_genome_from_resource(
+        builder.build_resource(tmp_path / "genome"))
+
+
+def test_derive_chrom_lengths_answers_from_the_genome_where_it_lists_the_contig(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The genome rung is exact and comes first, per contig (gain#1418).
+
+    chr1 is answered by the genome -- its true 3000, not the probe's bound
+    past 2500 -- and says so.  chrM is carried by the score but not by the
+    genome, and falls through to the table for that contig alone: the
+    genome does not veto a contig it merely does not know.
+    """
+    score = _a_tabix_score(tmp_path / "score", rows="""
+        chrom  pos_begin  score
+        chr1   10         0.1
+        chr1   2500       0.2
+        chrM   40         0.3
+    """).open()
+    genome = _a_genome_listing(tmp_path, chr1=3000)
+
+    resolved = derive_chrom_lengths(score, genome)
+
+    assert resolved["chr1"] == ChromLength(
+        length=3000, source=ChromLengthSource.REFERENCE_GENOME, extent=None)
+    assert resolved["chrM"] == ChromLength(
+        length=score.table.find_chromosome_length("chrM"),
+        source=ChromLengthSource.TABIX_ESTIMATE, extent=None)
 
 
 def test_get_all_chrom_lengths_holds_resolved_contigs_in_table_order(
