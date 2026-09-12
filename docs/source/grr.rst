@@ -839,8 +839,9 @@ expected percentages, add the label:
 
 The percentage is computed when the page is rendered, never stored, so adding the
 label needs no data rebuild — re-render the page (``grr_manage resource-info -r
-<resource_id> -f``) and the percentages appear; the next ``resource-stats`` run
-refreshes the stored lengths file, and only that.
+<resource_id>``) and the percentages appear. That same run refreshes the stored
+lengths file, and only that. Do not add ``-f`` for this: it forces a full
+statistics rebuild, histograms included.
 
 A label naming a genome that does not resolve degrades the whole section back to
 raw counts rather than rendering a wrong percentage. So does a single contig the

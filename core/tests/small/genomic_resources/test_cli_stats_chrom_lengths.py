@@ -130,6 +130,17 @@ def test_repair_stores_the_ladders_answer_and_what_it_was_derived_from(
     }
 
 
+def test_a_full_build_manifests_the_lengths_file(
+    tmp_path: pathlib.Path,
+) -> None:
+    _a_labelled_tabix_score_repo(tmp_path)
+
+    _resource_stats(tmp_path)
+
+    manifest = (tmp_path / "score" / ".MANIFEST").read_text()
+    assert "statistics/chrom_lengths.json" in manifest
+
+
 def test_an_unchanged_score_has_nothing_rewritten_by_a_second_run(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -215,6 +226,35 @@ def test_a_genome_that_turns_up_later_refreshes_the_lengths_file_alone(
         before[statistics / "stats_hash"]
 
 
+def _truncate(path: pathlib.Path) -> None:
+    """What a repair killed mid-write leaves behind."""
+    path.write_text(path.read_text()[:40])
+
+
+def test_a_truncated_lengths_file_is_rewritten_by_an_ordinary_run(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Unreadable is stale, not fatal: every other statistics file is
+    recoverable by a run, and this one must not need a manual rm."""
+    statistics = _a_repaired_labelled_score(tmp_path)
+    _truncate(statistics / "chrom_lengths.json")
+
+    _resource_stats(tmp_path)
+
+    assert json.loads((statistics / "chrom_lengths.json").read_text())
+
+
+def test_a_truncated_lengths_file_does_not_defeat_a_forced_run(
+    tmp_path: pathlib.Path,
+) -> None:
+    statistics = _a_repaired_labelled_score(tmp_path)
+    _truncate(statistics / "chrom_lengths.json")
+
+    _resource_stats(tmp_path, "-f")
+
+    assert json.loads((statistics / "chrom_lengths.json").read_text())
+
+
 def test_a_forced_run_rewrites_a_current_lengths_file_too(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -227,11 +267,23 @@ def test_a_forced_run_rewrites_a_current_lengths_file_too(
     assert lengths_file.stat().st_mtime_ns > before
 
 
+def _resync_the_manifest(tmp_path: pathlib.Path) -> None:
+    """Bring the manifest up to date with the files as they are now.
+
+    Deleting the lengths file, or editing the config, would otherwise
+    make the manifest pass that opens every run report the resource --
+    and a dry run counts that too, gate or no gate.  With the manifest
+    current, only the lengths gate can count it.
+    """
+    cli_manage(["resource-manifest", "-r", "score", "-R", str(tmp_path)])
+
+
 def test_a_dry_run_counts_a_stale_lengths_file_as_needing_update(
     tmp_path: pathlib.Path,
 ) -> None:
     statistics = _a_repaired_labelled_score(tmp_path)
     (statistics / "chrom_lengths.json").unlink()
+    _resync_the_manifest(tmp_path)
 
     with pytest.raises(SystemExit) as exit_status:
         _resource_stats(tmp_path, "--dry-run")
@@ -247,6 +299,7 @@ def test_a_dry_run_never_runs_the_tabix_probe_to_check_the_lengths_file(
     probe is the expensive rung the stored file exists to spare."""
     _a_repaired_labelled_score(tmp_path)
     _repoint_the_label(tmp_path, "other_genome")
+    _resync_the_manifest(tmp_path)
     probe = mocker.patch(
         "gain.genomic_resources.genomic_position_table.table_tabix"
         ".get_chromosome_length_tabix")
