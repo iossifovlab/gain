@@ -18,6 +18,7 @@ from gain.genomic_resources.genomic_scores.chrom_lengths import (
     DerivedFrom,
     StoredChromLengths,
     derive_chrom_lengths,
+    load_chrom_lengths,
     save_chrom_lengths,
 )
 from gain.genomic_resources.reference_genome import (
@@ -289,6 +290,19 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         -- is the score layer's (gain#1412), asked once per contig of the
         score; this caller supplies the genome and records the inputs.
         """
+        ref_genome, derived_from = self._chrom_lengths_inputs(grr)
+        return StoredChromLengths(
+            lengths=derive_chrom_lengths(self.score, ref_genome),
+            derived_from=derived_from)
+
+    def _chrom_lengths_inputs(
+        self, grr: GenomicResourceRepo | None,
+    ) -> tuple[ReferenceGenome | None, DerivedFrom]:
+        """The genome the ladder's top rung reads, and the freshness key.
+
+        Resolves the genome but never a length, so the gate that compares
+        the key is a label read, a genome lookup and a manifest read.
+        """
         # Narrowed rather than cast: a label that is not a resource id
         # used to reach the resolution cache as itself and raise
         # ``TypeError`` here, aborting a repository-wide statistics walk
@@ -299,18 +313,39 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             self.resource, "reference_genome")
         ref_genome = self._get_reference_genome_cached(grr, ref_genome_id)
         manifest = self.resource.get_manifest()
-        return StoredChromLengths(
-            lengths=derive_chrom_lengths(self.score, ref_genome),
-            derived_from=DerivedFrom(
-                # The label the genome was resolved FROM, so an
-                # unresolvable genome is recorded as none at all.
-                reference_genome=(
-                    ref_genome_id if ref_genome is not None else None),
-                files_md5={
-                    file_name: manifest[file_name].md5
-                    for file_name in sorted(self.files)},
-            ),
+        return ref_genome, DerivedFrom(
+            # The label the genome was resolved FROM, so an unresolvable
+            # genome is recorded as none at all -- and reads as a change
+            # the day it resolves.
+            reference_genome=ref_genome_id if ref_genome is not None else None,
+            files_md5={
+                file_name: manifest[file_name].md5
+                for file_name in sorted(self.files)},
         )
+
+    def has_stale_derived_files(
+        self, grr: GenomicResourceRepo | None,
+    ) -> bool:
+        stored = load_chrom_lengths(self.resource)
+        if stored is None:
+            logger.info(
+                "<%s> has no stored chromosome lengths; needs update",
+                self.resource.get_full_id())
+            return True
+        _, current = self._chrom_lengths_inputs(grr)
+        if stored.derived_from != current:
+            logger.info(
+                "stored chromosome lengths of <%s> are outdated; "
+                "needs update", self.resource.get_full_id())
+            return True
+        return False
+
+    def rebuild_derived_files(
+        self, grr: GenomicResourceRepo | None,
+    ) -> None:
+        with self.score.open():
+            save_chrom_lengths(
+                self.resource, self._resolve_chrom_lengths(grr))
 
     @staticmethod
     def _regions_from(
