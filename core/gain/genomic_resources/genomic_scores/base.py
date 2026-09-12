@@ -95,9 +95,11 @@ from .aggregation import (
     resolve_aggregator_requests,
 )
 from .chrom_lengths import (
+    ChromLength,
     ChromLengthSource,
     derive_chrom_length,
     derive_chrom_lengths,
+    load_chrom_lengths,
 )
 from .records import (
     RecordArrays,
@@ -300,6 +302,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             self.resource, self.config["table"],
         )
         self.score_definitions = self._build_scoredefs()
+        #: The stored ``chrom_lengths.json``, loaded by :meth:`open` when
+        #: it describes the resource as it is now and dropped by
+        #: :meth:`close`; ``None`` means the length reads resolve live.
+        self._stored_chrom_lengths: dict[str, ChromLength] | None = None
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
@@ -388,6 +394,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """
         self.table.close()
         self.table_loaded = False
+        self._stored_chrom_lengths = None
 
     def is_open(self) -> bool:
         """Whether :meth:`open` has run and :meth:`close` has not since."""
@@ -460,8 +467,40 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             is_bigwig=is_bigwig,
             table=self.table,
             resource_id=self.resource_id)
+        self._stored_chrom_lengths = self._load_stored_chrom_lengths()
 
         return self
+
+    def _load_stored_chrom_lengths(self) -> dict[str, ChromLength] | None:
+        """The stored lengths, if the file describes this resource as it is.
+
+        Three ways for it not to, all normal and all INFO: no file (a
+        resource repaired before gain#1419, or never), a ``derived_from``
+        that no longer matches (a label re-pointed and not yet repaired --
+        trusted, it would answer the old genome's lengths), and a contig
+        list that is not the table's (a ``chrom_mapping`` changed under
+        it).  The next repair refreshes the file; until then the reads
+        resolve live, as they did before the file existed.
+        """
+        stored = load_chrom_lengths(self.resource)
+        if stored is None:
+            logger.info(
+                "genomic score %s has no stored chromosome lengths; "
+                "resolving them live", self.resource_id)
+            return None
+        if not stored.derived_from.describes(self.resource):
+            logger.info(
+                "stored chromosome lengths of genomic score %s are stale; "
+                "resolving them live until the next repair",
+                self.resource_id)
+            return None
+        if list(stored.lengths) != list(self.get_all_chromosomes()):
+            logger.info(
+                "stored chromosome lengths of genomic score %s list other "
+                "contigs than its table; resolving them live until the next "
+                "repair", self.resource_id)
+            return None
+        return stored.lengths
 
     def __enter__(self) -> Self:
         return self
@@ -912,15 +951,17 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         Mirrors :meth:`ReferenceGenome.get_chrom_length` in name and
         contract: an ``int`` or a ``ValueError``.  How far the number is to
         be trusted is a separate question, answered by
-        :meth:`get_chrom_length_source` -- only a bigWig header is exact
-        here; a tabix score answers the probe's upper bound, an in-memory
-        score how far its rows reach.
+        :meth:`get_chrom_length_source` -- a reference genome's length and
+        a bigWig header's are exact; a tabix score answers the probe's
+        upper bound, an in-memory score how far its rows reach.
 
-        Answered live through the table alone on every call, not memoised:
-        on a tabix score that is the index probe each time.  The score
-        holds no genome -- see :mod:`.chrom_lengths` for the ladder and who
-        supplies its top rung.  gain#1419 stores the answer at repair and
-        takes the probe out of this path.
+        Answered from the ``chrom_lengths.json`` the last repair stored,
+        when :meth:`open` found it current -- the whole ladder, genome rung
+        included, at the cost of a dict lookup.  Without it (an unrepaired
+        resource, a re-pointed label) the table alone answers, live on
+        every call: on a tabix score that is the index probe each time.
+        The score holds no genome of its own -- see :mod:`.chrom_lengths`
+        for the ladder and who supplies its top rung.
         """
         return self._resolve_chrom_length(chrom)[0]
 
@@ -934,15 +975,22 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         needs to know WHY it is absent reads
         :func:`~.chrom_lengths.derive_chrom_lengths` instead.
 
-        Every contig is resolved live on every call, at the cost
-        :meth:`get_chrom_length` names, times the contig count.  Raises
-        ``ValueError`` on a score that is not open.
+        From the stored file when :meth:`open` loaded one, otherwise every
+        contig resolved live, at the cost :meth:`get_chrom_length` names,
+        times the contig count.  Raises ``ValueError`` on a score that is
+        not open.
         """
+        self._require_open()
         return {
             chrom: resolved.length
-            for chrom, resolved in derive_chrom_lengths(self).items()
+            for chrom, resolved in self._chrom_length_records().items()
             if resolved.length is not None
         }
+
+    def _chrom_length_records(self) -> dict[str, ChromLength]:
+        if self._stored_chrom_lengths is not None:
+            return self._stored_chrom_lengths
+        return derive_chrom_lengths(self)
 
     def get_chrom_length_source(self, chrom: str) -> ChromLengthSource:
         """Where :meth:`get_chrom_length` read ``chrom``'s length from.
@@ -965,7 +1013,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         so the two callers cannot drift apart.
         """
         self._require_open_and_known_chrom(chrom)
-        resolved = derive_chrom_length(self, chrom)
+        if self._stored_chrom_lengths is not None:
+            # Loaded only when its contig list is the table's, so a contig
+            # the screen above admitted is in it.
+            resolved = self._stored_chrom_lengths[chrom]
+        else:
+            resolved = derive_chrom_length(self, chrom)
         if resolved.extent is not None:
             raise ValueError(
                 resolved.extent.refusal(chrom, self.get_all_chromosomes()))

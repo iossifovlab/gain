@@ -28,6 +28,7 @@ from gain.genomic_resources.genomic_position_table import (
     ChromLengthSource,
     ContigExtent,
 )
+from gain.genomic_resources.utils import read_resource_id_label
 
 if TYPE_CHECKING:
     from gain.genomic_resources.reference_genome import ReferenceGenome
@@ -139,6 +140,24 @@ class DerivedFrom:
 
     reference_genome: str | None
     files_md5: dict[str, str | None]
+
+    def describes(self, resource: GenomicResource) -> bool:
+        """Whether ``resource``, as it is now, is what this was derived from.
+
+        The check a reader with no repository can make: the label as the
+        resource carries it today, and the manifest's md5 of every file
+        recorded here.  A label whose genome did not resolve at repair
+        was recorded as none, so it reads as stale here until it does --
+        conservative on purpose; the answer then costs the live probe
+        and nothing more.
+        """
+        if read_resource_id_label(
+                resource, "reference_genome") != self.reference_genome:
+            return False
+        manifest = resource.get_manifest()
+        return all(
+            file_name in manifest and manifest[file_name].md5 == md5
+            for file_name, md5 in self.files_md5.items())
 
 
 @dataclass(frozen=True)
