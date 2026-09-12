@@ -1016,6 +1016,9 @@ def _run_stats_core(
     needs_update = 0
     failed: set[str] = set(outcome.failed)
     stats_resources: list[GenomicResource] = []
+    # Resources whose derived files alone were rewritten: no task ran for
+    # them, but their manifests have new content to record all the same.
+    derived_resources: list[GenomicResource] = []
     for res in resources:
         if res.resource_id in failed:
             # Its manifest could not be built, so there is nothing to
@@ -1025,16 +1028,23 @@ def _run_stats_core(
                 "not building the statistics of <%s>: "
                 "it already failed in this run", res.resource_id)
             continue
-        # Four operations under one `try` -- building the implementation,
-        # looking up the manifest update, comparing the statistics hash and
-        # collecting the statistics tasks -- so the message names none of
-        # them and carries the cause instead (gain#364).
+        # Five operations under one `try` -- building the implementation,
+        # looking up the manifest update, comparing the statistics hash,
+        # checking the derived files and collecting the statistics tasks
+        # -- so the message names none of them and carries the cause
+        # instead (gain#364).
         try:
             impl = build_resource_implementation(res)
             manifest_updated = updates_needed[res.resource_id]
             needs_rebuild = manifest_updated or _stats_need_rebuild(proto, impl)
+            # A second gate, beside the hash's and independent of it: a
+            # file the kind derives at repair from inputs the hash must
+            # not learn about (a score's chromosome lengths from its
+            # `reference_genome` label, gain#1419).  Stale on its own, it
+            # is rewritten on its own -- never at the price of a rebuild.
+            derived_stale = impl.has_stale_derived_files(repo)
             if dry_run:
-                if needs_rebuild:
+                if needs_rebuild or derived_stale:
                     logger.info(
                         "Statistics of <%s> needs update", res.resource_id)
                     needs_update += 1
@@ -1043,6 +1053,9 @@ def _run_stats_core(
                     graph, proto, impl, repo,
                     region_size=region_size)
                 stats_resources.append(res)
+            elif derived_stale:
+                impl.rebuild_derived_files(repo)
+                derived_resources.append(res)
         except Exception as err:  # ruff: ignore[blind-except]
             # Collected, not raised: the resources after this one in the
             # repository are still repaired.
@@ -1089,8 +1102,11 @@ def _run_stats_core(
             # the per-resource list does not say better.
             repo_failed = False
 
-        # Rebuilding the statistics wrote new files into these resources, so
-        # their manifests have to be rebuilt. `use_dvc=True` (the size and
+    written = [*stats_resources, *derived_resources]
+    if written:
+        # Rebuilding the statistics (or the derived files alone) wrote new
+        # files into these resources, so their manifests have to be
+        # rebuilt. `use_dvc=True` (the size and
         # timestamp fast path) is deliberate even under `--without-dvc`: the
         # manifest pass above has just verified the content of every
         # materialised file of this very repository, in this very command,
@@ -1103,13 +1119,13 @@ def _run_stats_core(
         # resource must not be published from the manifest this pass
         # declined to write (gain#503).
         stats_manifest_outcome = _run_repo_manifest_command_internal(
-            proto, stats_resources,
+            proto, written,
             dry_run=False, force=True, use_dvc=True)
         failed |= set(stats_manifest_outcome.failed)
 
     return CommandResult(
         failed=frozenset(failed), repo_failed=repo_failed,
-        wrote=outcome.wrote or bool(stats_resources))
+        wrote=outcome.wrote or bool(written))
 
 
 def _publish_repository_contents(

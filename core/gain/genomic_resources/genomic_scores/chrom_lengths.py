@@ -48,6 +48,7 @@ __all__ = [
     "StoredChromLengths",
     "derive_chrom_length",
     "derive_chrom_lengths",
+    "load_chrom_lengths",
     "save_chrom_lengths",
 ]
 
@@ -171,9 +172,45 @@ def _serialize(stored: StoredChromLengths) -> str:
     }, indent=2)
 
 
+def _deserialize(content: str) -> StoredChromLengths:
+    document = json.loads(content)
+    derived_from = document["derived_from"]
+    return StoredChromLengths(
+        lengths={
+            chrom: ChromLength(
+                length=record["length"],
+                source=(
+                    ChromLengthSource[record["source"]]
+                    if record["source"] is not None else None),
+                extent=(
+                    ContigExtent[record["extent"]]
+                    if record["extent"] is not None else None),
+            )
+            for chrom, record in document["lengths"].items()
+        },
+        derived_from=DerivedFrom(
+            reference_genome=derived_from["reference_genome"],
+            files_md5=derived_from["files_md5"],
+        ),
+    )
+
+
 def save_chrom_lengths(
     resource: GenomicResource, stored: StoredChromLengths,
 ) -> None:
     """Write ``stored`` as the resource's ``CHROM_LENGTHS_FILE``."""
     with resource.open_raw_file(CHROM_LENGTHS_FILE, mode="wt") as outfile:
         outfile.write(_serialize(stored))
+
+
+def load_chrom_lengths(resource: GenomicResource) -> StoredChromLengths | None:
+    """Read the resource's ``CHROM_LENGTHS_FILE``; ``None`` when it has none.
+
+    Absence is a normal state, not an error: a resource repaired before
+    the file existed has nothing stored until its next repair.
+    """
+    try:
+        content = resource.get_file_content(CHROM_LENGTHS_FILE)
+    except FileNotFoundError:
+        return None
+    return _deserialize(content)
