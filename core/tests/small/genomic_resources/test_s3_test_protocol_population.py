@@ -34,19 +34,6 @@ STATE_SUFFIX = ".state"
 
 
 @pytest.fixture
-def s3_enabled(request: pytest.FixtureRequest) -> None:
-    """Skip unless the run was started with ``--enable-s3-testing``.
-
-    These tests speak to the s3 protocol directly rather than through the
-    ``grr_scheme`` parametrization -- what they cover is the population
-    itself, not a behaviour that every scheme shares -- so they need the
-    same gate the parametrization applies, applied by hand.
-    """
-    if not request.config.getoption("enable_s3"):
-        pytest.skip("S3 testing not enabled")
-
-
-@pytest.fixture
 def source_proto(
     tmp_path: pathlib.Path,
     content_fixture: dict[str, Any],

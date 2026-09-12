@@ -138,6 +138,13 @@ _COPY_BACKOFF_BASE = 5  # seconds; delays are 5s, 15s, 45s
 #: of the resource: everything that enumerates resource files skips it.
 GRR_INTERNAL_DIR = ".grr"
 
+#: How long the presigned url an s3 GRR hands pysam and pyBigWig stays
+#: valid, in seconds -- and therefore how long the handle does, since the
+#: library re-requests that url on every seek. The most SigV4 allows; see
+#: ADR 0023 (gain#1398) for why the maximum and what a handle older than
+#: this does.
+S3_PRESIGN_EXPIRATION_SECONDS = 7 * 24 * 60 * 60
+
 
 class RetryableCopyError(OSError):
     """A copy failure the download loop retries from scratch.
@@ -1756,7 +1763,8 @@ class FsspecReadOnlyProtocol(
             if self.scheme == "file":
                 return urlparse(url).path
             if self.scheme == "s3":
-                return cast(str, self.filesystem.sign(url))
+                return cast(str, self.filesystem.sign(
+                    url, expiration=S3_PRESIGN_EXPIRATION_SECONDS))
             return url
 
         return process_file_url(self.get_resource_file_url(resource, filename))

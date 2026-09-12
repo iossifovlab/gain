@@ -10,7 +10,8 @@
 [#1106](https://github.com/iossifovlab/gain/issues/1106),
 [#1314](https://github.com/iossifovlab/gain/issues/1314),
 [#1333](https://github.com/iossifovlab/gain/issues/1333),
-[#1339](https://github.com/iossifovlab/gain/issues/1339)
+[#1339](https://github.com/iossifovlab/gain/issues/1339),
+[#1398](https://github.com/iossifovlab/gain/issues/1398)
 
 ## Context
 
@@ -686,3 +687,45 @@ the by-name open refreshed it four times (its own, plus the probe for the
 index it never has). Feeding htslib the redacted bytes through a pipe fd
 would keep both invariants (no filename, no bracket) at a tenth of the cost,
 at the price of the named per-line refusal; not taken at this size.
+
+## Amendment — gain#1398: the presigned url has a lifetime, and it is the handle's
+
+**Date:** 2026-09-12
+
+The gain#1339 amendment describes the presigned url an s3 GRR hands pysam
+without saying how long it is good for. It was good for **100 seconds** —
+s3fs's default `expiration`, which `_get_file_url` never overrode — and
+that number is the handle's lifetime, not the open's: pysam holds the
+signed string and htslib re-requests it with a `Range:` header on every
+seek, so the first fetch after the signature lapsed that touched an unread
+byte range failed. Measured against the MinIO fixture: a `TabixFile`
+presigned for 2 s fetches, waits, and then raises
+`ValueError: iteration failed (error code -2)` on a far region; the same
+open presigned for 600 s fetches it. Nothing in the suite held an s3-backed
+handle for two minutes, and the production definitions in this stack are
+cached — the caching protocol downloads the file and opens it by local
+path, so no signed url reaches pysam there — which is why an uncached s3
+GRR could break this way unnoticed.
+
+**The lifetime is now seven days**, `S3_PRESIGN_EXPIRATION_SECONDS`, passed
+explicitly on every presign `_get_file_url` performs — the data file and
+each index, on every pysam open and on the bigwig open. Seven days is the
+most a SigV4 signature allows; S3 refuses a longer `X-Amz-Expires` at
+request time (botocore does not validate it). The older SigV2 spelling —
+the one botocore emits against a custom endpoint such as MinIO, per the
+gain#1339 amendment — has no such ceiling, and gets the same seven days
+anyway, so an s3 GRR's handles live equally long whichever signature its
+endpoint negotiates. The cap is the widest SigV4 allows rather than a
+choice an operator tunes, and no configuration surface is added.
+
+**What that buys and what it costs.** A handle on an uncached s3 GRR is
+good for a week after its open; every open re-signs, so a fresh handle
+starts a fresh week. A handle older than that still fails on its next
+unread range, and the remedy is to reopen — the cap cannot be removed while
+pysam is handed a signed string, because there is no hook to re-sign an
+open handle. Removing it would mean handing htslib `s3://` and letting it
+sign per request, which gain#1371 proved workable and declined
+(`.out-of-scope/htslib-native-s3.md`). The cost is a longer-lived bearer
+credential in the url; the redactors and the brackets this ADR describes
+are what make that acceptable, and none of them changes — the signed url's
+shape is the same, only its `Expires` / `X-Amz-Expires` moves.
