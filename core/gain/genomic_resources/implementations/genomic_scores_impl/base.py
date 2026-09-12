@@ -14,7 +14,12 @@ from gain.genomic_resources.genomic_scores import (
     build_score_from_resource,
 )
 from gain.genomic_resources.genomic_scores.chrom_lengths import (
+    ChromLength,
+    DerivedFrom,
+    StoredChromLengths,
     derive_chrom_lengths,
+    load_chrom_lengths,
+    save_chrom_lengths,
 )
 from gain.genomic_resources.reference_genome import (
     ReferenceGenome,
@@ -94,19 +99,23 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         region_size = kwargs.get("region_size", 3_000_000_000)
         grr = kwargs.get("grr")
 
-        if region_size <= 0:
-            # No regions; compute histograms directly.
-            return [
-                TaskGraph.make_task(
-                    f"{self.resource.get_full_id()}_noregion_histograms",
-                    scan.do_noregion_histograms,
-                    args=[self.resource],
-                    deps=[],
-                ),
-            ]
-
         with self.score.open():
-            regions = self._get_chrom_regions(region_size, grr)
+            # One resolver pass per repair: the answer is stored for the
+            # score's own reads (gain#1419) AND splits the regions below.
+            stored = self._store_chrom_lengths(grr)
+
+            if region_size <= 0:
+                # No regions; compute histograms directly.
+                return [
+                    TaskGraph.make_task(
+                        f"{self.resource.get_full_id()}_noregion_histograms",
+                        scan.do_noregion_histograms,
+                        args=[self.resource],
+                        deps=[],
+                    ),
+                ]
+
+            regions = self._regions_from(stored.lengths, region_size)
             all_min_max_scores, all_hist_confs = \
                 scan.unpack_score_defs(self.resource)
 
@@ -243,15 +252,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         # ``get`` with a default reads without inserting.
         if (resolved := cache.get(grr, {}).get(genome_id)) is not None:
             return resolved
-        try:
-            ref_genome = build_reference_genome_from_resource(
-                grr.get_resource(genome_id),
-            )
-            logger.info(
-                "Using reference genome label <%s> ",
-                genome_id,
-            )
-        except FileNotFoundError:
+        # ``find_resource``, not ``get_resource``: the two repository
+        # kinds refuse a missing id with different exceptions (the group
+        # repository the CLI builds raises ``ValueError``, a plain one
+        # ``FileNotFoundError``), and catching one of them let the other
+        # abort a score's statistics over a label naming nothing.
+        genome_resource = grr.find_resource(genome_id)
+        if genome_resource is None:
             logger.warning(
                 "Couldn't find reference genome %s",
                 genome_id,
@@ -259,28 +266,120 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             # Not remembered: it may be present next call, and callers
             # cope (raw counts rendering, the table's own length scanning).
             return None
+        ref_genome = build_reference_genome_from_resource(genome_resource)
+        logger.info(
+            "Using reference genome label <%s> ",
+            genome_id,
+        )
         cache.setdefault(grr, {})[genome_id] = ref_genome
         return ref_genome
 
     def _get_chrom_regions(
         self, region_size: int, grr: GenomicResourceRepo | None = None,
     ) -> list[Region]:
+        """The statistics regions, resolved live; writes nothing.
 
-        regions = []
+        The build itself goes through :meth:`_store_chrom_lengths`; this
+        is the seam the region-boundary tests pin, with no file written
+        into the fixture as a side effect.
+        """
+        return self._regions_from(
+            self._resolve_chrom_lengths(grr).lengths, region_size)
+
+    def _store_chrom_lengths(
+        self, grr: GenomicResourceRepo | None,
+    ) -> StoredChromLengths:
+        """Run the ladder over the open score and write what it found.
+
+        The one writer of ``CHROM_LENGTHS_FILE``, for both the full build
+        and the derived-only rewrite.  Written in the controller rather
+        than as a task: the file is independent of the histograms and
+        under its own gate.
+        """
+        stored = self._resolve_chrom_lengths(grr)
+        save_chrom_lengths(self.resource, stored)
+        return stored
+
+    def _resolve_chrom_lengths(
+        self, grr: GenomicResourceRepo | None,
+    ) -> StoredChromLengths:
+        """Run the ladder over the open score, and say what it ran on.
+
+        The ladder -- genome label first, then whatever the table can say
+        -- is the score layer's (gain#1412), asked once per contig of the
+        score; this caller supplies the genome and records the inputs.
+        """
+        ref_genome, derived_from = self._chrom_lengths_inputs(grr)
+        return StoredChromLengths(
+            lengths=derive_chrom_lengths(self.score, ref_genome),
+            derived_from=derived_from)
+
+    def _chrom_lengths_inputs(
+        self, grr: GenomicResourceRepo | None,
+    ) -> tuple[ReferenceGenome | None, DerivedFrom]:
+        """The genome the ladder's top rung reads, and the freshness key.
+
+        Resolves the genome but never a length, so the gate that compares
+        the key is a label read, a genome lookup and a manifest read.
+        """
         # Narrowed rather than cast: a label that is not a resource id
         # used to reach the resolution cache as itself and raise
         # ``TypeError`` here, aborting a repository-wide statistics walk
         # over one mis-authored resource.  Read as absent, the contig
-        # lengths fall through to the table's own answer below, which is
-        # what an unlabelled score already does (gain#1053).
+        # lengths fall through to the table's own answer, which is what
+        # an unlabelled score already does (gain#1053).
         ref_genome_id = read_resource_id_label(
             self.resource, "reference_genome")
         ref_genome = self._get_reference_genome_cached(grr, ref_genome_id)
-        # The ladder -- genome label first, then whatever the table can say
-        # -- is the score layer's (gain#1412), asked once per contig of the
-        # score; this caller only consumes the record.
-        for chrom, resolved in derive_chrom_lengths(
-                self.score, ref_genome).items():
+        return ref_genome, DerivedFrom(
+            # The label the genome was resolved FROM, so an unresolvable
+            # genome is recorded as none at all -- and reads as a change
+            # the day it resolves.
+            reference_genome=ref_genome_id if ref_genome is not None else None,
+            files_md5=self._files_md5(),
+        )
+
+    def _files_md5(self) -> dict[str, str | None]:
+        """The manifest md5 of every table file, keyed by name.
+
+        One definition of "the same files" for the two gates that ask --
+        the statistics hash and the stored lengths' key -- so they cannot
+        drift apart on what counts as a data file.
+        """
+        manifest = self.resource.get_manifest()
+        return {
+            file_name: manifest[file_name].md5
+            for file_name in sorted(self.files)}
+
+    def has_stale_derived_files(
+        self, grr: GenomicResourceRepo | None,
+    ) -> bool:
+        stored = load_chrom_lengths(self.resource)
+        if stored is None:
+            logger.info(
+                "<%s> has no stored chromosome lengths; needs update",
+                self.resource.get_full_id())
+            return True
+        _, current = self._chrom_lengths_inputs(grr)
+        if stored.derived_from != current:
+            logger.info(
+                "stored chromosome lengths of <%s> are outdated; "
+                "needs update", self.resource.get_full_id())
+            return True
+        return False
+
+    def rebuild_derived_files(
+        self, grr: GenomicResourceRepo | None,
+    ) -> None:
+        with self.score.open():
+            self._store_chrom_lengths(grr)
+
+    @staticmethod
+    def _regions_from(
+        lengths: dict[str, ChromLength], region_size: int,
+    ) -> list[Region]:
+        regions = []
+        for chrom, resolved in lengths.items():
             if resolved.extent is ContigExtent.EMPTY:
                 # PROVEN to hold no records -- only a backend holding the
                 # whole file can say this (e.g. a chrom_mapping onto a file
@@ -333,7 +432,6 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         This hash is used to decide whether the resource statistics should be
         recomputed.
         """
-        manifest = self.resource.get_manifest()
         return json.dumps({
             "config": {
                 "histograms": [
@@ -343,8 +441,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 ],
                 "table": {
                     "config": self.score.table.definition,
-                    "files_md5": {file_name: manifest[file_name].md5
-                                  for file_name in sorted(self.files)},
+                    "files_md5": self._files_md5(),
                 },
             },
             "score_config": [

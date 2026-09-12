@@ -89,14 +89,17 @@ class PositionScoreImplementation(GenomicScoreImplementation):
         A label naming something that is not a genome is a reason to
         degrade to raw counts, not to fail the page build.
 
-        Two ways it can fail to name one, and the guard below only ever
-        covered the second.  A value that is not a resource id at all --
-        the int, list or dict a free-form ``meta.labels`` allows -- used
-        to reach resolution as itself and raise ``TypeError`` past the
-        ``except ValueError``, failing the page build this comment says
-        must not fail; it is now read as absent and reported by the
-        narrowing (gain#1053).  A value that IS an id but names no
-        genome still reaches resolution and is caught here.
+        Three ways it can fail to name one.  A value that is not a
+        resource id at all -- the int, list or dict a free-form
+        ``meta.labels`` allows -- used to reach resolution as itself and
+        raise ``TypeError`` past the ``except ValueError``, failing the
+        page build this comment says must not fail; it is now read as
+        absent and reported by the narrowing (gain#1053).  An id the
+        repository does not have is answered ``None``, with its own
+        warning, by the cached resolver (which looks the id up rather
+        than catching one repository kind's exception, gain#1419).  An
+        id naming a resource of another type still reaches
+        ``build_reference_genome_from_resource`` and is caught here.
         """
         genome_id = read_resource_id_label(
             self.resource, "reference_genome")

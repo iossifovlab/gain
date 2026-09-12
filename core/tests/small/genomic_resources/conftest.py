@@ -17,6 +17,7 @@ from unittest import mock
 
 import pytest
 import pytest_mock
+import yaml
 from gain.genomic_resources.cli import _create_contents_db, cli_manage
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadOnlyProtocol,
@@ -46,9 +47,11 @@ from gain.genomic_resources.testing import (
     setup_directories,
 )
 from gain.genomic_resources.testing.builders import (
+    GRRBuilder,
     ResourceBuilder,
     a_grr,
     a_position_score,
+    a_reference_genome,
 )
 
 logger = logging.getLogger(__name__)
@@ -808,3 +811,90 @@ def indexed_repo(
     proto = build_filesystem_test_protocol(tmp_path, repair=False)
     assert _create_contents_db(proto) == frozenset()
     return GenomicResourceProtocolRepo(proto)
+
+
+# --- the labelled tabix score the chromosome-length tests share ------------
+#
+# One fixture for the repair seam (test_cli_stats_chrom_lengths) and the
+# score seam (test_score_stored_chrom_lengths), so the two suites assert
+# the same numbers about the same rows and cannot drift apart.
+
+#: The genome's exact length for chr1, past every row of the score.
+CHR1_GENOME_LENGTH = 3000
+#: The tabix probe's bound for a lone chrM row at 40, as the region-split
+#: pin in test_genomic_scores_impl measures for the same rows.
+CHRM_PROBE_BOUND = 48
+
+
+def a_labelled_tabix_score_grr(*, genome_id: str = "genome") -> GRRBuilder:
+    """A tabix score ``score`` labelled with ``genome``, which lists chr1
+    but not chrM, and a second genome ``other_genome`` for the label to be
+    re-pointed at.  ``genome_id`` labels the score with something else --
+    a genome the repository lacks, say."""
+    return (
+        a_grr()
+        .with_resource(
+            "genome",
+            a_reference_genome()
+            .with_chromosome("chr1", "A" * CHR1_GENOME_LENGTH))
+        .with_resource(
+            "other_genome",
+            a_reference_genome()
+            .with_chromosome("chr1", "A" * CHR1_GENOME_LENGTH))
+        .with_resource(
+            "score",
+            a_position_score()
+            .with_score("score", "float")
+            .with_data("""
+                chrom  pos_begin  score
+                chr1   10         0.1
+                chr1   2500       0.2
+                chrM   40         0.3
+            """)
+            .with_tabix()
+            .with_labels(reference_genome=genome_id))
+    )
+
+
+def resource_stats(
+    tmp_path: pathlib.Path, resource_id: str, *extra: str,
+) -> None:
+    """``grr_manage resource-stats`` on one resource of the repository."""
+    cli_manage([
+        "resource-stats", "-r", resource_id, "-R", str(tmp_path), "-j", "1",
+        *extra])
+
+
+def set_label(
+    tmp_path: pathlib.Path, resource_id: str, label: str, value: Any,
+) -> None:
+    """Rewrite one ``meta.labels`` entry of a realized resource, as YAML.
+
+    Through the YAML rather than a text replace, so any value -- an id,
+    an int, a list -- lands as the curator would have written it.
+    """
+    config = tmp_path / resource_id / GR_CONF_FILE_NAME
+    document = yaml.safe_load(config.read_text())
+    document["meta"]["labels"][label] = value
+    config.write_text(yaml.safe_dump(document))
+
+
+def truncate(path: pathlib.Path) -> None:
+    """Leave ``path`` as a write killed partway through would."""
+    path.write_text(path.read_text()[:40])
+
+
+def patch_tabix_probe(
+    mocker: pytest_mock.MockerFixture,
+    side_effect: Callable[..., Any] | None = None,
+) -> mock.MagicMock:
+    """Replace the tabix contig-length probe where it lives (gain#509).
+
+    One spelling of the dotted path for every test that asserts the
+    probe ran, or did not: a move of the probe fails them all loudly
+    here rather than turning an ``assert_not_called`` vacuous.
+    """
+    return mocker.patch(
+        "gain.genomic_resources.genomic_position_table.table_tabix"
+        ".get_chromosome_length_tabix",
+        side_effect=side_effect)

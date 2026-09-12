@@ -23,6 +23,7 @@ from .repository import (
     INDEX_COLUMN_PATTERN,
     INDEX_COLUMN_RE,
     GenomicResource,
+    GenomicResourceRepo,
     _description_in,
     _summary_in,
 )
@@ -288,6 +289,28 @@ class GenomicResourceImplementation(ABC):
     ) -> list[TaskDesc]:
         """Create tasks for calculating resource statistics for task graph."""
         raise NotImplementedError
+
+    def has_stale_derived_files(
+        self, grr: GenomicResourceRepo | None,  # ruff: ignore[unused-method-argument]
+    ) -> bool:
+        """Whether a file this kind derives at repair, under a freshness
+        gate of its own rather than the statistics hash's, is missing or
+        out of date.
+
+        Cheap by contract: a derived file's gate compares what it was
+        derived from with what is there now, and never derives anything.
+        Most kinds have no such file and answer ``False``; a genomic
+        score keeps its chromosome lengths this way (gain#1419).
+        """
+        return False
+
+    def rebuild_derived_files(
+        self, grr: GenomicResourceRepo | None,  # ruff: ignore[unused-method-argument]
+    ) -> None:
+        """Rewrite the derived files alone, leaving the statistics as they
+        are.  The repair loop calls this when the statistics hash is
+        current but :meth:`has_stale_derived_files` says otherwise."""
+        return
 
     @abstractmethod
     def calc_info_hash(self) -> bytes:
