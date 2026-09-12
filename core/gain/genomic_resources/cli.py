@@ -1042,9 +1042,10 @@ def _run_stats_core(
             # not learn about (a score's chromosome lengths from its
             # `reference_genome` label, gain#1419).  Stale on its own, it
             # is rewritten on its own -- never at the price of a rebuild.
-            derived_stale = impl.has_stale_derived_files(repo)
+            # Asked only when the hash gate has not already decided: a
+            # rebuild rewrites the derived files anyway.
             if dry_run:
-                if needs_rebuild or derived_stale:
+                if needs_rebuild or impl.has_stale_derived_files(repo):
                     logger.info(
                         "Statistics of <%s> needs update", res.resource_id)
                     needs_update += 1
@@ -1053,7 +1054,7 @@ def _run_stats_core(
                     graph, proto, impl, repo,
                     region_size=region_size)
                 stats_resources.append(res)
-            elif derived_stale:
+            elif impl.has_stale_derived_files(repo):
                 impl.rebuild_derived_files(repo)
                 derived_resources.append(res)
         except Exception as err:  # ruff: ignore[blind-except]

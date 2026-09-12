@@ -974,12 +974,13 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         upper bound, an in-memory score how far its rows reach.
 
         Answered from the ``chrom_lengths.json`` the last repair stored,
-        when :meth:`open` found it current -- the whole ladder, genome rung
-        included, at the cost of a dict lookup.  Without it (an unrepaired
-        resource, a re-pointed label) the table alone answers, live on
-        every call: on a tabix score that is the index probe each time.
-        The score holds no genome of its own -- see :mod:`.chrom_lengths`
-        for the ladder and who supplies its top rung.
+        read on the first length read of an open and found current -- the
+        whole ladder, genome rung included, at the cost of a dict lookup.
+        Without it (an unrepaired resource, a re-pointed label) the table
+        alone answers, live on every call: on a tabix score that is the
+        index probe each time.  The score holds no genome of its own --
+        see :mod:`.chrom_lengths` for the ladder and who supplies its top
+        rung.
         """
         return self._resolve_chrom_length(chrom)[0]
 
@@ -993,10 +994,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         needs to know WHY it is absent reads
         :func:`~.chrom_lengths.derive_chrom_lengths` instead.
 
-        From the stored file when :meth:`open` loaded one, otherwise every
-        contig resolved live, at the cost :meth:`get_chrom_length` names,
-        times the contig count.  Raises ``ValueError`` on a score that is
-        not open.
+        From the stored file when this open's first length read found one
+        current, otherwise every contig resolved live, at the cost
+        :meth:`get_chrom_length` names, times the contig count.  Raises
+        ``ValueError`` on a score that is not open.
         """
         self._require_open()
         return {

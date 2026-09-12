@@ -27,6 +27,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from gain import logging
 from gain.genomic_resources.genomic_position_table import (
     ChromLengthSource,
     ContigExtent,
@@ -38,6 +39,8 @@ if TYPE_CHECKING:
     from gain.genomic_resources.repository import GenomicResource
 
     from .base import GenomicScore
+
+logger = logging.getLogger(__name__)
 
 # The provenance vocabulary is the table layer's, because three of its four
 # members are facts each backend declares about its own format
@@ -150,12 +153,17 @@ class DerivedFrom:
         The check a reader with no repository can make: the label as the
         resource carries it today (narrowed as the repair narrowed it,
         but quietly -- this compares, it does not act), and the
-        manifest's md5 of every file recorded here.  A label whose genome
-        did not resolve at repair was recorded as none, so it reads as
-        stale here until it does -- conservative on purpose; the answer
-        then costs the live probe and nothing more.
+        manifest's md5 of every file recorded here.
+
+        A file derived with NO genome -- unlabelled, or a label naming a
+        genome the repository lacked -- matches whatever the label says
+        now: it holds only the table's answers, which are exactly what a
+        reader without a genome would resolve live, so trusting it can
+        answer nothing the fallback would not.  A file derived from a
+        genome matches only the same label: under another, or none, it
+        would answer that genome's lengths.
         """
-        if read_resource_id_label(
+        if self.reference_genome is not None and read_resource_id_label(
                 resource, "reference_genome", report=False,
         ) != self.reference_genome:
             return False
@@ -231,10 +239,24 @@ def load_chrom_lengths(resource: GenomicResource) -> StoredChromLengths | None:
     """Read the resource's ``CHROM_LENGTHS_FILE``; ``None`` when it has none.
 
     Absence is a normal state, not an error: a resource repaired before
-    the file existed has nothing stored until its next repair.
+    the file existed has nothing stored until its next repair.  A file
+    that cannot be read as one -- a repair killed mid-write leaves a
+    truncated one, and the write is not atomic -- reads as absent too,
+    with a WARNING naming it: absent, the repair gate rewrites it and the
+    score resolves live; raised, it would wedge both, ``-f`` included.
     """
     try:
         content = resource.get_file_content(CHROM_LENGTHS_FILE)
     except FileNotFoundError:
         return None
-    return _deserialize(content)
+    try:
+        return _deserialize(content)
+    except (ValueError, KeyError, TypeError) as err:
+        # ``json.JSONDecodeError`` is a ``ValueError``; so is an enum
+        # member the name does not match.  The other two are a document
+        # of the wrong shape.
+        logger.warning(
+            "resource <%s>: %s cannot be read as stored chromosome "
+            "lengths (%s); treating it as absent",
+            resource.resource_id, CHROM_LENGTHS_FILE, err)
+        return None
