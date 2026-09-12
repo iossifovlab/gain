@@ -20,8 +20,9 @@ stored ``statistics/chrom_lengths.json`` (gain#1419) is a later slice.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from gain.genomic_resources.genomic_position_table import (
     ChromLengthSource,
@@ -30,6 +31,7 @@ from gain.genomic_resources.genomic_position_table import (
 
 if TYPE_CHECKING:
     from gain.genomic_resources.reference_genome import ReferenceGenome
+    from gain.genomic_resources.repository import GenomicResource
 
     from .base import GenomicScore
 
@@ -39,11 +41,19 @@ if TYPE_CHECKING:
 # API that answers with it lives, so a caller of ``get_chrom_length_source``
 # finds the enum beside the method (the ``BIGWIG_VALUE_COLUMN`` pattern).
 __all__ = [
+    "CHROM_LENGTHS_FILE",
     "ChromLength",
     "ChromLengthSource",
+    "DerivedFrom",
+    "StoredChromLengths",
     "derive_chrom_length",
     "derive_chrom_lengths",
+    "save_chrom_lengths",
 ]
+
+#: Where a repaired score keeps the resolver's answer, beside its other
+#: statistics.  Under its own freshness gate, not ``stats_hash``'s.
+CHROM_LENGTHS_FILE = "statistics/chrom_lengths.json"
 
 
 @dataclass(frozen=True)
@@ -112,3 +122,58 @@ def derive_chrom_lengths(
         chrom: derive_chrom_length(score, chrom, ref_genome)
         for chrom in score.get_all_chromosomes()
     }
+
+
+@dataclass(frozen=True)
+class DerivedFrom:
+    """What a stored answer was computed from -- the file's freshness key.
+
+    ``reference_genome`` is the label the genome was actually resolved
+    from, ``None`` when there was none to resolve: no label, a label that
+    is not a resource id, or a genome the repository could not find.  So
+    a genome that turns up later reads as a change.  ``files_md5`` is the
+    manifest md5 of every data file of the table, keyed by name -- as the
+    manifest records it, which for an entry it has not digested is none.
+    """
+
+    reference_genome: str | None
+    files_md5: dict[str, str | None]
+
+
+@dataclass(frozen=True)
+class StoredChromLengths:
+    """The resolver's answer for every contig, and what it was derived from."""
+
+    lengths: dict[str, ChromLength]
+    derived_from: DerivedFrom
+
+
+def _serialize(stored: StoredChromLengths) -> str:
+    def record(resolved: ChromLength) -> dict[str, Any]:
+        return {
+            "length": resolved.length,
+            "source": (
+                resolved.source.name if resolved.source is not None
+                else None),
+            "extent": (
+                resolved.extent.name if resolved.extent is not None
+                else None),
+        }
+    return json.dumps({
+        "derived_from": {
+            "reference_genome": stored.derived_from.reference_genome,
+            "files_md5": stored.derived_from.files_md5,
+        },
+        "lengths": {
+            chrom: record(resolved)
+            for chrom, resolved in stored.lengths.items()
+        },
+    }, indent=2)
+
+
+def save_chrom_lengths(
+    resource: GenomicResource, stored: StoredChromLengths,
+) -> None:
+    """Write ``stored`` as the resource's ``CHROM_LENGTHS_FILE``."""
+    with resource.open_raw_file(CHROM_LENGTHS_FILE, mode="wt") as outfile:
+        outfile.write(_serialize(stored))
