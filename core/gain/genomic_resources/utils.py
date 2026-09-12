@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def read_resource_id_label(
-    resource: GenomicResource, label: str, *, report: bool = True,
+    resource: GenomicResource, label: str,
 ) -> str | None:
     """The named label's value, when that label names another resource.
 
@@ -22,13 +22,6 @@ def read_resource_id_label(
     be a resource id reads as absent and is reported.  An absent label,
     and the explicit YAML null the production GRRs carry, are not
     curator mistakes and stay silent.
-
-    ``report=False`` narrows without the warning, for a caller that only
-    COMPARES the label with a value it recorded earlier (a stored file's
-    freshness check, gain#1419) rather than acting on it: the readers
-    that act on it -- the repair, the page render -- have reported the
-    slip already, and a comparison on every ``open()`` would repeat it
-    without adding a fact.
 
     Taken by label name rather than hard-wired to ``reference_genome``,
     because four labels across three modules name a resource this way:
@@ -54,8 +47,6 @@ def read_resource_id_label(
         return None
     if isinstance(value, str) and value:
         return value
-    if not report:
-        return None
     reason = "empty" if isinstance(value, str) \
         else f"a {type(value).__name__}, not a string"
     logger.warning(
