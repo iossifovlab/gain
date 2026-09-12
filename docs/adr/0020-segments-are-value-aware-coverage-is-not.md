@@ -213,6 +213,47 @@ alt-minus-ref, not an absolute value.
     simply leaves the universe, contributing neither denominator nor roll-up.
   - **Still render-time only.** No stored statistic changes and no resource
     rebuilds: this bullet's own rule is what makes the correction free.
+
+  *Amended by [gain#1419](https://github.com/iossifovlab/gain/issues/1419):
+  chromosome **lengths** are now stored; **fractions** still are not.* The
+  bullet's premise — "chromosome lengths belong to a reference genome, not to
+  the score" — was half the story. The *score* has a length per contig it
+  carries, resolved through one ladder (`reference_genome` label → bigWig
+  header → tabix estimate, per contig; gain#1412), and the tabix rung is a
+  probe over the index that costs real time on a large score. So the repair
+  runs the ladder once and stores the answer as
+  `statistics/chrom_lengths.json` — per contig the length, its source and,
+  when there is no length, the reason (`EMPTY` / `UNDETERMINED`) — and the
+  score's `get_chrom_length` / `get_all_chrom_lengths` /
+  `get_chrom_length_source` answer from that file when it is current, live
+  through the table when it is not.
+
+  The two kinds of fact are stored differently because they are different
+  kinds of fact:
+
+  - **A length is a property of the score's own contigs, keyed by inputs the
+    resource carries.** The file records what it was derived from — the
+    label the genome was actually resolved from (`null` when it did not
+    resolve, so it reads as a change the day it does) and the manifest md5 of
+    every table file — and has a **freshness gate of its own** in the repair
+    loop, beside `stats_hash` and independent of it. Re-pointing the label
+    rewrites this one file and never a histogram: the label stays out of the
+    statistics hash, which is the promise the resource-authoring
+    documentation already made ("adding the label needs no data rebuild").
+  - **A fraction is a property of a genome the resource does not carry.**
+    Its denominator is the *whole* resolved reference (the gain#1041
+    amendment above), which can change without any file of the resource
+    changing, and which the resource cannot verify from its own manifest. So
+    the fraction stays render-time and the stored statistics stay
+    genome-independent, exactly as before.
+  - **Absent or stale, the file is ignored, never trusted.** A resource
+    repaired before this amendment has no file until its next `resource-stats`
+    run, which writes the file and rebuilds nothing else. A file whose
+    `derived_from` no longer matches the resource (a label re-pointed and not
+    yet repaired) would answer the *old* genome's lengths, so the score treats
+    it as absent and resolves live — at the cost of the probe, and nothing
+    more — until the next repair. Both cases are reported once, at INFO, by
+    the read that wanted the file; opening a score stays silent.
 - **Lazy rollout; `calc_statistics_hash` untouched.** The new statistics do
   not enter the statistics hash, so no existing resource is invalidated.
   Statistics appear as resources are rebuilt; the page renders "not computed"
