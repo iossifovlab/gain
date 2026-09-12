@@ -255,15 +255,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         # ``get`` with a default reads without inserting.
         if (resolved := cache.get(grr, {}).get(genome_id)) is not None:
             return resolved
-        try:
-            ref_genome = build_reference_genome_from_resource(
-                grr.get_resource(genome_id),
-            )
-            logger.info(
-                "Using reference genome label <%s> ",
-                genome_id,
-            )
-        except FileNotFoundError:
+        # ``find_resource``, not ``get_resource``: the two repository
+        # kinds refuse a missing id with different exceptions (the group
+        # repository the CLI builds raises ``ValueError``, a plain one
+        # ``FileNotFoundError``), and catching one of them let the other
+        # abort a score's statistics over a label naming nothing.
+        genome_resource = grr.find_resource(genome_id)
+        if genome_resource is None:
             logger.warning(
                 "Couldn't find reference genome %s",
                 genome_id,
@@ -271,6 +269,11 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             # Not remembered: it may be present next call, and callers
             # cope (raw counts rendering, the table's own length scanning).
             return None
+        ref_genome = build_reference_genome_from_resource(genome_resource)
+        logger.info(
+            "Using reference genome label <%s> ",
+            genome_id,
+        )
         cache.setdefault(grr, {})[genome_id] = ref_genome
         return ref_genome
 

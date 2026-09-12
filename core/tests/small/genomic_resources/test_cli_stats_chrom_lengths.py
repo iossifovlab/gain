@@ -12,6 +12,8 @@ import json
 import pathlib
 from typing import Any, cast
 
+import pytest
+import pytest_mock
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing.builders import (
@@ -170,6 +172,89 @@ def test_the_rewritten_lengths_file_names_the_new_label(
 
     assert _stored_derived_from(statistics)["reference_genome"] == \
         "other_genome"
+
+
+def test_a_label_whose_genome_does_not_resolve_is_stored_as_no_label(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The key records the label the genome was resolved FROM.
+
+    A genome the repository does not have contributes nothing to the
+    ladder, so the file says so -- rather than pinning the table's
+    answer to a label that never took part.
+    """
+    _a_labelled_tabix_score_repo(tmp_path, genome_id="late_genome")
+
+    _resource_stats(tmp_path)
+
+    stored = json.loads(
+        (tmp_path / "score" / "statistics" / "chrom_lengths.json")
+        .read_text())
+    assert stored["derived_from"]["reference_genome"] is None
+    assert stored["lengths"]["chr1"]["source"] == "TABIX_ESTIMATE"
+
+
+def test_a_genome_that_turns_up_later_refreshes_the_lengths_file_alone(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Recorded as none, the label reads as a change once it resolves --
+    so the ordinary run picks the genome up, and no ``-f`` is needed."""
+    _a_labelled_tabix_score_repo(tmp_path, genome_id="late_genome")
+    _resource_stats(tmp_path)
+    statistics = tmp_path / "score" / "statistics"
+    before = _mtimes(statistics)
+    (a_reference_genome()
+     .with_chromosome("chr1", "A" * _CHR1_GENOME_LENGTH)
+     .build_resource(tmp_path / "late_genome"))
+
+    _resource_stats(tmp_path)
+
+    assert _stored_derived_from(statistics)["reference_genome"] == \
+        "late_genome"
+    assert _mtimes(statistics)[statistics / "stats_hash"] == \
+        before[statistics / "stats_hash"]
+
+
+def test_a_forced_run_rewrites_a_current_lengths_file_too(
+    tmp_path: pathlib.Path,
+) -> None:
+    statistics = _a_repaired_labelled_score(tmp_path)
+    lengths_file = statistics / "chrom_lengths.json"
+    before = lengths_file.stat().st_mtime_ns
+
+    _resource_stats(tmp_path, "-f")
+
+    assert lengths_file.stat().st_mtime_ns > before
+
+
+def test_a_dry_run_counts_a_stale_lengths_file_as_needing_update(
+    tmp_path: pathlib.Path,
+) -> None:
+    statistics = _a_repaired_labelled_score(tmp_path)
+    (statistics / "chrom_lengths.json").unlink()
+
+    with pytest.raises(SystemExit) as exit_status:
+        _resource_stats(tmp_path, "--dry-run")
+
+    # The status is the COUNT of resources needing an update (gain#364).
+    assert exit_status.value.code == 1
+
+
+def test_a_dry_run_never_runs_the_tabix_probe_to_check_the_lengths_file(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The gate compares keys; it derives nothing.  On a tabix score the
+    probe is the expensive rung the stored file exists to spare."""
+    _a_repaired_labelled_score(tmp_path)
+    _repoint_the_label(tmp_path, "other_genome")
+    probe = mocker.patch(
+        "gain.genomic_resources.genomic_position_table.table_tabix"
+        ".get_chromosome_length_tabix")
+
+    with pytest.raises(SystemExit):
+        _resource_stats(tmp_path, "--dry-run")
+
+    probe.assert_not_called()
 
 
 def test_a_missing_lengths_file_is_rewritten_without_rebuilding_histograms(
