@@ -95,6 +95,7 @@ from .aggregation import (
     resolve_aggregator_requests,
 )
 from .chrom_lengths import (
+    CHROM_LENGTHS_FILE,
     ChromLength,
     ChromLengthSource,
     derive_chrom_length,
@@ -499,8 +500,19 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         list that is not the table's (a ``chrom_mapping`` changed under
         it).  The next repair refreshes the file; until then the reads
         resolve live, as they did before the file existed.
+
+        Absence is read off the stored manifest, which is already in
+        memory, before the file is asked for: on a remote repository the
+        read is a request, and every score repaired before the file
+        existed would pay it -- for a 404 -- on every open that wants a
+        length.  A resource with no stored manifest has nothing the file
+        could be verified against, and reads as having none.
         """
-        stored = load_chrom_lengths(self.resource)
+        manifest = self.resource.get_loaded_manifest()
+        stored = (
+            load_chrom_lengths(self.resource)
+            if manifest is not None and CHROM_LENGTHS_FILE in manifest
+            else None)
         if stored is None:
             logger.info(
                 "genomic score %s has no stored chromosome lengths; "

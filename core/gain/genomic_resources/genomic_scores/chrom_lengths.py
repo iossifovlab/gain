@@ -32,7 +32,6 @@ from gain.genomic_resources.genomic_position_table import (
     ChromLengthSource,
     ContigExtent,
 )
-from gain.genomic_resources.utils import read_resource_id_label
 
 if TYPE_CHECKING:
     from gain.genomic_resources.reference_genome import ReferenceGenome
@@ -151,9 +150,14 @@ class DerivedFrom:
         """Whether ``resource``, as it is now, is what this was derived from.
 
         The check a reader with no repository can make: the label as the
-        resource carries it today (narrowed as the repair narrowed it,
-        but quietly -- this compares, it does not act), and the
-        manifest's md5 of every file recorded here.
+        resource carries it today, and the stored manifest's md5 of every
+        file recorded here.  The label is compared raw, not narrowed the
+        way the repair reads it: the stored id is a non-empty string, so
+        every value the narrowing would reject is unequal to it already,
+        and this compares, it does not act -- the readers that act report
+        a mis-authored label; a comparison would only repeat them.  The
+        manifest is the stored one, never built: a reader must not scan a
+        resource to check a file, and without one nothing is verifiable.
 
         A file derived with NO genome -- unlabelled, or a label naming a
         genome the repository lacked -- matches whatever the label says
@@ -163,12 +167,12 @@ class DerivedFrom:
         genome matches only the same label: under another, or none, it
         would answer that genome's lengths.
         """
-        if self.reference_genome is not None and read_resource_id_label(
-                resource, "reference_genome", report=False,
-        ) != self.reference_genome:
+        if (self.reference_genome is not None
+                and resource.get_labels().get("reference_genome")
+                != self.reference_genome):
             return False
-        manifest = resource.get_manifest()
-        return all(
+        manifest = resource.get_loaded_manifest()
+        return manifest is not None and all(
             file_name in manifest and manifest[file_name].md5 == md5
             for file_name, md5 in self.files_md5.items())
 
@@ -242,8 +246,9 @@ def load_chrom_lengths(resource: GenomicResource) -> StoredChromLengths | None:
     the file existed has nothing stored until its next repair.  A file
     that cannot be read as one -- a repair killed mid-write leaves a
     truncated one, and the write is not atomic -- reads as absent too,
-    with a WARNING naming it: absent, the repair gate rewrites it and the
-    score resolves live; raised, it would wedge both, ``-f`` included.
+    with a WARNING naming it: absent, the ordinary repair rewrites it
+    and the score resolves live; raised, the gate would fail the
+    resource and every length read would raise with it.
     """
     try:
         content = resource.get_file_content(CHROM_LENGTHS_FILE)
