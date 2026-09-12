@@ -11,11 +11,14 @@ here keeps three things apart: the number, its provenance, and the
 when the number is absent.  The score's methods expose the ``int`` view only.
 
 The ladder the epic (gain#1412) settles is genome label → bigWig header →
-tabix estimate, applied per contig of the score.  This module answers every
-rung live: the genome rung from the ``ReferenceGenome`` a caller with a GRR
-hands in (the statistics build does; the score's own methods have none, so
-they resolve through the table alone), the rest through the table.  The
-stored ``statistics/chrom_lengths.json`` (gain#1419) is a later slice.
+tabix estimate, applied per contig of the score.  The resolver here answers
+every rung live: the genome rung from the ``ReferenceGenome`` a caller with
+a GRR hands in, the rest through the table.  The tabix rung is a probe over
+the index, so the caller that has a GRR -- the statistics build -- runs the
+ladder once, at repair, and stores the answer as ``CHROM_LENGTHS_FILE``
+together with what it was derived from (gain#1419).  The score's own
+methods have no GRR; they read that file when it describes the resource as
+it is now, and resolve through the table alone when it does not.
 """
 
 from __future__ import annotations
