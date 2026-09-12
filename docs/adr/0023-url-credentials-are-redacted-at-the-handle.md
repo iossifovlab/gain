@@ -524,7 +524,9 @@ pysam opens at all — nothing to redact, and gain#1360 unreachable for s3. It
 is not done here: it cannot help `open_bigwig_file` (libBigWig has no s3), it
 splits authentication across two configuration surfaces that must be kept in
 agreement, and it is currently proved only as far as the TLS handshake on
-this host. Tracked as gain#1371.
+this host. gain#1371 took it further — it works in the `core` image once a CA
+bundle sits at libcurl's compiled-in path — and declined it; the reasons are in
+`.out-of-scope/htslib-native-s3.md`.
 
 ## Amendment — gain#1360: the verbosity bracket is serialised
 
