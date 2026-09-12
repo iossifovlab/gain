@@ -302,10 +302,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             self.resource, self.config["table"],
         )
         self.score_definitions = self._build_scoredefs()
-        #: The stored ``chrom_lengths.json``, loaded by :meth:`open` when
-        #: it describes the resource as it is now and dropped by
-        #: :meth:`close`; ``None`` means the length reads resolve live.
+        #: The stored ``chrom_lengths.json``, loaded on the first length
+        #: read of an open when it describes the resource as it is now,
+        #: dropped by :meth:`close`; ``None`` once loaded means the reads
+        #: resolve live.  The flag tells "not yet read" from "read, none".
         self._stored_chrom_lengths: dict[str, ChromLength] | None = None
+        self._chrom_lengths_loaded = False
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
@@ -395,6 +397,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         self.table.close()
         self.table_loaded = False
         self._stored_chrom_lengths = None
+        self._chrom_lengths_loaded = False
 
     def is_open(self) -> bool:
         """Whether :meth:`open` has run and :meth:`close` has not since."""
@@ -467,9 +470,24 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             is_bigwig=is_bigwig,
             table=self.table,
             resource_id=self.resource_id)
-        self._stored_chrom_lengths = self._load_stored_chrom_lengths()
 
         return self
+
+    def _stored_chrom_lengths_if_current(
+        self,
+    ) -> dict[str, ChromLength] | None:
+        """The stored lengths, loaded on the first length read of an open.
+
+        On the first read, not at :meth:`open`: most opens never ask for
+        a length, and an open is silent at INFO by contract (the bigWig
+        deprecated-key test pins that) -- so the file is read, and its
+        absence reported, only by a caller that wants what it holds.
+        Held until :meth:`close`, then read afresh next time.
+        """
+        if not self._chrom_lengths_loaded:
+            self._stored_chrom_lengths = self._load_stored_chrom_lengths()
+            self._chrom_lengths_loaded = True
+        return self._stored_chrom_lengths
 
     def _load_stored_chrom_lengths(self) -> dict[str, ChromLength] | None:
         """The stored lengths, if the file describes this resource as it is.
@@ -988,8 +1006,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         }
 
     def _chrom_length_records(self) -> dict[str, ChromLength]:
-        if self._stored_chrom_lengths is not None:
-            return self._stored_chrom_lengths
+        stored = self._stored_chrom_lengths_if_current()
+        if stored is not None:
+            return stored
         return derive_chrom_lengths(self)
 
     def get_chrom_length_source(self, chrom: str) -> ChromLengthSource:
@@ -1013,10 +1032,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         so the two callers cannot drift apart.
         """
         self._require_open_and_known_chrom(chrom)
-        if self._stored_chrom_lengths is not None:
+        stored = self._stored_chrom_lengths_if_current()
+        if stored is not None:
             # Loaded only when its contig list is the table's, so a contig
             # the screen above admitted is in it.
-            resolved = self._stored_chrom_lengths[chrom]
+            resolved = stored[chrom]
         else:
             resolved = derive_chrom_length(self, chrom)
         if resolved.extent is not None:
