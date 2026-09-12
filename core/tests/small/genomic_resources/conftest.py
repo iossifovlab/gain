@@ -140,6 +140,19 @@ def fsspec_proto(
     raise ValueError(f"unexpected protocol scheme: <{grr_scheme}>")
 
 
+@pytest.fixture
+def s3_enabled(request: pytest.FixtureRequest) -> None:
+    """Skip unless the run was started with ``--enable-s3-testing``.
+
+    For tests that speak to the s3 protocol directly rather than through
+    the ``grr_scheme`` parametrization -- what they cover is s3-specific,
+    not a behaviour every scheme shares -- so they need the same gate the
+    parametrization applies, applied by hand.
+    """
+    if not request.config.getoption("enable_s3"):
+        pytest.skip("S3 testing not enabled")
+
+
 #: Run a callable in N threads whose starts are aligned by a barrier, and
 #: return ``(results, errors)``. See the ``run_in_threads`` fixture.
 RunInThreads = Callable[..., tuple[list[Any], list[BaseException]]]
