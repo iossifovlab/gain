@@ -145,14 +145,16 @@ class DerivedFrom:
         """Whether ``resource``, as it is now, is what this was derived from.
 
         The check a reader with no repository can make: the label as the
-        resource carries it today, and the manifest's md5 of every file
-        recorded here.  A label whose genome did not resolve at repair
-        was recorded as none, so it reads as stale here until it does --
-        conservative on purpose; the answer then costs the live probe
-        and nothing more.
+        resource carries it today (narrowed as the repair narrowed it,
+        but quietly -- this compares, it does not act), and the
+        manifest's md5 of every file recorded here.  A label whose genome
+        did not resolve at repair was recorded as none, so it reads as
+        stale here until it does -- conservative on purpose; the answer
+        then costs the live probe and nothing more.
         """
         if read_resource_id_label(
-                resource, "reference_genome") != self.reference_genome:
+                resource, "reference_genome", report=False,
+        ) != self.reference_genome:
             return False
         manifest = resource.get_manifest()
         return all(

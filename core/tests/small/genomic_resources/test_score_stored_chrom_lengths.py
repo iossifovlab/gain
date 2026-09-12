@@ -170,6 +170,24 @@ def test_all_lengths_omit_a_stored_extent(
     assert list(score.get_all_chrom_lengths()) == ["kept"]
 
 
+def test_opening_an_unrepaired_score_says_nothing_at_info(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Most opens never ask for a length; the absence is reported by the
+    read that wants the file, not by every open (the bigWig
+    deprecated-key test pins that an open is silent at INFO)."""
+    score = _a_repaired_labelled_tabix_score(tmp_path)
+    (tmp_path / "score" / "statistics" / "chrom_lengths.json").unlink()
+    caplog.clear()  # the setup's own repair and builder lines
+
+    with caplog.at_level(logging.INFO):
+        score.open()
+
+    assert [
+        record.getMessage() for record in caplog.records
+        if record.levelno >= logging.INFO] == []
+
+
 def test_a_file_derived_under_another_label_is_not_trusted(
     tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -183,9 +201,8 @@ def test_a_file_derived_under_another_label_is_not_trusted(
         build_filesystem_test_repository(tmp_path).get_resource("score"))
 
     with caplog.at_level(logging.INFO):
-        score.open()
+        source = score.open().get_chrom_length_source("chr1")
 
-    assert score.get_chrom_length_source("chr1") is \
-        ChromLengthSource.TABIX_ESTIMATE
+    assert source is ChromLengthSource.TABIX_ESTIMATE
     assert sum(
         "stale" in record.getMessage() for record in caplog.records) == 1
