@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import os
 import time
+from collections.abc import Generator
 from urllib.parse import parse_qsl, urlparse
 
 import pytest
@@ -153,16 +154,27 @@ def _presigned_lifetime_seconds(url: str, signed_at: int) -> int:
     return int(query["Expires"]) - signed_at
 
 
+@pytest.fixture
+def fresh_s3_filesystem_cache() -> Generator[None, None, None]:
+    """Clear fsspec's s3 instance cache around a test.
+
+    ``url_to_fs`` hands out the one instance fsspec built for its kwargs,
+    whatever environment an earlier test built it in -- and the one this
+    test builds carries its credentials, so it is dropped afterwards too.
+    """
+    S3FileSystem.clear_instance_cache()
+    yield
+    S3FileSystem.clear_instance_cache()
+
+
 def test_sign_presigns_an_s3_url_for_the_full_handle_lifetime(
+    fresh_s3_filesystem_cache: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Presigning is local to botocore -- credentials are all it needs, no
-    # endpoint -- so this speaks to the real s3 filesystem. The cache is
-    # cleared because fsspec hands ``url_to_fs`` the one instance it built
-    # for these kwargs, whatever environment an earlier test built it in.
+    # endpoint -- so this speaks to the real s3 filesystem.
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
-    S3FileSystem.clear_instance_cache()
     signed_at = int(time.time())
 
     signed = fs_utils.sign("s3://bucket/dir/data.txt.gz")
