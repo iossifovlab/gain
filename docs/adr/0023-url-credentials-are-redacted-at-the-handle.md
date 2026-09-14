@@ -787,10 +787,12 @@ drift.**
   stdlib and never interpolates its `args`. This is a property of wrapping
   `getMessage` rather than `Logger.handle`, which is why that seam was
   chosen over a record factory: a factory would either interpolate eagerly
-  or have to substitute the record's class, and a class built at runtime
-  cannot be pickled by a `QueueHandler`. Composition with a host's record
-  factory is free for the same reason — the host still gets a `LogRecord`,
-  with its own attributes, that renders redacted.
+  or have to substitute the record's class — a fixed subclass of its own,
+  which discards whatever class the host's factory produced, or one built
+  per host class at runtime, which a `QueueHandler` cannot pickle.
+  Composition with a host's record factory is free for the same reason —
+  the host still gets a `LogRecord`, of its own class and with its own
+  attributes, that renders redacted.
 - *Idempotent.* The installed function carries a marker, and the install
   returns when it finds one. The marker is on the function in the
   `LogRecord` slot, not in the module, so an `importlib.reload` — which

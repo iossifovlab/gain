@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import importlib
 import logging
-import logging.config
+import subprocess
+import sys
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -245,11 +246,17 @@ def test_installing_the_seam_again_does_not_stack_a_second_layer(
     """Re-import, ``importlib.reload`` and test isolation all re-run the
     install; each must find the seam in place and leave it alone."""
     logger, lines = isolated_logger("gain.tests.url_redaction.twice")
+    installed_by_importing_gain = logging.LogRecord.getMessage
 
     redact_url_userinfo_in_log_records()
     logger.error("cannot open %s", DOUBLE_AT_URL)
 
-    assert lines.lines == [f"ERROR cannot open {ONCE_REDACTED_DOUBLE_AT_URL}"]
+    # The identity half says the bootstrap had already installed it; the
+    # rendered half says a second install would have been visible.
+    assert (
+        logging.LogRecord.getMessage is installed_by_importing_gain,
+        lines.lines,
+    ) == (True, [f"ERROR cannot open {ONCE_REDACTED_DOUBLE_AT_URL}"])
 
 
 def test_reloading_the_bootstrap_module_does_not_stack_a_second_layer(
@@ -264,22 +271,40 @@ def test_reloading_the_bootstrap_module_does_not_stack_a_second_layer(
     assert lines.lines == [f"ERROR cannot open {ONCE_REDACTED_DOUBLE_AT_URL}"]
 
 
+#: A host in miniature: import gain, apply a Django-shaped ``LOGGING``
+#: (non-incremental, ``disable_existing_loggers: False``, its own handler
+#: and formatter on the root), then log a credentialed url through a logger
+#: of its own.  Run in a fresh interpreter because a non-incremental
+#: ``dictConfig`` shuts down every handler in the process -- pytest's
+#: included -- which is not state a test may leak into the suite.
+HOST_APPLYING_DICTCONFIG = f"""
+import logging, logging.config
+import gain
+logging.config.dictConfig({{
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {{"plain": {{"format": "%(levelname)s %(message)s"}}}},
+    "handlers": {{"console": {{
+        "class": "logging.StreamHandler", "formatter": "plain",
+        "stream": "ext://sys.stdout"}}}},
+    "loggers": {{"fsspec": {{"level": "WARNING"}}}},
+    "root": {{"handlers": ["console"], "level": "INFO"}},
+}})
+logging.getLogger("host.web").error("cannot open %s", {CREDENTIALED_URL!r})
+"""
+
+
 def test_the_seam_survives_a_host_applying_dictconfig_after_import(
-    isolated_logger: IsolatedLogger,
 ) -> None:
     """web_api's and gpf's Django ``LOGGING`` land as ``dictConfig`` long
     after ``gain`` was imported; a seam that configuration could undo
     would be one every deployment silently lacks."""
-    logger, lines = isolated_logger("gain.tests.url_redaction.dictconfig")
-    logging.config.dictConfig({
-        "version": 1,
-        "disable_existing_loggers": False,
-        "loggers": {"fsspec": {"level": "WARNING"}},
-    })
+    host = subprocess.run(
+        [sys.executable, "-c", HOST_APPLYING_DICTCONFIG],
+        capture_output=True, text=True, check=True, timeout=60,
+    )
 
-    logger.error("cannot open %s", CREDENTIALED_URL)
-
-    assert lines.lines == [f"ERROR cannot open {REDACTED_URL}"]
+    assert host.stdout == f"ERROR cannot open {REDACTED_URL}\n"
 
 
 def _open_forgetting_to_redact() -> None:
