@@ -173,22 +173,9 @@ class GenomicPositionTable(abc.ABC):
     # header's exact size, an index probe's upper bound, the rows' extent.
     # Declared, not defaulted: a backend that has not said is refused with
     # an AttributeError the first time a length's provenance is asked, so a
-    # new format cannot silently inherit a label (and, through
-    # :attr:`chrom_lengths_are_exact`, a trust level) that is not its own.
-    # It used to be the bool alone (#776); the bool is now derived from
-    # this, so the two cannot disagree (gain#1413).
+    # new format cannot silently inherit a label (and, through the
+    # member's ``is_exact``, a trust level) that is not its own.
     chrom_length_source: ClassVar[ChromLengthSource]
-
-    @property
-    def chrom_lengths_are_exact(self) -> bool:
-        """Whether :meth:`find_chromosome_length` answers EXACT lengths.
-
-        A caller that needs a true denominator -- e.g. a coverage fraction
-        -- may only trust a backend for which this holds; the tabix probe's
-        answer is guaranteed LARGER than the actual length.  Read off
-        :attr:`chrom_length_source` rather than declared beside it.
-        """
-        return self.chrom_length_source.is_exact
 
     CHROM = "chrom"
     POS_BEGIN = "pos_begin"

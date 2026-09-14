@@ -349,9 +349,9 @@ def test_each_backends_source_and_its_exactness(
     The member is pinned per backend because the exactness alone cannot
     tell a VCF labelled ``TABLE_EXTENT`` from one labelled
     ``TABIX_ESTIMATE``; the exactness is pinned as a literal because it is
-    what coverage's ``resolve_chrom_lengths`` -- through the table's
-    ``chrom_lengths_are_exact``, now derived from the same declaration --
-    trusts a denominator on, and gain#1414 moves it onto ``is_exact``.
+    what coverage's ``resolve_chrom_lengths`` trusts a denominator on
+    (gain#1414) -- a member that came to read as exact would silently
+    turn a probe's upper bound into a percentage.
     """
     score = build(tmp_path).open()
 
@@ -359,7 +359,6 @@ def test_each_backends_source_and_its_exactness(
 
     assert source is expected_source
     assert source.is_exact is expected_exact
-    assert score.table.chrom_lengths_are_exact is expected_exact
 
 
 def test_a_reference_genome_length_is_exact() -> None:
