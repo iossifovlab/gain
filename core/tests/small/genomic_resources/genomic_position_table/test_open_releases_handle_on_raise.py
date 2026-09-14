@@ -21,14 +21,22 @@ import pytest
 from gain.genomic_resources.genomic_position_table import (
     build_genomic_position_table,
 )
+from gain.genomic_resources.genomic_position_table.table_bigwig import (
+    BigWigTable,
+)
 from gain.genomic_resources.genomic_position_table.table_tabix import (
     TabixGenomicPositionTable,
+)
+from gain.genomic_resources.genomic_position_table.table_vcf import (
+    VCFGenomicPositionTable,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.testing.builders import (
+    a_bigwig_score,
     a_grr,
     a_position_score,
+    a_vcf_info_score,
 )
 
 
@@ -112,6 +120,63 @@ def _colliding_tabix_table(
     return resource, table
 
 
+def _vcf_table(
+    tmp_path: pathlib.Path,
+) -> tuple[GenomicResource, VCFGenomicPositionTable]:
+    """A well-formed VCF table; the tests inject the raise themselves.
+
+    No builder knob makes a VCF table's own setup refuse it, and the subject
+    here is the handle lifecycle around a raise, not the rule that raised.
+    """
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores/vcf",
+            a_vcf_info_score().with_data("""
+##fileformat=VCFv4.1
+##INFO=<ID=scoreA,Number=1,Type=Float,Description="score A">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   10  .  A   T   .    .      scoreA=0.1
+"""),
+        )
+        .build_repo(tmp_path)
+    )
+    resource = repo.get_resource("scores/vcf")
+    assert resource.config is not None
+    table = build_genomic_position_table(resource, resource.config["table"])
+    assert isinstance(table, VCFGenomicPositionTable)
+    return resource, table
+
+
+def _bigwig_table(
+    tmp_path: pathlib.Path,
+) -> tuple[GenomicResource, BigWigTable]:
+    """A well-formed bigWig table; the tests inject the raise themselves."""
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores/bw",
+            a_bigwig_score()
+            .with_score("bw", "float")
+            .with_data("chr1  0  10  0.11")
+            .with_chrom_lens({"chr1": 1000}),
+        )
+        .build_repo(tmp_path)
+    )
+    resource = repo.get_resource("scores/bw")
+    assert resource.config is not None
+    table = build_genomic_position_table(resource, resource.config["table"])
+    assert isinstance(table, BigWigTable)
+    return resource, table
+
+
+def _assert_bigwig_handle_closed(handle: Any) -> None:
+    # A pyBigWig handle has no ``closed`` flag; a released one refuses every
+    # call instead.
+    with pytest.raises(RuntimeError, match="not opened"):
+        handle.chroms()
+
+
 def test_tabix_chrom_mapping_refusal_leaves_no_open_handle(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -151,6 +216,85 @@ def test_tabix_cancellation_during_setup_leaves_no_open_handle(
     assert table.pysam_file is None
 
 
+def test_vcf_failing_close_does_not_replace_the_refusal(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resource, table = _vcf_table(tmp_path)
+    _make_close_fail(resource, "open_vcf_file", monkeypatch)
+    refusal = MalformedResourceError("<scores/vcf> is malformed")
+
+    def refuse() -> None:
+        raise refusal
+
+    monkeypatch.setattr(table, "_set_core_column_keys", refuse)
+
+    with pytest.raises(MalformedResourceError) as raised:
+        table.open()
+
+    assert raised.value is refusal
+
+
+def test_bigwig_chrom_mapping_refusal_leaves_no_open_handle(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resource, table = _bigwig_table(tmp_path)
+    handles = _spy_handles(resource, "open_bigwig_file", monkeypatch)
+    refusal = ValueError("The chromosome mapping collides")
+
+    def refuse() -> None:
+        raise refusal
+
+    monkeypatch.setattr(table, "_build_chrom_mapping", refuse)
+
+    with pytest.raises(ValueError) as raised:
+        table.open()
+
+    assert raised.value is refusal
+    assert len(handles) == 1
+    _assert_bigwig_handle_closed(handles[0])
+    assert table._bw_file is None
+    assert not table.chroms
+
+
+def test_bigwig_cancellation_during_setup_leaves_no_open_handle(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resource, table = _bigwig_table(tmp_path)
+    handles = _spy_handles(resource, "open_bigwig_file", monkeypatch)
+    cancelled = asyncio.CancelledError()
+
+    def cancel() -> None:
+        raise cancelled
+
+    monkeypatch.setattr(table, "_set_core_column_keys", cancel)
+
+    with pytest.raises(asyncio.CancelledError) as raised:
+        table.open()
+
+    assert raised.value is cancelled
+    assert len(handles) == 1
+    _assert_bigwig_handle_closed(handles[0])
+    assert table._bw_file is None
+
+
+def test_bigwig_failing_close_does_not_replace_the_refusal(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resource, table = _bigwig_table(tmp_path)
+    _make_close_fail(resource, "open_bigwig_file", monkeypatch)
+    refusal = MalformedResourceError("<scores/bw> is malformed")
+
+    def refuse() -> None:
+        raise refusal
+
+    monkeypatch.setattr(table, "_set_core_column_keys", refuse)
+
+    with pytest.raises(MalformedResourceError) as raised:
+        table.open()
+
+    assert raised.value is refusal
+
+
 def test_tabix_failing_close_does_not_replace_the_refusal(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -170,3 +314,46 @@ def test_tabix_failing_close_does_not_replace_the_refusal(
         table.open()
 
     assert raised.value is refusal
+
+
+def test_vcf_chrom_mapping_refusal_leaves_no_open_handle(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resource, table = _vcf_table(tmp_path)
+    handles = _spy_handles(resource, "open_vcf_file", monkeypatch)
+    refusal = ValueError("The chromosome mapping collides")
+
+    def refuse() -> None:
+        raise refusal
+
+    monkeypatch.setattr(table, "_build_chrom_mapping", refuse)
+
+    with pytest.raises(ValueError) as raised:
+        table.open()
+
+    assert raised.value is refusal
+    assert len(handles) == 1
+    assert isinstance(handles[0], pysam.VariantFile)
+    assert handles[0].closed
+    assert table.pysam_file is None
+
+
+def test_vcf_cancellation_during_setup_leaves_no_open_handle(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resource, table = _vcf_table(tmp_path)
+    handles = _spy_handles(resource, "open_vcf_file", monkeypatch)
+    cancelled = asyncio.CancelledError()
+
+    def cancel() -> None:
+        raise cancelled
+
+    monkeypatch.setattr(table, "_set_core_column_keys", cancel)
+
+    with pytest.raises(asyncio.CancelledError) as raised:
+        table.open()
+
+    assert raised.value is cancelled
+    assert len(handles) == 1
+    assert handles[0].closed
+    assert table.pysam_file is None
