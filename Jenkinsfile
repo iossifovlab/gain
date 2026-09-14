@@ -924,7 +924,8 @@ pipeline {
                                 gain-conda-builder-ci:${CI_TAG} \
                                 rattler-build build \
                                     --recipe core/conda-recipe/recipe.yaml \
-                                    --output-dir conda/core
+                                    --output-dir conda/core \
+                                    -c conda-forge -c bioconda
                             cp conda/core/noarch/*.conda dist/conda/
                         '''
                     }
@@ -1124,7 +1125,8 @@ pipeline {
                                     gain-conda-builder-ci:${CI_TAG} \
                                     rattler-build build \
                                         --recipe $proj/conda-recipe/recipe.yaml \
-                                        --output-dir conda/$proj
+                                        --output-dir conda/$proj \
+                                        -c conda-forge -c bioconda
                                 # Promote the final .conda artefact(s) out of
                                 # rattler-build's working tree. conda/$proj/bld/
                                 # holds 1000+ symlinks into build-env prefixes;

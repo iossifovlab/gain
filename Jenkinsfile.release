@@ -422,7 +422,8 @@ pipeline {
                             "${CONDA_BUILDER}" \
                             rattler-build build \
                                 --recipe $proj/conda-recipe/recipe.yaml \
-                                --output-dir conda/$proj
+                                --output-dir conda/$proj \
+                                -c conda-forge -c bioconda
                         cp conda/$proj/noarch/*.conda dist/conda/
                     done
                 '''
