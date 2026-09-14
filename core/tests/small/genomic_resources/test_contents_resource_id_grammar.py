@@ -1,6 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """One grammar for a resource id, and one consequence, on both enumeration
-paths (gain#1352, gain#1386).
+paths (gain#1352, gain#1386, gain#1385).
 
 Scanning a repository parses every candidate path with
 ``parse_gr_id_version_token``, so an id outside ``[a-zA-Z0-9/._-]`` is
@@ -132,11 +132,41 @@ def test_contents_id_with_an_empty_segment_is_not_served(
     assert _served_ids(remote_root) == ["good_one"]
 
 
-def test_a_refused_id_is_reported_with_the_character_it_carries(
+@pytest.mark.parametrize("resource_id", [
+    pytest.param("hg38/./scores/x", id="inner"),
+    pytest.param("./x", id="leading"),
+    pytest.param("x/.", id="trailing"),
+])
+def test_contents_id_with_a_dot_segment_is_not_served(
+    tmp_path: pathlib.Path, resource_id: str,
+) -> None:
+    """The other segment a filesystem cannot offer and the scan never yields.
+
+    ``.`` is inside the character class and the segment is not empty, so
+    ``hg38/./scores/x`` passes the character rule and the empty-segment
+    rule alike -- yet a scan skips every dot-named directory, so it can
+    never produce the id.  Served anyway, it was cached under that id and
+    a rescan of the cache enumerated the same directory as
+    ``hg38/scores/x``: one resource, two ids, and a consumer holding
+    either got nothing from the other (gain#1385).
+    """
+    remote_root = _remote_with_contents_ids(
+        tmp_path, [resource_id, "good_one"])
+
+    assert _served_ids(remote_root) == ["good_one"]
+
+
+@pytest.mark.parametrize("resource_id,reason", [
+    pytest.param("a#b", "carries <#>", id="a-character"),
+    pytest.param("hg38/./scores/x", "carries a <.> segment", id="a-segment"),
+])
+def test_a_refused_id_is_reported_with_what_it_carries(
     tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+    resource_id: str, reason: str,
 ) -> None:
     """Dropped silently, the resource just goes missing with no lead."""
-    remote_root = _remote_with_contents_ids(tmp_path, ["a#b", "good_one"])
+    remote_root = _remote_with_contents_ids(
+        tmp_path, [resource_id, "good_one"])
 
     with caplog.at_level(logging.WARNING, logger=_PROTOCOL_LOGGER):
         assert _served_ids(remote_root) == ["good_one"]
@@ -146,8 +176,8 @@ def test_a_refused_id_is_reported_with_the_character_it_carries(
         if "dropping resource" in message
     ]
     assert len(dropped) == 1
-    assert "a#b" in dropped[0]
-    assert "carries <#>" in dropped[0]
+    assert resource_id in dropped[0]
+    assert reason in dropped[0]
     assert GR_CONTENTS_FILE_NAME in dropped[0]
 
 
@@ -246,8 +276,12 @@ def _cached_root_of(
     return cached_root
 
 
+@pytest.mark.parametrize("resource_id", [
+    pytest.param("has space/x", id="outside-the-grammar"),
+    pytest.param("hg38/./scores/x", id="a-dot-segment"),
+])
 def test_a_wider_contents_id_no_longer_poisons_a_local_cache(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, resource_id: str,
 ) -> None:
     """The damage the disagreement actually did, and the reason for the rule.
 
@@ -256,8 +290,15 @@ def test_a_wider_contents_id_no_longer_poisons_a_local_cache(
     holding such a directory skips it (gain#1386) -- so what this pins
     is the half a scan cannot: the wider id is refused where it enters
     and never reaches the disk at all.
+
+    The dot-segment case is the quieter failure (gain#1385): the
+    filesystem resolves ``.`` away, so the directory landed under a
+    *different*, well-formed name -- ``hg38/scores/x`` -- and a rescan
+    served the resource under an id nobody had been given.  What the
+    assertion pins for it is that no ``hg38`` directory is written at
+    all, under either spelling.
     """
-    cached_root = _cached_root_of(tmp_path, ["has space/x", "good_one"])
+    cached_root = _cached_root_of(tmp_path, [resource_id, "good_one"])
 
     assert sorted(
         path.name for path in cached_root.iterdir()
