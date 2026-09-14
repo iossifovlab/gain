@@ -134,8 +134,11 @@ async function routeThrough(
  *
  * The single definition of what the harness allows, shared by every spec:
  * the generated GRR, and nothing else. Anything off that origin is
- * aborted -- the Google Fonts stylesheets the pages link, and any
- * dependency on the network a page grows later.
+ * aborted. Since iossifovlab/gain#1400 nothing a page loads is off it
+ * -- the search engine and both fonts are files of the GRR under
+ * `.static/` -- so an abort is no longer a known cost the specs
+ * tolerate but a dependency on the network a page grew, and the
+ * "refuses every request" spec fails on one.
  *
  * That abort is the point rather than a precaution. The Jenkins stage
  * runs the suite under `docker run --network none`, so a page that
