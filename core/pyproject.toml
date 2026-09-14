@@ -133,6 +133,11 @@ scanpy_drift = [
     "scanpy>=1.11",
 ]
 dev = [
+    # Decodes the vendored woff2 fonts under gain/templates/static/fonts
+    # so tests/small/templates/test_grr_page_icon_font.py can read which
+    # glyphs the icon subset carries: fontTools (already here through
+    # matplotlib) needs it for WOFF2 and nothing at runtime does (#1400).
+    "brotli",
     "coverage",
     "mypy==1.15.0",
     "pandas-stubs",

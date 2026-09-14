@@ -77,6 +77,35 @@ def rules_in(markup: str) -> list[Rule]:
     ]
 
 
+#: Every ``<style>`` of a page, not only the first: a resource page
+#: declares its icon face inside the sorter's own block, the second one.
+_STYLE = re.compile(r"<style>(.*?)</style>", re.DOTALL)
+
+#: The file a ``src`` declaration loads: ``url(<it>) format(...)``.
+_URL = re.compile(r"url\(\s*['\"]?([^'\")]+?)['\"]?\s*\)")
+
+
+def font_faces_in(markup: str) -> dict[str, str]:
+    """Family -> ``src`` url of every ``@font-face`` the markup declares.
+
+    Across every ``<style>`` of the page, since gain#1400 put the faces
+    inside them: the url is as written, relative to the page, for the
+    caller to resolve against wherever the page was published.  A face
+    declared twice for one family answers with the last.
+    """
+    faces: dict[str, str] = {}
+    for stylesheet in _STYLE.findall(markup):
+        for selectors, body in _CSS_RULE.findall(
+                _CSS_COMMENT.sub("", stylesheet)):
+            if selectors.strip() != "@font-face":
+                continue
+            declarations = dict(declarations_in(body))
+            url = _URL.search(declarations["src"])
+            assert url is not None, declarations["src"]
+            faces[declarations["font-family"].strip("'\"")] = url.group(1)
+    return faces
+
+
 def declarations_in(block: str) -> list[tuple[str, str]]:
     """A declaration block as ``(property, value)`` pairs, in source order.
 

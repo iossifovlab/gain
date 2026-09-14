@@ -10,7 +10,6 @@ for is what the same run put on disk.
 """
 import os
 import pathlib
-import re
 import shutil
 
 import pytest
@@ -20,6 +19,8 @@ from gain.templates.static_assets import (
     SQLITE_WASM_PATH,
     repository_static_files,
 )
+
+from tests.small.templates.page_css import font_faces_in
 
 from .conftest import read_published_contents
 
@@ -62,13 +63,6 @@ def vendored_files() -> dict[str, bytes]:
     }
 
 
-#: A ``@font-face`` block: the family it declares and the file it loads.
-_FONT_FACE = re.compile(
-    r"@font-face\s*\{[^}]*?\bfont-family:\s*['\"]?([^'\";]+?)['\"]?\s*;"
-    r"[^}]*?\bsrc:\s*url\(\s*['\"]?([^'\")]+)['\"]?\s*\)",
-)
-
-
 def font_faces_the_page_loads(page: pathlib.Path) -> dict[str, pathlib.Path]:
     """Family -> where its ``@font-face`` resolves on disk.
 
@@ -78,7 +72,8 @@ def font_faces_the_page_loads(page: pathlib.Path) -> dict[str, pathlib.Path]:
     """
     return {
         family: (page.parent / url).resolve()
-        for family, url in _FONT_FACE.findall(page.read_text(encoding="utf8"))
+        for family, url in font_faces_in(
+            page.read_text(encoding="utf8")).items()
     }
 
 
