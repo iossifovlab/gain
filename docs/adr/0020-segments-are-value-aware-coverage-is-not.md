@@ -14,7 +14,9 @@
   (the coverage-denominator amendment),
   [gain#1419](https://github.com/iossifovlab/gain/issues/1419) and
   [gain#1448](https://github.com/iossifovlab/gain/issues/1448)
-  (the stored-lengths amendment and its reversal)
+  (the stored-lengths amendment and its reversal),
+  [gain#1414](https://github.com/iossifovlab/gain/issues/1414)
+  (the score-rung amendment)
 
 ## Context
 
@@ -167,9 +169,9 @@ alt-minus-ref, not an absolute value.
 - **Raw counts stored; fractions at render.** The statistics file holds
   counts only. Coverage *fractions* need chromosome lengths, which belong to
   a reference genome, not to the score — so they are computed at render time
-  from a resolvable genome (bigWig header as fallback). The stored statistics
-  stay genome-independent, and rendering can improve without rebuilding any
-  resource.
+  from a resolvable genome (the score's own exact lengths as fallback — see
+  the gain#1414 amendment). The stored statistics stay genome-independent,
+  and rendering can improve without rebuilding any resource.
 
   *Amended by [gain#1041](https://github.com/iossifovlab/gain/issues/1041):
   the fraction's **denominator is the whole resolved reference**, not the
@@ -178,15 +180,16 @@ alt-minus-ref, not an absolute value.
   touching only chr1 reported a global percent as if the rest of the genome
   did not exist — a number that answered "what part of what I already cover
   do I cover", which is not a question anyone has. The denominator is now the
-  sum of **all** the genome's contig lengths; on the bigWig rung, the whole
-  contig list that backend serves cleanly off an open table
-  (`get_chromosomes()`, already in reference space).
+  sum of **all** the genome's contig lengths; on the score rung, every contig
+  the score lists with an exact length (the ladder's records, in table order
+  and already in reference space — originally read straight off the bigWig
+  table's `get_chromosomes()`; see the gain#1414 amendment).
 
   **The two rungs answer the same question about different universes**, and
   that is worth stating rather than discovering. A bigWig header is the
   *file's* universe, not a reference: a chr21-only bigWig reads as nearly
   fully covered unlabelled, and as a percent or two once labelled hg38. Only
-  the genome rung answers this bullet's title question; the table rung
+  the genome rung answers this bullet's title question; the score rung
   answers "what part of what this file declares". Under a `chrom_mapping`
   **file** it is narrower still — `get_chromosomes()` is then the mapping's
   contigs — so that rung's denominator is the resource's *declared* universe.
@@ -282,10 +285,10 @@ alt-minus-ref, not an absolute value.
 
   Why that is enough: the tabix probe is the only expensive rung, and it
   runs where the payload must be present anyway — inside a full
-  statistics rebuild, which dominates it. Today the region split is the
-  one caller; the page's coverage denominator still runs its own two-rung
-  ladder (genome, then an exact table header — never the probe) until
-  gain#1414 re-points it here. And why the file had to go rather
+  statistics rebuild, which dominates it. The region split was the one
+  caller until gain#1414 re-pointed the page's coverage denominator here
+  (its own amendment, below, says how it avoids the probe). And why the
+  file had to go rather
   than merely stay optional: its freshness gate opened every score
   resource lacking the file, which on a pointer-only DVC checkout — the
   shape every DVC-backed GRR's working copy has — failed each one on the
@@ -293,6 +296,45 @@ alt-minus-ref, not an absolute value.
   consistent as it stands, and a repair of it now opens no table. The
   "fractions at render" half of this bullet is unchanged: the stored
   statistics stay genome-independent, as they always were.
+
+  *Amended by [gain#1414](https://github.com/iossifovlab/gain/issues/1414):
+  the second rung is the ladder's records filtered on `is_exact`, not the
+  bigWig table's.* The page's denominator used to classify backends itself
+  — read the table's exactness flag, open the score, walk the table for the
+  header sizes — while the implementation had grown the one ladder
+  (`get_chrom_lengths`, the gain#1448 re-amendment above) whose records
+  carry each length's `ChromLengthSource`. Both rungs are now the caller's
+  to supply: the genome it resolved from the label, and the ladder's
+  records, asked for only once the genome rung has nothing; coverage keeps
+  the records whose source `is_exact` and opens no table. Which sources may
+  serve as a denominator is decided once, in the enum, for every caller
+  that needs a true length; the coverage code enumerates no members. For
+  an unlabelled bigWig nothing visible changes — the header's sizes, the
+  table's contig list, mapping and all.
+
+  Two things are decisions rather than fallout:
+
+  - **A backend whose lengths are never exact is not asked.** The
+    implementation reads the backend's declared `chrom_length_source`
+    before running the ladder for the page, and hands coverage nothing for
+    a tabix or in-memory score. Nothing such a backend says can be a
+    denominator, and finding that out would open its table and probe every
+    contig — at every render, and `repo-repair` renders every page. The
+    probe stays a repair-time cost, as the re-amendment above promises; an
+    unlabelled tabix score's render never opens it (pinned). A bigWig
+    header is exact, and is the one reason a render opens a table — so an
+    unlabelled bigWig on a pointer-only DVC checkout still fails the page
+    render on its absent payload (the gain#1448 note). That is the file
+    being the only source of its own denominator; the remedy is the label,
+    which the DVC-backed GRRs' scores carry.
+  - **One reader of the `reference_genome` label, with the page's policy.**
+    The build and the page each resolved the label, with different error
+    handling: a label naming a resource that is not a genome degraded the
+    page to raw counts but aborted the resource's statistics build. They
+    now share `_resolve_labelled_genome`, which warns and reads such a label
+    as absent — the lengths fall through to the table, as an unlabelled
+    score's do — because a mis-authored label on one resource must abort
+    neither a repository-wide statistics walk nor a page build.
 - **Lazy rollout; `calc_statistics_hash` untouched.** The new statistics do
   not enter the statistics hash, so no existing resource is invalidated.
   Statistics appear as resources are rebuilt; the page renders "not computed"
