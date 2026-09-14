@@ -558,6 +558,15 @@ class GenomicPositionTable(abc.ABC):
         self.rev_chrom_map = None
         self._file_chromosomes = None
         self._chromosome_index = None
+        # The header too, when it is the file's: under ``header_mode: file``
+        # every backend that has one reads it off the file -- the tabular two
+        # in open(), the VCF backend at construction -- and nothing reads it
+        # back after the score over the table is built, so it is retained for
+        # nothing.  Under ``list`` it is configuration, never rebuilt, and a
+        # name-addressed score resolves against it on every open(); under
+        # ``none`` there is none.
+        if self.header_mode == "file":
+            self.header = None
 
     @abc.abstractmethod
     def get_all_records(self) -> Generator[Record, None, None]:

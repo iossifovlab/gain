@@ -492,12 +492,6 @@ def test_every_backend_in_the_tree_is_in_the_backend_list(
 # decision recorded in a diff, rather than a field that quietly joined what a
 # closed table retains.
 _MAY_SURVIVE_CLOSE = {
-    "header": (
-        "the column names -- a *configured* parameter for header_mode 'list' "
-        "(set in __init__, never rebuilt by open()) and for the VCF backend, "
-        "which reads its INFO metadata at construction; releasing it would "
-        "make those two unreopenable. Bounded by the column count."
-    ),
     "chrom_key": "core column key: resolved from the definition and header",
     "pos_begin_key": "core column key: resolved from the definition and header",
     "pos_end_key": "core column key: resolved from the definition and header",
@@ -640,6 +634,62 @@ def test_a_closed_table_releases_what_open_established(
         f"configured parameters -- release these in close(), or add them to "
         f"_MAY_SURVIVE_CLOSE with the reason they are exempt (gain#350)."
     )
+
+
+def _a_tabular_score(
+    tmp_path: pathlib.Path, *, tabix: bool, header_mode: str = "file",
+) -> Backend:
+    """A one-row tabular score whose score is addressed by column NAME.
+
+    Name-addressed on purpose: resolving a name is the one read of
+    ``table.header`` a score performs, and it performs it on every ``open()``,
+    so this is the fixture through which a released-and-not-rebuilt header
+    becomes a visible failure rather than a retained tuple nobody looks at.
+    ``header_mode`` decides where that header comes from -- the file
+    (``"file"``), or the config (``"list"``).
+    """
+    builder = (
+        a_position_score()
+        .with_score("s_float", "float")
+        .with_data("""
+            chrom  pos_begin  s_float
+            1      10         0.5
+        """)
+    )
+    if header_mode != "file":
+        builder = builder.with_header_mode(header_mode)
+    if tabix:
+        builder = builder.with_tabix()
+    repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
+    return PositionScore(repo.get_resource("pos")), ("1", 10, 10)
+
+
+@pytest.mark.parametrize("tabix", [False, True], ids=["inmemory", "tabix"])
+def test_a_closed_table_releases_the_header_it_read_off_the_file(
+    *, tabix: bool, tmp_path: pathlib.Path,
+) -> None:
+    """Under ``header_mode: file`` the header is file content, and goes.
+
+    Both tabular backends read their column names off the file in ``open()``
+    and rebuild them on every reopen, so a closed table that keeps them holds
+    file-derived state for nothing -- the case the release policy exists for.
+    Asked directly rather than through
+    test_a_closed_table_releases_what_open_established, because that test
+    exempts ``header`` by name for the backends that genuinely cannot rebuild
+    it, and an exemption by name cannot tell a retained file header from a
+    retained configured one (gain#361).
+    """
+    score, region = _a_tabular_score(tmp_path, tabix=tabix)
+    table = score.table
+    table.open()
+    assert list(table.get_records_in_region(*region))
+    assert table.header is not None, "fixture: open() read no header"
+
+    table.close()
+
+    assert table.header is None, (
+        f"{type(table).__name__}.close() kept the header it read off the "
+        f"file: {table.header!r}")
 
 
 @pytest.mark.parametrize("build,_score_line", _LIFETIME_BACKENDS)
