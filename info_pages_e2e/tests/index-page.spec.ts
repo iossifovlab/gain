@@ -2282,3 +2282,56 @@ test('the way out of a scope that found nothing keeps the term',
     await expect(emptyState(page)).toContainText(
       `No resources under hg38 match '${BROWSE_SUMMARY_ONLY_TERM}'`);
   });
+
+test.describe('clearing the search', () => {
+  test('the button is offered only while there is a term', async ({
+    page,
+  }) => {
+    await openBrowseIndex(page);
+    await expect(page.locator('#clear-search')).toBeHidden();
+
+    await search(page, BROWSE_SUMMARY_ONLY_TERM);
+
+    await expect(page.locator('#clear-search')).toBeVisible();
+  });
+
+  test('clicking it restores the listing and takes the term out of the '
+    + 'address', async ({ page }) => {
+    await openBrowseIndex(page);
+    await search(page, BROWSE_SUMMARY_ONLY_TERM);
+    await expect(visibleResourceIds(page)).toHaveText([
+      BROWSE_SUMMARY_ONLY_RESOURCE_ID,
+    ]);
+
+    await page.locator('#clear-search').click();
+
+    await expect(visibleResourceIds(page)).toHaveCount(BROWSE_RESOURCE_COUNT);
+    await expect.poll(() => hashOf(page)).toBe('');
+    /* Back in the box, ready for the next term; and with nothing left to
+     * clear, the button goes away again. */
+    await expect(page.locator('#search-field')).toBeFocused();
+    await expect(page.locator('#clear-search')).toBeHidden();
+  });
+
+  test('it clears the term and leaves the type filter alone', async ({
+    page,
+  }) => {
+    await openBrowseIndex(page);
+    await search(page, BROWSE_SUMMARY_ONLY_TERM);
+    await filterByType(page, BROWSE_SCORE_TYPE);
+    await expect.poll(() => hashOf(page))
+      .toBe(`#?q=${BROWSE_SUMMARY_ONLY_TERM}&type=${BROWSE_SCORE_TYPE}`);
+
+    await page.locator('#clear-search').click();
+
+    await expect.poll(() => hashOf(page)).toBe(`#?type=${BROWSE_SCORE_TYPE}`);
+  });
+
+  test('a term arriving by address offers the button too', async ({
+    page,
+  }) => {
+    await openBrowseIndex(page, `#?q=${BROWSE_SUMMARY_ONLY_TERM}`, 1);
+
+    await expect(page.locator('#clear-search')).toBeVisible();
+  });
+});

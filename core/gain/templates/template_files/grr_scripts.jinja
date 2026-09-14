@@ -408,6 +408,18 @@
           // reset all icons
            document.querySelectorAll('.copy-icon').forEach(i => i.textContent = 'content_copy')
         });
+
+        // Clearing is a reader-driven edit of the box like any other, so
+        // it takes the same route as a keystroke that settled: run what
+        // the controls now say and tell the address. The type filter is
+        // left alone -- the button clears the term, not the search.
+        // Whether the button is shown is the stylesheet's business (it
+        // follows the field's own emptiness), so nothing here toggles it.
+        document.getElementById("clear-search").addEventListener("click", () => {
+            searchField.value = "";
+            searchFromControls();
+            searchField.focus();
+        });
         
         const copyResourceId = (e) => {
           navigator.clipboard.writeText(e.target.classList[2]).then(
