@@ -490,11 +490,15 @@ class GenomicPositionTable(abc.ABC):
         file rather than reusing it.
 
         A closed table stays **reopenable**: ``open()`` re-establishes
-        everything released here, and answers exactly as a table that was never
-        closed.  Until it is reopened it **refuses the reads that depend on
-        what it read out of the file** -- that is the contract, and it is what
-        releasing the state above amounts to at the call site.  Four of those
-        reads refuse in one stated way, ``ValueError``, on all four backends:
+        everything released here that a read depends on, and answers exactly
+        as a table that was never closed.  (The one release nothing re-reads
+        is the VCF backend's INFO metadata, its ``header``: read at
+        construction, needed only to build the score definitions there, and
+        never consulted again.)  Until it is reopened it **refuses the reads
+        that depend on what it read out of the file** -- that is the contract,
+        and it is what releasing the state above amounts to at the call site.
+        Four of those reads refuse in one stated way, ``ValueError``, on all
+        four backends:
         :meth:`get_chromosomes` once ``chrom_order`` is released, and
         :meth:`get_file_chromosomes` and :meth:`find_chromosome_length` off the
         handle their ``open()`` establishes and this ``close()`` drops -- plus
@@ -561,14 +565,6 @@ class GenomicPositionTable(abc.ABC):
         self.rev_chrom_map = None
         self._file_chromosomes = None
         self._chromosome_index = None
-        # The header too, when it is the file's: under ``header_mode: file``
-        # every backend that has one reads it off the file -- the tabular two
-        # in open(), where the next open() reads it again before anything
-        # resolves against it, and the VCF backend at construction, where the
-        # score definitions built from it are the only thing that needs it.
-        # Under ``list`` it is configuration, never rebuilt, and a
-        # name-addressed score resolves against it on every open(); under
-        # ``none`` there is none.
         if self.header_mode == "file":
             self.header = None
 

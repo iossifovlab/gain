@@ -120,45 +120,9 @@ from gain.genomic_resources.testing.builders import (
 from .test_backend_record_contract import (
     _BACKENDS,
     Backend,
+    _build_tabular,
     build_every_backend,
 )
-
-
-def _a_tabular_score(
-    tmp_path: pathlib.Path, *, tabix: bool,
-    header_mode: str = "file", add_prefix: str | None = None,
-) -> Backend:
-    """A one-row tabular score whose score is addressed by column NAME.
-
-    Name-addressed on purpose: resolving a name is the one read of
-    ``table.header`` a score cannot do without, and it does it on every
-    ``open()``, so this is the fixture through which a released-and-not-
-    rebuilt header becomes a visible failure rather than a retained tuple
-    nobody looks at.  ``header_mode`` decides where that header comes from --
-    the file (``"file"``), or the config (``"list"``); the default is left
-    OUT of the config rather than spelled, because the default is the case
-    under test.  ``add_prefix`` maps the file's contig ``1`` into reference
-    space, for the fixtures that need a populated chromosome map.
-    """
-    builder = (
-        a_position_score()
-        .with_score("s_float", "float")
-        .with_data("""
-            chrom  pos_begin  s_float
-            1      10         0.5
-        """)
-    )
-    if header_mode != "file":
-        builder = builder.with_header_mode(header_mode)
-    if add_prefix is not None:
-        builder = builder.with_chrom_mapping(add_prefix=add_prefix)
-    if tabix:
-        builder = builder.with_tabix()
-    repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
-    return (
-        PositionScore(repo.get_resource("pos")),
-        (f"{add_prefix or ''}1", 10, 10),
-    )
 
 
 def _build_mapped_tabular(
@@ -182,7 +146,7 @@ def _build_mapped_tabular(
     ``unmap_chromosome('chr1') -> 'chr1'`` against a file that has no ``chr1``,
     and return no records at all.
     """
-    return _a_tabular_score(tmp_path, tabix=tabix, add_prefix="chr")
+    return _build_tabular(tmp_path, tabix=tabix, add_prefix="chr")
 
 
 def _build_mapped_inmemory(tmp_path: pathlib.Path) -> Backend:
@@ -521,9 +485,10 @@ def test_every_backend_in_the_tree_is_in_the_backend_list(
 # the field's value came from.  ``header`` is that case: released under
 # ``header_mode: file``, kept under ``list``.  No fixture here runs in list
 # mode, so ``header`` is deliberately NOT on this list -- its list-mode
-# retention is pinned by the two ``configured_header`` tests below instead.
-# Adding a list-mode fixture to _LIFETIME_BACKENDS would need an entry here,
-# and that entry would exempt the file-mode fixtures with it (gain#361).
+# retention is pinned by _CONFIGURED_HEADER_BACKENDS on the reopen test
+# instead.  Adding a list-mode fixture to _LIFETIME_BACKENDS would need an
+# entry here, and that entry would exempt the file-mode fixtures with it
+# (gain#361).
 _MAY_SURVIVE_CLOSE = {
     "chrom_key": "core column key: resolved from the definition and header",
     "pos_begin_key": "core column key: resolved from the definition and header",
@@ -676,18 +641,15 @@ def test_a_closed_table_releases_the_header_it_read_off_the_file(
     """Under ``header_mode: file`` the header is file content, and goes.
 
     Both tabular backends read their column names off the file in ``open()``
-    and rebuild them on every reopen, so a closed table that keeps them holds
-    file-derived state for nothing -- the case the release policy exists for.
-    test_a_closed_table_releases_what_open_established catches it too, today;
-    this one is asked by MODE, and stays standing if ``header`` ever
-    re-enters ``_MAY_SURVIVE_CLOSE`` -- an exemption by field name cannot tell
-    a retained file header from a retained configured one, which is how the
-    file-mode header went unreleased in the first place (gain#361).
+    and again on every reopen, so a closed table that keeps them holds file
+    content for nothing.  Asked by MODE, beside the generic release test,
+    so that it stays standing if ``header`` ever re-enters
+    ``_MAY_SURVIVE_CLOSE`` -- the note there says why an entry by field name
+    would exempt this case with it (gain#361).
     """
-    score, region = _a_tabular_score(tmp_path, tabix=tabix)
+    score, _ = _build_tabular(tmp_path, tabix=tabix)
     table = score.table
     table.open()
-    assert list(table.get_records_in_region(*region))
     assert table.header is not None, "fixture: open() read no header"
 
     table.close()
@@ -802,7 +764,34 @@ def _read_region(
     return records, values
 
 
-@pytest.mark.parametrize("build,_score_line", _LIFETIME_BACKENDS)
+def _build_inmemory_configured_header(tmp_path: pathlib.Path) -> Backend:
+    return _build_tabular(tmp_path, tabix=False, configured_header=True)
+
+
+def _build_tabix_configured_header(tmp_path: pathlib.Path) -> Backend:
+    return _build_tabular(tmp_path, tabix=True, configured_header=True)
+
+
+# Under ``header_mode: list`` the header is configuration -- set at
+# construction, never rebuilt by ``open()`` -- and a name-addressed score
+# resolves against it on every ``open()``.  A close() that released it
+# regardless of where it came from would leave the table reopenable and the
+# score over it not: these two go red on the ValueError the score raises
+# against a header-less table (gain#361).  Kept off _LIFETIME_BACKENDS,
+# because the retained header would need a _MAY_SURVIVE_CLOSE entry -- see
+# the note there.
+_CONFIGURED_HEADER_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
+    pytest.param(
+        _build_inmemory_configured_header, extract_column_value,
+        id="inmemory-list"),
+    pytest.param(
+        _build_tabix_configured_header, extract_column_value,
+        id="tabix-list"),
+]
+
+
+@pytest.mark.parametrize(
+    "build,_score_line", [*_LIFETIME_BACKENDS, *_CONFIGURED_HEADER_BACKENDS])
 def test_a_reopened_table_answers_exactly_as_before_it_was_closed(
     build: object,
     _score_line: object,
@@ -833,55 +822,6 @@ def test_a_reopened_table_answers_exactly_as_before_it_was_closed(
         f"{type(score.table).__name__} answered differently after a close/"
         f"reopen cycle: {after} != {before}. open() must rebuild everything "
         f"close() releases (gain#350).")
-
-
-@pytest.mark.parametrize("tabix", [False, True], ids=["inmemory", "tabix"])
-def test_a_closed_table_keeps_the_header_it_was_configured_with(
-    *, tabix: bool, tmp_path: pathlib.Path,
-) -> None:
-    """Under ``header_mode: list`` the header is configuration, and stays.
-
-    The one case the release policy carves out for ``header``: set from the
-    definition at construction and never rebuilt by ``open()``, so there is
-    nothing a reopen could restore it from.  Bounded by the column count.
-    """
-    score, region = _a_tabular_score(tmp_path, tabix=tabix, header_mode="list")
-    table = score.table
-    configured = table.header
-    assert configured is not None, "fixture: no header configured"
-    table.open()
-    assert list(table.get_records_in_region(*region))
-
-    table.close()
-
-    assert table.header == configured
-
-
-@pytest.mark.parametrize("tabix", [False, True], ids=["inmemory", "tabix"])
-def test_a_name_addressed_score_over_a_configured_header_reopens(
-    *, tabix: bool, tmp_path: pathlib.Path,
-) -> None:
-    """Why the configured header must stay: the score resolves against it.
-
-    A score addressed by column name resolves that name to an index on
-    every ``open()``, against ``table.header``.  Under ``header_mode: file``
-    the reopen reads the header back first, so releasing it costs nothing;
-    under ``list`` nothing reads it back, and a table that released it would
-    reopen fine itself and then refuse to open the score over it.  This is
-    the test that goes red if close() ever releases the header regardless of
-    where it came from (gain#361).
-    """
-    score, region = _a_tabular_score(tmp_path, tabix=tabix, header_mode="list")
-    score.open()
-    before = _read_region(score, region)
-    assert before[0], "the fixture region yields no records: nothing compared"
-    score.close()
-
-    score.open()
-    after = _read_region(score, region)
-    score.close()
-
-    assert after == before
 
 
 def _a_mapped_vcf_table(tmp_path: pathlib.Path) -> GenomicPositionTable:

@@ -92,7 +92,22 @@ Region = tuple[str, int, int]
 Backend = tuple[GenomicScore, Region]
 
 
-def _build_tabular(tmp_path: pathlib.Path, *, tabix: bool) -> Backend:
+def _build_tabular(
+    tmp_path: pathlib.Path, *, tabix: bool,
+    configured_header: bool = False, add_prefix: str | None = None,
+) -> Backend:
+    """A one-row tabular score whose score is addressed by column NAME.
+
+    Name-addressed on purpose: resolving a name is the one read of
+    ``table.header`` a score cannot do without, and it does it on every
+    ``open()``, so a header that is released and not rebuilt shows up here
+    as a failure rather than as a retained tuple nobody looks at.
+    ``configured_header`` moves the header out of the file and into the
+    config (``header_mode: list``); the default leaves the mode unspelled,
+    because the backend default is the case under test.  ``add_prefix`` maps
+    the file's contig ``1`` into reference space, for the fixtures that need
+    a populated chromosome map.
+    """
     builder = (
         a_position_score()
         .with_score("s_float", "float")
@@ -101,10 +116,17 @@ def _build_tabular(tmp_path: pathlib.Path, *, tabix: bool) -> Backend:
             1      10         0.5
         """)
     )
+    if configured_header:
+        builder = builder.with_header_mode("list")
+    if add_prefix is not None:
+        builder = builder.with_chrom_mapping(add_prefix=add_prefix)
     if tabix:
         builder = builder.with_tabix()
     repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
-    return PositionScore(repo.get_resource("pos")), ("1", 10, 10)
+    return (
+        PositionScore(repo.get_resource("pos")),
+        (f"{add_prefix or ''}1", 10, 10),
+    )
 
 
 def _build_inmemory(tmp_path: pathlib.Path) -> Backend:
