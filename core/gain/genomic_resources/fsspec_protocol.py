@@ -1933,9 +1933,8 @@ class FsspecReadOnlyProtocol(
         GRR is opened by url -- presigned for ``s3`` -- which needs a
         pyBigWig built with libcurl (``pyBigWig.remote == 1``); the PyPI
         wheel is not, and a remote open on it is refused with an ``OSError``
-        naming the remedies rather than handed to a library that would take
-        the url for a local path. That refusal never carries the url, which
-        may hold a credential.
+        naming the remedies. That refusal never carries the url, which may
+        hold a credential.
         """
         if self.scheme not in {"file", "s3", "http", "https"}:
             raise OSError(

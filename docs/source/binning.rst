@@ -414,8 +414,8 @@ window first, then widen it.
     Reading a bigWig directly from a remote GRR needs a ``pyBigWig`` built
     with remote (libcurl) support. The conda package of GAIn ships one; the
     ``pyBigWig`` wheel on PyPI does not. If a run fails with
-    ``Couldn't open https://... for reading``, install GAIn from conda, or
-    point the tool at a local copy of the repository with
+    ``this pyBigWig build has no remote-file support``, install GAIn from
+    conda, or point the tool at a local copy of the repository with
     ``--grr-directory``. A GRR definition with a ``cache_dir`` (see
     :doc:`gain_getting_started_cli`) also works, but it downloads each
     bigWig in full before opening it — about 60 GB for the eight scores of
