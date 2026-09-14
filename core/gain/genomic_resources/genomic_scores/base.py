@@ -915,6 +915,20 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """
         return self.table.chrom_length_source
 
+    @property
+    def uses_tabix_index(self) -> bool:
+        """Whether the score's file is read through a tabix index.
+
+        A fact about the format, declared on the backend class, so it is
+        answered on a closed score: the resource file set -- the data file
+        and, on a tabix backend, the ``.tbi`` / ``.csi`` that goes with it
+        -- has to be known before any of those files is opened.  The
+        index's NAME is a separate question: ``index_filename`` in the
+        table section of :meth:`get_config` when the resource configures
+        one, the conventional suffixes over the manifest otherwise.
+        """
+        return self.table.uses_tabix_index
+
     def region_values_from_records(
         self,
         records: Iterator[Record],

@@ -5,16 +5,13 @@ import weakref
 from typing import Any, ClassVar, cast
 
 from gain import logging
-from gain.genomic_resources.genomic_position_table import (
-    ContigExtent,
-    TabixGenomicPositionTable,
-)
 from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     build_score_from_resource,
 )
 from gain.genomic_resources.genomic_scores.chrom_lengths import (
     ChromLength,
+    ContigExtent,
     derive_chrom_lengths,
 )
 from gain.genomic_resources.reference_genome import (
@@ -186,13 +183,22 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
     @property
     def files(self) -> set[str]:
-        filename = self.score.table.definition.filename
+        filename = self._table_config()["filename"]
         files = {filename}
-        if isinstance(self.score.table, TabixGenomicPositionTable):
+        if self.score.uses_tabix_index:
             index_filename = self._resolve_index_filename(filename)
             if index_filename is not None:
                 files.add(index_filename)
         return files
+
+    def _table_config(self) -> dict[str, Any]:
+        """The ``table`` section of the score's validated configuration.
+
+        What the score built its table from, and so what the file set
+        and the statistics hash read: the definition the table holds is
+        a ``Box`` over a copy of this dict, and serialises identically.
+        """
+        return cast("dict[str, Any]", self.score.get_config()["table"])
 
     def _resolve_index_filename(self, filename: str) -> str | None:
         """Return the tabix index of ``filename``, or ``None`` with a warning.
@@ -209,10 +215,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         hash an index the table does not read (gain#595).
         """
         manifest = self.resource.get_manifest()
-        # The definition is a Box over untyped config, so ``get`` is Any.
+        # The table section is untyped config, so ``get`` is Any.
         configured = cast(
-            "str | None",
-            self.score.table.definition.get("index_filename"))
+            "str | None", self._table_config().get("index_filename"))
         if configured is not None:
             if configured in manifest:
                 return configured
@@ -396,7 +401,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                     if hist_conf is not None
                 ],
                 "table": {
-                    "config": self.score.table.definition,
+                    "config": self._table_config(),
                     "files_md5": {file_name: manifest[file_name].md5
                                   for file_name in sorted(self.files)},
                 },

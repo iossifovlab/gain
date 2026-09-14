@@ -32,14 +32,18 @@ if TYPE_CHECKING:
 
     from .base import GenomicScore
 
-# The provenance vocabulary is the table layer's, because three of its four
-# members are facts each backend declares about its own format
-# (``chrom_length_source``); re-exported from here, where the record that
-# carries it lives, so a caller finds the enum beside the resolver (the
-# ``BIGWIG_VALUE_COLUMN`` pattern).
+# Both enums are the table layer's -- the provenance vocabulary because
+# three of its four members are facts each backend declares about its own
+# format (``chrom_length_source``), the extent because it is the table
+# that proves a contig empty or fails to measure it; re-exported from
+# here, where the record that carries them lives, so a caller finds them
+# beside the resolver (the ``BIGWIG_VALUE_COLUMN`` pattern) and the
+# statistics implementation need not import the table package at all
+# (gain#410).
 __all__ = [
     "ChromLength",
     "ChromLengthSource",
+    "ContigExtent",
     "derive_chrom_length",
     "derive_chrom_lengths",
 ]

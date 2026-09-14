@@ -5,7 +5,7 @@ import logging
 import pathlib
 import re
 import textwrap
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any, cast
 
 import pysam
@@ -47,6 +47,7 @@ from gain.genomic_resources.testing import (
 )
 from gain.genomic_resources.testing.builders import (
     PositionScoreBuilder,
+    a_bigwig_score,
     a_grr,
     a_position_score,
     a_reference_genome,
@@ -1507,6 +1508,37 @@ def a_tabix_position_score(*, csi: bool = False) -> PositionScoreBuilder:
     )
 
 
+@pytest.mark.parametrize(("build", "expected"), [
+    pytest.param(
+        lambda p: a_tabix_position_score().build_resource(p), True,
+        id="tabix"),
+    pytest.param(
+        lambda p: a_vcf_info_score().build_resource(p), True,
+        id="vcf"),
+    pytest.param(
+        lambda p: a_bigwig_score().build_resource(p), False,
+        id="bigwig"),
+    pytest.param(
+        lambda p: a_position_score().build_resource(p), False,
+        id="inmemory"),
+])
+def test_a_score_says_whether_its_file_is_read_through_a_tabix_index(
+    build: Callable[[pathlib.Path], GenomicResource],
+    expected: bool,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Whether an index belongs in the file set is a fact about the format.
+
+    The implementation used to decide it by ``isinstance`` over the
+    backend classes (gain#410); the score answers it for the closed score,
+    since which files a resource's table reads must be known before any
+    of them is opened.
+    """
+    score = build_score_from_resource(build(tmp_path))
+
+    assert score.uses_tabix_index is expected
+
+
 def test_files_of_csi_indexed_tabix_score_names_the_csi_index(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -1677,6 +1709,45 @@ def test_statistics_hash_of_a_custom_indexed_score_carries_its_index_md5(
         "data.txt.gz": res.get_manifest()["data.txt.gz"].md5,
         CUSTOM_INDEX_FILENAME: res.get_manifest()[CUSTOM_INDEX_FILENAME].md5,
     }
+
+
+@pytest.mark.parametrize(("build", "expected_table_config"), [
+    pytest.param(
+        lambda p: a_custom_indexed_tabix_position_score().build_resource(p),
+        {
+            "filename": "data.txt.gz",
+            "format": "tabix",
+            "index_filename": CUSTOM_INDEX_FILENAME,
+            "zero_based": True,
+        },
+        id="tabix_with_configured_index"),
+    pytest.param(
+        lambda p: a_bigwig_score().build_resource(p),
+        {"filename": "data.bw"},
+        id="bigwig"),
+])
+def test_statistics_hash_carries_the_table_config_as_the_resource_wrote_it(
+    build: Callable[[pathlib.Path], GenomicResource],
+    expected_table_config: dict[str, Any],
+    tmp_path: pathlib.Path,
+) -> None:
+    """The ``table`` block of the hash is the resource's own, verbatim.
+
+    Pinned as a literal, and deliberately not as "whatever the score's
+    config says": the hash is compared against the one stored with every
+    deployed resource's statistics, so a changed byte here marks every
+    one of them stale and rebuilds them on the next ``resource-stats``
+    pass.  The block was read off the table's own definition until
+    gain#410 moved the read to the score's validated config; the two
+    serialise identically, which is what this pins.  A hash that MUST
+    change is a change to this literal, made on purpose.
+    """
+    impl = build_score_implementation_from_resource(build(tmp_path))
+
+    table = json.loads(impl.calc_statistics_hash())["config"]["table"]
+
+    assert table["config"] == expected_table_config
+    assert sorted(table["files_md5"]) == sorted(impl.files)
 
 
 def test_files_warns_and_omits_a_configured_index_absent_from_the_manifest(

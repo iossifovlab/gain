@@ -78,6 +78,10 @@ class TabixGenomicPositionTable(GenomicPositionTable):
     chrom_length_source: ClassVar[ChromLengthSource] = \
         ChromLengthSource.TABIX_ESTIMATE
 
+    # The file is read through its ``.tbi`` / ``.csi`` index, which is
+    # therefore one of the resource's files.  The VCF backend inherits this.
+    uses_tabix_index: ClassVar[bool] = True
+
     # Serves the bulk column-array read; see get_region_value_arrays below.
     # NOT inherited in spirit by the VCF backend, which sets it back to False.
     supports_value_arrays: ClassVar[bool] = True
