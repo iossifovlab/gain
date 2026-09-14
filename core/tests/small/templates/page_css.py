@@ -56,17 +56,30 @@ class Rule(NamedTuple):
     declarations: list[tuple[str, str]]
 
 
-def rules_in(markup: str) -> list[Rule]:
-    """Every rule of ``markup``'s first ``<style>``, in source order.
+#: A ``<style>`` element's body.  The tag may carry attributes: a reader
+#: that matched only the bare tag would go blind -- and every "no third
+#: party" assertion built on it vacuous -- the day a template wrote
+#: ``<style type="text/css">``.
+_STYLE = re.compile(r"<style\b[^>]*>(.*?)</style>", re.DOTALL)
 
-    ``markup`` is a whole page or a fragment of one -- a description's
-    shadow root -- and it is that markup's own first ``<style>`` that is
-    read, so a page and a shadow root inside it each answer for
-    themselves.
+#: What a ``url()`` loads: ``url(<it>)``, quoted or not.  Exported: the
+#: origin scanner in ``page_origins`` reads the same thing, and two
+#: spellings of it would part the way the two readers gain#1322 folded
+#: did.
+CSS_URL = re.compile(r"url\(\s*['\"]?([^'\")]+?)['\"]?\s*\)")
+
+
+def stylesheets_in(markup: str) -> list[str]:
+    """The body of every ``<style>`` of the markup, in source order.
+
+    Every one, not only the first: a resource page declares its icon
+    face inside the sorter's own block, the second one (gain#1400).
     """
-    assert "<style>" in markup, "the markup carries no <style>"
-    opening = markup.index("<style>") + len("<style>")
-    stylesheet = markup[opening:markup.index("</style>", opening)]
+    return _STYLE.findall(markup)
+
+
+def _rules_of(stylesheet: str) -> list[Rule]:
+    """The rules of one stylesheet's text, in source order."""
     return [
         Rule(
             [selector.strip() for selector in selectors.split(",")],
@@ -77,12 +90,17 @@ def rules_in(markup: str) -> list[Rule]:
     ]
 
 
-#: Every ``<style>`` of a page, not only the first: a resource page
-#: declares its icon face inside the sorter's own block, the second one.
-_STYLE = re.compile(r"<style>(.*?)</style>", re.DOTALL)
+def rules_in(markup: str) -> list[Rule]:
+    """Every rule of ``markup``'s first ``<style>``, in source order.
 
-#: The file a ``src`` declaration loads: ``url(<it>) format(...)``.
-_URL = re.compile(r"url\(\s*['\"]?([^'\")]+?)['\"]?\s*\)")
+    ``markup`` is a whole page or a fragment of one -- a description's
+    shadow root -- and it is that markup's own first ``<style>`` that is
+    read, so a page and a shadow root inside it each answer for
+    themselves.
+    """
+    stylesheets = stylesheets_in(markup)
+    assert stylesheets, "the markup carries no <style>"
+    return _rules_of(stylesheets[0])
 
 
 def font_faces_in(markup: str) -> dict[str, str]:
@@ -94,13 +112,12 @@ def font_faces_in(markup: str) -> dict[str, str]:
     declared twice for one family answers with the last.
     """
     faces: dict[str, str] = {}
-    for stylesheet in _STYLE.findall(markup):
-        for selectors, body in _CSS_RULE.findall(
-                _CSS_COMMENT.sub("", stylesheet)):
-            if selectors.strip() != "@font-face":
+    for stylesheet in stylesheets_in(markup):
+        for rule in _rules_of(stylesheet):
+            if rule.selectors != ["@font-face"]:
                 continue
-            declarations = dict(declarations_in(body))
-            url = _URL.search(declarations["src"])
+            declarations = dict(rule.declarations)
+            url = CSS_URL.search(declarations["src"])
             assert url is not None, declarations["src"]
             faces[declarations["font-family"].strip("'\"")] = url.group(1)
     return faces

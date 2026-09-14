@@ -6,7 +6,8 @@ is also what a scanner that missed the mechanism would answer.  So this
 reads every way a page can reach a host, in one place, and
 ``test_page_origins.py`` holds it to a page that uses each:
 
-- attributes -- a ``<link href>``, or any ``src``;
+- attributes -- a ``<link href>`` (a stylesheet, a preconnect hint), or
+  any ``src``;
 - an ES module specifier, a string inside ``<script type="module">``
   that an HTML parser sees as opaque character data (gain#1335);
 - CSS inside ``<style>`` -- a ``url()`` (a ``@font-face`` ``src``, a
@@ -22,18 +23,16 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
+from tests.small.templates.page_css import CSS_URL, stylesheets_in
+
 #: ``import x from "<specifier>"`` -- an ES module specifier, which can
 #: reach an origin without being an ``src``.  Any specifier, so the same
 #: match serves both the relative import the page carries and the
 #: origin count that must notice an absolute one.
 MODULE_IMPORT = re.compile(r"\bimport\s+\w+\s+from\s+[\"']([^\"']+)[\"']")
 
-#: Every ``<style>`` of a page.
-_STYLE = re.compile(r"<style>(.*?)</style>", re.DOTALL)
-
-#: What CSS can fetch: ``url(<it>)`` anywhere, and ``@import "<it>"``,
-#: the one form of ``@import`` that takes no ``url()``.
-_CSS_URL = re.compile(r"url\(\s*['\"]?([^'\")]+?)['\"]?\s*\)")
+#: ``@import "<it>"`` -- the one form of ``@import`` that takes no
+#: ``url()``, which ``CSS_URL`` would otherwise already read.
 _CSS_IMPORT = re.compile(r"@import\s+['\"]([^'\"]+)['\"]")
 
 #: Tags whose ``href`` makes the browser fetch something.  ``<a>`` is
@@ -41,20 +40,17 @@ _CSS_IMPORT = re.compile(r"@import\s+['\"]([^'\"]+)['\"]")
 _FETCHING_HREF_TAGS = frozenset({"link"})
 
 
-class _LinkReader(HTMLParser):
-    """Collects the URLs a page fetches by attribute, and its preconnects."""
+class _AttributeUrls(HTMLParser):
+    """Collects every url the page fetches by attribute."""
 
     def __init__(self) -> None:
         super().__init__()
         self.urls: list[str] = []
-        #: host -> whether the hint warms a CORS socket.
-        self.preconnects: dict[str, bool] = {}
 
     def handle_starttag(
         self, tag: str, attrs: list[tuple[str, str | None]],
     ) -> None:
         attributes = dict(attrs)
-
         href = attributes.get("href")
         if href and tag in _FETCHING_HREF_TAGS:
             self.urls.append(href)
@@ -62,33 +58,44 @@ class _LinkReader(HTMLParser):
         if src:
             self.urls.append(src)
 
-        if tag == "link" and attributes.get("rel") == "preconnect" and href:
-            self.preconnects[urlparse(href).hostname or ""] = (
-                "crossorigin" in attributes
-            )
-
-
-def read_page(page: str) -> _LinkReader:
-    reader = _LinkReader()
-    reader.feed(page)
-    return reader
-
 
 def urls_the_page_loads(page: str) -> list[str]:
     """Every url the page fetches, as written -- relative ones included."""
-    stylesheets = _STYLE.findall(page)
+    by_attribute = _AttributeUrls()
+    by_attribute.feed(page)
     return [
-        *read_page(page).urls,
+        *by_attribute.urls,
         *MODULE_IMPORT.findall(page),
-        *(url for sheet in stylesheets for url in _CSS_URL.findall(sheet)),
-        *(url for sheet in stylesheets for url in _CSS_IMPORT.findall(sheet)),
+        *(
+            url for sheet in stylesheets_in(page)
+            for url in (*CSS_URL.findall(sheet), *_CSS_IMPORT.findall(sheet))
+        ),
     ]
 
 
 def external_origins(page: str) -> frozenset[str]:
     """Every third-party host the page loads from."""
+    parsed = [urlparse(url) for url in urls_the_page_loads(page)]
     return frozenset(
-        urlparse(url).hostname or ""
-        for url in urls_the_page_loads(page)
-        if urlparse(url).scheme in ("http", "https")
+        url.hostname or "" for url in parsed
+        if url.scheme in ("http", "https")
     )
+
+
+def pointed_at_google(page: str) -> str:
+    """The page with every font url sent back to Google's font host.
+
+    For the "no third party" tests, whose empty set is also what a
+    scanner blind to *this* page's stylesheets would answer: the urls
+    are the ones the page carries, rewritten in place, so a scan that
+    then names ``fonts.gstatic.com`` has read the page's own ``<style>``
+    blocks, however the tag is written.  Vacuous on a page with no font
+    url -- which the face assertions beside each use rule out.
+    """
+    assert _FONT_URL_PREFIX.search(page), "the page carries no font url"
+    return _FONT_URL_PREFIX.sub("https://fonts.gstatic.com/", page)
+
+
+#: Where a page's font urls start: the climb to the root, if the page
+#: sits below it, then the published fonts directory.
+_FONT_URL_PREFIX = re.compile(r"(?:\.\./)*\.static/fonts/")

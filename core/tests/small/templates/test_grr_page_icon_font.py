@@ -47,15 +47,13 @@ from typing import Any
 
 import pytest
 from gain.templates import get_template
-from gain.templates.static_assets import (
-    SQLITE_WASM_PATH,
-)
+from gain.templates.static_assets import SQLITE_WASM_PATH
 
 from tests.small.templates.page_css import font_faces_in, rules_in
 from tests.small.templates.page_origins import (
     MODULE_IMPORT,
     external_origins,
-    read_page,
+    pointed_at_google,
 )
 from tests.small.templates.vendored_fonts import (
     ICON_FONT,
@@ -95,14 +93,6 @@ EXPECTED_GLYPHS = frozenset({
 #: ``close`` and ``clear`` are one glyph.  Listed so the equality
 #: against the file can stay an equality.
 ALIASES = frozenset({"clear"})
-
-#: Every origin the pages *load* from: none.  The search engine and both
-#: fonts ship inside the repository (gain#1335, gain#1400), so a page
-#: behind an air gap is the same page.  Ordinary hyperlinks are
-#: deliberately not counted -- the browse page links to the SQLite FTS
-#: docs beside its search box, and a page that grows another such link
-#: has not grown a third party it loads code from.
-NO_ORIGINS: frozenset[str] = frozenset()
 
 
 #: A Material Symbols glyph name: lowercase, underscore-separated.  The
@@ -197,28 +187,28 @@ def test_the_icon_font_is_subsetted_to_the_glyphs_the_page_draws(
     assert ligatures_in(vendored_icon_font()) - ALIASES == EXPECTED_GLYPHS
 
 
-def test_the_browse_page_preconnects_nowhere(
-    browse_page: str,
-) -> None:
-    """Nothing to warm: every socket the page opens is to its own origin.
-
-    The hints went with the Google Fonts links they were for.  A hint
-    left behind would be harmless in a browser and misleading in this
-    file -- it would name a host the page no longer loads from.
-    """
-    assert not read_page(browse_page).preconnects
-
-
 def test_the_browse_page_loads_from_no_third_party(
     browse_page: str,
 ) -> None:
     """No host at all, not merely no new one.
 
-    What the assertion is really for is the next edit -- reaching for a
-    CDN for a font, an icon set or a script should have to change this
-    on purpose, and the change should read as what it is.
+    The search engine and both fonts ship inside the repository
+    (gain#1335, gain#1400), so a page behind an air gap is the same
+    page; the preconnect hints went with the Google Fonts links they
+    warmed a socket for.  What the assertion is really for is the
+    next edit -- reaching for a CDN for a font, an icon set or a
+    script should have to change this on purpose.
+
+    An empty set is also what a scanner blind to *this* page's
+    stylesheets would answer, so the same page with its font urls
+    pointed back at Google must name the host: that proves the scan
+    reads the ``<style>`` the faces are declared in, however the tag
+    is written.
     """
-    assert external_origins(browse_page) == NO_ORIGINS
+    assert external_origins(browse_page) == frozenset()
+    assert external_origins(pointed_at_google(browse_page)) == {
+        "fonts.gstatic.com",
+    }
 
 
 def test_the_browse_page_declares_both_faces_from_the_repository(
@@ -279,8 +269,10 @@ def test_the_browse_page_imports_sqlite_wasm_from_inside_the_repository(
 
 def test_the_about_page_loads_from_no_third_party(about_page: str) -> None:
     """Styled text with no script: nothing to load from anywhere."""
-    assert external_origins(about_page) == NO_ORIGINS
-    assert not read_page(about_page).preconnects
+    assert external_origins(about_page) == frozenset()
+    assert external_origins(pointed_at_google(about_page)) == {
+        "fonts.gstatic.com",
+    }
 
 
 def test_the_about_page_declares_its_typeface_and_no_icon_font(

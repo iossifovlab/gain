@@ -1,7 +1,7 @@
-{# The page's climb back to the repository root: one directory per
-   resource id segment, as for the resource page, plus the `statistics/`
-   directory this page is published in (gain#1400). #}
-{% set static_root = '../' * (resource.resource_id.count('/') + 2) %}
+{# `static_root` is the page's climb back to the repository root, passed
+   by the renderer from the path it publishes the page at: one directory
+   per resource id segment, plus the `statistics/` directory this page
+   sits in (gain#1400). #}
 <html>
   <head>
     <meta charset="utf-8">

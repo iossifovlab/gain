@@ -67,6 +67,20 @@ async function openBrowseIndex(
   await expect(page.locator('#status')).toHaveText(`${resources} resources`);
 }
 
+/**
+ * Open the browse index and wait for its fonts to settle.
+ *
+ * Fonts are fetched lazily, once layout finds an element that uses the
+ * face; the status line `openBrowseIndex` waits on proves the page ran,
+ * not that its fonts were asked for yet. `document.fonts.ready` resolves
+ * after the next layout with no font load pending -- which is what the
+ * specs about fonts need, and no other spec does.
+ */
+async function openBrowseIndexWithFonts(page: Page): Promise<void> {
+  await openBrowseIndex(page);
+  await page.evaluate(() => document.fonts.ready);
+}
+
 /** Type a term into the search box and run the search. */
 async function search(page: Page, term: string): Promise<void> {
   await page.locator('#search-field').fill(term);
@@ -203,11 +217,7 @@ test('the harness refuses every request it does not serve itself', async ({
   page.on('request', (request) => requested.push(request.url()));
   page.on('requestfailed', (request) => failed.add(request.url()));
 
-  await openBrowseIndex(page);
-  /* Fonts are fetched lazily, once layout finds an element that uses
-   * the face; the status line above proves the page ran, not that its
-   * fonts were asked for yet. */
-  await page.evaluate(() => document.fonts.ready);
+  await openBrowseIndexWithFonts(page);
 
   /* Nothing is asked for off the GRR's origin: the search engine and
    * both fonts ship inside the repository (iossifovlab/gain#1335,
@@ -258,8 +268,7 @@ test('the harness refuses every request it does not serve itself', async ({
 });
 
 test('an icon renders as a glyph, not as its name', async ({ page }) => {
-  await openBrowseIndex(page);
-  await page.evaluate(() => document.fonts.ready);
+  await openBrowseIndexWithFonts(page);
 
   /* The face itself, by its own report: `document.fonts.check()` is
    * not used because it answers true for a family no `@font-face`
