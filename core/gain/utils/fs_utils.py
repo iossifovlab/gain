@@ -12,9 +12,10 @@ from fsspec.core import url_to_fs
 #: How long a presigned s3 url stays valid, in seconds -- and therefore how
 #: long a pysam or pyBigWig handle opened on it does, since the library
 #: re-requests that url on every seek. Every presign in gain passes this:
-#: the GRR's ``_get_file_url`` and :func:`sign` below, which gpf's VCF
-#: loader holds for a whole import. The most SigV4 allows; see ADR 0023
-#: (gain#1398) for why the maximum and what a handle older than this does.
+#: the GRR's ``_get_file_url`` and :func:`sign` below, whose callers may
+#: hold the handle for the length of an import. The most SigV4 allows; see
+#: ADR 0023 (gain#1398) for why the maximum and what a handle older than
+#: this does.
 S3_PRESIGN_EXPIRATION_SECONDS = 7 * 24 * 60 * 60
 
 

@@ -729,3 +729,11 @@ sign per request, which gain#1371 proved workable and declined
 credential in the url; the redactors and the brackets this ADR describes
 are what make that acceptable, and none of them changes — the signed url's
 shape is the same, only its `Expires` / `X-Amz-Expires` moves.
+
+*Addendum, gain#1434 (2026-09-14): `_get_file_url` was not the only presign
+site. `gain.utils.fs_utils.sign` — a helper gain itself does not call, but
+gpf's VCF loader does, holding the resulting pysam handle for a whole
+import — presigned with the same 100 s default. It now passes the same
+constant, which moved down to `gain.utils.fs_utils` so both sites reach it
+without `utils` importing the protocol module. Every presign in gain now
+carries `S3_PRESIGN_EXPIRATION_SECONDS`.*
