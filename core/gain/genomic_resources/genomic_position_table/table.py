@@ -472,11 +472,13 @@ class GenomicPositionTable(abc.ABC):
 
         THE RELEASE POLICY, for every backend: **after ``close()`` a table
         holds only what ``open()`` does not rebuild** -- its resource, its
-        definition, and its configured parameters (the header when it is
-        configured rather than read from the file, and the core column keys
-        resolved from it).  Everything derived from the open file is given up:
-        the handle, the parser built around the file's header and contigs, any
-        buffered or fully-loaded records, and the chromosome state below.
+        definition, and its configured parameters (the header under
+        ``header_mode: list``, where it is configuration and not file
+        content, and the core column keys resolved from it).  Everything
+        derived from the file is given up: the handle, the header read off it
+        under ``header_mode: file``, the parser built around that header and
+        the file's contigs, any buffered or fully-loaded records, and the
+        chromosome state below.
 
         Stated once, here, because the alternative is deciding it per field --
         and per field the answer always looks like "this one is small".  It is
@@ -544,7 +546,8 @@ class GenomicPositionTable(abc.ABC):
         Released here is the base class's own file-derived state: the
         ``get_file_chromosomes`` memo and the chromosome mapping
         :meth:`_build_chrom_mapping` derives from it, which that method rebuilds
-        -- memo included -- on every ``open()``.  **A backend's ``close()`` must
+        -- memo included -- on every ``open()``, and the header when it is the
+        file's.  **A backend's ``close()`` must
         call up into this one**; what each backend releases on top of it is its
         own, and ``test_table_lifetime.py`` holds all four to the policy: it
         opens a table, *reads* through it, closes it, and then requires both

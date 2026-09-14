@@ -830,6 +830,55 @@ def test_a_reopened_table_answers_exactly_as_before_it_was_closed(
         f"close() releases (gain#350).")
 
 
+@pytest.mark.parametrize("tabix", [False, True], ids=["inmemory", "tabix"])
+def test_a_closed_table_keeps_the_header_it_was_configured_with(
+    *, tabix: bool, tmp_path: pathlib.Path,
+) -> None:
+    """Under ``header_mode: list`` the header is configuration, and stays.
+
+    The one case the release policy carves out for ``header``: set from the
+    definition at construction and never rebuilt by ``open()``, so there is
+    nothing a reopen could restore it from.  Bounded by the column count.
+    """
+    score, region = _a_tabular_score(tmp_path, tabix=tabix, header_mode="list")
+    table = score.table
+    configured = table.header
+    assert configured is not None, "fixture: no header configured"
+    table.open()
+    assert list(table.get_records_in_region(*region))
+
+    table.close()
+
+    assert table.header == configured
+
+
+@pytest.mark.parametrize("tabix", [False, True], ids=["inmemory", "tabix"])
+def test_a_name_addressed_score_over_a_configured_header_reopens(
+    *, tabix: bool, tmp_path: pathlib.Path,
+) -> None:
+    """Why the configured header must stay: the score resolves against it.
+
+    A score addressed by column name resolves that name to an index on
+    every ``open()``, against ``table.header``.  Under ``header_mode: file``
+    the reopen reads the header back first, so releasing it costs nothing;
+    under ``list`` nothing reads it back, and a table that released it would
+    reopen fine itself and then refuse to open the score over it.  This is
+    the test that goes red if close() ever releases the header regardless of
+    where it came from (gain#361).
+    """
+    score, region = _a_tabular_score(tmp_path, tabix=tabix, header_mode="list")
+    score.open()
+    before = _read_region(score, region)
+    assert before[0], "the fixture region yields no records: nothing compared"
+    score.close()
+
+    score.open()
+    after = _read_region(score, region)
+    score.close()
+
+    assert after == before
+
+
 def _a_mapped_vcf_table(tmp_path: pathlib.Path) -> GenomicPositionTable:
     """A ``vcf_info`` table whose file contig ``chr1`` maps to ``1``.
 
