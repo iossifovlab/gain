@@ -931,7 +931,9 @@ chr1   10  .  A   T   .    .      A=1
                 list(tab.get_records_in_region("chr1"))
 
 
-def test_invalid_chrom_mapping_file_with_tabix(tmp_path: pathlib.Path) -> None:
+def test_invalid_chrom_mapping_file_with_tabix(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
     setup_directories(
         tmp_path, {
             "genomic_resource.yaml": """
@@ -961,14 +963,20 @@ def test_invalid_chrom_mapping_file_with_tabix(tmp_path: pathlib.Path) -> None:
         seq_col=0, start_col=1, end_col=2)
     res = build_filesystem_test_resource(tmp_path)
     assert res.config is not None
+    open_tabix_file = mocker.spy(GenomicResource, "open_tabix_file")
+    table = build_genomic_position_table(res, res.config["table"])
 
     with pytest.raises(ValueError, match="The chromosome") as exception:
-        build_genomic_position_table(res, res.config["table"]).open()
+        table.open()
 
     assert str(exception.value) == (
         "The chromosome mapping file chrom_map.txt in resource  "
         "is expected to have the two columns 'chrom' and 'file_chrom'"
     )
+    # The refusal comes after the handle is acquired; open() is what
+    # releases it, since no caller was ever told the table is open (gain#627).
+    assert open_tabix_file.spy_return.closed
+    assert table.pysam_file is None
 
 
 def test_del_prefix_that_collides_two_file_contigs_is_rejected(
