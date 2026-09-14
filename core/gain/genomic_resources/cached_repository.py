@@ -18,7 +18,6 @@ from gain import logging
 from gain.genomic_resources.fsspec_protocol import (
     FileCacheVerdict,
     FsspecReadWriteProtocol,
-    _strip_url_userinfo,
 )
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
@@ -31,6 +30,7 @@ from gain.genomic_resources.repository import (
     is_safe_repo_id,
     resolve_tabix_index_filename_for_read,
 )
+from gain.utils.url_redaction import strip_url_userinfo
 
 from .fsspec_protocol import build_fsspec_protocol
 
@@ -351,7 +351,7 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
             # one above and the repository factory's -- already redact.
             raise ValueError(
                 f"a GRR cache must be on a local filesystem; cache url "
-                f"<{_strip_url_userinfo(cache_url)}> uses the unsupported "
+                f"<{strip_url_userinfo(cache_url)}> uses the unsupported "
                 f"scheme <{cache_scheme}>")
 
         logger.debug(
@@ -957,7 +957,7 @@ def _build_cache_worklist(
                 # ``error`` may be an fsspec/aiohttp fetch failure whose message
                 # embeds the credential-bearing fetch url; strip any url
                 # userinfo before it reaches the failure summary or the logs.
-                redacted = _strip_url_userinfo(str(error))
+                redacted = strip_url_userinfo(str(error))
                 # The name is untrusted GRR content and this is one of the
                 # sites that REPORTS a refused one, so it is escaped here
                 # too -- ``redacted`` already is, and leaving the bare name
@@ -1079,7 +1079,7 @@ def cache_resources(
                 # ``error`` may embed the credential-bearing fetch url (see the
                 # classify path above); redact any url userinfo before it
                 # reaches the summary or the reporter's ERROR log.
-                redacted = _strip_url_userinfo(str(error))
+                redacted = strip_url_userinfo(str(error))
                 failures.append(f"{label} ({redacted})")
                 # One concise line per failure; the full summary is raised at
                 # the end. A stack trace per failed file would swamp a large

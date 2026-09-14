@@ -76,16 +76,7 @@ from gain.templates.markdown_support import render_markdown as markdown
 from gain.templates.static_assets import repository_static_files
 from gain.utils.fs_utils import S3_PRESIGN_EXPIRATION_SECONDS
 from gain.utils.helpers import convert_size
-
-# The userinfo redactor is defined once, below the GRR, because the
-# log-record seam in ``gain.utils.url_redaction`` runs the same regex over
-# every log line in the process (ADR 0023, gain#1363). It keeps the name
-# this module has always exported: ~a dozen call sites here, the display-url
-# callers in the cached repository and the ann_data resource, and the
-# #1318 fence's ``URL_REDACTOR`` all spell it ``_strip_url_userinfo``.
-from gain.utils.url_redaction import (
-    strip_url_userinfo as _strip_url_userinfo,
-)
+from gain.utils.url_redaction import strip_url_userinfo
 
 # Silence the spurious "[W::hts_idx_load3] The index file is older than the
 # data file" warning that htslib emits when a tabix/VCF index has an older
@@ -293,7 +284,7 @@ _URL_QUERY_RE = re.compile(
 def _strip_url_query(text: str) -> str:
     """Strip the ``?query`` from every url embedded in ``text``.
 
-    The counterpart of :func:`_strip_url_userinfo` for the OTHER place a url
+    The counterpart of :func:`strip_url_userinfo` for the OTHER place a url
     can carry a secret. An s3 GRR does not hand out its stored url: it hands
     out ``filesystem.sign(url)``, a presigned url that is a bearer credential
     for as long as it lives, and every part of that credential is a query
@@ -320,7 +311,7 @@ def _strip_url_credentials(text: str) -> str:
     password kept and the host, which is what says *which* GRR failed, gone.
     Userinfo-first yields ``https://host/f.gz``.
 
-    :func:`_strip_url_userinfo` stays separate and narrower because the
+    :func:`strip_url_userinfo` stays separate and narrower because the
     *display*-url callers want exactly it: a display url keeps its query
     string, which on a stored (unsigned) url is part of the address rather
     than a secret. That argument covers display urls only; ADR 0023's
@@ -333,7 +324,7 @@ def _strip_url_credentials(text: str) -> str:
     # every open asks the predicate below whether it does.
     if "@" not in text and "?" not in text:
         return text
-    return _strip_url_query(_strip_url_userinfo(text))
+    return _strip_url_query(strip_url_userinfo(text))
 
 
 def _display_url(url: str) -> str:
@@ -449,11 +440,11 @@ def _url_carries_userinfo(url: str) -> bool:
     """Whether ``url`` embeds ``user:pass@`` userinfo.
 
     Defined as "the narrow redactor would change it", so that this predicate
-    and ``_strip_url_userinfo`` cannot come to disagree about what counts as
+    and ``strip_url_userinfo`` cannot come to disagree about what counts as
     userinfo. It is the userinfo half of ``_url_carries_credential``, which is
     the predicate a caller asking "is there a secret in here" wants.
     """
-    return _strip_url_userinfo(url) != url
+    return strip_url_userinfo(url) != url
 
 
 #: Serialises ``_htslib_silenced`` below, because htslib's verbosity level is
@@ -975,7 +966,7 @@ def _refuse_a_reconfiguring_rebuild(
     )
     if existing.mode() != requested:
         raise ValueError(
-            f"protocol {proto_id!r} over {_strip_url_userinfo(url)} is "
+            f"protocol {proto_id!r} over {strip_url_userinfo(url)} is "
             f"already built as {existing.mode().name}; it cannot also serve "
             f"a {requested.name} build -- give the {requested.name} protocol "
             f"an id of its own")
@@ -1000,11 +991,11 @@ def _refuse_a_reconfiguring_rebuild(
     if canonical_public_url(requested_public_url) != \
             canonical_public_url(existing.public_url):
         raise ValueError(
-            f"protocol {proto_id!r} over {_strip_url_userinfo(url)} is "
+            f"protocol {proto_id!r} over {strip_url_userinfo(url)} is "
             f"already built with the public url "
-            f"{_strip_url_userinfo(existing.public_url)}; rebuilding it "
+            f"{strip_url_userinfo(existing.public_url)}; rebuilding it "
             f"cannot repoint it at "
-            f"{_strip_url_userinfo(requested_public_url)} -- give the "
+            f"{strip_url_userinfo(requested_public_url)} -- give the "
             f"protocol published under that url an id of its own")
 
     requested_kwargs = _protocol_config_kwargs(kwargs)
@@ -1020,7 +1011,7 @@ def _refuse_a_reconfiguring_rebuild(
         # http basic-auth credentials reach a protocol, and an exception
         # message is logged, echoed and reported.
         raise ValueError(
-            f"protocol {proto_id!r} over {_strip_url_userinfo(url)} is "
+            f"protocol {proto_id!r} over {strip_url_userinfo(url)} is "
             f"already built with a different {', '.join(disagreeing)}; "
             f"rebuilding it cannot reconfigure the protocol its holders are "
             f"using -- give the differently configured protocol an id of "
@@ -1282,7 +1273,7 @@ class FsspecReadOnlyProtocol(
                     logger.debug(
                         "protocol with id %s and url %s already exists, "
                         "returning the existing instance",
-                        proto_id, _strip_url_userinfo(url))
+                        proto_id, strip_url_userinfo(url))
                     return existing
                 pending = _FSSPEC_PROTOCOLS_UNDER_CONSTRUCTION.get(key)
                 if pending is not None:
@@ -1697,7 +1688,7 @@ class FsspecReadOnlyProtocol(
                 # ``report_resource_failure`` logs this text at ERROR.
                 raise OSError(
                     f"Read-Only protocol {self.get_id()} trying to open "
-                    f"{_strip_url_userinfo(filepath)} for writing")
+                    f"{strip_url_userinfo(filepath)} for writing")
 
             # Create the containing directory if it doesn't exists.
             parent = os.path.dirname(filepath)
@@ -2862,7 +2853,7 @@ class FsspecReadWriteProtocol(
                     "transient failure downloading (%s: %s): %s; "
                     "retrying in %ss (attempt %s/%s)",
                     dest_resource.resource_id, filename,
-                    _strip_url_userinfo(str(error)),
+                    strip_url_userinfo(str(error)),
                     delay, attempt + 1, _COPY_MAX_ATTEMPTS)
                 time.sleep(delay)
 
@@ -2964,7 +2955,7 @@ class FsspecReadWriteProtocol(
                 # protocol over an authed store (gain#620).
                 raise OSError(
                     "destination file not created "
-                    f"{_strip_url_userinfo(tmp_filepath)}")
+                    f"{strip_url_userinfo(tmp_filepath)}")
 
             if bytes_written != expected_size:
                 raise TruncatedDownloadError(
@@ -3057,8 +3048,8 @@ class FsspecReadWriteProtocol(
             # is about; it and the path are redacted for the same reason.
             logger.warning(
                 "unable to remove the unpublished temp file %s: %s",
-                _strip_url_userinfo(tmp_filepath),
-                _strip_url_userinfo(str(error)))
+                strip_url_userinfo(tmp_filepath),
+                strip_url_userinfo(str(error)))
 
     def classify_resource_file(
             self, remote_resource: GenomicResource,
@@ -3543,7 +3534,7 @@ def build_fsspec_protocol(
             # compares the mode of the class this function *picked*, which on
             # this branch is read-only whatever the caller asked for.
             raise ValueError(
-                f"protocol {proto_id!r} over {_strip_url_userinfo(root_url)} "
+                f"protocol {proto_id!r} over {strip_url_userinfo(root_url)} "
                 f"cannot be built read-write: an http(s) repository is "
                 f"read-only -- there is nothing to create over http and no "
                 f"lockfile to take. Omit read_only to build the read-only "

@@ -1,8 +1,8 @@
 """Url userinfo redaction, and the log-record seam that applies it.
 
 Two things live here, and they live *here* -- below the GRR, next to
-``log_levels`` -- because ``gain.logging`` has to import them and every
-module in the package imports ``gain.logging``.
+``log_levels`` -- because ``gain/__init__`` has to import them before any
+module that logs, and the GRR is one of those modules.
 
 ``strip_url_userinfo`` is the redactor the GRR has always used for display
 urls and hand-redacted messages (ADR 0023).  ``redact_url_userinfo_in_log_
@@ -10,8 +10,8 @@ records`` is the fourth remedy that ADR's gain#1363 amendment records: it
 wraps ``logging.LogRecord.getMessage`` process-wide, so a credential that
 reaches *any* log line -- gain's own or fsspec's -- is stripped when the
 record is formatted, and the emitting site needs to know nothing about the
-rule.  It is deliberately the shape ``log_levels`` already uses on
-``logging.Logger``.
+rule.  Like ``log_levels``, this module installs its patch as an import
+side effect, so importing it is the whole of what a bootstrap has to do.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import re
 # scheme and everything from the host onward. Works both on a bare url and on a
 # longer diagnostic message that embeds one (e.g. an fsspec
 # ``FileNotFoundError`` whose text IS the credential-bearing fetch url).
-URL_USERINFO_RE = re.compile(
+_URL_USERINFO_RE = re.compile(
     r"(?P<scheme>[a-zA-Z][a-zA-Z0-9+.\-]*://)[^/@\s]+@")
 
 
@@ -33,8 +33,16 @@ def strip_url_userinfo(text: str) -> str:
     Used to build credential-free display urls, cache-hit log lines and
     redacted fetch-error messages. The host/port/path are preserved; only the
     userinfo is removed. A string with no userinfo is returned unchanged.
+
+    The ``@`` test up front is what keeps the log-record seam below cheap:
+    it runs on every formatted log line in the process, almost none of
+    which carry an ``@``, and the regex re-anchors at every letter of a
+    line that has none -- a few microseconds a line, against a few
+    nanoseconds for the test.
     """
-    return URL_USERINFO_RE.sub(lambda match: match.group("scheme"), text)
+    if "@" not in text:
+        return text
+    return _URL_USERINFO_RE.sub(lambda match: match.group("scheme"), text)
 
 
 #: Set on the ``getMessage`` this module installs, and nowhere else. It is
@@ -63,3 +71,6 @@ def redact_url_userinfo_in_log_records() -> None:
 
     setattr(get_message, _REDACTS_URL_USERINFO, True)
     logging.LogRecord.getMessage = get_message  # type: ignore[method-assign]
+
+
+redact_url_userinfo_in_log_records()

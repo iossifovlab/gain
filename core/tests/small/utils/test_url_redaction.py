@@ -17,7 +17,6 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 import gain
-import gain.logging  # ruff: ignore[unused-import] -- installs the seam
 import gain.utils.url_redaction
 import pytest
 from gain.utils.url_redaction import redact_url_userinfo_in_log_records
@@ -29,8 +28,8 @@ REDACTED_URL = "https://grr.example.org/repo/f.gz"
 class _FormattedLines(logging.Handler):
     """Collect what a reader of the log would see: the formatted lines."""
 
-    def __init__(self, level: int = logging.NOTSET) -> None:
-        super().__init__(level)
+    def __init__(self) -> None:
+        super().__init__()
         self.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
         self.lines: list[str] = []
 
@@ -50,12 +49,13 @@ def isolated_logger() -> Iterator[IsolatedLogger]:
     hangs its own capture off it -- so every property touched here is put
     back at teardown.
     """
-    saved: list[tuple[logging.Logger, list[logging.Handler], bool, int]] = []
+    isolated: list[logging.Logger] = []
+    saved: list[tuple[list[logging.Handler], bool, int]] = []
 
     def isolate(name: str | None) -> tuple[logging.Logger, _FormattedLines]:
         logger = logging.getLogger(name)
-        saved.append(
-            (logger, list(logger.handlers), logger.propagate, logger.level))
+        isolated.append(logger)
+        saved.append((list(logger.handlers), logger.propagate, logger.level))
         logger.handlers.clear()
         logger.propagate = False
         logger.setLevel(logging.DEBUG)
@@ -65,20 +65,11 @@ def isolated_logger() -> Iterator[IsolatedLogger]:
 
     yield isolate
 
-    for logger, handlers, propagate, level in reversed(saved):
+    for logger, (handlers, propagate, level) in zip(
+            isolated, saved, strict=True):
         logger.handlers[:] = handlers
         logger.propagate = propagate
         logger.setLevel(level)
-
-
-def test_a_credentialed_url_in_a_format_arg_renders_without_userinfo(
-    isolated_logger: IsolatedLogger,
-) -> None:
-    logger, lines = isolated_logger("gain.tests.url_redaction.arg")
-
-    logger.error("cannot open %s", CREDENTIALED_URL)
-
-    assert lines.lines == [f"ERROR cannot open {REDACTED_URL}"]
 
 
 #: The three ways a url reaches a log call in this tree: as a ``%s`` arg,
@@ -240,15 +231,25 @@ DOUBLE_AT_URL = "https://a@b@host/f.gz"
 ONCE_REDACTED_DOUBLE_AT_URL = "https://b@host/f.gz"
 
 
+def _reload_the_bootstrap() -> None:
+    importlib.reload(gain.utils.url_redaction)
+    importlib.reload(gain)
+
+
+#: The two ways the install runs again in one process: called outright, and
+#: re-executed by a module reload, which also resets any module-level flag
+#: an implementation might have kept its "already installed" state in.
+@pytest.mark.parametrize("reinstall", [
+    pytest.param(redact_url_userinfo_in_log_records, id="called-again"),
+    pytest.param(_reload_the_bootstrap, id="module-reloaded"),
+])
 def test_installing_the_seam_again_does_not_stack_a_second_layer(
-    isolated_logger: IsolatedLogger,
+    isolated_logger: IsolatedLogger, reinstall: Callable[[], None],
 ) -> None:
-    """Re-import, ``importlib.reload`` and test isolation all re-run the
-    install; each must find the seam in place and leave it alone."""
-    logger, lines = isolated_logger("gain.tests.url_redaction.twice")
+    logger, lines = isolated_logger("gain.tests.url_redaction.again")
     installed_by_importing_gain = logging.LogRecord.getMessage
 
-    redact_url_userinfo_in_log_records()
+    reinstall()
     logger.error("cannot open %s", DOUBLE_AT_URL)
 
     # The identity half says the bootstrap had already installed it; the
@@ -257,18 +258,6 @@ def test_installing_the_seam_again_does_not_stack_a_second_layer(
         logging.LogRecord.getMessage is installed_by_importing_gain,
         lines.lines,
     ) == (True, [f"ERROR cannot open {ONCE_REDACTED_DOUBLE_AT_URL}"])
-
-
-def test_reloading_the_bootstrap_module_does_not_stack_a_second_layer(
-    isolated_logger: IsolatedLogger,
-) -> None:
-    logger, lines = isolated_logger("gain.tests.url_redaction.reload")
-
-    importlib.reload(gain.utils.url_redaction)
-    importlib.reload(gain)
-    logger.error("cannot open %s", DOUBLE_AT_URL)
-
-    assert lines.lines == [f"ERROR cannot open {ONCE_REDACTED_DOUBLE_AT_URL}"]
 
 
 #: A host in miniature: import gain, apply a Django-shaped ``LOGGING``
