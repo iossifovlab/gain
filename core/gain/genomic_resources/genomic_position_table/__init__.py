@@ -737,10 +737,11 @@ the class attribute ``chrom_length_source``, the way it declares
 ``yields_records``.  The obligation: the base class gives it NO default, so
 a backend that has not said is refused with an ``AttributeError`` the first
 time a length's provenance is asked, rather than inheriting a label -- and a
-trust level -- that is not its own.  ``chrom_lengths_are_exact`` is
-**unchanged in name, type and meaning** for its readers (``coverage.py``),
-but is now a property derived from the declaration instead of a second
-``ClassVar`` beside it, so the two cannot disagree.
+trust level -- that is not its own.  The trust level is the member's
+``is_exact``; the exactness bool that used to sit beside the declaration
+(#776) had one reader -- the coverage denominator -- and that reader now
+asks the implementation's ladder, whose records carry the member
+(gain#1414).
 
 ``refusal`` is the one home of the two "no length" messages:
 ``get_chromosome_length`` raised them inline, and the score's method refuses
