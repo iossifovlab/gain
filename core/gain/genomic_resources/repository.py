@@ -362,7 +362,9 @@ def uncontained_resource_id_reason(resource_id: str) -> str | None:
     it as ``""`` and ``build_local_resource`` as ``"."``. Only the escape
     itself is refused here, not the degenerate spellings a file name is
     also held to: an id is joined once, at the root, so a ``.`` segment in
-    it is a no-op rather than a way to address something else.
+    it is a no-op rather than a way to address something else.  (It is
+    still refused -- by :func:`malformed_resource_id_reason`, on the
+    different ground that no scan can ever produce it.)
 
     An id carrying a control character is refused, which is a reporting
     concern rather than a containment one -- the id is logged unescaped at
@@ -407,24 +409,33 @@ def malformed_resource_id_reason(resource_id: str) -> str | None:
     with a warning the same way.  The two enumeration paths agree on
     both the grammar and its consequence.
 
-    The empty segment is the one refusal here the scan grammar does
-    *not* also make -- ``/`` is inside its character class, so ``a//b``
-    matches it -- and a filesystem cannot offer such a directory anyway,
-    having no empty name.  Only a hand-written ``.CONTENTS`` can.
+    Two segments are refused here that the scan grammar does *not*
+    refuse -- both ``/`` and ``.`` are inside its character class, so
+    ``a//b`` and ``a/./b`` match it -- because a scan never meets them: a
+    filesystem has no empty name to offer, and every dot-named directory
+    is skipped on the way down.  Only a hand-written ``.CONTENTS`` can
+    carry either.  The ``.`` segment is the quieter of the two: it
+    survives the join, the filesystem resolves it away, and the cached
+    directory is then enumerated under a *different* id than the one it
+    was served as (gain#1385).
 
-    ``""`` is exempt because it names the repository root, a supported
-    resource in its own right that is published under exactly that id.
-    ``"."``, the other spelling of the root, needs no exemption: it
-    carries no refused character and splits into no empty segment.
+    ``""`` and ``"."`` are exempt because both name the repository root,
+    a supported resource in its own right that is published under the
+    empty id and addressed as ``"."`` by ``build_local_resource``.  The
+    exemption is by whole id: ``"."`` as a segment of a longer id is the
+    refusal above.
     """
-    if not resource_id:
+    if resource_id in {"", "."}:
         return None
     match = _MALFORMED_ID_CHARACTER_RE.search(resource_id)
     if match is not None:
         return (
             f"carries <{escape_unsafe_characters(match.group())}>, "
             f"which a resource id may not contain")
-    if "" in _RESOURCE_NAME_SEPARATOR.split(resource_id):
+    segments = _RESOURCE_NAME_SEPARATOR.split(resource_id)
+    if "." in segments:
+        return "carries a <.> segment"
+    if "" in segments:
         return "carries an empty segment"
     return None
 
