@@ -11,18 +11,23 @@ here keeps three things apart: the number, its provenance, and the
 when the number is absent.  The score's methods expose the ``int`` view only.
 
 The ladder the epic (gain#1412) settles is genome label → bigWig header →
-tabix estimate, applied per contig of the score.  This module answers every
-rung live: the genome rung from the ``ReferenceGenome`` a caller with a GRR
-hands in (the statistics build does; the score's own methods have none, so
-they resolve through the table alone), the rest through the table.  The
-stored ``statistics/chrom_lengths.json`` (gain#1419) is a later slice.
+tabix estimate, applied per contig of the score.  The resolver here answers
+every rung live: the genome rung from the ``ReferenceGenome`` a caller with
+a GRR hands in, the rest through the table.  The tabix rung is a probe over
+the index, so the caller that has a GRR -- the statistics build -- runs the
+ladder once, at repair, and stores the answer as ``CHROM_LENGTHS_FILE``
+together with what it was derived from (gain#1419).  The score's own
+methods have no GRR; they read that file when it describes the resource as
+it is now, and resolve through the table alone when it does not.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from gain import logging
 from gain.genomic_resources.genomic_position_table import (
     ChromLengthSource,
     ContigExtent,
@@ -30,8 +35,11 @@ from gain.genomic_resources.genomic_position_table import (
 
 if TYPE_CHECKING:
     from gain.genomic_resources.reference_genome import ReferenceGenome
+    from gain.genomic_resources.repository import GenomicResource
 
     from .base import GenomicScore
+
+logger = logging.getLogger(__name__)
 
 # The provenance vocabulary is the table layer's, because three of its four
 # members are facts each backend declares about its own format
@@ -39,11 +47,20 @@ if TYPE_CHECKING:
 # API that answers with it lives, so a caller of ``get_chrom_length_source``
 # finds the enum beside the method (the ``BIGWIG_VALUE_COLUMN`` pattern).
 __all__ = [
+    "CHROM_LENGTHS_FILE",
     "ChromLength",
     "ChromLengthSource",
+    "DerivedFrom",
+    "StoredChromLengths",
     "derive_chrom_length",
     "derive_chrom_lengths",
+    "load_chrom_lengths",
+    "save_chrom_lengths",
 ]
+
+#: Where a repaired score keeps the resolver's answer, beside its other
+#: statistics.  Under its own freshness gate, not ``stats_hash``'s.
+CHROM_LENGTHS_FILE = "statistics/chrom_lengths.json"
 
 
 @dataclass(frozen=True)
@@ -112,3 +129,139 @@ def derive_chrom_lengths(
         chrom: derive_chrom_length(score, chrom, ref_genome)
         for chrom in score.get_all_chromosomes()
     }
+
+
+@dataclass(frozen=True)
+class DerivedFrom:
+    """What a stored answer was computed from -- the file's freshness key.
+
+    ``reference_genome`` is the label the genome was actually resolved
+    from, ``None`` when there was none to resolve: no label, a label that
+    is not a resource id, or a genome the repository could not find.  So
+    a genome that turns up later reads as a change.  ``files_md5`` is the
+    manifest md5 of every data file of the table, keyed by name -- as the
+    manifest records it, which for an entry it has not digested is none.
+    """
+
+    reference_genome: str | None
+    files_md5: dict[str, str | None]
+
+    def describes(self, resource: GenomicResource) -> bool:
+        """Whether ``resource``, as it is now, is what this was derived from.
+
+        The check a reader with no repository can make: the label as the
+        resource carries it today, and the stored manifest's md5 of every
+        file recorded here.  The label is compared raw, not narrowed the
+        way the repair reads it: the stored id is a non-empty string, so
+        every value the narrowing would reject is unequal to it already,
+        and this compares, it does not act -- the readers that act report
+        a mis-authored label; a comparison would only repeat them.  The
+        manifest is the stored one, never built: a reader must not scan a
+        resource to check a file, and without one nothing is verifiable.
+
+        A file derived with NO genome -- unlabelled, or a label naming a
+        genome the repository lacked -- matches whatever the label says
+        now: it holds only the table's answers, which are exactly what a
+        reader without a genome would resolve live, so trusting it can
+        answer nothing the fallback would not.  A file derived from a
+        genome matches only the same label: under another, or none, it
+        would answer that genome's lengths.
+        """
+        if (self.reference_genome is not None
+                and resource.get_labels().get("reference_genome")
+                != self.reference_genome):
+            return False
+        manifest = resource.get_loaded_manifest()
+        return manifest is not None and all(
+            file_name in manifest and manifest[file_name].md5 == md5
+            for file_name, md5 in self.files_md5.items())
+
+
+@dataclass(frozen=True)
+class StoredChromLengths:
+    """The resolver's answer for every contig, and what it was derived from."""
+
+    lengths: dict[str, ChromLength]
+    derived_from: DerivedFrom
+
+
+def _serialize(stored: StoredChromLengths) -> str:
+    def record(resolved: ChromLength) -> dict[str, Any]:
+        return {
+            "length": resolved.length,
+            "source": (
+                resolved.source.name if resolved.source is not None
+                else None),
+            "extent": (
+                resolved.extent.name if resolved.extent is not None
+                else None),
+        }
+    return json.dumps({
+        "derived_from": {
+            "reference_genome": stored.derived_from.reference_genome,
+            "files_md5": stored.derived_from.files_md5,
+        },
+        "lengths": {
+            chrom: record(resolved)
+            for chrom, resolved in stored.lengths.items()
+        },
+    }, indent=2)
+
+
+def _deserialize(content: str) -> StoredChromLengths:
+    document = json.loads(content)
+    derived_from = document["derived_from"]
+    return StoredChromLengths(
+        lengths={
+            chrom: ChromLength(
+                length=record["length"],
+                source=(
+                    ChromLengthSource[record["source"]]
+                    if record["source"] is not None else None),
+                extent=(
+                    ContigExtent[record["extent"]]
+                    if record["extent"] is not None else None),
+            )
+            for chrom, record in document["lengths"].items()
+        },
+        derived_from=DerivedFrom(
+            reference_genome=derived_from["reference_genome"],
+            files_md5=derived_from["files_md5"],
+        ),
+    )
+
+
+def save_chrom_lengths(
+    resource: GenomicResource, stored: StoredChromLengths,
+) -> None:
+    """Write ``stored`` as the resource's ``CHROM_LENGTHS_FILE``."""
+    with resource.open_raw_file(CHROM_LENGTHS_FILE, mode="wt") as outfile:
+        outfile.write(_serialize(stored))
+
+
+def load_chrom_lengths(resource: GenomicResource) -> StoredChromLengths | None:
+    """Read the resource's ``CHROM_LENGTHS_FILE``; ``None`` when it has none.
+
+    Absence is a normal state, not an error: a resource repaired before
+    the file existed has nothing stored until its next repair.  A file
+    that cannot be read as one -- a repair killed mid-write leaves a
+    truncated one, and the write is not atomic -- reads as absent too,
+    with a WARNING naming it: absent, the ordinary repair rewrites it
+    and the score resolves live; raised, the gate would fail the
+    resource and every length read would raise with it.
+    """
+    try:
+        content = resource.get_file_content(CHROM_LENGTHS_FILE)
+    except FileNotFoundError:
+        return None
+    try:
+        return _deserialize(content)
+    except (ValueError, KeyError, TypeError) as err:
+        # ``json.JSONDecodeError`` is a ``ValueError``; so is an enum
+        # member the name does not match.  The other two are a document
+        # of the wrong shape.
+        logger.warning(
+            "resource <%s>: %s cannot be read as stored chromosome "
+            "lengths (%s); treating it as absent",
+            resource.resource_id, CHROM_LENGTHS_FILE, err)
+        return None

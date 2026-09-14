@@ -793,17 +793,43 @@ Note that the value is used exactly as written — surrounding whitespace is not
 trimmed, so ``reference_genome: " hg38 "`` is a non-empty string that simply names
 no resource, and fails at resolution rather than being read as absent.
 
-For a score, the ``reference_genome`` label is what makes its resource info page
-answer **what part of the reference genome has values**. The Coverage section of
-the page reports covered positions as a percentage of the whole assembly — every
-contig of the labelled genome, including the ones the score never touches, which
-are rolled up into a single "N contigs with no values" row. Without a resolvable
-``reference_genome`` label there is nothing to divide by, and a **tabix-backed
-score renders raw covered-position counts and no percentages at all**. A
-bigWig-backed score is the one exception: its header carries exact contig sizes,
-so it renders percentages against the header's contig list even unlabelled. If a
-score's Coverage section shows counts where you expected percentages, add the
-label:
+For a score, the ``reference_genome`` label does two things. It is the top rung
+of the ladder that gives every contig of the score a **length**, and it is what
+makes the score's resource info page answer **what part of the reference genome
+has values**.
+
+The length ladder is ``reference_genome`` label → bigWig header → tabix estimate,
+applied per contig of the score: a contig the labelled genome lists takes the
+genome's exact length; a contig it does not list falls through, for that contig
+alone, to what the score's own file can say — a bigWig header is exact, a tabix
+index yields only an upper bound found by probing it, and a plain table knows
+how far its rows reach. The score's ``get_chrom_length`` / ``get_all_chrom_lengths``
+/ ``get_chrom_length_source`` methods expose the answer and its provenance.
+Because the tabix probe costs real time on a large score, the ladder runs once,
+at repair: ``grr_manage resource-stats`` (or ``repo-stats``) stores the answer as
+``statistics/chrom_lengths.json`` beside the other statistics, together with what
+it was derived from — the label the genome was resolved from and the md5 of the
+score's table files — and the score reads that file instead of probing. The file
+has a freshness gate of its own, separate from the statistics hash: when the label
+is added, removed or re-pointed, or a genome the label names becomes resolvable,
+**the next repair rewrites** ``chrom_lengths.json`` **and nothing else** — the
+histograms keep their files, because the label is deliberately not part of the
+statistics hash. ``--dry-run`` reports a stale or missing lengths file as needing
+an update. A score repaired before this file existed has no lengths file until its
+next ``resource-stats`` run; until then, and whenever the file no longer matches
+the resource (a re-pointed label not yet repaired), the score resolves lengths
+live from its own file, exactly as it always did, and says so once at INFO on the
+first length read.
+
+The Coverage section of the page reports covered positions as a percentage of
+the whole assembly — every contig of the labelled genome, including the ones the
+score never touches, which are rolled up into a single "N contigs with no values"
+row. Without a resolvable ``reference_genome`` label there is nothing to divide
+by, and a **tabix-backed score renders raw covered-position counts and no
+percentages at all**. A bigWig-backed score is the one exception: its header
+carries exact contig sizes, so it renders percentages against the header's contig
+list even unlabelled. If a score's Coverage section shows counts where you
+expected percentages, add the label:
 
 .. code-block:: yaml
 
@@ -813,7 +839,9 @@ label:
 
 The percentage is computed when the page is rendered, never stored, so adding the
 label needs no data rebuild — re-render the page (``grr_manage resource-info -r
-<resource_id> -f``) and the percentages appear.
+<resource_id>``) and the percentages appear. That same run refreshes the stored
+lengths file, and only that. Do not add ``-f`` for this: it forces a full
+statistics rebuild, histograms included.
 
 A label naming a genome that does not resolve degrades the whole section back to
 raw counts rather than rendering a wrong percentage. So does a single contig the
