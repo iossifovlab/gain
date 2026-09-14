@@ -1739,14 +1739,16 @@ def test_statistics_hash_carries_the_table_config_as_the_resource_wrote_it(
     one of them stale and rebuilds them on the next ``resource-stats``
     pass.  The block was read off the table's own definition until
     gain#410 moved the read to the score's validated config; the two
-    serialise identically, which is what this pins.  A hash that MUST
-    change is a change to this literal, made on purpose.
+    serialise identically, which is what this pins -- the keys, their
+    values AND their order, since ``json.dumps`` writes the order out.
+    A hash that MUST change is a change to this literal, made on purpose.
     """
     impl = build_score_implementation_from_resource(build(tmp_path))
 
     table = json.loads(impl.calc_statistics_hash())["config"]["table"]
 
     assert table["config"] == expected_table_config
+    assert list(table["config"]) == list(expected_table_config)
     assert sorted(table["files_md5"]) == sorted(impl.files)
 
 
