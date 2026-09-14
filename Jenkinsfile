@@ -8,10 +8,11 @@
 //
 // Lint / type-check tools (ruff, mypy, pylint) only report via their JUnit
 // XML and don't gate the build. Pytest, however, propagates its exit code
-// so test failures fail the build (the post.always hook still publishes
-// the JUnit + coverage reports either way). The web_ui stage follows the
-// same pattern with jest as the gating tool, and info_pages_e2e with
-// Playwright.
+// out of the container so test failures fail the build (the post.always
+// hook still publishes the JUnit + coverage reports either way, and
+// publishReports() gates a second time on the published failure count).
+// The web_ui stage follows the same pattern with jest as the gating tool,
+// and info_pages_e2e with Playwright.
 
 def runProject(Map args) {
     String name           = args.name                          // dir name, e.g. "demo_annotator"
@@ -64,7 +65,12 @@ def runProject(Map args) {
                 # cover it (#1327). Add it explicitly whenever it
                 # exists; both tools take a bare directory next to a
                 # package name. Keep these comments apostrophe-free:
-                # this whole block is one single-quoted sh -c string.
+                # this whole block is one single-quoted sh -c string,
+                # and an apostrophe ends it there. Everything after
+                # then runs in the OUTER Jenkins shell — which is how
+                # the exit at the bottom was a no-op for two months
+                # (#1403): the container always exited 0 and only
+                # publishReports caught failing tests.
                 scripts_dir=
                 if [ -d scripts ]; then
                     scripts_dir=scripts
@@ -100,11 +106,11 @@ def runProject(Map args) {
                 # mounted .git to produce a proper PEP 440 version.
                 uv build --package ${distPkg} --out-dir /dist
                 chmod -R a+rw /reports /dist
-                # Propagate pytest's exit code so test failures fail the
+                # Propagate the pytest exit code so test failures fail the
                 # build (FAILURE) instead of just being logged via JUnit
                 # (UNSTABLE). The post.always publishReports hook still
                 # uploads the XML reports either way. Lint / type-check
-                # failures from the steps above don't gate here — they
+                # failures from the steps above do not gate here — they
                 # surface via their JUnit XMLs only.
                 exit \$pytest_exit
             '
@@ -115,14 +121,21 @@ def publishReports(String name) {
     // Test failures must FAIL the build; lint/type findings only mark it
     // UNSTABLE.
     //
-    // `exit $pytest_exit` in runProject was meant to FAIL on test failures, but
-    // in practice the shell exit never failed the Jenkins step, so builds only
-    // ever went UNSTABLE (via junit marking the test failures) and kept going
-    // — e.g. still pushing images. So gate explicitly here: publish the test
-    // report with skipMarkingBuildUnstable (junit doesn't touch the result),
-    // capture its failure count, and error() -> FAILURE if anything failed.
-    // Publish the lint/type reports separately with the default marking so
-    // ruff/mypy/pylint findings still surface as UNSTABLE (non-gating).
+    // The `exit $pytest_exit` / `exit $jest_exit` at the end of each
+    // container script is the primary gate: a failing run makes `docker run`
+    // exit non-zero, which fails the `sh` step. (Until #1403 an apostrophe in
+    // the script's own comments cut the sh -c string short and left that exit
+    // to the outer shell, where it was a no-op, so builds only ever went
+    // UNSTABLE and kept going — e.g. still pushing images.) This is the
+    // second, complementary gate: it names the failure count in the build's
+    // error message, and it still runs from post.always after the step has
+    // failed. Publish the test report with skipMarkingBuildUnstable (junit
+    // doesn't touch the result), capture its failure count, and error() ->
+    // FAILURE if anything failed. Publish the lint/type reports separately
+    // with the default marking so ruff/mypy/pylint findings still surface as
+    // UNSTABLE (non-gating). Note allowEmptyResults: a runner that died
+    // without writing its XML counts as zero failures here — only the
+    // in-container exit catches that.
     def testResults = junit(
         allowEmptyResults: true,
         skipMarkingBuildUnstable: true,
@@ -707,6 +720,9 @@ pipeline {
                                             ${imageTag} \\
                                             sh -c '
                                                 set +e
+                                                # Keep these comments apostrophe-free:
+                                                # same single-quoted sh -c string as
+                                                # runProject, same #1403 failure mode.
                                                 mkdir -p /reports/coverage
                                                 npx eslint "**/*.{html,ts}" \\
                                                     --format checkstyle \\
@@ -735,10 +751,10 @@ pipeline {
                                                     /reports/coverage.xml \\
                                                     2>/dev/null || true
                                                 chmod -R a+rw /reports
-                                                # Propagate jest's exit code so test
+                                                # Propagate the jest exit code so test
                                                 # failures fail the build (mirrors the
-                                                # python projects' pytest gating).
-                                                # eslint / stylelint failures don't
+                                                # pytest gating in runProject).
+                                                # eslint / stylelint failures do not
                                                 # gate; they surface through their
                                                 # report XMLs only.
                                                 exit \$jest_exit
