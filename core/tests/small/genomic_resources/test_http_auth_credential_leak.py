@@ -905,15 +905,15 @@ class _AFailingDownload(typing.NamedTuple):
     dest_proto: FsspecReadWriteProtocol
     src_res: GenomicResource
     dest_res: GenomicResource
+    src_fs: FaultyFileSystem
     dest_fs: FaultyFileSystem
     sleep: unittest.mock.MagicMock
 
 
-def _a_failing_download(
+def _a_download(
     tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
-    error: BaseException,
 ) -> _AFailingDownload:
-    """Arrange a download whose every source read fails with ``error``.
+    """Arrange a download, with both filesystems open to a scripted fault.
 
     The backoff is patched here rather than in each test, because a test
     that forgot to would not fail -- it would sleep through the protocol's
@@ -925,9 +925,19 @@ def _a_failing_download(
     dest_proto, dest_fs = build_faulty_test_protocol(tmp_path / "dst")
     dest_res = GenomicResource(
         src_res.resource_id, src_res.version, dest_proto)
-    src_fs.fail_read(_DOWNLOAD_SOURCE_FILE, error)
     sleep = mocker.patch("gain.genomic_resources.fsspec_protocol.time.sleep")
-    return _AFailingDownload(dest_proto, src_res, dest_res, dest_fs, sleep)
+    return _AFailingDownload(
+        dest_proto, src_res, dest_res, src_fs, dest_fs, sleep)
+
+
+def _a_failing_download(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+    error: BaseException,
+) -> _AFailingDownload:
+    """Arrange a download whose every source read fails with ``error``."""
+    download = _a_download(tmp_path, mocker)
+    download.src_fs.fail_read(_DOWNLOAD_SOURCE_FILE, error)
+    return download
 
 
 def _the_error_a_failed_copy_raises(
@@ -2779,3 +2789,75 @@ def test_s3_bigwig_open_failure_does_not_leak_presigned_signature(
         "Couldn't open https://127.0.0.1:1/bucket/path/sub/res(1.0)/"
         f"{_BIGWIG_FILE_NAME} for reading")
     _assert_no_credential_escaped(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# gain#1370 — the download loop's retry and cleanup warnings redact an
+# exception's text with the union redactor, so a presigned url in it loses
+# its signature and keeps the host and path. The remote read cannot plant
+# one: the redacting handle strips it before the loop sees the error, so a
+# read-failure test is green under either redactor. The destination open
+# and the temp-file removal are raw calls on the loop's own store, and are
+# where a store's error reaches each warning as rendered.
+# ---------------------------------------------------------------------------
+
+
+def _a_presigned_fetch_url(query: str) -> str:
+    """The download loop's fetch url as an s3 GRR would hand it out."""
+    return f"https://{_AUTHED_HOST_PORT}/repo/{_DOWNLOAD_FILE_NAME}?{query}"
+
+
+def _a_download_failing_outside_the_handle(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+    error: BaseException,
+) -> _AFailingDownload:
+    """Arrange a download whose temp-file open fails with ``error``."""
+    download = _a_download(tmp_path, mocker)
+    download.dest_fs.fail_open(_PARTIAL_DOWNLOAD, error)
+    return download
+
+
+@_PRESIGNED_SHAPES
+def test_download_retry_warning_does_not_leak_a_presigned_signature(
+    query: str, tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    download = _a_download_failing_outside_the_handle(
+        tmp_path, mocker,
+        _an_aiohttp_error_carrying(_a_presigned_fetch_url(query)))
+
+    with caplog.at_level(logging.WARNING):
+        _the_error_a_failed_copy_raises(download)
+
+    assert _SIGNATURE not in caplog.text
+    # host, port and path preserved, so the retry line stays diagnosable.
+    assert _AUTHED_HOST_PORT in caplog.text
+    assert f"/repo/{_DOWNLOAD_FILE_NAME}" in caplog.text
+
+
+@_PRESIGNED_SHAPES
+def test_download_cleanup_failure_does_not_leak_a_presigned_signature(
+    query: str, tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    download = _a_failing_download(
+        tmp_path, mocker, _an_aiohttp_error_carrying(_AUTHED_FETCH_URL))
+    download.dest_fs.fail_rm(
+        _PARTIAL_DOWNLOAD,
+        OSError(f"the store refused to remove "
+                f"{_a_presigned_fetch_url(query)}"))
+
+    with caplog.at_level(logging.WARNING):
+        _the_error_a_failed_copy_raises(download)
+
+    assert _SIGNATURE not in caplog.text
+    # Read off the cleanup line itself: the retry warnings on the same
+    # log carry the same host and path, so the whole text would say
+    # nothing about which line kept them.
+    cleanup_lines = [
+        record.getMessage() for record in caplog.records
+        if "unable to remove" in record.getMessage()]
+    assert cleanup_lines, caplog.text
+    for line in cleanup_lines:
+        assert "refused to remove" in line
+        assert f"{_AUTHED_HOST_PORT}/repo/{_DOWNLOAD_FILE_NAME}" in line
