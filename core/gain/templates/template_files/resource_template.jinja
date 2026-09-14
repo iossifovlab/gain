@@ -1,9 +1,8 @@
 
-{# The page's climb back to the repository root.  A resource page is
-   published at `<resource_id>/index.html`, one directory per id
-   segment, so everything at the root -- the index page and the fonts
-   under `.static/` -- is that many `../` away (gain#1400). #}
-{% set static_root = '../' * (resource.resource_id.count('/') + 1) %}
+{# `static_root` is the page's climb back to the repository root, where
+   the index page and the fonts under `.static/` live.  The renderer
+   passes it, computed from the path it publishes the page at -- one
+   directory per resource id segment (gain#1400). #}
 <html>
   <head>
     <meta charset="utf-8">

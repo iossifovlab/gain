@@ -31,13 +31,16 @@ from .conftest import read_published_contents
 
 @pytest.fixture
 def bare_repo(settled_repo: pathlib.Path) -> pathlib.Path:
-    """``settled_repo`` with nothing under ``.static/``.
+    """``settled_repo`` with nothing under ``.static/``, and an ``about.md``.
 
     The settled template is fully repaired, assets included; a test
     about publishing them has to start from a repository that has none.
+    The ``about.md`` is what makes the publisher render ``about.html``,
+    so the about page can be pinned beside the others.
     """
     shutil.rmtree(settled_repo / ".static", ignore_errors=True)
     assert not (settled_repo / ".static").exists()
+    (settled_repo / "about.md").write_text("# About\n", encoding="utf8")
     return settled_repo
 
 
@@ -67,22 +70,10 @@ def vendored_files() -> dict[str, bytes]:
     }
 
 
-def font_faces_the_page_loads(page: pathlib.Path) -> dict[str, pathlib.Path]:
-    """Family -> where its ``@font-face`` resolves on disk.
-
-    Resolved against the page's own directory, as the browser resolves
-    a relative ``url()``: a page published below the repository root
-    has to climb back to ``.static/`` itself.
-    """
-    return {
-        family: (page.parent / url).resolve()
-        for family, url in font_faces_in(
-            page.read_text(encoding="utf8")).items()
-    }
-
-
 @pytest.mark.parametrize(("page", "families"), [
     ("index.html", {TEXT_FONT, ICON_FONT}),
+    # Styled text, so the typeface and nothing else.
+    ("about.html", {TEXT_FONT}),
     # Two directories down: the resource page has to climb to the root.
     ("sub/one/index.html", {TEXT_FONT, ICON_FONT}),
     # Three: the statistics page sits under the resource, and sorts no
@@ -116,29 +107,22 @@ def assert_fonts_come_from_the_repository(
     ``@import`` pointing back at Google fails here on the published
     page -- for the statistics page too, which no template test
     renders on its own.
+
+    Each url is resolved against the page's own directory, as the
+    browser resolves a relative ``url()``: a page published below the
+    repository root has to climb back to ``.static/`` itself.
     """
-    assert external_origins(page.read_text(encoding="utf8")) == frozenset()
-    faces = font_faces_the_page_loads(page)
+    markup = page.read_text(encoding="utf8")
+    assert external_origins(markup) == frozenset()
+    faces = {
+        family: (page.parent / url).resolve()
+        for family, url in font_faces_in(markup).items()
+    }
     assert set(faces) == families
     vendored = vendored_files()
     for family, path in faces.items():
         assert path.is_file(), (family, path)
         assert path.read_bytes() == vendored[path.name], (family, path)
-
-
-def test_the_about_page_loads_its_typeface_from_the_repository(
-    bare_repo: pathlib.Path,
-) -> None:
-    """Styled text, so the typeface and nothing else.
-
-    The page is only published when the repository carries an
-    ``about.md``; the settled fixture has none, so this writes one.
-    """
-    (bare_repo / "about.md").write_text("# About\n", encoding="utf8")
-    cli_manage(["repo-index", "-R", str(bare_repo)])
-
-    assert_fonts_come_from_the_repository(
-        bare_repo / "about.html", {TEXT_FONT})
 
 
 @pytest.mark.parametrize("command", [

@@ -14,12 +14,15 @@ from cerberus import Validator
 from gain import logging
 from gain.task_graph.graph import TaskDesc
 from gain.templates import get_template
+from gain.templates.static_assets import climb_to_root
 from gain.utils.helpers import convert_size
 
 from .dvc import is_dvc_sidecar
 from .repository import (
+    GR_INDEX_FILE_NAME,
     GR_INDEX_NON_LABEL_COLUMNS,
     GR_INDEX_RESOURCE_FIELDS,
+    GR_STATISTICS_INDEX_FILE_NAME,
     INDEX_COLUMN_PATTERN,
     INDEX_COLUMN_RE,
     GenomicResource,
@@ -463,6 +466,7 @@ class InfoImplementationMixin:
             data=template_data,
             base="resource_template.jinja",
             styles_template=self.styles_template_name,
+            static_root=self._climb_to_root(GR_INDEX_FILE_NAME),
         )
 
     def get_statistics_info(self, **kwargs: Any) -> str:  # ruff: ignore[unused-method-argument]
@@ -473,7 +477,19 @@ class InfoImplementationMixin:
             data=template_data,
             base="statistics_template.jinja",
             styles_template=self.styles_template_name,
+            static_root=self._climb_to_root(GR_STATISTICS_INDEX_FILE_NAME),
         )
+
+    def _climb_to_root(self, page: str) -> str:
+        """The ``../`` prefix that takes one of this resource's pages
+        back to the repository root.
+
+        ``page`` is the page's path inside the resource directory, as
+        the publisher names it; the resource directory is the id, one
+        directory per segment.  The templates prefix their urls into
+        ``.static/`` with it (gain#1400).
+        """
+        return climb_to_root(f"{self.resource.resource_id}/{page}")
 
 
 class _ThreadValidators(threading.local):

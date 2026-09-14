@@ -58,7 +58,7 @@ def ligatures_in(woff2: bytes) -> frozenset[str]:
         for subtable in lookup.SubTable:
             if lookup.LookupType == _EXTENSION:
                 subtable = subtable.ExtSubTable
-            if getattr(subtable, "LookupType", _LIGATURE) != _LIGATURE:
+            if subtable.LookupType != _LIGATURE:
                 continue
             for first, ligatures in subtable.ligatures.items():
                 names.update(

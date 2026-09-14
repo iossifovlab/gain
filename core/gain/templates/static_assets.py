@@ -62,27 +62,24 @@ SQLITE_WASM_PATH: str = f".static/sqlite-wasm-{SQLITE_WASM_VERSION}"
 _FONTS_DIR = files("gain.templates") / "static" / "fonts"
 
 #: The directory the fonts are published to, relative to the repository
-#: root.  Unversioned, unlike sqlite-wasm's: each font file is versioned
-#: by name instead (below).
-FONTS_PATH: str = ".static/fonts"
+#: root.  Unversioned, unlike sqlite-wasm's: each file is stamped
+#: instead (below).
+_FONTS_PATH = ".static/fonts"
 
 
 def _published_font_path(name: str) -> str:
     """Where a vendored font is published: its name, content-stamped.
 
-    A font's url is only ever written by the page beside it, which is
-    republished on every run -- so unlike sqlite-wasm, where the module
-    locates the wasm through ``import.meta.url``, nothing but the page
-    binds to the name and there is no version to keep in step by hand.
-    What the name still has to do is change whenever the bytes do: a
-    browser holding yesterday's icon subset would render a glyph added
-    today as its name, in words.  A digest of the bytes does that with
-    no ``version.txt`` to forget; the vendored README records where each
-    file came from.
+    Eight hex digits of the bytes' sha256 before the suffix -- a digest
+    rather than a version for the reason the module docstring gives:
+    the name must change whenever the bytes do (a browser holding
+    yesterday's icon subset would render a glyph added today as its
+    name, in words), and nothing but the page beside the file binds to
+    it, so there is no version to keep in step by hand.
     """
     digest = hashlib.sha256((_FONTS_DIR / name).read_bytes()).hexdigest()
     stem, suffix = name.rsplit(".", 1)
-    return f"{FONTS_PATH}/{stem}.{digest[:8]}.{suffix}"
+    return f"{_FONTS_PATH}/{stem}.{digest[:8]}.{suffix}"
 
 
 #: The vendored font files, named once: the Google Fonts release number
@@ -99,11 +96,18 @@ _MATERIAL_SYMBOLS = "material-symbols-outlined-v371.woff2"
 ROBOTO_FONT_PATH: str = _published_font_path(_ROBOTO)
 MATERIAL_SYMBOLS_FONT_PATH: str = _published_font_path(_MATERIAL_SYMBOLS)
 
-#: Vendored name -> published path, for the registry below.
-_FONT_FILES = (
-    (_ROBOTO, ROBOTO_FONT_PATH),
-    (_MATERIAL_SYMBOLS, MATERIAL_SYMBOLS_FONT_PATH),
-)
+
+def climb_to_root(page_path: str) -> str:
+    """The relative prefix that takes a page back to the repository root.
+
+    ``page_path`` is where the page is published, relative to the root
+    -- ``<resource id>/index.html``, say -- and each directory in it
+    is one ``../`` for the page's urls to climb before ``.static/``.
+    Computed here, from the path the publisher writes, rather than in
+    the templates from the resource id plus an offset per page kind:
+    the two cannot then drift.  Empty for a page at the root.
+    """
+    return "../" * page_path.count("/")
 
 
 def repository_static_files() -> Iterator[tuple[str, bytes]]:
@@ -118,5 +122,8 @@ def repository_static_files() -> Iterator[tuple[str, bytes]]:
             f"{SQLITE_WASM_PATH}/{name}",
             (_SQLITE_WASM_DIR / name).read_bytes(),
         )
-    for name, published in _FONT_FILES:
+    for name, published in (
+        (_ROBOTO, ROBOTO_FONT_PATH),
+        (_MATERIAL_SYMBOLS, MATERIAL_SYMBOLS_FONT_PATH),
+    ):
         yield published, (_FONTS_DIR / name).read_bytes()

@@ -37,7 +37,10 @@ from gain.gene_scores.implementations.gene_scores_impl import (
 from gain.genomic_resources.testing.builders import GeneScoreBuilder
 
 from tests.small.templates.page_css import font_faces_in
-from tests.small.templates.page_origins import external_origins
+from tests.small.templates.page_origins import (
+    external_origins,
+    pointed_at_google,
+)
 from tests.small.templates.vendored_fonts import (
     ICON_FONT,
     TEXT_FONT,
@@ -127,9 +130,14 @@ def test_a_resource_page_reaches_no_origin(gene_score_page: str) -> None:
     """Nothing off the repository: no font host, no CDN, nothing.
 
     Through the scanner that reads ``<style>`` too: the fonts are the
-    one thing a resource page loads, and they are declared in CSS.
+    one thing a resource page loads, and they are declared in CSS --
+    proven on this page by pointing them back at Google and seeing the
+    host named, as ``test_grr_page_icon_font.py`` does for its pages.
     """
     assert external_origins(gene_score_page) == frozenset()
+    assert external_origins(pointed_at_google(gene_score_page)) == {
+        "fonts.gstatic.com",
+    }
 
 
 def test_a_resource_page_declares_both_faces_from_the_repository(
