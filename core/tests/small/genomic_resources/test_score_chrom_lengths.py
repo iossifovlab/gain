@@ -1,14 +1,14 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""Score-level chromosome lengths, resolved live through the table (gain#1413).
+"""The chromosome-length resolver of a genomic score (gain#1413).
 
-The three ``GenomicScore`` methods mirror ``ReferenceGenome``'s
-``get_chrom_length`` / ``get_all_chrom_lengths``: an ``int`` or a
-``ValueError``.  Underneath them, ``derive_chrom_lengths`` keeps the
-tri-state answer the statistics region splitter needs (gain#509) -- a length,
-or the ``ContigExtent`` reason there is none -- and the source of each length
-is whatever the backend declares its lengths to be.  A caller holding a
+``derive_chrom_length`` / ``derive_chrom_lengths`` keep the tri-state answer
+the statistics region splitter needs (gain#509) -- a length, or the
+``ContigExtent`` reason there is none -- and the source of each length is
+whatever the backend declares its lengths to be.  A caller holding a
 ``ReferenceGenome`` hands it to the resolver, which answers every contig the
-genome lists from it first, exactly, and per contig (gain#1418).
+genome lists from it first, exactly, and per contig (gain#1418).  The caller
+that resolves the genome from the score's label is the implementation, pinned
+in test_genomic_scores_impl_chrom_lengths.
 """
 
 import pathlib
@@ -123,13 +123,15 @@ def test_tabix_score_answers_the_probes_bound_as_an_estimate(
 ) -> None:
     score = _a_tabix_score(tmp_path).open()
 
-    length = score.get_chrom_length("chr1")
+    resolved = derive_chrom_length(score, "chr1")
 
     # The table's own probe answers an upper bound, never the exact length;
-    # the score passes that bound through and says so.
-    assert length == score.table.find_chromosome_length("chr1")
-    assert length >= 2500
-    assert not score.get_chrom_length_source("chr1").is_exact
+    # the resolver passes that bound through and says so.
+    assert resolved.length == score.table.find_chromosome_length("chr1")
+    assert resolved.length is not None
+    assert resolved.length >= 2500
+    assert resolved.source is not None
+    assert not resolved.source.is_exact
 
 
 def test_bigwig_score_answers_the_header_length_exactly(
@@ -137,10 +139,13 @@ def test_bigwig_score_answers_the_header_length_exactly(
 ) -> None:
     score = _a_bigwig_score(tmp_path).open()
 
+    resolved = derive_chrom_length(score, "chr1")
+
     # The header's 1000, not the rows' 20: a bigWig header carries the exact
     # size of every contig it lists, which is why the source is exact.
-    assert score.get_chrom_length("chr1") == 1000
-    assert score.get_chrom_length_source("chr1").is_exact
+    assert resolved.length == 1000
+    assert resolved.source is not None
+    assert resolved.source.is_exact
 
 
 def test_inmemory_score_answers_the_extent_of_its_rows(
@@ -148,27 +153,19 @@ def test_inmemory_score_answers_the_extent_of_its_rows(
 ) -> None:
     score = _an_inmemory_score(tmp_path).open()
 
+    resolved = derive_chrom_length(score, "chr1")
+
     # ``max(pos_end) + 1``: how far the rows reach, which says nothing about
     # how long the contig is -- so the source is not exact.
-    assert score.get_chrom_length("chr1") == 46
-    assert not score.get_chrom_length_source("chr1").is_exact
-
-
-# Both the length and its source refuse the same questions, in the same
-# words: the source is the length's provenance and has none when there is no
-# length.
-_LENGTH_READS = ["get_chrom_length", "get_chrom_length_source"]
+    assert resolved.length == 46
+    assert resolved.source is not None
+    assert not resolved.source.is_exact
 
 
 @pytest.mark.parametrize("read", [
     pytest.param(
-        lambda score: score.get_chrom_length("chr1"), id="get_chrom_length"),
-    pytest.param(
-        lambda score: score.get_chrom_length_source("chr1"),
-        id="get_chrom_length_source"),
-    pytest.param(
-        lambda score: score.get_all_chrom_lengths(),
-        id="get_all_chrom_lengths"),
+        lambda score: derive_chrom_length(score, "chr1"),
+        id="derive_chrom_length"),
     pytest.param(derive_chrom_lengths, id="derive_chrom_lengths"),
 ])
 def test_a_closed_score_refuses_every_length_read(
@@ -176,66 +173,19 @@ def test_a_closed_score_refuses_every_length_read(
 ) -> None:
     score = _a_tabix_score(tmp_path)
 
-    with pytest.raises(ValueError, match="is not open"):
+    with pytest.raises(ValueError, match="not open"):
         read(score)
 
 
-@pytest.mark.parametrize("read", _LENGTH_READS)
 def test_a_contig_the_score_does_not_carry_is_refused(
-    read: str, tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path,
 ) -> None:
     score = _a_tabix_score(tmp_path).open()
 
-    with pytest.raises(
-            ValueError, match="chrX is not among the available chromosomes"):
-        getattr(score, read)("chrX")
-
-
-@pytest.mark.parametrize("read", _LENGTH_READS)
-def test_a_contig_proven_empty_is_refused_as_such(
-    read: str, tmp_path: pathlib.Path,
-) -> None:
-    score = _a_score_with_an_empty_mapped_contig(tmp_path).open()
-
-    # A ValueError, not the extent: the int view has nothing to answer, and
-    # the message says WHICH kind of nothing, since an operator acts on an
-    # empty contig (a chrom_mapping naming a contig the file lacks) and an
-    # undetermined one differently.
-    with pytest.raises(ValueError, match="contig empty has no records"):
-        getattr(score, read)("empty")
-
-
-@pytest.mark.parametrize("read", _LENGTH_READS)
-def test_a_contig_of_undeterminable_length_is_refused_as_such(
-    read: str, tmp_path: pathlib.Path, mocker: pytest_mock.MockFixture,
-) -> None:
-    score = _a_tabix_score(tmp_path).open()
-    _the_probe_fails_for(mocker, "chr1")
-
-    with pytest.raises(
-            ValueError,
-            match="could not determine the length of contig chr1"):
-        getattr(score, read)("chr1")
-
-
-def test_the_score_refuses_a_lengthless_contig_in_the_tables_words(
-    tmp_path: pathlib.Path, mocker: pytest_mock.MockFixture,
-) -> None:
-    """The two refusals are one message, not two copies of it.
-
-    The issue asked for the wording ``get_chromosome_length`` already uses;
-    this pins that the score's read and the table's raising view say the
-    same thing for the same contig, so the two cannot drift apart.
-    """
-    score = _a_tabix_score(tmp_path).open()
-    _the_probe_fails_for(mocker, "chr1")
-
-    with pytest.raises(ValueError) as from_the_table:
-        score.table.get_chromosome_length("chr1")
-    with pytest.raises(ValueError) as from_the_score:
-        score.get_chrom_length("chr1")
-
-    assert str(from_the_score.value) == str(from_the_table.value)
+    # A bad question, as opposed to an absent answer: refused, in the
+    # table's words, rather than answered with an extent.
+    with pytest.raises(ValueError, match="chrX"):
+        derive_chrom_length(score, "chrX")
 
 
 def test_derive_chrom_lengths_keeps_the_reason_a_contig_has_no_length(
@@ -374,25 +324,6 @@ def test_the_genome_answers_no_question_the_table_would_refuse(
         derive_chrom_length(score, "chr2", genome)
 
 
-def test_get_all_chrom_lengths_holds_resolved_contigs_in_table_order(
-    tmp_path: pathlib.Path, mocker: pytest_mock.MockFixture,
-) -> None:
-    score = _a_tabix_score(tmp_path, rows="""
-        chrom  pos_begin  score
-        chr3   40         0.3
-        chr1   10         0.1
-        chr2   20         0.2
-    """).open()
-    _the_probe_fails_for(mocker, "chr1")
-
-    lengths = score.get_all_chrom_lengths()
-
-    # chr1, unresolved, is simply absent -- the int view has nothing to say
-    # for it and does not raise, unlike get_chrom_length asked directly.
-    # The rest keep the table's order, which is not sorted.
-    assert list(lengths.items()) == [("chr3", 100), ("chr2", 100)]
-
-
 @pytest.mark.parametrize(("build", "expected_source", "expected_exact"), [
     pytest.param(
         _an_inmemory_score, ChromLengthSource.TABLE_EXTENT, False,
@@ -424,7 +355,7 @@ def test_each_backends_source_and_its_exactness(
     """
     score = build(tmp_path).open()
 
-    source = score.get_chrom_length_source("chr1")
+    source = derive_chrom_length(score, "chr1").source
 
     assert source is expected_source
     assert source.is_exact is expected_exact
@@ -432,8 +363,7 @@ def test_each_backends_source_and_its_exactness(
 
 
 def test_a_reference_genome_length_is_exact() -> None:
-    # Not producible by the score's own methods, which hold no genome, so
-    # the member is asserted directly: it is the one source that beats a
+    # Asserted on the member directly: it is the one source that beats a
     # bigWig header, and a caller filtering on exactness must keep it.
     assert ChromLengthSource.REFERENCE_GENOME.is_exact
 

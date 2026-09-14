@@ -11,7 +11,10 @@
   [gain#926](https://github.com/iossifovlab/gain/issues/926)
   (the fragment-segments amendment),
   [gain#1041](https://github.com/iossifovlab/gain/issues/1041)
-  (the coverage-denominator amendment)
+  (the coverage-denominator amendment),
+  [gain#1419](https://github.com/iossifovlab/gain/issues/1419) and
+  [gain#1448](https://github.com/iossifovlab/gain/issues/1448)
+  (the stored-lengths amendment and its reversal)
 
 ## Context
 
@@ -215,18 +218,21 @@ alt-minus-ref, not an absolute value.
     rebuilds: this bullet's own rule is what makes the correction free.
 
   *Amended by [gain#1419](https://github.com/iossifovlab/gain/issues/1419):
-  chromosome **lengths** are now stored; **fractions** still are not.* The
+  chromosome **lengths** are now stored; **fractions** still are not.*
+  **Reversed by [gain#1448](https://github.com/iossifovlab/gain/issues/1448)
+  before release — see the note after this amendment. Kept, because it is
+  the reasoning the reversal answers.** The
   bullet's premise — "chromosome lengths belong to a reference genome, not to
   the score" — was half the story. The *score* has a length per contig it
   carries, resolved through one ladder (`reference_genome` label → bigWig
   header → tabix estimate, per contig; gain#1412), and the tabix rung is a
   probe over the index that costs real time on a large score. So the repair
-  runs the ladder once and stores the answer as
-  `statistics/chrom_lengths.json` — per contig the length, its source and,
-  when there is no length, the reason (`EMPTY` / `UNDETERMINED`) — and the
-  score's `get_chrom_length` / `get_all_chrom_lengths` /
-  `get_chrom_length_source` answer from that file when it is current, live
-  through the table when it is not.
+  runs the ladder once and stores the answer in a lengths file beside the
+  other statistics — per contig the length, its source and, when there is
+  no length, the reason (`EMPTY` / `UNDETERMINED`) — and the score's
+  `get_chrom_length` / `get_all_chrom_lengths` / `get_chrom_length_source`
+  answer from that file when it is current, live through the table when it
+  is not.
 
   The two kinds of fact are stored differently because they are different
   kinds of fact:
@@ -254,6 +260,37 @@ alt-minus-ref, not an absolute value.
     it as absent and resolves live — at the cost of the probe, and nothing
     more — until the next repair. Both cases are reported once, at INFO, by
     the read that wanted the file; opening a score stays silent.
+
+  *Re-amended by [gain#1448](https://github.com/iossifovlab/gain/issues/1448):
+  chromosome **lengths are NOT stored either**; the ladder is a repair-time
+  computation on the implementation.* The gain#1419 amendment above was
+  built for a reader that has no repository — the score's own
+  `get_chrom_length` and its siblings — and the file existed only so that
+  such a reader could apply the genome rung. No such reader exists: every
+  consumer of a *score's* lengths (the statistics region split, the
+  coverage denominator of gain#1414, the `grr_bench` binning benchmark)
+  already holds a repository, and two of the three run inside the
+  implementation. So the ladder now lives on
+  `GenomicScoreImplementation.get_chrom_lengths(grr)`, which resolves the
+  `reference_genome` label through the repository it is handed, opens the
+  score if it must and restores it, and returns the per-contig record
+  (length, source, extent) in table order. The score-level methods, the
+  file, its `derived_from` key, its freshness gate in the repair loop and
+  the base implementation's derived-files hooks are all gone; the ladder,
+  the record, `ChromLengthSource` with `is_exact`, the backends'
+  declarations and the genome rung (gain#1418) stand.
+
+  Why that is enough: the tabix probe is the only expensive rung, and it
+  runs where the payload must be present anyway — inside a full
+  statistics rebuild, which dominates it — or at a page render that holds
+  the repository. Nothing else asks. And why the file had to go rather
+  than merely stay optional: its freshness gate opened every score
+  resource lacking the file, which on a pointer-only DVC checkout — the
+  shape every DVC-backed GRR's working copy has — failed each one on the
+  absent payload (gain#1444). A resource whose statistics are current is
+  consistent as it stands, and a repair of it now opens no table. The
+  "fractions at render" half of this bullet is unchanged: the stored
+  statistics stay genome-independent, as they always were.
 - **Lazy rollout; `calc_statistics_hash` untouched.** The new statistics do
   not enter the statistics hash, so no existing resource is invalidated.
   Statistics appear as resources are rebuilt; the page renders "not computed"

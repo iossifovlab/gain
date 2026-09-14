@@ -360,9 +360,9 @@ def test_the_package_exports_only_what_still_exists() -> None:
     # enum and compare against its members.
     #
     # ``ChromLengthSource`` is the other addition (gain#1413), for the same
-    # reason: it is what ``GenomicScore.get_chrom_length_source`` answers
-    # with, and it lives in this package because each backend declares its
-    # own member as ``chrom_length_source``.
+    # reason: it is what the score layer's chromosome-length resolver
+    # answers with, and it lives in this package because each backend
+    # declares its own member as ``chrom_length_source``.
     assert gpt.__all__ == [
         "BigWigTable",
         "ChromLengthSource",
