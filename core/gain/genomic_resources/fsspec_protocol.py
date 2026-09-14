@@ -77,6 +77,16 @@ from gain.templates.static_assets import repository_static_files
 from gain.utils.fs_utils import S3_PRESIGN_EXPIRATION_SECONDS
 from gain.utils.helpers import convert_size
 
+# The userinfo redactor is defined once, below the GRR, because the
+# log-record seam in ``gain.utils.url_redaction`` runs the same regex over
+# every log line in the process (ADR 0023, gain#1363). It keeps the name
+# this module has always exported: ~a dozen call sites here, the display-url
+# callers in the cached repository and the ann_data resource, and the
+# #1318 fence's ``URL_REDACTOR`` all spell it ``_strip_url_userinfo``.
+from gain.utils.url_redaction import (
+    strip_url_userinfo as _strip_url_userinfo,
+)
+
 # Silence the spurious "[W::hts_idx_load3] The index file is older than the
 # data file" warning that htslib emits when a tabix/VCF index has an older
 # mtime than its data file. In our GRR workflow this is benign: both the
@@ -252,25 +262,6 @@ def _strip_netloc_userinfo(netloc: str) -> str:
     if at_index == -1:
         return netloc
     return netloc[at_index + 1:]
-
-
-# Matches the ``scheme://user:pass@`` prefix of any url embedded in a string.
-# The userinfo (``[^/@\s]+``) carries the secret and is dropped, keeping the
-# scheme and everything from the host onward. Works both on a bare url and on a
-# longer diagnostic message that embeds one (e.g. an fsspec
-# ``FileNotFoundError`` whose text IS the credential-bearing fetch url).
-_URL_USERINFO_RE = re.compile(
-    r"(?P<scheme>[a-zA-Z][a-zA-Z0-9+.\-]*://)[^/@\s]+@")
-
-
-def _strip_url_userinfo(text: str) -> str:
-    """Strip ``user:pass@`` userinfo from every ``scheme://user:pass@host``.
-
-    Used to build credential-free display urls, cache-hit log lines and
-    redacted fetch-error messages. The host/port/path are preserved; only the
-    userinfo is removed. A string with no userinfo is returned unchanged.
-    """
-    return _URL_USERINFO_RE.sub(lambda match: match.group("scheme"), text)
 
 
 # Matches the ``?query`` of any url embedded in a string, keeping the url up

@@ -158,12 +158,16 @@ def test_no_gain_module_uses_stdlib_logging_directly() -> None:
     """Every gain module logs through `from gain import logging`.
 
     stdlib `import logging` skips the TRACE / USER_INFO level bootstrap that
-    `gain.logging` performs on import. Only that bootstrap module and the
-    `logging` shim itself may reach for the stdlib module by name (#373).
+    `gain.logging` performs on import. Only the bootstrap modules -- the
+    level registration (#373) and the url-userinfo log-record seam
+    (#1363), both of which patch stdlib classes and so must name the
+    stdlib module -- and the `logging` shim itself may reach for it by
+    name.
     """
     allowed = {
         os.path.join(GAIN_SRC, "logging.py"),
         os.path.join(GAIN_SRC, "utils", "log_levels.py"),
+        os.path.join(GAIN_SRC, "utils", "url_redaction.py"),
     }
     offenders = []
     for py in pathlib.Path(GAIN_SRC).rglob("*.py"):
@@ -1458,8 +1462,15 @@ def test_no_gain_module_interpolates_a_credential_url_unredacted() -> None:
     exists for the seventeenth site, not for present-tense coverage, and
     a reader should not take its green for more than that.
 
-    **What this does not catch.**  Two kinds of gap, both stated rather
-    than hidden.
+    **What this does not catch, and what now catches it instead.**  Two
+    kinds of gap, both stated rather than hidden.  Since gain#1363 every
+    one of them is closed *for a log call* by the log-record seam in
+    ``gain.utils.url_redaction``: whatever a site interpolates, however
+    it got there, is redacted when a handler formats the record.  So the
+    gaps below are live only for a ``raise`` whose text never reaches a
+    log -- and for the ``exc_info`` traceback tail of one that does,
+    which the seam does not render.  That is the residual this fence
+    still polices, and why it stays.
 
     *The taint does not reach this reader at all*, because it crosses a
     boundary one function cannot see:

@@ -11,6 +11,7 @@
 [#1314](https://github.com/iossifovlab/gain/issues/1314),
 [#1333](https://github.com/iossifovlab/gain/issues/1333),
 [#1339](https://github.com/iossifovlab/gain/issues/1339),
+[#1363](https://github.com/iossifovlab/gain/issues/1363),
 [#1398](https://github.com/iossifovlab/gain/issues/1398)
 
 ## Context
@@ -737,3 +738,96 @@ import — presigned with the same 100 s default. It now passes the same
 constant, which moved down to `gain.utils.fs_utils` so both sites reach it
 without `utils` importing the protocol module. Every presign in gain now
 carries `S3_PRESIGN_EXPIRATION_SECONDS`.*
+
+## Amendment — gain#1363: the log record is the fourth remedy
+
+**Date:** 2026-09-14
+
+The gain#1106 amendment left message interpolation as "the one mechanism in
+this family with no structural guard" and answered it with the gain#1318
+fence — a test that reads each function for a `_fetch_url`-derived name
+reaching a `raise` or a log call. The fence is honest about its reach: two
+anchored sites in the present tense, and a documented list of what it cannot
+see (taint through a helper, through a parameter, through `str(error)`,
+through binding forms it does not model). Both other structural remedies in
+this ADR close their mechanism at a **choke point** rather than at the
+composition site; interpolation had no choke point because a message can be
+composed anywhere.
+
+It does have one on the way *out*. Every log line in the process is a
+`logging.LogRecord` whose text a handler obtains from one method,
+`getMessage`. `gain.utils.log_levels` already patches `logging.Logger`
+process-wide, so the tree had already accepted that a library may alter the
+host's logging classes.
+
+**Decided.** `gain.utils.url_redaction.redact_url_userinfo_in_log_records`
+wraps `logging.LogRecord.getMessage` so the rendered message has
+`scheme://user:pass@host` reduced to `scheme://host`. It is installed from
+`gain/__init__`, next to the level bootstrap and for the same reason:
+importing anything under `gain` is the moment, so no worker, host or later
+import order misses it. The redactor itself moved down to that module —
+one definition, below the GRR, because the bootstrap cannot import the
+protocol — and `fsspec_protocol` imports it under the name its call sites
+and the fence already use.
+
+**The boundary, fixed at triage and pinned by tests rather than left to
+drift.**
+
+- *Userinfo only.* The union redactor of the gain#1339 amendment strips the
+  `?query` of every url in a string. At this seam that is every url in every
+  log line of the host — gpf, Django, gunicorn — a diagnostic cost imposed
+  on code that is not gain's. The gain#1339 amendment established that a
+  presigned url reaches only the four library opens, all wrapped, so the
+  seam gains nothing from the wider notion and is deliberately kept on the
+  narrower one; a presigned url passes through it intact, and a test says
+  so. gain#1370 owns the union question for the hand-redacted error-message
+  sites.
+- *Lazy.* `getMessage` runs when a handler formats the record, not when the
+  logger accepts it. A record that no handler formats costs nothing beyond
+  stdlib and never interpolates its `args`. This is a property of wrapping
+  `getMessage` rather than `Logger.handle`, which is why that seam was
+  chosen over a record factory: a factory would either interpolate eagerly
+  or have to substitute the record's class, and a class built at runtime
+  cannot be pickled by a `QueueHandler`. Composition with a host's record
+  factory is free for the same reason — the host still gets a `LogRecord`,
+  with its own attributes, that renders redacted.
+- *Idempotent.* The installed function carries a marker, and the install
+  returns when it finds one. The marker is on the function in the
+  `LogRecord` slot, not in the module, so an `importlib.reload` — which
+  re-runs the install and would reset a module flag — stacks nothing.
+
+**What it closes.** Every gap the gain#1318 fence lists, *for a log call*:
+however a credential-bearing url reached the message, it is stripped on
+the way out. It also closes a channel none of the three earlier remedies
+could see: `fsspec.implementations.http` logs the full fetch url at DEBUG
+on every read — `logger.debug(url)`, `f"{self.url} : {headers['Range']}"`
+— so an authed http GRR under a DEBUG fsspec logger wrote the password on
+every read. That was safe only because three separate configuration
+surfaces pin `fsspec` at INFO or above (`VerbosityConfiguration`, web_api's
+`LOGGING`, gpf's default settings). Those pins stay; they are defence in
+depth now rather than the only defence.
+
+**What it does not close, and why the fence stays.** The seam renders the
+*message*. `Formatter.formatException` renders the `exc_info` traceback
+from the exception object, and its last line is `str(exc)`, so a
+gain-composed `raise` that forgot its redaction and is then logged with
+`exc_info=True` — the DEBUG line of `report_resource_failure` — still shows
+the credential in the traceback tail. Pre-rendering `record.exc_text` at the
+seam would close that, at the cost of bypassing any host formatter's own
+`formatException`; it is not done, and a test pins the residual so that it
+is a decision rather than an oversight. A `raise` whose text never reaches
+a log at all — a terminal traceback, an HTTP response body — is likewise
+outside the seam. Those two shapes are what the gain#1318 fence still
+polices, and its rule is unchanged; only its coverage claim narrowed.
+
+A host `LogRecord` subclass that re-implements `getMessage` without calling
+the base method bypasses the seam. None is known; it is recorded here as
+the shape that would.
+
+**The rule this leaves.** Three questions decide the remedy, in order. *Is
+there a handle GAIn holds?* The handle redacts. *Is the url handed to a
+library?* Wrap the call, channel by channel. *Otherwise:* a
+`_fetch_url`-derived url reaching a message is still redacted at the site,
+as the fence demands — but if the message reaches a log, the seam has
+already made the omission harmless, and what the site's own redaction now
+protects is the unlogged `raise` and the traceback tail.
