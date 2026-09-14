@@ -95,8 +95,9 @@ Backend = tuple[GenomicScore, Region]
 def _build_tabular(
     tmp_path: pathlib.Path, *, tabix: bool,
     configured_header: bool = False, add_prefix: str | None = None,
+    contigs: int = 1,
 ) -> Backend:
-    """A one-row tabular score whose score is addressed by column NAME.
+    """A one-row-per-contig tabular score addressed by column NAME.
 
     Name-addressed on purpose: resolving a name is the one read of
     ``table.header`` a score cannot do without, and it does it on every
@@ -105,16 +106,19 @@ def _build_tabular(
     ``configured_header`` moves the header out of the file and into the
     config (``header_mode: list``); the default leaves the mode unspelled,
     because the backend default is the case under test.  ``add_prefix`` maps
-    the file's contig ``1`` into reference space, for the fixtures that need
-    a populated chromosome map.
+    the file's contigs into reference space, for the fixtures that need a
+    populated chromosome map.  ``contigs`` gives the file one row on each of
+    contigs ``1..contigs``, each with its own value, and the region returned
+    is on the LAST of them -- for the fixtures that must tell a whole
+    rebuild of the chromosome state from one that stopped at the first
+    entry (gain#360).
     """
+    rows = "\n".join(
+        f"{i}  {10 * i}  {0.5 / i}" for i in range(1, contigs + 1))
     builder = (
         a_position_score()
         .with_score("s_float", "float")
-        .with_data("""
-            chrom  pos_begin  s_float
-            1      10         0.5
-        """)
+        .with_data(f"chrom  pos_begin  s_float\n{rows}")
     )
     if configured_header:
         builder = builder.with_header_mode("list")
@@ -125,7 +129,7 @@ def _build_tabular(
     repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
     return (
         PositionScore(repo.get_resource("pos")),
-        (f"{add_prefix or ''}1", 10, 10),
+        (f"{add_prefix or ''}{contigs}", 10 * contigs, 10 * contigs),
     )
 
 

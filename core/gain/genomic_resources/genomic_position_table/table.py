@@ -583,10 +583,10 @@ class GenomicPositionTable(abc.ABC):
         call up into this one**; what each backend releases on top of it is its
         own, and ``test_table_lifetime.py`` holds all four to the policy: it
         opens a table, *reads* through it, closes it, and then requires both
-        that everything the open rebound was given up and that nothing the
-        closed table still holds has anything in it -- the second of which is
-        what catches a container filled in place, and the read is what reaches
-        the buffers a fetch establishes.
+        that everything the open established -- by rebinding, or by changing
+        a field in place, which a by-value snapshot sees (gain#360) -- was
+        given up and that nothing the closed table still holds has anything
+        in it; the read is what reaches the buffers a fetch establishes.
         """
         self.chrom_map = None
         self.chrom_order = None

@@ -10,7 +10,13 @@ retention-shape tests are the release policy stated on
 ``GenomicPositionTable.close()``, checked against all four backends, plus two
 chromosome-MAPPED fixtures without which the base class's ``chrom_map`` and
 ``rev_chrom_map`` are ``None`` throughout and every question asked of them is
-answered vacuously).
+answered vacuously).  The check reads fields by VALUE, not identity, so a
+helper object filled in place is not invisible to it, and it has tests of its
+own -- test_the_release_check_sees_a_field_filled_in_place and its two
+neighbours (gain#360).  The reopen half runs over two more fixture sets:
+``header_mode: list`` (gain#361) and the multi-contig ones, whose region is
+on the SECOND contig so a partial rebuild of the chromosome state is
+distinguishable from a whole one (gain#360).
 
 And a shell that **refuses to be read**: what a closed table answers is the
 other side of what it releases, so it is pinned here too --
@@ -85,8 +91,13 @@ import pkgutil
 import textwrap
 import weakref
 from collections.abc import Sized
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
+from gain.genomic_resources.bigwig_scores import (
+    extract_bigwig_value,
+)
 from gain.genomic_resources.genomic_position_table import (
     build_genomic_position_table,
 )
@@ -97,6 +108,9 @@ from gain.genomic_resources.genomic_position_table.record import (
 from gain.genomic_resources.genomic_position_table.table import (
     ContigExtent,
     GenomicPositionTable,
+)
+from gain.genomic_resources.genomic_position_table.table_bigwig import (
+    BigWigTable,
 )
 from gain.genomic_resources.genomic_scores import (
     GenomicScore,
@@ -121,6 +135,8 @@ from gain.genomic_resources.testing.builders import (
 from .test_backend_record_contract import (
     _BACKENDS,
     Backend,
+    _build_bigwig,
+    _build_tabix,
     _build_tabular,
     build_every_backend,
 )
@@ -145,7 +161,9 @@ def _build_mapped_tabular(
     A closed table that kept them would be caught, and -- the sharper half -- a
     reopened table that failed to rebuild them would answer
     ``unmap_chromosome('chr1') -> 'chr1'`` against a file that has no ``chr1``,
-    and return no records at all.
+    and return no records at all.  A table that rebuilt them PARTIALLY is
+    the ``_MULTI_CONTIG_BACKENDS`` fixtures' question, not this one's: on a
+    single contig, the first entry of the map is the whole map.
     """
     return _build_tabular(tmp_path, tabix=tabix, add_prefix="chr")
 
@@ -496,6 +514,13 @@ _MAY_SURVIVE_CLOSE = {
     "pos_end_key": "core column key: resolved from the definition and header",
     "ref_key": "core column key: resolved from the definition and header",
     "alt_key": "core column key: resolved from the definition and header",
+    "genomic_resource": (
+        "the table's own resource -- the first of the three things the "
+        "policy says a closed table keeps, handed in at construction. Its "
+        "lazily loaded manifest memo is populated by the tabix and VCF "
+        "open() paths, which the by-value snapshot sees one level down; that "
+        "is the resource's state, not the table's (gain#360)."
+    ),
     "definition": (
         "the table's own definition -- configuration, handed in at "
         "construction, never read from the file and never written to by the "
@@ -506,23 +531,100 @@ _MAY_SURVIVE_CLOSE = {
         "describing a CALL, not file content, and the tabix read cascade's "
         "own cursor. Bounded at three."
     ),
+    "_window": (
+        "the bigWig backend's adaptive fetch window: a records-per-call "
+        "target from the config and a base-pair stride retuned from the "
+        "record density each fetch observed. The stride IS file-derived, but "
+        "density is a property of the resource, so it is kept across fetches "
+        "on purpose (AdaptiveFetchWindow) -- and a close/reopen cycle is the "
+        "same resource, so resetting it would make every reopened table "
+        "re-converge from scratch. Two ints, bounded at two (gain#360)."
+    ),
 }
 
 
-def _is_released(value: object, before_open: object) -> bool:
-    """Whether a field the open/read established has been given up by close().
+class _Constructed:
+    """What a table held at construction: each field by identity and by shape.
 
-    Released means one of: ``None``; an empty container; or back to the value
-    the table was constructed with -- the three shapes the backends' releases
-    actually take (``self.parser = None``, ``self.records_by_chr = {}``,
-    ``self.chroms = {}``).  What they have in common is that the field no
-    longer holds anything read out of the file.
+    The release policy's baseline, taken before ``open()``.  Identity is what
+    a rebound field shows; :func:`_shape` is what a field filled in place
+    shows, and the reason it is needed is written there (gain#360).
     """
-    if value is None:
-        return True
-    if _held(value) == 0:
-        return True
-    return value == before_open
+
+    def __init__(self, table: GenomicPositionTable) -> None:
+        self.values = dict(vars(table))
+        self.shapes = {
+            name: _shape(value) for name, value in self.values.items()}
+
+    def established_in(self, current: dict[str, object]) -> set[str]:
+        """The fields ``current`` holds that construction did not.
+
+        Rebound by the open, or the same object with a different shape.
+        """
+        return {
+            name for name, value in current.items()
+            if name not in self.values or self.values[name] is not value
+            or _shape(value) != self.shapes[name]
+        }
+
+    def is_released(self, name: str, value: object) -> bool:
+        """Whether a field the open/read established has been given up.
+
+        Released means one of: ``None``; an empty container; or back to the
+        shape the table was constructed with -- the three forms the backends'
+        releases actually take (``self.parser = None``,
+        ``self.records_by_chr = {}``, ``self.chroms = {}``, a helper reset to
+        its initial numbers).  What they have in common is that the field no
+        longer holds anything read out of the file.
+
+        Shape, not ``==``: on an object without ``__eq__`` that is identity,
+        which a helper reset in place passes trivially and a helper rebuilt
+        afresh never does.  What shape cannot tell apart -- two non-empty
+        containers of one size -- the still-holding sweep in
+        :func:`_retained_after_close` reports regardless.
+        """
+        if value is None:
+            return True
+        if _held(value) == 0:
+            return True
+        return _shape(value) == self.shapes.get(name)
+
+
+def _shape(value: object) -> object:
+    """A cheap by-value fingerprint of what a field holds.
+
+    Taken before ``open()`` and again after ``close()``, so that a field
+    FILLED in place -- the same object, with more inside it -- reads as
+    established and then as retained, where a diff of identities sees the
+    same object twice (gain#360).  A primitive is itself.  A container is its
+    size and nothing more, because what it holds is the payload and how much
+    of it is the question -- a ``Sized`` helper's own scalar attributes are
+    not read.  An object is its own attributes, each a leaf: deep enough to
+    see a dict grow inside a helper or an int retuned from the file, shallow
+    enough never to walk into the resource's repository (it does read one
+    level into the resource itself, which is why ``genomic_resource`` is in
+    ``_MAY_SURVIVE_CLOSE``).  Anything else -- a handle, a generator, a
+    callable, whose state is a closure and not its ``__dict__`` -- is opaque,
+    and unchanged for as long as it is the same object.
+
+    Not a ``deepcopy``: the VCF backend's ``header`` is a pysam object that
+    refuses to be copied at all, and a copy of an object that compares by
+    identity would never equal the original.
+    """
+    if (isinstance(value, Sized) or callable(value)
+            or not hasattr(value, "__dict__")):
+        return _leaf(value)
+    return {name: _leaf(attribute) for name, attribute in vars(value).items()}
+
+
+def _leaf(value: object) -> object:
+    """A field's fingerprint with no looking inside: itself, its size or id."""
+    if value is None or isinstance(value, str | bytes | int | float):
+        return value
+    held = _held(value)
+    if held is not None:
+        return held
+    return id(value)
 
 
 def _held(value: object) -> int | None:
@@ -561,15 +663,22 @@ def test_a_closed_table_releases_what_open_established(
     it holds in two ways and either one alone is a hole big enough to drive the
     whole payload through:
 
-    * what the open **rebound** -- the difference between the constructed
-      table's attributes and the opened one's -- must be released.  This is the
-      question about handles and parsers, which are replaced wholesale.
+    * what the open **established** -- the difference between the constructed
+      table's attributes and the opened one's, by identity OR by
+      :func:`_shape` -- must be released.  This is the question about handles
+      and parsers, which are replaced wholesale, and since gain#360 about the
+      helper object that is never replaced but filled: a plain object holding
+      a dict, or an int retuned from the file, is the same object it was at
+      construction, and only a by-value snapshot sees what happened to it.
+      test_the_release_check_sees_a_field_filled_in_place is this question's
+      own test, over a field shaped to slip an identity diff.
     * what the closed table still **holds** -- every attribute that is a
-      container -- must be empty.  This is the question about payload, and it
-      is the one that does not care *how* the payload arrived: a dict filled by
-      ``update()`` is the same object it was at construction, so the rebinding
-      diff never sees it, and it is precisely how a contig dict or a line
-      buffer grows.
+      container -- must be empty.  This is the question about payload, asked
+      with no baseline at all: it catches what the snapshot never saw -- a
+      backend that read the file in ``__init__`` -- and what a size cannot
+      tell apart -- a non-empty container swapped for another of the same
+      size -- which is what lets ``is_released`` compare shapes rather than
+      values.
 
     And the table is **read** before it is closed, not merely opened -- twice
     over the same region.  The tabix line buffer and the read cascade's
@@ -589,7 +698,30 @@ def test_a_closed_table_releases_what_open_established(
     """
     score, region = build(tmp_path)  # type: ignore[operator]
     table = score.table
-    before = dict(vars(table))
+
+    retained = _retained_after_close(table, region)
+
+    assert not retained, (
+        f"{type(table).__name__}.close() left {sorted(retained)} holding "
+        f"what the open and the read took out of the file (sizes: "
+        f"{ {name: size for name, size in retained.items() if size} }). "
+        f"A closed table keeps only its resource, its definition and its "
+        f"configured parameters -- release these in close(), or add them to "
+        f"_MAY_SURVIVE_CLOSE with the reason they are exempt (gain#350)."
+    )
+
+
+def _retained_after_close(
+    table: GenomicPositionTable, region: tuple[str, int, int],
+) -> dict[str, int | None]:
+    """Open, read twice, close; return what the closed table still holds.
+
+    The release policy as a measurement: every field not named in
+    ``_MAY_SURVIVE_CLOSE`` that the open or the read established and
+    ``close()`` did not give up, mapped to how many things it holds (``None``
+    for a field that is not a container).  Empty means the policy holds.
+    """
+    constructed = _Constructed(table)
 
     table.open()
     # READ, don't just open, and read TWICE: the buffers and counters below
@@ -601,10 +733,7 @@ def test_a_closed_table_releases_what_open_established(
         f"inspect was never established")
     list(table.get_records_in_region(*region))
 
-    established = {
-        name: value for name, value in vars(table).items()
-        if name not in before or before[name] is not value
-    }
+    established = constructed.established_in(vars(table))
     # guard against a vacuous pass: the base class's chromosome state is
     # established by every backend's open(), so it must be under test here
     assert {"chrom_order", "_file_chromosomes"} <= set(established), (
@@ -614,25 +743,99 @@ def test_a_closed_table_releases_what_open_established(
 
     table.close()
 
-    rebound_but_kept = {
-        name for name, value in vars(table).items()
-        if name in established and not _is_released(value, before.get(name))
+    # the two questions: still holding anything, or established and not
+    # given back -- ``_held`` is a positive size for the first and ``None``
+    # for a non-container caught by the second
+    return {
+        name: _held(value)
+        for name, value in vars(table).items()
+        if name not in _MAY_SURVIVE_CLOSE
+        and (_held(value)
+             or (name in established
+                 and not constructed.is_released(name, value)))
     }
-    still_holding = {
-        name: _held(value) for name, value in vars(table).items()
-        if _held(value)
-    }
-    retained = sorted(
-        (rebound_but_kept | still_holding.keys()) - set(_MAY_SURVIVE_CLOSE))
-    sizes = {name: still_holding[name]
-             for name in retained if name in still_holding}
+
+
+def test_the_release_check_sees_a_field_filled_in_place(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The detector's own blind spot, closed: payload behind a plain object.
+
+    A field created at construction and FILLED by ``open()`` -- never rebound
+    -- is invisible to a diff of attribute identities, and a field with no
+    ``__len__`` is invisible to a sweep of container sizes.  A plain object
+    holding a dict is both at once, and it is how a closed table pinned a
+    file's whole contig dict while the policy test stayed green (gain#360).
+    Installed on the bigWig backend, whose ``chroms`` is the dict such a
+    field would copy.
+    """
+    score, region = _build_bigwig(tmp_path)
+    table = score.table
+    table._contig_index = SimpleNamespace()  # type: ignore[attr-defined]
+    real_open = BigWigTable.open
+
+    def open_and_pin_the_contigs(self: BigWigTable) -> BigWigTable:
+        real_open(self)
+        pinned = self._contig_index  # type: ignore[attr-defined]
+        pinned.data = dict(self.chroms)
+        return self
+
+    with patch.object(BigWigTable, "open", open_and_pin_the_contigs):
+        retained = _retained_after_close(table, region)
+
+    assert "_contig_index" in retained, (
+        f"a closed BigWigTable holds the file's contigs behind a field "
+        f"open() filled in place, and the release check reports only "
+        f"{sorted(retained)}")
+
+
+def test_the_fetch_window_exemption_exempts_something_the_check_sees(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``_window``'s entry in ``_MAY_SURVIVE_CLOSE`` is load-bearing.
+
+    The allow-list's cost is a written reason, and a reason is only paid for
+    if the field would otherwise fail: an entry for a field the check cannot
+    see is a decision nobody was asked to make, and an entry for a field that
+    ``close()`` has since started releasing is stale.  So the live case of
+    gain#360 is asked without its exemption -- the bigWig fetch window, a
+    non-container retuned in place by the read and kept across the close on
+    purpose -- and must be the one thing reported.
+    """
+    score, region = _build_bigwig(tmp_path)
+
+    with patch.dict(_MAY_SURVIVE_CLOSE):
+        del _MAY_SURVIVE_CLOSE["_window"]
+        retained = _retained_after_close(score.table, region)
+
+    assert retained == {"_window": None}, (
+        f"without its _MAY_SURVIVE_CLOSE entry the bigWig fetch window "
+        f"should be exactly what a closed table is reported holding; got "
+        f"{retained}. If close() now resets it, drop the entry.")
+
+
+def test_the_release_check_does_not_blame_the_resource_for_its_own_memo(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A by-value snapshot must not see the table's resource as payload.
+
+    The resource is the first thing the policy says a closed table keeps,
+    and :func:`_shape` reads one level into it -- where ``GenomicResource``
+    keeps a lazily loaded manifest memo that the tabix and VCF ``open()``
+    paths populate while resolving the index filename.  A fixture whose
+    resource arrives with the memo empty (``build_genomic_resource`` without
+    a manifest, or one that was ``invalidate()``d) would otherwise be told to
+    "release" its own resource (gain#360 review).
+    """
+    score, region = _build_tabix(tmp_path)
+    score.table.genomic_resource.invalidate()
+
+    retained = _retained_after_close(score.table, region)
+
     assert not retained, (
-        f"{type(table).__name__}.close() left {retained} holding what the "
-        f"open and the read took out of the file (sizes: {sizes}). "
-        f"A closed table keeps only its resource, its definition and its "
-        f"configured parameters -- release these in close(), or add them to "
-        f"_MAY_SURVIVE_CLOSE with the reason they are exempt (gain#350)."
-    )
+        f"the release check reports {sorted(retained)} on a table whose "
+        f"resource loaded its manifest during open(): the resource is the "
+        f"table's, not the file's, and it is not the closed table's to release")
 
 
 @pytest.mark.parametrize("tabix", [False, True], ids=["inmemory", "tabix"])
@@ -690,7 +893,7 @@ def test_a_failed_open_releases_what_it_had_established(
     """
     score, _region = build(tmp_path)  # type: ignore[operator]
     table = score.table
-    before = dict(vars(table))
+    constructed = _Constructed(table)
     at_raise: dict[str, object] = {}
 
     def raise_after_snapshot() -> None:
@@ -703,17 +906,14 @@ def test_a_failed_open_releases_what_it_had_established(
         table.open()
 
     assert raised.value is error
-    established = {
-        name for name, value in at_raise.items()
-        if name not in before or before[name] is not value
-    }
+    established = constructed.established_in(at_raise)
     assert established - {"_build_chrom_mapping"}, (
         f"{type(table).__name__}.open() established nothing before "
         f"_build_chrom_mapping; this test would be checking nothing")
     retained = sorted(
         name for name, value in vars(table).items()
         if name in established
-        and not _is_released(value, before.get(name))
+        and not constructed.is_released(name, value)
         and name not in _MAY_SURVIVE_CLOSE
         and name != "_build_chrom_mapping"
     )
@@ -829,6 +1029,21 @@ def _read_region(
     return records, values
 
 
+def _read_then_close(
+    score: GenomicScore, region: tuple[str, int, int],
+) -> tuple[list[tuple], list]:
+    """The first read of a reopen check: open, read, close, return the read.
+
+    Guarded against a region that yields nothing, because a reopen compared
+    against an empty read is a reopen compared against nothing.
+    """
+    score.open()
+    before = _read_region(score, region)
+    assert before[0], "the fixture region yields no records: nothing compared"
+    score.close()
+    return before
+
+
 def _build_inmemory_configured_header(tmp_path: pathlib.Path) -> Backend:
     return _build_tabular(tmp_path, tabix=False, configured_header=True)
 
@@ -855,8 +1070,77 @@ _CONFIGURED_HEADER_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
 ]
 
 
-@pytest.mark.parametrize(
-    "build,_score_line", [*_LIFETIME_BACKENDS, *_CONFIGURED_HEADER_BACKENDS])
+def _build_multi_contig_tabular(
+    tmp_path: pathlib.Path, *, tabix: bool,
+) -> Backend:
+    """A mapped two-contig tabular score, with its region on the SECOND.
+
+    Every other fixture here has one contig and one record, and against
+    those a reopen that rebuilt only the first entry of the chromosome state
+    is indistinguishable from a correct one: it reproduces the first read
+    exactly (gain#360).  Two contigs, mapped -- so that the state a
+    half-rebuild loses is the base class's own ``chrom_map`` -- and a region
+    on the contig a half-rebuild would lose.
+    """
+    return _build_tabular(tmp_path, tabix=tabix, add_prefix="chr", contigs=2)
+
+
+def _build_multi_contig_inmemory(tmp_path: pathlib.Path) -> Backend:
+    return _build_multi_contig_tabular(tmp_path, tabix=False)
+
+
+def _build_multi_contig_tabix(tmp_path: pathlib.Path) -> Backend:
+    return _build_multi_contig_tabular(tmp_path, tabix=True)
+
+
+def _build_multi_contig_bigwig(tmp_path: pathlib.Path) -> Backend:
+    """A two-contig bigWig, region on the second: its contig dict, rebuilt."""
+    return _a_bigwig_score(tmp_path, 2), ("chr2", 5, 5)
+
+
+# Fixtures whose region lies BEYOND the first contig, so the reopen check
+# can tell a whole rebuild of the chromosome state from a partial one.  The
+# two mapped tabular ones put the base class's ``chrom_map`` under that
+# question; the bigWig one puts its own ``chroms`` dict there, which is the
+# contig state gain#350 was about.
+_MULTI_CONTIG_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
+    pytest.param(
+        _build_multi_contig_inmemory, extract_column_value,
+        id="inmemory-mapped-multi"),
+    pytest.param(
+        _build_multi_contig_tabix, extract_column_value,
+        id="tabix-mapped-multi"),
+    pytest.param(
+        _build_multi_contig_bigwig, extract_bigwig_value,
+        id="bigwig-multi"),
+]
+
+
+@pytest.mark.parametrize("build,_score_line", _MULTI_CONTIG_BACKENDS)
+def test_the_multi_contig_fixtures_read_beyond_the_first_contig(
+    build: object,
+    _score_line: object,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The fixture guard: the region's contig is not the table's first.
+
+    What makes the multi-contig fixtures worth having; a region on the first
+    contig would be answered by a half-rebuilt chromosome state exactly as by
+    a whole one.
+    """
+    score, region = build(tmp_path)  # type: ignore[operator]
+    with score.open():
+        chromosomes = score.table.get_chromosomes()
+        assert len(chromosomes) > 1, "fixture has one contig"
+        assert region[0] in chromosomes[1:], (
+            f"the fixture region is on {region[0]!r}, which is not beyond "
+            f"the first of {chromosomes}")
+
+
+@pytest.mark.parametrize("build,_score_line", [
+    *_LIFETIME_BACKENDS, *_CONFIGURED_HEADER_BACKENDS,
+    *_MULTI_CONTIG_BACKENDS,
+])
 def test_a_reopened_table_answers_exactly_as_before_it_was_closed(
     build: object,
     _score_line: object,
@@ -872,12 +1156,15 @@ def test_a_reopened_table_answers_exactly_as_before_it_was_closed(
     against is silent -- a field released but not rebuilt does not raise, it
     answers with less (an empty contig list yields no records at all, a
     half-rebuilt chromosome map drops the records of the contigs it lost).
+
+    That last failure is only reachable on the ``_MULTI_CONTIG_BACKENDS``
+    fixtures -- on one contig, a map rebuilt down to its first entry is the
+    whole map -- and
+    test_a_reopen_that_rebuilds_only_the_first_contig_is_caught shows it
+    reached.
     """
     score, region = build(tmp_path)  # type: ignore[operator]
-    score.open()
-    before = _read_region(score, region)
-    assert before[0], "the fixture region yields no records: nothing compared"
-    score.close()
+    before = _read_then_close(score, region)
 
     score.open()
     after = _read_region(score, region)
@@ -887,6 +1174,57 @@ def test_a_reopened_table_answers_exactly_as_before_it_was_closed(
         f"{type(score.table).__name__} answered differently after a close/"
         f"reopen cycle: {after} != {before}. open() must rebuild everything "
         f"close() releases (gain#350).")
+
+
+@pytest.mark.parametrize("build,_score_line", _MULTI_CONTIG_BACKENDS)
+def test_a_reopen_that_rebuilds_only_the_first_contig_is_caught(
+    build: object,
+    _score_line: object,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The reopen check's own test: a half-rebuilt chromosome map fails it.
+
+    The failure the reopen check's docstring claims to catch, made to happen:
+    after the close, ``get_file_chromosomes`` -- the seam every backend's
+    ``_build_chrom_mapping`` derives ``chrom_order`` and the maps from -- is
+    made to answer with the first contig only, so the reopen rebuilds a
+    one-entry map, and the second read, on the second contig, must not
+    reproduce the first.  On the single-contig fixtures it would (gain#360).
+
+    Today the second read does not answer with less, it REFUSES: every
+    backend raises ``ValueError`` on a contig its rebuilt chromosome state
+    does not know -- the tabular ones from the table, the bigWig one from the
+    score layer's contig guard above a table whose own ``chroms`` still knows
+    it.  The reopen check fails either way, and which of the two it is
+    belongs to the unknown-contig contract, not here -- so a refusal is
+    recorded as "not the same answer" rather than pinned, and any other
+    exception propagates.
+    """
+    score, region = build(tmp_path)  # type: ignore[operator]
+    table = score.table
+    before = _read_then_close(score, region)
+
+    real_get_file_chromosomes = type(table).get_file_chromosomes
+
+    def only_the_first_contig(self: GenomicPositionTable) -> list[str]:
+        file_chromosomes: list[str] = real_get_file_chromosomes(self)
+        return file_chromosomes[:1]
+
+    with patch.object(
+            type(table), "get_file_chromosomes", only_the_first_contig):
+        score.open()
+        try:
+            after: object = _read_region(score, region)
+        except ValueError as refused:
+            after = refused
+        finally:
+            score.close()
+
+    assert after != before, (
+        f"{type(table).__name__} reopened over a one-contig chromosome map "
+        f"and answered a region on the second contig exactly as before: "
+        f"{after}. The multi-contig fixture is not reaching beyond the first "
+        f"contig, so the reopen check cannot fail the way it claims to.")
 
 
 def _a_mapped_vcf_table(tmp_path: pathlib.Path) -> GenomicPositionTable:
@@ -1224,12 +1562,18 @@ def test_an_inmemory_scan_in_flight_when_close_lands_raises(
 def _a_bigwig_score(
     tmp_path: pathlib.Path, n_contigs: int,
 ) -> PositionScore:
-    """Build a bigWig position score over ``n_contigs`` contigs."""
+    """Build a bigWig position score over ``n_contigs`` contigs.
+
+    One interval per contig, each with its own value, so that a read
+    misdirected to another contig answers with a different number.
+    """
     contigs = [f"chr{i}" for i in range(1, n_contigs + 1)]
     builder = (
         a_bigwig_score()
         .with_score("score", "float")
-        .with_data("\n".join(f"{chrom}  0  10  0.5" for chrom in contigs))
+        .with_data("\n".join(
+            f"{chrom}  0  10  {0.5 / i}"
+            for i, chrom in enumerate(contigs, start=1)))
         .with_chrom_lens(dict.fromkeys(contigs, 1000))
     )
     repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
