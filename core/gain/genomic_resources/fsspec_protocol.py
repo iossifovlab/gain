@@ -1927,9 +1927,28 @@ class FsspecReadOnlyProtocol(
     def open_bigwig_file(
         self, resource: GenomicResource, filename: str,
     ) -> Any:
+        """Open ``filename`` of ``resource`` with pyBigWig.
+
+        A ``file`` GRR is opened by path. An ``s3``, ``http`` or ``https``
+        GRR is opened by url -- presigned for ``s3`` -- which needs a
+        pyBigWig built with libcurl (``pyBigWig.remote == 1``); the PyPI
+        wheel is not, and a remote open on it is refused with an ``OSError``
+        naming the remedies rather than handed to a library that would take
+        the url for a local path. That refusal never carries the url, which
+        may hold a credential.
+        """
         if self.scheme not in {"file", "s3", "http", "https"}:
             raise OSError(
                 f"bigwig files are not supported on schema {self.scheme}")
+        has_remote = pyBigWig.remote  # pylint: disable=I1101
+        if self.scheme != "file" and not has_remote:
+            raise OSError(
+                f"cannot open bigwig file {filename} of resource "
+                f"{resource.resource_id} over {self.scheme}: this pyBigWig "
+                "build has no remote-file support (pyBigWig.remote == 0); "
+                "give the repository a cache_dir so the file is fetched "
+                "locally, or install a curl-enabled pyBigWig (e.g. the "
+                "bioconda build)")
         file_url = self._get_file_url(resource, filename)
         # Not the verbosity bracket of ``_open_htslib_file``: libBigWig is not
         # htslib and ``pysam.set_verbosity`` does not reach it. Its
