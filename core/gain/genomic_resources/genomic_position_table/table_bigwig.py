@@ -209,10 +209,11 @@ class BigWigTable(GenomicPositionTable):
             self.definition.filename)
         if self._bw_file is None:
             raise OSError
-        self.chroms = self._bw_file.chroms()
-        self._set_core_column_keys()
-        self._build_chrom_mapping()
-        self.parser = build_bigwig_parser()
+        with self._releasing_on_raise():
+            self.chroms = self._bw_file.chroms()
+            self._set_core_column_keys()
+            self._build_chrom_mapping()
+            self.parser = build_bigwig_parser()
         return self
 
     def close(self) -> None:

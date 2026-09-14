@@ -233,11 +233,12 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
     def open(self) -> VCFGenomicPositionTable:
         self.pysam_file = self.genomic_resource.open_vcf_file(
             self.definition.filename, self.index_filename)
-        self._set_core_column_keys()
-        self._build_chrom_mapping()
-        # Like the tabix parser, this cannot be built any earlier: the reverse
-        # chromosome map needs the file's contigs.
-        self.vcf_parser = build_vcf_parser(self.rev_chrom_map)
+        with self._releasing_on_raise():
+            self._set_core_column_keys()
+            self._build_chrom_mapping()
+            # Like the tabix parser, this cannot be built any earlier: the
+            # reverse chromosome map needs the file's contigs.
+            self.vcf_parser = build_vcf_parser(self.rev_chrom_map)
         return self
 
     def close(self) -> None:

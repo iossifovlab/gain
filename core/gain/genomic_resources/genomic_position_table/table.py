@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import contextlib
 import enum
 from collections.abc import Generator, Iterable
 from types import TracebackType
@@ -466,6 +467,38 @@ class GenomicPositionTable(abc.ABC):
     @abc.abstractmethod
     def open(self) -> GenomicPositionTable:
         pass
+
+    @contextlib.contextmanager
+    def _releasing_on_raise(self) -> Generator[None, None, None]:
+        """Release the table if the ``open()`` setup under this block raises.
+
+        A file-backed ``open()`` acquires its handle first and then does the
+        setup that can refuse the table -- resolving columns, building the
+        chromosome mapping, constructing the parser.  Nothing above ``open()``
+        has been told the table is open when that setup raises, so no caller
+        will ever ``close()`` it: the handle is ``open()``'s own to release,
+        and without this it leaks -- on the http and s3 protocols, the
+        connection under it too (gain#627).
+
+        Three properties, each load-bearing:
+
+        - It catches ``BaseException``, not ``Exception``.  A dask-cancelled
+          open arrives as ``CancelledError``, which is not an ``Exception``
+          and leaks the handle just the same.
+        - It re-raises unconditionally.  This is a release guard, not error
+          handling; the caller sees exactly the exception the setup raised.
+        - The release itself may fail -- a handle close raises ``OSError``
+          when ``hts_close`` does -- and that failure must not replace the
+          refusal being unwound.  The caller is owed the one line that says
+          what is wrong with the resource, not an ``OSError`` with that line
+          demoted to its ``__context__``.
+        """
+        try:
+            yield
+        except BaseException:
+            with contextlib.suppress(OSError):
+                self.close()
+            raise
 
     def close(self) -> None:
         """Close the file and release everything read out of it.

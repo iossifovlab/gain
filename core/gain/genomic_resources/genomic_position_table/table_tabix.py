@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import itertools
 from collections import Counter
 from collections.abc import Generator, Iterable
@@ -280,7 +279,8 @@ class TabixGenomicPositionTable(GenomicPositionTable):
     def open(self) -> TabixGenomicPositionTable:
         self.pysam_file = self.genomic_resource.open_tabix_file(
             self.definition.filename, self.index_filename)
-        try:
+        # The handle is this method's to release: see ``_releasing_on_raise``.
+        with self._releasing_on_raise():
             if self.header_mode == "file":
                 self.header = self._load_header()
             self._set_core_column_keys()
@@ -300,24 +300,6 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                 self.rev_chrom_map,
                 zero_based=self.zero_based,
             )
-        except BaseException:
-            # The handle is this method's to release: nothing above has been
-            # told the table is open -- ``close()`` would not be called on it
-            # -- so a raise from anywhere between the acquire and the return
-            # would leak the file, and on the http and s3 protocols the
-            # connection under it.  ``BaseException``, not ``Exception``: a
-            # dask-cancelled open arrives as ``CancelledError``, which is not
-            # an ``Exception``, and leaks just the same.  This is a release
-            # guard, not error handling -- it re-raises unconditionally.
-            #
-            # The release itself can fail -- a handle close raises ``OSError``
-            # when ``hts_close`` does -- and that failure must not replace
-            # the refusal being unwound: the caller is owed the one line that
-            # says what is wrong with the resource, not an ``OSError`` with
-            # that line demoted to its ``__context__``.
-            with contextlib.suppress(OSError):
-                self.close()
-            raise
         # A reopened table must not answer out of the previous open's buffer.
         # The buffer is keyed by region -- through ``_last_call``, the read
         # cascade's own cursor -- not by file or handle, so a table reopened
