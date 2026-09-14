@@ -279,7 +279,6 @@ class TabixGenomicPositionTable(GenomicPositionTable):
     def open(self) -> TabixGenomicPositionTable:
         self.pysam_file = self.genomic_resource.open_tabix_file(
             self.definition.filename, self.index_filename)
-        # The handle is this method's to release: see ``_releasing_on_raise``.
         with self._releasing_on_raise():
             if self.header_mode == "file":
                 self.header = self._load_header()

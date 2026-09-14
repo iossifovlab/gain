@@ -487,17 +487,23 @@ class GenomicPositionTable(abc.ABC):
           and leaks the handle just the same.
         - It re-raises unconditionally.  This is a release guard, not error
           handling; the caller sees exactly the exception the setup raised.
-        - The release itself may fail -- a handle close raises ``OSError``
-          when ``hts_close`` does -- and that failure must not replace the
-          refusal being unwound.  The caller is owed the one line that says
-          what is wrong with the resource, not an ``OSError`` with that line
-          demoted to its ``__context__``.
+        - The release is attempted, not guaranteed.  A handle close raises
+          ``OSError`` when ``hts_close`` does, and that failure must not
+          replace the refusal being unwound: the caller is owed the one line
+          that says what is wrong with the resource, not an ``OSError`` with
+          that line demoted to its ``__context__``.  It is logged instead,
+          and the table is then left as the backend's ``close()`` leaves a
+          partial failure -- still open by every check a caller can make.
         """
         try:
             yield
         except BaseException:
-            with contextlib.suppress(OSError):
+            try:
                 self.close()
+            except OSError as error:
+                logger.warning(
+                    "could not release <%s> after its open() failed: %s",
+                    self.genomic_resource.get_full_id(), error)
             raise
 
     def close(self) -> None:
