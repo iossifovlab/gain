@@ -28,6 +28,7 @@ every repository without the publisher changing.
 """
 from __future__ import annotations
 
+import hashlib
 from importlib.resources import files
 from typing import TYPE_CHECKING
 
@@ -52,6 +53,42 @@ SQLITE_WASM_VERSION: str = (_SQLITE_WASM_DIR / "version.txt").read_text(
 #: it themselves.
 SQLITE_WASM_PATH: str = f".static/sqlite-wasm-{SQLITE_WASM_VERSION}"
 
+#: Where the vendored fonts live in the package (gain#1400).
+_FONTS_DIR = files("gain.templates") / "static" / "fonts"
+
+#: The directory the fonts are published to, relative to the repository
+#: root.  Unversioned, unlike sqlite-wasm's: each font file is versioned
+#: by name instead (below).
+FONTS_PATH: str = ".static/fonts"
+
+
+def _published_font_path(name: str) -> str:
+    """Where a vendored font is published: its name, content-stamped.
+
+    A font's url is only ever written by the page beside it, which is
+    republished on every run -- so unlike sqlite-wasm, where the module
+    locates the wasm through ``import.meta.url``, nothing but the page
+    binds to the name and there is no version to keep in step by hand.
+    What the name still has to do is change whenever the bytes do: a
+    browser holding yesterday's icon subset would render a glyph added
+    today as its name, in words.  A digest of the bytes does that with
+    no ``version.txt`` to forget; the vendored README records where each
+    file came from.
+    """
+    digest = hashlib.sha256((_FONTS_DIR / name).read_bytes()).hexdigest()
+    stem, suffix = name.rsplit(".", 1)
+    return f"{FONTS_PATH}/{stem}.{digest[:8]}.{suffix}"
+
+
+#: The page's typeface: Roboto's latin subset, variable across weights.
+ROBOTO_FONT_PATH: str = _published_font_path("roboto-v51-latin.woff2")
+
+#: The icon font: Material Symbols Outlined, subsetted to the glyphs the
+#: pages draw -- ``tests/small/templates/test_grr_page_icon_font.py`` is
+#: the authority on which those are.
+MATERIAL_SYMBOLS_FONT_PATH: str = _published_font_path(
+    "material-symbols-outlined-v371.woff2")
+
 
 def repository_static_files() -> Iterator[tuple[str, bytes]]:
     """Each file to publish: its repository-relative path, and its bytes.
@@ -65,3 +102,8 @@ def repository_static_files() -> Iterator[tuple[str, bytes]]:
             f"{SQLITE_WASM_PATH}/{name}",
             (_SQLITE_WASM_DIR / name).read_bytes(),
         )
+    for name, published in (
+        ("roboto-v51-latin.woff2", ROBOTO_FONT_PATH),
+        ("material-symbols-outlined-v371.woff2", MATERIAL_SYMBOLS_FONT_PATH),
+    ):
+        yield published, (_FONTS_DIR / name).read_bytes()

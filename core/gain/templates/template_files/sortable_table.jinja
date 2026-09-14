@@ -18,17 +18,18 @@
    this one is two-state.  Same three glyphs, different cycle, on
    purpose.
 
-   Self-contained apart from the stylesheet link below: its own CSS and
-   its own script, so `resource_template.jinja` includes one line and
-   deleting that line removes the feature completely.  The link is the
-   exception worth knowing about -- a browser fetches it on every
-   resource page, including the ten kinds that render no sortable table.
-   Subsetting it to three glyphs is what keeps that cheap; the font file
-   itself is only fetched where an indicator actually renders. #}
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=arrow_downward,arrow_upward,unfold_more&display=block">
+   Self-contained: its own CSS, its own script, and the icon font its
+   indicator draws, so `resource_template.jinja` includes one line and
+   deleting that line removes the feature completely -- the icon face
+   with it, since no other element of a resource page draws a glyph.
+   The face is a `@font-face` over a file of the repository itself,
+   declared on every resource page including the ten kinds that render
+   no sortable table; that costs nothing, because a browser fetches a
+   font only when an element actually uses the face.  The url climbs to
+   the root by `static_root`, which the base template sets. #}
 <style>
+  {% include "icon_font.jinja" %}
+
   /* The class is added by the script, so the pointer and the indicator
      only appear on a header the script actually wired up. */
   th.sortable {
