@@ -729,9 +729,10 @@ a new method ``ContigExtent.refusal(chrom, contigs)``** (gain#1413).
 ``ChromLengthSource`` names what a length IS -- a header's exact size, an
 index probe's upper bound, the rows' extent, or (the one member no table
 produces) a reference genome's -- and carries ``is_exact``.  It is exported
-because the score layer's ``GenomicScore.get_chrom_length_source`` answers
-with it, and lives here rather than in the score layer because three of its
-four members are facts about a FORMAT: each backend now declares its own as
+because the score layer's chromosome-length resolver
+(``genomic_scores.chrom_lengths``) answers with it, and lives here rather
+than in the score layer because three of its four members are facts about
+a FORMAT: each backend now declares its own as
 the class attribute ``chrom_length_source``, the way it declares
 ``yields_records``.  The obligation: the base class gives it NO default, so
 a backend that has not said is refused with an ``AttributeError`` the first
