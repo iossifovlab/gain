@@ -1,0 +1,38 @@
+#!/bin/bash
+# Run ruff over the WHOLE tree before every push, at the version
+# uv.lock pins — the same one CI runs.
+#
+# The pre-commit hook checks only staged files, so it cannot see a
+# file this branch never touched. That is exactly the file that
+# breaks after a rebase of a repo-wide sweep: the sweep was verified
+# clean, then replayed onto commits that reintroduced what it swept
+# (CLAUDE.md, "Merging a PR"). Ruff only — pylint over the whole
+# tree takes minutes, and a hook that slow gets bypassed.
+
+# Redirect output to stderr.
+exec 1>&2
+
+top=$(git rev-parse --show-toplevel) || exit 1
+cd "$top" || exit 1
+
+if ! command -v uvx > /dev/null; then
+    echo "pre-push: uvx not found; install uv, or push with --no-verify"
+    exit 1
+fi
+
+# The [[package]] block for ruff itself: `name = "ruff"` on its own
+# line, `version = "..."` on the next. Dependency references spell it
+# inline (`{ name = "ruff" ... }`), so they never match.
+version=$(awk '
+    /^name = "ruff"$/ { in_ruff = 1; next }
+    in_ruff && /^version = / { gsub(/"/, "", $3); print $3; exit }
+' uv.lock)
+if [[ -z $version ]]; then
+    echo "pre-push: could not read ruff's version from uv.lock"
+    exit 1
+fi
+
+if ! uvx "ruff@$version" check --no-cache .; then
+    echo "pre-push: ruff $version found problems in the tree; push refused"
+    exit 1
+fi
