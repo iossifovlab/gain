@@ -178,6 +178,46 @@ def test_a_transcript_with_no_codon_records_is_coding(
     assert transcript.cds == (10059, 10404)
 
 
+#: A made-up transcript, sized to be traced by hand: two exons, a coding
+#: sequence that runs across both, and -- tagged ``cds_end_NF`` -- a
+#: ``start_codon`` with no ``stop_codon``. The fixtures above reproduce
+#: GENCODE records verbatim; this one states the rule in numbers small
+#: enough to check without the file.
+FAKE1 = _attributes(
+    gene_id="FAKE1", gene_name="FAKE1", transcript_id="FAKE1-tx",
+    tag="cds_end_NF",
+)
+_fake1 = _records("chr1", "+", FAKE1)
+FAKE1_CDS_SPAN = (121, 360)
+FAKE1_BODY = (
+    _fake1("transcript", 101, 400),
+    _fake1("exon", 101, 200),
+    _fake1("CDS", 121, 200),
+    _fake1("exon", 301, 400),
+    _fake1("CDS", 301, 360),
+)
+FAKE1_START_CODON = _fake1("start_codon", 121, 123)
+
+
+def test_the_coding_interval_is_widened_by_cds_records_not_codons_alone(
+    gtf_gene_models: Callable[..., GeneModels],
+) -> None:
+    """Every ``CDS`` record widens the interval, exactly as a codon does.
+
+    Traced by hand: seeded inverted at ``(400, 101)``; ``CDS 121..200``
+    brings it to ``(121, 200)``; the start codon lies inside and moves
+    nothing; ``CDS 301..360`` widens it to ``(121, 360)``. Widening from
+    the codon records alone left it at ``(121, 123)`` -- the 3 bp stub
+    that iossifovlab/grr#27 found baked into 529,763 published
+    transcripts.
+    """
+    gene_models = gtf_gene_models(*FAKE1_BODY, FAKE1_START_CODON)
+
+    transcript = gene_models.transcript_models["FAKE1-tx"]
+    assert transcript.cds == FAKE1_CDS_SPAN
+    assert transcript.is_coding()
+
+
 #: ``SMIM34``/``ENST00000450895``, a complete two-exon GENCODE v49
 #: transcript, reproduced record for record. Its ``CDS`` records do *not*
 #: coincide with its codon span -- they stop at 34419221 while the stop
