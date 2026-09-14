@@ -116,39 +116,28 @@ def test_contents_id_outside_the_scan_grammar_is_not_served(
     assert _served_ids(remote_root) == ["good_one"]
 
 
-def test_contents_id_with_an_empty_segment_is_not_served(
-    tmp_path: pathlib.Path,
-) -> None:
-    """The one refusal the scan grammar does *not* already make.
-
-    ``[a-zA-Z0-9/._-]`` has ``/`` inside it, so a doubled separator
-    matches the grammar and passes the scan -- a filesystem simply cannot
-    produce it, having no empty directory name.  A hand-written
-    ``.CONTENTS`` can, so this rule has to be added rather than inherited.
-    """
-    remote_root = _remote_with_contents_ids(
-        tmp_path, ["hg38//scores/x", "good_one"])
-
-    assert _served_ids(remote_root) == ["good_one"]
-
-
 @pytest.mark.parametrize("resource_id", [
-    pytest.param("hg38/./scores/x", id="inner"),
-    pytest.param("./x", id="leading"),
-    pytest.param("x/.", id="trailing"),
+    pytest.param("hg38//scores/x", id="empty-segment"),
+    pytest.param("hg38/./scores/x", id="dot-segment"),
+    pytest.param("./x", id="leading-dot-segment"),
+    pytest.param("x/.", id="trailing-dot-segment"),
 ])
-def test_contents_id_with_a_dot_segment_is_not_served(
+def test_contents_id_with_a_segment_no_scan_can_yield_is_not_served(
     tmp_path: pathlib.Path, resource_id: str,
 ) -> None:
-    """The other segment a filesystem cannot offer and the scan never yields.
+    """The two refusals the scan grammar does *not* already make.
 
-    ``.`` is inside the character class and the segment is not empty, so
-    ``hg38/./scores/x`` passes the character rule and the empty-segment
-    rule alike -- yet a scan skips every dot-named directory, so it can
-    never produce the id.  Served anyway, it was cached under that id and
-    a rescan of the cache enumerated the same directory as
-    ``hg38/scores/x``: one resource, two ids, and a consumer holding
-    either got nothing from the other (gain#1385).
+    ``[a-zA-Z0-9/._-]`` has both ``/`` and ``.`` inside it, so a doubled
+    separator and a ``.`` segment each match the grammar -- and neither
+    ever reaches a scan, which has no empty directory name to meet and
+    skips every dot-named one.  A hand-written ``.CONTENTS`` can carry
+    either, so these rules have to be added rather than inherited.
+
+    The ``.`` segment is the quieter failure.  Served, it was cached
+    under that id, the filesystem resolved the ``.`` away, and a rescan
+    of the cache enumerated the same directory as ``hg38/scores/x``: one
+    resource, two ids, and a consumer holding either got nothing from
+    the other (gain#1385).
     """
     remote_root = _remote_with_contents_ids(
         tmp_path, [resource_id, "good_one"])
@@ -193,14 +182,15 @@ def test_a_well_formed_contents_id_is_still_served(
 ) -> None:
     """The rule has to leave every ordinary id alone.
 
-    ``""`` is the case with teeth, and the reason the root exemption is
-    not decoration: a GRR whose root directory carries the config *is* a
-    resource, and it is published into ``.CONTENTS`` under the empty id.
-    Splitting that on ``/`` yields one empty segment, so without the
-    exemption the empty-segment rule would drop the root resource of
-    every such repository.  ``.`` is the other spelling of the root and
-    passes both sub-rules on its own, which is exactly why it cannot
-    stand in for this case.
+    ``""`` and ``.`` are the cases with teeth, and the reason the root
+    exemption is not decoration: a GRR whose root directory carries the
+    config *is* a resource, published into ``.CONTENTS`` under the empty
+    id and addressed as ``.`` by ``build_local_resource``.  Split on
+    ``/``, the one yields an empty segment and the other a ``.``
+    segment, so without the whole-id exemption each segment rule would
+    drop the root resource of every such repository.  Each spelling
+    guards the exemption against its own rule; neither can stand in for
+    the other.
     """
     remote_root = _remote_with_contents_ids(tmp_path, [resource_id])
 
