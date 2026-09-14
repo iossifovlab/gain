@@ -174,9 +174,37 @@ silent no-ops — a best-effort guard must not be the thing that takes a run dow
   test, the same signature the inheritance bug produced — was this mechanism,
   and a 256MB ballast released on `MemoryError` could not fix it because
   releasing the ballast is itself Python that runs after the failing
-  allocation. A shared broken fixture hitting many tests still pins one budget
-  per runaway for the rest of the worker's life; that memory is counted, not
-  freed.
+  allocation.
+- **A runaway's frames are released once its report exists** (amended
+  2026-09-14, [gain#1451](https://github.com/iossifovlab/gain/issues/1451)).
+  Widening leaves the runaway's data itself in place, and how long it stays
+  depends on who holds it. A runaway in a test body is pinned by
+  `sys.last_traceback` until the next test's call phase, and after that by the
+  exception → traceback → frame reference cycle until a full collection gets
+  to it — measured at ~50 small tests later, so that case self-heals late
+  rather than never. A runaway in a session- or module-scoped fixture is
+  different: pytest caches the failure as `(exc, traceback)` on the fixture for
+  the rest of its scope and re-raises it to every later user, which pinned
+  240 MB through 400 following tests — one budget per such runaway for the
+  rest of the worker, counted by every re-arm. So a `trylast`
+  `pytest_exception_interact` clears the locals of every frame in the
+  exception's cause/context chain. That hook fires for every failed phase
+  after the report is built and — being `trylast` — after `--pdb` has
+  post-mortemed the same frames, which is why it is not a wrapper around the
+  report hook. The traceback itself stays, so a cached fixture failure still
+  renders its source line for later users; only the values are gone. Two
+  things a later reader will be tempted to simplify away: on 3.12
+  `frame.clear()` alone frees nothing, because pytest read `f_locals` on every
+  frame while formatting the report and there that materialises a dict stored
+  on the frame which `clear()` leaves intact (RSS 486 → 486 MB); reading
+  `f_locals` once more resyncs it from the emptied fast locals (→ 230 MB), and
+  3.13+ keeps a proxy that clears its own cache. And a frame still executing
+  refuses to be cleared with `RuntimeError`; that one is skipped, the rest of
+  the chain still released. Measured right after the report, 16 MiB chunks:
+  485 → 229 MB on 3.12 and 294 → 54 MB on 3.14 for a test-body runaway,
+  469 → 229 MB for the session-fixture one, before the next test's setup.
+  What returns to the OS is the allocator's business, not the guard's: with
+  64 KiB chunks from the brk heap 3.12 gives it all back and 3.14 about half.
 - Re-arming costs one `/proc/self/status` read and one `setrlimit` per test.
   Against ~7900 items it is not visible in the suite's wall time (74s at `-n 5`).
 - Child processes inherit the limit. That is usually right — a runaway in a
