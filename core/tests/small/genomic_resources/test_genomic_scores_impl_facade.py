@@ -85,7 +85,7 @@ ACCESSOR_OWNERS: dict[str, type] = {
     "get_coverage_statistics": PositionScoreImplementation,
     "get_coverage_display": PositionScoreImplementation,
     "get_coverage_segment_lengths_image_filename": PositionScoreImplementation,
-    "_render_genome": PositionScoreImplementation,
+    "_score_chrom_lengths": PositionScoreImplementation,
     "get_allele_statistics": AlleleScoreImplementation,
     "get_allele_display": AlleleScoreImplementation,
     "get_allele_insertion_lengths_image_filename": AlleleScoreImplementation,

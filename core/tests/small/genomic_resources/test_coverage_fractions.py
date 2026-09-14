@@ -7,11 +7,13 @@ import weakref
 from typing import Any
 
 import pytest
+import pytest_mock
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     PositionScoreImplementation,
     scan,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.statistics.coverage import resolve_chrom_lengths
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     setup_bigwig,
@@ -24,7 +26,11 @@ from gain.genomic_resources.testing.builders import (
     a_reference_genome,
 )
 
-from .conftest import UNUSABLE_RESOURCE_ID_LABELS, label_warnings
+from .conftest import (
+    UNUSABLE_RESOURCE_ID_LABELS,
+    captured_warnings,
+    label_warnings,
+)
 
 
 def _a_chr1_score(genome_id: Any = None):
@@ -275,6 +281,55 @@ def test_statistics_page_still_builds_with_the_repo_kwarg(
     assert "Filename" in page  # the statistics-file listing rendered
 
 
+def test_a_covered_contig_the_score_cannot_price_is_left_out_and_reported(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The second rung's universe is what the score lists; a covered
+    contig outside it -- a mapping changed under the stored statistic,
+    say -- must be visible to the caller by its absence, which is what
+    degrades that row, and said out loud rather than dropped quietly."""
+    impl = _an_unbuilt_bigwig_impl(tmp_path)
+
+    with caplog.at_level(logging.WARNING):
+        lengths = resolve_chrom_lengths(
+            impl.resource, None, impl._score_chrom_lengths,
+            ["chr1", "chr2"])
+
+    assert lengths == {"chr1": 100}
+    assert captured_warnings(caplog) == [(
+        "covered contig chr2 has no exact length in scores/bw; "
+        "rendering raw counts for it"
+    )]
+
+
+def _an_unbuilt_bigwig_impl(
+    tmp_path: pathlib.Path,
+) -> PositionScoreImplementation:
+    """A chr1-only bigWig for the tests that call the rung directly.
+
+    No statistics built: the rung reads the score, not the statistic,
+    and the scan is most of a page test's cost.
+    """
+    repo = _a_bigwig_repo(tmp_path, {"chr1": 100})
+    return PositionScoreImplementation(repo.get_resource("scores/bw"))
+
+
+def test_a_closed_bigwig_score_is_closed_again_after_the_render(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The other half of the open-if-closed dance, at the page: the
+    header is the one thing a render opens a table for, and the open
+    belongs to the implementation's ladder, not to coverage."""
+    repo = _a_bigwig_repo(tmp_path, {"chr1": 100})
+    impl = _built_impl(repo, "scores/bw")
+    assert not impl.score.is_open()
+
+    impl.get_info(repo=repo)
+
+    assert not impl.score.is_open()
+
+
 def test_an_already_open_bigwig_score_stays_open(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -287,6 +342,30 @@ def test_an_already_open_bigwig_score_stays_open(
 
     assert impl.score.is_open()
     impl.score.close()
+
+
+def test_an_unlabelled_tabix_score_is_never_opened_to_render_raw_counts(
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Nothing a tabix table says about a length is exact, so the render
+    has no reason to open it -- and must not: ``repo-repair`` renders
+    every page, and the probe per contig is a repair-time cost, never a
+    render-time one (gain#1448).  Pinned on ``open`` itself rather than
+    on the probe, so the fence holds for any read the rung might grow."""
+    repo = (
+        a_grr()
+        .with_resource("scores/one", _a_chr1_score())
+        .build_repo(tmp_path)
+    )
+    impl = _built_impl(repo, "scores/one")
+    opened = mocker.spy(impl.score, "open")
+
+    page = impl.get_info(repo=repo)
+
+    assert f">{COVERED}<" in page
+    assert "Covered %" not in page
+    opened.assert_not_called()
 
 
 def test_chrom_mapped_bigwig_resolves_header_sizes_through_the_mapping(

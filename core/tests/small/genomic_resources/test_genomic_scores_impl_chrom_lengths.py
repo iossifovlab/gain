@@ -275,6 +275,29 @@ def test_a_label_naming_no_resource_falls_through_to_the_table(
     assert lengths["chr1"].source is ChromLengthSource.TABIX_ESTIMATE
 
 
+def test_a_label_naming_a_non_genome_resource_falls_through_and_says_so(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One policy for a label that names something that is not a genome,
+    wherever the label is read (gain#1414): the coverage page has always
+    degraded to raw counts over it rather than failing the build, and a
+    statistics build now falls through to the table the same way rather
+    than aborting the resource.  Warned, since the label is wrong."""
+    # The score labelled with ITSELF: a resource id, a real resource,
+    # not a genome.
+    impl, repo = _the_impl(
+        tmp_path, a_labelled_tabix_score_grr(genome_id="score"))
+
+    with caplog.at_level(logging.WARNING):
+        lengths = impl.get_chrom_lengths(repo)
+
+    assert lengths["chr1"].source is ChromLengthSource.TABIX_ESTIMATE
+    assert label_warnings(caplog) == [(
+        "meta.labels.reference_genome of score names 'score', "
+        "which is not a genome resource; ignoring it"
+    )]
+
+
 @pytest.mark.parametrize(
     ("value", "reported_as"), UNUSABLE_RESOURCE_ID_LABELS)
 def test_an_unusable_label_falls_through_to_the_table_and_says_so_once(

@@ -279,15 +279,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         Opens the score if it is closed, and closes it again only in
         that case -- an already-open score stays open for its owner.
         """
-        # Narrowed rather than cast: a label that is not a resource id
-        # used to reach the resolution cache as itself and raise
-        # ``TypeError`` here, aborting a repository-wide statistics walk
-        # over one mis-authored resource.  Read as absent, the contig
-        # lengths fall through to the table's own answer, which is what
-        # an unlabelled score already does (gain#1053).
-        ref_genome_id = read_resource_id_label(
-            self.resource, "reference_genome")
-        ref_genome = self._get_reference_genome_cached(grr, ref_genome_id)
+        ref_genome = self._resolve_labelled_genome(grr)
         opened_here = not self.score.is_open()
         if opened_here:
             self.score.open()
@@ -296,6 +288,40 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         finally:
             if opened_here:
                 self.score.close()
+
+    def _resolve_labelled_genome(
+        self, grr: GenomicResourceRepo | None,
+    ) -> ReferenceGenome | None:
+        """The genome the ``reference_genome`` label names, or ``None``.
+
+        The one reader of that label for both the statistics build and
+        the page's coverage denominator (gain#1414), so a label that
+        fails to name a genome is treated alike wherever it is read:
+        the lengths fall through to the table's own answer, as an
+        unlabelled score's do, and the page degrades to raw counts.
+        Never a raise -- a mis-authored label on one resource must not
+        abort a repository-wide statistics walk or a page build.
+
+        Three ways it can fail to name one.  A value that is not a
+        resource id at all -- the int, list or dict a free-form
+        ``meta.labels`` allows -- is read as absent and reported by the
+        narrowing (gain#1053).  An id the repository does not have is
+        answered ``None``, with its own warning, by the cached resolver
+        (which looks the id up rather than catching one repository
+        kind's exception, gain#1419).  An id naming a resource of
+        another type reaches ``build_reference_genome_from_resource``
+        and is caught here.
+        """
+        genome_id = read_resource_id_label(
+            self.resource, "reference_genome")
+        try:
+            return self._get_reference_genome_cached(grr, genome_id)
+        except ValueError:
+            logger.warning(
+                "meta.labels.reference_genome of %s names %r, which is "
+                "not a genome resource; ignoring it",
+                self.resource.resource_id, genome_id)
+            return None
 
     def _get_chrom_regions(
         self, region_size: int, grr: GenomicResourceRepo | None = None,

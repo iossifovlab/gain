@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -28,6 +28,7 @@ from gain.genomic_resources.genomic_scores import (
     RecordArrays,
     owned_records_mask,
 )
+from gain.genomic_resources.genomic_scores.chrom_lengths import ChromLength
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.base_statistic import (
@@ -722,104 +723,71 @@ class CoverageDisplay(NamedTuple):
 
 def resolve_chrom_lengths(
     resource: GenomicResource,
-    score: GenomicScore,
     ref_genome: ReferenceGenome | None,
+    score_lengths: Callable[[], Mapping[str, ChromLength]],
     chroms: Iterable[str],
 ) -> dict[str, int]:
     """Resolve chromosome lengths for the render-time denominator.
 
     The ladder: the ``reference_genome`` the caller resolved from the
-    resource's label, falling back to the bigWig header's chromosome
-    sizes for a bigWig-backed score, or raw counts (an empty mapping)
-    when nothing resolves.
+    resource's label; else the score's own lengths, kept where their
+    source is exact (a bigWig header's contig sizes); else raw counts
+    (an empty mapping).
 
     What comes back is the **whole universe** the fraction is measured
     against, not only the contigs the score touched (gain#1041): every
-    contig of the resolved genome, or every contig the table rung
-    lists.  ``chroms`` -- the covered contigs -- is still passed in so
-    that a covered contig the resolved source does NOT list is visible
-    to the caller by its absence, which is what degrades the fraction.
+    contig of the resolved genome, or every contig the score rung has
+    an exact length for.  ``chroms`` -- the covered contigs -- is still
+    passed in so that a covered contig the resolved source does NOT
+    list is visible to the caller by its absence, which is what
+    degrades the fraction.
 
     The two rungs are not interchangeable: only the genome rung answers
-    "what part of the reference genome has values", while the table rung
+    "what part of the reference genome has values", while the score rung
     answers "what part of what this file declares".  ``docs/adr/0020``
     carries the worked example and is the record to amend if this
     changes; the user-facing half is in ``docs/source/grr.rst``.
 
-    The genome rung is resolved by the CALLER: it needs a repository,
-    which only exists during a page build, and the cache it goes
-    through is shared with the scan's own contig splitting.
+    Both rungs are the CALLER's to supply: the genome needs a
+    repository, which only exists during a page build, and the score's
+    records come from the implementation's ladder
+    (:meth:`GenomicScoreImplementation.get_chrom_lengths`), which
+    opens the score to ask -- so they are asked for, through
+    ``score_lengths``, only once the genome rung has nothing.  Which of
+    a record's sources may serve as a denominator is
+    ``ChromLengthSource.is_exact``'s call, not this function's
+    (gain#1414): a tabix probe's upper bound and an in-memory table's
+    extent are dropped here, and a contig with no length at all
+    (proven empty, or one the probe could not bracket) with them.
     """
     if ref_genome is not None:
         return dict(ref_genome.get_all_chrom_lengths())
-    if score.table.chrom_lengths_are_exact:
-        return _table_exact_lengths(resource, score, chroms)
-    logger.info(
-        "no coverage denominator resolvable for %s; "
-        "rendering raw counts only", resource.resource_id)
-    return {}
-
-
-def _table_exact_lengths(
-    resource: GenomicResource,
-    score: GenomicScore,
-    chroms: Iterable[str],
-) -> dict[str, int]:
-    """Contig lengths from a backend that declares them exact.
-
-    Only consulted when the table's ``chrom_lengths_are_exact``
-    capability holds (the bigWig header; mapping-aware).  Opens the
-    score if it is closed, and closes it again only in that case --
-    an already-open score stays open for its owner.
-
-    The universe is the table's WHOLE contig list, which this backend
-    serves cleanly -- ``get_chromosomes()`` off an open table, already
-    in reference space -- rather than only the contigs the score
-    touched (gain#1041, ADR 0020).  The covered contigs are appended so
-    that one the table does not list still reaches the unknown-contig
-    warning below instead of vanishing silently.
-
-    "The table's" and not "the header's": under a ``chrom_mapping``
-    FILE, ``get_chromosomes()`` is the mapping's contigs, so a mapping
-    naming a subset of the header shrinks the universe to that subset.
-    That is the mapping doing its job -- a contig the resource declines
-    to map is not part of what the resource claims to cover -- but it
-    does mean this rung's denominator is the resource's declared
-    universe, not the file's.
-    """
-    opened_here = not score.is_open()
-    if opened_here:
-        score.open()
-    try:
-        universe = dict.fromkeys(
-            [*score.table.get_chromosomes(), *chroms])
-        lengths: dict[str, int] = {}
-        for chrom in universe:
-            try:
-                length = score.table.find_chromosome_length(chrom)
-            except ValueError:
-                # The backend raises ValueError both for a contig it does
-                # not list and for a closed table; the open() above rules
-                # the latter out, so this is the unknown-contig case.
-                #
-                # A WARNING unconditionally, unlike the implausible-length
-                # drop in ``_plausible_lengths``, which follows
-                # coveredness.  Every contig of the universe above came
-                # from ``get_chromosomes()`` and must resolve a length, so
-                # reaching here means either a covered contig the table
-                # does not list or a chrom_mapping naming a contig the
-                # file lacks -- both worth saying out loud.
-                logger.warning(
-                    "contig %s has no exact table length in %s; "
-                    "rendering raw counts for it",
-                    chrom, resource.resource_id)
-                continue
-            if isinstance(length, int):
-                lengths[chrom] = length
-        return lengths
-    finally:
-        if opened_here:
-            score.close()
+    lengths = {
+        chrom: resolved.length
+        for chrom, resolved in score_lengths().items()
+        if resolved.length is not None
+        and resolved.source is not None
+        and resolved.source.is_exact
+    }
+    if not lengths:
+        logger.info(
+            "no coverage denominator resolvable for %s; "
+            "rendering raw counts only", resource.resource_id)
+        return {}
+    for chrom in chroms:
+        if chrom not in lengths:
+            # Every contig this rung lists came from the score's own
+            # contig list, so a COVERED contig missing from it is either
+            # one the score does not list any more (a chrom_mapping
+            # changed under the stored statistic) or one whose length is
+            # not exact -- either way worth saying out loud, unlike the
+            # implausible-length drop in ``_plausible_lengths``, which
+            # follows coveredness quietly.
+            logger.warning(
+                "covered contig %s has no exact length in %s; "
+                "rendering raw counts for it",
+                chrom, resource.resource_id)
+    return lengths
 
 
 def build_coverage_display(
