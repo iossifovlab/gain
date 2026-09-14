@@ -267,7 +267,8 @@ class Annotator(abc.ABC):
     The pipeline drives the lifecycle: :meth:`open` before the first
     :meth:`annotate`, :meth:`close` once at the end.  An annotator may
     assume it is open when asked to annotate, and does not open itself
-    on demand.  Implementations extend :class:`AnnotatorBase`, which
+    on demand.  Implementations extend
+    :class:`~gain.annotation.annotator_base.AnnotatorBase`, which
     handles configuration and the ``None`` annotatable, rather than
     this class directly.
     """
@@ -281,9 +282,10 @@ class Annotator(abc.ABC):
         self._is_open = False
 
     def get_info(self) -> AnnotatorInfo:
-        """The :class:`AnnotatorInfo` this annotator was built from.
+        """The annotator info this annotator was built from.
 
-        Its type, id, configured attributes, parameters and resources.
+        An :class:`~gain.annotation.annotation_config.AnnotatorInfo`: its
+        type, id, configured attributes, parameters and resources.
         """
         return self._info
 
@@ -388,7 +390,8 @@ class Annotator(abc.ABC):
         The catalogue the configuration is checked against: a
         configured attribute whose source is not a key here is refused.
         Independent of the configuration and of :meth:`open`.
-        :class:`AnnotatorBase` calls it from its constructor, so it may
+        :class:`~gain.annotation.annotator_base.AnnotatorBase` calls it
+        from its constructor, so it may
         use only what the subclass set before delegating there.
         """
 
@@ -404,7 +407,11 @@ class AnnotationPipeline:
         self._is_open = False
 
     def get_info(self) -> list[AnnotatorInfo]:
-        """The :class:`AnnotatorInfo` of every annotator, in pipeline order."""
+        """The annotator info of every annotator, in pipeline order.
+
+        One :class:`~gain.annotation.annotation_config.AnnotatorInfo` per
+        annotator, as each was built from.
+        """
         return [annotator.get_info() for annotator in self.annotators]
 
     def get_attributes(self) -> list[Attribute]:

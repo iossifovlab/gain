@@ -20,27 +20,16 @@ The chapters build bottom-up, substrate before the things that consume it:
 1. :doc:`development/resources_in_python` — the resource half of the declared
    API: repositories and resources, reference genomes, gene models, the three
    kinds of score, histograms, and the seam for adding a resource type.
-2. Annotators — *planned* (:issue:`1144`).
+2. :doc:`development/annotators` — the annotation half: what an annotator
+   receives and declares, the two classes an annotator is built on, the
+   pipeline that drives it, and the entry-point group through which a
+   package of your own becomes an annotator a pipeline can name.
 3. :doc:`development/module_index` — the complete generated API tree, for when
    you already know the name you are looking for.
-
-.. attention::
-
-   **Draft marker D1 — the one unwritten chapter.** The numbered list above
-   names chapter 2 so the reader sees the shape of the guide, but the
-   ``toctree`` below deliberately leaves it out: a ``toctree`` entry for a
-   page that does not exist is a build warning, and a placeholder page that
-   says "coming soon" would go live on the site the moment this merges.
-   Decide which of the three you want here — (a) list-but-don't-link as now,
-   (b) a stub page that ships a one-paragraph placeholder, or (c) drop the
-   line from the list until :issue:`1144` lands. Option (a) is the draft's
-   choice because it publishes nothing that later has to be unpublished.
 
 .. toctree::
    :maxdepth: 2
 
    development/resources_in_python
+   development/annotators
    development/module_index
-
-.. Chapter 2 (gain#1144 "Annotators") slots in between the resources chapter
-   and the module index when it lands.
