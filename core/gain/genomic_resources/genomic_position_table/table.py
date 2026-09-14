@@ -177,16 +177,6 @@ class GenomicPositionTable(abc.ABC):
     # member's ``is_exact``, a trust level) that is not its own.
     chrom_length_source: ClassVar[ChromLengthSource]
 
-    # Whether this backend reads its file through a tabix index (``.tbi``
-    # or ``.csi``), so that the index is one of the resource's files as
-    # much as the data file is -- the statistics hash covers it, and the
-    # file set lists it.  Defaulted rather than declared: a backend with no
-    # index has nothing to say, and False is the honest silence.  The
-    # tabix backend sets it True and the VCF backend inherits the claim,
-    # which is what replaces the ``isinstance(Tabix)`` the file set used to
-    # decide by (gain#410).
-    uses_tabix_index: ClassVar[bool] = False
-
     CHROM = "chrom"
     POS_BEGIN = "pos_begin"
     POS_END = "pos_end"
@@ -449,6 +439,17 @@ class GenomicPositionTable(abc.ABC):
 
         self.ref_key = self.get_column_key(self.REF)
         self.alt_key = self.get_column_key(self.ALT)
+
+    def resource_files(self) -> set[str]:
+        """The resource's files this table reads: the data file, and the
+        index on a backend that reads one.
+
+        What the resource implementation hashes and lists as its file set,
+        answered here because it is the table that knows how it opens --
+        the tabix backend adds the index, this base has only the data file.
+        Answered without opening anything.
+        """
+        return {cast("str", self.definition.filename)}
 
     def __enter__(self) -> GenomicPositionTable:
         self.open()

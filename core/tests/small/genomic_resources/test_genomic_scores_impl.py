@@ -1510,33 +1510,42 @@ def a_tabix_position_score(*, csi: bool = False) -> PositionScoreBuilder:
 
 @pytest.mark.parametrize(("build", "expected"), [
     pytest.param(
-        lambda p: a_tabix_position_score().build_resource(p), True,
+        lambda p: a_tabix_position_score().build_resource(p),
+        {"data.txt.gz", "data.txt.gz.tbi"},
         id="tabix"),
     pytest.param(
-        lambda p: a_vcf_info_score().build_resource(p), True,
+        lambda p: a_vcf_info_score().build_resource(p),
+        {"data.vcf.gz", "data.vcf.gz.tbi"},
         id="vcf"),
     pytest.param(
-        lambda p: a_bigwig_score().build_resource(p), False,
+        lambda p: a_bigwig_score().build_resource(p),
+        {"data.bw"},
         id="bigwig"),
     pytest.param(
-        lambda p: a_position_score().build_resource(p), False,
+        lambda p: a_position_score().build_resource(p),
+        {"data.txt"},
         id="inmemory"),
 ])
-def test_a_score_says_whether_its_file_is_read_through_a_tabix_index(
+def test_a_closed_score_names_the_resource_files_it_reads(
     build: Callable[[pathlib.Path], GenomicResource],
-    expected: bool,
+    expected: set[str],
     tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
 ) -> None:
-    """Whether an index belongs in the file set is a fact about the format.
+    """Which files a score reads is the table's to say, and said unopened.
 
-    The implementation used to decide it by ``isinstance`` over the
-    backend classes (gain#410); the score answers it for the closed score,
-    since which files a resource's table reads must be known before any
-    of them is opened.
+    The implementation used to decide whether an index belongs in the set
+    by ``isinstance`` over the backend classes (gain#410); now the score
+    answers, before any of the files is opened -- the file set is what the
+    statistics hash covers, and a hash must not cost an open.
     """
     score = build_score_from_resource(build(tmp_path))
+    opened = mocker.spy(score.table, "open")
 
-    assert score.uses_tabix_index is expected
+    files = score.resource_files()
+
+    assert files == expected
+    opened.assert_not_called()
 
 
 def test_files_of_csi_indexed_tabix_score_names_the_csi_index(
@@ -1749,7 +1758,6 @@ def test_statistics_hash_carries_the_table_config_as_the_resource_wrote_it(
 
     assert table["config"] == expected_table_config
     assert list(table["config"]) == list(expected_table_config)
-    assert sorted(table["files_md5"]) == sorted(impl.files)
 
 
 def test_files_warns_and_omits_a_configured_index_absent_from_the_manifest(

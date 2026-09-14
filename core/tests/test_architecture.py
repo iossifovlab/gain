@@ -263,6 +263,10 @@ def _imports_of_layer(
     ]
 
 
+GENOMIC_SCORES_IMPL = (pathlib.Path(GAIN_SRC) / "genomic_resources"
+                       / "implementations" / "genomic_scores_impl")
+
+
 def test_the_statistics_scan_does_not_import_the_implementation_classes(
 ) -> None:
     """``genomic_scores_impl.scan`` sits below the classes and stays there.
@@ -288,8 +292,7 @@ def test_the_statistics_scan_does_not_import_the_implementation_classes(
     module-attribute check cannot see it.
     """
     pkg = "gain.genomic_resources.implementations.genomic_scores_impl"
-    scan_py = (pathlib.Path(GAIN_SRC) / "genomic_resources"
-               / "implementations" / "genomic_scores_impl" / "scan.py")
+    scan_py = GENOMIC_SCORES_IMPL / "scan.py"
     offenders = sorted(
         imported for imported in _imported_modules(scan_py)
         if imported == pkg or imported.startswith(f"{pkg}.")
@@ -300,10 +303,6 @@ def test_the_statistics_scan_does_not_import_the_implementation_classes(
         f"implementation -- use build_score_from_resource, as the rest of "
         f"scan does"
     )
-
-
-GENOMIC_SCORES_IMPL = (pathlib.Path(GAIN_SRC) / "genomic_resources"
-                       / "implementations" / "genomic_scores_impl")
 
 
 def _table_reaches(py: pathlib.Path) -> list[str]:
@@ -347,8 +346,8 @@ def test_the_statistics_implementation_talks_to_the_score_not_its_table(
     assert imports == [], (
         f"genomic_scores_impl imports the table package: {imports}. "
         f"The implementation talks to GenomicScore; a table fact it needs "
-        f"is a property the score forwards (chrom_length_source, "
-        f"uses_tabix_index), and the enums come from "
+        f"is something the score forwards (chrom_length_source, "
+        f"resource_files), and the enums come from "
         f"genomic_scores.chrom_lengths"
     )
     reaches = [

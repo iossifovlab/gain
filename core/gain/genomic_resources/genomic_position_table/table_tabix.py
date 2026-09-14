@@ -11,6 +11,7 @@ import pysam
 from gain import logging
 from gain.genomic_resources.repository import (
     GenomicResource,
+    resolve_tabix_index_filename,
     resolve_tabix_index_filename_for_read,
 )
 from gain.genomic_resources.resource_errors import (
@@ -77,10 +78,6 @@ class TabixGenomicPositionTable(GenomicPositionTable):
     # VCF backend inherits the probe, and so this claim with it.
     chrom_length_source: ClassVar[ChromLengthSource] = \
         ChromLengthSource.TABIX_ESTIMATE
-
-    # The file is read through its ``.tbi`` / ``.csi`` index, which is
-    # therefore one of the resource's files.  The VCF backend inherits this.
-    uses_tabix_index: ClassVar[bool] = True
 
     # Serves the bulk column-array read; see get_region_value_arrays below.
     # NOT inherited in spirit by the VCF backend, which sets it back to False.
@@ -168,6 +165,49 @@ class TabixGenomicPositionTable(GenomicPositionTable):
             return configured
         return resolve_tabix_index_filename_for_read(
             self.genomic_resource, self.definition.filename)
+
+    def resource_files(self) -> set[str]:
+        """The data file and its index, or the data file alone with a warning.
+
+        The index is resolved the way :meth:`open` resolves it: the
+        configured ``index_filename`` when there is one, the conventional
+        ``.tbi`` / ``.csi`` probe otherwise -- but over the resource
+        MANIFEST rather than the filesystem, and answering ``None`` where
+        the open would raise.  Only a name the manifest carries is ever
+        returned: the statistics hash looks every file-set entry up in that
+        same manifest and would raise on a missing key.  A configured index
+        absent from the manifest is a misconfiguration; it is reported and
+        dropped rather than falling back to the conventional probe, which
+        would silently hash an index the table does not read (gain#595).
+        """
+        files = super().resource_files()
+        index_filename = self._index_filename_in_manifest()
+        if index_filename is not None:
+            files.add(index_filename)
+        return files
+
+    def _index_filename_in_manifest(self) -> str | None:
+        filename = self.definition.filename
+        resource_id = self.genomic_resource.resource_id
+        manifest = self.genomic_resource.get_manifest()
+        configured = self.index_filename
+        if configured is not None:
+            if configured in manifest:
+                return configured
+            logger.warning(
+                "resource <%s>: tabix table %s configures index_filename "
+                "%s, which is not in the resource manifest; the index is "
+                "left out of the resource file set",
+                resource_id, filename, configured)
+            return None
+        index_filename = resolve_tabix_index_filename(manifest, filename)
+        if index_filename is None:
+            logger.warning(
+                "resource <%s>: tabix table %s has no index "
+                "(neither %s.tbi nor %s.csi) in the resource manifest; "
+                "the index is left out of the resource file set",
+                resource_id, filename, filename, filename)
+        return index_filename
 
     def _decline_index_check(
         self, index_filename: str, reason: str,
