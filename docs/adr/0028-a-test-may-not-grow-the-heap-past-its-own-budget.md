@@ -150,17 +150,33 @@ silent no-ops — a best-effort guard must not be the thing that takes a run dow
   process, so the machine-wide worst case is `(VmData_at_the_time + budget) ×
   workers`. Late in a `core/tests/small` run that is ~4.0GB + 2GiB per worker:
   ~30GB at CI's `-n 5`, ~195GB at a local `-n 32`.
-- **Several runaway tests in one session still cascade.** The failing frame's
-  locals stay pinned by the traceback pytest retains, so the process can sit at
-  the ceiling: later items then error in both setup and teardown, and pytest
-  itself can raise `MemoryError` inside its own capture teardown. Under `-n`
-  that can kill the controller with `INTERNALERROR` and name no test at all —
-  the same signature the inheritance bug produced, which is worth remembering
-  when diagnosing one. A single runaway among healthy tests recovers cleanly,
-  which is measured and asserted; a shared broken fixture hitting many tests
-  does not. A 256MB ballast released on `MemoryError` was tried and does not fix
-  it. Accepted: the alternative on the table was the OOM kill, which loses the
-  diagnostic and the host both.
+- **A tripped bound is widened by one budget before the report is built**
+  (amended 2026-09-14, [gain#1449](https://github.com/iossifovlab/gain/issues/1449)).
+  The failing frame's locals stay pinned by the traceback pytest retains until
+  the *next* test's call phase, so after a runaway the process sits at the
+  ceiling through the next test's setup — where the re-arm has to open
+  `/proc/self/status` before it can raise anything. That read is the allocation
+  that fails there: `python-matrix #167` (3.14) errored the test *after* the
+  runaway at setup with a bare `MemoryError` raised from the guard itself. How
+  much headroom the runaway leaves is an accident of its chunk size — a 16 MiB
+  chunk is mapped on its own and leaves up to 16 MiB unused under the ceiling
+  when refused; chunks under glibc's 128 KiB mmap threshold fill the brk heap
+  to the last byte and leave none, which makes the failure deterministic on
+  3.14 (30/30) where 3.12 and 3.13 still find slack (0/30). So
+  `pytest_runtest_makereport` (`tryfirst`, before pytest formats the report)
+  adds a budget to the bound *already armed*, measuring nothing; the next
+  re-arm measures again and settles the ceiling where it would have put it
+  anyway. Measured with the no-headroom runaway on 3.14: a single runaway,
+  three in a row, and one under `-n 2` all recover (`N failed, 1 passed`, 30/30,
+  10/10, 10/10) where before the fix every later item errored. The earlier
+  observation that several runaways cascade — later items erroring in setup and
+  teardown, and under `-n` the controller dying with `INTERNALERROR` naming no
+  test, the same signature the inheritance bug produced — was this mechanism,
+  and a 256MB ballast released on `MemoryError` could not fix it because
+  releasing the ballast is itself Python that runs after the failing
+  allocation. A shared broken fixture hitting many tests still pins one budget
+  per runaway for the rest of the worker's life; that memory is counted, not
+  freed.
 - Re-arming costs one `/proc/self/status` read and one `setrlimit` per test.
   Against ~7900 items it is not visible in the suite's wall time (74s at `-n 5`).
 - Child processes inherit the limit. That is usually right — a runaway in a

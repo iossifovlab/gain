@@ -44,6 +44,14 @@ def test_an_ordinary_test_after_it_still_passes():
     assert sum(range(1000)) == 499500
 """
 
+# The same runaway in chunks under glibc's mmap threshold (128 KiB), so
+# every allocation comes from the brk heap and the runaway fills it to the
+# last byte before the bound refuses it. A 16 MiB chunk is mapped on its own
+# and leaves up to 16 MiB of headroom under the ceiling when refused; this
+# leaves none, which is the case the guard's own recovery has to survive.
+NO_HEADROOM_RUNAWAY_TEST = RUNAWAY_TEST.replace(
+    "bytearray(16 * 1024 * 1024)", "bytearray(64 * 1024)")
+
 ARMED_PROBE = """\
 import resource
 
@@ -299,6 +307,96 @@ def test_a_refused_setrlimit_does_not_take_the_run_down(
     assert memory_guard.armed_limit() is None
 
 
+def _memory_error_call() -> pytest.CallInfo[None]:
+    def _raise() -> None:
+        raise MemoryError
+
+    return pytest.CallInfo.from_call(_raise, when="call")
+
+
+def test_a_memory_error_widens_our_own_bound_by_a_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ceiling moves *before* the report is built, and without a read.
+
+    After a runaway the process sits at the ceiling with the failing frame
+    still pinned, and the next test's re-arm has to open ``/proc`` before it
+    can raise anything -- which is exactly the allocation that fails there
+    (#1449). So the widening must not measure; it adds a budget to the bound
+    it already knows.
+    """
+    calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(memory_guard, "budget_bytes", lambda: 100)
+    monkeypatch.setattr(
+        memory_guard, "read_vm_data_bytes",
+        lambda: pytest.fail("the widening must not read /proc"))
+    monkeypatch.setattr(
+        memory_guard.resource,
+        "getrlimit",
+        lambda _res: (5100, resource.RLIM_INFINITY))
+    monkeypatch.setattr(
+        memory_guard.resource,
+        "setrlimit",
+        lambda _res, limits: calls.append(limits))
+    monkeypatch.setattr(
+        memory_guard, "_ARMED", {"baseline": 5000, "limit": 5100})
+
+    memory_guard.pytest_runtest_makereport(_memory_error_call())
+
+    assert calls == [(5200, resource.RLIM_INFINITY)]
+    assert memory_guard.armed_limit() == 5200
+    assert memory_guard.armed_baseline() == 5100
+
+
+def test_a_memory_error_under_a_foreign_bound_leaves_it_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(memory_guard, "budget_bytes", lambda: 100)
+    monkeypatch.setattr(
+        memory_guard.resource,
+        "getrlimit",
+        lambda _res: (1500, resource.RLIM_INFINITY))
+    monkeypatch.setattr(
+        memory_guard.resource,
+        "setrlimit",
+        lambda _res, limits: calls.append(limits))
+    monkeypatch.setattr(
+        memory_guard, "_ARMED", {"baseline": 5000, "limit": 5100})
+    monkeypatch.delenv(memory_guard.OWNED_ENV_VAR, raising=False)
+
+    memory_guard.pytest_runtest_makereport(_memory_error_call())
+
+    assert not calls, f"a foreign bound was widened: {calls}"
+
+
+def test_an_ordinary_failure_does_not_touch_the_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(memory_guard, "budget_bytes", lambda: 100)
+    monkeypatch.setattr(
+        memory_guard.resource,
+        "getrlimit",
+        lambda _res: (5100, resource.RLIM_INFINITY))
+    monkeypatch.setattr(
+        memory_guard.resource,
+        "setrlimit",
+        lambda _res, limits: calls.append(limits))
+    monkeypatch.setattr(
+        memory_guard, "_ARMED", {"baseline": 5000, "limit": 5100})
+
+    def _raise() -> None:
+        raise ValueError("not a memory error")
+
+    memory_guard.pytest_runtest_makereport(
+        pytest.CallInfo.from_call(_raise, when="call"))
+    memory_guard.pytest_runtest_makereport(
+        pytest.CallInfo.from_call(lambda: None, when="call"))
+
+    assert not calls
+
+
 def test_the_budgeted_limit_is_what_reaches_the_kernel(tmp_path: Path) -> None:
     """Assert the value, not merely that the code ran."""
     result = _run_inner(tmp_path, ARMED_PROBE)
@@ -322,6 +420,26 @@ def test_a_runaway_test_fails_as_itself_instead_of_being_oom_killed(
     assert "test_allocates_without_bound" in output, output
     assert "MemoryError" in output, output
     # The run survives the one runaway rather than collapsing behind it.
+    assert "1 failed, 1 passed" in output, output
+
+
+def test_a_runaway_that_leaves_no_headroom_still_lets_the_next_test_run(
+    tmp_path: Path,
+) -> None:
+    """The recovery must not depend on how much the runaway left unused.
+
+    Seen on python-matrix #167 under 3.14 with the 16 MiB runaway above: the
+    next test errored at setup with a bare ``MemoryError`` raised from the
+    guard's own ``/proc/self/status`` read, because the re-arm has to
+    allocate before it can raise the bound. Small chunks make that
+    deterministic (#1449).
+    """
+    result = _run_inner(tmp_path, NO_HEADROOM_RUNAWAY_TEST, "--tb=line")
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0, output
+    assert "test_allocates_without_bound" in output, output
+    assert "MemoryError" in output, output
     assert "1 failed, 1 passed" in output, output
 
 
