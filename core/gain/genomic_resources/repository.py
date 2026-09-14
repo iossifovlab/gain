@@ -326,14 +326,29 @@ def uncontained_resource_file_name_reason(filename: str) -> str | None:
     if not filename.strip():
         return "is empty"
     for candidate in (filename, unquote(filename)):
-        reason = _escaping_path_reason(candidate, "resource directory")
+        reason = (
+            _escaping_path_reason(candidate, "resource directory")
+            or _degenerate_segment_reason(candidate))
         if reason is not None:
             return reason
-        for segment in _RESOURCE_NAME_SEPARATOR.split(candidate):
-            if segment == ".":
-                return "carries a <.> segment"
-            if not segment.strip():
-                return "carries an empty segment"
+    return None
+
+
+def _degenerate_segment_reason(name: str) -> str | None:
+    """Return why a segment of ``name`` is degenerate, or ``None``.
+
+    A ``.`` segment and an empty segment are refused by the file-name
+    rule and the id rule alike, in the same words and in the same order
+    -- the first offending segment, left to right -- so the rule is
+    stated once and the two cannot drift.  A whole-name spelling a
+    caller keeps, ``.`` as the repository root, is that caller's
+    exemption to make before asking.
+    """
+    for segment in _RESOURCE_NAME_SEPARATOR.split(name):
+        if segment == ".":
+            return "carries a <.> segment"
+        if not segment.strip():
+            return "carries an empty segment"
     return None
 
 
@@ -432,12 +447,7 @@ def malformed_resource_id_reason(resource_id: str) -> str | None:
         return (
             f"carries <{escape_unsafe_characters(match.group())}>, "
             f"which a resource id may not contain")
-    segments = _RESOURCE_NAME_SEPARATOR.split(resource_id)
-    if "." in segments:
-        return "carries a <.> segment"
-    if "" in segments:
-        return "carries an empty segment"
-    return None
+    return _degenerate_segment_reason(resource_id)
 
 
 def report_uncontained_manifest_entries(
