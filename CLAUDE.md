@@ -132,14 +132,23 @@ old code is kept in a trailing comment beside each
 `ruff.toml` entry so grepping this file for a code quoted in
 an old commit or issue still lands on the right row.
 
-Two things to know about the new spelling. Ruff parses the
+Three things to know about the new spelling. Ruff parses the
 literal text `# noqa` wherever it appears in a comment, so
 prose *mentioning* a directive emits an "Invalid `# noqa`
 directive" warning — write "the E402 directive", not the
-directive itself. And ruff's own fixer drops a trailing
+directive itself. Ruff's own fixer drops a trailing
 suppression when it reformats the statement under it to
 multiple lines; `web_api/web_annotation/asgi.py` is where
-that bit us.
+that bit us. And `ruff --fix` on a `noqa-comments` finding
+is not safe to commit as-is when the old comment sat near
+the right margin: rule *names* are much longer than the
+codes they replace, so the rewritten line can run past
+pylint's `max-line-length=79`. Ruff exempts its own
+suppression comments from the line limit, pylint does not —
+the fixer's output turned three ruff findings into two
+`C0301` in #1108. Split the signature and put the
+suppression on the argument's own line instead, the idiom
+`genomic_context_cli.py` and `basic_resource_impl.py` use.
 
 **Two modules sit at exactly pylint's 1500-line cap**, so
 *any* line added to them turns the build UNSTABLE on `C0302`
@@ -174,16 +183,59 @@ ruff/mypy miss:
 treats as a snake_case variable — assign such constants
 exactly once.
 
-### Pre-commit Hook
+### Git hooks
 
 ```bash
-cp pre-commit .git/hooks/
+cp pre-commit pre-push .git/hooks/
 ```
 
 The pre-commit hook runs `ruff check` (ignoring FIX
-warnings) on staged `.py` files.
+warnings) on staged `.py` files. It sees only what you
+staged, so it cannot catch a file the branch never touched.
 
-### Merging a PR — do not delete the branch right away
+The pre-push hook runs ruff over the **whole tree** at the
+version `uv.lock` pins (via `uvx`, so no venv is needed)
+and refuses the push on any finding. It takes well under a
+second. It exists for the local-rebase case below — a
+mechanical sweep verified clean, then rebased onto commits
+that reintroduced what it swept. It runs ruff only: pylint
+over the whole tree is minutes, and a hook that slow gets
+bypassed, so pylint's whole-tree invariants (the module
+line cap above) are still yours to re-check. Neither hook
+covers the merge-time gap described under "Merging a PR" —
+nothing local can, because the merge happens on GitHub.
+
+### Merging a PR
+
+**Merge only when the PR is up to date with `master` and
+its branch build is green on that tip.** Check with
+`gh pr view <n> --json mergeStateStatus`: if it says
+`BEHIND`, update the branch (rebase, or merge `master` in),
+push, and wait for the *new* branch build. The previous
+green does not carry over. GitHub's merge — squash and
+rebase-merge alike — replays the branch onto whatever
+`master` is at that moment, and Jenkins builds the PR's
+*head*, so a behind-master PR lands a tree nobody built.
+The first build of that tree is the `master` build, and
+the whole-tree lint invariants (a fresh `# noqa` after the
+0.16 conversion, a module tipped over the 1500-line cap)
+are exactly what a clean-looking replay breaks: #1108 was
+a PR eight commits behind, rebase-merged with its check
+green, and `master` went UNSTABLE on two files the branch
+had never touched. `master` is not protected, so this is a
+rule to follow, not a button GitHub greys out (#1437
+tracks enforcing it).
+
+The same invariant applies one step earlier. After
+**every** rebase of a repo-wide mechanical sweep — a ruff
+bump, a suppression conversion, line-cap work — re-run the
+tool over the **entire tree**, not over the commit's file
+list: the file that breaks is by construction one the
+branch did not touch, so "re-check what I changed" cannot
+find it. The `max-module-lines` tip-overs (#928, #1007)
+were this shape; #1108 was the merge-time one above, and
+the two differ only in who did the rebase. The pre-push
+hook does the ruff half of this for you.
 
 **Merge without `--delete-branch`.** The two branch-scoped
 downstream jobs (`gain-web-e2e`, `gain-core-integration`)
