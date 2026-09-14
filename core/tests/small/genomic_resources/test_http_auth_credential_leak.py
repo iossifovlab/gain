@@ -1790,16 +1790,17 @@ _SIGNATURE = "Ns1gNaTuReDoNoTlOg%3D"
 _PYBIGWIG_HAS_CURL = bool(pyBigWig.remote)  # pylint: disable=I1101
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def curl_enabled_pybigwig(mocker: pytest_mock.MockerFixture) -> None:
     """Declare the installed pyBigWig able to open remote files.
 
     ``open_bigwig_file`` refuses a remote url outright on a build without
     libcurl (``pyBigWig.remote == 0``, gain#1425), before the fd 2 bracket
-    these tests exercise is ever entered. Every bigwig test here that hands
-    pyBigWig a remote url takes this fixture, so the bracket stays under
-    test on the PyPI wheel too, where the refusal would otherwise stand in
-    for it.
+    the bigwig tests here exercise is ever entered. Module-wide, so the
+    bracket stays under test on the PyPI wheel too -- where the refusal
+    would otherwise stand in for it -- and a bigwig test added here cannot
+    forget to ask for it. The declaration is inert for every other test:
+    nothing but the bigwig open reads ``pyBigWig.remote``.
     """
     mocker.patch.object(pyBigWig, "remote", 1)
 
@@ -2020,7 +2021,6 @@ def test_vcf_indexed_open_still_hands_pysam_the_credential(
     assert _SECRET in opened.call_args.kwargs["index_filename"]
 
 
-@pytest.mark.usefixtures("curl_enabled_pybigwig")
 def test_bigwig_open_failure_does_not_leak_url_credential(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
@@ -2053,7 +2053,6 @@ def test_bigwig_open_failure_does_not_leak_url_credential(
     _assert_no_credential_escaped(excinfo.value)
 
 
-@pytest.mark.usefixtures("curl_enabled_pybigwig")
 def test_bigwig_open_still_hands_pybigwig_the_credential(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
@@ -2065,7 +2064,6 @@ def test_bigwig_open_still_hands_pybigwig_the_credential(
     assert _SECRET in opened.call_args.args[0]
 
 
-@pytest.mark.usefixtures("curl_enabled_pybigwig")
 def test_bigwig_open_failure_does_not_leak_url_credential_to_stderr(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -2082,7 +2080,6 @@ def test_bigwig_open_failure_does_not_leak_url_credential_to_stderr(
     assert _SECRET not in capfd.readouterr().err
 
 
-@pytest.mark.usefixtures("curl_enabled_pybigwig")
 def test_bigwig_open_failure_does_not_leak_a_presigned_signature(
     capfd: pytest.CaptureFixture[str], mocker: pytest_mock.MockerFixture,
 ) -> None:
@@ -2108,7 +2105,6 @@ def test_bigwig_open_failure_does_not_leak_a_presigned_signature(
     assert _SIGNATURE not in capfd.readouterr().err
 
 
-@pytest.mark.usefixtures("curl_enabled_pybigwig")
 def test_bigwig_open_without_a_credential_keeps_libbigwig_diagnostics(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -2127,7 +2123,6 @@ def test_bigwig_open_without_a_credential_keeps_libbigwig_diagnostics(
     ) in capfd.readouterr().err
 
 
-@pytest.mark.usefixtures("curl_enabled_pybigwig")
 def test_bigwig_open_on_an_anonymous_s3_url_keeps_libbigwig_diagnostics(
     capfd: pytest.CaptureFixture[str], mocker: pytest_mock.MockerFixture,
 ) -> None:
@@ -2162,7 +2157,6 @@ def test_bigwig_open_on_a_file_scheme_path_keeps_libbigwig_diagnostics(
     assert _BIGWIG_FILE_NAME in captured
 
 
-@pytest.mark.usefixtures("curl_enabled_pybigwig")
 def test_bigwig_open_survives_a_closed_stderr(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
@@ -2180,7 +2174,6 @@ def test_bigwig_open_survives_a_closed_stderr(
     assert str(excinfo.value) == "Received an error during file opening!"
 
 
-@pytest.mark.usefixtures("curl_enabled_pybigwig")
 def test_bigwig_open_failure_still_reports_the_failure(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -2197,7 +2190,6 @@ def test_bigwig_open_failure_still_reports_the_failure(
     assert _SECRET not in capfd.readouterr().err
 
 
-@pytest.mark.usefixtures("curl_enabled_pybigwig")
 def test_failed_authed_bigwig_open_does_not_silence_the_next_one(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -2221,7 +2213,6 @@ def test_failed_authed_bigwig_open_does_not_silence_the_next_one(
     assert "[urlOpen]" in capfd.readouterr().err
 
 
-@pytest.mark.usefixtures("curl_enabled_pybigwig")
 def test_successful_authed_bigwig_open_does_not_silence_the_next_one(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -2242,7 +2233,6 @@ def test_successful_authed_bigwig_open_does_not_silence_the_next_one(
     assert "[urlOpen]" in capfd.readouterr().err
 
 
-@pytest.mark.usefixtures("curl_enabled_pybigwig")
 def test_concurrent_authed_bigwig_opens_do_not_strand_stderr(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -2766,7 +2756,6 @@ def test_s3_fasta_open_failure_does_not_leak_presigned_signature(
     assert _SIGNATURE not in capfd.readouterr().err
 
 
-@pytest.mark.usefixtures("curl_enabled_pybigwig")
 def test_s3_bigwig_open_failure_does_not_leak_presigned_signature(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
