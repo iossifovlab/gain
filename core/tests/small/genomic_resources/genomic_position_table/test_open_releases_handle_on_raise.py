@@ -1,83 +1,61 @@
-"""A table's ``open()`` releases the handle it acquired when its setup raises.
+"""A table's ``open()`` closes the handle it acquired when its setup raises.
 
-Every file-backed backend acquires its native handle first and then does the
-setup that can refuse the table -- resolving columns, building the chromosome
-mapping, constructing the parser.  Nothing above ``open()`` has been told the
-table is open when that setup raises, so no caller will ever ``close()`` it:
-the handle is ``open()``'s own to release (gain#627).
-
-Three properties, on each of the three backends:
-
-- a raise from the setup leaves the acquired handle closed;
-- a ``BaseException`` (a dask cancellation) does too, and propagates as the
-  same object;
-- a release that itself fails does not replace the refusal the caller is
-  owed.
+The structural half -- every field a failed open established is released, on
+every backend, for ``Exception`` and ``BaseException`` alike -- is asked in
+test_table_lifetime.py by
+``test_a_failed_open_releases_what_it_had_established``; the reasoning is in
+``GenomicPositionTable._releasing_on_raise`` (gain#627).
+What that sweep cannot see is the handle itself: a field set to ``None`` says
+nothing about whether ``close()`` reached the file underneath.  So this module
+gets hold of the handle ``open()`` acquired, by spying on the resource's
+``open_*_file``, and asserts on it directly.
 
 The raises are injected: the subject is the handle lifecycle around a raise,
-not the rule that raised, and no builder knob makes a VCF or bigWig table's
-own setup refuse it.  The two in-tree fixtures where a *real* refusal is
-reachable -- the tabix chromosome-mapping tests in
-test_genomic_position_table.py -- assert on their handle in place.  The
-handle itself comes from wrapping the resource's ``open_*_file``: a closed
-table with a live handle is exactly the leak, and nothing functional tells it
-apart from a released one.
+not the rule that raised.  The one in-tree fixture where a *real* tabix
+refusal is reachable after the acquire
+(``test_invalid_chrom_mapping_file_with_tabix``) asserts on its handle in
+place.
 """
 # pylint: disable=C0116
-import asyncio
 import logging
 import pathlib
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from typing import Any
 
-import pysam
 import pytest
+import pytest_mock
 from gain.genomic_resources.genomic_position_table import (
     build_genomic_position_table,
 )
-from gain.genomic_resources.genomic_position_table.table_bigwig import (
-    BigWigTable,
-)
-from gain.genomic_resources.genomic_position_table.table_tabix import (
-    TabixGenomicPositionTable,
-)
-from gain.genomic_resources.genomic_position_table.table_vcf import (
-    VCFGenomicPositionTable,
+from gain.genomic_resources.genomic_position_table.table import (
+    GenomicPositionTable,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
-    a_grr,
     a_position_score,
     a_vcf_info_score,
 )
 
 
-def _spy_handles(
-    resource: GenomicResource, method: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> list[Any]:
-    """Record every handle ``resource.<method>`` returns."""
-    handles: list[Any] = []
-    original = getattr(resource, method)
-
-    def spy(*args: Any, **kwargs: Any) -> Any:
-        handle = original(*args, **kwargs)
-        handles.append(handle)
-        return handle
-
-    monkeypatch.setattr(resource, method, spy)
-    return handles
-
-
 class _HandleProxy:
-    """Forward everything to the real handle; subclasses override one call."""
+    """Forward everything to the real handle, except the given overrides.
 
-    def __init__(self, handle: Any) -> None:
+    ``__iter__`` is forwarded explicitly because the in-memory backend reads
+    its stream with a ``for``, and dunder lookup bypasses ``__getattr__``.
+    """
+
+    def __init__(self, handle: Any, **overrides: Any) -> None:
         self._handle = handle
+        self.__dict__.update(overrides)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._handle, name)
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter(self._handle)
 
 
 class _HandleWhoseCloseFails(_HandleProxy):
@@ -90,23 +68,12 @@ class _HandleWhoseCloseFails(_HandleProxy):
 
     def close(self) -> None:
         self._handle.close()
-        raise OSError("hts_close failed")
-
-
-class _BigWigHandleWhoseChromsFail(_HandleProxy):
-    """``chroms()`` -- the first thing the bigWig ``open()`` reads -- raises."""
-
-    def __init__(self, handle: Any, error: BaseException) -> None:
-        super().__init__(handle)
-        self._error = error
-
-    def chroms(self) -> dict[str, int]:
-        raise self._error
+        raise OSError("release failed")
 
 
 def _wrap_handles(
     resource: GenomicResource, method: str,
-    monkeypatch: pytest.MonkeyPatch, wrap: Any,
+    monkeypatch: pytest.MonkeyPatch, wrap: Callable[[Any], Any],
 ) -> list[Any]:
     """Hand ``open()`` ``wrap(handle)`` in place of each handle; record both."""
     handles: list[Any] = []
@@ -121,144 +88,115 @@ def _wrap_handles(
     return handles
 
 
-def _raise(error: BaseException) -> Any:
-    def raiser(*_args: Any, **_kwargs: Any) -> None:
-        raise error
-    return raiser
-
-
-def _assert_bigwig_handle_closed(handle: Any) -> None:
+def _bigwig_is_closed(handle: Any) -> bool:
     # A pyBigWig handle has no ``closed`` flag; a released one refuses every
     # call instead.
-    with pytest.raises(RuntimeError, match="not opened"):
+    try:
         handle.chroms()
+    except RuntimeError as error:
+        return "not opened" in str(error)
+    return False
 
 
-# --- fixtures: one well-formed table per backend ---------------------------
+@dataclass(frozen=True)
+class _Backend:
+    """How one backend acquires its handle, and how a closed one looks."""
+
+    build: Callable[[pathlib.Path], GenomicResource]
+    open_method: str
+    handle_field: str
+    is_closed: Callable[[Any], bool] = lambda handle: bool(handle.closed)
 
 
-def _tabix_table(
-    tmp_path: pathlib.Path,
-) -> tuple[GenomicResource, TabixGenomicPositionTable]:
-    repo = (
-        a_grr()
-        .with_resource(
-            "scores/tabix",
-            a_position_score()
-            .with_score("c2", "float")
-            .with_tabix()
-            .with_data("""
-                chrom  pos_begin  pos_end  c2
-                chr1   10         12       3.14
-            """),
-        )
-        .build_repo(tmp_path)
-    )
-    resource = repo.get_resource("scores/tabix")
-    assert resource.config is not None
-    table = build_genomic_position_table(resource, resource.config["table"])
-    assert isinstance(table, TabixGenomicPositionTable)
-    return resource, table
+def _tabular(tmp_path: pathlib.Path, *, tabix: bool) -> GenomicResource:
+    builder = a_position_score().with_score("c2", "float").with_data("""
+        chrom  pos_begin  pos_end  c2
+        chr1   10         12       3.14
+    """)
+    if tabix:
+        builder = builder.with_tabix()
+    return builder.build_resource(tmp_path)
 
 
-def _vcf_table(
-    tmp_path: pathlib.Path,
-) -> tuple[GenomicResource, VCFGenomicPositionTable]:
-    repo = (
-        a_grr()
-        .with_resource(
-            "scores/vcf",
-            a_vcf_info_score().with_data("""
+def _vcf(tmp_path: pathlib.Path) -> GenomicResource:
+    return a_vcf_info_score().with_data("""
 ##fileformat=VCFv4.1
 ##INFO=<ID=scoreA,Number=1,Type=Float,Description="score A">
 #CHROM POS ID REF ALT QUAL FILTER INFO
 chr1   10  .  A   T   .    .      scoreA=0.1
-"""),
-        )
-        .build_repo(tmp_path)
+""").build_resource(tmp_path)
+
+
+def _bigwig(tmp_path: pathlib.Path) -> GenomicResource:
+    return (
+        a_bigwig_score()
+        .with_score("bw", "float")
+        .with_data("chr1  0  10  0.11")
+        .with_chrom_lens({"chr1": 1000})
+        .build_resource(tmp_path)
     )
-    resource = repo.get_resource("scores/vcf")
+
+
+_BIGWIG = _Backend(_bigwig, "open_bigwig_file", "_bw_file", _bigwig_is_closed)
+
+_BACKENDS = [
+    pytest.param(
+        _Backend(lambda p: _tabular(p, tabix=False),
+                 "open_raw_file", "str_stream"),
+        id="inmemory"),
+    pytest.param(
+        _Backend(lambda p: _tabular(p, tabix=True),
+                 "open_tabix_file", "pysam_file"),
+        id="tabix"),
+    pytest.param(
+        _Backend(_vcf, "open_vcf_file", "pysam_file"),
+        id="vcf"),
+    pytest.param(_BIGWIG, id="bigwig"),
+]
+
+
+def _table(
+    backend: _Backend, tmp_path: pathlib.Path,
+) -> tuple[GenomicResource, GenomicPositionTable]:
+    resource = backend.build(tmp_path)
     assert resource.config is not None
-    table = build_genomic_position_table(resource, resource.config["table"])
-    assert isinstance(table, VCFGenomicPositionTable)
-    return resource, table
+    return resource, build_genomic_position_table(
+        resource, resource.config["table"])
 
 
-def _bigwig_table(
-    tmp_path: pathlib.Path,
-) -> tuple[GenomicResource, BigWigTable]:
-    repo = (
-        a_grr()
-        .with_resource(
-            "scores/bw",
-            a_bigwig_score()
-            .with_score("bw", "float")
-            .with_data("chr1  0  10  0.11")
-            .with_chrom_lens({"chr1": 1000}),
-        )
-        .build_repo(tmp_path)
-    )
-    resource = repo.get_resource("scores/bw")
-    assert resource.config is not None
-    table = build_genomic_position_table(resource, resource.config["table"])
-    assert isinstance(table, BigWigTable)
-    return resource, table
-
-
-# --- tabix -----------------------------------------------------------------
-
-
-def test_tabix_raise_from_chrom_mapping_leaves_no_open_handle(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("backend", _BACKENDS)
+def test_a_raise_after_the_acquire_closes_the_handle(
+    backend: _Backend, tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
 ) -> None:
-    resource, table = _tabix_table(tmp_path)
-    handles = _spy_handles(resource, "open_tabix_file", monkeypatch)
+    resource, table = _table(backend, tmp_path)
+    acquire = mocker.spy(resource, backend.open_method)
     refusal = ValueError("The chromosome mapping collides")
-    monkeypatch.setattr(table, "_build_chrom_mapping", _raise(refusal))
+    mocker.patch.object(table, "_build_chrom_mapping", side_effect=refusal)
 
     with pytest.raises(ValueError) as raised:
         table.open()
 
     assert raised.value is refusal
-    assert len(handles) == 1
-    assert isinstance(handles[0], pysam.TabixFile)
-    assert handles[0].closed
-    assert table.pysam_file is None
+    assert acquire.call_count == 1
+    assert backend.is_closed(acquire.spy_return)
+    assert getattr(table, backend.handle_field) is None
 
 
-def test_tabix_cancellation_during_setup_leaves_no_open_handle(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # ``CancelledError`` is a ``BaseException``: it is how a dask-cancelled
-    # statistics scan tears an open down, and an ``except Exception`` guard
-    # does not see it.
-    resource, table = _tabix_table(tmp_path)
-    handles = _spy_handles(resource, "open_tabix_file", monkeypatch)
-    cancelled = asyncio.CancelledError()
-    monkeypatch.setattr(table, "_set_core_column_keys", _raise(cancelled))
-
-    with pytest.raises(asyncio.CancelledError) as raised:
-        table.open()
-
-    assert raised.value is cancelled
-    assert len(handles) == 1
-    assert handles[0].closed
-    assert table.pysam_file is None
-
-
-def test_tabix_failing_close_does_not_replace_the_refusal(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("backend", _BACKENDS)
+def test_a_failing_release_does_not_replace_the_refusal(
+    backend: _Backend, tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture, monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # The caller must see the refusal -- the one line ``grr_manage``
     # attributes to the resource -- not the ``OSError`` from releasing the
-    # handle on the way out, with the refusal demoted to its ``__context__``.
-    # The failed release is not silent, though: it is logged.
-    resource, table = _tabix_table(tmp_path)
+    # handle on the way out; the failed release is logged instead.
+    resource, table = _table(backend, tmp_path)
     handles = _wrap_handles(
-        resource, "open_tabix_file", monkeypatch, _HandleWhoseCloseFails)
-    refusal = MalformedResourceError("<scores/tabix> is malformed")
-    monkeypatch.setattr(table, "_set_core_column_keys", _raise(refusal))
+        resource, backend.open_method, monkeypatch, _HandleWhoseCloseFails)
+    refusal = MalformedResourceError("is malformed")
+    mocker.patch.object(table, "_set_core_column_keys", side_effect=refusal)
 
     with (
         caplog.at_level(logging.WARNING),
@@ -267,136 +205,28 @@ def test_tabix_failing_close_does_not_replace_the_refusal(
         table.open()
 
     assert raised.value is refusal
-    assert handles[0].closed
-    assert "scores/tabix" in caplog.text
-    assert "hts_close failed" in caplog.text
+    assert backend.is_closed(handles[0])
+    assert resource.get_full_id() in caplog.text
+    assert "release failed" in caplog.text
 
 
-# --- vcf -------------------------------------------------------------------
-
-
-def test_vcf_raise_from_chrom_mapping_leaves_no_open_handle(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    resource, table = _vcf_table(tmp_path)
-    handles = _spy_handles(resource, "open_vcf_file", monkeypatch)
-    refusal = ValueError("The chromosome mapping collides")
-    monkeypatch.setattr(table, "_build_chrom_mapping", _raise(refusal))
-
-    with pytest.raises(ValueError) as raised:
-        table.open()
-
-    assert raised.value is refusal
-    assert len(handles) == 1
-    assert isinstance(handles[0], pysam.VariantFile)
-    assert handles[0].closed
-    assert table.pysam_file is None
-
-
-def test_vcf_cancellation_during_setup_leaves_no_open_handle(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    resource, table = _vcf_table(tmp_path)
-    handles = _spy_handles(resource, "open_vcf_file", monkeypatch)
-    cancelled = asyncio.CancelledError()
-    monkeypatch.setattr(table, "_set_core_column_keys", _raise(cancelled))
-
-    with pytest.raises(asyncio.CancelledError) as raised:
-        table.open()
-
-    assert raised.value is cancelled
-    assert len(handles) == 1
-    assert handles[0].closed
-    assert table.pysam_file is None
-
-
-def test_vcf_failing_close_does_not_replace_the_refusal(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    resource, table = _vcf_table(tmp_path)
-    handles = _wrap_handles(
-        resource, "open_vcf_file", monkeypatch, _HandleWhoseCloseFails)
-    refusal = MalformedResourceError("<scores/vcf> is malformed")
-    monkeypatch.setattr(table, "_set_core_column_keys", _raise(refusal))
-
-    with pytest.raises(MalformedResourceError) as raised:
-        table.open()
-
-    assert raised.value is refusal
-    assert handles[0].closed
-
-
-# --- bigwig ----------------------------------------------------------------
-
-
-def test_bigwig_raise_from_the_chroms_read_leaves_no_open_handle(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+def test_bigwig_raise_from_the_chroms_read_closes_the_handle(
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The contig read is the first thing after the acquire, and it is a call
     # on the handle itself -- so the raise is injected there, through the
     # handle, rather than at a table method.
-    resource, table = _bigwig_table(tmp_path)
+    resource, table = _table(_BIGWIG, tmp_path)
     refusal = RuntimeError("corrupt chromosome tree")
     handles = _wrap_handles(
-        resource, "open_bigwig_file", monkeypatch,
-        lambda handle: _BigWigHandleWhoseChromsFail(handle, refusal))
+        resource, _BIGWIG.open_method, monkeypatch,
+        lambda handle: _HandleProxy(
+            handle, chroms=mocker.Mock(side_effect=refusal)))
 
     with pytest.raises(RuntimeError) as raised:
         table.open()
 
     assert raised.value is refusal
-    assert len(handles) == 1
-    _assert_bigwig_handle_closed(handles[0])
-    assert table._bw_file is None
-    assert not table.chroms
-
-
-def test_bigwig_raise_from_chrom_mapping_leaves_no_open_handle(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    resource, table = _bigwig_table(tmp_path)
-    handles = _spy_handles(resource, "open_bigwig_file", monkeypatch)
-    refusal = ValueError("The chromosome mapping collides")
-    monkeypatch.setattr(table, "_build_chrom_mapping", _raise(refusal))
-
-    with pytest.raises(ValueError) as raised:
-        table.open()
-
-    assert raised.value is refusal
-    assert len(handles) == 1
-    _assert_bigwig_handle_closed(handles[0])
-    assert table._bw_file is None
-    assert not table.chroms
-
-
-def test_bigwig_cancellation_during_setup_leaves_no_open_handle(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    resource, table = _bigwig_table(tmp_path)
-    handles = _spy_handles(resource, "open_bigwig_file", monkeypatch)
-    cancelled = asyncio.CancelledError()
-    monkeypatch.setattr(table, "_set_core_column_keys", _raise(cancelled))
-
-    with pytest.raises(asyncio.CancelledError) as raised:
-        table.open()
-
-    assert raised.value is cancelled
-    assert len(handles) == 1
-    _assert_bigwig_handle_closed(handles[0])
-    assert table._bw_file is None
-
-
-def test_bigwig_failing_close_does_not_replace_the_refusal(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    resource, table = _bigwig_table(tmp_path)
-    handles = _wrap_handles(
-        resource, "open_bigwig_file", monkeypatch, _HandleWhoseCloseFails)
-    refusal = MalformedResourceError("<scores/bw> is malformed")
-    monkeypatch.setattr(table, "_set_core_column_keys", _raise(refusal))
-
-    with pytest.raises(MalformedResourceError) as raised:
-        table.open()
-
-    assert raised.value is refusal
-    _assert_bigwig_handle_closed(handles[0])
+    assert _BIGWIG.is_closed(handles[0])
+    assert getattr(table, _BIGWIG.handle_field) is None

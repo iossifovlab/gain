@@ -488,12 +488,14 @@ class GenomicPositionTable(abc.ABC):
         - It re-raises unconditionally.  This is a release guard, not error
           handling; the caller sees exactly the exception the setup raised.
         - The release is attempted, not guaranteed.  A handle close raises
-          ``OSError`` when ``hts_close`` does, and that failure must not
-          replace the refusal being unwound: the caller is owed the one line
-          that says what is wrong with the resource, not an ``OSError`` with
-          that line demoted to its ``__context__``.  It is logged instead,
-          and the table is then left as the backend's ``close()`` leaves a
-          partial failure -- still open by every check a caller can make.
+          ``OSError`` when ``hts_close`` does; that ``OSError`` is caught and
+          logged rather than allowed to replace the refusal being unwound,
+          because the caller is owed the one line that says what is wrong
+          with the resource, not an ``OSError`` with that line demoted to its
+          ``__context__``.  The table is then left as the backend's
+          ``close()`` leaves any partial failure -- still open by every check
+          a caller can make.  Only ``OSError`` is caught: anything else a
+          ``close()`` raises is a bug in the backend, and propagates.
         """
         try:
             yield
