@@ -74,6 +74,7 @@ from gain.genomic_resources.repository import (
 from gain.templates import get_template
 from gain.templates.markdown_support import render_markdown as markdown
 from gain.templates.static_assets import repository_static_files
+from gain.utils.fs_utils import S3_PRESIGN_EXPIRATION_SECONDS
 from gain.utils.helpers import convert_size
 
 # Silence the spurious "[W::hts_idx_load3] The index file is older than the
@@ -137,13 +138,6 @@ _COPY_BACKOFF_BASE = 5  # seconds; delays are 5s, 15s, 45s
 #: per-file ``.state`` documents, lockfiles, and partial downloads. Not part
 #: of the resource: everything that enumerates resource files skips it.
 GRR_INTERNAL_DIR = ".grr"
-
-#: How long the presigned url an s3 GRR hands pysam and pyBigWig stays
-#: valid, in seconds -- and therefore how long the handle does, since the
-#: library re-requests that url on every seek. The most SigV4 allows; see
-#: ADR 0023 (gain#1398) for why the maximum and what a handle older than
-#: this does.
-S3_PRESIGN_EXPIRATION_SECONDS = 7 * 24 * 60 * 60
 
 
 class RetryableCopyError(OSError):

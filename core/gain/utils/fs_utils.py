@@ -9,6 +9,14 @@ from urllib.parse import urlparse
 
 from fsspec.core import url_to_fs
 
+#: How long a presigned s3 url stays valid, in seconds -- and therefore how
+#: long a pysam or pyBigWig handle opened on it does, since the library
+#: re-requests that url on every seek. Every presign in gain passes this:
+#: the GRR's ``_get_file_url`` and :func:`sign` below, which gpf's VCF
+#: loader holds for a whole import. The most SigV4 allows; see ADR 0023
+#: (gain#1398) for why the maximum and what a handle older than this does.
+S3_PRESIGN_EXPIRATION_SECONDS = 7 * 24 * 60 * 60
+
 
 def is_s3url(path: str) -> bool:
     return path.startswith("s3://")
@@ -102,12 +110,15 @@ def containing_path(path: str | os.PathLike) -> str:
 def sign(filename: str) -> str:
     """Create a signed URL representing the given path.
 
-    If the coresponding filesystem doesn't support signing then the filename
-    is returned as is.
+    On s3 the url is presigned for :data:`S3_PRESIGN_EXPIRATION_SECONDS`,
+    which is how long a handle opened on it stays usable (ADR 0023,
+    gain#1398). If the corresponding filesystem doesn't support signing
+    then the filename is returned as is.
     """
     fs, relative_path = url_to_fs(filename)
     try:
-        return cast(str, fs.sign(relative_path))
+        return cast(str, fs.sign(
+            relative_path, expiration=S3_PRESIGN_EXPIRATION_SECONDS))
     except NotImplementedError:
         return filename
 

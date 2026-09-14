@@ -1,9 +1,13 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import os
+import time
+from urllib.parse import parse_qsl, urlparse
 
 import pytest
 import pytest_mock
 from gain.utils import fs_utils
+from gain.utils.fs_utils import S3_PRESIGN_EXPIRATION_SECONDS
+from s3fs import S3FileSystem
 
 
 @pytest.mark.parametrize("segments, expected", [
@@ -134,3 +138,45 @@ def test_strip_compression_suffix(filename: str, expected: str) -> None:
 ])
 def test_is_compressed_filename(filename: str, expected: bool) -> None:
     assert fs_utils.is_compressed_filename(filename) is expected
+
+
+def _presigned_lifetime_seconds(url: str, signed_at: int) -> int:
+    """How long a presigned s3 ``url`` stays valid, in seconds.
+
+    botocore spells the expiry two ways: SigV2 writes an absolute
+    ``Expires`` epoch, SigV4 a relative ``X-Amz-Expires``. Which one a
+    filesystem gets is a property of its endpoint, so read either.
+    """
+    query = dict(parse_qsl(urlparse(url).query))
+    if "X-Amz-Expires" in query:
+        return int(query["X-Amz-Expires"])
+    return int(query["Expires"]) - signed_at
+
+
+def test_sign_presigns_an_s3_url_for_the_full_handle_lifetime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Presigning is local to botocore -- credentials are all it needs, no
+    # endpoint -- so this speaks to the real s3 filesystem. The cache is
+    # cleared because fsspec hands ``url_to_fs`` the one instance it built
+    # for these kwargs, whatever environment an earlier test built it in.
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
+    S3FileSystem.clear_instance_cache()
+    signed_at = int(time.time())
+
+    signed = fs_utils.sign("s3://bucket/dir/data.txt.gz")
+
+    lifetime = _presigned_lifetime_seconds(signed, signed_at)
+    assert lifetime == pytest.approx(S3_PRESIGN_EXPIRATION_SECONDS, abs=5)
+
+
+@pytest.mark.parametrize("filename", [
+    "/dir/data.txt.gz",
+    "file:///dir/data.txt.gz",
+    "data.txt.gz",
+])
+def test_sign_returns_a_filename_the_filesystem_cannot_sign_as_is(
+    filename: str,
+) -> None:
+    assert fs_utils.sign(filename) == filename
