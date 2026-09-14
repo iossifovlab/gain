@@ -88,7 +88,7 @@ Not covered here
 
 The annotation side of the declared API — pipelines, annotators, and the
 ``gain.annotation.annotators`` entry-point group — is the subject of its own
-chapter. ``gain.genomic_resources.testing``, the task graph, and the
+chapter, :doc:`annotators`. ``gain.genomic_resources.testing``, the task graph, and the
 effect-annotation engine are outside the declared API and are documented, to
 the extent they are, by the generated
 :doc:`module_index <module_index>`.

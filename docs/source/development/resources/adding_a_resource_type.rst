@@ -8,7 +8,8 @@ implementations are discovered through a Python entry-point group. A package
 installed alongside GAIn can add a type without any change to GAIn itself.
 
 This is the extension seam for a new *kind of resource*; adding a new
-annotator is a different seam, with its own entry-point group.
+annotator is a different seam, with its own entry-point group, described in
+:doc:`../annotators/plugins`.
 
 The interface
 -------------

@@ -62,7 +62,8 @@ def fold_own_values(
     record stream -- a gene list, a set intersection, one entry per
     prediction request -- so there is no folding read to move the
     reduction into.  Each attribute takes its source's value, reduced by
-    the aggregator it names (:meth:`Attribute.fold`), under the
+    the aggregator it names
+    (:meth:`~gain.annotation.annotation_config.Attribute.fold`), under the
     attribute's NAME.
 
     Only a ``list`` is folded.  A scalar, a ``None``, an absent source
@@ -88,15 +89,18 @@ class AnnotatorBase(Annotator):
     """Base implementation of the `Annotator` class.
 
     The class every in-tree annotator extends.  Its constructor checks
-    the configured attributes against :meth:`get_attribute_specs`,
+    the configured attributes against
+    :meth:`~gain.annotation.annotation_pipeline.Annotator.get_attribute_specs`,
     resolves each one's name, aggregator and parameters (consulting
     :meth:`get_attribute_defaults`), and requires a ``work_dir``
-    parameter.  A subclass implements :meth:`get_attribute_specs` and
-    ``_do_annotate``; overrides ``_do_batch_annotate`` when it has a
-    batched path; and overrides :meth:`get_attribute_defaults`,
-    :meth:`open` and :meth:`close` when it has defaults or resources.
-    :meth:`annotate` and :meth:`batch_annotate` are left alone, except
-    by a batch-only annotator, which makes :meth:`annotate` refuse.
+    parameter.  A subclass implements ``get_attribute_specs`` and
+    :meth:`_do_annotate`; overrides :meth:`_do_batch_annotate` when it
+    has a batched path; and overrides :meth:`get_attribute_defaults`,
+    :meth:`open` and
+    :meth:`~gain.annotation.annotation_pipeline.Annotator.close` when it
+    has defaults or resources.  :meth:`annotate` and
+    :meth:`batch_annotate` are left alone, except by a batch-only
+    annotator, which makes :meth:`annotate` refuse.
     """
 
     #: The resource types this annotator's ``resource_id`` may name.
