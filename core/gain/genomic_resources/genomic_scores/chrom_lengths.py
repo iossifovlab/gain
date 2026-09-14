@@ -11,12 +11,10 @@ when the number is absent.
 
 The ladder the epic (gain#1412) settles is genome label → bigWig header →
 tabix estimate, applied per contig of the score.  The resolver here answers
-every rung live: the genome rung from the ``ReferenceGenome`` a caller with
-a GRR hands in, the rest through the table.  The caller is
-:meth:`~gain.genomic_resources.implementations.genomic_scores_impl.base.GenomicScoreImplementation.get_chrom_lengths`,
-which resolves the score's ``reference_genome`` label through its
-repository; nothing is stored, because every consumer of a score's lengths
-holds a repository to ask through (gain#1448).
+every rung live: the genome rung from the ``ReferenceGenome`` the caller
+hands in, the rest through the table.  It holds no repository, so
+resolving the score's ``reference_genome`` label into that genome is the
+caller's job.
 """
 
 from __future__ import annotations

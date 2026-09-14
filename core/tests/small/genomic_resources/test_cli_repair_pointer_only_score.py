@@ -32,7 +32,10 @@ def _a_repaired_bigwig_score_left_as_a_pointer(
 
     Labelled with its genome, as the DVC-backed repositories' scores
     are: the page's coverage denominator then comes from the genome,
-    and nothing of the repair has a reason to look at the payload.
+    and nothing of the repair has a reason to look at the payload.  An
+    UNLABELLED bigWig is a different case -- the page render takes its
+    denominator from the header, which needs the bytes -- and is not
+    what these tests claim anything about.
     """
     (
         a_grr()
@@ -64,7 +67,28 @@ def _every_file_of(root: pathlib.Path) -> dict[pathlib.Path, bytes]:
         for path in sorted(root.rglob("*")) if path.is_file()}
 
 
-def test_repair_of_a_current_pointer_only_score_touches_nothing(
+def test_a_statistics_build_persists_nothing_about_chromosome_lengths(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The whole of what a repair writes there: the histograms, the
+    coverage counts, the hash and the statistics page.  The lengths are
+    computed where they are asked, and no repair has a file of them to
+    find missing."""
+    root = _a_repaired_bigwig_score_left_as_a_pointer(tmp_path)
+
+    assert sorted(
+        path.name for path in (root / "score" / "statistics").iterdir()
+    ) == [
+        "coverage.json",
+        "coverage_segment_lengths.png",
+        "histogram_score.json",
+        "histogram_score.png",
+        "index.html",
+        "stats_hash",
+    ]
+
+
+def test_repair_of_a_current_labelled_pointer_only_score_touches_nothing(
     tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
 ) -> None:
     root = _a_repaired_bigwig_score_left_as_a_pointer(tmp_path)
@@ -79,7 +103,7 @@ def test_repair_of_a_current_pointer_only_score_touches_nothing(
     assert _every_file_of(root) == before
 
 
-def test_a_dry_run_of_a_current_pointer_only_score_needs_no_update(
+def test_a_dry_run_of_a_current_labelled_pointer_only_score_needs_no_update(
     tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
 ) -> None:
     root = _a_repaired_bigwig_score_left_as_a_pointer(tmp_path)

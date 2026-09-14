@@ -282,8 +282,10 @@ alt-minus-ref, not an absolute value.
 
   Why that is enough: the tabix probe is the only expensive rung, and it
   runs where the payload must be present anyway — inside a full
-  statistics rebuild, which dominates it — or at a page render that holds
-  the repository. Nothing else asks. And why the file had to go rather
+  statistics rebuild, which dominates it. Today the region split is the
+  one caller; the page's coverage denominator still runs its own two-rung
+  ladder (genome, then an exact table header — never the probe) until
+  gain#1414 re-points it here. And why the file had to go rather
   than merely stay optional: its freshness gate opened every score
   resource lacking the file, which on a pointer-only DVC checkout — the
   shape every DVC-backed GRR's working copy has — failed each one on the
