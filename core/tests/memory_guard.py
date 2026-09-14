@@ -20,12 +20,21 @@ budget is what one *test* may add rather than an absolute ceiling. See
 ``RLIMIT_DATA`` and not ``RLIMIT_AS`` or an RSS watchdog, and why a measured
 budget beats a flat number.
 
+The moment a phase raises ``MemoryError`` the bound is also *widened* by one
+budget, before pytest builds the report (#1449).  The runaway's frame stays
+pinned by the traceback until the next test's call phase, so the process sits
+at the ceiling through the next test's setup -- and the re-arm there has to
+open ``/proc`` before it can raise anything, which is exactly the allocation
+that fails.  Widening from the bound already known needs no read.
+
 Registered from ``pytest.ini``'s ``addopts`` (``-p tests.memory_guard``),
 alongside the dask guard.
 """
 import os
 import resource
 import sys
+
+import pytest
 
 #: Budget in GiB that any one test may add to the memory already mapped when
 #: it starts. ``0`` disables the guard entirely.
@@ -110,6 +119,61 @@ def pytest_runtest_setup() -> None:
     growing without bound.
     """
     _arm()
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_makereport(call: pytest.CallInfo[None]) -> None:
+    """Widen the bound by a budget the moment a phase trips it.
+
+    ``tryfirst`` so this runs before pytest formats the report: formatting
+    allocates too, and under ``-n`` a ``MemoryError`` there kills the worker
+    with ``INTERNALERROR`` and names no test.  Returns None so pluggy carries
+    on to the implementation that builds the report.
+    """
+    if call.excinfo is None or not _raised_memory_error(call.excinfo.value):
+        return
+    _widen()
+
+
+def _raised_memory_error(exc: BaseException) -> bool:
+    """Say whether ``exc`` is, or was raised from, a ``MemoryError``."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, MemoryError):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _widen() -> None:
+    """Add a budget to our own bound without measuring anything.
+
+    Reading ``/proc/self/status`` is the allocation that fails at the
+    ceiling, so this works from the soft limit already armed instead.  The
+    next test's re-arm measures again and settles the ceiling where it
+    would have put it anyway.
+    """
+    budget = budget_bytes()
+    if budget == 0:
+        return
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_DATA)
+    except (OSError, ValueError):
+        return
+    if soft == resource.RLIM_INFINITY or not _is_our_own(soft):
+        return
+    limit = soft + budget
+    if hard != resource.RLIM_INFINITY and hard < limit:
+        return
+    try:
+        resource.setrlimit(resource.RLIMIT_DATA, (limit, hard))
+    except (OSError, ValueError):
+        return
+    _ARMED["baseline"] = soft
+    _ARMED["limit"] = limit
+    os.environ[OWNED_ENV_VAR] = str(limit)
 
 
 def _arm() -> None:
