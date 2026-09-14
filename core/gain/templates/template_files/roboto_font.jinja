@@ -1,0 +1,28 @@
+{# The page's typeface, loaded from the repository itself.
+
+   Roboto used to arrive as a Google Fonts stylesheet; on an intranet or
+   behind an air gap that link is dead and the page falls back to the
+   system font.  The face is now a file the same run published under
+   `.static/` (gain.templates.static_assets, gain#1400), and this block
+   is the one `@font-face` for it, included inside each page's `<style>`.
+
+   `static_root` is the page's climb back to the repository root -- empty
+   for the pages at the root, `../` per directory for a resource page
+   published below it.  The url is relative for the same reason the
+   search index's own `fetch()` is: the repository is served under
+   whatever host and sub-path it happens to be, and a relative url
+   follows it (gain#129).
+
+   One file covers every weight the pages use: the vendored woff2 is the
+   variable font, so `font-weight` declares its whole range and the
+   browser interpolates 400, 500 and 800 from it.  `unicode-range` says
+   what the latin subset holds; a glyph outside it falls back to the
+   system font rather than to a tofu box. #}
+      @font-face {
+        font-family: "Roboto";
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: swap;
+        src: url("{{ static_root | default('') }}{{ roboto_font_path }}") format("woff2");
+        unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+      }

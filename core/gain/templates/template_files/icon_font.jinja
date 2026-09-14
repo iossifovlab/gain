@@ -1,0 +1,47 @@
+{# The icon font, loaded from the repository itself (gain#1400).
+
+   Material Symbols renders by *ligature*: an element carrying the class
+   below holds the glyph's name as text, and the font substitutes the
+   glyph for it.  That makes a missing font worse than a missing
+   typeface -- with Roboto gone the page falls back to the system font,
+   with this gone every icon renders as its name, in words.  So the
+   face is a file the same run published under `.static/`, beside the
+   page, rather than a Google Fonts link that an intranet cannot reach.
+
+   The vendored woff2 is subsetted to the glyphs the pages draw; the
+   scan in tests/small/templates/test_grr_page_icon_font.py is the
+   authority on which those are, and it fails when the subset lacks
+   one.  `static_root` is the page's climb back to the repository root,
+   as in roboto_font.jinja.
+
+   `font-display: block` on purpose, against the `swap` the typeface
+   uses: a flash of unstyled text is a tolerable moment of the wrong
+   font, a flash of unstyled *icons* is the words "unfold_more" in every
+   column header.  The class rule is the one Google's stylesheet served
+   with the face: `font-feature-settings: "liga"` is the substitution
+   itself, `letter-spacing: normal` is what keeps it on -- a non-zero
+   letter-spacing disables ligatures -- and the rest keeps a glyph on
+   one line and one em wide. #}
+      @font-face {
+        font-family: "Material Symbols Outlined";
+        font-style: normal;
+        font-weight: 100 700;
+        font-display: block;
+        src: url("{{ static_root | default('') }}{{ material_symbols_font_path }}") format("woff2");
+      }
+
+      .material-symbols-outlined {
+        font-family: "Material Symbols Outlined";
+        font-weight: normal;
+        font-style: normal;
+        font-size: 24px;
+        line-height: 1;
+        letter-spacing: normal;
+        text-transform: none;
+        display: inline-block;
+        white-space: nowrap;
+        word-wrap: normal;
+        direction: ltr;
+        font-feature-settings: "liga";
+        -webkit-font-smoothing: antialiased;
+      }

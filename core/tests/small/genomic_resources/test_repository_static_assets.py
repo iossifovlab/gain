@@ -10,6 +10,7 @@ for is what the same run put on disk.
 """
 import os
 import pathlib
+import re
 import shutil
 
 import pytest
@@ -35,17 +36,22 @@ def bare_repo(settled_repo: pathlib.Path) -> pathlib.Path:
     return settled_repo
 
 
-def published_files(repo: pathlib.Path) -> dict[str, bytes]:
-    """Name -> bytes of what was published, files only.
+def published_paths(repo: pathlib.Path) -> list[pathlib.Path]:
+    """Every file published under ``.static/``.
 
-    Files only: the publish seam stages through a ``.grr/`` directory
-    beside its target, as it does beside every page and manifest.
+    Files only, and none from a ``.grr/`` directory: the publish seam
+    stages through one beside its target, as it does beside every page
+    and manifest.
     """
-    return {
-        path.name: path.read_bytes()
-        for path in (repo / SQLITE_WASM_PATH).iterdir()
-        if path.is_file()
-    }
+    return [
+        path for path in (repo / ".static").rglob("*")
+        if path.is_file() and ".grr" not in path.parts
+    ]
+
+
+def published_files(repo: pathlib.Path) -> dict[str, bytes]:
+    """Name -> bytes of everything published under ``.static/``."""
+    return {path.name: path.read_bytes() for path in published_paths(repo)}
 
 
 def vendored_files() -> dict[str, bytes]:
@@ -56,18 +62,100 @@ def vendored_files() -> dict[str, bytes]:
     }
 
 
+#: A ``@font-face`` block: the family it declares and the file it loads.
+_FONT_FACE = re.compile(
+    r"@font-face\s*\{[^}]*?\bfont-family:\s*['\"]?([^'\";]+?)['\"]?\s*;"
+    r"[^}]*?\bsrc:\s*url\(\s*['\"]?([^'\")]+)['\"]?\s*\)",
+)
+
+
+def font_faces_the_page_loads(page: pathlib.Path) -> dict[str, pathlib.Path]:
+    """Family -> where its ``@font-face`` resolves on disk.
+
+    Resolved against the page's own directory, as the browser resolves
+    a relative ``url()``: a page published below the repository root
+    has to climb back to ``.static/`` itself.
+    """
+    return {
+        family: (page.parent / url).resolve()
+        for family, url in _FONT_FACE.findall(page.read_text(encoding="utf8"))
+    }
+
+
+#: The typeface every page sets, and the icon font only the pages that
+#: draw a glyph carry: the browse page's sort indicators, row icons and
+#: copy buttons, and the resource pages' table sorter.
+TEXT_FONT = "Roboto"
+ICON_FONT = "Material Symbols Outlined"
+
+
+@pytest.mark.parametrize(("page", "families"), [
+    ("index.html", {TEXT_FONT, ICON_FONT}),
+    # Two directories down: the resource page has to climb to the root.
+    ("sub/one/index.html", {TEXT_FONT, ICON_FONT}),
+    # Three: the statistics page sits under the resource, and sorts no
+    # table, so it carries no icon font.
+    ("sub/one/statistics/index.html", {TEXT_FONT}),
+])
+def test_a_page_loads_its_fonts_from_files_the_same_run_published(
+    bare_repo: pathlib.Path, page: str, families: set[str],
+) -> None:
+    """Every font a page declares is a file the publisher put beside it.
+
+    The pages name no font host: their typeface and icon glyphs are
+    ``@font-face`` blocks whose ``url()`` climbs into ``.static/``, so a
+    repository behind an air gap renders them (gain#1400).  Pinned on
+    the published page rather than the template because this is the
+    one place both ends -- the url the page asks for and the file the
+    run wrote -- are on the same disk.
+    """
+    cli_manage(["repo-index", "-R", str(bare_repo)])
+
+    faces = font_faces_the_page_loads(bare_repo / page)
+
+    assert set(faces) == families
+    assert_published_by_this_gain(faces)
+
+
+def assert_published_by_this_gain(faces: dict[str, pathlib.Path]) -> None:
+    """Each face resolves to a file holding gain's vendored bytes."""
+    vendored = vendored_files()
+    for family, path in faces.items():
+        assert path.is_file(), (family, path)
+        assert path.read_bytes() == vendored[path.name], (family, path)
+
+
+def test_the_about_page_loads_its_typeface_from_the_repository(
+    bare_repo: pathlib.Path,
+) -> None:
+    """Styled text, so the typeface and nothing else.
+
+    The page is only published when the repository carries an
+    ``about.md``; the settled fixture has none, so this writes one.
+    """
+    (bare_repo / "about.md").write_text("# About\n", encoding="utf8")
+    cli_manage(["repo-index", "-R", str(bare_repo)])
+
+    faces = font_faces_the_page_loads(bare_repo / "about.html")
+
+    assert set(faces) == {TEXT_FONT}
+    assert_published_by_this_gain(faces)
+
+
 @pytest.mark.parametrize("command", [
     ["repo-index"],
     ["repo-info", "-j", "1"],
 ])
-def test_the_page_publishers_publish_sqlite_wasm_beside_it(
+def test_the_page_publishers_publish_everything_gain_vendors_beside_it(
     bare_repo: pathlib.Path, command: list[str],
 ) -> None:
-    """Both commands that publish the page publish what it imports.
+    """Both commands that publish the page publish what it loads.
 
     A page published by either with a dangling import is a page with
-    no search, so the pin covers both rather than trusting that they
-    share a publisher.
+    no search, and one with a dangling font url is a page of glyph
+    names in words -- so the pin covers both commands rather than
+    trusting that they share a publisher, and everything the registry
+    names rather than the search engine alone.
     """
     cli_manage([*command, "-R", str(bare_repo)])
 
@@ -102,10 +190,7 @@ def test_republishing_an_unchanged_repository_leaves_the_files_alone(
     bytes on every run would make every run look like a change.
     """
     cli_manage(["repo-index", "-R", str(bare_repo)])
-    files = [
-        bare_repo / SQLITE_WASM_PATH / name
-        for name in published_files(bare_repo)
-    ]
+    files = published_paths(bare_repo)
     pinned = 1_000_000_000
     for path in files:
         os.utime(path, (pinned, pinned))

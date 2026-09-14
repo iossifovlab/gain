@@ -91,7 +91,11 @@ from jinja2 import (
     TemplateNotFound,
 )
 
-from gain.templates.static_assets import SQLITE_WASM_PATH
+from gain.templates.static_assets import (
+    MATERIAL_SYMBOLS_FONT_PATH,
+    ROBOTO_FONT_PATH,
+    SQLITE_WASM_PATH,
+)
 from gain.utils.chromosome_order import natural_chromosome_key
 
 if TYPE_CHECKING:
@@ -178,6 +182,8 @@ def get_jinja_env() -> Environment:
         env.globals["markdown"] = render_markdown
         env.globals["natural_chromosome_key"] = natural_chromosome_key
         env.globals["sqlite_wasm_path"] = SQLITE_WASM_PATH
+        env.globals["roboto_font_path"] = ROBOTO_FONT_PATH
+        env.globals["material_symbols_font_path"] = MATERIAL_SYMBOLS_FONT_PATH
         # Published last, so no caller can reach a half-configured
         # environment: assigning first and installing the globals after
         # leaves a window where the singleton renders UndefinedError.
