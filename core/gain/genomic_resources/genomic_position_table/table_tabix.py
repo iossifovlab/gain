@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import itertools
 from collections import Counter
 from collections.abc import Generator, Iterable
@@ -284,28 +285,39 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                 self.header = self._load_header()
             self._set_core_column_keys()
             self._validate_index_columns()
-        except Exception:
+            self._build_chrom_mapping()
+            # The parser fuses record construction with the zero-based and
+            # chromosome-mapping transforms, specialised once here rather than
+            # branched per line.  It cannot be built any earlier: resolving
+            # the column keys needs the header, and the reverse chromosome map
+            # needs the file's contigs.
+            self.parser = build_tabular_parser(
+                self.chrom_key,
+                self.pos_begin_key,
+                self.pos_end_key,
+                self.ref_key,
+                self.alt_key,
+                self.rev_chrom_map,
+                zero_based=self.zero_based,
+            )
+        except BaseException:
             # The handle is this method's to release: nothing above has been
             # told the table is open -- ``close()`` would not be called on it
-            # -- so a raise from here without this would leak the file, and on
-            # the http and s3 protocols the connection under it.
-            self.close()
+            # -- so a raise from anywhere between the acquire and the return
+            # would leak the file, and on the http and s3 protocols the
+            # connection under it.  ``BaseException``, not ``Exception``: a
+            # dask-cancelled open arrives as ``CancelledError``, which is not
+            # an ``Exception``, and leaks just the same.  This is a release
+            # guard, not error handling -- it re-raises unconditionally.
+            #
+            # The release itself can fail -- a handle close raises ``OSError``
+            # when ``hts_close`` does -- and that failure must not replace
+            # the refusal being unwound: the caller is owed the one line that
+            # says what is wrong with the resource, not an ``OSError`` with
+            # that line demoted to its ``__context__``.
+            with contextlib.suppress(OSError):
+                self.close()
             raise
-        self._build_chrom_mapping()
-        # The parser fuses record construction with the zero-based and
-        # chromosome-mapping transforms, specialised once here rather than
-        # branched per line.  It cannot be built any earlier: resolving the
-        # column keys needs the header, and the reverse chromosome map needs
-        # the file's contigs.
-        self.parser = build_tabular_parser(
-            self.chrom_key,
-            self.pos_begin_key,
-            self.pos_end_key,
-            self.ref_key,
-            self.alt_key,
-            self.rev_chrom_map,
-            zero_based=self.zero_based,
-        )
         # A reopened table must not answer out of the previous open's buffer.
         # The buffer is keyed by region -- through ``_last_call``, the read
         # cascade's own cursor -- not by file or handle, so a table reopened
