@@ -302,6 +302,67 @@ def test_the_statistics_scan_does_not_import_the_implementation_classes(
     )
 
 
+GENOMIC_SCORES_IMPL = (pathlib.Path(GAIN_SRC) / "genomic_resources"
+                       / "implementations" / "genomic_scores_impl")
+
+
+def _table_reaches(py: pathlib.Path) -> list[str]:
+    """``<file>:<line>`` for every ``<expr>.table`` in ``py``.
+
+    An attribute scan rather than a text one: ``"table"`` is also a key
+    in the config the implementation serialises, and a docstring may
+    name the attribute it is explaining.
+    """
+    tree = ast.parse(py.read_text(encoding="utf8"))
+    return [
+        f"{py.relative_to(GAIN_SRC)}:{node.lineno}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and node.attr == "table"
+    ]
+
+
+def test_the_statistics_implementation_talks_to_the_score_not_its_table(
+) -> None:
+    """``genomic_scores_impl`` asks ``GenomicScore``, never ``score.table``.
+
+    The implementation used to reach through the score to the backend
+    underneath it -- for the data file's name, for whether a tabix index
+    goes with it, for the table config it hashes, for a contig's length --
+    and each reach was an ``isinstance`` over concrete backend classes or a
+    read of one backend's handle, so the statistics layer knew which
+    backends existed and a new one could not be added without editing it.
+    gain#409 and gain#1424 removed the read paths; gain#410 removed the
+    rest, each behind a question the score answers about itself.
+
+    Two sweeps, because the two ways back differ.  An import of the table
+    package is the way a backend class returns; the attribute scan is the
+    way ``self.score.table.<anything>`` returns, which needs no import at
+    all.  ``ContigExtent`` and ``ChromLengthSource`` are the score layer's
+    to hand out: ``genomic_scores.chrom_lengths`` re-exports both beside
+    the record that carries them.
+    """
+    imports = _imports_of_layer(
+        GENOMIC_SCORES_IMPL,
+        "gain.genomic_resources.genomic_position_table")
+    assert imports == [], (
+        f"genomic_scores_impl imports the table package: {imports}. "
+        f"The implementation talks to GenomicScore; a table fact it needs "
+        f"is a property the score forwards (chrom_length_source, "
+        f"uses_tabix_index), and the enums come from "
+        f"genomic_scores.chrom_lengths"
+    )
+    reaches = [
+        site
+        for py in sorted(GENOMIC_SCORES_IMPL.rglob("*.py"))
+        for site in _table_reaches(py)
+    ]
+    assert reaches == [], (
+        f"genomic_scores_impl reaches into score.table at: {reaches}. "
+        f"Ask the score instead -- its validated config carries the table "
+        f"definition, and its properties forward the backend's facts"
+    )
+
+
 #: The deprecated alias for ``gain.annotation.annotate_tabular``, which
 #: warns from its module body.  Named so the rule below has an anchor
 #: that cannot pass on an empty scan.

@@ -177,6 +177,16 @@ class GenomicPositionTable(abc.ABC):
     # member's ``is_exact``, a trust level) that is not its own.
     chrom_length_source: ClassVar[ChromLengthSource]
 
+    # Whether this backend reads its file through a tabix index (``.tbi``
+    # or ``.csi``), so that the index is one of the resource's files as
+    # much as the data file is -- the statistics hash covers it, and the
+    # file set lists it.  Defaulted rather than declared: a backend with no
+    # index has nothing to say, and False is the honest silence.  The
+    # tabix backend sets it True and the VCF backend inherits the claim,
+    # which is what replaces the ``isinstance(Tabix)`` the file set used to
+    # decide by (gain#410).
+    uses_tabix_index: ClassVar[bool] = False
+
     CHROM = "chrom"
     POS_BEGIN = "pos_begin"
     POS_END = "pos_end"
