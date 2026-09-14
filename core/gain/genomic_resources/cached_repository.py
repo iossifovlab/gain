@@ -30,7 +30,10 @@ from gain.genomic_resources.repository import (
     is_safe_repo_id,
     resolve_tabix_index_filename_for_read,
 )
-from gain.utils.url_redaction import strip_url_userinfo
+from gain.utils.url_redaction import (
+    strip_url_credentials,
+    strip_url_userinfo,
+)
 
 from .fsspec_protocol import build_fsspec_protocol
 
@@ -955,9 +958,11 @@ def _build_cache_worklist(
                 # collected and surfaced in the end-of-run summary like a
                 # download failure. See gain#43.
                 # ``error`` may be an fsspec/aiohttp fetch failure whose message
-                # embeds the credential-bearing fetch url; strip any url
-                # userinfo before it reaches the failure summary or the logs.
-                redacted = strip_url_userinfo(str(error))
+                # embeds the credential-bearing fetch url; strip its
+                # credentials -- userinfo or a presigned signature -- before
+                # it reaches the failure summary or the logs. The summary is
+                # raised, not logged, so the log-record seam never sees it.
+                redacted = strip_url_credentials(str(error))
                 # The name is untrusted GRR content and this is one of the
                 # sites that REPORTS a refused one, so it is escaped here
                 # too -- ``redacted`` already is, and leaving the bare name
@@ -1077,9 +1082,9 @@ def cache_resources(
                 # raise a summary at the end so the run still fails loudly.
                 # See gain#43.
                 # ``error`` may embed the credential-bearing fetch url (see the
-                # classify path above); redact any url userinfo before it
-                # reaches the summary or the reporter's ERROR log.
-                redacted = strip_url_userinfo(str(error))
+                # classify path above); strip its credentials before it
+                # reaches the raised summary or the reporter's ERROR log.
+                redacted = strip_url_credentials(str(error))
                 failures.append(f"{label} ({redacted})")
                 # One concise line per failure; the full summary is raised at
                 # the end. A stack trace per failed file would swamp a large

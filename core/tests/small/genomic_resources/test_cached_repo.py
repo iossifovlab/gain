@@ -1085,6 +1085,57 @@ def test_cache_resources_raises_when_all_classification_fails(
         assert cache_repo.get_resource_cached_files("bad") == set()
 
 
+#: The bearer half of a presigned url, in each of the two query spellings
+#: botocore emits -- they share no parameter name, so a redactor that
+#: recognises one by name leaks the other (gain#1339). Spelled here rather
+#: than imported from the credential-leak suite, which owns the same
+#: literals, because test modules here import from ``conftest`` only.
+_PRESIGNED_SIGNATURE = "Ns1gNaTuReDoNoTlOg%3D"
+_PRESIGNED_HOST_PATH = "grr.example.com:8443/repo/bad/data.txt"
+_PRESIGNED_QUERIES = pytest.mark.parametrize("query", [
+    (f"AWSAccessKeyId=alice&Signature={_PRESIGNED_SIGNATURE}"
+     "&Expires=1789022041"),
+    ("X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=alice%2F20260910"
+     "%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260910T063222Z"
+     "&X-Amz-Expires=100&X-Amz-SignedHeaders=host"
+     f"&X-Amz-Signature={_PRESIGNED_SIGNATURE}"),
+], ids=["sigv2", "sigv4"])
+
+
+@_PRESIGNED_QUERIES
+@pytest.mark.parametrize("failing_call", [
+    "classify_cached_resource_file", "download_cached_resource_file",
+], ids=["classify", "download"])
+def test_failure_summary_does_not_leak_a_presigned_signature(
+        query: str, failing_call: str,
+        cache_repository: CacheRepositoryBuilder,
+        mocker: MockerFixture,
+        caplog: pytest.LogCaptureFixture) -> None:
+    # Both phases collect a failure's text into the same summary, which is
+    # RAISED -- so the log-record seam never sees it, and what keeps the
+    # signature out is the site's own redaction (gain#1370).
+    with cache_repository({
+            "bad": {GR_CONF_FILE_NAME: "", "data.txt": "b"},
+            }) as cache_repo:
+
+        def presigned_fetch_failure(*_args: Any, **_kwargs: Any) -> Any:
+            raise OSError(
+                f"cannot fetch https://{_PRESIGNED_HOST_PATH}?{query}")
+
+        mocker.patch.object(
+            CachingProtocol, failing_call,
+            autospec=True, side_effect=presigned_fetch_failure)
+
+        with caplog.at_level(logging.ERROR), \
+                pytest.raises(RuntimeError) as excinfo:
+            cache_resources(cache_repo, None, workers=1)
+
+    assert _PRESIGNED_SIGNATURE not in str(excinfo.value)
+    assert _PRESIGNED_HOST_PATH in str(excinfo.value)
+    assert _PRESIGNED_SIGNATURE not in caplog.text
+    assert _PRESIGNED_HOST_PATH in caplog.text
+
+
 def test_cache_resources_parallel_workers(
         cache_repository: CacheRepositoryBuilder) -> None:
     """Test cache_resources with parallel workers."""

@@ -6,7 +6,14 @@ import importlib
 import os
 import pathlib
 import tomllib
-from collections.abc import Container, Iterator, Mapping
+from collections.abc import (
+    Callable,
+    Collection,
+    Container,
+    Iterable,
+    Iterator,
+    Mapping,
+)
 from typing import NamedTuple
 
 import pytest
@@ -1016,8 +1023,19 @@ CREDENTIAL_BEARING_GETTERS = frozenset({
     "_get_file_url",
 })
 
-#: The one call that makes such a url safe to show.
+#: The call that makes such a url safe to show: the redactor a *display*
+#: url takes.
 URL_REDACTOR = "strip_url_userinfo"
+
+#: The redactor a *message* takes -- the union of userinfo and presigned
+#: query, per ADR 0023's gain#1370 amendment.  Either one makes a url safe
+#: to show; the rule further down is that only this one is applied to an
+#: exception's text, where the argument's provenance does not say which
+#: it wants.
+MESSAGE_REDACTOR = "strip_url_credentials"
+
+#: Every redactor the sweeps here recognise.
+URL_REDACTORS = frozenset({URL_REDACTOR, MESSAGE_REDACTOR})
 
 
 class _UrlMessageSite(NamedTuple):
@@ -1080,9 +1098,9 @@ def _tainted_occurrences(
 
 
 def _is_redactor_call(node: ast.AST) -> bool:
-    """Is ``node`` the call that makes a credential-bearing url safe?"""
+    """Is ``node`` a call that makes a credential-bearing url safe?"""
     return (isinstance(node, ast.Call)
-            and _tail_name(node.func) == URL_REDACTOR)
+            and _tail_name(node.func) in URL_REDACTORS)
 
 
 def _credential_bearing_names(fn: _Function) -> Mapping[str, bool]:
@@ -1430,15 +1448,27 @@ def _credential_url_sites() -> tuple[tuple[str, _UrlMessageSite], ...]:
     same names the analysis keys on, so it cannot hide a site the full
     sweep would report.
     """
-    found: list[tuple[str, _UrlMessageSite]] = []
+    return _sites_in_gain(
+        CREDENTIAL_BEARING_GETTERS, _credential_url_message_sites)
+
+
+def _sites_in_gain[T](
+    names: Collection[str], sites_in: Callable[[str], Iterable[T]],
+) -> tuple[tuple[str, T], ...]:
+    """``sites_in`` applied to every ``gain`` module whose text has a name.
+
+    The package walk both credential sweeps share.  ``names`` must be
+    what ``sites_in`` keys on -- the filter is only sound as a filter on
+    the analysis's own vocabulary, never on a spelling of the finding.
+    """
+    found: list[tuple[str, T]] = []
     for py in pathlib.Path(GAIN_SRC).rglob("*.py"):
         source = py.read_text(encoding="utf8")
-        if not any(getter in source
-                   for getter in CREDENTIAL_BEARING_GETTERS):
+        if not any(name in source for name in names):
             continue
         found.extend(
             (str(py.relative_to(GAIN_SRC)), site)
-            for site in _credential_url_message_sites(source))
+            for site in sites_in(source))
     return tuple(found)
 
 
@@ -1544,9 +1574,12 @@ def test_no_gain_module_interpolates_a_credential_url_unredacted() -> None:
       its corrupt-publish report interpolate it raw.  Both are safe by
       protocol selection rather than by redaction -- ADR 0023 gives the
       argument -- and neither is visible here.
-    - *Through an exception's text.*  ``strip_url_userinfo(str(error))``
+    - *Through an exception's text.*  ``strip_url_credentials(str(error))``
       redacts a url that arrived inside a third-party message, never
-      through a url-valued name.
+      through a url-valued name.  Which redactor such a site takes is
+      the one question about it a static read *can* answer, and
+      :func:`test_no_gain_module_redacts_an_exceptions_text_with_the_narrow_redactor`
+      answers it.
 
     *The taint is bound by a spelling this reader does not model*: see
     :func:`_name_bindings`, which recognises ``x = e``, ``x: T = e`` and
@@ -1571,6 +1604,201 @@ def test_no_gain_module_interpolates_a_credential_url_unredacted() -> None:
         f"derives from the authed _fetch_url, and a message interpolating "
         f"one escapes before any handle exists -- wrap it in "
         f"{URL_REDACTOR}, as the sites around it do (ADR 0023, gain#1106)"
+    )
+
+
+class _ExceptionTextRedaction(NamedTuple):
+    """One place a redactor is applied to ``str(...)`` of an exception."""
+
+    function: str
+    redactor: str
+    line: int
+
+
+def _exception_text_redactions(
+    source: str,
+) -> tuple[_ExceptionTextRedaction, ...]:
+    """Every ``<redactor>(str(...))`` call in ``source``, any redactor.
+
+    Positional only: the argument must be a bare ``str(...)`` call.  An
+    exception's text bound to a name first (``text = str(error)``) is out
+    of reach, as is a redactor wrapped around an f-string that embeds
+    one; both are forms to model if a site ever takes them, not shapes
+    this reads.  The converse gap is stated too: ``str(...)`` of a url
+    *object* rendered for display would be read as an exception's text
+    and told to take the union.  No site spells a display url that way,
+    and one that did would want a different fence, not a looser one.
+
+    Read with :func:`_call_time_nodes`, so a site inside a nested ``def``
+    is reported once, under the ``def`` that runs it.
+    """
+    found: list[_ExceptionTextRedaction] = []
+    for fn in ast.walk(ast.parse(source)):
+        if not isinstance(fn, _Function):
+            continue
+        for node in _call_time_nodes(fn):
+            if not isinstance(node, ast.Call):
+                continue
+            redactor = _tail_name(node.func)
+            if redactor not in URL_REDACTORS:
+                continue
+            if len(node.args) != 1 or node.keywords:
+                continue
+            argument = node.args[0]
+            if isinstance(argument, ast.Call) \
+                    and _tail_name(argument.func) == "str":
+                found.append(
+                    _ExceptionTextRedaction(fn.name, redactor, node.lineno))
+    return tuple(found)
+
+
+EXCEPTION_TEXT_CASES: tuple[
+    tuple[str, tuple[tuple[str, str], ...]], ...,
+] = (
+    # The shape the rule exists for: the narrow redactor on an
+    # exception's text.
+    ("""
+def cache(resource):
+    try:
+        download(resource)
+    except Exception as error:
+        redacted = strip_url_userinfo(str(error))
+""",
+     (("cache", "strip_url_userinfo"),)),
+    # The same site done right.
+    ("""
+def cache(resource):
+    try:
+        download(resource)
+    except Exception as error:
+        redacted = strip_url_credentials(str(error))
+""",
+     (("cache", "strip_url_credentials"),)),
+    # Straight into a log call's arguments, with no name to bind it.
+    ("""
+def cleanup(self, path):
+    try:
+        self.filesystem.rm(path)
+    except Exception as error:
+        logger.warning("unable to remove %s: %s",
+                       strip_url_userinfo(path),
+                       strip_url_userinfo(str(error)))
+""",
+     (("cleanup", "strip_url_userinfo"),)),
+    # A display url is not an exception's text; the narrow redactor is
+    # what it should take, and this rule has nothing to say about it.
+    ("""
+def show(self, url):
+    return strip_url_userinfo(url)
+""",
+     ()),
+    # Reached through a module, as a site that imports the module rather
+    # than the name would spell it.
+    ("""
+def cache(resource):
+    try:
+        download(resource)
+    except Exception as error:
+        redacted = url_redaction.strip_url_userinfo(str(error))
+""",
+     (("cache", "strip_url_userinfo"),)),
+    # A site inside a nested ``def`` belongs to the ``def`` that runs it,
+    # and is reported once.
+    ("""
+def cache(resource):
+    def report(error):
+        return strip_url_credentials(str(error))
+    return report
+""",
+     (("report", "strip_url_credentials"),)),
+)
+
+
+@pytest.mark.parametrize(("source", "sites"), EXCEPTION_TEXT_CASES)
+def test_what_counts_as_a_redactor_applied_to_an_exceptions_text(
+    source: str, sites: tuple[tuple[str, str], ...],
+) -> None:
+    """The rule the sweep below applies, stated on its own.
+
+    Table-driven for the reason
+    :func:`test_what_counts_as_a_credential_url_reaching_a_message` gives.
+    """
+    assert tuple(
+        (site.function, site.redactor)
+        for site in _exception_text_redactions(source)
+    ) == sites
+
+
+#: Where the sweep must still find the union redactor on an exception's
+#: text.  Without this the rule below is green both when every message
+#: site takes the union and when the sweep stopped recognising the shape
+#: -- the same false green the credential-url anchor above guards.
+ANCHORED_MESSAGE_REDACTION_SITES = frozenset({
+    # The cached repository's classify and download failure paths, which
+    # feed the end-of-run summary and its ERROR log (gain#43).
+    "genomic_resources/cached_repository.py: _build_cache_worklist",
+    "genomic_resources/cached_repository.py: cache_resources",
+    # The download loop's retry warning (gain#620) and the temp-file
+    # cleanup warning that runs from its ``finally``.
+    "genomic_resources/fsspec_protocol.py: copy_resource_file",
+    "genomic_resources/fsspec_protocol.py: _discard_unpublished_file",
+})
+
+
+@functools.cache
+def _exception_text_redaction_sites() -> tuple[
+    tuple[str, _ExceptionTextRedaction], ...,
+]:
+    """Every redactor applied to an exception's text in ``gain``.
+
+    Scoped and filtered as :func:`_credential_url_sites` is.  Keying the
+    filter on ``(str(`` would be cheaper and wrong: a call wrapped across
+    lines has no such substring, and the file would never be read.
+    """
+    return _sites_in_gain(URL_REDACTORS, _exception_text_redactions)
+
+
+def test_the_sweep_finds_the_message_redaction_sites_it_is_anchored_to(
+) -> None:
+    redacted = {
+        f"{module}: {site.function}"
+        for module, site in _exception_text_redaction_sites()
+        if site.redactor == MESSAGE_REDACTOR
+    }
+
+    assert redacted >= ANCHORED_MESSAGE_REDACTION_SITES, (
+        f"the anchored message-redaction sites are no longer found: "
+        f"{sorted(ANCHORED_MESSAGE_REDACTION_SITES - redacted)}. Either "
+        f"the union redactor was renamed -- update MESSAGE_REDACTOR -- or "
+        f"a site no longer spells its redaction as "
+        f"{MESSAGE_REDACTOR}(str(...)). An unanchored rule passes on an "
+        f"empty scan"
+    )
+
+
+def test_no_gain_module_redacts_an_exceptions_text_with_the_narrow_redactor(
+) -> None:
+    """A message takes the union redactor; a display url takes the narrow one.
+
+    An exception's text is the one place the two can be confused, because
+    the argument's provenance does not say which it wants (ADR 0023,
+    gain#1370).  The log-record seam of gain#1363 does not make the
+    narrow redactor harmless here: it strips userinfo only, so a
+    presigned url narrowed on its way to a *log* still carries its
+    signature there -- and the raised summary and the ``exc_info`` tail
+    never reach the seam at all.
+    """
+    offenders = sorted(
+        f"{module}:{site.line}: {site.function}"
+        for module, site in _exception_text_redaction_sites()
+        if site.redactor == URL_REDACTOR
+    )
+    assert offenders == [], (
+        f"these sites redact an exception's text with the userinfo-only "
+        f"redactor: {offenders}. A message can embed a presigned url, "
+        f"whose credential is its query string -- redact it with "
+        f"{MESSAGE_REDACTOR}, and keep {URL_REDACTOR} for display urls "
+        f"(ADR 0023, gain#1370)"
     )
 
 

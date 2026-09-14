@@ -12,6 +12,7 @@
 [#1333](https://github.com/iossifovlab/gain/issues/1333),
 [#1339](https://github.com/iossifovlab/gain/issues/1339),
 [#1363](https://github.com/iossifovlab/gain/issues/1363),
+[#1370](https://github.com/iossifovlab/gain/issues/1370),
 [#1398](https://github.com/iossifovlab/gain/issues/1398)
 
 ## Context
@@ -504,9 +505,9 @@ That is what makes the handful of log lines still redacting an error message
 with the narrow `_strip_url_userinfo` — two in `cached_repository` and two in
 `fsspec_protocol` — safe today. They are safe by *reachability*, not because
 narrower is what they want, so a future path that carries a presigned url to
-one of them has to widen it. Tracked as gain#1370, and recorded here rather
-than left to inference, because this section is where a coverage claim of
-this ADR belongs.
+one of them has to widen it. Tracked as gain#1370 — **and closed by its
+amendment below** — and recorded here rather than left to inference,
+because this section is where a coverage claim of this ADR belongs.
 
 **What this does NOT cover.** The returned handle's later reads are unchanged
 (above). The htslib bracket is still **not serialised** while the verbosity
@@ -834,3 +835,74 @@ library?* Wrap the call, channel by channel. *Otherwise:* a
 as the fence demands — but if the message reaches a log, the seam has
 already made the omission harmless, and what the site's own redaction now
 protects is the unlogged `raise` and the traceback tail.
+
+## Amendment — gain#1370: a message takes the union redactor
+
+**Date:** 2026-09-14
+
+The gain#1339 amendment widened "url credential" to userinfo *or* a
+presigned query string and routed every structural remedy through the
+union redactor. It left four sites on the narrow, userinfo-only one, and
+said why they were safe: each redacts an *exception's text* — the cached
+repository's classify and download failure summaries, the download loop's
+retry warning and its temp-file cleanup warning — and no presigned url
+could reach any of them, because `_get_file_url` was the only producer and
+its four callers were all wrapped.
+
+Safe by reachability is an argument that has to be re-derived every time a
+url path is added, and the tree already held the path that would break it:
+`gain.utils.fs_utils.sign` presigns any url on any filesystem that can, and
+stood one caller away from handing a presigned url to a site that would
+have kept its signature. gain#1363's log-record seam did not change this —
+it strips userinfo only, by decision, and two of the four sites feed a
+summary that is *raised*, which no log seam renders.
+
+**Decided.** The four sites take `strip_url_credentials`. The rule is now
+one a reader applies without a trace: **a display url takes
+`strip_url_userinfo`; a message takes `strip_url_credentials`.** A display
+url keeps its query string because on a stored url that is part of the
+address; a message keeps nothing, because what a library embedded in its
+error is the library's to choose. The narrow redactor's remaining callers
+are all display urls or netloc derivation.
+
+The union now lives in `gain.utils.url_redaction`, beside the userinfo
+redactor gain#1363 moved there, as `strip_url_credentials`; the gain#1339
+amendment names it by its former private spelling. The cached repository
+is the second module that redacts a message by hand, and reaching the
+union from it meant either a private import across modules or one home
+for all three. The query half stays private (`_strip_url_query`): on its
+own it keeps userinfo, which makes it as narrow as the userinfo redactor
+and wrong for a message in the same way, and a name nothing can import
+needs no fence. The seam itself is unchanged and still userinfo-only.
+
+**The fence.** An architecture test reads every function in `gain` for a
+redactor applied to a `str(...)` call and refuses the narrow one there; an
+anchor requires the sweep to find the union at the four sites, so the rule
+cannot go green by ceasing to look. It is a sibling of the gain#1318 fence,
+not an extension of it: that fence traces a `_fetch_url`-derived *name* to
+a message and lists exception text as a boundary it cannot see across;
+this one asks the single question about exception text a static read can
+answer — which redactor wrapped it. The shape it reads is positional: an
+exception's text bound to a name before redaction, or embedded in an
+f-string under the redactor, is a form to model if a site ever takes it.
+
+**What the tests plant, and why there.** The download loop's read failure
+reaches the retry warning already redacted by the handle, so a test built
+on the read-failure harness proves the handle and stays green under either
+redactor. The retry-warning test therefore fails the *destination* open —
+the raw fsspec call the loop makes on its own store, the one place a
+store's error reaches the warning as rendered. That is also the shape the
+site's own redaction exists for: the gain#620 "last redaction on the way
+out", for an error raised by the `except` clause's machinery rather than by
+a read.
+
+**Not done.** `fs_utils.sign` is still uncalled and still presigns; whether
+it should route through anything, or exist, is its own question. And the
+retry loop still redacts its warning by hand rather than running each
+attempt under `_run_redacting_url_credentials`, which would hand the
+`except` clause an already-clean error — message and object both, so the
+`exc_info` tail too — and make the warning's own redaction and the
+"last redaction on the way out" unnecessary. This ADR's retryability
+decision exists to permit exactly that wrap; it is a change to the loop's
+structure rather than to which redactor a site takes, and belongs to its
+own issue.

@@ -13,7 +13,6 @@ import json
 import operator
 import os
 import pathlib
-import re
 import tempfile
 import time
 import uuid
@@ -76,7 +75,10 @@ from gain.templates.markdown_support import render_markdown as markdown
 from gain.templates.static_assets import repository_static_files
 from gain.utils.fs_utils import S3_PRESIGN_EXPIRATION_SECONDS
 from gain.utils.helpers import convert_size
-from gain.utils.url_redaction import strip_url_userinfo
+from gain.utils.url_redaction import (
+    strip_url_credentials,
+    strip_url_userinfo,
+)
 
 # Silence the spurious "[W::hts_idx_load3] The index file is older than the
 # data file" warning that htslib emits when a tabix/VCF index has an older
@@ -255,78 +257,6 @@ def _strip_netloc_userinfo(netloc: str) -> str:
     return netloc[at_index + 1:]
 
 
-# Matches the ``?query`` of any url embedded in a string, keeping the url up
-# to the ``?``. The credential of a PRESIGNED url lives there (gain#1339).
-#
-# The url body and the query both stop at whitespace OR at one of the
-# delimiters a library actually wraps a url in, because the whole point is to
-# act on a url embedded in a longer diagnostic message: pysam writes
-# ``file `<url>` `` and htslib's stderr writes ``file "<url>"``. Stopping at
-# whitespace alone would swallow those closing delimiters.
-#
-# The set is those two plus ``'`` and ``>``; it is deliberately NOT every
-# character that could follow a url. A message spelling one as ``URL(<url>)``
-# or ``<url>, retrying`` still loses its ``)`` or ``,`` to the query match.
-# That over-deletes -- it never leaks -- and adding closers on speculation
-# would start eating characters that are legal IN a query string. Only the
-# CLOSING half of a bracket pair is needed: a match starts at the scheme, so
-# an opening ``<`` is never inside either span.
-#
-# The scheme repeat is BOUNDED. Unbounded, the engine restarts a scan at
-# every alphanumeric position and runs to the end before failing on ``://``,
-# which is quadratic in the length of the message: a 6 KB error string -- an
-# aiohttp message carrying a response body is that big -- costs ~48 ms per
-# substitution against ~0.35 ms bounded, for identical output.
-_URL_QUERY_RE = re.compile(
-    r"(?P<url>[a-zA-Z][a-zA-Z0-9+.\-]{0,15}://[^\s?`\"'>]*)\?[^\s`\"'>]*")
-
-
-def _strip_url_query(text: str) -> str:
-    """Strip the ``?query`` from every url embedded in ``text``.
-
-    The counterpart of :func:`strip_url_userinfo` for the OTHER place a url
-    can carry a secret. An s3 GRR does not hand out its stored url: it hands
-    out ``filesystem.sign(url)``, a presigned url that is a bearer credential
-    for as long as it lives, and every part of that credential is a query
-    parameter.
-
-    The WHOLE query string goes, rather than a list of known-secret parameter
-    names -- botocore emits two presigned spellings and a name list written
-    from one passes the other through. The host and path, which say *which*
-    GRR failed, are kept. ADR 0023's gain#1339 amendment has the argument.
-    """
-    return _URL_QUERY_RE.sub(lambda match: match.group("url"), text)
-
-
-def _strip_url_credentials(text: str) -> str:
-    """Strip every url credential this module recognises from ``text``.
-
-    The union of the two redactors, and the one every redaction path should
-    reach for: a url can carry userinfo AND a query-string signature at the
-    same time, and dropping only one of them still leaks.
-
-    **The order is load-bearing.** Userinfo goes first because a password may
-    itself contain ``?``; strip the query first and
-    ``https://alice:p?w@host/f.gz`` becomes ``https://alice:p`` -- half the
-    password kept and the host, which is what says *which* GRR failed, gone.
-    Userinfo-first yields ``https://host/f.gz``.
-
-    :func:`strip_url_userinfo` stays separate and narrower because the
-    *display*-url callers want exactly it: a display url keeps its query
-    string, which on a stored (unsigned) url is part of the address rather
-    than a secret. That argument covers display urls only; ADR 0023's
-    gain#1339 amendment records why the few log lines still using the narrow
-    redactor on a *message* are safe (reachability) rather than right.
-    """
-    # Neither pattern can match without its literal, so this is an
-    # equivalence rather than a fast path -- and it is the common case: a GRR
-    # that is neither url-authed nor s3 carries no credential at all, and
-    # every open asks the predicate below whether it does.
-    if "@" not in text and "?" not in text:
-        return text
-    return _strip_url_query(strip_url_userinfo(text))
-
-
 def _display_url(url: str) -> str:
     """Return the credential-free ``scheme://netloc/path`` form of a url.
 
@@ -392,7 +322,7 @@ def _rebuild_error_without_url_credentials(
 def _error_without_url_credentials(exc: BaseException) -> BaseException:
     """Return a credential-free rebuild of ``exc``, or ``exc`` if it has none.
 
-    "Credential" is whatever :func:`_strip_url_credentials` recognises --
+    "Credential" is whatever :func:`strip_url_credentials` recognises --
     ``user:pass@`` userinfo and a presigned url's query string alike -- so a
     message carrying both loses both, in one rebuild.
 
@@ -404,7 +334,7 @@ def _error_without_url_credentials(exc: BaseException) -> BaseException:
     whether anything was redacted.
     """
     message = str(exc)
-    redacted = _strip_url_credentials(message)
+    redacted = strip_url_credentials(message)
     if redacted == message:
         return exc
     return _rebuild_error_without_url_credentials(exc, redacted)
@@ -2849,11 +2779,14 @@ class FsspecReadWriteProtocol(
                 if attempt >= _COPY_MAX_ATTEMPTS:
                     break
                 delay = _COPY_BACKOFF_BASE * (3 ** (attempt - 1))
+                # A read failure arrives already redacted by the handle; a
+                # failure of this clause's own machinery -- the temp-file
+                # open, the publish -- arrives as the store rendered it.
                 logger.warning(
                     "transient failure downloading (%s: %s): %s; "
                     "retrying in %ss (attempt %s/%s)",
                     dest_resource.resource_id, filename,
-                    strip_url_userinfo(str(error)),
+                    strip_url_credentials(str(error)),
                     delay, attempt + 1, _COPY_MAX_ATTEMPTS)
                 time.sleep(delay)
 
@@ -3045,11 +2978,12 @@ class FsspecReadWriteProtocol(
             # credential-bearing fetch url. That put the secret in the log by
             # a second route, one the retry loop's own redaction never sees
             # (gain#620). The cleanup error's own message is what this line
-            # is about; it and the path are redacted for the same reason.
+            # is about; it and the path are redacted for the same reason,
+            # the path as the display url it is.
             logger.warning(
                 "unable to remove the unpublished temp file %s: %s",
                 strip_url_userinfo(tmp_filepath),
-                strip_url_userinfo(str(error)))
+                strip_url_credentials(str(error)))
 
     def classify_resource_file(
             self, remote_resource: GenomicResource,
