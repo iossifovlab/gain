@@ -6,22 +6,18 @@ which is the base of every resource page -- so it ships on the gene
 score, gene models and reference genome pages too, none of which have a
 sortable table.  That is deliberate, and the price is bounded by two
 things this file pins: the script does nothing without opt-in markup,
-and it brings no new external origin along with it.
+and it reaches no external origin at all.
 
-Note what the second of those does NOT say.  The stylesheet is a real
-request on every resource page, sortable table or not -- only the font
-file behind it is conditional, since no page without an indicator
-renders a ``.material-symbols-outlined`` element.  What is pinned here
-is the origin set and the subsetting, which are what keep that request
-cheap; the request itself is the accepted cost of putting the include at
-the page base rather than in the statistics templates.
-
-The sorter's header indicator uses Material Symbols to match
-``grr_index.jinja``.  Subsetting with ``icon_names`` is what keeps this
-copy cheap, and asserting on the *set of origins* rather than on the URL
-keeps the next person from reaching for a CDN.  The browse page is
-subsetted too, to a larger set -- it draws a copy button and a tick that
-no resource page has; see ``test_grr_page_icon_font.py``.
+The icon face is declared on every resource page, sortable table or
+not, and that costs nothing: a browser fetches a font only for an
+element that uses the face, and no page without an indicator renders a
+``.material-symbols-outlined`` element.  Since gain#1400 the face is a
+``@font-face`` over a file of the repository itself, the same vendored
+subset the browse page uses -- so what is pinned here is that the page
+declares it from the repository and that the subset carries the three
+glyphs the sorter draws.  The subset is sized by the browse page, which
+draws a copy button and a tick that no resource page has; see
+``test_grr_page_icon_font.py`` for the equality that keeps it small.
 
 The markup contract these scripts read is asserted from the rendered
 statistics tables, in
@@ -30,6 +26,7 @@ statistics tables, in
 from __future__ import annotations
 
 import pathlib
+import re
 import textwrap
 from html.parser import HTMLParser
 from urllib.parse import urlparse
@@ -40,12 +37,28 @@ from gain.gene_scores.implementations.gene_scores_impl import (
 )
 from gain.genomic_resources.testing.builders import GeneScoreBuilder
 
-#: The origins a resource page is allowed to reach.  Both were already
-#: there for Roboto, so the icon font adds no third party.
-ALLOWED_ORIGINS = {"fonts.googleapis.com", "fonts.gstatic.com"}
+from tests.small.templates.page_css import font_faces_in
+from tests.small.templates.test_grr_page_icon_font import (
+    ICON_FONT,
+    TEXT_FONT,
+    vendored_icon_font,
+)
+from tests.small.templates.vendored_fonts import ligatures_in
 
-#: The only glyphs the sorter draws.
-ICON_NAMES = ("arrow_downward", "arrow_upward", "unfold_more")
+#: The only glyphs the sorter draws, written out by hand so the scan
+#: below is held to it rather than trusted.
+ICON_NAMES = frozenset({"arrow_downward", "arrow_upward", "unfold_more"})
+
+#: How the sorter's script names them: one ``var`` per indicator state,
+#: ``var IDLE = "unfold_more";``.
+_STATE_GLYPH = re.compile(
+    r"\bvar\s+(?:IDLE|ASCENDING|DESCENDING)\s*=\s*\"([a-z][a-z0-9_]*)\"",
+)
+
+
+def glyphs_the_sorter_draws(page: str) -> frozenset[str]:
+    """Every glyph name the sorter's script can put in a header."""
+    return frozenset(_STATE_GLYPH.findall(page))
 
 
 class _PageReader(HTMLParser):
@@ -113,33 +126,47 @@ def test_a_resource_page_loads_no_jquery(gene_score_page: str) -> None:
     assert "jquery" not in gene_score_page.lower()
 
 
-def test_a_resource_page_reaches_no_origin_it_did_not_already(
-    gene_score_page: str,
-) -> None:
-    """The icon font rides the origins Roboto already brought."""
+def test_a_resource_page_reaches_no_origin(gene_score_page: str) -> None:
+    """Nothing off the repository: no font host, no CDN, nothing."""
     hosts = {
         urlparse(url).hostname
         for url in read_page(gene_score_page).urls
         if urlparse(url).scheme in ("http", "https")
     }
 
-    assert hosts <= ALLOWED_ORIGINS, hosts
+    assert hosts == set()
 
 
-def test_the_icon_font_is_subsetted_to_the_glyphs_the_sorter_draws(
+def test_a_resource_page_declares_both_faces_from_the_repository(
     gene_score_page: str,
 ) -> None:
-    """Three glyphs, not the whole variable icon font.
+    """The typeface and the sorter's icon font, each climbing to ``.static/``.
 
-    Pinning the exact ``icon_names`` list here is what makes a fourth
-    glyph a deliberate edit rather than a silent download.  Three is the
-    whole set for a resource page: the sorter is the only thing here
-    drawing an icon, and it only ever shows an indicator state.
+    A resource page is published one directory per id segment below the
+    root, so its urls have to climb; how far is pinned on a published
+    repository by the CLI tests, where the file is really there.  What
+    this pins is that both faces are declared and that neither names a
+    host.
     """
-    stylesheets = [
-        url for url in read_page(gene_score_page).urls
-        if "Material+Symbols" in url
-    ]
+    faces = font_faces_in(gene_score_page)
 
-    assert len(stylesheets) == 1, stylesheets
-    assert f"icon_names={','.join(ICON_NAMES)}" in stylesheets[0]
+    assert set(faces) == {TEXT_FONT, ICON_FONT}
+    assert all(url.startswith("../") for url in faces.values()), faces
+    assert all(".static/" in url for url in faces.values()), faces
+
+
+def test_the_vendored_subset_carries_the_glyphs_the_sorter_draws(
+    gene_score_page: str,
+) -> None:
+    """Three glyphs the sorter can show, all in the one file it loads.
+
+    Containment against the file, not equality: the subset is sized by
+    the browse page and the equality lives with it.  What this guards
+    is the other direction -- an indicator state renamed in the script
+    without a re-subset would render as its name, in words, in every
+    sortable header.  The scan is held to the hand-written table first,
+    so a script rephrased past the regex fails here rather than
+    shrinking the set the file is checked against.
+    """
+    assert glyphs_the_sorter_draws(gene_score_page) == ICON_NAMES
+    assert ligatures_in(vendored_icon_font()) >= ICON_NAMES

@@ -19,6 +19,9 @@ dependencies:
   - pytest-mock
   - pytest-django
   - pytest-doctestplus=1.2
+  # Test-only: decodes the vendored woff2 fonts so the icon-font test
+  # can read which glyphs the subset carries (#1400).
+  - brotli
   - ruff=0.16.5
   - pylint
   - nodejs>=24
