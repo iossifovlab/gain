@@ -111,10 +111,9 @@ def containing_path(path: str | os.PathLike) -> str:
 def sign(filename: str) -> str:
     """Create a signed URL representing the given path.
 
-    On s3 the url is presigned for :data:`S3_PRESIGN_EXPIRATION_SECONDS`,
-    which is how long a handle opened on it stays usable (ADR 0023,
-    gain#1398). If the corresponding filesystem doesn't support signing
-    then the filename is returned as is.
+    On s3 the url is presigned for :data:`S3_PRESIGN_EXPIRATION_SECONDS`.
+    If the corresponding filesystem doesn't support signing then the
+    filename is returned as is.
     """
     fs, relative_path = url_to_fs(filename)
     try:
