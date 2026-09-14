@@ -55,7 +55,7 @@ def test_remote_bigwig_open_on_a_no_curl_build_is_refused_before_pybigwig(
     opened.assert_not_called()
     message = str(excinfo.value)
     assert "cache_dir" in message
-    assert "pyBigWig" in message
+    assert "curl" in message
 
 
 _SECRET = "s3cr3tDoNotLog"  # ruff: ignore[hardcoded-password-string]
@@ -81,13 +81,14 @@ def test_refusal_names_the_resource_but_not_the_credentialed_url() -> None:
 
 
 @pytest.mark.usefixtures("no_curl_pybigwig")
-def test_refusal_does_not_carry_a_presigned_signature(
+def test_refusal_is_raised_before_the_file_url_is_built(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
-    # An s3 GRR's credential sits in the query string of the presigned url
-    # ``_get_file_url`` produces, not in userinfo.
+    # An s3 GRR's credential is minted by ``_get_file_url`` itself -- the
+    # signature in the query string of the presigned url -- so the refusal
+    # has to come before that call: a url that was never built cannot leak.
     proto, resource = _an_http_protocol("i1425-presigned")
-    mocker.patch.object(
+    presign = mocker.patch.object(
         proto, "_get_file_url",
         return_value=(
             f"https://127.0.0.1:1/path/sub/res(1.0)/{_BIGWIG_FILE_NAME}"
@@ -97,6 +98,7 @@ def test_refusal_does_not_carry_a_presigned_signature(
     with pytest.raises(OSError) as excinfo:
         proto.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
 
+    presign.assert_not_called()
     assert _SIGNATURE not in str(excinfo.value)
 
 
@@ -171,7 +173,9 @@ def test_bigwig_opens_over_a_scheme_the_build_can_reach(
 def test_bigwig_over_a_remote_scheme_is_refused_by_a_no_curl_build(
     bigwig_proto: FsspecReadOnlyProtocol, grr_scheme: str,
 ) -> None:
-    if grr_scheme == "file" or pyBigWig.remote:  # pylint: disable=I1101
+    if grr_scheme == "file":
+        pytest.skip("a file GRR is not guarded")
+    if pyBigWig.remote:  # pylint: disable=I1101
         pytest.skip("this pyBigWig build can open remote files")
     resource = bigwig_proto.get_resource("one")
 
