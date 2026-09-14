@@ -204,6 +204,13 @@ and the ``get_file_chromosomes`` memo.  The abstract set is now exactly
 ``open``, ``get_all_records``, ``get_records_in_region``,
 ``find_chromosome_length`` and ``_load_file_chromosomes``.
 
+#361 added the header to what that base ``close()`` releases, under the
+default ``header_mode: file`` only.  An out-of-tree backend that sets
+``header`` at construction and consults it in ``open()`` -- rather than
+reading it off the file there, as the tabular backends do -- reopens with
+``None`` unless it takes ``header_mode: list``, which is what "configured, not
+read from the file" means to the release policy.
+
 **For an out-of-tree backend this breaks in the OPPOSITE shape to the two
 renames above: nothing fails at instantiation any more.**  A backend that
 already defines ``close()`` keeps working and simply acquires an obligation --

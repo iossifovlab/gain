@@ -124,6 +124,43 @@ from .test_backend_record_contract import (
 )
 
 
+def _a_tabular_score(
+    tmp_path: pathlib.Path, *, tabix: bool,
+    header_mode: str = "file", add_prefix: str | None = None,
+) -> Backend:
+    """A one-row tabular score whose score is addressed by column NAME.
+
+    Name-addressed on purpose: resolving a name is the one read of
+    ``table.header`` a score cannot do without, and it does it on every
+    ``open()``, so this is the fixture through which a released-and-not-
+    rebuilt header becomes a visible failure rather than a retained tuple
+    nobody looks at.  ``header_mode`` decides where that header comes from --
+    the file (``"file"``), or the config (``"list"``); the default is left
+    OUT of the config rather than spelled, because the default is the case
+    under test.  ``add_prefix`` maps the file's contig ``1`` into reference
+    space, for the fixtures that need a populated chromosome map.
+    """
+    builder = (
+        a_position_score()
+        .with_score("s_float", "float")
+        .with_data("""
+            chrom  pos_begin  s_float
+            1      10         0.5
+        """)
+    )
+    if header_mode != "file":
+        builder = builder.with_header_mode(header_mode)
+    if add_prefix is not None:
+        builder = builder.with_chrom_mapping(add_prefix=add_prefix)
+    if tabix:
+        builder = builder.with_tabix()
+    repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
+    return (
+        PositionScore(repo.get_resource("pos")),
+        (f"{add_prefix or ''}1", 10, 10),
+    )
+
+
 def _build_mapped_tabular(
     tmp_path: pathlib.Path, *, tabix: bool,
 ) -> Backend:
@@ -145,19 +182,7 @@ def _build_mapped_tabular(
     ``unmap_chromosome('chr1') -> 'chr1'`` against a file that has no ``chr1``,
     and return no records at all.
     """
-    builder = (
-        a_position_score()
-        .with_score("s_float", "float")
-        .with_chrom_mapping(add_prefix="chr")
-        .with_data("""
-            chrom  pos_begin  s_float
-            1      10         0.5
-        """)
-    )
-    if tabix:
-        builder = builder.with_tabix()
-    repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
-    return PositionScore(repo.get_resource("pos")), ("chr1", 10, 10)
+    return _a_tabular_score(tmp_path, tabix=tabix, add_prefix="chr")
 
 
 def _build_mapped_inmemory(tmp_path: pathlib.Path) -> Backend:
@@ -491,6 +516,14 @@ def test_every_backend_in_the_tree_is_in_the_backend_list(
 # that pass without releasing it is to name it here with a reason -- which is a
 # decision recorded in a diff, rather than a field that quietly joined what a
 # closed table retains.
+#
+# It is keyed by FIELD, so it cannot state a carve-out that depends on where
+# the field's value came from.  ``header`` is that case: released under
+# ``header_mode: file``, kept under ``list``.  No fixture here runs in list
+# mode, so ``header`` is deliberately NOT on this list -- its list-mode
+# retention is pinned by the two ``configured_header`` tests below instead.
+# Adding a list-mode fixture to _LIFETIME_BACKENDS would need an entry here,
+# and that entry would exempt the file-mode fixtures with it (gain#361).
 _MAY_SURVIVE_CLOSE = {
     "chrom_key": "core column key: resolved from the definition and header",
     "pos_begin_key": "core column key: resolved from the definition and header",
@@ -636,34 +669,6 @@ def test_a_closed_table_releases_what_open_established(
     )
 
 
-def _a_tabular_score(
-    tmp_path: pathlib.Path, *, tabix: bool, header_mode: str = "file",
-) -> Backend:
-    """A one-row tabular score whose score is addressed by column NAME.
-
-    Name-addressed on purpose: resolving a name is the one read of
-    ``table.header`` a score performs, and it performs it on every ``open()``,
-    so this is the fixture through which a released-and-not-rebuilt header
-    becomes a visible failure rather than a retained tuple nobody looks at.
-    ``header_mode`` decides where that header comes from -- the file
-    (``"file"``), or the config (``"list"``).
-    """
-    builder = (
-        a_position_score()
-        .with_score("s_float", "float")
-        .with_data("""
-            chrom  pos_begin  s_float
-            1      10         0.5
-        """)
-    )
-    if header_mode != "file":
-        builder = builder.with_header_mode(header_mode)
-    if tabix:
-        builder = builder.with_tabix()
-    repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
-    return PositionScore(repo.get_resource("pos")), ("1", 10, 10)
-
-
 @pytest.mark.parametrize("tabix", [False, True], ids=["inmemory", "tabix"])
 def test_a_closed_table_releases_the_header_it_read_off_the_file(
     *, tabix: bool, tmp_path: pathlib.Path,
@@ -673,11 +678,11 @@ def test_a_closed_table_releases_the_header_it_read_off_the_file(
     Both tabular backends read their column names off the file in ``open()``
     and rebuild them on every reopen, so a closed table that keeps them holds
     file-derived state for nothing -- the case the release policy exists for.
-    Asked directly rather than through
-    test_a_closed_table_releases_what_open_established, because that test
-    exempts ``header`` by name for the backends that genuinely cannot rebuild
-    it, and an exemption by name cannot tell a retained file header from a
-    retained configured one (gain#361).
+    test_a_closed_table_releases_what_open_established catches it too, today;
+    this one is asked by MODE, and stays standing if ``header`` ever
+    re-enters ``_MAY_SURVIVE_CLOSE`` -- an exemption by field name cannot tell
+    a retained file header from a retained configured one, which is how the
+    file-mode header went unreleased in the first place (gain#361).
     """
     score, region = _a_tabular_score(tmp_path, tabix=tabix)
     table = score.table

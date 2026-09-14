@@ -546,8 +546,8 @@ class GenomicPositionTable(abc.ABC):
         Released here is the base class's own file-derived state: the
         ``get_file_chromosomes`` memo and the chromosome mapping
         :meth:`_build_chrom_mapping` derives from it, which that method rebuilds
-        -- memo included -- on every ``open()``, and the header when it is the
-        file's.  **A backend's ``close()`` must
+        -- memo included -- on every ``open()``; and the header, when
+        ``header_mode`` says it is the file's.  **A backend's ``close()`` must
         call up into this one**; what each backend releases on top of it is its
         own, and ``test_table_lifetime.py`` holds all four to the policy: it
         opens a table, *reads* through it, closes it, and then requires both
@@ -563,9 +563,10 @@ class GenomicPositionTable(abc.ABC):
         self._chromosome_index = None
         # The header too, when it is the file's: under ``header_mode: file``
         # every backend that has one reads it off the file -- the tabular two
-        # in open(), the VCF backend at construction -- and nothing reads it
-        # back after the score over the table is built, so it is retained for
-        # nothing.  Under ``list`` it is configuration, never rebuilt, and a
+        # in open(), where the next open() reads it again before anything
+        # resolves against it, and the VCF backend at construction, where the
+        # score definitions built from it are the only thing that needs it.
+        # Under ``list`` it is configuration, never rebuilt, and a
         # name-addressed score resolves against it on every open(); under
         # ``none`` there is none.
         if self.header_mode == "file":
