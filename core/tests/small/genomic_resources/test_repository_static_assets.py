@@ -1,12 +1,14 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""The repository carries the search engine its index page runs on.
+"""The repository carries what its pages load: the search engine and fonts.
 
 ``grr_manage repo-index`` and ``repo-info`` publish gain's vendored
-sqlite-wasm into the repository, under ``.static/sqlite-wasm-<version>/``
-beside ``index.html``, and the page imports it from there
-(``gain.templates.static_assets``, gain#1335).  These pin the two halves
-of that contract against each other through the CLI: what the page asks
-for is what the same run put on disk.
+sqlite-wasm and the two font files into the repository, under
+``.static/`` beside ``index.html``; the index page imports the engine
+from there and every page declares its ``@font-face`` over the fonts
+(``gain.templates.static_assets``, gain#1335 and gain#1400).  These pin
+the two halves of that contract against each other through the CLI:
+what a page asks for is what the same run put on disk -- including for
+the pages published below the root, whose urls have to climb.
 """
 import os
 import pathlib

@@ -294,11 +294,14 @@ A resource without a committed manifest is left out of the index,
 reported by id, and fails the ``repo-index`` run.
 
 The repository index page's search runs on SQLite compiled to
-WebAssembly, and whichever command publishes the page publishes that
-engine beside it, under ``.static/sqlite-wasm-<version>/`` at the
-repository root — so a published repository carries everything its
-page needs and loads no code from a CDN at view time. The files change
-only when gain's vendored copy does; a rerun on an unchanged
+WebAssembly, and the pages set their text in Roboto and draw their
+icons from a Material Symbols subset. Whichever command publishes the
+pages publishes all three beside them, under ``.static/`` at the
+repository root (``sqlite-wasm-<version>/`` and ``fonts/``) — so a
+published repository carries everything its pages need and loads
+nothing from a CDN or a font host at view time; on an intranet or
+behind an air gap the pages render as they do on the web. The files
+change only when gain's vendored copies do; a rerun on an unchanged
 repository leaves them untouched. Publish (or commit, for a repository
 kept in git) the ``.static`` directory along with ``index.html``.
 
