@@ -95,6 +95,6 @@ class PositionScoreImplementation(GenomicScoreImplementation):
         page (gain#1448).  The probe stays a repair-time cost.  A bigWig
         header is exact, and is the one reason a render opens a table.
         """
-        if not self.score.table.chrom_length_source.is_exact:
+        if not self.score.chrom_length_source.is_exact:
             return {}
         return self.get_chrom_lengths(None)

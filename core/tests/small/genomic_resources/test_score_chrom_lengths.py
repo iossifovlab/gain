@@ -324,7 +324,7 @@ def test_the_genome_answers_no_question_the_table_would_refuse(
         derive_chrom_length(score, "chr2", genome)
 
 
-@pytest.mark.parametrize(("build", "expected_source", "expected_exact"), [
+_EACH_BACKENDS_SOURCE = [
     pytest.param(
         _an_inmemory_score, ChromLengthSource.TABLE_EXTENT, False,
         id="inmemory"),
@@ -337,7 +337,11 @@ def test_the_genome_answers_no_question_the_table_would_refuse(
     pytest.param(
         _a_bigwig_score, ChromLengthSource.BIGWIG, True,
         id="bigwig"),
-])
+]
+
+
+@pytest.mark.parametrize(
+    ("build", "expected_source", "expected_exact"), _EACH_BACKENDS_SOURCE)
 def test_each_backends_source_and_its_exactness(
     build: Callable[[pathlib.Path], GenomicScore],
     expected_source: ChromLengthSource,
@@ -359,6 +363,31 @@ def test_each_backends_source_and_its_exactness(
 
     assert source is expected_source
     assert source.is_exact is expected_exact
+
+
+@pytest.mark.parametrize(
+    ("build", "expected_source", "expected_exact"), _EACH_BACKENDS_SOURCE)
+def test_a_score_names_its_length_source_without_opening(
+    build: Callable[[pathlib.Path], GenomicScore],
+    expected_source: ChromLengthSource,
+    expected_exact: bool,
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The source is a fact about the format, so a closed score can say it.
+
+    What coverage's second rung asks before deciding whether to open the
+    table at all (gain#1448): a source that is never exact is not worth
+    the open.  Answered through the score rather than its table, so the
+    statistics implementation need not know the backend (gain#410).
+    """
+    score = build(tmp_path)
+    opened = mocker.spy(score, "open")
+
+    source = score.chrom_length_source
+
+    assert source is expected_source
+    opened.assert_not_called()
 
 
 def test_a_reference_genome_length_is_exact() -> None:
