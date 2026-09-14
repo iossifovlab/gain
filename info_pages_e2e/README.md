@@ -46,13 +46,18 @@ than skipping (`global-setup.ts`).
 
 `serving.ts` answers every request the page under test makes by reading
 a file out of the generated GRR, and aborts anything else. Everything a
-page loads -- the sqlite-wasm the search runs on, published under
-`.static/` by `repo-index`, included -- is a file of the GRR, so nothing
-is vendored here: `node_modules` holds the toolchain and nothing the
-browser sees. The "refuses every request" spec pins both halves: the
-search engine's files were asked for from the GRR origin and served, and
-the only requests off that origin were the Google Fonts stylesheets,
-aborted.
+page loads -- the sqlite-wasm the search runs on and the two fonts,
+published under `.static/` by `repo-index` -- is a file of the GRR, so
+nothing is vendored here: `node_modules` holds the toolchain and nothing
+the browser sees. The "refuses every request" spec pins both halves: the
+engine's files and the fonts were asked for from the GRR origin and
+served, and nothing at all was asked for off it. Because nothing is, the
+spec proves the abort on a request it makes itself; an off-origin
+request from the page is a bug, not a known cost the suite tolerates
+(iossifovlab/gain#1400 -- before it, the Google Fonts stylesheets were
+the one thing aborted). A second spec checks the icon font did what it
+is for: a header indicator renders one glyph wide, not as the word
+`unfold_more`.
 
 The GRR is served from a **virtual origin**, `https://grr.test/`.
 Nothing listens on a socket; the origin exists only inside Playwright's

@@ -204,41 +204,89 @@ test('the harness refuses every request it does not serve itself', async ({
   page.on('requestfailed', (request) => failed.add(request.url()));
 
   await openBrowseIndex(page);
+  /* Fonts are fetched lazily, once layout finds an element that uses
+   * the face; the status line above proves the page ran, not that its
+   * fonts were asked for yet. */
+  await page.evaluate(() => document.fonts.ready);
 
-  /* The pages link a Google Fonts stylesheet for the sort indicator's
-   * glyphs, so there is always at least one request that must not be
-   * answered -- which is what keeps the check below from passing
-   * vacuously on a page that happened to ask for nothing. */
-  const fonts = requested.filter((url) => url.includes('fonts.googleapis.com'));
-  expect(fonts.length).toBeGreaterThan(0);
-  expect(fonts.filter((url) => !failed.has(url))).toEqual([]);
-
-  /* And the fonts are the *only* thing asked for off the GRR's origin.
-   * Asked for, not let through: a script the page needed from a CDN
-   * would be aborted like the fonts and leave the page without whatever
-   * that script did. The Jenkins stage runs this suite under
+  /* Nothing is asked for off the GRR's origin: the search engine and
+   * both fonts ship inside the repository (iossifovlab/gain#1335,
+   * iossifovlab/gain#1400), so a page behind an air gap is the same
+   * page. Asked for, not let through: a script the page needed from a
+   * CDN would be aborted and leave the page without whatever that
+   * script did. The Jenkins stage runs this suite under
    * `docker run --network none`, so a page that grew a dependency on
    * the network would hang there; failing here instead is the whole
    * point of aborting rather than allowing. */
   const offOrigin = requested.filter(
     (url) => !SERVED_HOSTS.includes(new URL(url).host),
   );
-  expect(offOrigin).toEqual(fonts);
+  expect(offOrigin).toEqual([]);
 
-  /* The search engine came from the repository, and all of it did: the
-   * page imports `index.mjs` from the GRR's own `.static/`, and the
-   * module then locates `sqlite3.wasm` beside itself
-   * (iossifovlab/gain#1335). Both files, by name and host -- the module
-   * loading while the wasm failed would leave the search dead and this
-   * list one entry short. */
-  const engine = requested.filter((url) => url.includes('/.static/'));
-  const hostAndName = (url: string) => {
+  /* That list would be empty on a harness that let everything through
+   * just as it is on one that refuses, so the refusal is proven on a
+   * request this test makes itself. Until iossifovlab/gain#1400 the
+   * Google Fonts stylesheet played this part; now nothing on the page
+   * asks for the network, and an off-origin request in the list above
+   * is a bug in the page rather than a known cost. */
+  const probe = 'https://example.invalid/probe';
+  const outcome = await page.evaluate(
+    (url) => fetch(url).then(() => 'answered', () => 'refused'), probe,
+  );
+  expect(outcome).toBe('refused');
+  expect(failed.has(probe)).toBe(true);
+
+  /* Everything the page loads from `.static/`, by host and name, and
+   * all of it served: the module and the wasm it locates beside itself
+   * (the module loading while the wasm failed would leave the search
+   * dead), and the two font files (a face that failed to load would
+   * render every icon as its name in words). The names carry a digest
+   * of the file's bytes, so only the stem is pinned. */
+  const vendored = requested.filter((url) => url.includes('/.static/'));
+  const hostAndStem = (url: string) => {
     const { host, pathname } = new URL(url);
-    return `${host}${pathname.slice(pathname.lastIndexOf('/'))}`;
+    const name = pathname.slice(pathname.lastIndexOf('/') + 1);
+    return `${host}/${name.replace(/\.[0-9a-f]{8}\.woff2$/, '.woff2')}`;
   };
-  expect(engine.map(hostAndName).sort())
-    .toEqual(['grr.test/index.mjs', 'grr.test/sqlite3.wasm']);
-  expect(engine.filter((url) => failed.has(url))).toEqual([]);
+  expect(vendored.map(hostAndStem).sort()).toEqual([
+    'grr.test/index.mjs',
+    'grr.test/material-symbols-outlined-v371.woff2',
+    'grr.test/roboto-v51-latin.woff2',
+    'grr.test/sqlite3.wasm',
+  ]);
+  expect(vendored.filter((url) => failed.has(url))).toEqual([]);
+});
+
+test('an icon renders as a glyph, not as its name', async ({ page }) => {
+  await openBrowseIndex(page);
+  await page.evaluate(() => document.fonts.ready);
+
+  /* The face itself, by its own report: `document.fonts.check()` is
+   * not used because it answers true for a family no `@font-face`
+   * declares at all, which is precisely the failure being looked for. */
+  const status = await page.evaluate(() => [...document.fonts]
+    .filter((face) => face.family.replace(/"/g, '') === 'Material Symbols Outlined')
+    .map((face) => face.status));
+  expect(status).toEqual(['loaded']);
+
+  /* Then what the reader sees. Material Symbols draws by ligature: the
+   * header indicator's text is `unfold_more`, and the font substitutes
+   * one glyph for the eleven letters -- one em wide, where the word is
+   * several. The same element measured in a text face is that word,
+   * which is what keeps the first measurement from passing on an
+   * element that was hidden or empty. */
+  const indicator = page.locator('#id-sort-indicator');
+  await expect(indicator).toHaveText('unfold_more');
+  const widths = await indicator.evaluate((el: HTMLElement) => {
+    const em = parseFloat(getComputedStyle(el).fontSize);
+    const asGlyph = el.getBoundingClientRect().width / em;
+    el.style.fontFamily = 'monospace';
+    const asWord = el.getBoundingClientRect().width / em;
+    el.style.fontFamily = '';
+    return { asGlyph, asWord };
+  });
+  expect(widths.asGlyph).toBeLessThanOrEqual(1.25);
+  expect(widths.asWord).toBeGreaterThan(4);
 });
 
 /* ---- Copy-to-clipboard ---- */
