@@ -76,6 +76,7 @@ and fails the ones no fixture builds.
 """
 from __future__ import annotations
 
+import asyncio
 import gc
 import importlib
 import inspect
@@ -657,6 +658,70 @@ def test_a_closed_table_releases_the_header_it_read_off_the_file(
     assert table.header is None, (
         f"{type(table).__name__}.close() kept the header it read off the "
         f"file: {table.header!r}")
+
+
+@pytest.mark.parametrize("error", [
+    pytest.param(ValueError("refused"), id="exception"),
+    pytest.param(asyncio.CancelledError(), id="base-exception"),
+])
+@pytest.mark.parametrize("build,_score_line", _LIFETIME_BACKENDS)
+def test_a_failed_open_releases_what_it_had_established(
+    build: object,
+    _score_line: object,
+    error: BaseException,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A raise from ``open()``'s setup releases what the open established.
+
+    The release policy's other half, asked of every backend at once.  Every
+    file-backed ``open()`` acquires its handle first and then does the setup
+    that can refuse the table; nothing above ``open()`` has been told the
+    table is open when that setup raises, so no caller will ever ``close()``
+    it -- the release is ``open()``'s own job
+    (``GenomicPositionTable._releasing_on_raise``, gain#627).
+
+    The raise is injected at ``_build_chrom_mapping``, which every backend
+    calls after its acquire, and the fields the open had established by then
+    are read at the moment of the raise -- that is what makes the pass
+    non-vacuous: a backend that established nothing before raising would
+    have nothing to leak, and this says so.  A ``CancelledError`` is the
+    ``BaseException`` a dask-cancelled open arrives as; a guard that sees
+    only ``Exception`` leaks on it.
+    """
+    score, _region = build(tmp_path)  # type: ignore[operator]
+    table = score.table
+    before = dict(vars(table))
+    at_raise: dict[str, object] = {}
+
+    def raise_after_snapshot() -> None:
+        at_raise.update(vars(table))
+        raise error
+
+    table._build_chrom_mapping = raise_after_snapshot
+
+    with pytest.raises(type(error)) as raised:
+        table.open()
+
+    assert raised.value is error
+    established = {
+        name for name, value in at_raise.items()
+        if name not in before or before[name] is not value
+    }
+    assert established - {"_build_chrom_mapping"}, (
+        f"{type(table).__name__}.open() established nothing before "
+        f"_build_chrom_mapping; this test would be checking nothing")
+    retained = sorted(
+        name for name, value in vars(table).items()
+        if name in established
+        and not _is_released(value, before.get(name))
+        and name not in _MAY_SURVIVE_CLOSE
+        and name != "_build_chrom_mapping"
+    )
+    assert not retained, (
+        f"{type(table).__name__}.open() raised after establishing "
+        f"{retained} and left them held: nothing above open() will close "
+        f"a table it was never told is open, so open() must release what it "
+        f"acquired before re-raising (gain#627).")
 
 
 @pytest.mark.parametrize("build,_score_line", _LIFETIME_BACKENDS)

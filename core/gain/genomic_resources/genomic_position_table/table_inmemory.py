@@ -130,84 +130,87 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
         self.str_stream = self.genomic_resource.open_raw_file(
             self.definition.filename, mode="rt", compression=compression)
         assert self.str_stream is not None
-        clmn_sep, strip_chars, space_replacement = \
-            InmemoryGenomicPositionTable.FORMAT_DEF[self.format]
-        if self.header_mode == "file":
-            hcs = None
+        with self._releasing_on_raise():
+            clmn_sep, strip_chars, space_replacement = \
+                InmemoryGenomicPositionTable.FORMAT_DEF[self.format]
+            if self.header_mode == "file":
+                hcs = None
+                try:
+                    for row in self.str_stream:
+                        row = row.strip(strip_chars)
+                        if not row:
+                            continue
+                        hcs = row.split(clmn_sep)
+                        break
+                except UnicodeDecodeError as exc:
+                    raise self._not_text_error() from exc
+                if not hcs:
+                    raise ValueError("No header found")
+
+                self.header = tuple(hcs)
+            col_number = len(self.header) if self.header else None
+
+            self._set_core_column_keys()
+
+            # Buffer the raw rows so the file contigs are known before the
+            # parser is built.  This two-pass read is needed ONLY for a
+            # del_prefix / add_prefix chrom_mapping, whose reverse map derives
+            # the reference contigs from the observed file contigs -- so the
+            # map, and hence the parser, cannot be built until the file has
+            # been scanned.  With no chrom_mapping, or a
+            # chrom_mapping.filename (both give a rev_chrom_map that does not
+            # depend on the file contigs), the parser could be built up front
+            # and applied streaming; we keep the single code path here because
+            # for an in-memory table the transient buffer is harmless (a list
+            # of row pointers, freed on return, leaving only records_by_chr
+            # live).  The tabix migration must NOT buffer -- see #236-#238.
+            raw_rows: list[tuple[str, ...]] = []
+            seen_chromosomes: set[str] = set()
             try:
                 for row in self.str_stream:
                     row = row.strip(strip_chars)
                     if not row:
                         continue
-                    hcs = row.split(clmn_sep)
-                    break
+                    columns = tuple(row.split(clmn_sep))
+                    if col_number and len(columns) != col_number:
+                        raise ValueError("Inconsistent number of columns")
+
+                    col_number = len(columns)
+                    if space_replacement:
+                        columns = tuple(
+                            "" if v == "EMPTY" else v for v in columns)
+                    raw_rows.append(columns)
+                    seen_chromosomes.add(columns[self.chrom_key])
             except UnicodeDecodeError as exc:
                 raise self._not_text_error() from exc
-            if not hcs:
-                raise ValueError("No header found")
 
-            self.header = tuple(hcs)
-        col_number = len(self.header) if self.header else None
+            self._scanned_chromosomes = sorted(seen_chromosomes)
+            self._build_chrom_mapping()
 
-        self._set_core_column_keys()
+            parser = build_tabular_parser(
+                self.chrom_key,
+                self.pos_begin_key,
+                self.pos_end_key,
+                self.ref_key,
+                self.alt_key,
+                self.rev_chrom_map,
+                zero_based=self.zero_based,
+            )
 
-        # Buffer the raw rows so the file contigs are known before the parser
-        # is built.  This two-pass read is needed ONLY for a del_prefix /
-        # add_prefix chrom_mapping, whose reverse map derives the reference
-        # contigs from the observed file contigs -- so the map, and hence the
-        # parser, cannot be built until the file has been scanned.  With no
-        # chrom_mapping, or a chrom_mapping.filename (both give a rev_chrom_map
-        # that does not depend on the file contigs), the parser could be built
-        # up front and applied streaming; we keep the single code path here
-        # because for an in-memory table the transient buffer is harmless (a
-        # list of row pointers, freed on return, leaving only records_by_chr
-        # live).  The tabix migration must NOT buffer -- see #236-#238.
-        raw_rows: list[tuple[str, ...]] = []
-        seen_chromosomes: set[str] = set()
-        try:
-            for row in self.str_stream:
-                row = row.strip(strip_chars)
-                if not row:
+            records_by_chr: dict[str, list[Record]] = \
+                collections.defaultdict(list)
+            for columns in raw_rows:
+                record = parser(columns)
+                if record is None:
+                    # contig absent from the chromosome map -- dropped,
+                    # exactly as the transform does today
                     continue
-                columns = tuple(row.split(clmn_sep))
-                if col_number and len(columns) != col_number:
-                    raise ValueError("Inconsistent number of columns")
+                records_by_chr[record[CHROM]].append(record)
 
-                col_number = len(columns)
-                if space_replacement:
-                    columns = tuple(
-                        "" if v == "EMPTY" else v for v in columns)
-                raw_rows.append(columns)
-                seen_chromosomes.add(columns[self.chrom_key])
-        except UnicodeDecodeError as exc:
-            raise self._not_text_error() from exc
-
-        self._scanned_chromosomes = sorted(seen_chromosomes)
-        self._build_chrom_mapping()
-
-        parser = build_tabular_parser(
-            self.chrom_key,
-            self.pos_begin_key,
-            self.pos_end_key,
-            self.ref_key,
-            self.alt_key,
-            self.rev_chrom_map,
-            zero_based=self.zero_based,
-        )
-
-        records_by_chr: dict[str, list[Record]] = collections.defaultdict(list)
-        for columns in raw_rows:
-            record = parser(columns)
-            if record is None:
-                # contig absent from the chromosome map -- dropped, exactly as
-                # the transform does today
-                continue
-            records_by_chr[record[CHROM]].append(record)
-
-        self.records_by_chr = {
-            c: sorted(recs, key=sort_key)
-            for c, recs in records_by_chr.items()
-        }
+            self.records_by_chr = {
+                c: sorted(recs, key=sort_key)
+                for c, recs in records_by_chr.items()
+            }
         return self
 
     def _load_file_chromosomes(self) -> list[str]:
