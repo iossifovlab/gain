@@ -22,6 +22,7 @@ dependencies:
   # Test-only: decodes the vendored woff2 fonts so the icon-font test
   # can read which glyphs the subset carries (#1400).
   - brotli
+  - fonttools
   - ruff=0.16.5
   - pylint
   - nodejs>=24

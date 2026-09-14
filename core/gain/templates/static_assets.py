@@ -85,14 +85,25 @@ def _published_font_path(name: str) -> str:
     return f"{FONTS_PATH}/{stem}.{digest[:8]}.{suffix}"
 
 
-#: The page's typeface: Roboto's latin subset, variable across weights.
-ROBOTO_FONT_PATH: str = _published_font_path("roboto-v51-latin.woff2")
+#: The vendored font files, named once: the Google Fonts release number
+#: is in the name, so a refresh that changes it is an edit here and in
+#: the README's digests (and in the e2e spec that names the stems).
+#:
+#: - The page's typeface: Roboto's latin subset, variable across weights.
+#: - The icon font: Material Symbols Outlined, subsetted to the glyphs
+#:   the pages draw -- ``tests/small/templates/test_grr_page_icon_font.py``
+#:   is the authority on which those are.
+_ROBOTO = "roboto-v51-latin.woff2"
+_MATERIAL_SYMBOLS = "material-symbols-outlined-v371.woff2"
 
-#: The icon font: Material Symbols Outlined, subsetted to the glyphs the
-#: pages draw -- ``tests/small/templates/test_grr_page_icon_font.py`` is
-#: the authority on which those are.
-MATERIAL_SYMBOLS_FONT_PATH: str = _published_font_path(
-    "material-symbols-outlined-v371.woff2")
+ROBOTO_FONT_PATH: str = _published_font_path(_ROBOTO)
+MATERIAL_SYMBOLS_FONT_PATH: str = _published_font_path(_MATERIAL_SYMBOLS)
+
+#: Vendored name -> published path, for the registry below.
+_FONT_FILES = (
+    (_ROBOTO, ROBOTO_FONT_PATH),
+    (_MATERIAL_SYMBOLS, MATERIAL_SYMBOLS_FONT_PATH),
+)
 
 
 def repository_static_files() -> Iterator[tuple[str, bytes]]:
@@ -107,8 +118,5 @@ def repository_static_files() -> Iterator[tuple[str, bytes]]:
             f"{SQLITE_WASM_PATH}/{name}",
             (_SQLITE_WASM_DIR / name).read_bytes(),
         )
-    for name, published in (
-        ("roboto-v51-latin.woff2", ROBOTO_FONT_PATH),
-        ("material-symbols-outlined-v371.woff2", MATERIAL_SYMBOLS_FONT_PATH),
-    ):
+    for name, published in _FONT_FILES:
         yield published, (_FONTS_DIR / name).read_bytes()

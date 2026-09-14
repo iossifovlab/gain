@@ -29,7 +29,6 @@ import pathlib
 import re
 import textwrap
 from html.parser import HTMLParser
-from urllib.parse import urlparse
 
 import pytest
 from gain.gene_scores.implementations.gene_scores_impl import (
@@ -38,12 +37,13 @@ from gain.gene_scores.implementations.gene_scores_impl import (
 from gain.genomic_resources.testing.builders import GeneScoreBuilder
 
 from tests.small.templates.page_css import font_faces_in
-from tests.small.templates.test_grr_page_icon_font import (
+from tests.small.templates.page_origins import external_origins
+from tests.small.templates.vendored_fonts import (
     ICON_FONT,
     TEXT_FONT,
+    ligatures_in,
     vendored_icon_font,
 )
-from tests.small.templates.vendored_fonts import ligatures_in
 
 #: The only glyphs the sorter draws, written out by hand so the scan
 #: below is held to it rather than trusted.
@@ -62,20 +62,17 @@ def glyphs_the_sorter_draws(page: str) -> frozenset[str]:
 
 
 class _PageReader(HTMLParser):
-    """Collects the page's element attributes and its linked URLs."""
+    """Collects the names of every attribute any element of the page carries."""
 
     def __init__(self) -> None:
         super().__init__()
         self.attribute_names: set[str] = set()
-        self.urls: list[str] = []
 
     def handle_starttag(
         self, tag: str, attrs: list[tuple[str, str | None]],
     ) -> None:
-        for name, value in attrs:
+        for name, _ in attrs:
             self.attribute_names.add(name)
-            if name in ("href", "src") and value is not None:
-                self.urls.append(value)
 
 
 def read_page(page: str) -> _PageReader:
@@ -127,14 +124,12 @@ def test_a_resource_page_loads_no_jquery(gene_score_page: str) -> None:
 
 
 def test_a_resource_page_reaches_no_origin(gene_score_page: str) -> None:
-    """Nothing off the repository: no font host, no CDN, nothing."""
-    hosts = {
-        urlparse(url).hostname
-        for url in read_page(gene_score_page).urls
-        if urlparse(url).scheme in ("http", "https")
-    }
+    """Nothing off the repository: no font host, no CDN, nothing.
 
-    assert hosts == set()
+    Through the scanner that reads ``<style>`` too: the fonts are the
+    one thing a resource page loads, and they are declared in CSS.
+    """
+    assert external_origins(gene_score_page) == frozenset()
 
 
 def test_a_resource_page_declares_both_faces_from_the_repository(

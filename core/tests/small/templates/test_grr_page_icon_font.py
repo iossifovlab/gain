@@ -43,20 +43,26 @@ python:3.12-slim, which has no JS runtime.
 from __future__ import annotations
 
 import re
-from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import urlparse
 
 import pytest
 from gain.templates import get_template
 from gain.templates.static_assets import (
-    MATERIAL_SYMBOLS_FONT_PATH,
     SQLITE_WASM_PATH,
-    repository_static_files,
 )
 
 from tests.small.templates.page_css import font_faces_in, rules_in
-from tests.small.templates.vendored_fonts import ligatures_in
+from tests.small.templates.page_origins import (
+    MODULE_IMPORT,
+    external_origins,
+    read_page,
+)
+from tests.small.templates.vendored_fonts import (
+    ICON_FONT,
+    TEXT_FONT,
+    ligatures_in,
+    vendored_icon_font,
+)
 
 #: The class the icon font styles.  An element carrying it renders its
 #: own text as a glyph.
@@ -90,12 +96,6 @@ EXPECTED_GLYPHS = frozenset({
 #: against the file can stay an equality.
 ALIASES = frozenset({"clear"})
 
-
-def vendored_icon_font() -> bytes:
-    """The icon font as the publisher will write it into a repository."""
-    return dict(repository_static_files())[MATERIAL_SYMBOLS_FONT_PATH]
-
-
 #: Every origin the pages *load* from: none.  The search engine and both
 #: fonts ship inside the repository (gain#1335, gain#1400), so a page
 #: behind an air gap is the same page.  Ordinary hyperlinks are
@@ -104,10 +104,6 @@ def vendored_icon_font() -> bytes:
 #: has not grown a third party it loads code from.
 NO_ORIGINS: frozenset[str] = frozenset()
 
-#: The typeface every page sets, and the icon face only pages that draw
-#: a glyph declare.
-TEXT_FONT = "Roboto"
-ICON_FONT = "Material Symbols Outlined"
 
 #: A Material Symbols glyph name: lowercase, underscore-separated.  The
 #: shape is what separates a glyph from the script's other string
@@ -135,49 +131,6 @@ _SORT_STATE_GLYPH = re.compile(
     r"\b(?:none|asc|desc)\s*:\s*['\"]" + _GLYPH + r"['\"]",
 )
 
-#: ``import x from "<specifier>"`` -- an ES module specifier, which can
-#: reach an origin without being an ``src``.  Any specifier, so the same
-#: match serves both the relative import the page carries and the
-#: origin count that must notice an absolute one.
-_MODULE_IMPORT = re.compile(r"\bimport\s+\w+\s+from\s+[\"']([^\"']+)[\"']")
-
-#: Tags whose ``href`` makes the browser fetch something.  ``<a>`` is
-#: pointedly absent; ``src`` is a subresource on whatever carries it.
-_FETCHING_HREF_TAGS = frozenset({"link"})
-
-
-class _LinkReader(HTMLParser):
-    """Collects the URLs a page fetches, and its preconnect hints."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.urls: list[str] = []
-        #: host -> whether the hint warms a CORS socket.
-        self.preconnects: dict[str, bool] = {}
-
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]],
-    ) -> None:
-        attributes = dict(attrs)
-
-        href = attributes.get("href")
-        if href and tag in _FETCHING_HREF_TAGS:
-            self.urls.append(href)
-        src = attributes.get("src")
-        if src:
-            self.urls.append(src)
-
-        if tag == "link" and attributes.get("rel") == "preconnect" and href:
-            self.preconnects[urlparse(href).hostname or ""] = (
-                "crossorigin" in attributes
-            )
-
-
-def read_page(page: str) -> _LinkReader:
-    reader = _LinkReader()
-    reader.feed(page)
-    return reader
-
 
 def glyphs_the_page_can_draw(page: str) -> frozenset[str]:
     """Every glyph name the page renders now or can swap in later."""
@@ -186,22 +139,6 @@ def glyphs_the_page_can_draw(page: str) -> frozenset[str]:
         | set(_ASSIGNED_GLYPH.findall(page))
         | set(_SORT_STATE_GLYPH.findall(page)),
     )
-
-
-def external_origins(page: str) -> frozenset[str]:
-    """Every third-party host the page loads from.
-
-    Attribute URLs are not the whole story: the search database's
-    sqlite-wasm arrives through a bare ES module specifier, which is a
-    string inside a ``<script type="module">`` rather than an ``src``.
-    Counting only markup would leave a module's origin out of a set this
-    module claims is exhaustive.
-    """
-    fetched = [
-        url for url in read_page(page).urls + _MODULE_IMPORT.findall(page)
-        if urlparse(url).scheme in ("http", "https")
-    ]
-    return frozenset(urlparse(url).hostname or "" for url in fetched)
 
 
 @pytest.fixture
@@ -335,7 +272,7 @@ def test_the_browse_page_imports_sqlite_wasm_from_inside_the_repository(
     ``import.meta.url`` lookup of ``sqlite3.wasm`` follows; see
     ``gain.templates.static_assets``.
     """
-    assert _MODULE_IMPORT.findall(browse_page) == [
+    assert MODULE_IMPORT.findall(browse_page) == [
         f"./{SQLITE_WASM_PATH}/index.mjs",
     ]
 

@@ -91,8 +91,12 @@ sha256sum *.woff2     # update the digests above
 ```
 
 If the Google Fonts release number in the url changed (`v51`, `v371`),
-rename the file to match and update the two names in
-`gain/templates/static_assets.py`; the `unicode-range` in
-`roboto_font.jinja` is the one the `latin` block declares and should be
-checked against it. The next `repo-info` publishes the new file under
-its new digest; the old one is left in place and can be deleted by hand.
+rename the file to match and update the name in the three places that
+spell it: `_ROBOTO` / `_MATERIAL_SYMBOLS` in
+`gain/templates/static_assets.py`, the table and digests above, and the
+served-file stems in `info_pages_e2e/tests/index-page.spec.ts`. The
+`unicode-range` in `roboto_font.jinja` is the one the `latin` block
+declares and should be checked against it. The next `repo-info`
+publishes the new file under its new digest; the old one is left in
+place -- and, in a GRR kept in git, stays committed -- until deleted by
+hand.

@@ -11,20 +11,37 @@ matches an element's text against.
 
 Two modules ask: ``test_grr_page_icon_font.py`` for the browse page's
 eight glyphs and ``test_resource_page_sorter.py`` for the sorter's
-three, both against the one file gain vendors.  Decoding WOFF2 needs
-``brotli``, a dev-group dependency for this purpose alone (gain#1400).
+three, both against the one file gain vendors, reached here through the
+registry the publisher reads so the bytes checked are the bytes
+published.  Decoding WOFF2 needs ``brotli``, a dev-group dependency for
+this purpose alone (gain#1400).
 """
 from __future__ import annotations
 
 import io
 
 from fontTools.ttLib import TTFont
+from gain.templates.static_assets import (
+    MATERIAL_SYMBOLS_FONT_PATH,
+    repository_static_files,
+)
+
+#: The typeface every page sets, and the icon face only the pages that
+#: draw a glyph declare -- as ``@font-face`` names them.
+TEXT_FONT = "Roboto"
+ICON_FONT = "Material Symbols Outlined"
 
 #: ``GSUB`` lookup types: 4 is a ligature substitution, 7 an extension
-#: wrapping another lookup (the subset font uses plain type 4, but a
-#: refresh may not).
+#: wrapping another lookup.  Both are read because Google's subsetter
+#: emits either: the vendored icon font wraps its ligature lookup in an
+#: extension, Roboto's are plain type 4.
 _LIGATURE = 4
 _EXTENSION = 7
+
+
+def vendored_icon_font() -> bytes:
+    """The icon font as the publisher will write it into a repository."""
+    return dict(repository_static_files())[MATERIAL_SYMBOLS_FONT_PATH]
 
 
 def ligatures_in(woff2: bytes) -> frozenset[str]:
