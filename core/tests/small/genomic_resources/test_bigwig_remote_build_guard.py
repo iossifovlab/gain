@@ -152,6 +152,16 @@ def bigwig_proto(
     raise ValueError(f"unexpected protocol scheme: <{grr_scheme}>")
 
 
+def _build_can_reach(grr_scheme: str) -> bool:
+    """Whether the INSTALLED pyBigWig can open a file over ``grr_scheme``.
+
+    A ``file`` GRR is read by any build; the remote schemes only by a build
+    with libcurl. The two fixture tests below split on exactly this, one on
+    each side.
+    """
+    return grr_scheme == "file" or bool(pyBigWig.remote)  # pylint: disable=I1101
+
+
 @pytest.mark.grr_full
 @pytest.mark.grr_http
 def test_bigwig_opens_over_a_scheme_the_build_can_reach(
@@ -159,7 +169,7 @@ def test_bigwig_opens_over_a_scheme_the_build_can_reach(
 ) -> None:
     # The one place the two pyBigWig builds meet a real remote file: a curl
     # build reads it over the wire, and a ``file`` GRR reads on either.
-    if grr_scheme != "file" and not pyBigWig.remote:  # pylint: disable=I1101
+    if not _build_can_reach(grr_scheme):
         pytest.skip("this pyBigWig build has no remote-file support")
     resource = bigwig_proto.get_resource("one")
 
@@ -173,10 +183,8 @@ def test_bigwig_opens_over_a_scheme_the_build_can_reach(
 def test_bigwig_over_a_remote_scheme_is_refused_by_a_no_curl_build(
     bigwig_proto: FsspecReadOnlyProtocol, grr_scheme: str,
 ) -> None:
-    if grr_scheme == "file":
-        pytest.skip("a file GRR is not guarded")
-    if pyBigWig.remote:  # pylint: disable=I1101
-        pytest.skip("this pyBigWig build can open remote files")
+    if _build_can_reach(grr_scheme):
+        pytest.skip("this pyBigWig build is not refused over this scheme")
     resource = bigwig_proto.get_resource("one")
 
     with pytest.raises(OSError, match="no remote-file support"):
