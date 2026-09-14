@@ -1,30 +1,35 @@
 """Static files a repository's generated pages need, shipped with gain.
 
-The GRR index page's search runs on sqlite-wasm.  Rather than loading it
-from a CDN at view time, gain vendors the two files the browser needs
-under ``gain/templates/static/sqlite-wasm/`` and publishes them into
-every repository it indexes, beside ``index.html``, at a path the page
-imports by relative URL (gain#1335).  A repository then carries
-everything its search needs -- no third party at view time, a working
-search on an intranet or behind an air gap, and the bytes that run are
-the bytes the generating gain was tested with.
+The GRR index page's search runs on sqlite-wasm, and every generated
+page sets its text in Roboto and draws its icons from a Material
+Symbols subset.  Rather than loading any of that from a CDN or a font
+host at view time, gain vendors the files under
+``gain/templates/static/`` and publishes them into every repository it
+indexes, beside ``index.html``, at paths the pages reach by relative URL
+(gain#1335 for the engine, gain#1400 for the fonts).  A repository then
+carries everything its pages need -- no third party at view time, a
+working search and real icons on an intranet or behind an air gap, and
+the bytes that run are the bytes the generating gain was tested with.
 
-The version is in the published *directory name*, not a query string:
-the module locates its ``sqlite3.wasm`` through ``import.meta.url``, so
-a ``?v=`` on the import would never reach the wasm, and a gain upgrade
-must not run a browser's cached module against a new wasm.
-``version.txt`` beside the vendored files is the single source of
-truth -- the directory name and the page's import are both derived from
-it here, so a bump is one edit.
+Two ways of versioning what is published, for two kinds of coupling.
+The sqlite-wasm version is in the published *directory name*, not a
+query string: the module locates its ``sqlite3.wasm`` through
+``import.meta.url``, so a ``?v=`` on the import would never reach the
+wasm, and a gain upgrade must not run a browser's cached module against
+a new wasm.  ``version.txt`` beside the vendored files is the single
+source of truth -- the directory name and the page's import are both
+derived from it here, so a bump is one edit.  The fonts have no such
+sibling to keep in step, so each is named by a digest of its own bytes
+(:func:`_published_font_path`), with nothing to bump.
 
 The directory is dot-prefixed on purpose.  A resource id can never
 start with a dot, so nothing under ``.static/`` can collide with one,
 and the repository scanner passes over every dot-prefixed entry.
 
 :func:`repository_static_files` is the registry the publisher iterates:
-it names no asset, so the next thing the page should load from the
-repository rather than a CDN (a font, say) is added here and reaches
-every repository without the publisher changing.
+it names no asset, so the next thing the pages should load from the
+repository rather than a CDN is added here and reaches every repository
+without the publisher changing.
 """
 from __future__ import annotations
 

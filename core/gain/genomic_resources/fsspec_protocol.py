@@ -3322,9 +3322,10 @@ class FsspecReadWriteProtocol(
     def _publish_static_assets(self) -> None:
         """Publish the files the index page loads from the repository.
 
-        What gain ships for the page -- the search engine it runs on,
-        today -- is published into every repository beside the page, so
-        a repository carries everything its page needs (gain#1335).
+        What gain ships for the pages -- the search engine the index
+        runs on, and the fonts every page sets its text and icons in --
+        is published into every repository beside them, so a repository
+        carries everything its pages need (gain#1335, gain#1400).
         Which files is ``gain.templates.static_assets``' business; this
         names none.  Through :meth:`publish_repository_file`, so each
         file lands in a single move or not at all; the names are

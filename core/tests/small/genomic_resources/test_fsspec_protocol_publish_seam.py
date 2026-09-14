@@ -21,6 +21,7 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     setup_directories,
 )
+from gain.templates.static_assets import repository_static_files
 from pytest_mock import MockerFixture
 
 from .conftest import (
@@ -303,13 +304,15 @@ def test_publishing_carries_the_encoding_to_the_staged_open(
         call for call in opened.call_args_list
         if str(call.args[0]).endswith(".part")
     ]
-    # The index page's sqlite-wasm stages through the same seam, in
-    # binary (gain#1335); an encoding on those would be a bug of the
-    # opposite kind, so the split is asserted rather than filtered out.
+    # The vendored static files -- sqlite-wasm and the two fonts -- stage
+    # through the same seam, in binary (gain#1335, gain#1400); an
+    # encoding on those would be a bug of the opposite kind, so the
+    # split is asserted rather than filtered out.
     text = [call for call in staged if "t" in call.args[1]]
     binary = [call for call in staged if "b" in call.args[1]]
     assert len(text) == 2, "about.html and the index page both stage"
-    assert len(binary) == 2, "index.mjs and sqlite3.wasm both stage"
+    assert len(binary) == len(list(repository_static_files())), \
+        "every vendored static file stages"
     for call in text:
         assert call.kwargs.get("encoding") == "utf8"
     for call in binary:
