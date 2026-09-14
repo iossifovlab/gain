@@ -1,15 +1,22 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pathlib
+from typing import Any
 
 import pytest
 import pytest_mock
 from django.test import Client
+from gain.genomic_resources.cached_repository import (
+    GenomicResourceCachedRepo,
+)
 from gain.genomic_resources.cli import _create_contents_db
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,
     GenomicResourceRepo,
     SearchIndexUnavailableError,
+)
+from gain.genomic_resources.repository_factory import (
+    build_genomic_resource_repository,
 )
 from gain.genomic_resources.testing import build_filesystem_test_protocol
 from gain.genomic_resources.testing.builders import (
@@ -718,3 +725,144 @@ def _unsearchable_repo() -> GenomicResourceRepo:
                 "unindexed", "no search index was published")
 
     return _NoIndex("unindexed")
+
+
+@pytest.mark.parametrize("query_params", [
+    # No filter: the listing short-circuits to `get_all_resources()`.
+    {},
+    # Answered from the resources themselves, no index opened.
+    {"type": "position_score"},
+    # Answered out of the FTS index.
+    {"search": "t4c8"},
+    # Evaluated by the child on the remote resource, before the hit is
+    # mapped to its cached twin.
+    {"query": "scores/*"},
+    {"query": 'scores/*[phenotype="autism"]', "type": "position_score"},
+])
+def test_a_cached_grr_answers_what_the_plain_one_does_at_its_public_url(
+    clients: dict[str, Client],
+    mocker: pytest_mock.MockFixture,
+    tmp_path: pathlib.Path,
+    query_params: dict[str, str],
+) -> None:
+    """Over a cached GRR the endpoint answers the same resources (gain#448).
+
+    Every request in this file used to reach a plain `dir` repository;
+    none went through `GenomicResourceCachedRepo`, whose `search_resources`
+    maps each hit onto its cached twin -- so a `KeyError` out of that
+    mapping was a 500 here that only hand-written reproducers found
+    (gain#435). What HTTP can observe of the cache wrapper is a 200, the
+    plain repository's resource set, and each resource at the REMOTE's
+    public url: `CachingProtocol.get_public_url` forwards to the remote,
+    and a local cache path is not something a client can fetch. (That a
+    hit is cache-backed rather than remote-bound is invisible here -- both
+    report the same public url -- and is pinned in core.)
+
+    Once per way of selecting resources, because the filters are applied
+    in different places -- no filter opens no index and neither does a
+    `type` alone, a `search` does, and a `query` is matched against the
+    remote resource before the cache wrapping -- so one of them passing
+    says nothing about the others.
+    """
+    client = clients["anonymous"]
+    plain = client.get(
+        "/api/resources/search", query_params=query_params).json()
+    plain_ids = {res["resource_id"] for res in plain["resources"]}
+    assert plain_ids, "an empty plain answer would make the case vacuous"
+    mocker.patch(
+        "web_annotation.annotation_base_view.GRR",
+        _a_cached_twin_of_the_fixture_grr(tmp_path / "cache"))
+
+    response = client.get("/api/resources/search", query_params=query_params)
+
+    assert response.status_code == 200
+    cached = response.json()
+    assert {res["resource_id"] for res in cached["resources"]} == plain_ids
+    assert cached["total_resources"] == plain["total_resources"]
+    assert [res["url"] for res in cached["resources"]] == \
+        [_at_the_cached_twin(res) for res in cached["resources"]]
+
+
+# The public url of the cached twin below. Deliberately NOT the settings'
+# `http://test`: with the same url a cached answer and a plain one would be
+# indistinguishable over HTTP, and an assertion that the two agree would
+# hold just as well if the patch had never taken effect. Every `url` in a
+# cached answer has to be under this, which fails both when the plain
+# repository answered and when a cache path leaked into the payload.
+CACHED_TWIN_PUBLIC_URL = "http://cached-remote"
+
+
+def _a_cached_twin_of_the_fixture_grr(
+    cache_dir: pathlib.Path,
+) -> GenomicResourceCachedRepo:
+    """The fixture GRR again, read through a cache under ``cache_dir``.
+
+    A `GenomicResourceCachedRepo` over the same directory the settings'
+    GRR serves -- what any `cache_dir` definition builds, and the class
+    gain#435 rewrote. Its own id and public url, not the settings': a
+    protocol is memoized by id over its directory and cannot be repointed
+    at a second public url (see the `test_grr` fixture in conftest).
+    """
+    grr_dir = pathlib.Path(__file__).parent / "fixtures" / "grr"
+    repo = build_genomic_resource_repository({
+        "id": "test-cached",
+        "type": "dir",
+        "directory": str(grr_dir),
+        "public_url": CACHED_TWIN_PUBLIC_URL,
+        "cache_dir": str(cache_dir),
+    })
+    assert isinstance(repo, GenomicResourceCachedRepo)
+    return repo
+
+
+def _at_the_cached_twin(record: dict[str, Any]) -> str:
+    """The url the cached twin has to report for ``record``.
+
+    Joined from `full_id`, as `GenomicResource.get_public_url` does; the
+    fixture resources all sit at version 0, where it equals `resource_id`,
+    and a versioned one would pass through here unchanged.
+    """
+    return f"{CACHED_TWIN_PUBLIC_URL}/{record['full_id']}"
+
+
+def test_a_cached_grr_pages_as_the_plain_one_does(
+    clients: dict[str, Client],
+    mocker: pytest_mock.MockFixture,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A page over a cache is the plain page, url apart (gain#448).
+
+    The whole payload is compared, not just the counts: `pages`, `page`,
+    the records on the page in their order, and `incomplete`.
+    """
+    client = clients["anonymous"]
+    query_params = {"page_size": 2, "page": 1}
+    plain = client.get(
+        "/api/resources/search", query_params=query_params).json()
+    assert plain["pages"] > 1, "one page would leave `page` untested"
+    mocker.patch(
+        "web_annotation.annotation_base_view.GRR",
+        _a_cached_twin_of_the_fixture_grr(tmp_path / "cache"))
+
+    response = client.get(
+        "/api/resources/search", query_params=query_params)
+
+    assert response.status_code == 200
+    cached = response.json()
+    # `incomplete` rides in this comparison: the plain answer's is empty
+    # (pinned above), and a cache wrapping is not a child a group could
+    # skip, so the cached one has to be too.
+    assert _without_urls(cached) == _without_urls(plain)
+    assert [res["url"] for res in cached["resources"]] == \
+        [_at_the_cached_twin(res) for res in plain["resources"]]
+
+
+def _without_urls(payload: dict[str, Any]) -> dict[str, Any]:
+    """The search payload with every record's ``url`` dropped."""
+    return {
+        **payload,
+        "resources": [
+            {key: value for key, value in res.items() if key != "url"}
+            for res in payload["resources"]
+        ],
+    }
