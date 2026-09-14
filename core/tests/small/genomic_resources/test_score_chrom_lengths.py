@@ -382,12 +382,16 @@ def test_a_score_names_its_length_source_without_opening(
     statistics implementation need not know the backend (gain#410).
     """
     score = build(tmp_path)
-    opened = mocker.spy(score, "open")
+    score_opened = mocker.spy(score, "open")
+    # The table is the I/O seam; the score's ``open`` is only its usual door.
+    table_opened = mocker.spy(score.table, "open")
 
     source = score.chrom_length_source
 
     assert source is expected_source
-    opened.assert_not_called()
+    assert source.is_exact is expected_exact
+    score_opened.assert_not_called()
+    table_opened.assert_not_called()
 
 
 def test_a_reference_genome_length_is_exact() -> None:
