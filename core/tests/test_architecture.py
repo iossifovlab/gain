@@ -956,10 +956,8 @@ CREDENTIAL_BEARING_GETTERS = frozenset({
     "_get_file_url",
 })
 
-#: The one call that makes such a url safe to show, under both of its
-#: spellings: the definition in ``gain.utils.url_redaction`` (gain#1363)
-#: and the private alias ``fsspec_protocol`` keeps for its call sites.
-URL_REDACTORS = frozenset({"strip_url_userinfo", "_strip_url_userinfo"})
+#: The one call that makes such a url safe to show.
+URL_REDACTOR = "strip_url_userinfo"
 
 
 class _UrlMessageSite(NamedTuple):
@@ -1024,7 +1022,7 @@ def _tainted_occurrences(
 def _is_redactor_call(node: ast.AST) -> bool:
     """Is ``node`` the call that makes a credential-bearing url safe?"""
     return (isinstance(node, ast.Call)
-            and _tail_name(node.func) in URL_REDACTORS)
+            and _tail_name(node.func) == URL_REDACTOR)
 
 
 def _credential_bearing_names(fn: _Function) -> Mapping[str, bool]:
@@ -1174,7 +1172,7 @@ def open_raw_file(self, resource, filename, mode="rt"):
     filepath = self.get_resource_file_url(resource, filename)
     if "w" in mode:
         raise OSError(
-            f"trying to open {_strip_url_userinfo(filepath)} for writing")
+            f"trying to open {strip_url_userinfo(filepath)} for writing")
 """,
      (("open_raw_file", "filepath", True),)),
     # Laundered through an intermediate name.  The ann_data resource
@@ -1196,7 +1194,7 @@ def _local_file_path(resource, file_name):
     ("""
 def _local_file_path(resource, file_name):
     file_url = resource.get_file_url(file_name)
-    display_url = _strip_url_userinfo(file_url)
+    display_url = strip_url_userinfo(file_url)
     raise ValueError(f"cannot load the url {display_url}")
 """,
      (("_local_file_path", "display_url", True),)),
@@ -1248,24 +1246,13 @@ def outer(self, filename):
         raise OSError(f"cannot open {url}")
 """,
      (("inner", "url", False),)),
-    # Redacted through the redactor's canonical, public spelling rather
-    # than the protocol module's private alias of it.  Since gain#1363 the
-    # definition lives in ``gain.utils.url_redaction``; a site importing
-    # it from there is exactly as redacted, and a fence that knew only the
-    # alias would report it as a leak.
-    ("""
-def probe(self, filename):
-    url = self.get_file_url(filename)
-    raise OSError(f"cannot open {strip_url_userinfo(url)}")
-""",
-     (("probe", "url", True),)),
     # Redacted at the binding, with the redactor somewhere inside the
     # expression rather than wrapped around the whole of it.  Judged by
     # the same positional read as every other case, so that the fence can
     # never tell an author to wrap a line that already wraps it.
     ("""
 def probe(self, filename):
-    display = f"<{_strip_url_userinfo(self.get_file_url(filename))}>"
+    display = f"<{strip_url_userinfo(self.get_file_url(filename))}>"
     raise OSError(f"cannot open {display}")
 """,
      (("probe", "display", True),)),
@@ -1460,7 +1447,7 @@ def test_no_gain_module_interpolates_a_credential_url_unredacted() -> None:
     escapes before any handle exists, so the handle cannot reach it and
     the call site owns the redaction.  That left the one mechanism in
     this family with no structural guard -- sixteen hand-written
-    ``_strip_url_userinfo`` calls that a seventeenth site can silently
+    ``strip_url_userinfo`` calls that a seventeenth site can silently
     forget, which is how gain#1106 arose.
 
     The discriminator is the url's provenance, not its spelling:
@@ -1469,7 +1456,7 @@ def test_no_gain_module_interpolates_a_credential_url_unredacted() -> None:
 
     **How much this polices today: two sites.**  The read-only protocol's
     write refusal and the ann_data display url, both named in
-    ``ANCHORED_REDACTION_SITES``.  Every other ``_strip_url_userinfo``
+    ``ANCHORED_REDACTION_SITES``.  Every other ``strip_url_userinfo``
     call in the tree is either one of the shapes below or a
     ``self.url``-derived url that needs no redaction at all.  The rule
     exists for the seventeenth site, not for present-tense coverage, and
@@ -1497,7 +1484,7 @@ def test_no_gain_module_interpolates_a_credential_url_unredacted() -> None:
       its corrupt-publish report interpolate it raw.  Both are safe by
       protocol selection rather than by redaction -- ADR 0023 gives the
       argument -- and neither is visible here.
-    - *Through an exception's text.*  ``_strip_url_userinfo(str(error))``
+    - *Through an exception's text.*  ``strip_url_userinfo(str(error))``
       redacts a url that arrived inside a third-party message, never
       through a url-valued name.
 
@@ -1523,8 +1510,7 @@ def test_no_gain_module_interpolates_a_credential_url_unredacted() -> None:
         f"{offenders}. A url from one of {sorted(CREDENTIAL_BEARING_GETTERS)} "
         f"derives from the authed _fetch_url, and a message interpolating "
         f"one escapes before any handle exists -- wrap it in "
-        f"{sorted(URL_REDACTORS)}, as the sites around it do "
-        f"(ADR 0023, gain#1106)"
+        f"{URL_REDACTOR}, as the sites around it do (ADR 0023, gain#1106)"
     )
 
 

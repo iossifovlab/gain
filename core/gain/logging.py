@@ -24,11 +24,8 @@ that *every* logger — including the root logger and any already created — ga
 the methods at runtime.
 
 The same import installs the url-userinfo log-record seam of
-``gain.utils.url_redaction`` (ADR 0023, gain#1363): ``LogRecord.getMessage``
-is wrapped so that every log line in the process — from a gain logger, from
-fsspec's, from the host's — renders ``scheme://user:pass@host`` as
-``scheme://host``. Both bootstraps run from ``gain/__init__``, so importing
-this module, or anything else under ``gain``, is enough.
+``gain.utils.url_redaction`` (ADR 0023, gain#1363). Both bootstraps also run
+from ``gain/__init__``, so importing anything under ``gain`` is enough.
 
 For type checkers, ``getLogger`` is declared to return a ``Logger`` subclass
 advertising ``.trace`` / ``.user_info``. This is a pure typing shim: it is
@@ -51,6 +48,7 @@ from logging import (  # ruff: ignore[unused-import]
 from typing import TYPE_CHECKING, Any
 
 import gain.utils.log_levels  # ruff: ignore[unused-import]
+import gain.utils.url_redaction  # ruff: ignore[unused-import]
 from gain.utils.log_levels import (  # ruff: ignore[unused-import]
     TRACE,
     USER_INFO,

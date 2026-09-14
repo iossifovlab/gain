@@ -13,12 +13,12 @@ from gain.genomic_resources.ann_data_10x import (
     read_10x_h5,
     read_10x_mtx,
 )
-from gain.genomic_resources.fsspec_protocol import _strip_url_userinfo
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
     Manifest,
 )
+from gain.utils.url_redaction import strip_url_userinfo
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +220,7 @@ def _local_file_path(resource: GenomicResource, file_name: str) -> str:
         # it has to drop the ``user:pass@`` userinfo first (#608).  The
         # unredacted url keeps driving the scheme test and the local path
         # below, which are internal.
-        display_url = _strip_url_userinfo(file_url)
+        display_url = strip_url_userinfo(file_url)
         logger.error(
             "ann_data resources can only be loaded from a file:// url, "
             "and not from %s for the ann_data %s",

@@ -765,10 +765,11 @@ wraps `logging.LogRecord.getMessage` so the rendered message has
 `scheme://user:pass@host` reduced to `scheme://host`. It is installed from
 `gain/__init__`, next to the level bootstrap and for the same reason:
 importing anything under `gain` is the moment, so no worker, host or later
-import order misses it. The redactor itself moved down to that module —
-one definition, below the GRR, because the bootstrap cannot import the
-protocol — and `fsspec_protocol` imports it under the name its call sites
-and the fence already use.
+import order misses it. The redactor itself moved down to that module as
+`strip_url_userinfo` — one definition, below the GRR, because the bootstrap
+cannot import the protocol — and the protocol, the cached repository and
+the ann_data resource import it from there; the sections above name it by
+its former private spelling, `_strip_url_userinfo`.
 
 **The boundary, fixed at triage and pinned by tests rather than left to
 drift.**
