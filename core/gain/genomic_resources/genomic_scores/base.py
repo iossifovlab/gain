@@ -52,6 +52,7 @@ from gain.genomic_resources.bigwig_scores import (
 )
 from gain.genomic_resources.genomic_position_table import (
     BigWigTable,
+    ChromLengthSource,
     VCFGenomicPositionTable,
     build_genomic_position_table,
 )
@@ -900,6 +901,19 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """
         self._require_open()
         return self.table.has_chromosome(chrom)
+
+    @property
+    def chrom_length_source(self) -> ChromLengthSource:
+        """What the score's own file can say a contig's length is.
+
+        A fact about the format, declared on the backend class, so it is
+        answered on a closed score -- which is the point: a caller weighing
+        whether to open the table for its lengths at all (coverage's
+        second rung, gain#1448) asks this first.  The lengths themselves,
+        with this source on each, come from
+        :func:`~.chrom_lengths.derive_chrom_lengths`.
+        """
+        return self.table.chrom_length_source
 
     def region_values_from_records(
         self,
