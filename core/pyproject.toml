@@ -133,12 +133,16 @@ scanpy_drift = [
     "scanpy>=1.11",
 ]
 dev = [
-    # Decodes the vendored woff2 fonts under gain/templates/static/fonts
-    # so tests/small/templates/test_grr_page_icon_font.py can read which
-    # glyphs the icon subset carries: fontTools (already here through
-    # matplotlib) needs it for WOFF2 and nothing at runtime does (#1400).
+    # tests/small/templates/vendored_fonts.py decodes the woff2 fonts
+    # under gain/templates/static/fonts to read which glyphs the icon
+    # subset carries.  fontTools is already a runtime dependency through
+    # matplotlib but is named here because the tests import it directly;
+    # brotli is what it needs for WOFF2, and nothing at runtime does.
+    # Bare brotli rather than `fonttools[woff]`, which would also pull
+    # zopfli for a compression the tests never do (#1400).
     "brotli",
     "coverage",
+    "fonttools",
     "mypy==1.15.0",
     "pandas-stubs",
     "pyarrow-stubs",

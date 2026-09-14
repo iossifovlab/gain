@@ -21,7 +21,6 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     setup_directories,
 )
-from gain.templates.static_assets import repository_static_files
 from pytest_mock import MockerFixture
 
 from .conftest import (
@@ -311,8 +310,7 @@ def test_publishing_carries_the_encoding_to_the_staged_open(
     text = [call for call in staged if "t" in call.args[1]]
     binary = [call for call in staged if "b" in call.args[1]]
     assert len(text) == 2, "about.html and the index page both stage"
-    assert len(binary) == len(list(repository_static_files())), \
-        "every vendored static file stages"
+    assert len(binary) == 4, "index.mjs, sqlite3.wasm and both fonts stage"
     for call in text:
         assert call.kwargs.get("encoding") == "utf8"
     for call in binary:

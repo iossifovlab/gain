@@ -1322,6 +1322,7 @@ dependencies = [
 dev = [
     { name = "brotli" },
     { name = "coverage" },
+    { name = "fonttools" },
     { name = "mypy" },
     { name = "pandas-stubs" },
     { name = "pyarrow-stubs" },
@@ -1381,6 +1382,7 @@ requires-dist = [
 dev = [
     { name = "brotli" },
     { name = "coverage" },
+    { name = "fonttools" },
     { name = "mypy", specifier = "==1.15.0" },
     { name = "pandas-stubs" },
     { name = "pyarrow-stubs" },

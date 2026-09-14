@@ -3320,7 +3320,7 @@ class FsspecReadWriteProtocol(
         return result
 
     def _publish_static_assets(self) -> None:
-        """Publish the files the index page loads from the repository.
+        """Publish the files the pages load from the repository.
 
         What gain ships for the pages -- the search engine the index
         runs on, and the fonts every page sets its text and icons in --

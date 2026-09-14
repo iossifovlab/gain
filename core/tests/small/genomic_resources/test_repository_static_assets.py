@@ -23,6 +23,8 @@ from gain.templates.static_assets import (
 )
 
 from tests.small.templates.page_css import font_faces_in
+from tests.small.templates.page_origins import external_origins
+from tests.small.templates.vendored_fonts import ICON_FONT, TEXT_FONT
 
 from .conftest import read_published_contents
 
@@ -79,13 +81,6 @@ def font_faces_the_page_loads(page: pathlib.Path) -> dict[str, pathlib.Path]:
     }
 
 
-#: The typeface every page sets, and the icon font only the pages that
-#: draw a glyph carry: the browse page's sort indicators, row icons and
-#: copy buttons, and the resource pages' table sorter.
-TEXT_FONT = "Roboto"
-ICON_FONT = "Material Symbols Outlined"
-
-
 @pytest.mark.parametrize(("page", "families"), [
     ("index.html", {TEXT_FONT, ICON_FONT}),
     # Two directories down: the resource page has to climb to the root.
@@ -108,14 +103,23 @@ def test_a_page_loads_its_fonts_from_files_the_same_run_published(
     """
     cli_manage(["repo-index", "-R", str(bare_repo)])
 
-    faces = font_faces_the_page_loads(bare_repo / page)
+    assert_fonts_come_from_the_repository(bare_repo / page, families)
 
+
+def assert_fonts_come_from_the_repository(
+    page: pathlib.Path, families: set[str],
+) -> None:
+    """The page declares exactly these faces, each a published file.
+
+    And nothing from anywhere else: the scan for third-party hosts
+    reads ``<style>`` as well as attributes, so a font ``src`` or an
+    ``@import`` pointing back at Google fails here on the published
+    page -- for the statistics page too, which no template test
+    renders on its own.
+    """
+    assert external_origins(page.read_text(encoding="utf8")) == frozenset()
+    faces = font_faces_the_page_loads(page)
     assert set(faces) == families
-    assert_published_by_this_gain(faces)
-
-
-def assert_published_by_this_gain(faces: dict[str, pathlib.Path]) -> None:
-    """Each face resolves to a file holding gain's vendored bytes."""
     vendored = vendored_files()
     for family, path in faces.items():
         assert path.is_file(), (family, path)
@@ -133,10 +137,8 @@ def test_the_about_page_loads_its_typeface_from_the_repository(
     (bare_repo / "about.md").write_text("# About\n", encoding="utf8")
     cli_manage(["repo-index", "-R", str(bare_repo)])
 
-    faces = font_faces_the_page_loads(bare_repo / "about.html")
-
-    assert set(faces) == {TEXT_FONT}
-    assert_published_by_this_gain(faces)
+    assert_fonts_come_from_the_repository(
+        bare_repo / "about.html", {TEXT_FONT})
 
 
 @pytest.mark.parametrize("command", [

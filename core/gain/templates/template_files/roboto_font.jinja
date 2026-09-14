@@ -15,9 +15,12 @@
 
    One file covers every weight the pages use: the vendored woff2 is the
    variable font, so `font-weight` declares its whole range and the
-   browser interpolates 400, 500 and 800 from it.  `unicode-range` says
-   what the latin subset holds; a glyph outside it falls back to the
-   system font rather than to a tofu box. #}
+   browser draws 400, 500, 700 (`bold`) and 800 from it.  That is one
+   visible change from the Google Fonts link, which declared only 400,
+   500 and 800 and so rendered `bold` as 800; a bold heading is now a
+   true 700, one step lighter.  `unicode-range` says what the latin
+   subset holds; a glyph outside it falls back to the system font
+   rather than to a tofu box. #}
       @font-face {
         font-family: "Roboto";
         font-style: normal;
