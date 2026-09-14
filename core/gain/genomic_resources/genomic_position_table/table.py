@@ -61,10 +61,10 @@ class ContigExtent(enum.Enum):
     def refusal(self, chrom: str, contigs: list[str]) -> str:
         """The message for a caller that has no use for this member.
 
-        The one home of the two wordings, for
-        :meth:`GenomicPositionTable.get_chromosome_length` and for the score
-        layer's ``get_chrom_length``, which refuses the same two facts and
-        must say them the same way (gain#1413).  Named apart rather than
+        The one home of the two wordings, so that
+        :meth:`GenomicPositionTable.get_chromosome_length` and any other
+        caller refusing the same two facts say them the same way
+        (gain#1413).  Named apart rather than
         collapsed into one "no length" message because an operator reading
         a failed statistics build acts on them differently: an empty contig
         is usually a ``chrom_mapping`` naming something the file does not

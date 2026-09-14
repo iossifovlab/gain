@@ -106,70 +106,69 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 ),
             ]
 
-        with self.score.open():
-            regions = self._get_chrom_regions(region_size, grr)
-            all_min_max_scores, all_hist_confs = \
-                scan.unpack_score_defs(self.resource)
+        regions = self._get_chrom_regions(region_size, grr)
+        all_min_max_scores, all_hist_confs = \
+            scan.unpack_score_defs(self.resource)
 
-            tasks: list[TaskDesc] = []
-            merge_min_max_task: Task | dict[str, Any] = all_hist_confs
-            if all_min_max_scores:
-                min_max_tasks = []
-                for region in regions:
-                    chrom = region.chrom
-                    start = region.start
-                    end = region.stop
-                    task = TaskGraph.make_task(
-                        f"{self.resource.get_full_id()}_calculate_min_max"
-                        f"_{chrom}_{start}_{end}",
-                        scan.do_min_max_task,
-                        args=[
-                            self.resource,
-                            all_min_max_scores,
-                            chrom, start, end],
-                        deps=[],
-                    )
-                    min_max_tasks.append(task.task)
-                    tasks.append(task)
-                merge_task = TaskGraph.make_task(
-                    f"{self.resource.get_full_id()}_merge_min_max",
-                    scan.merge_min_max,
-                    args=[
-                        all_min_max_scores,
-                        all_hist_confs,
-                        *min_max_tasks,
-                    ],
-                    deps=[],
-                )
-                tasks.append(merge_task)
-                merge_min_max_task = merge_task.task
-
-            histogram_tasks = []
+        tasks: list[TaskDesc] = []
+        merge_min_max_task: Task | dict[str, Any] = all_hist_confs
+        if all_min_max_scores:
+            min_max_tasks = []
             for region in regions:
                 chrom = region.chrom
                 start = region.start
                 end = region.stop
                 task = TaskGraph.make_task(
-                    f"{self.resource.get_full_id()}_calculate_histogram_"
-                    f"{chrom}_{start}_{end}",
-                    scan.do_histogram_task,
+                    f"{self.resource.get_full_id()}_calculate_min_max"
+                    f"_{chrom}_{start}_{end}",
+                    scan.do_min_max_task,
                     args=[
                         self.resource,
-                        merge_min_max_task,
+                        all_min_max_scores,
                         chrom, start, end],
                     deps=[],
                 )
-                histogram_tasks.append(task.task)
+                min_max_tasks.append(task.task)
                 tasks.append(task)
-            save_task = TaskGraph.make_task(
-                f"{self.resource.get_full_id()}_merge_and_save_histograms",
-                scan.merge_and_save_histograms,
-                args=[self.resource, *histogram_tasks],
+            merge_task = TaskGraph.make_task(
+                f"{self.resource.get_full_id()}_merge_min_max",
+                scan.merge_min_max,
+                args=[
+                    all_min_max_scores,
+                    all_hist_confs,
+                    *min_max_tasks,
+                ],
                 deps=[],
             )
-            tasks.append(save_task)
+            tasks.append(merge_task)
+            merge_min_max_task = merge_task.task
 
-            return tasks
+        histogram_tasks = []
+        for region in regions:
+            chrom = region.chrom
+            start = region.start
+            end = region.stop
+            task = TaskGraph.make_task(
+                f"{self.resource.get_full_id()}_calculate_histogram_"
+                f"{chrom}_{start}_{end}",
+                scan.do_histogram_task,
+                args=[
+                    self.resource,
+                    merge_min_max_task,
+                    chrom, start, end],
+                deps=[],
+            )
+            histogram_tasks.append(task.task)
+            tasks.append(task)
+        save_task = TaskGraph.make_task(
+            f"{self.resource.get_full_id()}_merge_and_save_histograms",
+            scan.merge_and_save_histograms,
+            args=[self.resource, *histogram_tasks],
+            deps=[],
+        )
+        tasks.append(save_task)
+
+        return tasks
 
     #: Reference genomes already resolved, per repository.  Keyed by the
     #: repository FIRST: an id only names a genome relative to one, so an
@@ -275,9 +274,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         through ``grr`` -- is the top rung; the table's own answer (the
         bigWig header, the tabix probe) the rest, per contig.  A contig
         with no length keeps the reason (``EMPTY`` / ``UNDETERMINED``)
-        in its record.  Nothing is stored: the ladder runs where it is
-        asked, and its callers -- the statistics region split, the
-        coverage page -- each hold a repository to ask through.
+        in its record.
 
         Opens the score if it is closed, and closes it again only in
         that case -- an already-open score stays open for its owner.
@@ -305,13 +302,6 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> list[Region]:
         """The statistics regions: the ladder's lengths, split."""
         return self._regions_from(self.get_chrom_lengths(grr), region_size)
-
-    def _files_md5(self) -> dict[str, str | None]:
-        """The manifest md5 of every table file, keyed by name."""
-        manifest = self.resource.get_manifest()
-        return {
-            file_name: manifest[file_name].md5
-            for file_name in sorted(self.files)}
 
     @staticmethod
     def _regions_from(
@@ -371,6 +361,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         This hash is used to decide whether the resource statistics should be
         recomputed.
         """
+        manifest = self.resource.get_manifest()
         return json.dumps({
             "config": {
                 "histograms": [
@@ -380,7 +371,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 ],
                 "table": {
                     "config": self.score.table.definition,
-                    "files_md5": self._files_md5(),
+                    "files_md5": {file_name: manifest[file_name].md5
+                                  for file_name in sorted(self.files)},
                 },
             },
             "score_config": [
