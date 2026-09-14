@@ -27,12 +27,19 @@ at the ceiling through the next test's setup -- and the re-arm there has to
 open ``/proc`` before it can raise anything, which is exactly the allocation
 that fails.  Widening from the bound already known needs no read.
 
+Once the report exists the runaway's frames are *released* (#1451): their
+locals are cleared, so the data goes back to the allocator right away instead
+of at the next full collection -- or, for a scoped fixture whose failure
+pytest caches for the rest of its scope, never.
+
 Registered from ``pytest.ini``'s ``addopts`` (``-p tests.memory_guard``),
 alongside the dask guard.
 """
 import os
 import resource
 import sys
+import traceback
+from collections.abc import Iterator
 
 import pytest
 
@@ -83,10 +90,15 @@ def read_vm_data_bytes() -> int | None:
     private anonymous mappings -- which is *not* resident memory.  Reading it
     here is what lets the budget be a budget rather than a guess.
     """
+    return read_proc_status_bytes("VmData")
+
+
+def read_proc_status_bytes(field: str) -> int | None:
+    """Return a ``kB`` field of ``/proc/self/status`` in bytes, or None."""
     try:
         with open("/proc/self/status", encoding="utf-8") as status:
             for line in status:
-                if line.startswith("VmData:"):
+                if line.startswith(f"{field}:"):
                     return int(line.split()[1]) * 1024
     except (OSError, ValueError, IndexError):
         return None
@@ -130,21 +142,69 @@ def pytest_runtest_makereport(call: pytest.CallInfo[None]) -> None:
     with ``INTERNALERROR`` and names no test.  Returns None so pluggy carries
     on to the implementation that builds the report.
     """
-    if call.excinfo is None or not _raised_memory_error(call.excinfo.value):
-        return
-    _widen()
+    if _runaway_of(call) is not None:
+        _widen()
 
 
-def _raised_memory_error(exc: BaseException) -> bool:
-    """Say whether ``exc`` is, or was raised from, a ``MemoryError``."""
+@pytest.hookimpl(trylast=True)
+def pytest_exception_interact(call: pytest.CallInfo[object]) -> None:
+    """Release a runaway's frames once nothing needs them any more.
+
+    pytest calls this for every failed phase after the report is built --
+    and after ``--pdb`` has run its post-mortem on the same frames, which is
+    why ``trylast`` and not a wrapper around the report hook (#1451).
+    """
+    runaway = _runaway_of(call)
+    if runaway is not None:
+        _release_frames(runaway)
+
+
+def _runaway_of(call: pytest.CallInfo[object]) -> BaseException | None:
+    """Return the exception a phase tripped the guard with, if it did.
+
+    That is one raised from a ``MemoryError`` -- as itself or as the cause or
+    context of what surfaced -- while the guard is switched on at all.
+    """
+    if call.excinfo is None or budget_bytes() == 0:
+        return None
+    exc = call.excinfo.value
+    if any(isinstance(e, MemoryError) for e in _exception_chain(exc)):
+        return exc
+    return None
+
+
+def _exception_chain(exc: BaseException) -> Iterator[BaseException]:
+    """Yield ``exc`` and what it was raised from, cause before context."""
     seen: set[int] = set()
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
-        if isinstance(current, MemoryError):
-            return True
+        yield current
         seen.add(id(current))
         current = current.__cause__ or current.__context__
-    return False
+
+
+def _release_frames(exc: BaseException) -> None:
+    """Drop the locals of every frame in ``exc``'s traceback chain.
+
+    The traceback itself stays: line numbers and source still render, only
+    the values are gone.  A frame that is still executing refuses to be
+    cleared; that one is left alone.  (A suspended generator's frame refuses
+    too from 3.13 on; 3.12 closes the generator instead.  Nothing in pytest's
+    own machinery leaves one in a ``MemoryError``'s traceback.)
+
+    Clearing is not enough on 3.12: pytest read ``f_locals`` on every frame
+    while formatting the report, and there that materialises a dict stored on
+    the frame which ``clear()`` leaves intact.  Reading it once more resyncs
+    it from the emptied fast locals.  3.13+ keeps a proxy instead and clears
+    its own cache.
+    """
+    for current in _exception_chain(exc):
+        for frame, _lineno in traceback.walk_tb(current.__traceback__):
+            try:
+                frame.clear()
+            except RuntimeError:
+                continue
+            _ = frame.f_locals
 
 
 def _widen() -> None:
@@ -156,8 +216,6 @@ def _widen() -> None:
     would have put it anyway.
     """
     budget = budget_bytes()
-    if budget == 0:
-        return
     try:
         soft, hard = resource.getrlimit(resource.RLIMIT_DATA)
     except (OSError, ValueError):
