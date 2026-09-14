@@ -16,7 +16,7 @@
         reading the template alone; the scan in
         tests/small/templates/test_grr_page_icon_font.py is the
         authority on which glyphs the page can draw. #}
-     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=arrow_downward,arrow_upward,check,content_copy,description,folder,unfold_more&display=block" />
+     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=arrow_downward,arrow_upward,check,close,content_copy,description,folder,unfold_more&display=block" />
     <style>
 
       body {
@@ -61,13 +61,47 @@
         cursor: pointer;
       }
 
-      #search-field {
+      #search-box {
+        position: relative;
         width: 40%;
+      }
+
+      #search-field {
+        width: 100%;
         border: 1px solid #85a2b9;
         height: 40px;
         border-radius: 5px;
         font-size: 18px;
-        padding: 0 10px;
+        /* Room on the right for the clear button sitting over the box. */
+        padding: 0 40px 0 10px;
+      }
+
+      #clear-search {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        background: none;
+        padding: 0;
+        color: #5b778c;
+        cursor: pointer;
+      }
+
+      #clear-search:hover {
+        color: #24699E;
+      }
+
+      /* Offered only while there is something to clear.  Driven by the
+         field itself rather than by script, so a term that arrives by
+         address (`apply` fills the box) shows the button just as a typed
+         one does, with nothing to keep in step. */
+      #search-field:placeholder-shown + #clear-search {
+        display: none;
       }
 
       input::placeholder {
@@ -430,7 +464,10 @@
                 <option value="all">All</option>
             </select>
           </div>
-          <input type="text" id="search-field" placeholder="Search">
+          <div id="search-box">
+            <input type="text" id="search-field" placeholder="Search">
+            <button type="button" id="clear-search" title="Clear search" aria-label="Clear search"><span class="material-symbols-outlined">close</span></button>
+          </div>
         </div>
         <div class="search-info">
           <div>

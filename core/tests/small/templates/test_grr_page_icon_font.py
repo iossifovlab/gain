@@ -62,10 +62,12 @@ ICON_CLASS = "material-symbols-outlined"
 #:   copy, reverted after a timeout.
 #: - ``folder`` / ``description`` -- the hierarchical view's row icons,
 #:   built as markup strings and assigned through ``innerHTML``.
+#: - ``close`` -- the button that clears the search term (gain#1454).
 EXPECTED_GLYPHS = frozenset({
     "arrow_downward",
     "arrow_upward",
     "check",
+    "close",
     "content_copy",
     "description",
     "folder",

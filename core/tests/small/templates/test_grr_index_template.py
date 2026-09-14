@@ -143,3 +143,25 @@ def test_tree_treats_version_zero_as_unversioned() -> None:
     rendered = _render_browse_page()
 
     assert 'd.version !== "0"' in rendered
+
+
+def test_the_clear_button_empties_the_field_and_reruns_the_search() -> None:
+    """The search box carries a clear button wired through the search path.
+
+    Three things are read off the source: the button is there and named
+    for assistive technology; it is hidden by the stylesheet while the
+    field is empty (driven by the field, so a term arriving by address
+    shows it too); and its handler empties the field and goes through
+    ``searchFromControls`` -- the one route every reader-driven change
+    takes, which is what rewrites the address and re-runs the query.
+    """
+    rendered = _render_browse_page()
+
+    assert 'id="clear-search"' in rendered
+    assert 'aria-label="Clear search"' in rendered
+    assert "#search-field:placeholder-shown + #clear-search" in rendered
+
+    start = rendered.index('getElementById("clear-search")')
+    handler = rendered[start:rendered.index("});", start)]
+    assert 'searchField.value = ""' in handler
+    assert "searchFromControls()" in handler
