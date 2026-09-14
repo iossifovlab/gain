@@ -7,3 +7,10 @@ except ImportError:
     __version__ = "0.0.0.dev0"
 
 import gain.utils.log_levels  # ruff: ignore[unused-import]
+from gain.utils.url_redaction import redact_url_userinfo_in_log_records
+
+# Every LogRecord in the process -- gain's, fsspec's, the host's -- renders
+# without url userinfo from here on (ADR 0023, gain#1363). Installed next to
+# the level bootstrap above for the same reason: importing gain at all is
+# the moment, so no worker, host or later import order can miss it.
+redact_url_userinfo_in_log_records()

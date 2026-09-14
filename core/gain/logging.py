@@ -23,6 +23,13 @@ The custom TRACE / USER_INFO levels (and the ``Logger.trace`` /
 that *every* logger — including the root logger and any already created — gains
 the methods at runtime.
 
+The same import installs the url-userinfo log-record seam of
+``gain.utils.url_redaction`` (ADR 0023, gain#1363): ``LogRecord.getMessage``
+is wrapped so that every log line in the process — from a gain logger, from
+fsspec's, from the host's — renders ``scheme://user:pass@host`` as
+``scheme://host``. Both bootstraps run from ``gain/__init__``, so importing
+this module, or anything else under ``gain``, is enough.
+
 For type checkers, ``getLogger`` is declared to return a ``Logger`` subclass
 advertising ``.trace`` / ``.user_info``. This is a pure typing shim: it is
 declared *before* the star import so the type checker adopts the richer return
