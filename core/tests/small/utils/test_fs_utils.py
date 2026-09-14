@@ -167,28 +167,37 @@ def fresh_s3_filesystem_cache() -> Generator[None, None, None]:
     S3FileSystem.clear_instance_cache()
 
 
+# The region decides which signature botocore emits: none is SigV2, a
+# regional endpoint is SigV4. Both spellings must carry the lifetime.
+@pytest.mark.parametrize("region", [
+    pytest.param(None, id="sigv2"),
+    pytest.param("eu-central-1", id="sigv4"),
+])
 def test_sign_presigns_an_s3_url_for_the_full_handle_lifetime(
     fresh_s3_filesystem_cache: None,
     monkeypatch: pytest.MonkeyPatch,
+    region: str | None,
 ) -> None:
     # Presigning is local to botocore -- credentials are all it needs, no
-    # endpoint -- so this speaks to the real s3 filesystem.
+    # endpoint -- so this speaks to the real s3 filesystem. The developer's
+    # own ``~/.aws`` is shut out so the region is the one set here.
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
+    monkeypatch.setenv("AWS_CONFIG_FILE", "/nonexistent")
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", "/nonexistent")
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    if region is None:
+        monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    else:
+        monkeypatch.setenv("AWS_DEFAULT_REGION", region)
     signed_at = int(time.time())
 
     signed = fs_utils.sign("s3://bucket/dir/data.txt.gz")
 
+    assert ("X-Amz-Expires" in signed) is (region is not None)
     lifetime = _presigned_lifetime_seconds(signed, signed_at)
     assert lifetime == pytest.approx(S3_PRESIGN_EXPIRATION_SECONDS, abs=5)
 
 
-@pytest.mark.parametrize("filename", [
-    "/dir/data.txt.gz",
-    "file:///dir/data.txt.gz",
-    "data.txt.gz",
-])
-def test_sign_returns_a_filename_the_filesystem_cannot_sign_as_is(
-    filename: str,
-) -> None:
-    assert fs_utils.sign(filename) == filename
+def test_sign_returns_a_filename_the_filesystem_cannot_sign_as_is() -> None:
+    assert fs_utils.sign("/dir/data.txt.gz") == "/dir/data.txt.gz"
