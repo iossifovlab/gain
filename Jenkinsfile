@@ -68,9 +68,10 @@ def runProject(Map args) {
                 # this whole block is one single-quoted sh -c string,
                 # and an apostrophe ends it there. Everything after
                 # then runs in the OUTER Jenkins shell — which is how
-                # the exit at the bottom was a no-op for two months
-                # (#1403): the container always exited 0 and only
-                # publishReports caught failing tests.
+                # the exit at the bottom was a no-op from the day it
+                # was added until #1403: the container always exited 0,
+                # and failing tests were caught by nothing at all until
+                # the publishReports gate arrived, then by that alone.
                 scripts_dir=
                 if [ -d scripts ]; then
                     scripts_dir=scripts
@@ -125,11 +126,11 @@ def publishReports(String name) {
     // container script is the primary gate: a failing run makes `docker run`
     // exit non-zero, which fails the `sh` step. (Until #1403 an apostrophe in
     // the script's own comments cut the sh -c string short and left that exit
-    // to the outer shell, where it was a no-op, so builds only ever went
-    // UNSTABLE and kept going — e.g. still pushing images.) This is the
-    // second, complementary gate: it names the failure count in the build's
-    // error message, and it still runs from post.always after the step has
-    // failed. Publish the test report with skipMarkingBuildUnstable (junit
+    // to the outer shell, where it was a no-op; before this gate existed,
+    // builds therefore only ever went UNSTABLE and kept going — e.g. still
+    // pushing images.) This is the second, complementary gate: it reports
+    // the failure count, and it still runs from post.always after the step
+    // has failed. Publish the test report with skipMarkingBuildUnstable (junit
     // doesn't touch the result), capture its failure count, and error() ->
     // FAILURE if anything failed. Publish the lint/type reports separately
     // with the default marking so ruff/mypy/pylint findings still surface as
