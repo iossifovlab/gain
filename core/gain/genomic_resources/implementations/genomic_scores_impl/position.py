@@ -11,8 +11,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from gain import logging
-from gain.genomic_resources.reference_genome import ReferenceGenome
+from gain.genomic_resources.genomic_scores.chrom_lengths import ChromLength
 from gain.genomic_resources.statistics.coverage import (
     COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
     COVERAGE_STATISTICS_FILE,
@@ -21,11 +20,8 @@ from gain.genomic_resources.statistics.coverage import (
     build_coverage_display,
     resolve_chrom_lengths,
 )
-from gain.genomic_resources.utils import read_resource_id_label
 
 from .base import GenomicScoreImplementation
-
-logger = logging.getLogger(__name__)
 
 
 class PositionScoreImplementation(GenomicScoreImplementation):
@@ -78,37 +74,27 @@ class PositionScoreImplementation(GenomicScoreImplementation):
         if coverage is None:
             return None
         lengths = resolve_chrom_lengths(
-            self.resource, self.score, self._render_genome(),
+            self.resource,
+            self._resolve_labelled_genome(self._render_repo),
+            self._score_chrom_lengths,
             coverage.covered_by_chromosome())
         return build_coverage_display(
             self.resource.resource_id, coverage, lengths)
 
-    def _render_genome(self) -> ReferenceGenome | None:
-        """The resource's labelled reference genome, at render time.
+    def _score_chrom_lengths(self) -> dict[str, ChromLength]:
+        """The second rung's records: what the score's own file can say.
 
-        A label naming something that is not a genome is a reason to
-        degrade to raw counts, not to fail the page build.
+        Asked only once the genome rung has resolved nothing, so the
+        label is not consulted again -- the ladder runs without a
+        genome, as it does for an unlabelled score.
 
-        Three ways it can fail to name one.  A value that is not a
-        resource id at all -- the int, list or dict a free-form
-        ``meta.labels`` allows -- used to reach resolution as itself and
-        raise ``TypeError`` past the ``except ValueError``, failing the
-        page build this comment says must not fail; it is now read as
-        absent and reported by the narrowing (gain#1053).  An id the
-        repository does not have is answered ``None``, with its own
-        warning, by the cached resolver (which looks the id up rather
-        than catching one repository kind's exception, gain#1419).  An
-        id naming a resource of another type still reaches
-        ``build_reference_genome_from_resource`` and is caught here.
+        Not asked of a backend whose lengths are never exact.  Nothing
+        such a backend says can serve as a denominator, and finding that
+        out would open its table: on a tabix score, the index probe per
+        contig, at every render -- and ``repo-repair`` renders every
+        page (gain#1448).  The probe stays a repair-time cost.  A bigWig
+        header is exact, and is the one reason a render opens a table.
         """
-        genome_id = read_resource_id_label(
-            self.resource, "reference_genome")
-        try:
-            return self._get_reference_genome_cached(
-                self._render_repo, genome_id)
-        except ValueError:
-            logger.warning(
-                "reference_genome label %r of %s does not name a genome "
-                "resource; ignoring it for coverage fractions",
-                genome_id, self.resource.resource_id)
-            return None
+        if not self.score.table.chrom_length_source.is_exact:
+            return {}
+        return self.get_chrom_lengths(None)
