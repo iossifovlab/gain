@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import weakref
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 from gain import logging
 from gain.genomic_resources.genomic_scores import (
@@ -21,7 +21,6 @@ from gain.genomic_resources.reference_genome import (
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
-    resolve_tabix_index_filename,
 )
 from gain.genomic_resources.resource_implementation import (
     InfoImplementationMixin,
@@ -183,60 +182,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
     @property
     def files(self) -> set[str]:
-        filename = self._table_config()["filename"]
-        files = {filename}
-        if self.score.uses_tabix_index:
-            index_filename = self._resolve_index_filename(filename)
-            if index_filename is not None:
-                files.add(index_filename)
-        return files
-
-    def _table_config(self) -> dict[str, Any]:
-        """The ``table`` section of the score's validated configuration.
-
-        What the score built its table from, and so what the file set
-        and the statistics hash read: the definition the table holds is
-        a ``Box`` over a copy of this dict, and serialises identically.
-        """
-        return cast("dict[str, Any]", self.score.get_config()["table"])
-
-    def _resolve_index_filename(self, filename: str) -> str | None:
-        """Return the tabix index of ``filename``, or ``None`` with a warning.
-
-        Resolves the index the way the table itself opens it: the table
-        definition's ``index_filename`` when it is set, and otherwise the
-        conventional ``.tbi`` / ``.csi`` probe over the resource manifest.
-
-        Only a name the manifest carries is ever returned -- the statistics
-        hash looks every file-set entry up in that same manifest and would
-        raise on a missing key.  A configured index absent from the
-        manifest is a misconfiguration; it is reported and dropped rather
-        than falling back to the conventional probe, which would silently
-        hash an index the table does not read (gain#595).
-        """
-        manifest = self.resource.get_manifest()
-        # The table section is untyped config, so ``get`` is Any.
-        configured = cast(
-            "str | None", self._table_config().get("index_filename"))
-        if configured is not None:
-            if configured in manifest:
-                return configured
-            logger.warning(
-                "resource <%s>: tabix table %s configures index_filename "
-                "%s, which is not in the resource manifest; the index is "
-                "left out of the resource file set",
-                self.resource.resource_id, filename, configured)
-            return None
-        # The statistics hash is computed against the same manifest, so
-        # resolving from it here is free and keeps the two consistent.
-        index_filename = resolve_tabix_index_filename(manifest, filename)
-        if index_filename is None:
-            logger.warning(
-                "resource <%s>: tabix table %s has no index "
-                "(neither %s.tbi nor %s.csi) in the resource manifest; "
-                "the index is left out of the resource file set",
-                self.resource.resource_id, filename, filename, filename)
-        return index_filename
+        # The statistics hash looks every entry up in the resource
+        # manifest, and the score's table resolves its index against that
+        # same manifest, so the two cannot disagree (gain#595).
+        return self.score.resource_files()
 
     @staticmethod
     def _get_reference_genome_cached(
@@ -401,7 +350,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                     if hist_conf is not None
                 ],
                 "table": {
-                    "config": self._table_config(),
+                    # The validated ``table`` section the score built its
+                    # table from; the definition the table holds is a Box
+                    # over a copy of it and serialises identically.
+                    "config": self.score.get_config()["table"],
                     "files_md5": {file_name: manifest[file_name].md5
                                   for file_name in sorted(self.files)},
                 },

@@ -91,7 +91,7 @@ def derive_chrom_length(
     if isinstance(length, ContigExtent):
         return ChromLength(length=None, source=None, extent=length)
     return ChromLength(
-        length=length, source=score.table.chrom_length_source, extent=None)
+        length=length, source=score.chrom_length_source, extent=None)
 
 
 def derive_chrom_lengths(

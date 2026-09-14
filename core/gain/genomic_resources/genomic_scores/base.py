@@ -906,28 +906,22 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     def chrom_length_source(self) -> ChromLengthSource:
         """What the score's own file can say a contig's length is.
 
-        A fact about the format, declared on the backend class, so it is
-        answered on a closed score -- which is the point: a caller weighing
-        whether to open the table for its lengths at all (coverage's
-        second rung, gain#1448) asks this first.  The lengths themselves,
-        with this source on each, come from
+        Declared on the backend class, so answered on a closed score --
+        which is what a caller weighing whether to open the table for its
+        lengths at all (coverage's second rung, gain#1448) needs.  The
+        lengths themselves come from
         :func:`~.chrom_lengths.derive_chrom_lengths`.
         """
         return self.table.chrom_length_source
 
-    @property
-    def uses_tabix_index(self) -> bool:
-        """Whether the score's file is read through a tabix index.
+    def resource_files(self) -> set[str]:
+        """The resource's files the score reads: the data file, plus the
+        index on a backend that reads one.
 
-        A fact about the format, declared on the backend class, so it is
-        answered on a closed score: the resource file set -- the data file
-        and, on a tabix backend, the ``.tbi`` / ``.csi`` that goes with it
-        -- has to be known before any of those files is opened.  The
-        index's NAME is a separate question: ``index_filename`` in the
-        table section of :meth:`get_config` when the resource configures
-        one, the conventional suffixes over the manifest otherwise.
+        Answered by the table, which knows how it opens, on a closed score
+        -- the file set has to be known before any of the files is.
         """
-        return self.table.uses_tabix_index
+        return self.table.resource_files()
 
     def region_values_from_records(
         self,
