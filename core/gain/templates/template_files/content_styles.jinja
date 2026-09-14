@@ -33,6 +33,27 @@
         font-family: "Roboto", system-ui, -apple-system, sans-serif;
       }
 
+      {# The reset above outranks the browser's own `monospace` for these,
+         so it has to be given back by name -- a directory tree drawn in a
+         description reads through its column alignment, and every glyph
+         must be the same width for the column to hold (gain#1452).  A
+         `pre` wider than its box scrolls rather than wraps for the same
+         reason: a wrapped tree line is as broken as a ragged one.
+
+         The descendants are named too, not left to inherit: the reset
+         sets the font *on* every element, so a link drawn into a tree --
+         a `<pre>` written as raw HTML so that its folders can be linked
+         -- would otherwise come out proportional and push the column
+         it sits in. #}
+      pre, pre *, code, code *, kbd, samp {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas,
+          "Liberation Mono", monospace;
+      }
+
+      pre {
+        overflow-x: auto;
+      }
+
       h1, h2, h3, h4, h5, h6 {
         color: #5b778c;
       }

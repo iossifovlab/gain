@@ -187,6 +187,100 @@ def test_a_description_link_takes_its_colour_from_the_pages_rule(
     assert_shared_with_page(page, shadow_root, "a:hover", "color: #4C93C9")
 
 
+@pytest.fixture
+def resource_described_by_a_directory_tree() -> GenomicResource:
+    """A resource whose description lays out its siblings as a tree.
+
+    The NYGC single-cell demo GRR's dataset summaries do exactly this: an
+    indented block drawn with box characters, one "N resources" column
+    aligned by spaces.  Its meaning is in the alignment, so it only reads
+    right in a font where every glyph is the same width.
+    """
+    return basic_resource_described_by("""
+        The dataset is laid out as
+
+            johansen2025Crossspecies/
+            ├── rna_expression_matrix/       15 resources
+            │   ├── HMBA-10xMultiome-BG/      6 resources
+            │   └── HMBA-Macaque-PatchSeq/    1 resource
+            └── atac_fragments/             518 resources
+    """)
+
+
+@pytest.fixture
+def tree_page(resource_described_by_a_directory_tree: GenomicResource) -> str:
+    """The rendered resource page carrying that description."""
+    return BasicResourceImplementation(
+        resource_described_by_a_directory_tree).get_info()
+
+
+def test_a_description_code_block_is_set_in_a_monospace_font(
+    tree_page: str,
+) -> None:
+    """A code block in a description keeps every glyph the same width.
+
+    The shared sheet's ``*`` reset names Roboto for every element, which
+    outranks the browser's own ``monospace`` default for ``pre`` and
+    ``code``, and until gain#1452 nothing restored it: a directory tree
+    drawn in a description came out ragged, its aligned column wandering
+    with the width of each name's letters.  Both elements are pinned --
+    the block's ``pre`` and the ``code`` markdown2 nests inside it --
+    because either one naming a proportional font is enough to break the
+    alignment.
+    """
+    shadow_root = description_shadow_root(tree_page)
+    assert "├── rna_expression_matrix/       15 resources" in shadow_root
+    assert "<pre><code>" in shadow_root
+
+    for selector in ("pre", "code"):
+        declared = declared_for(shadow_root, selector)
+        fonts = [d for d in declared if d.startswith("font-family: ")]
+        assert fonts, f"nothing names a font for {selector}: {declared}"
+        assert all(font.rstrip().endswith("monospace") for font in fonts), \
+            f"{selector} falls back to a proportional font: {fonts}"
+        assert_shared_with_page(tree_page, shadow_root, selector, *fonts)
+
+
+def test_a_link_inside_a_description_code_block_keeps_the_monospace_font(
+) -> None:
+    """A tree written as raw HTML so its folders can be linked stays aligned.
+
+    Markdown cannot put a link inside a code block, so an author who
+    wants a clickable tree writes the ``<pre>`` themselves.  The reset
+    sets the font *on* every element rather than leaving it to inherit,
+    so the ``<a>`` inside would come out in Roboto and shift the column
+    it sits in, unless the descendants of ``pre`` are named as well.
+    """
+    page = BasicResourceImplementation(basic_resource_described_by("""
+        The dataset is laid out as
+
+        <pre>demo/
+        ├── <a href="../index.html#/demo/scores">scores/</a>      15 resources
+        └── <a href="../index.html#/demo/genomes">genomes/</a>     3 resources
+        </pre>
+    """)).get_info()
+    shadow_root = description_shadow_root(page)
+    assert '<a href="../index.html#/demo/scores">scores/</a>' in shadow_root
+
+    fonts = [
+        d for d in declared_for(shadow_root, "pre")
+        if d.startswith("font-family: ")]
+    assert fonts
+    assert_shared_with_page(page, shadow_root, "pre *", *fonts)
+    assert_shared_with_page(page, shadow_root, "code *", *fonts)
+
+
+def test_a_wide_description_code_block_scrolls_rather_than_wraps(
+    tree_page: str,
+) -> None:
+    """A tree wider than the page scrolls sideways; a wrapped line is a
+    broken tree just as surely as a proportional one."""
+    shadow_root = description_shadow_root(tree_page)
+
+    assert_shared_with_page(
+        tree_page, shadow_root, "pre", "overflow-x: auto")
+
+
 def test_description_content_is_laid_out_in_the_pages_box_model(
     page: str, shadow_root: str,
 ) -> None:
