@@ -1403,7 +1403,7 @@ class BasicResourceBuilder(MetaMixin):
     Two exits: :meth:`build_resource` writes the resource under a
     ``tmp_path`` like every other builder, and :meth:`build_inmemory`
     hands it back with no directory at all, for a fixture that only
-    renders the resource's page.  Both realize the same :meth:`content`.
+    renders the resource's page.  Both realize the same content dict.
     """
 
     files: tuple[tuple[str, str], ...] = ((_DATA_FILENAME, "alabala"),)
@@ -1425,31 +1425,15 @@ class BasicResourceBuilder(MetaMixin):
                 f"{filename!r} is the rendered config, not a payload; "
                 f"declare meta with with_meta, or the whole block with "
                 f"with_raw_meta")
-        if any(name == filename for name, _ in self.files):
-            files = tuple(
-                (name, content if name == filename else text)
-                for name, text in self.files)
-        else:
-            files = (*self.files, (filename, content))
-        return dataclasses.replace(self, files=files)
-
-    def content(self) -> dict[str, Any]:
-        """The resource as a ``{filename: content}`` mapping.
-
-        The one recipe both exits realize -- ``setup_directories`` on the
-        filesystem, ``build_inmemory_test_resource`` in memory -- so the
-        two cannot describe different resources.
-        """
-        config = yaml.safe_dump(
-            {"type": "basic"}, default_flow_style=False, sort_keys=False)
-        return {
-            GR_CONF_FILE_NAME: config + self.render_meta(),
-            **dict(self.files),
-        }
+        # A dict keeps a reassigned key in its slot, which is the
+        # replace-in-place the docstring promises.
+        files = dict(self.files)
+        files[filename] = content
+        return dataclasses.replace(self, files=tuple(files.items()))
 
     def realize_into(self, resource_dir: pathlib.Path) -> None:
         """Write this basic resource into ``resource_dir``."""
-        setup_directories(resource_dir, self.content())
+        setup_directories(resource_dir, _build_basic_resource_content(self))
 
     def build_resource(self, tmp_path: pathlib.Path) -> GenomicResource:
         """Realize this single resource (repo id ``""``) into ``tmp_path``."""
@@ -1461,7 +1445,23 @@ class BasicResourceBuilder(MetaMixin):
         For a fixture that has no directory to write into -- the
         template tests render a resource's page and never touch a file.
         """
-        return build_inmemory_test_resource(self.content())
+        return build_inmemory_test_resource(
+            _build_basic_resource_content(self))
+
+
+def _build_basic_resource_content(
+    builder: BasicResourceBuilder,
+) -> dict[str, Any]:
+    """Build the pure filesystem content dict for one basic resource.
+
+    The one recipe both exits realize -- ``setup_directories`` on the
+    filesystem, ``build_inmemory_test_resource`` in memory -- so the two
+    cannot describe different resources.
+    """
+    return {
+        GR_CONF_FILE_NAME: "type: basic\n" + builder.render_meta(),
+        **dict(builder.files),
+    }
 
 
 def _build_single_resource(

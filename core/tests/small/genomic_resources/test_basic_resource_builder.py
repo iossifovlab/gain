@@ -10,6 +10,7 @@ config, which repository tests pin by md5, and the ``meta:`` round trip.
 """
 from __future__ import annotations
 
+import hashlib
 import pathlib
 import textwrap
 
@@ -29,6 +30,10 @@ def test_bare_builder_is_a_basic_resource_with_one_payload_file(
     assert res.get_file_content("data.txt")
 
 
+#: What the repository-layout fixtures hand-write for a basic resource.
+THE_LITERAL = "type: basic\n"
+
+
 def test_bare_config_is_byte_identical_to_the_hand_written_literal(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -42,10 +47,13 @@ def test_bare_config_is_byte_identical_to_the_hand_written_literal(
     """
     res = a_basic_resource().build_resource(tmp_path)
 
-    assert res.get_file_content(GR_CONF_FILE_NAME) == "type: basic\n"
+    assert res.get_file_content(GR_CONF_FILE_NAME) == THE_LITERAL
     entry = res.get_manifest()[GR_CONF_FILE_NAME]
     assert (entry.size, entry.md5) == (
-        12, "808e4e365b077a980b881de4701e9cb6")
+        len(THE_LITERAL),
+        hashlib.md5(  # ruff: ignore[hashlib-insecure-hash-function]
+            THE_LITERAL.encode()).hexdigest(),
+    )
 
 
 A_MARKDOWN_DESCRIPTION = textwrap.dedent("""\
