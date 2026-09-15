@@ -68,6 +68,30 @@ async function openBrowseIndex(
 }
 
 /**
+ * Open the browse index with its search module never evaluating.
+ *
+ * Aborts sqlite-wasm. It is a *static* import at the top of the module
+ * that owns the search, so failing it means that module never evaluates
+ * at all and never publishes the seam -- not that the search merely
+ * comes up empty. The route filter matches the module's
+ * `.static/sqlite-wasm-<version>/` path.
+ *
+ * Nothing is waited for: the rows are server-rendered and the view is
+ * chosen synchronously, and the `#status` line `openBrowseIndex` waits
+ * on is written by the module that never runs.
+ */
+async function openBrowseIndexWithoutSearch(
+  page: Page, hash = '',
+): Promise<void> {
+  await serveGrr(page, FIXTURE_BROWSE_GRR);
+  await page.route(
+    (url) => url.href.includes('sqlite-wasm'),
+    (route) => route.abort(),
+  );
+  await page.goto(indexPageUrl() + hash);
+}
+
+/**
  * Open the browse index and wait for its fonts to settle.
  *
  * Fonts are fetched lazily, once layout finds an element that uses the
@@ -1080,6 +1104,139 @@ test('the tree orders names by locale, as the table does', async ({ page }) => {
   expect(await resourceNames(page)).toEqual(resources.byLocale);
 });
 
+/* ---- The table's default order is its sorter's order (#1351) ---- */
+
+/** The ids the table shows, in the order it shows them. */
+function tableIds(page: Page): Promise<string[]> {
+  return visibleResourceIds(page).allTextContents();
+}
+
+/**
+ * Open the browse index and read the rows as it first lists them.
+ *
+ * The guard is the fixture's capitalised names doing their job: where
+ * code-unit and locale order agree, a table that listed its rows in the
+ * order the index was built -- Python's code-point order -- passes every
+ * assertion below, and the disagreement between the listing a reader
+ * sees on arrival and the one a click hands them is invisible.
+ */
+async function defaultTableIds(page: Page): Promise<string[]> {
+  await openBrowseIndex(page);
+  await expectView(page, 'table');
+  const ids = await tableIds(page);
+  expect(ids).not.toEqual([...ids].sort());
+  return ids;
+}
+
+test('the table lists resources in the order its ID sorter puts them',
+  async ({ page }) => {
+    const unsorted = await defaultTableIds(page);
+    const orders = await bothOrders(page, unsorted);
+
+    await page.locator('#id-col-header').click();
+    const sortedById = await tableIds(page);
+
+    expect(sortedById).toEqual(orders.byLocale);
+    expect(unsorted).toEqual(sortedById);
+  });
+
+test('the rows arrive from the server already in that order', async ({
+  page,
+}) => {
+  /* The order above is computed by the page once its index has loaded
+   * and it has rewritten every row. Until then -- and for good if the
+   * module that owns the search never evaluates -- what the reader sees
+   * is the markup as published, so the publisher has to have put the
+   * rows in the order the page will keep them in. */
+  await openBrowseIndexWithoutSearch(page);
+  await expectView(page, 'table');
+
+  const asPublished = await tableIds(page);
+  expect(asPublished).toHaveLength(BROWSE_RESOURCE_COUNT);
+
+  const orders = await bothOrders(page, asPublished);
+  expect(orders.byCodeUnit).not.toEqual(orders.byLocale);
+  expect(asPublished).toEqual(orders.byLocale);
+});
+
+test('the table and the tree list the repository in the same order',
+  async ({ page }) => {
+    /* Read from each other, not each against a constant: that is what
+     * nothing did while the two drifted (iossifovlab/gain#564, #1351).
+     * The tree is nested where the table is flat, so what is compared
+     * is the order the top-level folders first appear in down the ID
+     * column, and the order of the resources inside one of them. */
+    const ids = await defaultTableIds(page);
+    const foldersByTable = [...new Set(ids.map((id) => id.split('/')[0]))];
+    const resourcesByTable = ids
+      .filter((id) => id.startsWith(`${BROWSE_CAPITALISED_FOLDER}/`))
+      .map((id) => id.split('/')[1]);
+
+    await page.locator('#hierarchical-view-btn').click();
+    await expectView(page, 'hierarchical');
+    const foldersByTree = await folderNames(page);
+    await folderRow(page, BROWSE_CAPITALISED_FOLDER).click();
+    const resourcesByTree = await resourceNames(page);
+
+    expect(foldersByTable).toEqual(foldersByTree);
+    expect(resourcesByTable).toEqual(resourcesByTree);
+    /* Agreeing in code-unit order would be agreeing on the bug. */
+    expect(foldersByTree).not.toEqual([...foldersByTree].sort());
+    expect(resourcesByTree).not.toEqual([...resourcesByTree].sort());
+  });
+
+test('a search lists its matches in the default order', async ({ page }) => {
+  /* The hit set comes back from the index in whatever order the query
+   * ran in, which is rowid order for a scan and the build order for the
+   * rest -- neither of them the table's. The type filter is the one
+   * search here whose answer is more than one row. */
+  const unfiltered = await defaultTableIds(page);
+
+  await filterByType(page, BROWSE_SCORE_TYPE);
+  await expect(page.locator('#status'))
+    .toHaveText(`${BROWSE_RESOURCE_COUNT - 1} resources`);
+  const matches = await tableIds(page);
+
+  expect(matches).toHaveLength(BROWSE_RESOURCE_COUNT - 1);
+  expect(matches).toEqual(unfiltered.filter((id) => matches.includes(id)));
+  expect(matches).not.toEqual([...matches].sort());
+});
+
+test('cycling a column back to unsorted returns to the default order',
+  async ({ page }) => {
+    /* The third click on a header is the `none` state, which used to
+     * mean "as the index listed them". The Type column, whose
+     * descending state puts the one genome last, so that the order
+     * being returned from is distinguishable from the one returned to. */
+    const byDefault = await defaultTableIds(page);
+
+    const header = page.locator('#type-col-header');
+    await header.click();
+    await header.click();
+    const descending = await tableIds(page);
+    expect(descending).not.toEqual(byDefault);
+    await header.click();
+
+    expect(await tableIds(page)).toEqual(byDefault);
+  });
+
+test('rows a column cannot tell apart keep the default order', async ({
+  page,
+}) => {
+  /* Six of the seven share a type. Sorted by it, they are ties, and a
+   * tie falls through to whatever order the sort started from -- which
+   * has to be the default, not the index's. */
+  const byDefault = await defaultTableIds(page);
+
+  await page.locator('#type-col-header').click();
+  const byType = await tableIds(page);
+  const scores = byType.filter((id) => id !== BROWSE_GENOME_RESOURCE_ID);
+
+  expect(scores).toHaveLength(BROWSE_RESOURCE_COUNT - 1);
+  expect(scores).toEqual(
+    byDefault.filter((id) => id !== BROWSE_GENOME_RESOURCE_ID));
+});
+
 /* ---- The search state lives in the URL hash (#1331) ---- */
 
 test('Enter runs the search and writes it to the address', async ({
@@ -1408,25 +1565,7 @@ test('a tree still browses when the search index cannot be loaded', async ({
   page,
 }) => {
   const errors = collectPageErrors(page);
-  await serveGrr(page, FIXTURE_BROWSE_GRR);
-
-  /* Abort sqlite-wasm. It is a *static* import at the top of the module
-   * that owns the search, so failing it means that module never
-   * evaluates at all and never publishes the seam -- not that the search
-   * merely comes up empty.
-   *
-   * Before the search was addressable, the module that owns the address
-   * touched none of it, and a module this page could not load still left
-   * a browsable tree and a working Back and Forward over an empty table.
-   * Consulting the seam put that at risk: reaching for it directly makes
-   * the whole address machinery die with the import. The route filter
-   * matches the module's `.static/sqlite-wasm-<version>/` path. */
-  await page.route(
-    (url) => url.href.includes('sqlite-wasm'),
-    (route) => route.abort(),
-  );
-
-  await page.goto(`${indexPageUrl()}#/`);
+  await openBrowseIndexWithoutSearch(page, '#/');
 
   /* An *empty* tree, and that is the pre-existing bargain rather than a
    * shortfall: the tree is folded up from `window.rowData`, which the
