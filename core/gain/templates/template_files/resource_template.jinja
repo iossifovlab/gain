@@ -20,9 +20,16 @@
       }
 
       {% include "base_styles.jinja" %}
+      {% include "breadcrumb_styles.jinja" %}
+      {% include "copy_button_styles.jinja" %}
 
       #resource-table {
         margin-bottom: 70px;
+      }
+
+      #resource-table .copy-icon {
+        vertical-align: middle;
+        margin-left: 8px;
       }
 
       #resource-table th {
@@ -112,16 +119,14 @@
     {% include "sortable_table.jinja" %}
   </head>
   <body>
-    <nav id="page-header">
-      <a href="{{ static_root }}index.html">← Back to main page</a>
-    </nav>
+    {% include "breadcrumb.jinja" %}
     <div class="page-content">
     <h2>Resource</h2>
     <div>
         <table id="resource-table">
             <tr>
                 <th>Id</th>
-                <td>{{ resource.resource_id }}</td>
+                <td>{{ resource.resource_id }}<span class="material-symbols-outlined copy-icon" data-copy-id="{{ resource.resource_id }}">content_copy</span></td>
             </tr>
             <tr>
                 <th>Type</th>
@@ -231,5 +236,8 @@
     </tbody>
     </table>
     </div>
+    <script>
+{% include "copy_button.jinja" %}
+    </script>
   </body>
 </html>

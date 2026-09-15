@@ -8,18 +8,27 @@
     <style>
       {% include "roboto_font.jinja" %}
 
+      /* The same frame as the resource page: a header across the
+         whole width, the content centred under it (gain#1477). */
       body {
+        margin: 0;
+      }
+
+      .page-content {
         max-width: 1200px;
-        margin: 50px auto 100px auto;
-        padding: 0 40px;
+        margin: 0 auto;
+        padding: 40px 40px 100px;
       }
 
       {% include "base_styles.jinja" %}
+      {% include "breadcrumb_styles.jinja" %}
 
       {% include styles_template %}
     </style>
   </head>
   <body>
+    {% include "breadcrumb.jinja" %}
+    <div class="page-content">
       <table>
         <thead>
           <tr>
@@ -40,5 +49,6 @@
           {%- endfor %}
         </tbody>
       </table>
+    </div>
   </body>
 </html>

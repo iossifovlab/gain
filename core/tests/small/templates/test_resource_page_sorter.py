@@ -16,8 +16,9 @@ element that uses the face, and no page without an indicator renders a
 subset the browse page uses -- so what is pinned here is that the page
 declares it from the repository and that the subset carries the three
 glyphs the sorter draws.  The subset is sized by the browse page, which
-draws a copy button and a tick that no resource page has; see
-``test_grr_page_icon_font.py`` for the equality that keeps it small.
+draws everything a resource page does and more -- the Id cell's copy
+button and its tick are the browse page's own row icons (gain#1477);
+see ``test_grr_page_icon_font.py`` for the equality that keeps it small.
 
 The markup contract these scripts read is asserted from the rendered
 statistics tables, in

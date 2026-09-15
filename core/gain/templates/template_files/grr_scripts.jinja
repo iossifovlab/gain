@@ -171,7 +171,7 @@
                 const link = cells[1].querySelector("a");
                 link.setAttribute("href", rowData.url);
                 link.textContent = rowData.id;
-                cells[1].querySelector(".copy-icon").className = `material-symbols-outlined copy-icon ${rowData.id}`;
+                cells[1].querySelector(".copy-icon").dataset.copyId = rowData.id;
                 cells[2].textContent = rowData.version;
                 cells[3].textContent = rowData.size;
                 cells[4].textContent = rowData.summary;
@@ -421,19 +421,7 @@
             searchField.focus();
         });
         
-        const copyResourceId = (e) => {
-          navigator.clipboard.writeText(e.target.classList[2]).then(
-            () => {
-              // reset all icons
-              document.querySelectorAll('.copy-icon').forEach(i => i.textContent = 'content_copy')
-              e.target.textContent = 'check'
-              setTimeout(function(){
-                e.target.textContent = 'content_copy'
-              }, 3000);
-            }
-          )
-        };
-        document.querySelectorAll(".copy-icon").forEach((icon) => icon.addEventListener("click", copyResourceId));
+{% include "copy_button.jinja" %}
 
         const sortableColumns = {
             'id-col-header': 'id',
