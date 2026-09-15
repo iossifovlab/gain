@@ -235,6 +235,18 @@ def as_python_number(value: Any, what: str) -> float | int:
     return folded
 
 
+#: What a numeric accumulator's nan skip raises for a value it cannot read
+#: as a number -- the complaints :func:`non_numeric_error` re-words, stated
+#: once so the twins that catch them cannot drift apart.  ``TypeError`` is
+#: ``np.isnan`` on text or ``Decimal``; ``ValueError`` is ``np.isnan`` on a
+#: SEQUENCE, which answers with an array whose coercion to the ``bool`` the
+#: skip needs is what raises.  Catching only the first let the second escape
+#: every statistics pass's per-score containment and abort the whole build
+#: (gain#1337).  A one-element sequence is the exception: its array coerces,
+#: and :func:`as_python_number` refuses it below the skip instead.
+NON_NUMERIC_ERRORS = (TypeError, ValueError)
+
+
 def non_numeric_error(value: Any, what: str) -> TypeError:
     """The one wording of a numeric accumulator's refusal.
 
@@ -245,7 +257,7 @@ def non_numeric_error(value: Any, what: str) -> TypeError:
     score's reason should not be able to tell which of them produced it.
 
     Returned rather than raised, so a caller can raise it ``from`` the
-    numpy error it is re-wording.
+    numpy error it is re-wording -- one of :data:`NON_NUMERIC_ERRORS`.
     """
     return TypeError(
         f"Cannot add non numerical value {value!r} ({type(value)}) to {what}",

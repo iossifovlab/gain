@@ -4,6 +4,7 @@ import numpy as np
 import yaml
 
 from gain.genomic_resources.statistics.base_statistic import (
+    NON_NUMERIC_ERRORS,
     PYTHON_NUMBER_TYPES,
     Statistic,
     as_python_number,
@@ -47,7 +48,7 @@ class MinMaxValue(Statistic):
         try:
             if value is None or np.isnan(value):
                 return
-        except TypeError as err:
+        except NON_NUMERIC_ERRORS as err:
             raise non_numeric_error(value, "a min/max") from err
 
         # Reached only by values ``np.isnan`` accepted -- which is not the

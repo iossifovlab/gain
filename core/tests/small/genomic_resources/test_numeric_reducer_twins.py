@@ -72,9 +72,12 @@ def _min_max_fold(value: Any) -> Callable[[], Any]:
         np.float32(0.5), np.float16(0.5), np.float64(0.5),
         np.int64(3), np.bool_(1),
         # Refused past the nan skip, by the type gate.
-        0.5 + 0j, np.complex128(0.5), np.array(0.5), np.array([0.5]),
-        # Refused at the nan skip.
+        0.5 + 0j, np.complex128(0.5), np.array(0.5), np.array([0.5]), [0.5],
+        # Refused at the nan skip -- by its ``TypeError`` for text, and by
+        # the ``ValueError`` a longer sequence's array-shaped answer raises
+        # when coerced to bool (gain#1337).
         "aaa", np.str_("aaa"), Decimal("0.5"),
+        [0.5, 1.5], (0.5, 1.5), np.array([0.5, 1.5]), [],
     ],
     ids=repr,
 )

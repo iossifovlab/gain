@@ -116,11 +116,17 @@ def test_number_histogram_folds_numpy_bool_as_zero_and_one() -> None:
         (0.5 + 0j, "complex"),
         (np.complex128(0.5), "numpy.complex128"),
         (np.array(0.5), "numpy.ndarray"),
-        # A 1-element array, unlike the 2-element one that raises ValueError
-        # from the truthiness of ``np.isnan(...)`` above and escapes the
-        # scan's per-value ``except TypeError`` -- that is gain#1337, and it
-        # is this line whoever fixes it will be editing.
+        # A 1-element sequence passes the nan skip (its ``np.isnan`` is a
+        # 1-element array, which coerces to bool) and is refused here.
         (np.array([0.5]), "numpy.ndarray"),
+        ([0.5], "list"),
+        # Refused by the ``np.isnan`` re-wording, for its OTHER complaint: a
+        # longer sequence's ``np.isnan`` is an array of ambiguous truth, and
+        # that is ``ValueError`` (gain#1337).
+        ([0.5, 1.5], "list"),
+        ((0.5, 1.5), "tuple"),
+        (np.array([0.5, 1.5]), "numpy.ndarray"),
+        ([], "list"),
         # Refused earlier, by the ``np.isnan`` re-wording (gain#1312).
         # Here to pin that BOTH refusal routes carry the shared wording.
         (np.str_("aaa"), "numpy.str_"),
