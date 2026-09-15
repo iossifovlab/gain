@@ -4,6 +4,8 @@ from abc import abstractmethod
 from collections.abc import Iterable
 from typing import Any, Protocol, Self
 
+import numpy as np
+
 
 class Statistic:
     """
@@ -189,13 +191,48 @@ def regions_in_genomic_order[R: ScannedRegion](
 #: ``NUMBER_HISTOGRAM_VALUE_TYPES``: that one is declared score
 #: ``value_type`` STRINGS, this one is the type of a single folded value.
 #:
-#: Hoisted rather than written as a tuple literal in the check, because a
-#: tuple of names is rebuilt on every call.  1M ``isinstance`` calls, best of
-#: 5: 112 ns/call for the 3-member literal this replaces (which also
-#: re-resolved ``np.integer`` through the module each time) against 52 ns
-#: hoisted.  ``float`` first because ``isinstance`` tests a tuple in order
-#: and a Python float is what the scan folds.
+#: Public rather than folded into :func:`as_python_number`, because each
+#: twin tests it INLINE before calling that: ``add_value`` runs per value of
+#: every record, a Python float is what the scan hands it, and a function
+#: call on that path costs measurably more than one ``isinstance`` against a
+#: hoisted tuple (gain#1358 measured +8% against +3%).  Hoisted rather than
+#: written as a tuple literal at each check, because a tuple of names is
+#: rebuilt on every call: 1M ``isinstance`` calls, best of 5 (gain#1338),
+#: 112 ns/call for a 3-member literal against 52 ns hoisted.  ``float`` first
+#: because ``isinstance`` tests a tuple in order.
 PYTHON_NUMBER_TYPES = (float, int)
+
+
+def as_python_number(value: Any, what: str) -> float | int:
+    """The Python number a value that is NOT already one folds as.
+
+    The slow path of the numeric contract ``NumberHistogram`` and
+    ``MinMaxValue`` share, reached only by a value ``np.isnan`` accepted and
+    the caller's inline :data:`PYTHON_NUMBER_TYPES` test refused -- text and
+    ``Decimal`` never get here, and neither does a Python number.
+
+    numpy's own scalars fold as the Python value they hold, which is what an
+    enumerated allow-list checked BEFORE normalizing got wrong: ``np.float32``
+    is not a ``float`` (only ``np.float64`` subclasses it) and ``np.bool_``
+    is not an ``np.integer``, so all of them were refused as non-numeric even
+    though ``add_batch`` folds them and a gene score's column really does
+    arrive as one (gain#1338).  ``item()`` rather than a wider allow-list:
+    widening alone would not make the histogram's two arms agree, because
+    numpy 2 keeps ``np.float32 - <python float>`` in float32 and that picks a
+    different bin at the edges -- the witness is in
+    ``test_add_batch_matches_add_value_loop_float32_at_bin_edges``.
+
+    Anything else is refused: ``np.isnan`` accepting a value does not make it
+    one a reducer can fold.  A complex or a 0-d array passes it, and
+    ``min()`` would order either without complaint and leave the extremum
+    holding it (gain#1358).  The refusal names what the CALLER handed over,
+    not what it was normalized to, so a nullified score's reason does not
+    report a ``np.complex128`` as a plain ``complex``.
+    """
+    folded = value.item() if isinstance(value, np.generic) else value
+    if not isinstance(folded, PYTHON_NUMBER_TYPES):
+        raise non_numeric_error(value, what)
+    return folded
 
 
 def non_numeric_error(value: Any, what: str) -> TypeError:

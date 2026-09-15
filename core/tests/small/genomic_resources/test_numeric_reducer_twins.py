@@ -3,9 +3,11 @@
 
 ``non_numeric_error`` promises that a reader of a nullified score's reason
 cannot tell which of the two reducers produced it.  That is only true if the
-two refuse the same values and fold the rest to the same Python number -- and
-each twin states the rule in its own ``add_value``, so this is the test that
-breaks when one of them drifts (gain#1338, gain#1358).
+two refuse the same values and fold the rest to the same Python number.  The
+slow path is one shared ``as_python_number``, but each twin still owns its
+nan skip and the inline fast-path test that decides whether to call it, so
+this is the test that breaks when one of them stops routing through the
+rule, or drifts on the part it keeps (gain#1338, gain#1358).
 """
 import re
 from collections.abc import Callable

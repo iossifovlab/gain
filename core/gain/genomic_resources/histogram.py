@@ -21,6 +21,7 @@ from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.base_statistic import (
     PYTHON_NUMBER_TYPES,
     Statistic,
+    as_python_number,
     non_numeric_error,
 )
 from gain.genomic_resources.statistics.min_max import MinMaxValue
@@ -431,29 +432,14 @@ class NumberHistogram(Statistic):
             raise non_numeric_error(value, "number histogram") from err
 
         # Reached only by values ``np.isnan`` accepted -- text and
-        # ``Decimal`` never get this far, the skip above refuses those.
-        #
-        # numpy's own scalars fold as the Python value they hold, which is
-        # what the enumerated allow-list this replaces got wrong:
-        # ``np.float32`` is not a ``float`` (only ``np.float64`` subclasses
-        # it) and ``np.bool_`` is not an ``np.integer``, so all of them were
-        # refused as non-numeric even though ``add_batch`` folds them and a
-        # gene score's column really does arrive as one (gain#1338).
-        #
-        # ``item()`` rather than a wider allow-list: widening alone would not
-        # make the two arms agree, because numpy 2 keeps ``np.float32 -
-        # <python float>`` in float32 and that picks a different bin at the
-        # edges.  The witness is in
-        # ``test_add_batch_matches_add_value_loop_float32_at_bin_edges``.
-        #
-        # The refusal names what the CALLER handed over, not what it was
-        # normalized to, so a nullified score's reason does not report a
-        # ``np.complex128`` as a plain ``complex``.
+        # ``Decimal`` never get this far, the skip above refuses those.  A
+        # Python number folds as-is; everything else goes through the rule
+        # the min/max twin shares, which says why a numpy scalar folds as
+        # ``item()`` and why a complex or an array does not (gain#1338,
+        # gain#1358).  The isinstance stays inline because this runs per
+        # value of every record and a Python float is what the scan folds.
         if not isinstance(value, PYTHON_NUMBER_TYPES):
-            folded = value.item() if isinstance(value, np.generic) else value
-            if not isinstance(folded, PYTHON_NUMBER_TYPES):
-                raise non_numeric_error(value, "number histogram")
-            value = folded
+            value = as_python_number(value, "number histogram")
 
         self.min_value = min(value, self.min_value)
         self.max_value = max(value, self.max_value)
