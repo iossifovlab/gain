@@ -447,11 +447,9 @@ def _refuse_genotype_arity(
     nor field, from a resource that had opened without complaint
     (gain#1258).  The shape is visible in the header, so it is refused here
     instead, where the resource and the field can both be named and every
-    consumer sees one attributed error.
-
-    Raised through :func:`score_configuration_error` although a header-only
-    resource has no ``scores:`` entry at all: what the builder shares is the
-    ADDRESS and the type, and the fix is a config edit either way.
+    consumer sees one attributed error -- through
+    :func:`score_configuration_error`, which says why a header-only
+    resource still counts as one.
     """
     if header_entry.number != "G":
         return
@@ -557,9 +555,18 @@ def parse_vcf_scoredefs(
             large_values_desc=None,
             hist_conf=None,
         )
+    # Every field that becomes a definition -- all of them with no config or
+    # a merging one, else the ones the config names -- is checked here,
+    # before the override loop, so the arity refusal precedes the type
+    # refusal: a per-genotype field is unreadable whatever the entry states,
+    # and "state 'type: str'" is an edit that cannot make it readable.
+    defined = (
+        vcf_scoredefs if config_scoredefs is None or merge
+        else config_scoredefs)
+    for score in defined:
+        _refuse_genotype_arity(resource_id, score, vcf_header_info[score])
+
     if config_scoredefs is None:
-        for score in vcf_scoredefs:
-            _refuse_genotype_arity(resource_id, score, vcf_header_info[score])
         return vcf_scoredefs
 
     # allow overriding of vcf-generated scoredefs
@@ -592,10 +599,6 @@ def parse_vcf_scoredefs(
         # value is something the join cannot produce.
         config_type = config_scoredef.value_type
         header_entry = vcf_header_info[score]
-        # Arity first: a per-genotype field is unreadable whatever the entry
-        # states, and the type refusal's advice ("state 'type: str'") would
-        # send the author to an edit that cannot make it readable.
-        _refuse_genotype_arity(resource_id, score, header_entry)
         number = header_entry.number
         is_scalar = number in _SCALAR_VALUED_NUMBERS
         takes_config_type = config_type is not None and is_scalar
@@ -630,7 +633,6 @@ def parse_vcf_scoredefs(
         for score, vcf_scoredef in vcf_scoredefs.items():
             if score in scoredefs:
                 continue
-            _refuse_genotype_arity(resource_id, score, vcf_header_info[score])
             scoredefs[score] = vcf_scoredef
 
     return scoredefs
