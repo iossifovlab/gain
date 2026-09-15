@@ -77,34 +77,44 @@
         let sortOrder = 'none'; // 'none' | 'asc' | 'desc'
         let lastIds = [];
 
+        // The ID column's comparator. Also the default: with no column
+        // chosen the table is in ID-ascending order, not the order the
+        // index was built in -- Python's code-point order, which puts
+        // every capitalised id ahead of every lowercase one and so
+        // disagreed with the first click on ID (gain#1351).
+        const compareById = (a, b) =>
+            window.rowData[a].id.localeCompare(window.rowData[b].id);
+
         function sortedIds(ids) {
-            if (sortOrder === 'none' || sortColumn === 'none') return ids;
-            const sorted = [...ids].sort((a, b) => {
-                let aVal, bVal;
-                let isNumeric = false;
-                if (sortColumn === 'id') {
-                    aVal = window.rowData[a].id;
-                    bVal = window.rowData[b].id;
-                } else if (sortColumn === 'type') {
-                    aVal = window.rowData[a].type;
-                    bVal = window.rowData[b].type;
-                } else if (sortColumn === 'version') {
-                    aVal = window.rowData[a].version;
-                    bVal = window.rowData[b].version;
-                } else if (sortColumn === 'size') {
-                    aVal = window.rowData[a].sizeInBytes;
-                    bVal = window.rowData[b].sizeInBytes;
-                    isNumeric = true;
-                } else if (sortColumn === 'summary') {
-                    aVal = window.rowData[a].summary;
-                    bVal = window.rowData[b].summary;
-                }
-                if (isNumeric) {
-                    return aVal - bVal;
-                }
-                return aVal.localeCompare(bVal);
-            });
-            return sortOrder === 'desc' ? sorted.reverse() : sorted;
+            // Every column sort starts from the default, so that rows a
+            // column cannot tell apart stay in it (`sort` is stable).
+            const byId = [...ids].sort(compareById);
+            if (sortOrder === 'none' || sortColumn === 'none') return byId;
+            if (sortColumn !== 'id') {
+                byId.sort((a, b) => {
+                    let aVal, bVal;
+                    let isNumeric = false;
+                    if (sortColumn === 'type') {
+                        aVal = window.rowData[a].type;
+                        bVal = window.rowData[b].type;
+                    } else if (sortColumn === 'version') {
+                        aVal = window.rowData[a].version;
+                        bVal = window.rowData[b].version;
+                    } else if (sortColumn === 'size') {
+                        aVal = window.rowData[a].sizeInBytes;
+                        bVal = window.rowData[b].sizeInBytes;
+                        isNumeric = true;
+                    } else if (sortColumn === 'summary') {
+                        aVal = window.rowData[a].summary;
+                        bVal = window.rowData[b].summary;
+                    }
+                    if (isNumeric) {
+                        return aVal - bVal;
+                    }
+                    return aVal.localeCompare(bVal);
+                });
+            }
+            return sortOrder === 'desc' ? byId.reverse() : byId;
         }
 
         /**

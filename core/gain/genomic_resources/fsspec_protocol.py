@@ -75,6 +75,7 @@ from gain.templates.markdown_support import render_markdown as markdown
 from gain.templates.static_assets import repository_static_files
 from gain.utils.fs_utils import S3_PRESIGN_EXPIRATION_SECONDS
 from gain.utils.helpers import convert_size
+from gain.utils.resource_id_order import resource_id_collation_key
 from gain.utils.url_redaction import (
     strip_url_credentials,
     strip_url_userinfo,
@@ -3186,7 +3187,13 @@ class FsspecReadWriteProtocol(
         build-from-scratch of a failed resource's manifest (#373).
         """
         result = {}
-        for res in self.get_all_resources():
+        # In the order the page keeps its rows in -- its own ID sorter's
+        # -- because until the search index loads, and for good if it
+        # never does, the published order is all a reader has
+        # (gain#1351).  The memo's own order is left alone.
+        for res in sorted(
+                self.get_all_resources(),
+                key=lambda r: resource_id_collation_key(r.get_full_id())):
             manifest = self._manifest_for_repository_index(res, failed)
             if manifest is None:
                 continue
