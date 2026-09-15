@@ -40,6 +40,8 @@ from gain.genomic_resources.testing.builders import (
     a_vcf_info_score,
 )
 
+from tests.small.genomic_resources.conftest import opened_allele_score
+
 # Every ``Number`` shape the type decision distinguishes.  The scalar four
 # (``0``, ``1``, ``A``, ``R``) carry a value on the first row and the joined
 # shapes carry theirs on the second, so that neither data line runs past the
@@ -157,32 +159,6 @@ _JOINED_NUMERIC_TYPES = [
 ]
 
 
-def _opened(
-    builder: VcfInfoScoreBuilder, tmp_path: pathlib.Path,
-) -> AlleleScore:
-    """The allele score ``builder`` realizes, constructed and opened.
-
-    Construction is where a contradicting entry is refused (gain#1336), so
-    a ``pytest.raises`` around this call sees that refusal.
-    """
-    return AlleleScore(builder.build_resource(tmp_path)).open()
-
-
-def _repaired_vcf_resource(tmp_path: pathlib.Path) -> pathlib.Path:
-    """Realize ``_VCF`` as a one-resource GRR and ``repo-repair`` it.
-
-    The ``_opened`` twin for the test that needs the statistics BUILT rather
-    than the definitions read: the same header-only resource, under a
-    ``repo/`` dir the CLI can be pointed at.  Returns the resource
-    directory, so a caller reads its ``statistics/``.
-    """
-    repo = tmp_path / "repo"
-    a_grr().with_resource("vcf_score", _vcf()).build_repo(repo)
-
-    cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
-    return repo / "vcf_score"
-
-
 def _declared(score: AlleleScore, field: str) -> str | None:
     """What the score DEFINITION says ``field`` holds.
 
@@ -211,7 +187,7 @@ def test_a_stated_type_the_join_cannot_produce_is_refused(
     pairing is written out here so it cannot drift out of the fixture.
     """
     with pytest.raises(ValueError, match="MANY") as excinfo:
-        _opened(_MANY_TYPED_INT, tmp_path)
+        opened_allele_score(_MANY_TYPED_INT, tmp_path)
 
     assert "int" in str(excinfo.value)
 
@@ -232,7 +208,7 @@ def test_every_joined_shape_declares_str_on_every_route(
     must NOT move: it already declared ``str``, and it is the only
     multi-valued shape deployed resources actually carry.
     """
-    score = _opened(route(_vcf()), tmp_path)
+    score = opened_allele_score(route(_vcf()), tmp_path)
 
     assert _declared(score, field) == "str"
 
@@ -249,7 +225,7 @@ def test_the_scalar_shapes_keep_the_type_they_declare(
     the same lie in the other direction.  Restating the header's type leaves
     them where they were, which is what makes the three routes agree here.
     """
-    score = _opened(route(_vcf()), tmp_path)
+    score = opened_allele_score(route(_vcf()), tmp_path)
 
     assert [_declared(score, field) for field in _SCALAR_FIELDS] == [
         _HEADER_TYPES[field] for field in _SCALAR_FIELDS]
@@ -266,7 +242,7 @@ def test_a_scalar_field_still_takes_a_config_type_the_header_denies(
     is what a reader must see -- otherwise this fix has quietly taken the
     override away from the shapes it belongs to.
     """
-    score = _opened(_CNT_TYPED_FLOAT, tmp_path)
+    score = opened_allele_score(_CNT_TYPED_FLOAT, tmp_path)
 
     assert _declared(score, "CNT") == "float"
 
@@ -288,7 +264,7 @@ def test_restating_a_numeric_header_type_on_a_joined_field_is_refused(
     ``Type=Integer`` would leave ``Float`` constructing.
     """
     with pytest.raises(ValueError, match=field) as excinfo:
-        _opened(_vcf().with_score(field, header_type), tmp_path)
+        opened_allele_score(_vcf().with_score(field, header_type), tmp_path)
 
     assert f"type: {header_type}" in str(excinfo.value)
     assert _JOINED_TEXT_REPORT in str(excinfo.value)
@@ -305,7 +281,7 @@ def test_restating_str_on_a_joined_field_still_constructs(
     twenty, dbSNP's ``CAF``/``TOPMED``), and a refusal that reached it would
     fail every deployed VCF resource rather than none.
     """
-    score = _opened(_vcf().with_score("TAGS", "str"), tmp_path)
+    score = opened_allele_score(_vcf().with_score("TAGS", "str"), tmp_path)
 
     assert _declared(score, "TAGS") == "str"
 
@@ -347,7 +323,7 @@ def test_stating_str_on_a_joined_field_is_not_reported(
     tuned out.
     """
     with caplog.at_level("WARNING"):
-        _opened(_vcf().with_score("TAGS", "str"), tmp_path)
+        opened_allele_score(_vcf().with_score("TAGS", "str"), tmp_path)
 
     assert _JOINED_TEXT_REPORT not in caplog.text
 
@@ -362,7 +338,7 @@ def test_a_scalar_field_with_an_overriding_type_is_not_reported(
     not for every type that disagrees with the header.
     """
     with caplog.at_level("WARNING"):
-        _opened(_CNT_TYPED_FLOAT, tmp_path)
+        opened_allele_score(_CNT_TYPED_FLOAT, tmp_path)
 
     assert _JOINED_TEXT_REPORT not in caplog.text
 
@@ -387,10 +363,14 @@ def test_a_resource_with_a_joined_field_builds_its_statistics(
     declaring the field unusable (a null histogram) would build just as
     quietly, and it is the joined values themselves that have to be counted.
     """
-    resource = _repaired_vcf_resource(tmp_path)
+    repo = tmp_path / "repo"
+    a_grr().with_resource("vcf_score", _vcf()).build_repo(repo)
+
+    cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
 
     histogram = json.loads(
-        (resource / "statistics" / "histogram_MANY.json").read_text())
+        (repo / "vcf_score" / "statistics" / "histogram_MANY.json")
+        .read_text())
     assert histogram["config"]["type"] == "categorical"
     assert histogram["values"] == {"1|2": 1}
 

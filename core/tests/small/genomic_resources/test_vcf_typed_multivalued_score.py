@@ -28,16 +28,16 @@ it: ``str`` is the parser that does not raise on a tuple, and handing it one
 read the repr ``"('a', 'b')"`` silently.  The numeric shapes stay in the
 fixture under ``str`` for exactly that reason.
 """
+import functools
 import pathlib
 import textwrap
 
 import pytest
 from gain.genomic_resources.genomic_scores import AlleleScore
 from gain.genomic_resources.score_def import ScoreValue
-from gain.genomic_resources.testing.builders import (
-    VcfInfoScoreBuilder,
-    a_vcf_info_score,
-)
+from gain.genomic_resources.testing.builders import a_vcf_info_score
+
+from tests.small.genomic_resources.conftest import opened_allele_score
 
 # Every INFO shape ``extract_vcf_value`` distinguishes, in both the types that
 # separate them: the ``Flag`` and the ``Number=1`` scalars, the per-allele
@@ -88,37 +88,19 @@ _STATEABLE_TYPES = {
     for field, value_type in _HEADER_TYPES.items()
 }
 
+#: A resource over ``_VCF`` with no ``scores:`` block at all.
+_HEADER_ONLY = a_vcf_info_score().with_data(_VCF)
 
-def _header_only() -> VcfInfoScoreBuilder:
-    """A resource over ``_VCF`` with no ``scores:`` block at all."""
-    return a_vcf_info_score().with_data(_VCF)
+#: The same resource naming every field and stating the type it may hold.
+_STATING_HOLDABLE_TYPES = functools.reduce(
+    lambda builder, entry: builder.with_score(*entry),
+    _STATEABLE_TYPES.items(), _HEADER_ONLY)
 
-
-def _stating_holdable_types() -> VcfInfoScoreBuilder:
-    """``_header_only()`` naming every field with its ``_STATEABLE_TYPES``."""
-    builder = _header_only()
-    for field, value_type in _STATEABLE_TYPES.items():
-        builder = builder.with_score(field, value_type)
-    return builder
-
-
-def _named_without_type() -> VcfInfoScoreBuilder:
-    """``_header_only()`` naming every field with no ``type:`` at all.
-
-    The gain#1221 shape, which reads the header's type and the header's
-    parser.
-    """
-    builder = _header_only()
-    for field in _HEADER_TYPES:
-        builder = builder.with_score(field)
-    return builder
-
-
-def _opened(
-    builder: VcfInfoScoreBuilder, tmp_path: pathlib.Path,
-) -> AlleleScore:
-    """The allele score ``builder`` realizes, opened."""
-    return AlleleScore(builder.build_resource(tmp_path)).open()
+#: The same resource naming every field with no ``type:`` at all -- the
+#: gain#1221 shape, which reads the header's type and the header's parser.
+_NAMED_WITHOUT_TYPE = functools.reduce(
+    lambda builder, field: builder.with_score(field),
+    _HEADER_TYPES, _HEADER_ONLY)
 
 
 def _read(
@@ -146,7 +128,7 @@ def test_an_unbounded_integer_field_typed_str_reads_the_joined_text(
     that silenced the log while reading the repr would pass a log check
     alone.
     """
-    score = _opened(_stating_holdable_types(), tmp_path)
+    score = opened_allele_score(_STATING_HOLDABLE_TYPES, tmp_path)
 
     with caplog.at_level("ERROR"):
         value = _read(score, _TUPLE_POS, ["MANY"])["MANY"]
@@ -165,7 +147,7 @@ def test_an_unbounded_float_field_typed_str_reads_the_joined_text(
     is what must stop mattering once the field joins, and stating ``str``
     over a ``Type=Float`` header is the config that says so.
     """
-    score = _opened(_stating_holdable_types(), tmp_path)
+    score = opened_allele_score(_STATING_HOLDABLE_TYPES, tmp_path)
 
     value = _read(score, _TUPLE_POS, ["FMANY"])["FMANY"]
 
@@ -182,7 +164,7 @@ def test_a_fixed_arity_integer_field_typed_str_reads_the_joined_text(
     on ``Number == "."`` alone would leave this reading its parser's take on
     a tuple rather than the join.
     """
-    score = _opened(_stating_holdable_types(), tmp_path)
+    score = opened_allele_score(_STATING_HOLDABLE_TYPES, tmp_path)
 
     value = _read(score, _TUPLE_POS, ["TWO"])["TWO"]
 
@@ -201,7 +183,7 @@ def test_a_fixed_arity_string_field_typed_str_reads_the_joined_text(
     unless it would raise".  ``Number=.``/``Type=String`` escapes it only
     because :func:`extract_vcf_value` joins that one shape itself.
     """
-    score = _opened(_stating_holdable_types(), tmp_path)
+    score = opened_allele_score(_STATING_HOLDABLE_TYPES, tmp_path)
 
     value = _read(score, _TUPLE_POS, ["PAIR"])["PAIR"]
 
@@ -220,7 +202,7 @@ def test_an_unbounded_string_field_typed_str_is_unchanged(
     multi-valued shape deployed resources actually type (ClinVar's twenty,
     dbSNP's ``CAF``/``TOPMED``).
     """
-    score = _opened(_stating_holdable_types(), tmp_path)
+    score = opened_allele_score(_STATING_HOLDABLE_TYPES, tmp_path)
 
     value = _read(score, _TUPLE_POS, ["TAGS"])["TAGS"]
 
@@ -243,7 +225,7 @@ def test_a_flag_typed_int_reads_the_number_not_the_bool(
     a subclass of ``int``, so neither equality nor ``isinstance`` can tell
     the two answers apart.
     """
-    score = _opened(_header_only().with_score("RV", "int"), tmp_path)
+    score = opened_allele_score(_HEADER_ONLY.with_score("RV", "int"), tmp_path)
 
     value = _read(score, _SCALAR_POS, ["RV"])["RV"]
 
@@ -261,7 +243,8 @@ def test_a_per_allele_field_takes_the_config_type_over_the_header(
     through unchanged and the two candidate parsers agree.  Only a type the
     header does NOT declare can tell which parser ran.
     """
-    score = _opened(_header_only().with_score("PA", "float"), tmp_path)
+    score = opened_allele_score(
+        _HEADER_ONLY.with_score("PA", "float"), tmp_path)
 
     value = _read(score, _SCALAR_POS, ["PA"])["PA"]
 
@@ -279,7 +262,8 @@ def test_a_scalar_field_still_takes_the_config_type_over_the_header(
     wins, value and type.  Asserting ``3.0 == 3`` would not show it -- the
     type is the assertion.
     """
-    score = _opened(_header_only().with_score("CNT", "float"), tmp_path)
+    score = opened_allele_score(
+        _HEADER_ONLY.with_score("CNT", "float"), tmp_path)
 
     value = _read(score, _SCALAR_POS, ["CNT"])["CNT"]
 
@@ -295,7 +279,7 @@ def test_per_allele_fields_typed_int_still_select_by_allele(
     a stated ``type:`` is honoured and each ALT allele keeps reading its own
     value -- ``R`` counting the reference at offset 0.
     """
-    score = _opened(_stating_holdable_types(), tmp_path)
+    score = opened_allele_score(_STATING_HOLDABLE_TYPES, tmp_path)
 
     assert _read(score, _SCALAR_POS, ["PA"], "T")["PA"] == 7
     assert _read(score, _SCALAR_POS, ["PA"], "G")["PA"] == 8
@@ -354,9 +338,9 @@ def test_stating_a_holdable_type_reads_what_the_header_only_resource_reads(
     can drift alone.  The per-allele shapes are compared at both ALT
     indices.
     """
-    header_only = _opened(_header_only(), tmp_path / "header_only")
-    untyped = _opened(_named_without_type(), tmp_path / "untyped")
-    typed = _opened(_stating_holdable_types(), tmp_path / "typed")
+    header_only = opened_allele_score(_HEADER_ONLY, tmp_path / "header_only")
+    untyped = opened_allele_score(_NAMED_WITHOUT_TYPE, tmp_path / "untyped")
+    typed = opened_allele_score(_STATING_HOLDABLE_TYPES, tmp_path / "typed")
 
     expected = _values_and_types(header_only, pos, fields, alt)
     expected_types = _declared_types(header_only, fields)

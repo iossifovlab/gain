@@ -11,16 +11,16 @@ The contract these tests hold: an entry that states no ``type:`` reads
 exactly what the header-only path reads for the same field.  The parser
 follows the same source as the type.
 """
+import functools
 import pathlib
 import textwrap
 
 import pytest
 from gain.genomic_resources.genomic_scores import AlleleScore
 from gain.genomic_resources.score_def import ScoreValue
-from gain.genomic_resources.testing.builders import (
-    VcfInfoScoreBuilder,
-    a_vcf_info_score,
-)
+from gain.genomic_resources.testing.builders import a_vcf_info_score
+
+from tests.small.genomic_resources.conftest import opened_allele_score
 
 # Every INFO shape ``extract_vcf_value`` distinguishes: a ``Flag``,
 # ``Number=1`` in two types, the per-allele ``Number=A`` and ``Number=R``
@@ -43,25 +43,13 @@ chr1 6 . A T . . .
 
 _FIELDS = ["RV", "CNT", "LAB", "PA", "PR", "MANY", "TAGS"]
 
+#: A resource over ``_VCF`` with no ``scores:`` block at all.
+_HEADER_ONLY = a_vcf_info_score().with_data(_VCF)
 
-def _header_only() -> VcfInfoScoreBuilder:
-    """A resource over ``_VCF`` with no ``scores:`` block at all."""
-    return a_vcf_info_score().with_data(_VCF)
-
-
-def _named_without_type() -> VcfInfoScoreBuilder:
-    """``_header_only()`` naming every field in ``scores:``, none typed."""
-    builder = _header_only()
-    for field in _FIELDS:
-        builder = builder.with_score(field)
-    return builder
-
-
-def _opened(
-    builder: VcfInfoScoreBuilder, tmp_path: pathlib.Path,
-) -> AlleleScore:
-    """The allele score ``builder`` realizes, opened."""
-    return AlleleScore(builder.build_resource(tmp_path)).open()
+#: The same resource naming every field in ``scores:``, none with a
+#: ``type:``.
+_NAMED_WITHOUT_TYPE = functools.reduce(
+    lambda builder, field: builder.with_score(field), _FIELDS, _HEADER_ONLY)
 
 
 def _read(
@@ -82,7 +70,7 @@ def test_a_vcf_flag_named_without_type_reads_presence_as_true(
     ``True`` pysam decodes.  ``True == 1.0`` in Python, so the assertion
     names the type as well as the value.
     """
-    score = _opened(_named_without_type(), tmp_path)
+    score = opened_allele_score(_NAMED_WITHOUT_TYPE, tmp_path)
 
     value = _read(score, 5, ["RV"])["RV"]
 
@@ -93,7 +81,7 @@ def test_a_vcf_flag_named_without_type_reads_absence_as_false(
     tmp_path: pathlib.Path,
 ) -> None:
     """The other half of the Flag contract: the defect read ``0.0`` here."""
-    score = _opened(_named_without_type(), tmp_path)
+    score = opened_allele_score(_NAMED_WITHOUT_TYPE, tmp_path)
 
     value = _read(score, 6, ["RV"])["RV"]
 
@@ -104,7 +92,7 @@ def test_an_integer_field_named_without_type_reads_an_int(
     tmp_path: pathlib.Path,
 ) -> None:
     """The defect read ``3.0``: the float parser over pysam's ``3``."""
-    score = _opened(_named_without_type(), tmp_path)
+    score = opened_allele_score(_NAMED_WITHOUT_TYPE, tmp_path)
 
     value = _read(score, 5, ["CNT"])["CNT"]
 
@@ -123,7 +111,7 @@ def test_a_string_field_named_without_type_reads_its_text(
     that swallowed the log but still read nothing would pass the value
     check alone in reverse, and vice versa.
     """
-    score = _opened(_named_without_type(), tmp_path)
+    score = opened_allele_score(_NAMED_WITHOUT_TYPE, tmp_path)
 
     with caplog.at_level("ERROR"):
         value = _read(score, 5, ["LAB"])["LAB"]
@@ -142,7 +130,7 @@ def test_an_unbounded_field_named_without_type_reads_the_joined_text(
     not merely dropping the config's.  The defect read ``None`` here
     (``float((1, 2))`` fails).
     """
-    score = _opened(_named_without_type(), tmp_path)
+    score = opened_allele_score(_NAMED_WITHOUT_TYPE, tmp_path)
 
     value = _read(score, 5, ["MANY"])["MANY"]
 
@@ -162,8 +150,8 @@ def test_an_untyped_entry_reads_what_the_header_only_resource_reads(
     It cannot drift on one side alone.  Read once per ALT allele, so the
     per-allele shapes are compared at both indices.
     """
-    header_only = _opened(_header_only(), tmp_path / "header_only")
-    untyped = _opened(_named_without_type(), tmp_path / "untyped")
+    header_only = opened_allele_score(_HEADER_ONLY, tmp_path / "header_only")
+    untyped = opened_allele_score(_NAMED_WITHOUT_TYPE, tmp_path / "untyped")
 
     for alt in ("T", "G"):
         expected = _read(header_only, 5, _FIELDS, alt)
