@@ -118,8 +118,14 @@ def test_resource_info(
     # `resource-info` writes describes *this* resource, its declared score,
     # and that score's histogram.  Page structure at large is the business
     # of tests/small/genomic_resources/info_pages/.
-    assert "<td>one</td>" in result, \
+    # The Id cell holds the id and, since gain#1477, the icon that copies
+    # it -- which names the id again, as data.  Both are checked: the
+    # cell for the page naming the resource, the icon for copying *this*
+    # one.
+    assert "<td>one<span" in result, \
         "the generated page does not name the resource it describes"
+    assert 'data-copy-id="one"' in result, \
+        "the generated page's copy icon does not name the resource"
     assert "<td>phastCons100way</td>" in result, \
         "the generated page does not name the score the resource declares"
     # The thumbnail's class, not `alt="HISTOGRAM FOR ..."`.  That alt text

@@ -1,0 +1,28 @@
+{# The trail from the repository root to this page, in the page header,
+   where the "Back to main page" link used to be (gain#1477).
+
+   `breadcrumb` is a list of crumbs, outermost first, each with a `name`
+   and an `href` -- `None` for the page itself, which is rendered as
+   text.  The renderer computes it (`gain.templates.breadcrumb`) from
+   the resource id and the page's path inside the resource directory;
+   nothing here decides where a crumb leads.
+
+   Same element ids and classes as the index page's trail, so the same
+   stylesheet (`breadcrumb_styles.jinja`) and the same test locators
+   apply to both. #}
+    <nav id="page-header">
+      <div id="breadcrumb">
+        {#- No whitespace between the elements, on purpose: the index
+            page's trail is built from script with none, and its
+            separators are spaced by their margin alone.  A text node
+            here would put a space on one side of each slash. -#}
+        {%- for crumb in breadcrumb -%}
+        {%- if not loop.first -%}<span class="breadcrumb-sep">/</span>{%- endif -%}
+        {%- if crumb.href is none -%}
+        <span class="breadcrumb-item current">{{ crumb.name }}</span>
+        {%- else -%}
+        <a class="breadcrumb-item" href="{{ crumb.href }}">{{ crumb.name }}</a>
+        {%- endif -%}
+        {%- endfor %}
+      </div>
+    </nav>

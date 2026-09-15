@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { breadcrumbLink, breadcrumbTrail } from '../breadcrumb';
 import {
   BROWSE_CAPITALISED_FOLDER,
   BROWSE_GENOME_RESOURCE_ID,
@@ -668,19 +669,6 @@ function folderRow(page: Page, name: string) {
     .filter({ has: page.getByText(name, { exact: true }) });
 }
 
-/**
- * The breadcrumb link for `name`.
- *
- * Only the crumbs above the current folder are links -- the last one is a
- * span -- so this locates something clickable by construction. Exact, for
- * the same reason `folderRow` is: a substring match on a trail containing
- * both `hg38` and `hg38_extra` would be answered by either.
- */
-function breadcrumbLink(page: Page, name: string) {
-  return page.locator('#breadcrumb a.breadcrumb-item')
-    .filter({ has: page.getByText(name, { exact: true }) });
-}
-
 /** The folder names the tree shows, in the order it shows them. */
 function folderNames(page: Page): Promise<string[]> {
   return page.locator('#hierarchical-list .hv-folder .hv-name')
@@ -729,21 +717,6 @@ function collectPageErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(String(error)));
   return errors;
-}
-
-/**
- * The breadcrumb trail, outermost crumb first.
- *
- * `allTextContents` rather than `allInnerTexts`: the latter reports text
- * as *rendered*, collapsing whitespace runs and reading nothing at all
- * from a hidden element -- and the breadcrumb is hidden whenever the table
- * view is showing. This reads what the page actually set.
- *
- * The separators are excluded by selecting the crumbs themselves, so the
- * result is the trail and not the trail interleaved with "/".
- */
-function breadcrumbTrail(page: Page): Promise<string[]> {
-  return page.locator('#breadcrumb .breadcrumb-item').allTextContents();
 }
 
 test('drilling into a folder puts it in the URL hash', async ({ page }) => {

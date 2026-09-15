@@ -14,6 +14,7 @@ from cerberus import Validator
 from gain import logging
 from gain.task_graph.graph import TaskDesc
 from gain.templates import get_template
+from gain.templates.breadcrumb import Crumb, page_breadcrumb
 from gain.templates.static_assets import climb_to_root
 from gain.utils.helpers import convert_size
 
@@ -467,6 +468,7 @@ class InfoImplementationMixin:
             base="resource_template.jinja",
             styles_template=self.styles_template_name,
             static_root=self._climb_to_root(GR_INDEX_FILE_NAME),
+            breadcrumb=self._breadcrumb(GR_INDEX_FILE_NAME),
         )
 
     def get_statistics_info(self, **kwargs: Any) -> str:  # ruff: ignore[unused-method-argument]
@@ -478,6 +480,7 @@ class InfoImplementationMixin:
             base="statistics_template.jinja",
             styles_template=self.styles_template_name,
             static_root=self._climb_to_root(GR_STATISTICS_INDEX_FILE_NAME),
+            breadcrumb=self._breadcrumb(GR_STATISTICS_INDEX_FILE_NAME),
         )
 
     def _climb_to_root(self, page: str) -> str:
@@ -490,6 +493,12 @@ class InfoImplementationMixin:
         ``.static/`` with it (gain#1400).
         """
         return climb_to_root(f"{self.resource.resource_id}/{page}")
+
+    def _breadcrumb(self, page: str) -> list[Crumb]:
+        """The trail from the repository root to one of this resource's
+        pages, for its header; ``page`` as in :meth:`_climb_to_root`.
+        """
+        return page_breadcrumb(self.resource.resource_id, page)
 
 
 class _ThreadValidators(threading.local):

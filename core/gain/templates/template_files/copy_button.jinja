@@ -1,0 +1,31 @@
+        // ---- Copy a resource id (copy_button.jinja) ----
+        //
+        // Included, as statements, into a script that runs once the
+        // icons are in the document: the index page's, and the resource
+        // page's (gain#1477).  An icon names what it copies in
+        // `data-copy-id`; its text is the glyph it shows.
+        //
+        // The Clipboard API exists only on a secure origin -- https, or
+        // localhost -- so on a plain-http host there is nothing to write
+        // to, and an icon there is hidden rather than left as a dead
+        // click.  Hidden with an inline style, not removed: the index
+        // page rewrites its rows in place and looks each row's icon up
+        // again, so the element has to stay.
+        const copyIcons = document.querySelectorAll(".copy-icon");
+        if (!navigator.clipboard) {
+            copyIcons.forEach((icon) => { icon.style.display = "none"; });
+        }
+        const copyResourceId = (e) => {
+          navigator.clipboard.writeText(e.target.dataset.copyId).then(
+            () => {
+              // One tick at a time: every other icon goes back to its
+              // glyph, the clicked one reports for a moment.
+              copyIcons.forEach((icon) => { icon.textContent = 'content_copy'; });
+              e.target.textContent = 'check';
+              setTimeout(function(){
+                e.target.textContent = 'content_copy'
+              }, 3000);
+            }
+          )
+        };
+        copyIcons.forEach((icon) => icon.addEventListener("click", copyResourceId));

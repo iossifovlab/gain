@@ -189,15 +189,7 @@
         width: 50%;
       }
 
-      .copy-icon {
-        font-size: 20px;
-        color: #B9D3E7;
-      }
-
-      .copy-icon:hover {
-        cursor: pointer;
-        color: #85A2B9;
-      }
+      {% include "copy_button_styles.jinja" %}
 
       #nav-about {
         margin-left: auto;
@@ -318,24 +310,7 @@
         font-size: 15px;
       }
 
-      .breadcrumb-item {
-        color: #252e34;
-      }
-
-      a.breadcrumb-item:hover {
-        color: #4C93C9;
-        text-decoration: underline;
-        cursor: pointer;
-      }
-
-      .breadcrumb-item.current {
-        color: #24699E;
-      }
-
-      .breadcrumb-sep {
-        color: #85a2b9;
-        margin: 0 2px;
-      }
+      {% include "breadcrumb_styles.jinja" %}
 
       #hierarchical-list {
         border: 1px solid #cfd8df;
@@ -510,7 +485,7 @@
               <td class="id-cell" title="{{key}}">
                 <div class="id-wrapper">
                   <a class="nowrap" href='{{key}}/index.html'>{{key}}</a>
-                  <span class="material-symbols-outlined copy-icon {{key}}">content_copy</span>
+                  <span class="material-symbols-outlined copy-icon" data-copy-id="{{key}}">content_copy</span>
                 </div>
               </td>
               <td class="nowrap version-cell">{{value['res_version']}}</td>
