@@ -143,6 +143,30 @@ def test_a_refused_score_does_not_cost_the_others_their_min_max(
     assert (result["f"].min, result["f"].max) == (0.1, 1.0)
 
 
+def test_a_value_only_the_type_gate_refuses_nullifies_that_one_score(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The containment holds for the gate's refusals, not only the nan skip's.
+
+    A ``complex`` passes ``np.isnan`` and is refused by the type gate that
+    follows it (gain#1358) -- a second refusal route, and one that used to
+    escape as a raw comparison error.  No file format yields a complex, so
+    the record stream is stood in for at the read seam every pass composes.
+    """
+    resource = _text_and_number_tabix(tmp_path)
+    records = [(1, 1, [0.5 + 0j, 0.1]), (2, 2, [0.5 + 0j, 0.9])]
+    monkeypatch.setattr(
+        scan, "scan_region", lambda *_args, **_kwargs: iter(records))
+
+    result = scan.do_min_max(resource, ["s", "f"], "chr1", 1, 2)
+
+    assert isinstance(result["s"], NullMinMaxValue)
+    assert "non numerical value" in result["s"].reason
+    assert "complex" in result["s"].reason
+    assert (result["f"].min, result["f"].max) == (0.1, 0.9)
+
+
 def test_a_refused_score_leaves_the_others_exactly_their_solo_min_max(
     tmp_path: pathlib.Path,
 ) -> None:

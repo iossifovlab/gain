@@ -24,15 +24,19 @@ class MinMaxValue(Statistic):
         self.min = min_value
         self.max = max_value
 
-    def add_value(self, value: float | None) -> None:
-        # State the numeric contract the way the histogram twin states it:
-        # ``np.isnan`` is the thing that refuses a value this cannot fold, so
-        # the contract is exactly what it accepts, and the statement is a
-        # re-wording of its complaint rather than a second opinion about
-        # types.  An isinstance check ahead of it would be both slower (this
-        # runs per value of every record) and WRONG to write as an
-        # allow-list: ``np.float32`` is not a ``float`` and ``np.bool_`` is
-        # not an ``np.integer``, yet both fold here perfectly well.
+    def add_value(self, value: float | np.generic | None) -> None:
+        """Fold one value into the running extremum.
+
+        The same numeric contract as ``NumberHistogram.add_value``, stated
+        the same way and in the same order, so that a nullified score's
+        reason reads alike whichever twin refused (gain#1313, gain#1358).
+        The agreement is pinned value by value in
+        ``test_numeric_reducer_twins``.
+        """
+        # ``np.isnan`` is the first refusal: it raises on text and
+        # ``Decimal``, and re-wording its complaint costs ~nothing when it
+        # does not fire, where an isinstance guard AHEAD of it costs this
+        # per-record path measurably (gain#1313).
         #
         # Skip nan as ``NumberHistogram.add_value`` does: a ``min(nan, x)`` /
         # ``max(nan, x)`` returns nan and would wipe the running extremum (and
@@ -44,6 +48,20 @@ class MinMaxValue(Statistic):
                 return
         except TypeError as err:
             raise non_numeric_error(value, "a min/max") from err
+
+        # Reached only by values ``np.isnan`` accepted -- which is not the
+        # same as values a min/max can fold: a complex or a 0-d array passes
+        # it, and ``min()`` would order either without complaint and leave
+        # the extremum holding it (gain#1358).  A Python number folds as-is;
+        # a numpy scalar folds as the Python value it holds, never as the
+        # numpy object, so the extremum a histogram later reads its
+        # ``view_range`` from is not in float32 by accident; anything else is
+        # refused naming what the CALLER handed over.
+        #
+        # The allow-list is checked after ``item()``, not before, which is
+        # how it admits ``np.float32`` (not a ``float``) and ``np.bool_``
+        # (not an ``np.integer``) -- the trap an allow-list ahead of the
+        # normalization fell into on the histogram side (gain#1338).
         if not isinstance(value, PYTHON_NUMBER_TYPES):
             folded = value.item() if isinstance(value, np.generic) else value
             if not isinstance(folded, PYTHON_NUMBER_TYPES):
@@ -126,7 +144,8 @@ class NullMinMaxValue(MinMaxValue):
         self.reason = reason
 
     def add_value(
-        self, value: float | None,  # ruff: ignore[unused-method-argument]
+        self,
+        value: float | np.generic | None,  # ruff: ignore[unused-method-argument]
     ) -> None:
         # pylint: disable=unused-argument
         return
