@@ -15,9 +15,8 @@ statement of the dialect lives in
 through a regression that re-introduced a per-call-site ``extras`` here,
 which is the regression this module exists to catch.
 
-Fenced blocks are un-tagged on purpose -- see that module's docstring for
-why a language tag makes the expected HTML depend on whether Pygments is
-installed (gain#1289).
+Fenced blocks here are un-tagged; the language-tagged shape is pinned
+in that module too (gain#1289).
 """
 from __future__ import annotations
 
