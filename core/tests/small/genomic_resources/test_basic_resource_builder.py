@@ -13,8 +13,10 @@ from __future__ import annotations
 import pathlib
 import textwrap
 
+import pytest
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing.builders import a_basic_resource, a_grr
+from gain.genomic_resources.testing.score_specs import ResourceValidationError
 
 
 def test_bare_builder_is_a_basic_resource_with_one_payload_file(
@@ -32,13 +34,18 @@ def test_bare_config_is_byte_identical_to_the_hand_written_literal(
 ) -> None:
     """Exactly ``type: basic\\n`` -- 12 bytes, no ``meta:``, no blank line.
 
-    Repository-layout tests hand-write that literal and pin its size and
-    md5 in forged manifests; the builder has to render the same bytes for
-    those fixtures to be migratable onto it.
+    Repository-layout tests hand-write that literal, and some pin its
+    size and md5 in manifests they author; the builder has to render the
+    same bytes for those fixtures to be migratable onto it.  The manifest
+    entry is asserted in that vocabulary too, so a drift fails here in
+    the numbers such a fixture would carry.
     """
     res = a_basic_resource().build_resource(tmp_path)
 
     assert res.get_file_content(GR_CONF_FILE_NAME) == "type: basic\n"
+    entry = res.get_manifest()[GR_CONF_FILE_NAME]
+    assert (entry.size, entry.md5) == (
+        12, "808e4e365b077a980b881de4701e9cb6")
 
 
 A_MARKDOWN_DESCRIPTION = textwrap.dedent("""\
@@ -119,6 +126,38 @@ def test_with_file_replaces_the_default_payload_by_name(
     assert res.get_file_content("data.txt") == "authored"
 
 
+def test_with_file_keeps_the_replaced_payload_in_its_slot() -> None:
+    files = (
+        a_basic_resource()
+        .with_file("second.txt", "2")
+        .with_file("data.txt", "authored")
+        .files
+    )
+
+    assert files == (("data.txt", "authored"), ("second.txt", "2"))
+
+
+def test_with_file_refuses_the_config_name() -> None:
+    """The config is rendered, never authored as a payload.
+
+    A file named ``genomic_resource.yaml`` would win over the rendered
+    config and silently drop the type and every declared ``meta:`` --
+    the builder refuses it at the call site, the way ``GRRBuilder``
+    refuses a duplicate id, and points at ``with_raw_meta`` for the
+    config shapes ``with_meta`` cannot spell.
+    """
+    with pytest.raises(ResourceValidationError, match="with_raw_meta"):
+        a_basic_resource().with_file(GR_CONF_FILE_NAME, "type: basic\n")
+
+
+def test_with_file_leaves_the_receiver_untouched() -> None:
+    base = a_basic_resource()
+
+    base.with_file("second.txt", "2")
+
+    assert base.files == (("data.txt", "alabala"),)
+
+
 def test_a_scalar_meta_is_carried_as_is(tmp_path: pathlib.Path) -> None:
     """``basic`` runs no schema, so a ``meta:`` that is prose gets through.
 
@@ -135,6 +174,18 @@ def test_a_scalar_meta_is_carried_as_is(tmp_path: pathlib.Path) -> None:
 
     assert res.get_config()["meta"] == "Some prose that is not a mapping."
     assert res.get_summary() == ""
+
+
+def test_labels_are_inherited_without_code_of_their_own(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_basic_resource()
+        .with_labels(reference_genome="hg38")
+        .build_resource(tmp_path)
+    )
+
+    assert res.get_labels() == {"reference_genome": "hg38"}
 
 
 def test_composes_into_a_grr_under_its_own_id(

@@ -10,7 +10,8 @@ The builders assemble a pure in-memory recipe with no side effects; the
 ``build_*`` methods delegate the actual file writing and repository
 construction to the existing helpers in
 :mod:`gain.genomic_resources.testing` (``setup_directories`` and
-``build_filesystem_test_repository``).
+``build_filesystem_test_repository``, or ``build_inmemory_test_resource``
+for the one builder with an in-memory exit).
 
 Example::
 
@@ -1412,13 +1413,25 @@ class BasicResourceBuilder(MetaMixin):
 
         A ``basic`` resource ships arbitrary files, so this is the only
         content knob it has.  ``with_file("data.txt", ...)`` overwrites
-        the default payload rather than adding a second entry under the
-        same name, which the realized directory could not hold anyway.
+        the default payload in place rather than adding a second entry
+        under the same name, which the realized directory could not hold
+        anyway.  The config is not a payload: it is rendered from the
+        type and the declared ``meta:``, and a file under its name would
+        silently win over both, so that name is refused here -- the
+        ``GRRBuilder`` duplicate-id precedent.
         """
-        kept = tuple(
-            (name, text) for name, text in self.files if name != filename)
-        return dataclasses.replace(
-            self, files=(*kept, (filename, content)))
+        if filename == GR_CONF_FILE_NAME:
+            raise ResourceValidationError(
+                f"{filename!r} is the rendered config, not a payload; "
+                f"declare meta with with_meta, or the whole block with "
+                f"with_raw_meta")
+        if any(name == filename for name, _ in self.files):
+            files = tuple(
+                (name, content if name == filename else text)
+                for name, text in self.files)
+        else:
+            files = (*self.files, (filename, content))
+        return dataclasses.replace(self, files=files)
 
     def content(self) -> dict[str, Any]:
         """The resource as a ``{filename: content}`` mapping.
