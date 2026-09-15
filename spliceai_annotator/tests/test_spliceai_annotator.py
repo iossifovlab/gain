@@ -342,11 +342,11 @@ def test_spliceai_annotator_genomeless_preamble_uses_the_context(
     """The gain#1055 chain, reached through this plugin's annotator.
 
     ``find_annotator_reference_genome`` ends its ``or`` chain on the
-    preamble's ``input_reference_genome``, which the parser defaults to
-    ``""`` when the key is absent.  Guarding that with ``is None`` read
-    the empty id as a configured one, so a pipeline whose preamble
-    carries only a ``summary`` never reached the context fallback and
-    died resolving resource id ``""``.  This plugin used to carry its
+    preamble's ``input_reference_genome``, so a pipeline whose preamble
+    carries only a ``summary`` must fall through to the context genome.
+    gain#1055 is the regression this guards: the undeclared genome was
+    read as a configured one, and annotation died resolving resource id
+    ``""`` instead of reaching the context.  This plugin used to carry its
     own copy of that chain; gain#1077 collapsed it onto the shared
     helper, so what this now guards is that the plugin still routes
     through the helper at all.

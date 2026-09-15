@@ -293,12 +293,12 @@ def test_normalize_allele_annotator_genomeless_preamble_uses_the_context(
 ) -> None:
     """A preamble that omits the genome must not out-rank the context.
 
-    ``input_reference_genome`` is optional and the parser defaults it to
-    ``""``, so a preamble carrying only a ``summary`` still supplies the
-    last operand of the ``or`` chain.  Guarding that chain with
-    ``is None`` (gain#1055) let the empty id through as if it were a
+    ``input_reference_genome`` is optional, so a preamble carrying only a
+    ``summary`` supplies nothing to the ``or`` chain and the annotator
+    must take the context genome the pipeline has.  gain#1055 is the
+    regression this guards: the undeclared genome was read as a
     configured one, and the annotator went off to resolve resource id
-    ``""`` instead of taking the context genome the pipeline has.
+    ``""`` instead.
     """
     genome_id = "t4c8_genome_implicit_B"
     config = textwrap.dedent("""

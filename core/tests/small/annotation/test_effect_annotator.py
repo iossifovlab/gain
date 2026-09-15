@@ -196,11 +196,11 @@ def test_effect_annotator_genomeless_preamble_uses_the_context(
     """The same fall-through, with a preamble that declares no genome.
 
     ``find_annotator_reference_genome`` ends its ``or`` chain on the
-    preamble's ``input_reference_genome``, which the parser defaults to
-    ``""`` when the key is absent.  An ``is None`` guard read that empty
-    id as a configured one (gain#1055), so a pipeline whose preamble
-    carries only a ``summary`` never reached the context fallback and
-    died resolving resource id ``""``.
+    preamble's ``input_reference_genome``, so a pipeline whose preamble
+    carries only a ``summary`` must fall through past that operand to
+    the context genome.  gain#1055 is the regression this guards: the
+    undeclared genome was read as a configured one, and annotation died
+    resolving resource id ``""`` instead of reaching the context.
 
     ``t4c8_genes_ALT`` declares no ``reference_genome`` label, so the
     preamble really is the last operand standing before the context.

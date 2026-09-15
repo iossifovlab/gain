@@ -49,18 +49,14 @@ def find_annotator_gene_models(
 def preamble_reference_genome_id(
     pipeline: AnnotationPipeline,
 ) -> str | None:
-    """Get the reference genome id declared by the pipeline's preamble.
+    """The genome id the pipeline's preamble declares, if any.
 
-    `None` when there is no preamble, and also when the preamble declares
-    no genome: `input_reference_genome` is optional and parses to `""`,
-    which means "not configured" rather than "the resource named the
-    empty string" (gain#1055).  Normalising that here keeps the `str |
-    None` return type honest, so a caller guarding with `is not None`
-    cannot re-acquire gain#1055 through this operand.
+    `None` when there is no preamble, or when it declares no genome (see
+    `AnnotationPreamble.input_reference_genome`).
     """
     if pipeline.preamble is None:
         return None
-    return pipeline.preamble.input_reference_genome or None
+    return pipeline.preamble.input_reference_genome
 
 
 def resolve_reference_genome(
@@ -82,9 +78,11 @@ def resolve_reference_genome(
     raised when nothing resolves; it is the one part of that error that
     cannot be stated here, since the chain is the caller's.
     """
-    # `input_reference_genome` is optional and parses to "" when absent,
-    # so an empty id means "not configured" -- not "the resource named
-    # the empty string" (gain#1055).
+    # A truthiness check, not `is None`: an annotator's own `genome:`
+    # parameter is the raw YAML value, so `genome: ""` can still arrive
+    # here, and it means "not configured", not "the resource named the
+    # empty string" (gain#1055).  Narrowing that at its source is
+    # gain#1101's question.
     if genome_resource_id:
         logger.debug(
             "Reference genome for %s taken from %s",
