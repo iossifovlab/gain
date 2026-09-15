@@ -107,6 +107,16 @@ def digest_of(output: np.ndarray) -> str:
     return hashlib.sha256(output.tobytes()).hexdigest()
 
 
+def digest_handle(digest: str) -> str:
+    """The short form a digest is *shown* as -- in a table row and a repr.
+
+    The stored digest stays exact; this is only how it is named to a reader,
+    and one function so a results table and a failure message name the same
+    answer the same way.
+    """
+    return digest[:12]
+
+
 def distinct_answers(outputs: Iterable[np.ndarray]) -> dict[str, np.ndarray]:
     """Digest -> one representative array, in first-seen order.
 
@@ -221,7 +231,7 @@ class WorkerRun(NamedTuple):
     answers: dict[str, np.ndarray]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class ProbeResult:
     """One configuration's answer: did it drift, did it contend, how fast."""
 
@@ -238,6 +248,30 @@ class ProbeResult:
     #: Sampled *before* the workers start, so it describes the host this ran
     #: on rather than the load this run itself created.
     load_before: float
+
+    def __repr__(self) -> str:
+        """One line that fits a failed assertion, every field still on it.
+
+        pytest renders assertion operands through a size-capped `saferepr`
+        that elides the *middle* of anything longer than its default budget.
+        The generated repr overshot it -- the 64-character digest alone is a
+        quarter of the budget -- and what fell out was `max_concurrent`, the
+        one field that says whether the workers overlapped at all (#1389, out
+        of the #1380 diagnosis). So: the digest as the same 12-character
+        handle the results table prints, floats at four figures, and the
+        overlap named before the drift detail.
+        """
+        return (
+            f"ProbeResult(workers={self.workers}, "
+            f"max_concurrent={self.overlap.max_concurrent}, "
+            f"passes={self.drift.passes}, distinct={self.drift.distinct}, "
+            f"max_abs_deviation={self.drift.max_abs_deviation:.4g}, "
+            f"digest={digest_handle(self.drift.reference_digest)}, "
+            f"timed_seconds={self.timed_seconds:.4g}, "
+            f"wall_seconds={self.wall_seconds:.4g}, "
+            f"passes_per_second={self.passes_per_second:.4g}, "
+            f"load_before={self.load_before:.4g})"
+        )
 
 
 #: How long to wait for a worker before declaring the run broken. Generous:
@@ -518,7 +552,8 @@ def format_row(payload: OnnxEnsemblePayload, result: ProbeResult) -> str:
     """
     oversubscription = payload.threads * result.workers / processor_count()
     answer = (
-        result.drift.reference_digest[:12] if result.drift.distinct == 1
+        digest_handle(result.drift.reference_digest)
+        if result.drift.distinct == 1
         else f"({result.drift.distinct} answers)")
     return (
         f"| {payload.threads} | {'yes' if payload.deterministic else 'no'} | "
