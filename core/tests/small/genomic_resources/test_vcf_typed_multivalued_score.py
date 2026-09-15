@@ -95,8 +95,7 @@ def _header_only() -> VcfInfoScoreBuilder:
 
 
 def _stating_holdable_types() -> VcfInfoScoreBuilder:
-    """``_header_only()`` naming every field and stating the type it may
-    hold (``_STATEABLE_TYPES``)."""
+    """``_header_only()`` naming every field with its ``_STATEABLE_TYPES``."""
     builder = _header_only()
     for field, value_type in _STATEABLE_TYPES.items():
         builder = builder.with_score(field, value_type)
@@ -104,8 +103,11 @@ def _stating_holdable_types() -> VcfInfoScoreBuilder:
 
 
 def _named_without_type() -> VcfInfoScoreBuilder:
-    """``_header_only()`` naming every field with no ``type:`` at all -- the
-    gain#1221 shape, which reads the header's type and the header's parser."""
+    """``_header_only()`` naming every field with no ``type:`` at all.
+
+    The gain#1221 shape, which reads the header's type and the header's
+    parser.
+    """
     builder = _header_only()
     for field in _HEADER_TYPES:
         builder = builder.with_score(field)

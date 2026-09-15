@@ -1074,8 +1074,10 @@ class VcfInfoScoreBuilder(MetaMixin):
     Nothing declared is checked against the VCF text: an entry naming no
     INFO field, or stating a type the header's ``Number`` denies, is what a
     test authors to watch the RESOURCE refuse it (gain#1336), so the builder
-    renders it as given.  Reads back through ``AlleleScore`` on the
-    ``vcf_info`` table backend, which the ``.vcf.gz`` filename selects.
+    renders it as given.  The block itself is checked as the table builders
+    check theirs -- a field declared twice is refused at realize.  Reads
+    back through ``AlleleScore`` on the ``vcf_info`` table backend, which
+    the ``.vcf.gz`` filename selects.
     """
 
     data: str | None = None
@@ -1190,6 +1192,7 @@ class VcfInfoScoreBuilder(MetaMixin):
         """Write the resource config and the bgzipped VCF + index."""
         data = self.data if self.data is not None else _VCF_DEFAULT_DATA
         self._validate(data)
+        _validate_score_specs(self.scores)
         setup_directories(
             resource_dir, {GR_CONF_FILE_NAME: self._render_config()})
         setup_vcf(resource_dir / _VCF_FILENAME, data, csi=self.csi)

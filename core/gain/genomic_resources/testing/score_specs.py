@@ -108,7 +108,7 @@ def set_histogram(
 ) -> tuple[ScoreSpec, ...]:
     """Return ``scores`` with ``histogram`` set on one declared score.
 
-    Shared by both builders' ``with_histogram``.  With ``score_id`` omitted
+    Shared by every builder's ``with_histogram``.  With ``score_id`` omitted
     the histogram is attached to the most-recently-declared score; passing
     ``score_id`` targets that specific score.  Declaring a histogram before
     any score, or for an unknown score id, is a validation error.
@@ -131,7 +131,7 @@ def set_na_values(
 ) -> tuple[ScoreSpec, ...]:
     """Return ``scores`` with ``na_values`` set on one declared score.
 
-    Shared by the table-score builders' ``with_na_values``.  With ``score_id``
+    Shared by every builder's ``with_na_values``.  With ``score_id``
     omitted the sentinel(s) are attached to the most-recently-declared score;
     passing ``score_id`` targets that specific score.  Setting na_values before
     any score, or for an unknown score id, is a validation error.  The value is
