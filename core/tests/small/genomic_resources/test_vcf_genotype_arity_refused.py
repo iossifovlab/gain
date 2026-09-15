@@ -1,0 +1,227 @@
+"""A ``Number=G`` INFO field is refused where definitions are built (gain#1258).
+
+``Number=G`` is a legal INFO arity -- one value per genotype -- and a header
+declaring one parses fine, in pysam and in gain.  What pysam will not do is
+READ such a field: ``info.get(key)`` on a row that carries it raises
+``ValueError: genotype is only valid as a format field``.  That lookup is a
+pure function of ``(record, score_def)``, deliberately outside the ``try``
+that guards the parse, so the error escaped the score read uncaught -- from a
+resource that had opened without complaint, on the first row carrying the
+field, naming neither the resource nor the field.
+
+The contract these tests hold: the shape is visible in the header, so a field
+declared ``Number=G`` is refused where the definitions are BUILT, by the same
+:class:`MalformedResourceError` gain#1336 raises for a contradictory
+``type:`` -- and only when that field becomes a definition.  A ``scores:``
+block that leaves it out reads the rest of the file exactly as before.
+"""
+import pathlib
+import textwrap
+
+import pytest
+from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
+    build_score_from_resource,
+)
+from gain.genomic_resources.resource_errors import MalformedResourceError
+from gain.genomic_resources.testing import (
+    build_filesystem_test_protocol,
+    setup_directories,
+    setup_vcf,
+)
+
+#: One per-genotype field beside one ordinary scalar, and a row that CARRIES
+#: the per-genotype value: that row is the one pysam refuses to read, so any
+#: test that reads through the resource proves the field is never looked up.
+_VCF = textwrap.dedent("""
+##fileformat=VCFv4.1
+##INFO=<ID=PERGT,Number=G,Type=Integer,Description="one per genotype">
+##INFO=<ID=CNT,Number=1,Type=Integer,Description="a scalar">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1 5 . A T . . CNT=7
+chr1 6 . A T . . PERGT=1,2,3;CNT=8
+""")
+
+_RESOURCE_ID = "a_per_genotype_vcf"
+
+
+def _vcf_resource(
+    repo: pathlib.Path, scores_block: str = "",
+    resource_id: str = _RESOURCE_ID,
+) -> pathlib.Path:
+    """Write one allele-score resource over ``_VCF`` into ``repo``.
+
+    Realized under a repository directory rather than straight into
+    ``tmp_path`` so the resource has an id -- the refusal has to name it,
+    and ``build_filesystem_test_resource`` hands back the id ``""``.
+    """
+    resource_dir = repo / resource_id
+    setup_directories(resource_dir, {
+        "genomic_resource.yaml": textwrap.dedent("""
+            type: allele_score
+            table:
+                filename: data.vcf.gz
+        """) + scores_block,
+    })
+    setup_vcf(resource_dir / "data.vcf.gz", _VCF)
+    return resource_dir
+
+
+def _build(repo: pathlib.Path, resource_id: str = _RESOURCE_ID) -> AlleleScore:
+    proto = build_filesystem_test_protocol(repo)
+    score = build_score_from_resource(proto.get_resource(resource_id))
+    assert isinstance(score, AlleleScore)
+    return score
+
+
+def test_a_header_only_resource_with_a_per_genotype_field_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The report's shape: no ``scores:`` block, so every header field is a
+    definition, ``PERGT`` among them.
+
+    The fetch sits inside the ``raises`` so the failure names the defect:
+    without the refusal the build succeeds and the row carrying ``PERGT``
+    dies in pysam with a bare ``ValueError`` that is not a
+    ``MalformedResourceError`` and names neither resource nor field.
+    """
+    _vcf_resource(tmp_path)
+
+    with pytest.raises(MalformedResourceError, match=_RESOURCE_ID) as excinfo:
+        _build(tmp_path).open().fetch_allele_scores("chr1", 6, "A", "T")
+
+    assert "PERGT" in str(excinfo.value)
+
+
+def test_the_refusal_says_what_was_declared_and_how_to_fix_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A refusal the author can act on: the declared shape, why it cannot be
+    read, and the two edits that resolve it -- leave the field out of a
+    ``scores:`` block, or change the header.
+    """
+    _vcf_resource(tmp_path)
+
+    with pytest.raises(MalformedResourceError) as excinfo:
+        _build(tmp_path)
+
+    message = str(excinfo.value)
+    assert "Number=G" in message
+    assert "pysam" in message
+    assert "scores:" in message
+    assert "header" in message
+
+
+#: A ``scores:`` entry naming the per-genotype field, with and without a
+#: stated type.  The typed one is the shape gain#1336 refuses for the TYPE
+#: ("state 'type: str'") -- advice that would send the author to an edit
+#: which cannot make the field readable.
+_NAMING_PERGT = pytest.mark.parametrize("scores_block", [
+    pytest.param(textwrap.dedent("""
+        scores:
+        - id: PERGT
+          name: PERGT
+    """), id="untyped"),
+    pytest.param(textwrap.dedent("""
+        scores:
+        - id: PERGT
+          name: PERGT
+          type: int
+    """), id="typed-int"),
+])
+
+
+@_NAMING_PERGT
+def test_a_scores_entry_naming_the_field_is_refused_for_its_arity(
+    tmp_path: pathlib.Path, scores_block: str,
+) -> None:
+    """The config route: an entry naming ``PERGT`` makes it a definition.
+
+    The arity refusal comes FIRST.  An entry stating ``type: int`` over a
+    joined field is also a contradiction gain#1336 refuses, but its advice
+    -- state ``str`` or drop the line -- leaves a field pysam cannot read;
+    the refusal the author sees has to be the one whose fix works.
+    """
+    _vcf_resource(tmp_path, scores_block)
+
+    with pytest.raises(MalformedResourceError, match="PERGT") as excinfo:
+        _build(tmp_path)
+
+    message = str(excinfo.value)
+    assert "Number=G" in message
+    assert "type: str" not in message
+
+
+#: The fix the refusal recommends: name what you want, leave ``PERGT`` out.
+_OMITTING_PERGT = textwrap.dedent("""
+    scores:
+    - id: CNT
+      name: CNT
+""")
+
+
+def test_a_scores_block_omitting_the_field_reads_the_rest(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The refusal is about DEFINITIONS, not the header.
+
+    With ``merge_vcf_scores`` unset the ``scores:`` block is a filter, so no
+    definition of ``PERGT`` is built and nothing ever looks it up -- which
+    the row that CARRIES it proves: pysam would refuse that lookup, and the
+    read of ``CNT`` on the same row goes through untouched.
+    """
+    _vcf_resource(tmp_path, _OMITTING_PERGT)
+
+    score = _build(tmp_path).open()
+
+    assert score.fetch_allele_scores("chr1", 6, "A", "T") == {"CNT": 8}
+
+
+def test_merging_the_header_back_in_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``merge_vcf_scores: true`` turns the same block from a filter into an
+    override: every header field the block does not name is merged in as
+    the header defined it, ``PERGT`` included -- so it is a definition
+    again, and refused again.
+    """
+    _vcf_resource(
+        tmp_path, "merge_vcf_scores: true\n" + _OMITTING_PERGT)
+
+    with pytest.raises(MalformedResourceError, match="PERGT"):
+        _build(tmp_path)
+
+
+def test_repo_repair_names_the_refused_resource_and_builds_the_rest(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Where the refusal is felt: the statistics build.
+
+    Before it, ``repo-repair`` opened the header-only resource, planned its
+    region tasks and died in one of them with pysam's bare error.  Now the
+    resource is refused before any task is planned, reported by name as one
+    attributed line rather than an unexpected internal error, and the
+    repository's other resource -- whose block omits the field -- still
+    builds its statistics, reading through the row that carries ``PERGT``.
+    """
+    repo = tmp_path / "repo"
+    bad = _vcf_resource(repo, resource_id="refused")
+    good = _vcf_resource(repo, _OMITTING_PERGT, resource_id="agreeing")
+
+    with caplog.at_level("ERROR"), pytest.raises(SystemExit):
+        cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
+
+    assert not (bad / "statistics").exists(), (
+        "the refused resource ran its statistics tasks"
+    )
+    assert (good / "statistics" / "histogram_CNT.json").exists(), (
+        "the valid resource lost its statistics; one refused resource must "
+        "not cost the rest of the repository its build"
+    )
+    reports = [
+        r.getMessage() for r in caplog.records
+        if "Number=G" in r.getMessage()]
+    assert len(reports) == 1, "the refusal is reported once, not per task"
+    assert "<refused>" in reports[0]
+    assert "unexpected internal error" not in caplog.text

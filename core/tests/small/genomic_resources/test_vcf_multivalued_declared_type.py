@@ -71,21 +71,6 @@ chr1 5 . A T,G . . RV;CNT=3;PA=7,8;PR=1.5,2.5,3.5
 chr1 6 . A T . . MANY=1,2;FMANY=1.5,2.5;TAGS=x,y;TWO=1.5,2.5
 """)
 
-#: The genotype-arity shape, alone and never read.  ``Number=G`` belongs to
-#: the same "not a scalar" side of the decision as the fields above, but pysam
-#: refuses to hand over an INFO value declared that way at all -- reading one
-#: raises ``ValueError: genotype is only valid as a format field`` -- so a
-#: resource carrying it cannot have its statistics built for reasons that have
-#: nothing to do with gain#1259.  Its DECLARATION is still built from the
-#: header like any other, which is the part this file is about, so it is
-#: pinned here on its own rather than in the fixture every other test reads.
-_PERGT_VCF = textwrap.dedent("""
-##fileformat=VCFv4.1
-##INFO=<ID=PERGT,Number=G,Type=Integer,Description="one per genotype">
-#CHROM POS ID REF ALT QUAL FILTER INFO
-chr1 5 . A T . . PERGT=1,2
-""")
-
 #: Every field, with the ``type:`` its own ``##INFO`` line declares -- what an
 #: author documenting the file naturally writes.
 _HEADER_TYPES = {
@@ -178,9 +163,9 @@ _JOINED_NUMERIC_TYPES = [
 
 
 def _realize_vcf_resource(
-    resource_dir: pathlib.Path, scores_block: str = "", vcf: str = _VCF,
+    resource_dir: pathlib.Path, scores_block: str = "",
 ) -> pathlib.Path:
-    """Write one allele-score resource over ``vcf`` into ``resource_dir``.
+    """Write one allele-score resource over ``_VCF`` into ``resource_dir``.
 
     The single place this file states what a VCF score resource looks like
     on disk -- the config skeleton and the data file beside it -- so that
@@ -197,7 +182,7 @@ def _realize_vcf_resource(
                 filename: data.vcf.gz
         """) + scores_block,
     })
-    setup_vcf(resource_dir / "data.vcf.gz", vcf)
+    setup_vcf(resource_dir / "data.vcf.gz", _VCF)
     return resource_dir
 
 
@@ -431,52 +416,6 @@ def test_a_scalar_field_with_an_overriding_type_is_not_reported(
         _vcf_score(tmp_path, _CNT_TYPED_FLOAT)
 
     assert _JOINED_TEXT_REPORT not in caplog.text
-
-
-def test_the_genotype_arity_shape_declares_str_too(
-    tmp_path: pathlib.Path,
-) -> None:
-    """``Number=G`` is on the joined side of the set, and declares with it.
-
-    It gets its own resource because pysam will not READ an INFO field
-    declared per-genotype -- see :data:`_PERGT_VCF` -- so it cannot sit in
-    the fixture the other tests read values through.  The declaration is
-    built from the header alone, and that is what is checked: a shape that
-    is not one of the scalar four must not take its element ``Type=`` as its
-    own, whether or not a value ever arrives.
-    """
-    _realize_vcf_resource(tmp_path, vcf=_PERGT_VCF)
-    score = build_score_from_resource(build_filesystem_test_resource(tmp_path))
-
-    assert score.score_definitions["PERGT"].value_type == "str"
-
-
-def test_the_genotype_arity_shape_refuses_a_stated_numeric_type(
-    tmp_path: pathlib.Path,
-) -> None:
-    """``Number=G`` is refused with the rest of the joined side.
-
-    The shapes in ``_VCF`` are ``.`` and a fixed ``2``, so every other
-    refusal test here would still pass under a rule keyed on ``number ==
-    "."`` or on ``isinstance(number, int)``.  ``G`` is neither, and is the
-    shape that catches such a rule.
-
-    It gets its own resource because pysam will not READ an INFO field
-    declared per-genotype -- see :data:`_PERGT_VCF` -- but the refusal is
-    decided from the header and the config, before any value is read, so it
-    fires here exactly as it does for a readable field.
-    """
-    _realize_vcf_resource(tmp_path, textwrap.dedent("""
-        scores:
-        - id: PERGT
-          name: PERGT
-          type: int
-    """), vcf=_PERGT_VCF)
-
-    with pytest.raises(ValueError, match="PERGT") as excinfo:
-        build_score_from_resource(build_filesystem_test_resource(tmp_path))
-
-    assert "Number=G" in str(excinfo.value)
 
 
 def test_a_resource_with_a_joined_field_builds_its_statistics(
