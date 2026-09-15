@@ -35,8 +35,10 @@ that pins the old text, and a sentence-shaped pin it cannot render fails
 it until registered with a producer or allow-listed with its origin. The
 module docstring says how.
 
-Two habits keep that cheap: pin the refusal clause, not the echo of your
+One habit keeps that cheap: pin the refusal clause, not the echo of your
 own input (an `AnnotatorInfo` repr or a temp path is the test's input
-coming back; see the comment in `tests/pipeline/validation.spec.ts`),
-and when a page mixes backend text with its own, pin the backend
-sentence on its own as well (`tests/single-annotation/annotator-modal.spec.ts`).
+coming back; see the comment in `tests/pipeline/validation.spec.ts`).
+A pin on Markdown the page renders (the annotator modal,
+`tests/single-annotation/annotator-modal.spec.ts`) is registered whole
+and compared the way `toHaveText` compares, whitespace collapsed on both
+sides.
