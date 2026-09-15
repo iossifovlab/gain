@@ -52,10 +52,16 @@ class ScoreSpec:
     never both.  When ``column_index`` is set, ``column_name`` is ``None``
     and the column the index points at is resolved from the data header at
     realize time (see :func:`_resolve_column_names`).
+
+    ``value_type`` is ``None`` for an entry that states no ``type:`` at all
+    -- a legal shape (``type:`` is optional in the resource schema) that a
+    VCF-backed score reaches for on purpose, because there the header
+    already declares the type and an unstated one means "the header's"
+    (gain#1221).  The table-backed builders always state one.
     """
 
     score_id: str
-    value_type: str
+    value_type: str | None
     column_name: str | None
     column_index: int | None = None
     desc: str | None = None
@@ -65,13 +71,13 @@ class ScoreSpec:
 
 
 def append_score(
-    scores: tuple[ScoreSpec, ...], score_id: str, value_type: str, *,
+    scores: tuple[ScoreSpec, ...], score_id: str, value_type: str | None, *,
     column_name: str | None = None, column_index: int | None = None,
     desc: str | None = None,
 ) -> tuple[ScoreSpec, ...]:
     """Return ``scores`` with one more declared score appended.
 
-    Shared by both builders' ``with_score``.  With neither addressing mode
+    Shared by every builder's ``with_score``.  With neither addressing mode
     given, ``column_name`` defaults to ``score_id``; the two modes are
     mutually exclusive, matching the resource schema, which declares
     ``column_index`` as excluding ``name``/``column_name``/``index``.
@@ -197,7 +203,8 @@ def render_score_specs_yaml(scores: tuple[ScoreSpec, ...]) -> str:
 
     Optional ``desc``/``histogram`` are emitted only when set, so a score
     with neither renders exactly the three ``id``/``type``/``column_name``
-    lines the position-score builder emitted before the shared base.
+    lines the position-score builder emitted before the shared base.  A
+    ``value_type`` of ``None`` emits no ``type:`` line at all.
     """
     blocks: list[str] = []
     for spec in scores:
@@ -206,11 +213,10 @@ def render_score_specs_yaml(scores: tuple[ScoreSpec, ...]) -> str:
             if spec.column_index is not None
             else f"  column_name: {spec.column_name}"
         )
-        lines = [
-            f"- id: {spec.score_id}",
-            f"  type: {spec.value_type}",
-            addressing,
-        ]
+        lines = [f"- id: {spec.score_id}"]
+        if spec.value_type is not None:
+            lines.append(f"  type: {spec.value_type}")
+        lines.append(addressing)
         if spec.na_values is not None:
             # Emit through yaml so a scalar renders as ``na_values: '-1'`` and
             # a list as a block sequence, both indented at the score-entry
