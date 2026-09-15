@@ -39,6 +39,14 @@ test.describe('Single annotation annotator modal', () => {
     const singleAnnotation = new SingleAnnotation(page);
     await singleAnnotation.infoIcons.nth(1).click();
     await expect(singleAnnotation.annotatorHeader).toHaveText('allele_score');
+    // The backend's sentence on its own, so the pin registry
+    // (web_api/web_annotation/tests/test_e2e_backend_pins.py) can check it
+    // against core's allele_score documentation without a browser. The
+    // whole-modal assertion below mixes that Markdown, rendered, with the
+    // UI's own parameter list, which only the browser can compare.
+    await expect(singleAnnotation.modalContent.locator('.annotator-description')).toContainText(
+      'Annotator to use with scores that depend on allele like\nvariant frequencies, etc.'
+    );
     await expect(singleAnnotation.modalContent.locator('.annotator-description')).toHaveText(
       'Annotator to use with scores that depend on allele like\nvariant frequencies, etc.\n' +
       'Mode (mode parameter, applies to VCFAllele inputs only):\n\n' +

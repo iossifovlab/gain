@@ -35,6 +35,7 @@ from web_annotation.annotation_base_view import (
     AsyncAnnotationBaseView,
 )
 from web_annotation.authentication import WebAnnotationAuthentication
+from web_annotation.messages import SINGLE_ALLELE_QUOTA_EXCEEDED
 from web_annotation.models import AlleleQuery, BaseUser, User
 from web_annotation.pipeline_cache import ThreadSafePipeline, await_build
 from web_annotation.serializers import AlleleSerializer
@@ -217,7 +218,7 @@ class SingleAnnotation(AsyncAnnotationBaseView):
             not quota.single_allele_allowed(attributes_count)
         ):
             return Response(
-                {"reason": "Single allele query quota exceeded!"},
+                {"reason": SINGLE_ALLELE_QUOTA_EXCEEDED},
                 status=views.status.HTTP_429_TOO_MANY_REQUESTS,
             )
 

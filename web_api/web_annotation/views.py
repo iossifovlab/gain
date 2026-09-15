@@ -25,6 +25,11 @@ from rest_framework.request import QueryDict, Request
 from rest_framework.response import Response
 
 from web_annotation.authentication import WebAnnotationAuthentication
+from web_annotation.messages import (
+    EMAIL_ALREADY_IN_USE,
+    INVALID_LOGIN_CREDENTIALS,
+    RESET_LINK_EMAIL_SENT,
+)
 from web_annotation.serializers import UserSerializer
 from web_annotation.throttling import (
     AccountConfirmRateThrottle,
@@ -175,7 +180,7 @@ class Login(FirstRefusalThrottledAPIView):
             cast(HttpRequest, request), email=email, password=password)
         if user is None:
             return Response(
-                {"error": "Invalid login credentials"},
+                {"error": INVALID_LOGIN_CREDENTIALS},
                 status=views.status.HTTP_400_BAD_REQUEST)
 
         request.session.flush()
@@ -214,7 +219,7 @@ class Registration(views.APIView):
 
         if User.objects.filter(email=email).exists():
             return Response(
-                {"error": "This email is already in use"},
+                {"error": EMAIL_ALREADY_IN_USE},
                 status=views.status.HTTP_400_BAD_REQUEST)
 
         user = User.objects.create_user(
@@ -322,10 +327,7 @@ class ForgotPassword(HtmlThrottledAPIView, FirstRefusalThrottledAPIView):
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
         email = form.cleaned_data["email"]
-        message = (
-            f"An e-mail has been sent to {email}"
-            " containing the reset link"
-        )
+        message = RESET_LINK_EMAIL_SENT.format(email=email)
 
         # The response must not depend on whether the address is
         # registered - a differing status or message would let an

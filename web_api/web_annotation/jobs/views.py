@@ -26,6 +26,7 @@ from web_annotation.annotation_base_view import (
     count_input_variants,
 )
 from web_annotation.authentication import WebAnnotationAuthentication
+from web_annotation.messages import CANNOT_BUILD_ANNOTATABLE
 from web_annotation.models import (
     AnonymousJob,
     BaseUser,
@@ -462,9 +463,7 @@ class ColumnValidation(AnnotationBaseView):
             return Response(
                 {
                     "annotatable": "",
-                    "errors": (
-                        "Cannot build annotatable from selected columns!"
-                    ),
+                    "errors": CANNOT_BUILD_ANNOTATABLE,
                 },
                 status=views.status.HTTP_200_OK)
 
