@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import pathlib
 import textwrap
 
 import pytest
@@ -7,6 +8,10 @@ from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.fsspec_protocol import build_fsspec_protocol
 from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.testing import setup_directories, setup_vcf
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_vcf_info_score,
+)
 
 
 @pytest.fixture
@@ -134,3 +139,41 @@ def test_vcf_info_annotator(
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(vcf_allele)
         assert result == expected
+
+
+def test_a_number_1_row_carrying_two_values_annotates_as_null(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An attribute declared ``float`` never carries a ``tuple`` (#1257).
+
+    htslib does not enforce a header's ``Number`` on read, so a
+    ``Number=1`` field whose row carries ``SC=2.5,3.5`` reached the
+    annotator as the raw pysam tuple, and the pipeline emitted ``(2.5, 3.5)``
+    -- typed ``tuple`` -- for an attribute whose spec says ``float``.  The
+    score layer now refuses that row at the read, so the attribute is the
+    same null an absent INFO key gives.
+    """
+    repo = (
+        a_grr()
+        .with_resource("score", a_vcf_info_score().with_data("""
+##fileformat=VCFv4.1
+##INFO=<ID=SC,Number=1,Type=Float,Description="declared scalar">
+##INFO=<ID=SS,Number=1,Type=String,Description="declared scalar text">
+#CHROM POS ID REF ALT QUAL FILTER  INFO
+chr1   3   .  A   T   .    .       SC=1.5;SS=a
+chr1   6   .  A   T   .    .       SC=2.5,3.5;SS=a,b
+"""))
+        .build_repo(tmp_path)
+    )
+    pipeline = load_pipeline_from_yaml("- allele_score: score", repo)
+
+    with pipeline.open() as work_pipeline:
+        results = [
+            work_pipeline.annotate(VCFAllele("chr1", pos, "A", "T"))
+            for pos in (3, 6)
+        ]
+
+    assert results == [
+        {"SC": 1.5, "SS": "a"},
+        {"SC": None, "SS": None},
+    ]

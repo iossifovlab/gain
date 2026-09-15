@@ -294,12 +294,15 @@ class GenomicScoreDef(ScoreDef):
     # reads it: ``fetch_region_value_arrays`` does, but the VCF backend does
     # not serve that call (``supports_region_value_arrays``).
     score_index: int = field(init=False)        # internal
-    # Whether a malformed per-allele value COUNT has already been reported for
-    # this field (#289).  A ``Number=A``/``Number=R`` INFO field carries one
-    # value per allele, so a row whose count does not match its ALT column is
-    # a broken resource -- worth a warning, but exactly one: the check sits in
-    # the per-record score read, and a field malformed on one row is normally
-    # malformed on every row of the table.
+    # Whether a malformed value COUNT has already been reported for this
+    # field.  A ``Number=A``/``Number=R`` INFO field carries one value per
+    # allele, so a row whose count does not match its ALT column is a broken
+    # resource (#289); a ``Number=1`` field carries one, so a row handing
+    # over a tuple is one too (#1257).  Worth a warning, but exactly
+    # one: the check sits in the per-record score read, and a field malformed
+    # on one row is normally malformed on every row of the table.  One flag
+    # for both shapes, because a field has one declared ``Number`` and so
+    # only ever trips one of them.
     #
     # The flag lives HERE, on the definition, because that is what makes it
     # per-TABLE: score definitions are built once per ``GenomicScore``, in its
@@ -311,8 +314,8 @@ class GenomicScoreDef(ScoreDef):
     # given; a module-level flag would silence the second RESOURCE, not the
     # second row.
     #
-    # Only ``extract_vcf_value`` writes it -- the arity of a per-allele INFO
-    # field is a VCF-only notion, as ``col_index``/``score_index`` above are
+    # Only ``extract_vcf_value`` writes it -- the arity of an INFO field is a
+    # VCF-only notion, as ``col_index``/``score_index`` above are
     # column-backend-only ones.  ``compare=False`` keeps a warning that has
     # fired out of ``__eq__``: whether a def has logged is not part of what it
     # defines.
