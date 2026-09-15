@@ -10,21 +10,10 @@ plain Markdown, so a curator's table reached the reader as literal
 and rendered the same source correctly.
 
 The tests here are that single decision, stated as behaviour: a table and
-a fenced code block are markup under the default, and a caller that asks
-for plain Markdown by passing ``extras=[]`` still gets it.  Between them
-they pin both extras by name -- drop either from the default and one of
-them goes red.
-
-**Fenced blocks here are deliberately un-tagged.**  markdown2's
-``fenced-code-blocks`` has two output shapes, and which one you get is
-decided by the environment rather than by the source: a fence carrying a
-language routes through Pygments when it is importable, emitting
-``<div class="codehilite">`` around highlighted spans, and falls back to
-plain ``<pre><code>`` when it is not.  Pygments is not a declared
-dependency of GAIn, so a language-tagged fence would make this suite's
-expected HTML depend on what happens to be installed.  gain#1289 carries
-that decision; until it lands, un-tagged fences are the only shape that
-is a function of the Markdown alone.
+a fenced code block are markup under the default, a language-tagged fence
+is *not* highlighted (gain#1289 -- the why is on ``DEFAULT_EXTRAS``), and
+a caller that asks for plain Markdown by passing ``extras=[]`` still gets
+it.  Each of the first three pins one extra by name.
 
 The wrapper's other job -- rescuing prose from bogus tags -- is covered
 in ``test_markdown_support.py``, and the template global that exposes it
@@ -32,14 +21,17 @@ to Jinja in ``test_markdown_global.py``.
 """
 from __future__ import annotations
 
+import pytest
 from gain.templates.markdown_support import render_markdown
 
 #: A table in the shape a curator writes it, header row included.
 _TABLE = "| score | meaning |\n|---|---|\n| 1 | high |\n"
 
-#: A fenced block with no language tag -- see the module docstring for
-#: why the tag is deliberately absent.
+#: A fenced block with no language tag.
 _FENCE = "```\nannotate --help\n```\n"
+
+#: The same block naming a language.
+_TAGGED_FENCE = "```python\nx = 1\n```\n"
 
 
 def test_a_table_is_markup_under_the_default_dialect() -> None:
@@ -56,6 +48,23 @@ def test_a_fenced_block_is_a_code_block_under_the_default_dialect() -> None:
     out = render_markdown(_FENCE)
 
     assert "<pre><code>annotate --help\n</code></pre>" in out
+
+
+def test_a_language_tagged_fence_is_not_highlighted_even_when_it_could_be(
+) -> None:
+    """markdown2 would highlight this through Pygments; the default says no.
+
+    It only would where Pygments is importable, so this test proves
+    nothing elsewhere -- it skips there rather than pass vacuously.
+    """
+    pytest.importorskip("pygments")
+
+    out = render_markdown(_TAGGED_FENCE)
+
+    assert '<pre><code class="python language-python">x = 1\n</code></pre>' \
+        in out
+    assert "codehilite" not in out
+    assert "<span" not in out
 
 
 def test_a_caller_asking_for_plain_markdown_still_gets_it() -> None:

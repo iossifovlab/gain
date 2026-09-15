@@ -43,11 +43,16 @@ from markdown2 import markdown
 #: is how the about page and the resource page drifted into rendering the
 #: same source differently (gain#1278).
 #:
-#: ``fenced-code-blocks`` highlights through Pygments when a fence names a
-#: language *and* Pygments is importable, and falls back to a plain
-#: ``<pre><code>`` otherwise; Pygments is not a declared dependency, so
-#: that shape is environment-dependent.  gain#1289 decides it.
-DEFAULT_EXTRAS: Final = ("tables", "fenced-code-blocks")
+#: ``fenced-code-blocks`` on its own highlights through Pygments when a
+#: fence names a language *and* Pygments is importable, and falls back
+#: to a plain ``<pre><code>`` otherwise.  Pygments is not a declared
+#: dependency -- absent from the gain-core runtime closure, present in a
+#: dev venv -- so that shape would be decided by the build environment
+#: rather than by the GRR content.  ``highlightjs-lang`` makes markdown2
+#: skip Pygments unconditionally and carry the language only as a class
+#: on ``<code>`` (``<pre><code class="python language-python">``): no
+#: server-side highlighting, by decision (gain#1289).
+DEFAULT_EXTRAS: Final = ("tables", "fenced-code-blocks", "highlightjs-lang")
 
 #: Element names a browser recognizes -- HTML per the WHATWG living
 #: standard plus obsolete names browsers still tokenize, and the SVG and
