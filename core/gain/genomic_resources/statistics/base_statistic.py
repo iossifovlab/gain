@@ -174,6 +174,30 @@ def regions_in_genomic_order[R: ScannedRegion](
             region.start if region.start is not None else 0))
 
 
+#: What one value folded into a numeric accumulator may be, once numpy's own
+#: scalars have been normalized to the Python value they hold.  ``bool``
+#: rides in through ``int``, which it subclasses -- a bool score under a
+#: number histogram really does produce a 0/1 histogram.
+#:
+#: Shared by ``NumberHistogram`` and ``MinMaxValue`` for the reason
+#: :func:`non_numeric_error` below is: the twins fold the same values, so the
+#: allow-list is stated once (gain#1338, gain#1358).  It lives here rather than
+#: with the histogram because ``histogram.py`` imports ``min_max.py`` and not
+#: the reverse.
+#:
+#: Named for Python's types to keep it distinct from
+#: ``NUMBER_HISTOGRAM_VALUE_TYPES``: that one is declared score
+#: ``value_type`` STRINGS, this one is the type of a single folded value.
+#:
+#: Hoisted rather than written as a tuple literal in the check, because a
+#: tuple of names is rebuilt on every call.  1M ``isinstance`` calls, best of
+#: 5: 112 ns/call for the 3-member literal this replaces (which also
+#: re-resolved ``np.integer`` through the module each time) against 52 ns
+#: hoisted.  ``float`` first because ``isinstance`` tests a tuple in order
+#: and a Python float is what the scan folds.
+PYTHON_NUMBER_TYPES = (float, int)
+
+
 def non_numeric_error(value: Any, what: str) -> TypeError:
     """The one wording of a numeric accumulator's refusal.
 

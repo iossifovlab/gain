@@ -1,3 +1,7 @@
+import re
+from decimal import Decimal
+from typing import Any
+
 import numpy as np
 import pytest
 from gain.genomic_resources.statistics.min_max import (
@@ -47,6 +51,81 @@ def test_min_max_value_folds_every_numeric_flavour(value: object) -> None:
     min_max_value.add_value(value)  # type: ignore[arg-type]
 
     assert min_max_value.min == value
+
+
+@pytest.mark.parametrize(
+    ("value", "python_type"),
+    [
+        (np.float32(3.0), float),
+        (np.float16(3.0), float),
+        (np.int64(3), int),
+        (np.bool_(1), bool),
+    ],
+)
+def test_min_max_value_folds_a_numpy_scalar_as_the_python_value_it_holds(
+    value: Any, python_type: type,
+) -> None:
+    """The extremum is never left holding a numpy scalar.
+
+    ``min(np.float32(3.0), 5)`` orders fine and hands back the float32, so
+    without normalizing, ``min`` becomes whatever numpy type the caller
+    used -- which then flows into a histogram's ``view_range`` and picks its
+    bin edges in that precision.  The histogram twin folds ``value.item()``
+    for exactly that reason (gain#1338); so does this.
+    """
+    min_max_value = MinMaxValue("test_score", 5, 10)
+
+    min_max_value.add_value(value)
+
+    # Exact type on purpose: ``np.float64`` SUBCLASSES ``float``, so an
+    # isinstance check would pass with the numpy scalar still in place.
+    assert type(min_max_value.min) is python_type  # pylint: disable=unidiomatic-typecheck
+
+
+@pytest.mark.parametrize(
+    ("value", "type_name"),
+    [
+        # Refused by the type gate: ``np.isnan`` accepts all of these, and
+        # before the gate each one FOLDED -- ``min()`` orders a complex
+        # without complaint and leaves ``min`` holding one, or an array
+        # (gain#1358).  ``complex`` alone used to die in ``min()`` instead,
+        # with numpy-free wording that named neither value nor type.
+        (0.5 + 0j, "complex"),
+        (np.complex128(0.5), "numpy.complex128"),
+        (np.array(0.5), "numpy.ndarray"),
+        (np.array([0.5]), "numpy.ndarray"),
+        # Refused earlier, by the ``np.isnan`` re-wording (gain#1313).
+        # Here to pin that BOTH refusal routes carry the shared wording.
+        (np.str_("aaa"), "numpy.str_"),
+        (Decimal("0.5"), "decimal.Decimal"),
+    ],
+)
+def test_min_max_value_refuses_a_non_number_naming_what_it_was_given(
+    value: Any, type_name: str,
+) -> None:
+    """A value ``np.isnan`` accepts is not thereby a value a min/max folds.
+
+    The mirror of the histogram twin's
+    ``test_number_histogram_refuses_a_non_number_naming_what_it_was_given``,
+    row for row: the shared wording promises a reader cannot tell which twin
+    refused, so the two must refuse the same values.
+
+    ``np.complex128`` is the row that pins the wording and not just the
+    refusal: it is the only value here that is normalized before being
+    refused, so it is the one that catches a refusal reporting the
+    ``complex`` it became instead of the ``np.complex128`` the caller
+    handed over.
+    """
+    min_max_value = MinMaxValue("test_score")
+
+    with pytest.raises(
+        TypeError,
+        match=rf"non numerical value.*{re.escape(type_name)}",
+    ):
+        min_max_value.add_value(value)
+
+    assert np.isnan(min_max_value.min), "a refused value folds nothing"
+    assert np.isnan(min_max_value.max), "a refused value folds nothing"
 
 
 def test_min_max_value_add_value() -> None:

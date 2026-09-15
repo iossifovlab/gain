@@ -19,6 +19,7 @@ from matplotlib import ticker
 from gain import logging
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.base_statistic import (
+    PYTHON_NUMBER_TYPES,
     Statistic,
     non_numeric_error,
 )
@@ -278,24 +279,6 @@ class NullHistogramConfig:
 HISTOGRAM_LABELS_FONT_SIZE = 20
 
 
-# What one value folded into a number histogram may be, once numpy's own
-# scalars have been normalized to the Python value they hold.  ``bool``
-# rides in through ``int``, which it subclasses -- a bool score under a
-# number histogram really does produce a 0/1 histogram.
-#
-# Named for Python's types to keep it distinct from the statistics scan's
-# ``_NUMBER_HISTOGRAM_VALUE_TYPES``: that one is declared score
-# ``value_type`` STRINGS, this one is the type of a single folded value.
-#
-# Hoisted rather than written as a tuple literal in the check, because a
-# tuple of names is rebuilt on every call.  1M ``isinstance`` calls, best of
-# 5: 112 ns/call for the 3-member literal this replaces (which also
-# re-resolved ``np.integer`` through the module each time) against 52 ns
-# hoisted.  ``float`` first because ``isinstance`` tests a tuple in order
-# and a Python float is what the scan folds.
-_PYTHON_NUMBER_TYPES = (float, int)
-
-
 class NumberHistogram(Statistic):
     """Class to represent a histogram."""
 
@@ -466,9 +449,9 @@ class NumberHistogram(Statistic):
         # The refusal names what the CALLER handed over, not what it was
         # normalized to, so a nullified score's reason does not report a
         # ``np.complex128`` as a plain ``complex``.
-        if not isinstance(value, _PYTHON_NUMBER_TYPES):
+        if not isinstance(value, PYTHON_NUMBER_TYPES):
             folded = value.item() if isinstance(value, np.generic) else value
-            if not isinstance(folded, _PYTHON_NUMBER_TYPES):
+            if not isinstance(folded, PYTHON_NUMBER_TYPES):
                 raise non_numeric_error(value, "number histogram")
             value = folded
 
