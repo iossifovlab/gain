@@ -276,6 +276,51 @@ def test_gene_set_annotator_missing_input_gene_list_names_the_annotator(
     assert "gene_set_annotator" in message
 
 
+def test_gene_set_annotator_refuses_a_gene_list_the_pipeline_lacks(
+    test_grr: GenomicResourceRepo,
+) -> None:
+    # An empty pipeline provides no attribute at all, so whatever
+    # name the configuration asks for is one nobody upstream produces.
+    pipeline = AnnotationPipeline(test_grr)
+    info = AnnotatorInfo(
+        "gene_set_annotator", [],
+        {"resource_id": "foobar_gene_set_collection",
+         "input_gene_list": "gene_list"})
+
+    with pytest.raises(ValueError) as excinfo:
+        build_gene_set_annotator(pipeline, info)
+
+    message = str(excinfo.value)
+    assert "gene_list" in message
+    assert "not provided by the pipeline" in message
+
+
+def test_gene_set_annotator_refuses_a_gene_list_that_is_not_an_object(
+    test_grr: GenomicResourceRepo,
+) -> None:
+    # The effect annotator provides ``worst_effect`` as a str, so it is
+    # an attribute the pipeline DOES have -- just not one that holds
+    # a list of genes.
+    pipeline = load_pipeline_from_yaml(textwrap.dedent(
+        """
+        - effect_annotator:
+            genome: foobar_genome
+            gene_models: foobar_genes
+        """),
+        test_grr)
+    info = AnnotatorInfo(
+        "gene_set_annotator", [],
+        {"resource_id": "foobar_gene_set_collection",
+         "input_gene_list": "worst_effect"})
+
+    with pytest.raises(ValueError) as excinfo:
+        build_gene_set_annotator(pipeline, info)
+
+    message = str(excinfo.value)
+    assert "worst_effect" in message
+    assert "provided by the pipeline is not of type object" in message
+
+
 @pytest.mark.parametrize("set_config,set_id, chrom,pos,ref,alt, expected", [
     ("set_1", "set_0", "foo", 10, "A", "C", None),
     ("set_0", "set_0", "foo", 10, "A", "C", True),

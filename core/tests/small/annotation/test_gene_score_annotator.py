@@ -5,8 +5,15 @@ import textwrap
 
 import pytest
 from gain.annotation.annotatable import Region
-from gain.annotation.annotation_config import AnnotatorInfo, AttributeConfig
-from gain.annotation.annotation_pipeline import AnnotationPipeline
+from gain.annotation.annotation_config import (
+    AnnotatorInfo,
+    Attribute,
+    AttributeConfig,
+)
+from gain.annotation.annotation_pipeline import (
+    AnnotationPipeline,
+    AttributeSpec,
+)
 from gain.annotation.gene_score_annotator import (
     GeneScoreAnnotator,
     build_gene_score_annotator,
@@ -16,6 +23,8 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
 )
 from gain.genomic_resources.testing import build_inmemory_test_repository
+
+from tests.small.annotation.conftest import DummyAnnotator
 
 _DUMMY_ANNOTATABLE = Region("chr1", 1, 1)
 
@@ -196,6 +205,49 @@ def test_gene_score_annotator_missing_input_gene_list_names_the_annotator(
     assert "input_gene_list" in message
     assert "built-in function" not in message
     assert "gene_score_annotator" in message
+
+
+def test_gene_score_annotator_refuses_a_gene_list_the_pipeline_lacks(
+    scores_repo: GenomicResourceRepo,
+) -> None:
+    # An empty pipeline provides no attribute at all, so whatever
+    # name the configuration asks for is one nobody upstream produces.
+    pipeline = AnnotationPipeline(scores_repo)
+    info = AnnotatorInfo(
+        "gene_score_annotator", [],
+        {"resource_id": "LGD_rank", "input_gene_list": "gene_list"})
+
+    with pytest.raises(ValueError) as excinfo:
+        build_gene_score_annotator(pipeline, info)
+
+    message = str(excinfo.value)
+    assert "gene_list" in message
+    assert "not provided by the pipeline" in message
+
+
+def test_gene_score_annotator_refuses_a_gene_list_that_is_not_an_object(
+    scores_repo: GenomicResourceRepo,
+) -> None:
+    # An upstream annotator provides ``worst_effect`` as a str, so it is
+    # an attribute the pipeline DOES have -- just not one that holds a
+    # list of genes.
+    pipeline = AnnotationPipeline(scores_repo)
+    pipeline.add_annotator(DummyAnnotator(attributes=[Attribute(
+        name="worst_effect", source="worst_effect",
+        spec=AttributeSpec(
+            source="worst_effect", value_type="str",
+            description="", is_default=True),
+    )]))
+    info = AnnotatorInfo(
+        "gene_score_annotator", [],
+        {"resource_id": "LGD_rank", "input_gene_list": "worst_effect"})
+
+    with pytest.raises(ValueError) as excinfo:
+        build_gene_score_annotator(pipeline, info)
+
+    message = str(excinfo.value)
+    assert "worst_effect" in message
+    assert "provided by the pipeline is not of type object" in message
 
 
 @pytest.fixture

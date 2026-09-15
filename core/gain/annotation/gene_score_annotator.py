@@ -25,24 +25,13 @@ logger = logging.getLogger(__name__)
 def build_gene_score_annotator(pipeline: AnnotationPipeline,
                                info: AnnotatorInfo) -> Annotator:
     """Create a gene score annotator."""
-    # Before the input_gene_list checks below: a holder whose resource is
-    # the wrong kind is told THAT first, rather than about a pipeline
+    # Before the input_gene_list check: a holder whose resource is the
+    # wrong kind is told THAT first, rather than about a pipeline
     # attribute they would go on to wire up correctly for a resource this
     # annotator was never going to accept.
     gene_score_resource = GeneScoreAnnotator.resolve_resource(pipeline, info)
-
-    input_gene_list = info.parameters.get("input_gene_list")
-    if input_gene_list is None:
-        raise ValueError(f"The {info} must have an 'input_gene_list' "
-                         "parameter")
-    input_gene_list_info = pipeline.get_attribute_info(input_gene_list)
-    if input_gene_list_info is None:
-        raise ValueError(f"The {input_gene_list} is not provided by the "
-                         "pipeline.")
-    if input_gene_list_info.spec is None \
-            or input_gene_list_info.spec.value_type != "object":
-        raise ValueError(f"The {input_gene_list} provided by the pipeline "
-                         "is not of type object.")
+    input_gene_list = GeneScoreAnnotator.resolve_input_gene_list(
+        pipeline, info)
     return GeneScoreAnnotator(pipeline, info,
                               gene_score_resource, input_gene_list)
 
