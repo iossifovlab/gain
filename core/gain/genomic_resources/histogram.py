@@ -19,6 +19,7 @@ from matplotlib import ticker
 from gain import logging
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.base_statistic import (
+    NON_NUMERIC_ERRORS,
     PYTHON_NUMBER_TYPES,
     Statistic,
     as_python_number,
@@ -428,7 +429,7 @@ class NumberHistogram(Statistic):
         try:
             if value is None or np.isnan(value):
                 return
-        except TypeError as err:
+        except NON_NUMERIC_ERRORS as err:
             raise non_numeric_error(value, "number histogram") from err
 
         # Reached only by values ``np.isnan`` accepted -- text and
