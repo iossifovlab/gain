@@ -60,3 +60,32 @@ def test_a_non_list_label_renders_as_its_rendered_form(
     page = _info_page(tmp_path, protocol=value)
 
     assert f"<li>protocol: {rendered}</li>" in page
+
+
+def test_labels_are_listed_by_key_not_by_authoring_order(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Keys arrive in yaml authoring order (gain#1482); a row of 17 labels
+    # is scanned by name, so the page lists them alphabetically.  The
+    # elements of a list value keep their authored order: that order is
+    # the curator's (``RNA, ATAC`` for a Multiome assay), not the page's.
+    page = _info_page(
+        tmp_path,
+        species="mouse",
+        age="P56",
+        modalities=["RNA", "ATAC"],
+        dataset="zemke2023Conserved",
+    )
+
+    labels_row = page[page.index("<th>Labels</th>"):]
+    items = [
+        line.strip()
+        for line in labels_row.splitlines()
+        if line.strip().startswith("<li>")
+    ]
+    assert items == [
+        "<li>age: P56</li>",
+        "<li>dataset: zemke2023Conserved</li>",
+        "<li>modalities: RNA, ATAC</li>",
+        "<li>species: mouse</li>",
+    ]
