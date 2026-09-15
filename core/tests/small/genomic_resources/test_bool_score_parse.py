@@ -14,27 +14,21 @@ and what that default costs lives in
 """
 # pylint: disable=C0116,W0212,W0621
 import pathlib
-import textwrap
 
 import pytest
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     PositionScore,
-    build_score_from_resource,
 )
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
     CategoricalHistogramConfig,
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import scan
-from gain.genomic_resources.testing import (
-    build_filesystem_test_resource,
-    setup_directories,
-    setup_vcf,
-)
 from gain.genomic_resources.testing.builders import (
     PositionScoreBuilder,
     a_position_score,
+    a_vcf_info_score,
 )
 
 
@@ -175,33 +169,20 @@ def _dbsnp_shaped_flag_score(tmp_path: pathlib.Path) -> AlleleScore:
     MULTI-valued keeps the header's parser whatever the config states --
     gain#1233.)  So a VCF score declared ``type: bool`` runs the very
     parser the text tables use, over whatever pysam decoded.
-
-    Hand-rolled rather than built with ``a_vcf_info_score()``, which emits
-    no ``scores:`` block at all and so cannot express the override this
-    exists to exercise.
     """
-    setup_directories(tmp_path, {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: allele_score
-            table:
-                filename: data.vcf.gz
-            scores:
-            - id: RV
-              name: RV
-              type: bool
-              desc: RS orientation is reversed
-        """),
-    })
-    setup_vcf(tmp_path / "data.vcf.gz", textwrap.dedent("""
+    resource = (
+        a_vcf_info_score()
+        .with_data("""
 ##fileformat=VCFv4.1
 ##INFO=<ID=RV,Number=0,Type=Flag,Description="RS orientation is reversed">
 #CHROM POS ID REF ALT QUAL FILTER  INFO
 chr1   5   .  A   T   .    .       RV
 chr1   6   .  A   T   .    .       .
-    """))
-    score = build_score_from_resource(build_filesystem_test_resource(tmp_path))
-    assert isinstance(score, AlleleScore)
-    return score
+""")
+        .with_score("RV", "bool", desc="RS orientation is reversed")
+        .build_resource(tmp_path)
+    )
+    return AlleleScore(resource)
 
 
 def test_a_vcf_flag_declared_bool_in_config_still_reads_presence_as_true(

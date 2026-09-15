@@ -26,6 +26,7 @@ declared type, and a ``scores:`` entry still overrides it there.
 import json
 import pathlib
 import textwrap
+from collections.abc import Callable
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
@@ -33,11 +34,10 @@ from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     build_score_from_resource,
 )
-from gain.genomic_resources.testing import (
-    build_filesystem_test_protocol,
-    build_filesystem_test_resource,
-    setup_directories,
-    setup_vcf,
+from gain.genomic_resources.testing.builders import (
+    VcfInfoScoreBuilder,
+    a_grr,
+    a_vcf_info_score,
 )
 
 # Every ``Number`` shape the type decision distinguishes.  The scalar four
@@ -53,9 +53,6 @@ from gain.genomic_resources.testing import (
 # ``MANY`` and a fix keyed on one cannot pass for the other; and that file's
 # ``PAIR`` (``Number=2,Type=String``) is dropped, because a fixed-arity STRING
 # field declares ``str`` on both sides of this change and so cannot show it.
-# The copy exists because ``a_vcf_info_score()`` cannot emit a ``scores:``
-# block at all -- gain#1290 is about giving it one and consolidating the four
-# hand-rolled helpers that work around it.
 _VCF = textwrap.dedent("""
 ##fileformat=VCFv4.1
 ##INFO=<ID=RV,Number=0,Type=Flag,Description="a flag">
@@ -85,27 +82,28 @@ _JOINED_FIELDS = ["MANY", "FMANY", "TAGS", "TWO"]
 #: The shapes that reach a parser as a single value.
 _SCALAR_FIELDS = ["RV", "CNT", "PA", "PR"]
 
-#: The same block with no ``type:`` at all -- the gain#1221 shape.
-_UNTYPED_BLOCK = "scores:\n" + "".join(
-    f"- id: {field}\n  name: {field}\n" for field in _HEADER_TYPES)
+
+def _vcf() -> VcfInfoScoreBuilder:
+    """A resource over ``_VCF`` with no ``scores:`` block -- the header-only
+    shape, and the base every entry below is stated on."""
+    return a_vcf_info_score().with_data(_VCF)
+
+
+def _named_without_type(builder: VcfInfoScoreBuilder) -> VcfInfoScoreBuilder:
+    """Name every field in ``scores:`` with no ``type:`` -- the gain#1221
+    shape."""
+    for field in _HEADER_TYPES:
+        builder = builder.with_score(field)
+    return builder
+
 
 #: One joined field typed with a number, and one scalar field typed against
 #: its header -- the two entries the tests below reach for repeatedly.  Named
 #: rather than written inline each time so that the field and the type it
 #: states stay paired in one place.
-_MANY_TYPED_INT = textwrap.dedent("""
-    scores:
-    - id: MANY
-      name: MANY
-      type: int
-""")
+_MANY_TYPED_INT = _vcf().with_score("MANY", "int")
 
-_CNT_TYPED_FLOAT = textwrap.dedent("""
-    scores:
-    - id: CNT
-      name: CNT
-      type: float
-""")
+_CNT_TYPED_FLOAT = _vcf().with_score("CNT", "float")
 
 #: The joined field under an EXPLICIT number histogram -- gain#1285's shape.
 #:
@@ -116,18 +114,12 @@ _CNT_TYPED_FLOAT = textwrap.dedent("""
 #: Stating ``int`` here instead would be refused for the type before the
 #: histogram was ever consulted, and a test built on it would pass with the
 #: histogram check deleted.
-_MANY_NUMBER_HIST_WITH_CNT = textwrap.dedent("""
-    scores:
-    - id: MANY
-      name: MANY
-      type: str
-      histogram:
-        type: number
-        number_of_bins: 4
-    - id: CNT
-      name: CNT
-      type: int
-""")
+_MANY_NUMBER_HIST_WITH_CNT = (
+    _vcf()
+    .with_score("MANY", "str")
+    .with_histogram({"type": "number", "number_of_bins": 4})
+    .with_score("CNT", "int")
+)
 
 #: A stable fragment of the override report, so the silence assertions test
 #: for THAT line rather than for a quiet log -- opening a resource emits
@@ -135,8 +127,9 @@ _MANY_NUMBER_HIST_WITH_CNT = textwrap.dedent("""
 #: reason the moment one was added.
 _JOINED_TEXT_REPORT = "reads '|'-joined text"
 
-#: The ways a resource can reach a field's definition AND still construct.
-#: Named so a failure says which route drifted.
+#: The ways a resource can reach a field's definition AND still construct,
+#: each as what it states on the header-only builder.  Named so a failure
+#: says which route drifted.
 #:
 #: A block restating each field's own ``Type=`` is deliberately NOT here
 #: since gain#1336: on a joined field that restatement is the contradiction
@@ -144,9 +137,10 @@ _JOINED_TEXT_REPORT = "reads '|'-joined text"
 #: exercised on its own in
 #: :func:`test_restating_a_numeric_header_type_on_a_joined_field_is_refused`,
 #: which is where the fixture's numeric joined entries are still pinned.
+_Route = Callable[[VcfInfoScoreBuilder], VcfInfoScoreBuilder]
 _ROUTES = [
-    pytest.param("", id="header-only"),
-    pytest.param(_UNTYPED_BLOCK, id="named-without-type"),
+    pytest.param(lambda builder: builder, id="header-only"),
+    pytest.param(_named_without_type, id="named-without-type"),
 ]
 
 #: The joined fields whose header ``Type=`` is a NUMBER, paired with the
@@ -162,59 +156,30 @@ _JOINED_NUMERIC_TYPES = [
 ]
 
 
-def _realize_vcf_resource(
-    resource_dir: pathlib.Path, scores_block: str = "",
-) -> pathlib.Path:
-    """Write one allele-score resource over ``_VCF`` into ``resource_dir``.
+def _opened(
+    builder: VcfInfoScoreBuilder, tmp_path: pathlib.Path,
+) -> AlleleScore:
+    """The allele score ``builder`` realizes, constructed and opened.
 
-    The single place this file states what a VCF score resource looks like
-    on disk -- the config skeleton and the data file beside it -- so that
-    the shape cannot drift between the tests that open the score, the ones
-    that run ``repo-repair`` over it, and the ones that build a repository
-    of two.  Hand-rolled rather than built with ``a_vcf_info_score()``,
-    which emits no ``scores:`` block at all, and the block is what every
-    test here varies (gain#1290).
+    Construction is where a contradicting entry is refused (gain#1336), so
+    a ``pytest.raises`` around this call sees that refusal.
     """
-    setup_directories(resource_dir, {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: allele_score
-            table:
-                filename: data.vcf.gz
-        """) + scores_block,
-    })
-    setup_vcf(resource_dir / "data.vcf.gz", _VCF)
-    return resource_dir
+    return AlleleScore(builder.build_resource(tmp_path)).open()
 
 
-def _vcf_score(tmp_path: pathlib.Path, scores_block: str = "") -> AlleleScore:
-    """An opened allele score over ``_VCF``, with the ``scores:`` block given.
-
-    Hand-rolled rather than built with ``a_vcf_info_score()``, which emits no
-    ``scores:`` block -- and whether the block can override the declared type
-    is half of what these tests are about.  An empty ``scores_block`` is the
-    header-only resource.
-    """
-    _realize_vcf_resource(tmp_path, scores_block)
-    score = build_score_from_resource(build_filesystem_test_resource(tmp_path))
-    assert isinstance(score, AlleleScore)
-    return score.open()
-
-
-def _repaired_vcf_resource(
-    tmp_path: pathlib.Path, scores_block: str = "",
-) -> pathlib.Path:
+def _repaired_vcf_resource(tmp_path: pathlib.Path) -> pathlib.Path:
     """Realize ``_VCF`` as a one-resource GRR and ``repo-repair`` it.
 
-    The ``_vcf_score`` twin for the tests that need the statistics BUILT
-    rather than the definitions read: same resource, same ``scores:`` block
-    composition, but under a ``repo/`` dir the CLI can be pointed at.
-    Returns the resource directory, so a caller reads its ``statistics/``.
+    The ``_opened`` twin for the test that needs the statistics BUILT rather
+    than the definitions read: the same header-only resource, under a
+    ``repo/`` dir the CLI can be pointed at.  Returns the resource
+    directory, so a caller reads its ``statistics/``.
     """
     repo = tmp_path / "repo"
-    resource = _realize_vcf_resource(repo / "vcf_score", scores_block)
+    a_grr().with_resource("vcf_score", _vcf()).build_repo(repo)
 
     cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
-    return resource
+    return repo / "vcf_score"
 
 
 def _declared(score: AlleleScore, field: str) -> str | None:
@@ -245,15 +210,15 @@ def test_a_stated_type_the_join_cannot_produce_is_refused(
     pairing is written out here so it cannot drift out of the fixture.
     """
     with pytest.raises(ValueError, match="MANY") as excinfo:
-        _vcf_score(tmp_path, _MANY_TYPED_INT)
+        _opened(_MANY_TYPED_INT, tmp_path)
 
     assert "int" in str(excinfo.value)
 
 
-@pytest.mark.parametrize("scores_block", _ROUTES)
+@pytest.mark.parametrize("route", _ROUTES)
 @pytest.mark.parametrize("field", _JOINED_FIELDS)
 def test_every_joined_shape_declares_str_on_every_route(
-    tmp_path: pathlib.Path, field: str, scores_block: str,
+    tmp_path: pathlib.Path, field: str, route: _Route,
 ) -> None:
     """The rule itself, over each joined shape and each way in.
 
@@ -266,14 +231,14 @@ def test_every_joined_shape_declares_str_on_every_route(
     must NOT move: it already declared ``str``, and it is the only
     multi-valued shape deployed resources actually carry.
     """
-    score = _vcf_score(tmp_path, scores_block)
+    score = _opened(route(_vcf()), tmp_path)
 
     assert _declared(score, field) == "str"
 
 
-@pytest.mark.parametrize("scores_block", _ROUTES)
+@pytest.mark.parametrize("route", _ROUTES)
 def test_the_scalar_shapes_keep_the_type_they_declare(
-    tmp_path: pathlib.Path, scores_block: str,
+    tmp_path: pathlib.Path, route: _Route,
 ) -> None:
     """The fence: the narrowing must not reach a shape that holds its type.
 
@@ -283,7 +248,7 @@ def test_the_scalar_shapes_keep_the_type_they_declare(
     the same lie in the other direction.  Restating the header's type leaves
     them where they were, which is what makes the three routes agree here.
     """
-    score = _vcf_score(tmp_path, scores_block)
+    score = _opened(route(_vcf()), tmp_path)
 
     assert [_declared(score, field) for field in _SCALAR_FIELDS] == [
         _HEADER_TYPES[field] for field in _SCALAR_FIELDS]
@@ -300,7 +265,7 @@ def test_a_scalar_field_still_takes_a_config_type_the_header_denies(
     is what a reader must see -- otherwise this fix has quietly taken the
     override away from the shapes it belongs to.
     """
-    score = _vcf_score(tmp_path, _CNT_TYPED_FLOAT)
+    score = _opened(_CNT_TYPED_FLOAT, tmp_path)
 
     assert _declared(score, "CNT") == "float"
 
@@ -321,15 +286,8 @@ def test_restating_a_numeric_header_type_on_a_joined_field_is_refused(
     fixed arity above one constructing; ``FMANY`` because a fix keyed on
     ``Type=Integer`` would leave ``Float`` constructing.
     """
-    block = textwrap.dedent(f"""
-        scores:
-        - id: {field}
-          name: {field}
-          type: {header_type}
-    """)
-
     with pytest.raises(ValueError, match=field) as excinfo:
-        _vcf_score(tmp_path, block)
+        _opened(_vcf().with_score(field, header_type), tmp_path)
 
     assert f"type: {header_type}" in str(excinfo.value)
     assert _JOINED_TEXT_REPORT in str(excinfo.value)
@@ -346,14 +304,7 @@ def test_restating_str_on_a_joined_field_still_constructs(
     twenty, dbSNP's ``CAF``/``TOPMED``), and a refusal that reached it would
     fail every deployed VCF resource rather than none.
     """
-    block = textwrap.dedent("""
-        scores:
-        - id: TAGS
-          name: TAGS
-          type: str
-    """)
-
-    score = _vcf_score(tmp_path, block)
+    score = _opened(_vcf().with_score("TAGS", "str"), tmp_path)
 
     assert _declared(score, "TAGS") == "str"
 
@@ -369,15 +320,17 @@ def test_the_refusal_names_the_resource_it_came_from(
     survive into the message -- a test on the field name alone would pass
     with the threading removed.
     """
-    repo = tmp_path / "repo"
-    _realize_vcf_resource(repo / "a_named_vcf_resource", _MANY_TYPED_INT)
-    # Through a PROTOCOL rather than ``build_filesystem_test_resource``,
-    # which hands back ``get_resource("")`` -- an id of "" cannot show that
-    # the id reached the message.
-    proto = build_filesystem_test_protocol(repo)
+    # Through a REPOSITORY rather than ``build_resource``, which hands back
+    # a resource with an id of "" -- which cannot show that the id reached
+    # the message.
+    repo = (
+        a_grr()
+        .with_resource("a_named_vcf_resource", _MANY_TYPED_INT)
+        .build_repo(tmp_path / "repo")
+    )
 
     with pytest.raises(ValueError, match="a_named_vcf_resource"):
-        build_score_from_resource(proto.get_resource("a_named_vcf_resource"))
+        build_score_from_resource(repo.get_resource("a_named_vcf_resource"))
 
 
 def test_stating_str_on_a_joined_field_is_not_reported(
@@ -393,12 +346,7 @@ def test_stating_str_on_a_joined_field_is_not_reported(
     tuned out.
     """
     with caplog.at_level("WARNING"):
-        _vcf_score(tmp_path, textwrap.dedent("""
-            scores:
-            - id: TAGS
-              name: TAGS
-              type: str
-        """))
+        _opened(_vcf().with_score("TAGS", "str"), tmp_path)
 
     assert _JOINED_TEXT_REPORT not in caplog.text
 
@@ -413,7 +361,7 @@ def test_a_scalar_field_with_an_overriding_type_is_not_reported(
     not for every type that disagrees with the header.
     """
     with caplog.at_level("WARNING"):
-        _vcf_score(tmp_path, _CNT_TYPED_FLOAT)
+        _opened(_CNT_TYPED_FLOAT, tmp_path)
 
     assert _JOINED_TEXT_REPORT not in caplog.text
 
@@ -469,9 +417,14 @@ def test_repo_repair_fails_only_the_contradicting_resource(
     statistics, which is worse than the warning it replaces.
     """
     repo = tmp_path / "repo"
-    bad = _realize_vcf_resource(
-        repo / "contradicting", _MANY_NUMBER_HIST_WITH_CNT)
-    good = _realize_vcf_resource(repo / "agreeing", _UNTYPED_BLOCK)
+    (
+        a_grr()
+        .with_resource("contradicting", _MANY_NUMBER_HIST_WITH_CNT)
+        .with_resource("agreeing", _named_without_type(_vcf()))
+        .build_repo(repo)
+    )
+    bad = repo / "contradicting"
+    good = repo / "agreeing"
 
     with pytest.raises(SystemExit):
         cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
