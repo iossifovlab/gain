@@ -47,9 +47,11 @@ VCF_TYPE_CONVERSION_MAP = {
 #: reaches a score's parser as a scalar.  pysam decodes ``0`` (a ``Flag``) to
 #: a ``bool`` and ``1`` to a single value, and :func:`extract_vcf_value`
 #: indexes ``A``/``R`` down to one element before parsing.  Every other
-#: declared shape -- unbounded ``.``, the genotype-arity ``G``, and any fixed
-#: arity above one -- decodes to a tuple, and the only thing that reads a
-#: tuple is the ``|``-joining ``converter``.
+#: declared shape -- unbounded ``.`` and any fixed arity above one --
+#: decodes to a tuple, and the only thing that reads a tuple is the
+#: ``|``-joining ``converter``.  (The genotype-arity ``G`` is on this side
+#: too, but never reaches the converter: pysam will not read a per-genotype
+#: INFO field, so :func:`_refuse_genotype_arity` refuses the definition.)
 #:
 #: It decides THREE things, on both the header side and the config-override
 #: side: which fields get that converter, which may take a stated ``type:``
@@ -431,6 +433,31 @@ def _refuse_overridden_type(
         f"State 'type: str' or leave 'type:' unstated.")
 
 
+def _refuse_genotype_arity(
+    resource_id: str, score_id: str, header_entry: Any,
+) -> None:
+    """Refuse a field the header declares ``Number=G``.
+
+    ``G`` is a legal INFO arity -- one value per genotype -- and the header
+    parses; what pysam will not do is READ the value: ``info.get`` on a row
+    carrying such a field raises ``ValueError: genotype is only valid as a
+    format field``.  That lookup sits outside the ``try`` guarding the parse
+    in :func:`extract_vcf_value`, on purpose, so the error escaped a fetch
+    uncaught, naming neither resource nor field, from a resource that had
+    opened without complaint (gain#1258).  The shape is visible in the
+    header, so it is refused here instead, where the resource and the field
+    can both be named and every consumer sees one attributed error.
+    """
+    if header_entry.number != "G":
+        return
+    raise score_configuration_error(
+        resource_id, score_id,
+        f"is declared Number=G,Type={header_entry.type} in its ##INFO line; "
+        f"pysam does not read a per-genotype INFO field, so this score can "
+        f"never be read. Leave it out of a 'scores:' block (with "
+        f"'merge_vcf_scores' unset) or change the header.")
+
+
 def parse_vcf_scoredefs(
     vcf_header_info: dict[str, Any] | None,
     config_scoredefs: dict[str, GenomicScoreDef] | None, *,
@@ -525,6 +552,8 @@ def parse_vcf_scoredefs(
             hist_conf=None,
         )
     if config_scoredefs is None:
+        for score in vcf_scoredefs:
+            _refuse_genotype_arity(resource_id, score, vcf_header_info[score])
         return vcf_scoredefs
 
     # allow overriding of vcf-generated scoredefs
@@ -557,6 +586,10 @@ def parse_vcf_scoredefs(
         # value is something the join cannot produce.
         config_type = config_scoredef.value_type
         header_entry = vcf_header_info[score]
+        # Arity first: a per-genotype field is unreadable whatever the entry
+        # states, and the type refusal's advice ("state 'type: str'") would
+        # send the author to an edit that cannot make it readable.
+        _refuse_genotype_arity(resource_id, score, header_entry)
         number = header_entry.number
         is_scalar = number in _SCALAR_VALUED_NUMBERS
         takes_config_type = config_type is not None and is_scalar
@@ -591,6 +624,7 @@ def parse_vcf_scoredefs(
         for score, vcf_scoredef in vcf_scoredefs.items():
             if score in scoredefs:
                 continue
+            _refuse_genotype_arity(resource_id, score, vcf_header_info[score])
             scoredefs[score] = vcf_scoredef
 
     return scoredefs
