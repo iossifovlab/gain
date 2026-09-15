@@ -1977,13 +1977,13 @@ _VCF_SCORE_AMENDMENTS = [
 ]
 
 
-@pytest.mark.parametrize(
-    "amend, key, rendered", _VCF_SCORE_AMENDMENTS)
-def test_vcf_info_score_amendment_before_any_score_raises(
-    amend: Any, key: str, rendered: Any,
-) -> None:
+def test_vcf_info_score_amendment_before_any_score_raises() -> None:
     with pytest.raises(ResourceValidationError, match="call with_score first"):
-        amend(a_vcf_info_score())
+        a_vcf_info_score().with_histogram({"type": "number"})
+    with pytest.raises(ResourceValidationError, match="call with_score first"):
+        a_vcf_info_score().with_na_values(["-1"])
+    with pytest.raises(ResourceValidationError, match="call with_score first"):
+        a_vcf_info_score().with_aggregator("max")
 
 
 @pytest.mark.parametrize(
@@ -2027,6 +2027,22 @@ def test_vcf_info_score_leaves_a_contradicting_entry_to_the_resource(
 
     with pytest.raises(refusal, match=names):
         AlleleScore(resource).open()
+
+
+def test_vcf_info_score_refuses_a_score_declared_twice(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The one check the builder does make is on the block itself, as the
+    # table builders do: two entries for one field would have the resource
+    # quietly take the last, and a test could not tell which it read.
+    builder = (
+        a_vcf_info_score().with_data(_VCF_INFO_SHAPES)
+        .with_score("AF", "float")
+        .with_score("AF", "str")
+    )
+
+    with pytest.raises(ResourceValidationError, match="duplicate score id"):
+        builder.build_resource(tmp_path)
 
 
 def test_position_score_zero_based_shifts_positions(

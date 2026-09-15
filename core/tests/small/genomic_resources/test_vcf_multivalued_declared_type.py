@@ -84,14 +84,15 @@ _SCALAR_FIELDS = ["RV", "CNT", "PA", "PR"]
 
 
 def _vcf() -> VcfInfoScoreBuilder:
-    """A resource over ``_VCF`` with no ``scores:`` block -- the header-only
-    shape, and the base every entry below is stated on."""
+    """A resource over ``_VCF`` with no ``scores:`` block.
+
+    The header-only shape, and the base every entry below is stated on.
+    """
     return a_vcf_info_score().with_data(_VCF)
 
 
 def _named_without_type(builder: VcfInfoScoreBuilder) -> VcfInfoScoreBuilder:
-    """Name every field in ``scores:`` with no ``type:`` -- the gain#1221
-    shape."""
+    """Name every field in ``scores:`` with no ``type:`` (gain#1221)."""
     for field in _HEADER_TYPES:
         builder = builder.with_score(field)
     return builder
