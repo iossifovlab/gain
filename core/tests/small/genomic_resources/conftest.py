@@ -23,7 +23,7 @@ from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
     FsspecRepositoryProtocol,
 )
-from gain.genomic_resources.genomic_scores import PositionScore
+from gain.genomic_resources.genomic_scores import AlleleScore, PositionScore
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
@@ -47,6 +47,7 @@ from gain.genomic_resources.testing import (
 )
 from gain.genomic_resources.testing.builders import (
     ResourceBuilder,
+    VcfInfoScoreBuilder,
     a_grr,
     a_position_score,
 )
@@ -752,6 +753,20 @@ def a_flag_score(tmp_path: pathlib.Path) -> PositionScore:
         """)
     )).build_repo(tmp_path)
     return PositionScore(repo.get_resource("flags"))
+
+
+def opened_allele_score(
+    builder: VcfInfoScoreBuilder, tmp_path: pathlib.Path,
+) -> AlleleScore:
+    """The allele score ``builder`` realizes into ``tmp_path``, opened.
+
+    Shared by the files about what a ``scores:`` block over a VCF does,
+    each of which realizes its own VCF a dozen ways and reads every one
+    back through ``AlleleScore``.  Construction is where a contradicting
+    entry is refused (gain#1336), so a ``pytest.raises`` around this call
+    sees that refusal.
+    """
+    return AlleleScore(builder.build_resource(tmp_path)).open()
 
 
 def index_row(resource: GenomicResource) -> dict[str, str]:

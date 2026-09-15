@@ -1061,13 +1061,27 @@ class VcfInfoScoreBuilder(MetaMixin):
     """Immutable builder for a VCF-backed ``allele_score`` resource.
 
     The score definitions are derived by the resource from the VCF's
-    ``##INFO`` header rather than declared in the config, so this builder
-    has no ``with_score``: author the INFO metadata in the VCF text and the
-    scores follow.  Reads back through ``AlleleScore`` on the ``vcf_info``
-    table backend, which the ``.vcf.gz`` filename selects.
+    ``##INFO`` header, so a bare builder declares none: author the INFO
+    metadata in the VCF text and the scores follow.  :meth:`with_score`
+    AMENDS one of them through a ``scores:`` entry -- the ``desc``,
+    ``na_values``, ``aggregator`` and ``histogram`` a config may give a
+    header-derived score, and a ``type:`` where the header declares a
+    scalar (dbSNP's ``Flag`` typed ``bool`` is the canonical case).  Its
+    ``value_type`` defaults to ``None``, an entry that states no ``type:``
+    at all, because that is a first-class shape here (gain#1221) and the
+    header already carries one.
+
+    Nothing declared is checked against the VCF text: an entry naming no
+    INFO field, or stating a type the header's ``Number`` denies, is what a
+    test authors to watch the RESOURCE refuse it (gain#1336), so the builder
+    renders it as given.  The block itself is checked as the table builders
+    check theirs -- a field declared twice is refused at realize.  Reads
+    back through ``AlleleScore`` on the ``vcf_info`` table backend, which
+    the ``.vcf.gz`` filename selects.
     """
 
     data: str | None = None
+    scores: tuple[ScoreSpec, ...] = ()
     zero_based: bool = False
     csi: bool = False
     index_filename: str | None = None
@@ -1077,6 +1091,47 @@ class VcfInfoScoreBuilder(MetaMixin):
     def with_data(self, data: str) -> Self:
         """Author the whole VCF, ``##`` header lines included."""
         return dataclasses.replace(self, data=data)
+
+    def with_score(
+        self, score_id: str, value_type: str | None = None, *,
+        desc: str | None = None,
+    ) -> Self:
+        """Amend the INFO field ``score_id`` through a ``scores:`` entry.
+
+        With no ``value_type`` the entry states no ``type:`` and reads what
+        the header-only resource reads (gain#1221).
+        """
+        return dataclasses.replace(
+            self,
+            scores=append_score(self.scores, score_id, value_type, desc=desc),
+        )
+
+    def with_histogram(
+        self, histogram: dict[str, Any], *, score_id: str | None = None,
+    ) -> Self:
+        """Attach a histogram block to a score declared with_score."""
+        return dataclasses.replace(
+            self,
+            scores=set_histogram(self.scores, histogram, score_id=score_id),
+        )
+
+    def with_na_values(
+        self, na_values: str | list[str], *, score_id: str | None = None,
+    ) -> Self:
+        """Declare the NA sentinel(s) of a score declared with_score."""
+        return dataclasses.replace(
+            self,
+            scores=set_na_values(self.scores, na_values, score_id=score_id),
+        )
+
+    def with_aggregator(
+        self, aggregator: str, *, score_id: str | None = None,
+    ) -> Self:
+        """Declare the default aggregator of a score declared with_score."""
+        return dataclasses.replace(
+            self,
+            scores=set_aggregator(self.scores, aggregator, score_id=score_id),
+        )
 
     def with_csi_index(self) -> Self:
         """Index the bgzipped VCF as ``.csi``, not the default ``.tbi``."""
@@ -1137,6 +1192,7 @@ class VcfInfoScoreBuilder(MetaMixin):
         """Write the resource config and the bgzipped VCF + index."""
         data = self.data if self.data is not None else _VCF_DEFAULT_DATA
         self._validate(data)
+        _validate_score_specs(self.scores)
         setup_directories(
             resource_dir, {GR_CONF_FILE_NAME: self._render_config()})
         setup_vcf(resource_dir / _VCF_FILENAME, data, csi=self.csi)
@@ -1176,12 +1232,16 @@ class VcfInfoScoreBuilder(MetaMixin):
         index_line = (
             f"    index_filename: {self.index_filename}\n"
             if self.index_filename is not None else "")
+        scores_block = (
+            "scores:\n" + render_score_specs_yaml(self.scores)
+            if self.scores else "")
         return (
             "type: allele_score\n"
             "table:\n"
             f"    filename: {_VCF_FILENAME}\n"
             f"{index_line}"
             f"{zero_based_line}"
+            f"{scores_block}"
             f"{self.render_meta()}"
         )
 
