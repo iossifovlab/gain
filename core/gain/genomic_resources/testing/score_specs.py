@@ -40,12 +40,12 @@ class ResourceValidationError(ValueError):
 class ScoreSpec:
     """A single declared score column.
 
-    The shared score-declaration representation used by BOTH the
-    position-score and the gene-score builders: an ``id``, a ``column_name``
+    The shared score-declaration representation used by the position-score,
+    the gene-score and the VCF-info builders: an ``id``, a ``column_name``
     (defaulting to the id), a value ``type``, an optional ``desc`` and an
-    optional ``histogram`` block.  The two builders differ only in the base
-    (non-score) columns their data tables require; the score declarations,
-    their ``column_name`` defaulting, duplicate-id / duplicate-column_name
+    optional ``histogram`` block.  The builders differ only in what their
+    data files require of a declaration; the declarations themselves, their
+    ``column_name`` defaulting, duplicate-id / duplicate-column_name
     validation and YAML rendering are all shared through this type.
 
     A score is addressed EITHER by ``column_name`` or by ``column_index``,

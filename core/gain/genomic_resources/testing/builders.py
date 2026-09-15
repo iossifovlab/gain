@@ -1061,10 +1061,21 @@ class VcfInfoScoreBuilder(MetaMixin):
     """Immutable builder for a VCF-backed ``allele_score`` resource.
 
     The score definitions are derived by the resource from the VCF's
-    ``##INFO`` header rather than declared in the config, so this builder
-    has no ``with_score``: author the INFO metadata in the VCF text and the
-    scores follow.  Reads back through ``AlleleScore`` on the ``vcf_info``
-    table backend, which the ``.vcf.gz`` filename selects.
+    ``##INFO`` header, so a bare builder declares none: author the INFO
+    metadata in the VCF text and the scores follow.  :meth:`with_score`
+    AMENDS one of them through a ``scores:`` entry -- the ``desc``,
+    ``na_values``, ``aggregator`` and ``histogram`` a config may give a
+    header-derived score, and a ``type:`` where the header declares a
+    scalar (dbSNP's ``Flag`` typed ``bool`` is the canonical case).  Its
+    ``value_type`` defaults to ``None``, an entry that states no ``type:``
+    at all, because that is a first-class shape here (gain#1221) and the
+    header already carries one.
+
+    Nothing declared is checked against the VCF text: an entry naming no
+    INFO field, or stating a type the header's ``Number`` denies, is what a
+    test authors to watch the RESOURCE refuse it (gain#1336), so the builder
+    renders it as given.  Reads back through ``AlleleScore`` on the
+    ``vcf_info`` table backend, which the ``.vcf.gz`` filename selects.
     """
 
     data: str | None = None
@@ -1091,6 +1102,33 @@ class VcfInfoScoreBuilder(MetaMixin):
         return dataclasses.replace(
             self,
             scores=append_score(self.scores, score_id, value_type, desc=desc),
+        )
+
+    def with_histogram(
+        self, histogram: dict[str, Any], *, score_id: str | None = None,
+    ) -> Self:
+        """Attach a histogram block to a score declared with_score."""
+        return dataclasses.replace(
+            self,
+            scores=set_histogram(self.scores, histogram, score_id=score_id),
+        )
+
+    def with_na_values(
+        self, na_values: str | list[str], *, score_id: str | None = None,
+    ) -> Self:
+        """Declare the NA sentinel(s) of a score declared with_score."""
+        return dataclasses.replace(
+            self,
+            scores=set_na_values(self.scores, na_values, score_id=score_id),
+        )
+
+    def with_aggregator(
+        self, aggregator: str, *, score_id: str | None = None,
+    ) -> Self:
+        """Declare the default aggregator of a score declared with_score."""
+        return dataclasses.replace(
+            self,
+            scores=set_aggregator(self.scores, aggregator, score_id=score_id),
         )
 
     def with_csi_index(self) -> Self:
