@@ -4,6 +4,7 @@ import numpy as np
 import yaml
 
 from gain.genomic_resources.statistics.base_statistic import (
+    PYTHON_NUMBER_TYPES,
     Statistic,
     non_numeric_error,
 )
@@ -43,6 +44,11 @@ class MinMaxValue(Statistic):
                 return
         except TypeError as err:
             raise non_numeric_error(value, "a min/max") from err
+        if not isinstance(value, PYTHON_NUMBER_TYPES):
+            folded = value.item() if isinstance(value, np.generic) else value
+            if not isinstance(folded, PYTHON_NUMBER_TYPES):
+                raise non_numeric_error(value, "a min/max")
+            value = folded
         self.min = min(value, self.min)
         self.max = max(value, self.max)
 
