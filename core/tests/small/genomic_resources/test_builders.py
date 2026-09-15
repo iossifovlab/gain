@@ -1863,6 +1863,103 @@ chr1   10  .  A   T   .    .      .
         builder.build_resource(tmp_path)
 
 
+# A VCF whose header declares every INFO shape a ``scores:`` entry may
+# amend: a ``Flag``, a scalar, and a multi-valued field the resource joins.
+_VCF_INFO_SHAPES = """
+##fileformat=VCFv4.1
+##INFO=<ID=RV,Number=0,Type=Flag,Description="a flag">
+##INFO=<ID=AF,Number=1,Type=Float,Description="freq">
+##INFO=<ID=MANY,Number=.,Type=Integer,Description="an unbounded list">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   10  .  A   T   .    .      RV;AF=0.25;MANY=1,2
+"""
+
+
+def test_vcf_info_score_with_score_names_a_field_without_a_type(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A ``scores:`` entry that states no ``type:`` is the gain#1221 shape --
+    # it reads exactly what the header-only resource reads.  The entry is
+    # rendered with NO ``type`` key, not with some default.
+    header_only = AlleleScore(
+        a_vcf_info_score().with_data(_VCF_INFO_SHAPES)
+        .build_resource(tmp_path / "header"),
+    ).open()
+    amended_resource = (
+        a_vcf_info_score().with_data(_VCF_INFO_SHAPES)
+        .with_score("AF")
+        .build_resource(tmp_path / "amended")
+    )
+
+    config = amended_resource.get_config()
+    assert config is not None
+    [entry] = config["scores"]
+    assert entry["id"] == "AF"
+    assert "type" not in entry
+    amended = AlleleScore(amended_resource).open()
+    assert amended.score_definitions["AF"].value_type == \
+        header_only.score_definitions["AF"].value_type
+    assert amended.fetch_allele_scores("chr1", 10, "A", "T") == {"AF": 0.25}
+    assert header_only.fetch_allele_scores(
+        "chr1", 10, "A", "T", scores=["AF"]) == {"AF": 0.25}
+
+
+def test_vcf_info_score_with_score_states_the_type_verbatim(
+    tmp_path: pathlib.Path,
+) -> None:
+    # dbSNP's shape: a ``Flag`` the config types ``bool``.  The type is
+    # rendered as given, and a scalar field takes the config's type.
+    resource = (
+        a_vcf_info_score().with_data(_VCF_INFO_SHAPES)
+        .with_score("RV", "bool")
+        .build_resource(tmp_path)
+    )
+
+    config = resource.get_config()
+    assert config is not None
+    [entry] = config["scores"]
+    assert (entry["id"], entry["type"]) == ("RV", "bool")
+    score = AlleleScore(resource).open()
+    assert score.score_definitions["RV"].value_type == "bool"
+    assert score.fetch_allele_scores("chr1", 10, "A", "T") == {"RV": True}
+
+
+def test_vcf_info_score_with_score_desc_overrides_the_header_description(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_vcf_info_score().with_data(_VCF_INFO_SHAPES)
+        .with_score("RV", desc="RS orientation is reversed")
+        .build_resource(tmp_path)
+    )
+
+    config = resource.get_config()
+    assert config is not None
+    [entry] = config["scores"]
+    assert entry["desc"] == "RS orientation is reversed"
+    score = AlleleScore(resource).open()
+    assert score.score_definitions["RV"].desc == "RS orientation is reversed"
+
+
+def test_vcf_info_score_without_with_score_renders_no_scores_block(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The header-only resource is the NORMAL VCF shape, so the shared
+    # one-float-score fallback the table builders use must not apply: a
+    # ``scores:`` key would turn the header's scores into a config filter
+    # naming a ``score`` field the header does not declare.
+    resource = (
+        a_vcf_info_score().with_data(_VCF_INFO_SHAPES)
+        .build_resource(tmp_path)
+    )
+
+    config = resource.get_config()
+    assert config is not None
+    assert "scores" not in config
+    assert set(AlleleScore(resource).open().score_definitions) == \
+        {"RV", "AF", "MANY"}
+
+
 def test_position_score_zero_based_shifts_positions(
     tmp_path: pathlib.Path,
 ) -> None:

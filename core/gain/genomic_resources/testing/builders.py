@@ -1068,6 +1068,7 @@ class VcfInfoScoreBuilder(MetaMixin):
     """
 
     data: str | None = None
+    scores: tuple[ScoreSpec, ...] = ()
     zero_based: bool = False
     csi: bool = False
     index_filename: str | None = None
@@ -1077,6 +1078,20 @@ class VcfInfoScoreBuilder(MetaMixin):
     def with_data(self, data: str) -> Self:
         """Author the whole VCF, ``##`` header lines included."""
         return dataclasses.replace(self, data=data)
+
+    def with_score(
+        self, score_id: str, value_type: str | None = None, *,
+        desc: str | None = None,
+    ) -> Self:
+        """Amend the INFO field ``score_id`` through a ``scores:`` entry.
+
+        With no ``value_type`` the entry states no ``type:`` and reads what
+        the header-only resource reads (gain#1221).
+        """
+        return dataclasses.replace(
+            self,
+            scores=append_score(self.scores, score_id, value_type, desc=desc),
+        )
 
     def with_csi_index(self) -> Self:
         """Index the bgzipped VCF as ``.csi``, not the default ``.tbi``."""
@@ -1176,12 +1191,16 @@ class VcfInfoScoreBuilder(MetaMixin):
         index_line = (
             f"    index_filename: {self.index_filename}\n"
             if self.index_filename is not None else "")
+        scores_block = (
+            "scores:\n" + render_score_specs_yaml(self.scores)
+            if self.scores else "")
         return (
             "type: allele_score\n"
             "table:\n"
             f"    filename: {_VCF_FILENAME}\n"
             f"{index_line}"
             f"{zero_based_line}"
+            f"{scores_block}"
             f"{self.render_meta()}"
         )
 
