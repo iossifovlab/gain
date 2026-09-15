@@ -33,6 +33,7 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
     build_resource_implementation,
 )
+from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.testing.builders import (
     ResourceValidationError,
     a_bigwig_score,
@@ -1958,6 +1959,74 @@ def test_vcf_info_score_without_with_score_renders_no_scores_block(
     assert "scores" not in config
     assert set(AlleleScore(resource).open().score_definitions) == \
         {"RV", "AF", "MANY"}
+
+
+#: The amendments a ``scores:`` entry may carry beyond its type, each as
+#: (the ``with_*`` call, the key it renders, the value it renders).
+_VCF_SCORE_AMENDMENTS = [
+    pytest.param(
+        lambda b: b.with_histogram({"type": "number", "number_of_bins": 4}),
+        "histogram", {"type": "number", "number_of_bins": 4},
+        id="histogram"),
+    pytest.param(
+        lambda b: b.with_na_values(["-1"]), "na_values", ["-1"],
+        id="na_values"),
+    pytest.param(
+        lambda b: b.with_aggregator("max"), "aggregator", "max",
+        id="aggregator"),
+]
+
+
+@pytest.mark.parametrize(
+    "amend, key, rendered", _VCF_SCORE_AMENDMENTS)
+def test_vcf_info_score_amendment_before_any_score_raises(
+    amend: Any, key: str, rendered: Any,
+) -> None:
+    with pytest.raises(ResourceValidationError, match="call with_score first"):
+        amend(a_vcf_info_score())
+
+
+@pytest.mark.parametrize(
+    "amend, key, rendered", _VCF_SCORE_AMENDMENTS)
+def test_vcf_info_score_amendment_renders_under_the_declared_score(
+    tmp_path: pathlib.Path, amend: Any, key: str, rendered: Any,
+) -> None:
+    resource = amend(
+        a_vcf_info_score().with_data(_VCF_INFO_SHAPES).with_score("AF"),
+    ).build_resource(tmp_path)
+
+    config = resource.get_config()
+    assert config is not None
+    [entry] = config["scores"]
+    assert entry["id"] == "AF"
+    assert entry[key] == rendered
+    assert AlleleScore(resource).open().fetch_allele_scores(
+        "chr1", 10, "A", "T") == {"AF": 0.25}
+
+
+@pytest.mark.parametrize("score_id, value_type, refusal, names", [
+    # An entry naming no ``##INFO`` field.
+    pytest.param("NOT_IN_HEADER", None, LookupError, "NOT_IN_HEADER",
+                 id="unknown-field"),
+    # A joined field claiming a type the join cannot produce (gain#1336).
+    pytest.param("MANY", "int", MalformedResourceError, "MANY",
+                 id="contradicting-type"),
+])
+def test_vcf_info_score_leaves_a_contradicting_entry_to_the_resource(
+    tmp_path: pathlib.Path, score_id: str, value_type: str | None,
+    refusal: type[Exception], names: str,
+) -> None:
+    # The builder renders what it is asked for and validates nothing against
+    # the VCF text: these shapes are authored on purpose to watch the
+    # RESOURCE refuse them, and a builder-side check would pre-empt that.
+    resource = (
+        a_vcf_info_score().with_data(_VCF_INFO_SHAPES)
+        .with_score(score_id, value_type)
+        .build_resource(tmp_path)
+    )
+
+    with pytest.raises(refusal, match=names):
+        AlleleScore(resource).open()
 
 
 def test_position_score_zero_based_shifts_positions(
