@@ -6,6 +6,7 @@ import yaml
 from gain.genomic_resources.statistics.base_statistic import (
     PYTHON_NUMBER_TYPES,
     Statistic,
+    as_python_number,
     non_numeric_error,
 )
 
@@ -52,21 +53,16 @@ class MinMaxValue(Statistic):
         # Reached only by values ``np.isnan`` accepted -- which is not the
         # same as values a min/max can fold: a complex or a 0-d array passes
         # it, and ``min()`` would order either without complaint and leave
-        # the extremum holding it (gain#1358).  A Python number folds as-is;
-        # a numpy scalar folds as the Python value it holds, never as the
-        # numpy object, so the extremum a histogram later reads its
-        # ``view_range`` from is not in float32 by accident; anything else is
-        # refused naming what the CALLER handed over.
-        #
-        # The allow-list is checked after ``item()``, not before, which is
-        # how it admits ``np.float32`` (not a ``float``) and ``np.bool_``
-        # (not an ``np.integer``) -- the trap an allow-list ahead of the
-        # normalization fell into on the histogram side (gain#1338).
+        # the extremum holding it (gain#1358).  A Python number folds as-is
+        # (``np.float64`` IS one, it subclasses ``float``); everything else
+        # goes through the rule the histogram twin shares, which says why a
+        # numpy scalar folds as ``item()`` -- so the extremum a histogram
+        # later reads its ``view_range`` from is not in float32 by accident
+        # -- and why the rest is refused.  The isinstance stays inline
+        # because this runs per value of every record and a Python float is
+        # what the scan folds.
         if not isinstance(value, PYTHON_NUMBER_TYPES):
-            folded = value.item() if isinstance(value, np.generic) else value
-            if not isinstance(folded, PYTHON_NUMBER_TYPES):
-                raise non_numeric_error(value, "a min/max")
-            value = folded
+            value = as_python_number(value, "a min/max")
         self.min = min(value, self.min)
         self.max = max(value, self.max)
 

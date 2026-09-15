@@ -40,11 +40,13 @@ def test_min_max_value_still_skips_none_after_the_refusal_is_stated() -> None:
     np.float32(3.0), np.float64(3.0), np.True_, True, 3,
 ])
 def test_min_max_value_folds_every_numeric_flavour(value: object) -> None:
-    """Only TEXT is refused -- numpy's numeric scalars still fold.
+    """Refusing non-numbers must not refuse numpy's numeric scalars.
 
     ``np.float32`` is not a ``float`` and ``np.bool_`` is not an
-    ``np.integer``, so an isinstance INCLUSION list stating the contract here
-    would silently stop folding them.
+    ``np.integer``, so an isinstance allow-list checked BEFORE the numpy
+    scalar is normalized would silently stop folding them -- the trap the
+    histogram twin fell into (gain#1338).  The list this reducer keeps is
+    checked after.
     """
     min_max_value = MinMaxValue("test_score", 5, 10)
 
