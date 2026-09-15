@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from dask.distributed import Client
-from gain.genomic_resources.histogram import HistogramError
+from gain.genomic_resources.resource_errors import HistogramError
 from gain.task_graph import dask_executor
 from gain.task_graph.cache import CacheRecordType, FileTaskCache
 from gain.task_graph.cli_tools import task_graph_run_with_results

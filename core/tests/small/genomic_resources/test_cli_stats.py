@@ -13,7 +13,6 @@ from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.genomic_scores import build_score_from_resource
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
-    HistogramError,
     NumberHistogram,
 )
 from gain.genomic_resources.repository import (
@@ -24,6 +23,7 @@ from gain.genomic_resources.repository import (
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
+from gain.genomic_resources.resource_errors import HistogramError
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
     ResourceStatistics,

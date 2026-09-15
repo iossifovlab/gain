@@ -1,4 +1,4 @@
-"""How a resource is refused, and why the refusal is a `ValueError`.
+"""The exceptions more than one tier must be able to name.
 
 `MalformedResourceError` places the blame on the *resource*: its records or
 its configuration do not hold to what its kind can mean. It subclasses
@@ -9,10 +9,25 @@ as an unexpected internal error carrying a traceback (ADR 0008).
 The module is a leaf -- it imports nothing from GAIn -- so the score layer,
 the table layer and the CLI tier can raise and catch the same exception
 without any of them acquiring a dependency on another.
+
+`HistogramError` is here so that `cli_errors.RESOURCE_ERRORS` can name it
+without importing the histogram module; `cli_errors` says why it may not.
 """
 from __future__ import annotations
 
 from collections.abc import Sequence
+
+
+class HistogramError(Exception):
+    """A histogram-specific failure of one resource.
+
+    Raised for a categorical histogram past its cardinality limit, which
+    the statistics scan catches and nullifies, and for a histogram file
+    that cannot be read, which reaches ``grr_manage``'s one-line reporting
+    tier.  A plain ``Exception``, not a :class:`MalformedResourceError`,
+    because the second case is a fault of the resource's state rather than
+    of its records or configuration.
+    """
 
 
 class MalformedResourceError(ValueError):

@@ -266,8 +266,18 @@ def _imports_of_layer(
         for py in sorted(pkg.rglob("*.py"))
         if py not in allowed
         for imported in sorted(_imported_modules(py))
-        if imported == layer or imported.startswith(layer + ".")
+        if _is_under(imported, layer)
     ]
+
+
+def _is_under(imported: str, layer: str) -> bool:
+    """Whether the dotted name ``imported`` is ``layer`` or inside it.
+
+    Matched on dotted segments, not characters: ``gain.annotation`` is
+    under ``gain.annotation`` and so is ``gain.annotation.x``, while
+    ``gain.annotations`` is not.
+    """
+    return imported == layer or imported.startswith(layer + ".")
 
 
 GENOMIC_SCORES_IMPL = (pathlib.Path(GAIN_SRC) / "genomic_resources"
@@ -302,13 +312,52 @@ def test_the_statistics_scan_does_not_import_the_implementation_classes(
     scan_py = GENOMIC_SCORES_IMPL / "scan.py"
     offenders = sorted(
         imported for imported in _imported_modules(scan_py)
-        if imported == pkg or imported.startswith(f"{pkg}.")
+        if _is_under(imported, pkg)
     )
     assert offenders == [], (
         f"genomic_scores_impl.scan imports {offenders}, which closes the "
         f"package into a cycle. The machinery needs a GenomicScore, not an "
         f"implementation -- use build_score_from_resource, as the rest of "
         f"scan does"
+    )
+
+
+def test_the_resource_failure_reporter_imports_only_leaves() -> None:
+    """``cli_errors`` sits beneath the statistics package and stays there.
+
+    The reporter is imported from that package (``statistics.region_fold``),
+    and ``histogram`` imports the package's base class, so a path from
+    ``cli_errors`` up to ``histogram`` closes ``base_statistic ->
+    cli_errors -> histogram -> base_statistic`` the moment a statistic
+    beneath ``histogram`` reports through the reporter -- the cycle that
+    kept the region fold out of ``base_statistic`` (gain#1176).  Ten
+    modules import ``histogram``, so the fence is an allowlist rather than
+    a denylist of the one module: the reporter may import nothing of
+    ``gain`` beyond the logging shim and the two leaves it names an
+    exception from.  ``HistogramError`` is in ``resource_errors``, with the
+    other exceptions more than one tier must name, for this reason
+    (gain#1293).
+
+    Read from the AST for the reason the ``scan`` rule above gives: the
+    import that would reopen the cycle is as likely to be function-local
+    as module-level.
+    """
+    cli_errors_py = pathlib.Path(GAIN_SRC) / "genomic_resources" / (
+        "cli_errors.py")
+    leaves = (
+        "gain.logging",
+        "gain.genomic_resources.dvc",
+        "gain.genomic_resources.resource_errors",
+    )
+    offenders = sorted(
+        imported for imported in _imported_modules(cli_errors_py)
+        if imported.startswith("gain.")
+        and not any(_is_under(imported, leaf) for leaf in leaves)
+    )
+    assert offenders == [], (
+        f"cli_errors imports {offenders}, which may reach histogram and "
+        f"close it into a cycle with the statistics package. An exception "
+        f"the reporter must name belongs in resource_errors"
     )
 
 

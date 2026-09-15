@@ -3,6 +3,12 @@
 Its own module because more than one command needs it and they must agree:
 a repository-wide command that dies on the first bad resource reports half
 a repository and hides the rest (gain#364, gain#503).
+
+It is imported from the statistics package (`statistics.region_fold`), so
+it may import nothing of GAIn beyond the logging shim and the leaves it
+names an exception from -- anything more can reach `histogram`, which
+imports that package's base class, and close a cycle. The architecture
+suite pins the allowlist and says what the cycle is (gain#1293).
 """
 from __future__ import annotations
 
@@ -10,7 +16,7 @@ from cerberus.schema import SchemaError
 
 from gain import logging
 from gain.genomic_resources.dvc import UnsupportedDvcDirectoryOutputError
-from gain.genomic_resources.histogram import HistogramError
+from gain.genomic_resources.resource_errors import HistogramError
 
 logger = logging.getLogger("grr_manage")
 
