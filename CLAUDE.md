@@ -83,6 +83,17 @@ answered from disk inside `page.route`, out of the
 generated fixtures and the two vendored CDN packages, and
 anything else is aborted. See `info_pages_e2e/README.md`.
 
+**Backend text the `web_e2e` specs pin is checked without
+the stack** by
+`web_api/web_annotation/tests/test_e2e_backend_pins.py`,
+which renders each registered message through the real code
+path and compares both ways (#1357, after #1353). Rewording
+a message it registers, or adding a sentence-shaped pin it
+cannot render, fails the `web_api` suite naming the spec —
+fix spec and backend in the same PR. The module docstring
+and `web_e2e/README.md` say how to register or allow-list a
+pin.
+
 ### Linting and Type Checking
 
 Run these from `core/`, as CI does — the `core` image's

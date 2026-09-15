@@ -31,6 +31,7 @@ from web_annotation.executor import (
     TaskExecutor,
     ThreadedTaskExecutor,
 )
+from web_annotation.messages import JOB_QUOTA_EXCEEDED
 from web_annotation.models import (
     AnonymousJob,
     BasePipeline,
@@ -597,7 +598,7 @@ class AnnotationMixin:
             quota = request.user.get_quota()
             if not quota.check_job_quota():
                 return Response(
-                    {"reason": "Job quota exceeded!"},
+                    {"reason": JOB_QUOTA_EXCEEDED},
                     status=views.status.HTTP_403_FORBIDDEN,
                 )
         if not request.content_type.startswith("multipart/form-data"):
