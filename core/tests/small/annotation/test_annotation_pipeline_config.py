@@ -812,6 +812,56 @@ def test_parse_preamble_with_valid_genome(
     assert preamble.input_reference_genome_res is not None
 
 
+@pytest.mark.parametrize("preamble_line", [
+    pytest.param(
+        "summary: a preamble that declares no reference genome",
+        id="absent"),
+    pytest.param('input_reference_genome: ""', id="empty-string"),
+])
+def test_parse_preamble_without_genome_declares_none(
+    preamble_line: str,
+    test_grr: GenomicResourceRepo,
+) -> None:
+    """``input_reference_genome`` is optional; not declaring it is ``None``.
+
+    Both spellings of "no genome" -- the key absent, or an explicit
+    ``""`` -- parse to ``None``, never to the empty string that every
+    reader then had to know meant "not declared" (gain#1055, gain#1346).
+    Neither is looked up in the repository.
+    """
+    preamble, _ = AnnotationConfigParser.parse_str(f"""
+        preamble:
+          {preamble_line}
+        annotators:
+          - sample_annotator
+    """, grr=test_grr)
+
+    assert preamble is not None
+    assert preamble.input_reference_genome is None
+    assert preamble.input_reference_genome_res is None
+
+
+@pytest.mark.parametrize("genome_id", ["null", "42"])
+def test_parse_preamble_rejects_a_non_string_genome_id(
+    genome_id: str,
+) -> None:
+    """Only a string is a genome id; YAML ``null`` is not a way to omit it.
+
+    The absent value is ``None`` inside the parsed preamble (gain#1346),
+    but that is the parser's own default, not an accepted input: the same
+    ``TypeError`` refuses ``null`` as refuses a number.
+    """
+    with pytest.raises(
+        TypeError, match="preamble reference genome id must be a string",
+    ):
+        AnnotationConfigParser.parse_str(f"""
+            preamble:
+              input_reference_genome: {genome_id}
+            annotators:
+              - sample_annotator
+        """)
+
+
 def test_parse_preamble_no_preamble() -> None:
     preamble, _ = AnnotationConfigParser.parse_str("""
         - annotator:

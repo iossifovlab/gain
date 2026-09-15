@@ -597,7 +597,8 @@ class AnnotatorInfo:
 class AnnotationPreamble:
     summary: str
     description: str
-    input_reference_genome: str
+    #: ``None`` when the preamble declares no genome; never ``""``.
+    input_reference_genome: str | None
     input_reference_genome_res: GenomicResource | None
     metadata: dict[str, Any]
 
@@ -874,9 +875,12 @@ class AnnotationConfigParser:
         if not isinstance(raw.get("metadata", {}), dict):
             raise TypeError("preamble metadata must be a dictionary!")
 
-        genome_id = raw.get("input_reference_genome", "")
+        # An absent key and an explicit "" both mean "no genome declared";
+        # storing None keeps that decision here instead of at every reader
+        # (gain#1055, gain#1346).
+        genome_id = raw.get("input_reference_genome") or None
         genome = None
-        if genome_id != "" and grr is not None:
+        if genome_id is not None and grr is not None:
             genome = grr.get_resource(genome_id)
 
         return AnnotationPreamble(
