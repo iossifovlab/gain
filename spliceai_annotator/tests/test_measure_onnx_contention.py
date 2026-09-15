@@ -18,9 +18,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import numpy as np
 import pytest
+
+# What pytest renders assertion operands through, and the size it caps them
+# at by default. The `ProbeResult` rendering tests pin that budget, so they
+# go through this rather than through `repr`.
+from _pytest._io.saferepr import DEFAULT_REPR_MAX_SIZE, saferepr
 
 #: Hands each worker of `_staggered_payload` a distinct index. Shared rather
 #: than derived from the pid so the stagger is predictable.
@@ -186,6 +192,66 @@ def test_workers_that_took_turns_are_not_reported_as_concurrent() -> None:
     summary = harness.summarize_overlap(spans)
 
     assert summary.max_concurrent == 1
+
+
+def _probe_result_as_ci_reported_it() -> Any:
+    """The `ProbeResult` behind the #1380 CI failure, with a real digest.
+
+    A digest of a real array rather than a lookalike string, so the repr is
+    exactly as long as the one pytest truncated on the agent.
+    """
+    return harness.ProbeResult(
+        workers=2,
+        drift=harness.DriftSummary(
+            passes=4, distinct=1, max_abs_deviation=0.0,
+            reference_digest=harness.digest_of(
+                np.full((2, 2), 0.5, dtype=np.float32))),
+        overlap=harness.OverlapSummary(max_concurrent=2),
+        timed_seconds=0.1640194829669781,
+        wall_seconds=0.6670132739818655,
+        passes_per_second=24.387346720299785,
+        load_before=62.5048828125,
+    )
+
+
+def test_a_failed_assertion_still_shows_how_many_workers_overlapped() -> None:
+    """`max_concurrent` must survive pytest's rendering of a `ProbeResult`.
+
+    pytest renders every object in a failed assertion's `+ where` lines
+    through `saferepr`, which elides the *middle* of a repr longer than its
+    default budget. With a 64-character digest inside, the generated repr
+    overshot that budget and the field that separates "the workers never
+    overlapped" from "the passes ran slow" was exactly the part cut out --
+    #1380 had to be reproduced locally to learn which had happened. Rendered
+    through pytest's own function at its default size, not through `repr`,
+    because the budget is the property under test.
+    """
+    result = _probe_result_as_ci_reported_it()
+
+    rendered = saferepr(result, maxsize=DEFAULT_REPR_MAX_SIZE)
+
+    assert "max_concurrent=2" in rendered
+
+
+def test_pytest_renders_the_whole_result_at_four_figures() -> None:
+    """Fitting the budget costs precision, never a field -- and nothing else.
+
+    Pinned as the exact line pytest prints, so it says both things at once:
+    no field was cut (the whole line fits the budget, whatever order the
+    fields come in), and every number is there at four significant figures
+    -- what a reader of a failure needs to see a 0.164 s window against
+    0.04 s of work, or a 3e-4 drift. The digest is the same 12-character
+    handle the results table prints, so a failure message and a table row
+    name the same answer.
+    """
+    result = _probe_result_as_ci_reported_it()
+
+    rendered = saferepr(result, maxsize=DEFAULT_REPR_MAX_SIZE)
+
+    assert rendered == (
+        "ProbeResult(workers=2, max_concurrent=2, passes=4, distinct=1, "
+        "max_abs_deviation=0, digest=1dc5c8e021c6, timed_seconds=0.164, "
+        "wall_seconds=0.667, passes_per_second=24.39, load_before=62.5)")
 
 
 #: Setup cost of the slow payloads, an order of magnitude above the per-pass
