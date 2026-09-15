@@ -58,11 +58,10 @@ VCF_TYPE_CONVERSION_MAP = {
 #: question -- does a value reach the parser whole -- so they are answered
 #: from one set and cannot drift apart.
 #:
-#: It is the DECLARED number, not the shape that actually arrives: a row may
-#: carry two values for a field its header calls ``Number=1``, and nothing
-#: rejects one.  Such a row still reaches the config's parser as a tuple.
-#: That is a pre-existing hole (the header-only path hands the raw tuple back
-#: as a score value, which no ``ScoreValue`` admits), not one this set closes.
+#: It is the DECLARED number, not the shape that actually arrives: a row
+#: may carry two values for a field its header calls ``Number=1``.  This
+#: set says what the header promises; :func:`extract_vcf_value` is what
+#: holds a row to it (gain#1257).
 #:
 #: ``0`` is in the set on the strength of the CONFIG side.  A ``Flag`` needs
 #: no join -- ``converter`` returns a ``bool`` unchanged -- so the header side
@@ -75,63 +74,79 @@ VCF_TYPE_CONVERSION_MAP = {
 _SCALAR_VALUED_NUMBERS = (0, 1, "A", "R")
 
 
-def _check_allele_arity(
-    record: Record, score_def: GenomicScoreDef, number: str, count: int,
+def _check_number_arity(
+    record: Record, score_def: GenomicScoreDef, number: str | int,
+    count: int,
 ) -> None:
-    """Warn if a per-allele INFO field's value count is not its allele count.
+    """Warn if an INFO field's value count is not what its ``Number`` fixes.
 
     ``Number=A`` declares one value per ALT allele and ``Number=R`` one per
-    allele including the reference, so on a well-formed record the count is
-    fixed by the ALT column.  Neither shape of mismatch is rejected anywhere
-    -- not by pysam, not at resource load -- and both are silent to a reader:
-    a SHORT tuple leaves the alleles past its end with no value (they read
-    null, see :func:`extract_vcf_value`), an OVER-LONG one has values no
-    allele will ever select.  Only the resource's author can fix either, and
-    they cannot fix what nothing reports.
+    allele including the reference, so on a well-formed record the count
+    follows from the ALT column; ``Number=1`` fixes it at one.  (``0``, a
+    ``Flag``, is accepted for symmetry with the scalar set; pysam never
+    hands a tuple for one.)  No mismatch is rejected anywhere -- htslib
+    does not enforce ``Number`` on read, and resource load never looks at a
+    row -- and every shape is silent to a reader: a SHORT per-allele tuple
+    leaves the alleles past its end with no value (they read null, see
+    :func:`extract_vcf_value`), an OVER-LONG one has values no allele will
+    ever select, and a tuple where a scalar was promised has no rule that
+    picks one of its elements, so the row reads null (gain#1257).  Only the
+    resource's author can fix any of these, and they cannot fix what
+    nothing reports.
 
     **Once per field per table, not once per line.**  The flag is
     ``score_def.number_mismatch_warned``, and the definition is per-table
-    (see its comment in ``score_def``).  This is the per-record score read --
-    keeping it cheap is what #237 was about -- and a field whose arity is
-    wrong on one row is normally wrong on every row, so per-line logging
-    would bury the run in identical lines.  Testing the flag FIRST is what
-    bounds the cost on a malformed table: once it has warned, every later
-    record of it stops at a single attribute read.
+    (see its comment in ``score_def``, which also says why one flag serves
+    both shapes).  This is the per-record score read -- keeping it cheap is
+    what #237 was about -- and a field whose arity is wrong on one row is
+    normally wrong on every row, so per-line logging would bury the run in
+    identical lines.  Testing the flag FIRST is what bounds the cost on a
+    malformed table: once it has warned, every later record of it stops at
+    a single attribute read.
 
-    A WELL-FORMED table has no such short circuit and pays the ALT lookup on
-    every record -- there is no cheaper way to learn how many values a row
-    ought to carry, and remembering the first row's count would only be
-    right for a table whose alleles never vary.  The cost lands where it can
-    be afforded: only inside the ``Number=A``/``Number=R`` branch, which no
-    ``Number=1`` field ever enters (it decodes to a scalar) and which already
-    builds a fresh pysam ``VariantMetadata`` per read -- so it is a fraction
-    added to an already-expensive branch, on a shape no production resource
-    in the GRRs uses today.
+    A WELL-FORMED per-allele table has no such short circuit and pays the
+    ALT lookup on every record -- there is no cheaper way to learn how many
+    values a row ought to carry, and remembering the first row's count would
+    only be right for a table whose alleles never vary.  The cost lands
+    where it can be afforded: only inside the tuple branch of the read,
+    which a well-formed ``Number=1`` row never enters (it decodes to a
+    scalar) and which already builds a fresh pysam ``VariantMetadata`` per
+    read -- so it is a fraction added to an already-expensive branch, and
+    nothing at all on the common scalar shape.
 
-    The message names the field, its number, the counts and the row that
-    tripped it.  It cannot name the resource: the read is a pure function of
-    ``(record, score_def)`` and neither carries a resource id.  The locus is
-    the better half of that trade anyway -- it names the offending row of the
-    offending file, which is what an author has to open.
+    The message names the field, its number, the count it carried against
+    the count it owed, and the row that tripped it.  It cannot name the
+    resource: the read is a pure function of ``(record, score_def)`` and
+    neither carries a resource id.  The locus is the better half of that
+    trade anyway -- it names the offending row of the offending file, which
+    is what an author has to open.
     """
     if score_def.number_mismatch_warned:
         return
-    alts = record[PAYLOAD][VARIANT].alts
-    # ``alts`` is None for a record whose ALT is absent ('.'): zero ALT
-    # alleles, so a Number=A field carries no values at all and a Number=R
-    # field carries only the reference's.
-    expected = len(alts) if alts is not None else 0
-    if number == "R":
-        expected += 1
+    if number in ("A", "R"):
+        alts = record[PAYLOAD][VARIANT].alts
+        # ``alts`` is None for a record whose ALT is absent ('.'): zero ALT
+        # alleles, so a Number=A field carries no values at all and a
+        # Number=R field carries only the reference's.
+        expected = len(alts) if alts is not None else 0
+        if number == "R":
+            expected += 1
+        owed = (
+            f"for {expected} allele(s); the VCF row is malformed and an "
+            f"allele with no value of its own reads as null")
+    else:
+        expected = 1
+        owed = (
+            "where the header declares one; the VCF row is malformed and "
+            "reads as null")
     if count == expected:
         return
     score_def.number_mismatch_warned = True
     logger.warning(
-        "INFO field %s (Number=%s) of %s:%s carries %s value(s) for %s "
-        "allele(s); the VCF row is malformed and an allele with no value of "
-        "its own reads as null. Reported once per table.",
+        "INFO field %s (Number=%s) of %s:%s carries %s value(s) %s. "
+        "Reported once per table.",
         score_def.score_id, number, record[CHROM], record[POS_BEGIN],
-        count, expected)
+        count, owed)
 
 
 def _reports_empty_elements(meta: Any) -> bool:
@@ -160,7 +175,7 @@ def _report_empty_element(
     share of the arity check's, so an arity report and an empty-element
     report cannot silence each other.  Why once, and why the message names
     the field and the locus, is #289's reasoning unchanged: see
-    :func:`_check_allele_arity`.
+    :func:`_check_number_arity`.
     """
     if score_def.empty_element_warned:
         return
@@ -242,7 +257,8 @@ def extract_vcf_value(
     typed by the header metadata, and for a per-allele field selected by the
     record's allele index.
 
-    The four cases:
+    The five cases a TUPLE value falls into (a scalar value -- the common
+    shape, a well-formed ``Number=1`` or a ``Flag`` -- skips them all):
 
     * **Number=A** -- one value per ALT allele: select this record's allele.
       A record whose ALT is absent ('.') has no allele index and so no
@@ -257,6 +273,13 @@ def extract_vcf_value(
     * **Number=R** -- one value per allele *including the reference*, which
       occupies offset 0: an ALT allele reads at ``allele_index + 1``, and a
       record with no ALT reads the **reference** value at offset 0.
+    * **Number=1 or Number=0** -- a declared scalar that arrived as a tuple
+      (``SC=2.5,3.5`` under ``Number=1``; htslib does not enforce
+      ``Number`` on read).  Refused: the row reads ``None`` and is reported
+      by :func:`_check_number_arity` (gain#1257).  It is decided on the
+      tuple as pysam hands it over, ahead of the empty-element drop, so
+      ``SS=a,`` is an over-arity row and not a one-value row with an empty
+      element.
     * **Number=. and Type=String** -- an unbounded string field, joined on
       '|' into a single value (a VCF-local convention).
     * anything else -- handed to ``parse_value``, which joins it on '|'
@@ -294,7 +317,7 @@ def extract_vcf_value(
     crash escaped ``get_score`` and took the scan with it.  An allele past
     the end of the tuple therefore reads ``None`` -- the same null #256 gives
     the ALT-less record, by the same rule: no applicable per-ALT value, no
-    score.  The mismatch itself is reported by :func:`_check_allele_arity`,
+    score.  The mismatch itself is reported by :func:`_check_number_arity`,
     which also catches the mirror shape (more values than alleles, the extras
     unreadable), once per table.
 
@@ -335,14 +358,14 @@ def extract_vcf_value(
         if number == "A":
             if allele_index is None:
                 return None
-            _check_allele_arity(record, score_def, number, len(value))
+            _check_number_arity(record, score_def, number, len(value))
             if allele_index >= len(value):
                 return None
             value = value[allele_index]
             if value is None and _reports_empty_elements(meta):
                 _report_empty_element(record, score_def)
         elif number == "R":
-            _check_allele_arity(record, score_def, number, len(value))
+            _check_number_arity(record, score_def, number, len(value))
             # Get reference allele value if ALT is '.'
             index = allele_index + 1 if allele_index is not None else 0
             if index >= len(value):
@@ -350,6 +373,11 @@ def extract_vcf_value(
             value = value[index]
             if value is None and _reports_empty_elements(meta):
                 _report_empty_element(record, score_def)
+        elif number in (0, 1):
+            # Declared scalar, arrived as a tuple (#1257): refused before
+            # any drop, join or parse sees it.
+            _check_number_arity(record, score_def, number, len(value))
+            return None
         else:
             # Not per-allele: every element of this tuple contributes to one
             # joined value, so an empty one has to go before either join sees
