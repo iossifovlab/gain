@@ -37,10 +37,15 @@ def page() -> str:
 def test_the_description_reaches_the_page_once(page: str) -> None:
     """Rendered in its own cell, and nowhere else.
 
-    The fence around the summary ``basic_resource_described_by``
-    declares: without one the description shows *again*, raw, in the
-    summary cell, and the dialect assertion below would be reading two
-    copies.
+    This is the fence behind the explicit ``summary`` every resource
+    from ``basic_resource_described_by`` carries, even though no test
+    reads one: a resource with no summary displays its *description* in
+    the summary cell instead (gain#1008), as plain text rather than
+    rendered Markdown.  Without the summary the description would reach
+    the page twice -- once rendered, once raw -- and the dialect
+    assertions below would be ambiguous about which copy they found,
+    failing or passing for a reason that has nothing to do with what
+    they are about.
     """
     assert "<td>high confidence</td>" in page
     assert page.count("high confidence") == 1

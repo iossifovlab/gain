@@ -13,9 +13,8 @@ from collections.abc import Callable, Iterator
 from unittest.mock import MagicMock
 
 import pytest
-import yaml
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing import build_inmemory_test_resource
+from gain.genomic_resources.testing.builders import a_basic_resource
 from gain.templates import reset_caches
 
 
@@ -35,25 +34,17 @@ def basic_resource_described_by(description: str) -> GenomicResource:
     resource carries is the Markdown as written, starting at its first
     line -- as a YAML ``|`` block would have stored it.
 
-    The resource carries an explicit ``summary`` even though no test
-    reads one: a resource with no summary displays its *description* in
-    the summary cell instead (gain#1008), as plain text rather than
-    rendered Markdown.  Without it the description would reach the page
-    twice -- once rendered, once raw -- and an assertion about "the
-    description on the page" would be ambiguous about which copy it
-    found, failing or passing for a reason that has nothing to do with
-    what it is about.
+    The summary is a fence, not content -- see
+    ``test_the_description_reaches_the_page_once`` for why every
+    resource built here carries one.
     """
-    return build_inmemory_test_resource({
-        "genomic_resource.yaml": yaml.safe_dump({
-            "type": "basic",
-            "meta": {
-                "summary": "scores for genes",
-                "description": textwrap.dedent(description).lstrip("\n"),
-            },
-        }),
-        "data.txt": "alabala",
-    })
+    return (
+        a_basic_resource()
+        .with_meta(
+            summary="scores for genes",
+            description=textwrap.dedent(description).lstrip("\n"))
+        .build_inmemory()
+    )
 
 
 def make_entry_point(
