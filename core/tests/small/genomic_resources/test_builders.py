@@ -1865,15 +1865,16 @@ chr1   10  .  A   T   .    .      .
 
 
 # A VCF whose header declares every INFO shape a ``scores:`` entry may
-# amend: a ``Flag``, a scalar, and a multi-valued field the resource joins.
-_VCF_INFO_SHAPES = """
+# amend -- a ``Flag``, a scalar, and a multi-valued field the resource joins
+# -- as the header-only builder every test below amends.
+_INFO_SHAPES = a_vcf_info_score().with_data("""
 ##fileformat=VCFv4.1
 ##INFO=<ID=RV,Number=0,Type=Flag,Description="a flag">
 ##INFO=<ID=AF,Number=1,Type=Float,Description="freq">
 ##INFO=<ID=MANY,Number=.,Type=Integer,Description="an unbounded list">
 #CHROM POS ID REF ALT QUAL FILTER INFO
 chr1   10  .  A   T   .    .      RV;AF=0.25;MANY=1,2
-"""
+""")
 
 
 def test_vcf_info_score_with_score_names_a_field_without_a_type(
@@ -1883,14 +1884,9 @@ def test_vcf_info_score_with_score_names_a_field_without_a_type(
     # it reads exactly what the header-only resource reads.  The entry is
     # rendered with NO ``type`` key, not with some default.
     header_only = AlleleScore(
-        a_vcf_info_score().with_data(_VCF_INFO_SHAPES)
-        .build_resource(tmp_path / "header"),
-    ).open()
+        _INFO_SHAPES.build_resource(tmp_path / "header")).open()
     amended_resource = (
-        a_vcf_info_score().with_data(_VCF_INFO_SHAPES)
-        .with_score("AF")
-        .build_resource(tmp_path / "amended")
-    )
+        _INFO_SHAPES.with_score("AF").build_resource(tmp_path / "amended"))
 
     config = amended_resource.get_config()
     assert config is not None
@@ -1910,11 +1906,7 @@ def test_vcf_info_score_with_score_states_the_type_verbatim(
 ) -> None:
     # dbSNP's shape: a ``Flag`` the config types ``bool``.  The type is
     # rendered as given, and a scalar field takes the config's type.
-    resource = (
-        a_vcf_info_score().with_data(_VCF_INFO_SHAPES)
-        .with_score("RV", "bool")
-        .build_resource(tmp_path)
-    )
+    resource = _INFO_SHAPES.with_score("RV", "bool").build_resource(tmp_path)
 
     config = resource.get_config()
     assert config is not None
@@ -1929,8 +1921,7 @@ def test_vcf_info_score_with_score_desc_overrides_the_header_description(
     tmp_path: pathlib.Path,
 ) -> None:
     resource = (
-        a_vcf_info_score().with_data(_VCF_INFO_SHAPES)
-        .with_score("RV", desc="RS orientation is reversed")
+        _INFO_SHAPES.with_score("RV", desc="RS orientation is reversed")
         .build_resource(tmp_path)
     )
 
@@ -1949,10 +1940,7 @@ def test_vcf_info_score_without_with_score_renders_no_scores_block(
     # one-float-score fallback the table builders use must not apply: a
     # ``scores:`` key would turn the header's scores into a config filter
     # naming a ``score`` field the header does not declare.
-    resource = (
-        a_vcf_info_score().with_data(_VCF_INFO_SHAPES)
-        .build_resource(tmp_path)
-    )
+    resource = _INFO_SHAPES.build_resource(tmp_path)
 
     config = resource.get_config()
     assert config is not None
@@ -1961,71 +1949,59 @@ def test_vcf_info_score_without_with_score_renders_no_scores_block(
         {"RV", "AF", "MANY"}
 
 
-#: The amendments a ``scores:`` entry may carry beyond its type, each as
-#: (the ``with_*`` call, the key it renders, the value it renders).
+#: The amendments a ``scores:`` entry may carry beyond its type, as the
+#: key each renders and the value it is given -- ``with_<key>(value)``.
 _VCF_SCORE_AMENDMENTS = [
     pytest.param(
-        lambda b: b.with_histogram({"type": "number", "number_of_bins": 4}),
-        "histogram", {"type": "number", "number_of_bins": 4},
-        id="histogram"),
-    pytest.param(
-        lambda b: b.with_na_values(["-1"]), "na_values", ["-1"],
-        id="na_values"),
-    pytest.param(
-        lambda b: b.with_aggregator("max"), "aggregator", "max",
-        id="aggregator"),
+        "histogram", {"type": "number", "number_of_bins": 4}, id="histogram"),
+    pytest.param("na_values", ["-1"], id="na_values"),
+    pytest.param("aggregator", "max", id="aggregator"),
 ]
 
 
-def test_vcf_info_score_amendment_before_any_score_raises() -> None:
-    with pytest.raises(ResourceValidationError, match="call with_score first"):
-        a_vcf_info_score().with_histogram({"type": "number"})
-    with pytest.raises(ResourceValidationError, match="call with_score first"):
-        a_vcf_info_score().with_na_values(["-1"])
-    with pytest.raises(ResourceValidationError, match="call with_score first"):
-        a_vcf_info_score().with_aggregator("max")
-
-
-@pytest.mark.parametrize(
-    "amend, key, rendered", _VCF_SCORE_AMENDMENTS)
-def test_vcf_info_score_amendment_renders_under_the_declared_score(
-    tmp_path: pathlib.Path, amend: Any, key: str, rendered: Any,
+@pytest.mark.parametrize("key, value", _VCF_SCORE_AMENDMENTS)
+def test_vcf_info_score_amendment_before_any_score_raises(
+    key: str, value: Any,
 ) -> None:
-    resource = amend(
-        a_vcf_info_score().with_data(_VCF_INFO_SHAPES).with_score("AF"),
-    ).build_resource(tmp_path)
+    with pytest.raises(ResourceValidationError, match="call with_score first"):
+        getattr(a_vcf_info_score(), f"with_{key}")(value)
+
+
+@pytest.mark.parametrize("key, value", _VCF_SCORE_AMENDMENTS)
+def test_vcf_info_score_amendment_renders_under_the_declared_score(
+    tmp_path: pathlib.Path, key: str, value: Any,
+) -> None:
+    resource = getattr(
+        _INFO_SHAPES.with_score("AF"), f"with_{key}")(value).build_resource(
+            tmp_path)
 
     config = resource.get_config()
     assert config is not None
     [entry] = config["scores"]
     assert entry["id"] == "AF"
-    assert entry[key] == rendered
+    assert entry[key] == value
     assert AlleleScore(resource).open().fetch_allele_scores(
         "chr1", 10, "A", "T") == {"AF": 0.25}
 
 
-@pytest.mark.parametrize("score_id, value_type, refusal, names", [
+@pytest.mark.parametrize("score_id, value_type, refusal", [
     # An entry naming no ``##INFO`` field.
-    pytest.param("NOT_IN_HEADER", None, LookupError, "NOT_IN_HEADER",
-                 id="unknown-field"),
+    pytest.param("NOT_IN_HEADER", None, LookupError, id="unknown-field"),
     # A joined field claiming a type the join cannot produce (gain#1336).
-    pytest.param("MANY", "int", MalformedResourceError, "MANY",
+    pytest.param("MANY", "int", MalformedResourceError,
                  id="contradicting-type"),
 ])
 def test_vcf_info_score_leaves_a_contradicting_entry_to_the_resource(
     tmp_path: pathlib.Path, score_id: str, value_type: str | None,
-    refusal: type[Exception], names: str,
+    refusal: type[Exception],
 ) -> None:
     # The builder renders what it is asked for and validates nothing against
     # the VCF text: these shapes are authored on purpose to watch the
     # RESOURCE refuse them, and a builder-side check would pre-empt that.
     resource = (
-        a_vcf_info_score().with_data(_VCF_INFO_SHAPES)
-        .with_score(score_id, value_type)
-        .build_resource(tmp_path)
-    )
+        _INFO_SHAPES.with_score(score_id, value_type).build_resource(tmp_path))
 
-    with pytest.raises(refusal, match=names):
+    with pytest.raises(refusal, match=score_id):
         AlleleScore(resource).open()
 
 
@@ -2035,11 +2011,7 @@ def test_vcf_info_score_refuses_a_score_declared_twice(
     # The one check the builder does make is on the block itself, as the
     # table builders do: two entries for one field would have the resource
     # quietly take the last, and a test could not tell which it read.
-    builder = (
-        a_vcf_info_score().with_data(_VCF_INFO_SHAPES)
-        .with_score("AF", "float")
-        .with_score("AF", "str")
-    )
+    builder = _INFO_SHAPES.with_score("AF", "float").with_score("AF", "str")
 
     with pytest.raises(ResourceValidationError, match="duplicate score id"):
         builder.build_resource(tmp_path)
