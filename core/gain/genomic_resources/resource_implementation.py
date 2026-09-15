@@ -433,10 +433,12 @@ class InfoImplementationMixin:
         template_data["resource_files"].append(
             self.FileEntry("statistics/", "", ""))
         # Each label as the strings its value stands for; the template
-        # joins them for display (gain#1225).
+        # joins them for display (gain#1225).  Listed by key, not in
+        # yaml authoring order, so a long row scans by name (gain#1482);
+        # the alternatives inside a value keep the curator's order.
         template_data["labels"] = [
             (key, label_alternatives(value))
-            for key, value in self.resource.get_labels().items()
+            for key, value in sorted(self.resource.get_labels().items())
         ]
         return template_data
 
