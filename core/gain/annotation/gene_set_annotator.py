@@ -30,23 +30,12 @@ def build_gene_set_annotator(
     info: AnnotatorInfo,
 ) -> Annotator:
     """Create a gene set annotator."""
-    # Before the input_gene_list checks below, for the reason the gene
-    # score annotator resolves its resource first: the resource is the
-    # thing this annotator was configured to read.
+    # Before the input_gene_list check, for the reason the gene score
+    # annotator resolves its resource first: the resource is the thing
+    # this annotator was configured to read.
     gene_set_resource = GeneSetAnnotator.resolve_resource(pipeline, info)
-
-    input_gene_list = info.parameters.get("input_gene_list")
-    if input_gene_list is None:
-        raise ValueError(f"The {info} must have an 'input_gene_list' "
-                         "parameter")
-    input_gene_list_info = pipeline.get_attribute_info(input_gene_list)
-    if input_gene_list_info is None:
-        raise ValueError(f"The {input_gene_list} is not privided by the "
-                         "pipeline.")
-    if input_gene_list_info.spec is None \
-            or input_gene_list_info.spec.value_type != "object":
-        raise ValueError(f"The {input_gene_list} privided by the pipeline "
-                         "is not of type object.")
+    input_gene_list = GeneSetAnnotator.resolve_input_gene_list(
+        pipeline, info)
     return GeneSetAnnotator(
         pipeline,
         info,

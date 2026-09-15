@@ -55,6 +55,10 @@ class DummyAnnotator(Annotator):
                 source=a.source,
                 internal=a.internal,
                 parameters=a.parameters,
+                # An ``Attribute`` may carry a spec, so a test can say
+                # what TYPE the dummy provides; an ``AttributeConfig``
+                # has none, and the pipeline sees a typeless attribute.
+                spec=getattr(a, "spec", None),
             )
             for a in attr_inputs
         ]
