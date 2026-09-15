@@ -29,12 +29,12 @@ from urllib.parse import quote
 from gain.genomic_resources.histogram import (
     Histogram,
     HistogramConfig,
-    HistogramError,
     NumberHistogram,
     load_histogram,
     truncated_histogram_filename,
 )
 from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.resource_errors import HistogramError
 from gain.genomic_resources.resource_implementation import (
     ResourceConfigValidationMixin,
 )

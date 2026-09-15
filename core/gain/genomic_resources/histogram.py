@@ -18,6 +18,7 @@ from matplotlib import ticker
 
 from gain import logging
 from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.resource_errors import HistogramError
 from gain.genomic_resources.statistics.base_statistic import (
     PYTHON_NUMBER_TYPES,
     Statistic,
@@ -27,14 +28,6 @@ from gain.genomic_resources.statistics.base_statistic import (
 from gain.genomic_resources.statistics.min_max import MinMaxValue
 
 logger = logging.getLogger(__name__)
-
-
-class HistogramError(Exception):
-    """
-    Class used for histogram specific errors.
-
-    Histograms should be nullified when a HistogramError occurs.
-    """
 
 
 #: Which score value types a NUMBER histogram can accumulate, one value at a

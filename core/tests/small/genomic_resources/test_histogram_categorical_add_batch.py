@@ -6,8 +6,8 @@ import pytest
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
     CategoricalHistogramConfig,
-    HistogramError,
 )
+from gain.genomic_resources.resource_errors import HistogramError
 
 
 def _config(*, enforce_type: bool = False) -> CategoricalHistogramConfig:
