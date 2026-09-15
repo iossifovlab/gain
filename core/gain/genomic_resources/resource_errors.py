@@ -67,19 +67,22 @@ def backwards_records_error(
 def score_configuration_error(
     resource_id: str, score_id: str, detail: str,
 ) -> MalformedResourceError:
-    """Refuse a score whose CONFIG states what the score cannot be.
+    """Refuse a score whose DEFINITION says what the score cannot be.
 
     The sibling of :func:`overlapping_records_error` for the other half of
     what makes a resource malformed: not a record that breaks its kind's
-    promise, but a ``scores:`` entry claiming a value the score cannot hold.
-    Two rules are detected in two layers -- a stated ``type:`` the VCF
-    header contradicts, in the header/config merge, and a number histogram
-    over a value type no number histogram accumulates, at the construction
-    convergence point -- and each phrases its own ``detail``.
+    promise, but a definition claiming a value the score cannot hold.
+    Three rules are detected in two layers -- in the VCF header/config
+    merge, a stated ``type:`` the header contradicts and a header field
+    declared ``Number=G``, which pysam will never read (gain#1258); at the
+    construction convergence point, a number histogram over a value type no
+    number histogram accumulates -- and each phrases its own ``detail``.
+    The ``Number=G`` rule is the one a ``scores:`` entry need not have
+    caused: a header-only resource has none, and the claim is the header's.
 
     What is shared is the ADDRESS: which resource, and which score in it.
     That is the half a reader needs to find the file to edit, it is the half
-    neither raise site can word differently without sending someone to the
+    no raise site can word differently without sending someone to the
     wrong place, and it is why it is built here rather than at each site.
 
     The prefix matches ``ResourceConfigValidationMixin`` so that a caller

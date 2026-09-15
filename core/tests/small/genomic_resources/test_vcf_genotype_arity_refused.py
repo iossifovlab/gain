@@ -109,8 +109,8 @@ def test_the_refusal_says_what_was_declared_and_how_to_fix_it(
     message = str(excinfo.value)
     assert "Number=G" in message
     assert "pysam" in message
-    assert "scores:" in message
-    assert "header" in message
+    assert "'scores:' block that leaves it out" in message
+    assert "change the header" in message
 
 
 #: A ``scores:`` entry naming the per-genotype field, with and without a

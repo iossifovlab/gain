@@ -1731,8 +1731,8 @@ GAIn derives each score's type from the VCF ``INFO`` field type:
 
 This mapping applies to a field whose header declares a **single value per
 score** -- a ``Number`` of ``0``, ``1``, ``A`` or ``R``. A field declared
-multi-valued (an unbounded ``Number=.``, the genotype-arity ``Number=G``, or
-any fixed arity above one) has no single value to type: GAIn reads every
+multi-valued (an unbounded ``Number=.``, or any fixed arity above one) has
+no single value to type: GAIn reads every
 element of it as one string, joined on ``|``, so such a score is typed
 ``str`` whatever its ``Type=`` says. ``##INFO=<ID=A,Number=.,Type=Integer>``
 with the row ``A=1,2`` reads ``"1|2"``.
@@ -1762,7 +1762,24 @@ VCF field and equally a plain table score declaring ``type: str``. Give
 such a score ``histogram: {type: categorical}``, or no ``histogram:`` at
 all and let GAIn pick the default for its type.
 
-Both errors are raised for the **genomic** score types described in this
+A field declared with the genotype arity ``Number=G`` cannot be a score at
+all: pysam does not read a per-genotype ``INFO`` field, so any row carrying
+one would fail the read. GAIn refuses the resource when the field would
+become a score -- with no ``scores:`` block every header field does, and so
+does an entry naming it, or ``merge_vcf_scores: true`` -- and names it:
+
+.. code-block:: text
+
+    Invalid configuration: <resource id>: score 'A' is declared
+    Number=G,Type=Integer in its ##INFO line; pysam does not read a
+    per-genotype INFO field, so this score can never be read. List the
+    fields you want in a 'scores:' block that leaves it out
+    ('merge_vcf_scores' unset or false), or change the header.
+
+A ``scores:`` block that leaves the field out reads the rest of the file as
+usual, whatever the rows carry for it.
+
+These errors are raised for the **genomic** score types described in this
 section -- ``position_score``, ``np_score``, ``allele_score`` and
 ``fragment_score``. A ``gene_score`` builds its definitions on its own
 path and reports a mismatched histogram differently.

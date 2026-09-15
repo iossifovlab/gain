@@ -441,12 +441,17 @@ def _refuse_genotype_arity(
     ``G`` is a legal INFO arity -- one value per genotype -- and the header
     parses; what pysam will not do is READ the value: ``info.get`` on a row
     carrying such a field raises ``ValueError: genotype is only valid as a
-    format field``.  That lookup sits outside the ``try`` guarding the parse
-    in :func:`extract_vcf_value`, on purpose, so the error escaped a fetch
-    uncaught, naming neither resource nor field, from a resource that had
-    opened without complaint (gain#1258).  The shape is visible in the
-    header, so it is refused here instead, where the resource and the field
-    can both be named and every consumer sees one attributed error.
+    format field``.  :func:`extract_vcf_value` makes that lookup outside the
+    ``try`` in :meth:`GenomicScoreDef.parse_value` that guards the PARSE, on
+    purpose, so the error escaped a fetch uncaught, naming neither resource
+    nor field, from a resource that had opened without complaint
+    (gain#1258).  The shape is visible in the header, so it is refused here
+    instead, where the resource and the field can both be named and every
+    consumer sees one attributed error.
+
+    Raised through :func:`score_configuration_error` although a header-only
+    resource has no ``scores:`` entry at all: what the builder shares is the
+    ADDRESS and the type, and the fix is a config edit either way.
     """
     if header_entry.number != "G":
         return
@@ -454,8 +459,9 @@ def _refuse_genotype_arity(
         resource_id, score_id,
         f"is declared Number=G,Type={header_entry.type} in its ##INFO line; "
         f"pysam does not read a per-genotype INFO field, so this score can "
-        f"never be read. Leave it out of a 'scores:' block (with "
-        f"'merge_vcf_scores' unset) or change the header.")
+        f"never be read. List the fields you want in a 'scores:' block that "
+        f"leaves it out ('merge_vcf_scores' unset or false), or change the "
+        f"header.")
 
 
 def parse_vcf_scoredefs(
