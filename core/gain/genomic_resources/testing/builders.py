@@ -60,6 +60,7 @@ from gain.genomic_resources.resource_types import (
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
+    build_inmemory_test_resource,
     convert_to_tab_separated,
     setup_bigwig,
     setup_directories,
@@ -1384,6 +1385,72 @@ class GRRBuilder:
                     f"resource {resource_id!r}: {exc}") from exc
 
 
+@dataclasses.dataclass(frozen=True)
+class BasicResourceBuilder(MetaMixin):
+    """Immutable builder for a single ``basic`` resource.
+
+    ``basic`` is the catch-all type: no schema, no type-specific file
+    list, whatever files the author put there.  A bare builder realizes
+    ``type: basic`` plus one placeholder ``data.txt`` payload -- the
+    resource every repository-layout test reaches for when it needs *a*
+    resource and does not care which -- and the config it renders for
+    that is byte-identical to the hand-written ``"type: basic\\n"``
+    literal it replaces, so fixtures pinning that literal's size and md5
+    can move onto it.  ``with_meta`` and its siblings come from
+    :class:`MetaMixin`; :meth:`with_file` is the only knob of its own.
+
+    Two exits: :meth:`build_resource` writes the resource under a
+    ``tmp_path`` like every other builder, and :meth:`build_inmemory`
+    hands it back with no directory at all, for a fixture that only
+    renders the resource's page.  Both realize the same :meth:`content`.
+    """
+
+    files: tuple[tuple[str, str], ...] = ((_DATA_FILENAME, "alabala"),)
+
+    def with_file(self, filename: str, content: str) -> Self:
+        """Add a payload file, or replace the one already carrying its name.
+
+        A ``basic`` resource ships arbitrary files, so this is the only
+        content knob it has.  ``with_file("data.txt", ...)`` overwrites
+        the default payload rather than adding a second entry under the
+        same name, which the realized directory could not hold anyway.
+        """
+        kept = tuple(
+            (name, text) for name, text in self.files if name != filename)
+        return dataclasses.replace(
+            self, files=(*kept, (filename, content)))
+
+    def content(self) -> dict[str, Any]:
+        """The resource as a ``{filename: content}`` mapping.
+
+        The one recipe both exits realize -- ``setup_directories`` on the
+        filesystem, ``build_inmemory_test_resource`` in memory -- so the
+        two cannot describe different resources.
+        """
+        config = yaml.safe_dump(
+            {"type": "basic"}, default_flow_style=False, sort_keys=False)
+        return {
+            GR_CONF_FILE_NAME: config + self.render_meta(),
+            **dict(self.files),
+        }
+
+    def realize_into(self, resource_dir: pathlib.Path) -> None:
+        """Write this basic resource into ``resource_dir``."""
+        setup_directories(resource_dir, self.content())
+
+    def build_resource(self, tmp_path: pathlib.Path) -> GenomicResource:
+        """Realize this single resource (repo id ``""``) into ``tmp_path``."""
+        return _build_single_resource(self, tmp_path)
+
+    def build_inmemory(self) -> GenomicResource:
+        """Realize this single resource in memory, with no ``tmp_path``.
+
+        For a fixture that has no directory to write into -- the
+        template tests render a resource's page and never touch a file.
+        """
+        return build_inmemory_test_resource(self.content())
+
+
 def _build_single_resource(
     builder: ResourceBuilder, tmp_path: pathlib.Path,
 ) -> GenomicResource:
@@ -1864,6 +1931,11 @@ def a_vcf_info_score() -> VcfInfoScoreBuilder:
 def a_gene_score() -> GeneScoreBuilder:
     """Return an immutable gene-score builder."""
     return GeneScoreBuilder()
+
+
+def a_basic_resource() -> BasicResourceBuilder:
+    """Return an immutable ``basic`` resource builder."""
+    return BasicResourceBuilder()
 
 
 def a_grr() -> GRRBuilder:
