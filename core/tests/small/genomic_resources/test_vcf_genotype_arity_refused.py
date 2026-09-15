@@ -55,6 +55,11 @@ def _vcf_resource(
     Realized under a repository directory rather than straight into
     ``tmp_path`` so the resource has an id -- the refusal has to name it,
     and ``build_filesystem_test_resource`` hands back the id ``""``.
+
+    Hand-rolled, like ``_realize_vcf_resource`` in the sibling
+    test_vcf_multivalued_declared_type, because ``a_vcf_info_score()``
+    emits no ``scores:`` block and the block is what half these tests vary
+    -- one more copy for gain#1290 to fold.
     """
     resource_dir = repo / resource_id
     setup_directories(resource_dir, {
