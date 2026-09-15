@@ -15,12 +15,12 @@ from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
     CategoricalHistogramConfig,
-    HistogramError,
     NullHistogram,
     NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
 )
+from gain.genomic_resources.resource_errors import HistogramError
 from gain.genomic_resources.resource_implementation import (
     InfoImplementationMixin,
 )

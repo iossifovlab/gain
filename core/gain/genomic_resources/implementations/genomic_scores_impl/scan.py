@@ -21,7 +21,6 @@ from gain.genomic_resources.histogram import (
     CategoricalHistogramConfig,
     Histogram,
     HistogramConfig,
-    HistogramError,
     NullHistogram,
     NullHistogramConfig,
     NumberHistogram,
@@ -33,6 +32,7 @@ from gain.genomic_resources.repository import (
     GenomicResource,
 )
 from gain.genomic_resources.resource_errors import (
+    HistogramError,
     MalformedResourceError,
 )
 from gain.genomic_resources.score_def import ScoreValue

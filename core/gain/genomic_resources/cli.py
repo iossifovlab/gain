@@ -39,7 +39,6 @@ from gain.genomic_resources.fsspec_protocol import (
 )
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
-    HistogramError,
     truncated_histogram_filename,
 )
 from gain.genomic_resources.repository import (
@@ -67,6 +66,7 @@ from gain.genomic_resources.repository_factory import (
     load_definition_file,
     redact_definition,
 )
+from gain.genomic_resources.resource_errors import HistogramError
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
     IndexColumn,

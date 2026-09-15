@@ -1,10 +1,8 @@
 """The scan-side fold that turns a kind's regions into one statistic.
 
 Not part of ``base_statistic`` because this fold reports through
-``cli_errors``, and ``cli_errors`` reaches ``histogram``, which imports
-``base_statistic`` -- importing it from there closes a cycle.  The line
-it draws is a real one either way: ``base_statistic`` says what a
-statistic IS, and stays free of anything CLI-facing.
+``cli_errors``, and the line that draws is a real one: ``base_statistic``
+says what a statistic IS, and stays free of anything CLI-facing.
 """
 from __future__ import annotations
 
