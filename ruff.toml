@@ -141,6 +141,10 @@ preview = true
     "unused-method-argument",              # ARG002
 ]
 "setup.py" = ["implicit-namespace-package"]  # INP001
+# Standalone script baked into the gain-conda-integration image and run by
+# path with the solved env's interpreter (#1429); the directory is not a
+# package and cannot be one (its name has a dash).
+"core/conda-integration/*.py" = ["implicit-namespace-package"]  # INP001
 # RUF067 (`non-empty-init-module`), new in ruff 0.16's preview set, wants
 # every `__init__.py` to hold nothing but docstrings and re-exports.  These
 # five hold deliberate code and moving it is an API change, not a lint fix:

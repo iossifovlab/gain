@@ -6,7 +6,7 @@
 
 ## Context
 
-Three Jenkins jobs load their pipeline *definition* from a build parameter
+Four Jenkins jobs load their pipeline *definition* from a build parameter
 rather than from `master`:
 
 | Loads definition from `${BRANCH_NAME}` | Loads definition from `master` |
@@ -14,7 +14,7 @@ rather than from `master`:
 | `gain-core-integration` (#598) | `gain-nightly` (cron) |
 | `gain-web-e2e` (#272) | `gain-python-matrix` (cron) |
 | `gain-spliceai-integration` | `gain-release` |
-| | `gain-vep-integration` (master-triggered + cron) |
+| `gain-conda-integration` (#1429) | `gain-vep-integration` (master-triggered + cron) |
 
 Jenkins does **not** evaluate a "Pipeline script from SCM" definition under the
 Groovy sandbox. A `cpsScm` definition resolved from `${BRANCH_NAME}` therefore

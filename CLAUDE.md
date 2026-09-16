@@ -248,8 +248,9 @@ were this shape; #1108 was the merge-time one above, and
 the two differ only in who did the rebase. The pre-push
 hook does the ruff half of this for you.
 
-**Merge without `--delete-branch`.** The two branch-scoped
-downstream jobs (`gain-web-e2e`, `gain-core-integration`)
+**Merge without `--delete-branch`.** The three branch-scoped
+downstream jobs (`gain-web-e2e`, `gain-core-integration`,
+`gain-conda-integration`)
 are triggered from the root `Jenkinsfile`'s *last* stages
 with `wait: false`, and resolve the branch at their own
 start time — minutes later. `gain-web-e2e` additionally
