@@ -270,6 +270,24 @@ def _imports_of_layer(
     ]
 
 
+def _gain_imports(
+    py: pathlib.Path, *, leaves: Iterable[str] = (),
+) -> list[str]:
+    """Every ``gain`` module ``py`` imports, except those under ``leaves``.
+
+    The sweep the "this module is a leaf" fences share: a module that
+    other tiers all import must not itself reach into ``gain`` beyond the
+    leaves it is allowed, or its importers inherit that reach.  Resolution
+    is :func:`_imported_modules`, so a function-local import counts.
+    """
+    allowed = tuple(leaves)
+    return sorted(
+        imported for imported in _imported_modules(py)
+        if imported.startswith("gain.")
+        and not any(_is_under(imported, leaf) for leaf in allowed)
+    )
+
+
 def _is_under(imported: str, layer: str) -> bool:
     """Whether the dotted name ``imported`` is ``layer`` or inside it.
 
@@ -349,11 +367,7 @@ def test_the_resource_failure_reporter_imports_only_leaves() -> None:
         "gain.genomic_resources.dvc",
         "gain.genomic_resources.resource_errors",
     )
-    offenders = sorted(
-        imported for imported in _imported_modules(cli_errors_py)
-        if imported.startswith("gain.")
-        and not any(_is_under(imported, leaf) for leaf in leaves)
-    )
+    offenders = _gain_imports(cli_errors_py, leaves=leaves)
     assert offenders == [], (
         f"cli_errors imports {offenders}, which may reach histogram and "
         f"close it into a cycle with the statistics package. An exception "
@@ -368,49 +382,39 @@ def test_the_statistics_package_imports_nothing_from_histogram() -> None:
     """``histogram`` is a client of the statistics package, spelled one way.
 
     ``histogram`` imports the package's base class, its min/max statistic
-    and its chart style at module level.  For those three modules an
-    import back into ``histogram`` is a genuine cycle; for the rest of the
-    package it is the dependency spelled backwards -- ``alleles`` and
-    ``length_histogram`` did it, function-locally, for one integer the
-    client happened to define, the chart label font size (gain#1486).
-    That constant is a statistics-chart contract and lives in
-    ``statistics.chart_style`` now, a leaf both tiers import.  The fence
-    is the general rule with no allowlist so the direction stays spelled
-    one way: what ``histogram`` and a statistic share goes DOWN into a
-    leaf, never up into ``histogram``.
-
-    What this does not say is that the package sits below ``histogram``:
-    the statistics that read scores reach it transitively through
-    ``genomic_scores`` today.  The rule is about the direct spelling.
-
-    Read from the AST for the reason the ``scan`` rule above gives: the
-    import most likely to reappear is function-local, as both were.
+    and its chart style at module level; an import back from any of those
+    three is a genuine cycle.  For the rest of the package it is the
+    dependency spelled backwards -- the score statistics already reach
+    ``histogram`` transitively through ``genomic_scores``, so the rule is
+    about the direct spelling, not the tier.  ``alleles`` and
+    ``length_histogram`` spelled it backwards, function-locally, for one
+    integer the client happened to define: the chart label font size, a
+    statistics-chart contract that lives in ``statistics.chart_style`` now
+    (gain#1486).  No allowlist, so what ``histogram`` and a statistic
+    share goes DOWN into a leaf, never up into ``histogram``.  Read from
+    the AST, as the ``scan`` rule above is, because both imports were
+    function-local.
     """
     offenders = _imports_of_layer(
         STATISTICS_PKG, "gain.genomic_resources.histogram")
     assert offenders == [], (
         f"the statistics package imports histogram: {offenders}. "
         f"histogram is a client of the package, so the package does not "
-        f"import histogram -- move the shared name down into a statistics "
-        f"leaf, as chart_style holds the label font size"
+        f"import histogram -- a shared constant goes down into a statistics "
+        f"leaf, as chart_style holds the label font size; a histogram class "
+        f"is reached through the score layer, as the score statistics do"
     )
 
 
 def test_the_chart_style_leaf_imports_nothing_from_gain() -> None:
-    """``statistics.chart_style`` is the leaf the rule above relies on.
+    """``statistics.chart_style`` is a leaf, transitively.
 
-    It exists so that ``histogram`` and the statistics that draw charts
-    have a module both may import for the typography they share.  That
-    only holds while it imports nothing of ``gain`` itself: ``histogram``
-    imports it at module level, so an import from ``histogram`` would be
-    a genuine cycle, and one from a statistic would hand every importer
-    of the leaf that statistic's imports too.
+    The rule above sees only a DIRECT import of ``histogram``.  This one
+    keeps the leaf ``histogram`` imports from reaching it through any
+    other ``gain`` module -- the way the ``cli_errors`` rule does -- and
+    from handing every importer of the leaf some statistic's imports.
     """
-    offenders = sorted(
-        imported
-        for imported in _imported_modules(STATISTICS_PKG / "chart_style.py")
-        if imported.startswith("gain.")
-    )
+    offenders = _gain_imports(STATISTICS_PKG / "chart_style.py")
     assert offenders == [], (
         f"chart_style imports {offenders}. It is the leaf both histogram "
         f"and the statistics package draw from, and stays one -- a chart "
