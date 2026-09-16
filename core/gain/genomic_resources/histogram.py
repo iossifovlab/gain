@@ -26,6 +26,9 @@ from gain.genomic_resources.statistics.base_statistic import (
     as_python_number,
     non_numeric_error,
 )
+from gain.genomic_resources.statistics.chart_style import (
+    HISTOGRAM_LABELS_FONT_SIZE,
+)
 from gain.genomic_resources.statistics.min_max import MinMaxValue
 
 logger = logging.getLogger(__name__)
@@ -269,9 +272,6 @@ class NullHistogramConfig:
         return NullHistogramConfig(
             reason=reason,
         )
-
-
-HISTOGRAM_LABELS_FONT_SIZE = 20
 
 
 class NumberHistogram(Statistic):
