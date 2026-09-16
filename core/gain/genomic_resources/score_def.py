@@ -759,9 +759,10 @@ def validate_scoredefs(
             if stated is not None:
                 raise score_configuration_error(
                     resource.resource_id, score["id"],
-                    f"states column_name '{stated}', but the table's "
-                    f"header_mode is 'none', so it has no column names; "
-                    f"address the score by column_index.")
+                    f"states column_name '{stated}' (or its legacy "
+                    f"'name:' spelling), but the table's header_mode is "
+                    f"'none', so it has no column names; address the "
+                    f"score by column_index.")
     elif table.header is None:
         # Table has no header (e.g. BigWig); column-name references are
         # invalid, but index-based scores are fine — open() validates them.
