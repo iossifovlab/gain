@@ -425,6 +425,48 @@ class AnnotationPipeline:
                     return attribute_info
         return None
 
+    def resolve_attribute_parameter(
+        self, info: AnnotatorInfo, parameter: str, *,
+        expected_attribute_type: str,
+    ) -> str:
+        """Resolve ``info``'s ``parameter`` to the name of one of my attributes.
+
+        The parameter names an upstream attribute the annotator reads --
+        ``input_gene_list`` for the gene score and gene set annotators,
+        ``input_annotatable`` for any annotator wrapped in
+        :class:`InputAnnotableAnnotatorDecorator`.  Refused, as a
+        ``ValueError``, when ``info`` has no such parameter, when no
+        annotator before this one produces an attribute of that name, or
+        when the attribute's :attr:`AttributeSpec.attribute_type` is not
+        ``expected_attribute_type``.
+
+        One implementation rather than one per caller because the copies
+        it replaces had drifted apart -- a typo fixed twice (gain#1170), a
+        misspelling fixed in one copy and left in the other (gain#1280),
+        and the listing of available attributes in the refusal present in
+        one copy and absent from the others (gain#1490).
+        """
+        attribute_name: str | None = info.parameters.get(parameter)
+        if attribute_name is None:
+            raise ValueError(
+                f"The {info} must have an '{parameter}' parameter")
+        attribute = self.get_attribute_info(attribute_name)
+        if attribute is None:
+            available_attributes = ",".join([
+                f"'{att.name}' [{att.spec.attribute_type if att.spec else '?'}]"
+                for att in self.get_attributes()
+            ])
+            raise ValueError(
+                f"The attribute '{attribute_name}' has not been defined "
+                "before its use. The available attributes are: "
+                f"{available_attributes}")
+        if attribute.spec is None \
+                or attribute.spec.attribute_type != expected_attribute_type:
+            raise ValueError(
+                f"The attribute '{attribute_name}' is expected to be of "
+                f"type {expected_attribute_type}.")
+        return attribute_name
+
     def get_resource_ids(self) -> set[str]:
         """The ids of every resource any annotator uses, as one set."""
         return {r_id for annotator in self.annotators

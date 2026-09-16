@@ -210,9 +210,17 @@ def test_gene_score_annotator_missing_input_gene_list_names_the_annotator(
 def test_gene_score_annotator_refuses_a_gene_list_the_pipeline_lacks(
     scores_repo: GenomicResourceRepo,
 ) -> None:
-    # An empty pipeline provides no attribute at all, so whatever
-    # name the configuration asks for is one nobody upstream produces.
+    # The one attribute upstream is ``worst_effect``; whatever other name
+    # the configuration asks for is one nobody upstream produces.  The
+    # refusal lists what IS there, with its attribute type, so the holder
+    # can pick from it (gain#1490).
     pipeline = AnnotationPipeline(scores_repo)
+    pipeline.add_annotator(DummyAnnotator(attributes=[Attribute(
+        name="worst_effect", source="worst_effect",
+        spec=AttributeSpec(
+            source="worst_effect", value_type="str",
+            description="", is_default=True),
+    )]))
     info = AnnotatorInfo(
         "gene_score_annotator", [],
         {"resource_id": "LGD_rank", "input_gene_list": "gene_list"})
@@ -221,8 +229,8 @@ def test_gene_score_annotator_refuses_a_gene_list_the_pipeline_lacks(
         build_gene_score_annotator(pipeline, info)
 
     message = str(excinfo.value)
-    assert "gene_list" in message
-    assert "not provided by the pipeline" in message
+    assert "'gene_list' has not been defined" in message
+    assert "'worst_effect' [attribute]" in message
 
 
 def test_gene_score_annotator_refuses_a_gene_list_that_is_not_an_object(
@@ -247,7 +255,34 @@ def test_gene_score_annotator_refuses_a_gene_list_that_is_not_an_object(
 
     message = str(excinfo.value)
     assert "worst_effect" in message
-    assert "provided by the pipeline is not of type object" in message
+    assert "expected to be of type gene_list" in message
+
+
+def test_gene_score_annotator_refuses_an_object_that_is_not_a_gene_list(
+    scores_repo: GenomicResourceRepo,
+) -> None:
+    # ``value_type="object"`` is what a gene list is stored as, but it is
+    # what any structured attribute is stored as too.  Only the
+    # ``gene_list`` attribute type marks an object as a list of genes --
+    # the mark the web editor offers for ``input_gene_list`` -- so an
+    # object without it is refused (gain#1490).
+    pipeline = AnnotationPipeline(scores_repo)
+    pipeline.add_annotator(DummyAnnotator(attributes=[Attribute(
+        name="gene_effects", source="gene_effects",
+        spec=AttributeSpec(
+            source="gene_effects", value_type="object",
+            description="", is_default=True),
+    )]))
+    info = AnnotatorInfo(
+        "gene_score_annotator", [],
+        {"resource_id": "LGD_rank", "input_gene_list": "gene_effects"})
+
+    with pytest.raises(ValueError) as excinfo:
+        build_gene_score_annotator(pipeline, info)
+
+    message = str(excinfo.value)
+    assert "gene_effects" in message
+    assert "expected to be of type gene_list" in message
 
 
 @pytest.fixture
