@@ -1069,7 +1069,9 @@ class VcfInfoScoreBuilder(MetaMixin):
     scalar (dbSNP's ``Flag`` typed ``bool`` is the canonical case).  Its
     ``value_type`` defaults to ``None``, an entry that states no ``type:``
     at all, because that is a first-class shape here (gain#1221) and the
-    header already carries one.
+    header already carries one.  The block is a FILTER by default -- the
+    resource defines only the fields it names; :meth:`with_merge_vcf_scores`
+    turns it into an override, merging every unnamed header field back in.
 
     Nothing declared is checked against the VCF text: an entry naming no
     INFO field, or stating a type the header's ``Number`` denies, is what a
@@ -1082,6 +1084,7 @@ class VcfInfoScoreBuilder(MetaMixin):
 
     data: str | None = None
     scores: tuple[ScoreSpec, ...] = ()
+    merge_vcf_scores: bool = False
     zero_based: bool = False
     csi: bool = False
     index_filename: str | None = None
@@ -1188,6 +1191,17 @@ class VcfInfoScoreBuilder(MetaMixin):
         """
         return dataclasses.replace(self, zero_based=True)
 
+    def with_merge_vcf_scores(self) -> Self:
+        """Emit a top-level ``merge_vcf_scores: true``.
+
+        Turns the ``scores:`` block from a filter into an override: the
+        entries it carries amend the header's definitions and every field
+        it does not name is merged in as the header defined it -- so a
+        refusal keyed on a header field (gain#1258) is reachable through a
+        block that never names that field.
+        """
+        return dataclasses.replace(self, merge_vcf_scores=True)
+
     def realize_into(self, resource_dir: pathlib.Path) -> None:
         """Write the resource config and the bgzipped VCF + index."""
         data = self.data if self.data is not None else _VCF_DEFAULT_DATA
@@ -1232,6 +1246,8 @@ class VcfInfoScoreBuilder(MetaMixin):
         index_line = (
             f"    index_filename: {self.index_filename}\n"
             if self.index_filename is not None else "")
+        merge_line = (
+            "merge_vcf_scores: true\n" if self.merge_vcf_scores else "")
         scores_block = (
             "scores:\n" + render_score_specs_yaml(self.scores)
             if self.scores else "")
@@ -1241,6 +1257,7 @@ class VcfInfoScoreBuilder(MetaMixin):
             f"    filename: {_VCF_FILENAME}\n"
             f"{index_line}"
             f"{zero_based_line}"
+            f"{merge_line}"
             f"{scores_block}"
             f"{self.render_meta()}"
         )

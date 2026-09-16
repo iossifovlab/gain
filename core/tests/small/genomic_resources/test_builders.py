@@ -1939,14 +1939,43 @@ def test_vcf_info_score_without_with_score_renders_no_scores_block(
     # The header-only resource is the NORMAL VCF shape, so the shared
     # one-float-score fallback the table builders use must not apply: a
     # ``scores:`` key would turn the header's scores into a config filter
-    # naming a ``score`` field the header does not declare.
+    # naming a ``score`` field the header does not declare.  Nor is a
+    # ``merge_vcf_scores`` key emitted unasked: the schema defaults it, and
+    # a bare builder renders what a header-only resource on disk carries.
     resource = _INFO_SHAPES.build_resource(tmp_path)
 
     config = resource.get_config()
     assert config is not None
     assert "scores" not in config
+    assert "merge_vcf_scores" not in config
     assert set(AlleleScore(resource).open().score_definitions) == \
         {"RV", "AF", "MANY"}
+
+
+def test_vcf_info_score_with_merge_vcf_scores_turns_the_block_into_an_override(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A ``scores:`` block over a VCF is a FILTER by default -- name one
+    # field and the resource defines only that one.  ``merge_vcf_scores``
+    # turns it into an override: the named entry is amended, every header
+    # field it does not name is merged back in as the header defined it.
+    # The knob is a top-level resource key, a sibling of ``type:``, which
+    # is where the schema declares it.
+    filtered = AlleleScore(
+        _INFO_SHAPES.with_score("AF", desc="amended")
+        .build_resource(tmp_path / "filtered")).open()
+    merged_resource = (
+        _INFO_SHAPES.with_score("AF", desc="amended").with_merge_vcf_scores()
+        .build_resource(tmp_path / "merged"))
+
+    config = merged_resource.get_config()
+    assert config is not None
+    assert config["merge_vcf_scores"] is True
+    assert "merge_vcf_scores" not in config["table"]
+    merged = AlleleScore(merged_resource).open()
+    assert set(filtered.score_definitions) == {"AF"}
+    assert set(merged.score_definitions) == {"RV", "AF", "MANY"}
+    assert merged.score_definitions["AF"].desc == "amended"
 
 
 #: The amendments a ``scores:`` entry may carry beyond its type, as the
