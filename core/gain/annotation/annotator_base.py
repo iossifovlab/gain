@@ -197,30 +197,21 @@ class AnnotatorBase(Annotator):
         """Resolve this annotator's ``input_gene_list`` to an attribute name.
 
         The name of an upstream attribute holding the genes the annotator
-        reads, checked to exist in ``pipeline`` and to be of type
-        ``object`` -- the only value type that can carry a list.
+        reads, checked to exist in ``pipeline`` and to be marked
+        ``gene_list`` -- the attribute type every gene list the effect
+        annotators produce carries, and the one the web editor offers for
+        this parameter.  A bare ``object`` attribute is not enough:
+        ``object`` is what any structured attribute is stored as.
 
         Beside :meth:`resolve_resource` for the same reason it is a
         method here at all: its two callers, the gene-score and gene-set
         builders, resolve the name to hand to a constructor that has not
-        run yet.  One implementation rather than one per builder because
-        the two copies it replaces had drifted apart -- a typo fixed
-        twice (gain#1170), a misspelling fixed in one copy and left in
-        the other (reported in gain#1280).
+        run yet.  The lookup itself is
+        :meth:`AnnotationPipeline.resolve_attribute_parameter`, shared
+        with the ``input_annotatable`` decorator -- see there for why.
         """
-        input_gene_list: str | None = info.parameters.get("input_gene_list")
-        if input_gene_list is None:
-            raise ValueError(f"The {info} must have an 'input_gene_list' "
-                             "parameter")
-        input_gene_list_info = pipeline.get_attribute_info(input_gene_list)
-        if input_gene_list_info is None:
-            raise ValueError(f"The {input_gene_list} is not provided by the "
-                             "pipeline.")
-        if input_gene_list_info.spec is None \
-                or input_gene_list_info.spec.value_type != "object":
-            raise ValueError(f"The {input_gene_list} provided by the pipeline "
-                             "is not of type object.")
-        return input_gene_list
+        return pipeline.resolve_attribute_parameter(
+            info, "input_gene_list", expected_attribute_type="gene_list")
 
     def __init__(
         self, pipeline: AnnotationPipeline | None,

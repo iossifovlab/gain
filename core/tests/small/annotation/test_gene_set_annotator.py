@@ -7,10 +7,14 @@ from gain.annotation.annotatable import VCFAllele
 from gain.annotation.annotation_config import (
     AnnotationConfigurationError,
     AnnotatorInfo,
+    Attribute,
     AttributeConfig,
 )
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
-from gain.annotation.annotation_pipeline import AnnotationPipeline
+from gain.annotation.annotation_pipeline import (
+    AnnotationPipeline,
+    AttributeSpec,
+)
 from gain.annotation.gene_set_annotator import (
     GeneSetAnnotator,
     build_gene_set_annotator,
@@ -21,6 +25,8 @@ from gain.genomic_resources.repository_factory import (
 )
 from gain.genomic_resources.testing import setup_directories
 from gain.testing.foobar_import import foobar_genes, foobar_genome
+
+from tests.small.annotation.conftest import DummyAnnotator
 
 
 @pytest.fixture(scope="module")
@@ -279,20 +285,29 @@ def test_gene_set_annotator_missing_input_gene_list_names_the_annotator(
 def test_gene_set_annotator_refuses_a_gene_list_the_pipeline_lacks(
     test_grr: GenomicResourceRepo,
 ) -> None:
-    # An empty pipeline provides no attribute at all, so whatever
-    # name the configuration asks for is one nobody upstream produces.
-    pipeline = AnnotationPipeline(test_grr)
+    # The effect annotator upstream produces ``gene_list`` (and more);
+    # ``genes_of_interest`` is a name nobody upstream produces.  The
+    # refusal lists what IS there, with its attribute type, so the holder
+    # can see which of them is a gene list (gain#1490).
+    pipeline = load_pipeline_from_yaml(textwrap.dedent(
+        """
+        - effect_annotator:
+            genome: foobar_genome
+            gene_models: foobar_genes
+        """),
+        test_grr)
     info = AnnotatorInfo(
         "gene_set_annotator", [],
         {"resource_id": "foobar_gene_set_collection",
-         "input_gene_list": "gene_list"})
+         "input_gene_list": "genes_of_interest"})
 
     with pytest.raises(ValueError) as excinfo:
         build_gene_set_annotator(pipeline, info)
 
     message = str(excinfo.value)
-    assert "gene_list" in message
-    assert "not provided by the pipeline" in message
+    assert "'genes_of_interest' has not been defined" in message
+    assert "'gene_list' [gene_list]" in message
+    assert "'worst_effect' [attribute]" in message
 
 
 def test_gene_set_annotator_refuses_a_gene_list_that_is_not_an_object(
@@ -318,7 +333,35 @@ def test_gene_set_annotator_refuses_a_gene_list_that_is_not_an_object(
 
     message = str(excinfo.value)
     assert "worst_effect" in message
-    assert "provided by the pipeline is not of type object" in message
+    assert "expected to be of type gene_list" in message
+
+
+def test_gene_set_annotator_refuses_an_object_that_is_not_a_gene_list(
+    test_grr: GenomicResourceRepo,
+) -> None:
+    # ``value_type="object"`` is what a gene list is stored as, but it is
+    # what any structured attribute is stored as too.  Only the
+    # ``gene_list`` attribute type marks an object as a list of genes --
+    # the mark the web editor offers for ``input_gene_list`` -- so an
+    # object without it is refused (gain#1490).
+    pipeline = AnnotationPipeline(test_grr)
+    pipeline.add_annotator(DummyAnnotator(attributes=[Attribute(
+        name="gene_effects", source="gene_effects",
+        spec=AttributeSpec(
+            source="gene_effects", value_type="object",
+            description="", is_default=True),
+    )]))
+    info = AnnotatorInfo(
+        "gene_set_annotator", [],
+        {"resource_id": "foobar_gene_set_collection",
+         "input_gene_list": "gene_effects"})
+
+    with pytest.raises(ValueError) as excinfo:
+        build_gene_set_annotator(pipeline, info)
+
+    message = str(excinfo.value)
+    assert "gene_effects" in message
+    assert "expected to be of type gene_list" in message
 
 
 @pytest.mark.parametrize("set_config,set_id, chrom,pos,ref,alt, expected", [
