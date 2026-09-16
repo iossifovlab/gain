@@ -19,16 +19,14 @@ import textwrap
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
-from gain.genomic_resources.genomic_scores import (
-    AlleleScore,
-    build_score_from_resource,
-)
 from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.testing.builders import (
     VcfInfoScoreBuilder,
     a_grr,
     a_vcf_info_score,
 )
+
+from tests.small.genomic_resources.conftest import named_allele_score
 
 #: Two declared fields, one per-genotype (for the ordering test) and one
 #: ordinary scalar; the config under test names a third the header lacks.
@@ -48,22 +46,6 @@ def _vcf() -> VcfInfoScoreBuilder:
     return a_vcf_info_score().with_data(_VCF)
 
 
-def _realized(
-    tmp_path: pathlib.Path, builder: VcfInfoScoreBuilder,
-    resource_id: str = _RESOURCE_ID,
-) -> AlleleScore:
-    """The score ``builder`` realizes under ``tmp_path``, unopened.
-
-    Realized through a repository rather than ``build_resource`` so the
-    resource has an id -- the refusal has to name it, and
-    ``build_resource`` hands back the id ``""``.
-    """
-    repo = a_grr().with_resource(resource_id, builder).build_repo(tmp_path)
-    score = build_score_from_resource(repo.get_resource(resource_id))
-    assert isinstance(score, AlleleScore)
-    return score
-
-
 #: The shape under test: an entry whose ``id`` no ``##INFO`` line declares.
 #: The builder checks nothing against the VCF text, so it renders the entry
 #: as given -- which is the point: the RESOURCE is what refuses it.
@@ -78,7 +60,7 @@ def test_an_entry_naming_no_info_field_is_refused_by_name(
     see the typo without opening the file.
     """
     with pytest.raises(MalformedResourceError) as excinfo:
-        _realized(tmp_path, _NAMING_NOPE)
+        named_allele_score(_NAMING_NOPE, tmp_path, _RESOURCE_ID)
 
     message = str(excinfo.value)
     assert _RESOURCE_ID in message
@@ -98,7 +80,8 @@ def test_merging_the_header_in_does_not_excuse_the_entry(
     resource through to the override loop and its own bare ``KeyError``.
     """
     with pytest.raises(MalformedResourceError, match="'NOPE'"):
-        _realized(tmp_path, _NAMING_NOPE.with_merge_vcf_scores())
+        named_allele_score(
+            _NAMING_NOPE.with_merge_vcf_scores(), tmp_path, _RESOURCE_ID)
 
 
 def test_the_unknown_id_is_refused_before_the_arity_of_a_declared_one(
@@ -111,7 +94,9 @@ def test_the_unknown_id_is_refused_before_the_arity_of_a_declared_one(
     else the block gets wrong.
     """
     with pytest.raises(MalformedResourceError, match="'NOPE'") as excinfo:
-        _realized(tmp_path, _vcf().with_score("PERGT").with_score("NOPE"))
+        named_allele_score(
+            _vcf().with_score("PERGT").with_score("NOPE"),
+            tmp_path, _RESOURCE_ID)
 
     assert "Number=G" not in str(excinfo.value)
 

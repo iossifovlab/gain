@@ -20,16 +20,14 @@ import textwrap
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
-from gain.genomic_resources.genomic_scores import (
-    AlleleScore,
-    build_score_from_resource,
-)
 from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.testing.builders import (
     VcfInfoScoreBuilder,
     a_grr,
     a_vcf_info_score,
 )
+
+from tests.small.genomic_resources.conftest import named_allele_score
 
 #: One per-genotype field beside one ordinary scalar, and a row that CARRIES
 #: the per-genotype value: that row is the one pysam refuses to read, so any
@@ -54,22 +52,6 @@ def _vcf() -> VcfInfoScoreBuilder:
     return a_vcf_info_score().with_data(_VCF)
 
 
-def _realized(
-    tmp_path: pathlib.Path, builder: VcfInfoScoreBuilder,
-    resource_id: str = _RESOURCE_ID,
-) -> AlleleScore:
-    """The score ``builder`` realizes under ``tmp_path``, unopened.
-
-    Realized through a repository rather than ``build_resource`` so the
-    resource has an id -- the refusal has to name it, and
-    ``build_resource`` hands back the id ``""``.
-    """
-    repo = a_grr().with_resource(resource_id, builder).build_repo(tmp_path)
-    score = build_score_from_resource(repo.get_resource(resource_id))
-    assert isinstance(score, AlleleScore)
-    return score
-
-
 def test_a_header_only_resource_with_a_per_genotype_field_is_refused(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -82,8 +64,9 @@ def test_a_header_only_resource_with_a_per_genotype_field_is_refused(
     ``MalformedResourceError`` and names neither resource nor field.
     """
     with pytest.raises(MalformedResourceError, match=_RESOURCE_ID) as excinfo:
-        _realized(tmp_path, _vcf()).open().fetch_allele_scores(
-            "chr1", 6, "A", "T")
+        named_allele_score(
+            _vcf(), tmp_path, _RESOURCE_ID,
+        ).open().fetch_allele_scores("chr1", 6, "A", "T")
 
     assert "PERGT" in str(excinfo.value)
 
@@ -96,7 +79,7 @@ def test_the_refusal_says_what_was_declared_and_how_to_fix_it(
     ``scores:`` block, or change the header.
     """
     with pytest.raises(MalformedResourceError) as excinfo:
-        _realized(tmp_path, _vcf())
+        named_allele_score(_vcf(), tmp_path, _RESOURCE_ID)
 
     message = str(excinfo.value)
     assert "Number=G" in message
@@ -127,7 +110,7 @@ def test_a_scores_entry_naming_the_field_is_refused_for_its_arity(
     the refusal the author sees has to be the one whose fix works.
     """
     with pytest.raises(MalformedResourceError, match="PERGT") as excinfo:
-        _realized(tmp_path, builder)
+        named_allele_score(builder, tmp_path, _RESOURCE_ID)
 
     message = str(excinfo.value)
     assert "Number=G" in message
@@ -148,7 +131,7 @@ def test_a_scores_block_omitting_the_field_reads_the_rest(
     the row that CARRIES it proves: pysam would refuse that lookup, and the
     read of ``CNT`` on the same row goes through untouched.
     """
-    score = _realized(tmp_path, _OMITTING_PERGT).open()
+    score = named_allele_score(_OMITTING_PERGT, tmp_path, _RESOURCE_ID).open()
 
     assert score.fetch_allele_scores("chr1", 6, "A", "T") == {"CNT": 8}
 
@@ -162,7 +145,8 @@ def test_merging_the_header_back_in_is_refused(
     again, and refused again.
     """
     with pytest.raises(MalformedResourceError, match="PERGT"):
-        _realized(tmp_path, _OMITTING_PERGT.with_merge_vcf_scores())
+        named_allele_score(
+            _OMITTING_PERGT.with_merge_vcf_scores(), tmp_path, _RESOURCE_ID)
 
 
 def test_repo_repair_names_the_refused_resource_and_builds_the_rest(
