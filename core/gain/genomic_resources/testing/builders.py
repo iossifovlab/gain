@@ -1194,11 +1194,9 @@ class VcfInfoScoreBuilder(MetaMixin):
     def with_merge_vcf_scores(self) -> Self:
         """Emit a top-level ``merge_vcf_scores: true``.
 
-        Turns the ``scores:`` block from a filter into an override: the
-        entries it carries amend the header's definitions and every field
-        it does not name is merged in as the header defined it -- so a
-        refusal keyed on a header field (gain#1258) is reachable through a
-        block that never names that field.
+        With the block an override rather than a filter, a refusal keyed on
+        a header field (gain#1258) is reachable through a block that never
+        names that field.
         """
         return dataclasses.replace(self, merge_vcf_scores=True)
 

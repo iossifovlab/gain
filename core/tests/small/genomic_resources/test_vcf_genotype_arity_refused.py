@@ -21,11 +21,7 @@ import textwrap
 import pytest
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.resource_errors import MalformedResourceError
-from gain.genomic_resources.testing.builders import (
-    VcfInfoScoreBuilder,
-    a_grr,
-    a_vcf_info_score,
-)
+from gain.genomic_resources.testing.builders import a_grr, a_vcf_info_score
 
 from tests.small.genomic_resources.conftest import named_allele_score
 
@@ -43,13 +39,9 @@ chr1 6 . A T . . PERGT=1,2,3;CNT=8
 
 _RESOURCE_ID = "a_per_genotype_vcf"
 
-
-def _vcf() -> VcfInfoScoreBuilder:
-    """A resource over ``_VCF`` with no ``scores:`` block.
-
-    The report's shape, and the base every block below is stated on.
-    """
-    return a_vcf_info_score().with_data(_VCF)
+#: A resource over ``_VCF`` with no ``scores:`` block -- the report's shape,
+#: and the base every block below is stated on.
+_HEADER_ONLY = a_vcf_info_score().with_data(_VCF)
 
 
 def test_a_header_only_resource_with_a_per_genotype_field_is_refused(
@@ -65,7 +57,7 @@ def test_a_header_only_resource_with_a_per_genotype_field_is_refused(
     """
     with pytest.raises(MalformedResourceError, match=_RESOURCE_ID) as excinfo:
         named_allele_score(
-            _vcf(), tmp_path, _RESOURCE_ID,
+            _HEADER_ONLY, tmp_path, _RESOURCE_ID,
         ).open().fetch_allele_scores("chr1", 6, "A", "T")
 
     assert "PERGT" in str(excinfo.value)
@@ -79,7 +71,7 @@ def test_the_refusal_says_what_was_declared_and_how_to_fix_it(
     ``scores:`` block, or change the header.
     """
     with pytest.raises(MalformedResourceError) as excinfo:
-        named_allele_score(_vcf(), tmp_path, _RESOURCE_ID)
+        named_allele_score(_HEADER_ONLY, tmp_path, _RESOURCE_ID)
 
     message = str(excinfo.value)
     assert "Number=G" in message
@@ -92,15 +84,13 @@ def test_the_refusal_says_what_was_declared_and_how_to_fix_it(
 #: stated type.  The typed one is the shape gain#1336 refuses for the TYPE
 #: ("state 'type: str'") -- advice that would send the author to an edit
 #: which cannot make the field readable.
-_NAMING_PERGT = pytest.mark.parametrize("builder", [
-    pytest.param(_vcf().with_score("PERGT"), id="untyped"),
-    pytest.param(_vcf().with_score("PERGT", "int"), id="typed-int"),
-])
+_NAMING_PERGT = pytest.mark.parametrize(
+    "value_type", [None, "int"], ids=["untyped", "typed-int"])
 
 
 @_NAMING_PERGT
 def test_a_scores_entry_naming_the_field_is_refused_for_its_arity(
-    tmp_path: pathlib.Path, builder: VcfInfoScoreBuilder,
+    tmp_path: pathlib.Path, value_type: str | None,
 ) -> None:
     """The config route: an entry naming ``PERGT`` makes it a definition.
 
@@ -110,7 +100,9 @@ def test_a_scores_entry_naming_the_field_is_refused_for_its_arity(
     the refusal the author sees has to be the one whose fix works.
     """
     with pytest.raises(MalformedResourceError, match="PERGT") as excinfo:
-        named_allele_score(builder, tmp_path, _RESOURCE_ID)
+        named_allele_score(
+            _HEADER_ONLY.with_score("PERGT", value_type),
+            tmp_path, _RESOURCE_ID)
 
     message = str(excinfo.value)
     assert "Number=G" in message
@@ -118,7 +110,7 @@ def test_a_scores_entry_naming_the_field_is_refused_for_its_arity(
 
 
 #: The fix the refusal recommends: name what you want, leave ``PERGT`` out.
-_OMITTING_PERGT = _vcf().with_score("CNT")
+_OMITTING_PERGT = _HEADER_ONLY.with_score("CNT")
 
 
 def test_a_scores_block_omitting_the_field_reads_the_rest(
@@ -161,12 +153,11 @@ def test_repo_repair_names_the_refused_resource_and_builds_the_rest(
     repository's other resource -- whose block omits the field -- still
     builds its statistics, reading through the row that carries ``PERGT``.
     """
-    # Realized only -- no manifests, no index -- so ``repo-repair`` starts
-    # from the raw directory it would find on a fresh checkout.
+    # ``realize_all``, not ``build_repo``: no manifests written ahead of it.
     repo = tmp_path / "repo"
     (
         a_grr()
-        .with_resource("refused", _vcf())
+        .with_resource("refused", _HEADER_ONLY)
         .with_resource("agreeing", _OMITTING_PERGT)
         .realize_all(repo)
     )

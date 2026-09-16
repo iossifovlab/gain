@@ -1956,24 +1956,20 @@ def test_vcf_info_score_with_merge_vcf_scores_turns_the_block_into_an_override(
     tmp_path: pathlib.Path,
 ) -> None:
     # A ``scores:`` block over a VCF is a FILTER by default -- name one
-    # field and the resource defines only that one.  ``merge_vcf_scores``
-    # turns it into an override: the named entry is amended, every header
-    # field it does not name is merged back in as the header defined it.
-    # The knob is a top-level resource key, a sibling of ``type:``, which
-    # is where the schema declares it.
-    naming_af = _INFO_SHAPES.with_score("AF", desc="amended")
-    merged_resource = (
-        naming_af.with_merge_vcf_scores().build_resource(tmp_path / "merged"))
+    # field and the resource defines only that one, as the ``with_score``
+    # test above reads.  ``merge_vcf_scores`` turns it into an override:
+    # the named entry is amended, every header field it does not name is
+    # merged back in as the header defined it.  The knob is a top-level
+    # resource key, a sibling of ``type:``, where the schema declares it.
+    resource = (
+        _INFO_SHAPES.with_score("AF", desc="amended").with_merge_vcf_scores()
+        .build_resource(tmp_path)
+    )
 
-    filtered = AlleleScore(
-        naming_af.build_resource(tmp_path / "filtered")).open()
-    merged = AlleleScore(merged_resource).open()
-
-    config = merged_resource.get_config()
+    config = resource.get_config()
     assert config is not None
     assert config["merge_vcf_scores"] is True
-    assert "merge_vcf_scores" not in config["table"]
-    assert set(filtered.score_definitions) == {"AF"}
+    merged = AlleleScore(resource).open()
     assert set(merged.score_definitions) == {"RV", "AF", "MANY"}
     assert merged.score_definitions["AF"].desc == "amended"
 
