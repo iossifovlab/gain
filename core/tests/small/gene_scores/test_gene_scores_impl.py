@@ -11,6 +11,7 @@ from gain.gene_scores.gene_scores import (
 from gain.gene_scores.implementations.gene_scores_impl import (
     GeneScoreImplementation,
 )
+from gain.genomic_resources.genomic_scores import build_score_from_resource
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
     NullHistogram,
@@ -31,6 +32,7 @@ from gain.genomic_resources.testing import (
 from gain.genomic_resources.testing.builders import (
     a_gene_score,
     a_grr,
+    a_position_score,
 )
 from gain.task_graph.graph import TaskDesc
 
@@ -561,6 +563,56 @@ def test_a_number_histogram_over_a_str_gene_score_is_refused_at_construction(
         "the auto-ranging min/max pass ran over the text column; the "
         "refusal has to fire before it, so the anonymous ValueError "
         "never surfaces"
+    )
+
+
+def test_a_gene_score_and_a_genomic_score_refuse_the_pairing_alike(
+    tmp_path: pathlib.Path,
+) -> None:
+    """One rule, so one wording: the families differ only in the address.
+
+    The refusal is a fact about a score DEFINITION -- its value type and
+    the histogram configured over it -- and both families build theirs on
+    the same ``ScoreDef`` base, so the gene score calls the rule the
+    genomic score already had rather than restating it.  A second copy
+    would drift: a widening of the accepted types, or a reworded remedy,
+    made in one place and not the other.  So the two messages have to be
+    the same sentence once the resource id is stripped from each, and
+    that is what a copy could not keep true by accident.
+    """
+    gene_res = _a_str_gene_score_under_a_number_histogram(tmp_path)
+    genomic_res = (
+        a_grr()
+        .with_resource(
+            "scores/text",
+            a_position_score()
+            .with_score("s", "str")
+            .with_histogram({"type": "number", "number_of_bins": 4})
+            .with_data(textwrap.dedent("""
+                chrom  pos_begin  s
+                1      10         A
+                1      11         B
+            """)),
+        )
+        .build_repo(tmp_path)
+        .get_resource("scores/text")
+    )
+
+    with pytest.raises(MalformedResourceError) as gene_excinfo:
+        build_gene_score_from_resource(gene_res)
+    with pytest.raises(MalformedResourceError) as genomic_excinfo:
+        build_score_from_resource(genomic_res)
+
+    def without_address(excinfo: pytest.ExceptionInfo, res_id: str) -> str:
+        return str(excinfo.value).replace(res_id, "<resource>")
+
+    gene_message = without_address(gene_excinfo, gene_res.resource_id)
+    genomic_message = without_address(
+        genomic_excinfo, genomic_res.resource_id)
+    assert "a number histogram cannot accumulate" in gene_message
+    assert gene_message == genomic_message, (
+        "the two families phrase the same refusal differently; the rule "
+        "is one function on the shared ScoreDef base, not a copy per family"
     )
 
 
