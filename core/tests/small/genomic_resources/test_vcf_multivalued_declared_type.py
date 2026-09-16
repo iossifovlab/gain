@@ -30,17 +30,17 @@ from collections.abc import Callable
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
-from gain.genomic_resources.genomic_scores import (
-    AlleleScore,
-    build_score_from_resource,
-)
+from gain.genomic_resources.genomic_scores import AlleleScore
 from gain.genomic_resources.testing.builders import (
     VcfInfoScoreBuilder,
     a_grr,
     a_vcf_info_score,
 )
 
-from tests.small.genomic_resources.conftest import opened_allele_score
+from tests.small.genomic_resources.conftest import (
+    named_allele_score,
+    opened_allele_score,
+)
 
 # Every ``Number`` shape the type decision distinguishes.  The scalar four
 # (``0``, ``1``, ``A``, ``R``) carry a value on the first row and the joined
@@ -297,17 +297,8 @@ def test_the_refusal_names_the_resource_it_came_from(
     survive into the message -- a test on the field name alone would pass
     with the threading removed.
     """
-    # Through a REPOSITORY rather than ``build_resource``, which hands back
-    # a resource with an id of "" -- which cannot show that the id reached
-    # the message.
-    repo = (
-        a_grr()
-        .with_resource("a_named_vcf_resource", _MANY_TYPED_INT)
-        .build_repo(tmp_path / "repo")
-    )
-
     with pytest.raises(ValueError, match="a_named_vcf_resource"):
-        build_score_from_resource(repo.get_resource("a_named_vcf_resource"))
+        named_allele_score(_MANY_TYPED_INT, tmp_path, "a_named_vcf_resource")
 
 
 def test_stating_str_on_a_joined_field_is_not_reported(

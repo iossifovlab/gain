@@ -20,11 +20,7 @@ import textwrap
 import pytest
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.resource_errors import MalformedResourceError
-from gain.genomic_resources.testing.builders import (
-    VcfInfoScoreBuilder,
-    a_grr,
-    a_vcf_info_score,
-)
+from gain.genomic_resources.testing.builders import a_grr, a_vcf_info_score
 
 from tests.small.genomic_resources.conftest import named_allele_score
 
@@ -40,16 +36,13 @@ chr1 5 . A T . . CNT=7
 
 _RESOURCE_ID = "a_vcf_naming_an_unknown_field"
 
-
-def _vcf() -> VcfInfoScoreBuilder:
-    """A resource over ``_VCF`` with no ``scores:`` block."""
-    return a_vcf_info_score().with_data(_VCF)
-
+#: A resource over ``_VCF`` with no ``scores:`` block.
+_HEADER_ONLY = a_vcf_info_score().with_data(_VCF)
 
 #: The shape under test: an entry whose ``id`` no ``##INFO`` line declares.
 #: The builder checks nothing against the VCF text, so it renders the entry
 #: as given -- which is the point: the RESOURCE is what refuses it.
-_NAMING_NOPE = _vcf().with_score("NOPE")
+_NAMING_NOPE = _HEADER_ONLY.with_score("NOPE")
 
 
 def test_an_entry_naming_no_info_field_is_refused_by_name(
@@ -95,7 +88,7 @@ def test_the_unknown_id_is_refused_before_the_arity_of_a_declared_one(
     """
     with pytest.raises(MalformedResourceError, match="'NOPE'") as excinfo:
         named_allele_score(
-            _vcf().with_score("PERGT").with_score("NOPE"),
+            _HEADER_ONLY.with_score("PERGT").with_score("NOPE"),
             tmp_path, _RESOURCE_ID)
 
     assert "Number=G" not in str(excinfo.value)
@@ -113,13 +106,12 @@ def test_repo_repair_names_the_refused_resource_and_builds_the_rest(
     repository's other resource -- whose block names a declared field --
     still builds its statistics.
     """
-    # Realized only -- no manifests, no index -- so ``repo-repair`` starts
-    # from the raw directory it would find on a fresh checkout.
+    # ``realize_all``, not ``build_repo``: no manifests written ahead of it.
     repo = tmp_path / "repo"
     (
         a_grr()
         .with_resource("refused", _NAMING_NOPE)
-        .with_resource("agreeing", _vcf().with_score("CNT"))
+        .with_resource("agreeing", _HEADER_ONLY.with_score("CNT"))
         .realize_all(repo)
     )
 
