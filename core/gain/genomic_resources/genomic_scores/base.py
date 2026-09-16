@@ -448,7 +448,15 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         # ``header:``/``header_mode:`` pair reports one anyway, and those keys
         # are ignored for bigWig (see ``genomic_position_table.utils``), so
         # they must not decide how the scores are checked either.
-        if "scores" in self.config and not is_bigwig:
+        #
+        # A VCF's is skipped for the same reason from the other side: its
+        # scores have no column address to check -- each reads the INFO
+        # field named by its ``id`` -- and the one thing the config may say
+        # about the address (nothing, or the id itself) was already checked
+        # where the definitions were built, by ``parse_vcf_scoredefs``.
+        # Asked here anyway, this method demanded an address the reader
+        # ignores and refused an entry that gave none.
+        if "scores" in self.config and not (is_bigwig or is_vcf):
             validate_scoredefs(self.config, self.table, self.resource)
         resolve_score_indices(
             self.score_definitions,

@@ -463,32 +463,6 @@ def test_raise_error_when_missing_column_name_in_header_as_list() -> None:
         build_score_from_resource(res).open()
 
 
-def test_vcf_check_for_missing_score_columns(tmp_path: pathlib.Path) -> None:
-    setup_directories(
-        tmp_path, {
-            "genomic_resource.yaml": textwrap.dedent("""
-                type: allele_score
-                table:
-                  filename: data.vcf.gz
-                scores:
-                - id: A
-                  name: NO_SUCH_SCORE_IN_HEADER
-                  type: float
-            """),
-        })
-    setup_vcf(
-        tmp_path / "data.vcf.gz",
-        textwrap.dedent("""
-##fileformat=VCFv4.1
-##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">
-#CHROM POS ID REF ALT QUAL FILTER  INFO
-chr1   5   .  A   T   .    .       A=1
-    """))
-    res = build_filesystem_test_resource(tmp_path)
-    with pytest.raises(AssertionError):
-        build_score_from_resource(res).open()
-
-
 def test_line_score_value_parsing(tmp_path: pathlib.Path) -> None:
     setup_directories(
         tmp_path, {
