@@ -24,10 +24,10 @@ from gain.genomic_resources.genomic_scores import (
     build_score_from_resource,
 )
 from gain.genomic_resources.resource_errors import MalformedResourceError
-from gain.genomic_resources.testing import (
-    build_filesystem_test_protocol,
-    setup_directories,
-    setup_vcf,
+from gain.genomic_resources.testing.builders import (
+    VcfInfoScoreBuilder,
+    a_grr,
+    a_vcf_info_score,
 )
 
 #: Two declared fields, one per-genotype (for the ordering test) and one
@@ -43,43 +43,31 @@ chr1 5 . A T . . CNT=7
 _RESOURCE_ID = "a_vcf_naming_an_unknown_field"
 
 
-def _vcf_resource(
-    repo: pathlib.Path, scores_block: str = "",
+def _vcf() -> VcfInfoScoreBuilder:
+    """A resource over ``_VCF`` with no ``scores:`` block."""
+    return a_vcf_info_score().with_data(_VCF)
+
+
+def _realized(
+    tmp_path: pathlib.Path, builder: VcfInfoScoreBuilder,
     resource_id: str = _RESOURCE_ID,
-) -> pathlib.Path:
-    """Write one allele-score resource over ``_VCF`` into ``repo``.
+) -> AlleleScore:
+    """The score ``builder`` realizes under ``tmp_path``, unopened.
 
-    Realized under a repository directory rather than straight into
-    ``tmp_path`` so the resource has an id -- the refusal has to name it,
-    and ``build_filesystem_test_resource`` hands back the id ``""``.
-    Hand-rolled like the gain#1258 sibling's because ``a_vcf_info_score()``
-    has no ``merge_vcf_scores`` knob, and that flag is what these tests vary.
+    Realized through a repository rather than ``build_resource`` so the
+    resource has an id -- the refusal has to name it, and
+    ``build_resource`` hands back the id ``""``.
     """
-    resource_dir = repo / resource_id
-    setup_directories(resource_dir, {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: allele_score
-            table:
-                filename: data.vcf.gz
-        """) + scores_block,
-    })
-    setup_vcf(resource_dir / "data.vcf.gz", _VCF)
-    return resource_dir
-
-
-def _build(repo: pathlib.Path, resource_id: str = _RESOURCE_ID) -> AlleleScore:
-    proto = build_filesystem_test_protocol(repo)
-    score = build_score_from_resource(proto.get_resource(resource_id))
+    repo = a_grr().with_resource(resource_id, builder).build_repo(tmp_path)
+    score = build_score_from_resource(repo.get_resource(resource_id))
     assert isinstance(score, AlleleScore)
     return score
 
 
 #: The shape under test: an entry whose ``id`` no ``##INFO`` line declares.
-_NAMING_NOPE = textwrap.dedent("""
-    scores:
-    - id: NOPE
-      name: NOPE
-""")
+#: The builder checks nothing against the VCF text, so it renders the entry
+#: as given -- which is the point: the RESOURCE is what refuses it.
+_NAMING_NOPE = _vcf().with_score("NOPE")
 
 
 def test_an_entry_naming_no_info_field_is_refused_by_name(
@@ -89,10 +77,8 @@ def test_an_entry_naming_no_info_field_is_refused_by_name(
     which score -- and says what the header does declare, so the author can
     see the typo without opening the file.
     """
-    _vcf_resource(tmp_path, _NAMING_NOPE)
-
     with pytest.raises(MalformedResourceError) as excinfo:
-        _build(tmp_path)
+        _realized(tmp_path, _NAMING_NOPE)
 
     message = str(excinfo.value)
     assert _RESOURCE_ID in message
@@ -111,10 +97,8 @@ def test_merging_the_header_in_does_not_excuse_the_entry(
     same one.  A check that ran only on the filter path would let this
     resource through to the override loop and its own bare ``KeyError``.
     """
-    _vcf_resource(tmp_path, "merge_vcf_scores: true\n" + _NAMING_NOPE)
-
     with pytest.raises(MalformedResourceError, match="'NOPE'"):
-        _build(tmp_path)
+        _realized(tmp_path, _NAMING_NOPE.with_merge_vcf_scores())
 
 
 def test_the_unknown_id_is_refused_before_the_arity_of_a_declared_one(
@@ -126,16 +110,8 @@ def test_the_unknown_id_is_refused_before_the_arity_of_a_declared_one(
     header does not have, so the unknown id is checked first, whatever
     else the block gets wrong.
     """
-    _vcf_resource(tmp_path, textwrap.dedent("""
-        scores:
-        - id: PERGT
-          name: PERGT
-        - id: NOPE
-          name: NOPE
-    """))
-
     with pytest.raises(MalformedResourceError, match="'NOPE'") as excinfo:
-        _build(tmp_path)
+        _realized(tmp_path, _vcf().with_score("PERGT").with_score("NOPE"))
 
     assert "Number=G" not in str(excinfo.value)
 
@@ -153,20 +129,20 @@ def test_repo_repair_names_the_refused_resource_and_builds_the_rest(
     still builds its statistics.
     """
     repo = tmp_path / "repo"
-    bad = _vcf_resource(repo, _NAMING_NOPE, resource_id="refused")
-    good = _vcf_resource(repo, textwrap.dedent("""
-        scores:
-        - id: CNT
-          name: CNT
-    """), resource_id="agreeing")
+    (
+        a_grr()
+        .with_resource("refused", _NAMING_NOPE)
+        .with_resource("agreeing", _vcf().with_score("CNT"))
+        .build_repo(repo)
+    )
 
     with caplog.at_level("ERROR"), pytest.raises(SystemExit):
         cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
 
-    assert not (bad / "statistics").exists(), (
+    assert not (repo / "refused" / "statistics").exists(), (
         "the refused resource ran its statistics tasks"
     )
-    assert (good / "statistics" / "histogram_CNT.json").exists(), (
+    assert (repo / "agreeing" / "statistics" / "histogram_CNT.json").exists(), (
         "the valid resource lost its statistics; one refused resource must "
         "not cost the rest of the repository its build"
     )
