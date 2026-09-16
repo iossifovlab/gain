@@ -25,10 +25,10 @@ from gain.genomic_resources.genomic_scores import (
     build_score_from_resource,
 )
 from gain.genomic_resources.resource_errors import MalformedResourceError
-from gain.genomic_resources.testing import (
-    build_filesystem_test_protocol,
-    setup_directories,
-    setup_vcf,
+from gain.genomic_resources.testing.builders import (
+    VcfInfoScoreBuilder,
+    a_grr,
+    a_vcf_info_score,
 )
 
 #: One per-genotype field beside one ordinary scalar, and a row that CARRIES
@@ -46,36 +46,26 @@ chr1 6 . A T . . PERGT=1,2,3;CNT=8
 _RESOURCE_ID = "a_per_genotype_vcf"
 
 
-def _vcf_resource(
-    repo: pathlib.Path, scores_block: str = "",
-    resource_id: str = _RESOURCE_ID,
-) -> pathlib.Path:
-    """Write one allele-score resource over ``_VCF`` into ``repo``.
+def _vcf() -> VcfInfoScoreBuilder:
+    """A resource over ``_VCF`` with no ``scores:`` block.
 
-    Realized under a repository directory rather than straight into
-    ``tmp_path`` so the resource has an id -- the refusal has to name it,
-    and ``build_filesystem_test_resource`` hands back the id ``""``.
-
-    Hand-rolled, like ``_realize_vcf_resource`` in the sibling
-    test_vcf_multivalued_declared_type, because ``a_vcf_info_score()``
-    emits no ``scores:`` block and the block is what half these tests vary
-    -- one more copy for gain#1290 to fold.
+    The report's shape, and the base every block below is stated on.
     """
-    resource_dir = repo / resource_id
-    setup_directories(resource_dir, {
-        "genomic_resource.yaml": textwrap.dedent("""
-            type: allele_score
-            table:
-                filename: data.vcf.gz
-        """) + scores_block,
-    })
-    setup_vcf(resource_dir / "data.vcf.gz", _VCF)
-    return resource_dir
+    return a_vcf_info_score().with_data(_VCF)
 
 
-def _build(repo: pathlib.Path, resource_id: str = _RESOURCE_ID) -> AlleleScore:
-    proto = build_filesystem_test_protocol(repo)
-    score = build_score_from_resource(proto.get_resource(resource_id))
+def _realized(
+    tmp_path: pathlib.Path, builder: VcfInfoScoreBuilder,
+    resource_id: str = _RESOURCE_ID,
+) -> AlleleScore:
+    """The score ``builder`` realizes under ``tmp_path``, unopened.
+
+    Realized through a repository rather than ``build_resource`` so the
+    resource has an id -- the refusal has to name it, and
+    ``build_resource`` hands back the id ``""``.
+    """
+    repo = a_grr().with_resource(resource_id, builder).build_repo(tmp_path)
+    score = build_score_from_resource(repo.get_resource(resource_id))
     assert isinstance(score, AlleleScore)
     return score
 
@@ -91,10 +81,9 @@ def test_a_header_only_resource_with_a_per_genotype_field_is_refused(
     dies in pysam with a bare ``ValueError`` that is not a
     ``MalformedResourceError`` and names neither resource nor field.
     """
-    _vcf_resource(tmp_path)
-
     with pytest.raises(MalformedResourceError, match=_RESOURCE_ID) as excinfo:
-        _build(tmp_path).open().fetch_allele_scores("chr1", 6, "A", "T")
+        _realized(tmp_path, _vcf()).open().fetch_allele_scores(
+            "chr1", 6, "A", "T")
 
     assert "PERGT" in str(excinfo.value)
 
@@ -106,10 +95,8 @@ def test_the_refusal_says_what_was_declared_and_how_to_fix_it(
     read, and the two edits that resolve it -- leave the field out of a
     ``scores:`` block, or change the header.
     """
-    _vcf_resource(tmp_path)
-
     with pytest.raises(MalformedResourceError) as excinfo:
-        _build(tmp_path)
+        _realized(tmp_path, _vcf())
 
     message = str(excinfo.value)
     assert "Number=G" in message
@@ -122,24 +109,15 @@ def test_the_refusal_says_what_was_declared_and_how_to_fix_it(
 #: stated type.  The typed one is the shape gain#1336 refuses for the TYPE
 #: ("state 'type: str'") -- advice that would send the author to an edit
 #: which cannot make the field readable.
-_NAMING_PERGT = pytest.mark.parametrize("scores_block", [
-    pytest.param(textwrap.dedent("""
-        scores:
-        - id: PERGT
-          name: PERGT
-    """), id="untyped"),
-    pytest.param(textwrap.dedent("""
-        scores:
-        - id: PERGT
-          name: PERGT
-          type: int
-    """), id="typed-int"),
+_NAMING_PERGT = pytest.mark.parametrize("builder", [
+    pytest.param(_vcf().with_score("PERGT"), id="untyped"),
+    pytest.param(_vcf().with_score("PERGT", "int"), id="typed-int"),
 ])
 
 
 @_NAMING_PERGT
 def test_a_scores_entry_naming_the_field_is_refused_for_its_arity(
-    tmp_path: pathlib.Path, scores_block: str,
+    tmp_path: pathlib.Path, builder: VcfInfoScoreBuilder,
 ) -> None:
     """The config route: an entry naming ``PERGT`` makes it a definition.
 
@@ -148,10 +126,8 @@ def test_a_scores_entry_naming_the_field_is_refused_for_its_arity(
     -- state ``str`` or drop the line -- leaves a field pysam cannot read;
     the refusal the author sees has to be the one whose fix works.
     """
-    _vcf_resource(tmp_path, scores_block)
-
     with pytest.raises(MalformedResourceError, match="PERGT") as excinfo:
-        _build(tmp_path)
+        _realized(tmp_path, builder)
 
     message = str(excinfo.value)
     assert "Number=G" in message
@@ -159,11 +135,7 @@ def test_a_scores_entry_naming_the_field_is_refused_for_its_arity(
 
 
 #: The fix the refusal recommends: name what you want, leave ``PERGT`` out.
-_OMITTING_PERGT = textwrap.dedent("""
-    scores:
-    - id: CNT
-      name: CNT
-""")
+_OMITTING_PERGT = _vcf().with_score("CNT")
 
 
 def test_a_scores_block_omitting_the_field_reads_the_rest(
@@ -176,9 +148,7 @@ def test_a_scores_block_omitting_the_field_reads_the_rest(
     the row that CARRIES it proves: pysam would refuse that lookup, and the
     read of ``CNT`` on the same row goes through untouched.
     """
-    _vcf_resource(tmp_path, _OMITTING_PERGT)
-
-    score = _build(tmp_path).open()
+    score = _realized(tmp_path, _OMITTING_PERGT).open()
 
     assert score.fetch_allele_scores("chr1", 6, "A", "T") == {"CNT": 8}
 
@@ -191,11 +161,8 @@ def test_merging_the_header_back_in_is_refused(
     the header defined it, ``PERGT`` included -- so it is a definition
     again, and refused again.
     """
-    _vcf_resource(
-        tmp_path, "merge_vcf_scores: true\n" + _OMITTING_PERGT)
-
     with pytest.raises(MalformedResourceError, match="PERGT"):
-        _build(tmp_path)
+        _realized(tmp_path, _OMITTING_PERGT.with_merge_vcf_scores())
 
 
 def test_repo_repair_names_the_refused_resource_and_builds_the_rest(
@@ -211,16 +178,20 @@ def test_repo_repair_names_the_refused_resource_and_builds_the_rest(
     builds its statistics, reading through the row that carries ``PERGT``.
     """
     repo = tmp_path / "repo"
-    bad = _vcf_resource(repo, resource_id="refused")
-    good = _vcf_resource(repo, _OMITTING_PERGT, resource_id="agreeing")
+    (
+        a_grr()
+        .with_resource("refused", _vcf())
+        .with_resource("agreeing", _OMITTING_PERGT)
+        .build_repo(repo)
+    )
 
     with caplog.at_level("ERROR"), pytest.raises(SystemExit):
         cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
 
-    assert not (bad / "statistics").exists(), (
+    assert not (repo / "refused" / "statistics").exists(), (
         "the refused resource ran its statistics tasks"
     )
-    assert (good / "statistics" / "histogram_CNT.json").exists(), (
+    assert (repo / "agreeing" / "statistics" / "histogram_CNT.json").exists(), (
         "the valid resource lost its statistics; one refused resource must "
         "not cost the rest of the repository its build"
     )
