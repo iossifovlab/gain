@@ -87,17 +87,16 @@ def score_configuration_error(
     The sibling of :func:`overlapping_records_error` for the other half of
     what makes a resource malformed: not a record that breaks its kind's
     promise, but a definition claiming a value the score cannot hold.
-    Six rules are detected in three layers -- in the VCF header/config
-    merge, an entry whose ``id`` no ``##INFO`` line declares (gain#1489), a
-    column address other than that ``id`` (gain#1498), a stated ``type:``
-    the header contradicts and a header field declared ``Number=G``, which
-    pysam will never read (gain#1258); at the construction convergence
-    point, a number histogram over a value type no number histogram
-    accumulates; and at open, once a tabular table's header is known, a
-    column address the header cannot honour (gain#1498) -- and each phrases
-    its own ``detail``.  The ``Number=G`` rule is the one a ``scores:``
-    entry need not have caused: a header-only resource has none, and the
-    claim is the header's.
+    The rules live in three layers, and each raise site phrases its own
+    ``detail``: the VCF header/config merge (the ``_refuse_*`` helpers in
+    ``vcf_scores``, for an ``id``, an address or a ``type:`` the header
+    contradicts, and for a field declared ``Number=G``), the construction
+    convergence point (``refuse_unfoldable_histograms``, for a number
+    histogram over a value type none accumulates), and open, once a tabular
+    table's header is known (``validate_scoredefs``, for a column address
+    the header cannot honour).  The ``Number=G`` rule is the one a
+    ``scores:`` entry need not have caused: a header-only resource has
+    none, and the claim is the header's.
 
     What is shared is the ADDRESS: which resource, and which score in it.
     That is the half a reader needs to find the file to edit, it is the half

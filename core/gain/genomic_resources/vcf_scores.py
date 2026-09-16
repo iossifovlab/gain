@@ -610,10 +610,12 @@ def parse_vcf_scoredefs(
     one as well, REFUSED by :func:`_refuse_overridden_address` (gain#1498);
     an address equal to the ``id`` is redundant and passes.  The fourth
     refusal, :func:`_refuse_genotype_arity`, is the header's own claim
-    rather than the config's (gain#1258), and it runs BEFORE the two
-    config-side ones, because a per-genotype field is unreadable whatever
-    the entry states and neither of their advised edits can change that.
-    ``resource_id`` is threaded in for those four messages alone.
+    rather than the config's (gain#1258).  The order is id, arity, address,
+    type: the arity check runs BEFORE the two config-side ones because a
+    per-genotype field is unreadable whatever the entry states and neither
+    of their advised edits can change that, and the address check precedes
+    the type check because a wrong address is wrong whatever type is
+    stated.  ``resource_id`` is threaded in for those four messages alone.
 
     ``merge`` decides what happens to header fields the config does not
     mention: ``False`` (the default) returns only the configured scores, so
@@ -668,11 +670,8 @@ def parse_vcf_scoredefs(
 
     # Every field that becomes a definition -- all of them with no config or
     # a merging one, else the ones the config names -- is checked here,
-    # before the override loop, so the arity refusal precedes both of the
-    # config-side refusals in it, the address and the type: a per-genotype
-    # field is unreadable whatever the entry states, and "state 'type:
-    # str'" or "make the address the id" are edits that cannot make it
-    # readable.
+    # before the override loop's two config-side refusals (the docstring
+    # says why that order).
     defined = (
         vcf_scoredefs if config_scoredefs is None or merge
         else config_scoredefs)
@@ -686,9 +685,6 @@ def parse_vcf_scoredefs(
     scoredefs = {}
     for score, config_scoredef in config_scoredefs.items():
         vcf_scoredef = vcf_scoredefs[score]
-        # The entry's id is in the header and its field is readable; what
-        # is left to refuse is what the entry itself claims, address first
-        # (a wrong address is wrong whatever type is stated), then type.
         _refuse_overridden_address(resource_id, config_scoredef)
 
         # ONE rule for both, which is why neither is a ``config.x or vcf.x``

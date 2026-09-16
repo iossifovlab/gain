@@ -26,7 +26,7 @@ from gain.genomic_resources.statistics.record_validation import (
     validate_records,
 )
 from gain.genomic_resources.testing import (
-    build_inmemory_test_protocol,
+    build_inmemory_test_repository,
     build_inmemory_test_resource,
 )
 
@@ -481,14 +481,27 @@ def test_build_score_from_resource_invalid_type() -> None:
         build_score_from_resource(res)
 
 
-def test_validate_scoredefs_column_name_not_in_header() -> None:
-    """A ``column_name:`` the header lacks is a configuration error, refused
-    at ``open()`` (the header is only known then) by name -- which resource,
-    which score, what was stated -- and listing the columns the header DOES
-    have, so the typo reads off the line (gain#1498).
+@pytest.mark.parametrize(
+    ("address", "expected"), [
+        ("column_name: nonexistent_column",
+         ("nonexistent_column", "score1")),
+        ("column_index: 10", ("column_index 10", "3 columns")),
+        ("", ("column_name",)),
+    ],
+    ids=["name-not-in-header", "index-past-header", "no-address"])
+def test_validate_scoredefs_refuses_a_column_address_the_header_cannot_honour(
+    address: str, expected: tuple[str, ...],
+) -> None:
+    """A tabular score's address is checked against the header at ``open()``
+    (the header is only known then), and a mismatch is a configuration
+    error refused by name -- which resource, which score, what was stated
+    (gain#1498).  A name the header lacks lists the columns it does have,
+    so the typo reads off the line; an index past it says how many there
+    are; no address at all is refused because a table with a header needs
+    one chosen from it.
     """
-    proto = build_inmemory_test_protocol({"misaddressed": {
-        GR_CONF_FILE_NAME: """
+    repo = build_inmemory_test_repository({"misaddressed": {
+        GR_CONF_FILE_NAME: f"""
             type: position_score
             table:
                 filename: data.mem
@@ -500,85 +513,22 @@ def test_validate_scoredefs_column_name_not_in_header() -> None:
             scores:
                 - id: score
                   type: float
-                  column_name: nonexistent_column
+                  {address}
         """,
         "data.mem": """
             1  10  0.1
         """,
     }})
 
-    score = PositionScore(proto.get_resource("misaddressed"))
+    score = PositionScore(repo.get_resource("misaddressed"))
     with pytest.raises(MalformedResourceError) as excinfo:
         score.open()
 
     message = str(excinfo.value)
     assert "misaddressed" in message
     assert "'score'" in message
-    assert "nonexistent_column" in message
-    assert "score1" in message
-
-
-def test_validate_scoredefs_column_index_out_of_bounds() -> None:
-    """A ``column_index:`` past the header is refused the same way, saying
-    how many columns there are (gain#1498).
-    """
-    proto = build_inmemory_test_protocol({"misaddressed": {
-        GR_CONF_FILE_NAME: """
-            type: position_score
-            table:
-                filename: data.mem
-                header_mode: list
-                header:
-                    - chrom
-                    - pos_begin
-                    - score1
-            scores:
-                - id: score
-                  type: float
-                  column_index: 10
-        """,
-        "data.mem": """
-            1  10  0.1
-        """,
-    }})
-
-    score = PositionScore(proto.get_resource("misaddressed"))
-    with pytest.raises(MalformedResourceError) as excinfo:
-        score.open()
-
-    message = str(excinfo.value)
-    assert "misaddressed" in message
-    assert "'score'" in message
-    assert "column_index 10" in message
-    assert "3 columns" in message
-
-
-def test_validate_scoredefs_no_column_name_or_index() -> None:
-    """A tabular score with neither address is refused by name: the table
-    has a header, so a column has to be chosen from it (gain#1498).
-    """
-    proto = build_inmemory_test_protocol({"unaddressed": {
-        GR_CONF_FILE_NAME: """
-            type: position_score
-            table:
-                filename: data.mem
-            scores:
-                - id: score
-                  type: float
-        """,
-        "data.mem": """
-            chrom  pos_begin  score
-            1      10         0.1
-        """,
-    }})
-
-    score = PositionScore(proto.get_resource("unaddressed"))
-    with pytest.raises(MalformedResourceError, match="column_name") as excinfo:
-        score.open()
-
-    message = str(excinfo.value)
-    assert "unaddressed" in message
-    assert "'score'" in message
+    for token in expected:
+        assert token in message
 
 
 def test_deprecated_name_and_index_config(

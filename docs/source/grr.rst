@@ -1782,7 +1782,8 @@ error: a ``column_name:`` (or legacy ``name:``) that differs from the
 ``column_index:`` (``index:``), since an ``INFO`` field is not a column.
 The reader would ignore such a line while the author reads it as the
 score's source. An address equal to the ``id`` -- ``column_name: A`` on
-``id: A``, as in the spelled-out example above -- is redundant and passes:
+``id: A``, as in the spelled-out example above -- is redundant and passes.
+``column_name: B`` on ``id: A`` does not:
 
 .. code-block:: text
 

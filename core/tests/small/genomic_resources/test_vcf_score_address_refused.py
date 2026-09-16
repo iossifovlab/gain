@@ -54,7 +54,10 @@ def _vcf_resource(
 
     Under a repository directory rather than straight into ``tmp_path`` so
     the resource has an id for the refusal to name (the gain#1489 sibling
-    says why).
+    says why).  Hand-rolled like that sibling's, because the shapes under
+    test -- a wrong address, no address, the legacy spellings -- are exactly
+    what ``VcfInfoScoreBuilder`` does not render; one more copy for
+    gain#1290 to fold.
     """
     resource_dir = repo / resource_id
     setup_directories(resource_dir, {
@@ -62,15 +65,15 @@ def _vcf_resource(
             type: allele_score
             table:
                 filename: data.vcf.gz
-        """) + scores_block,
+        """) + textwrap.dedent(scores_block),
     })
     setup_vcf(resource_dir / "data.vcf.gz", _VCF)
     return resource_dir
 
 
-def _build(repo: pathlib.Path, resource_id: str = _RESOURCE_ID) -> AlleleScore:
+def _build(repo: pathlib.Path) -> AlleleScore:
     proto = build_filesystem_test_protocol(repo)
-    score = build_score_from_resource(proto.get_resource(resource_id))
+    score = build_score_from_resource(proto.get_resource(_RESOURCE_ID))
     assert isinstance(score, AlleleScore)
     return score
 
@@ -83,12 +86,12 @@ def test_an_address_the_header_lacks_is_refused_where_the_score_is_built(
     score and what was stated -- and saying what the score reads instead,
     so the fix (drop the line, or make it the id) reads off the message.
     """
-    _vcf_resource(tmp_path, textwrap.dedent("""
+    _vcf_resource(tmp_path, """
         scores:
         - id: A
           column_name: NO_SUCH_SCORE_IN_HEADER
           type: float
-    """))
+    """)
 
     with pytest.raises(MalformedResourceError) as excinfo:
         _build(tmp_path)
@@ -107,11 +110,11 @@ def test_an_address_naming_another_declared_field_is_refused_too(
     ``B`` never consulted.  Being in the header does not make the address
     the score's; only equality with the id does.
     """
-    _vcf_resource(tmp_path, textwrap.dedent("""
+    _vcf_resource(tmp_path, """
         scores:
         - id: A
           column_name: B
-    """))
+    """)
 
     with pytest.raises(MalformedResourceError, match="'B'") as excinfo:
         _build(tmp_path)
@@ -128,11 +131,11 @@ def test_a_column_index_is_refused_because_a_vcf_field_has_none(
     ``column_index:``) used to be accepted and ignored.  Index 0 on purpose:
     it is the one address a falsy-check would have overlooked.
     """
-    _vcf_resource(tmp_path, textwrap.dedent("""
+    _vcf_resource(tmp_path, """
         scores:
         - id: A
           index: 0
-    """))
+    """)
 
     with pytest.raises(MalformedResourceError, match="column_index") as excinfo:
         _build(tmp_path)
@@ -140,17 +143,24 @@ def test_a_column_index_is_refused_because_a_vcf_field_has_none(
     assert "'A'" in str(excinfo.value)
 
 
-def test_an_entry_stating_no_address_reads_the_info_field_named_by_its_id(
-    tmp_path: pathlib.Path,
+@pytest.mark.parametrize(
+    "address", ["", "column_name: A", "name: A"],
+    ids=["none", "modern", "legacy"])
+def test_an_entry_reads_the_info_field_named_by_its_id(
+    tmp_path: pathlib.Path, address: str,
 ) -> None:
-    """The address is not the config's to give, so it need not give one.
-    ``id:`` alone used to be refused at ``open()`` for "neither an index
-    nor a name" -- the tabular rule, asked of a table it does not apply to.
+    """The address is not the config's to give, so the entry need not give
+    one -- ``id:`` alone used to be refused at ``open()`` for "neither an
+    index nor a name", the tabular rule asked of a table it does not apply
+    to -- and giving the id itself is redundant, not wrong: every deployed
+    VCF resource (ClinVar, dbSNP) spells ``column_name: <id>``, and the
+    legacy ``name:`` is the same statement.
     """
-    _vcf_resource(tmp_path, textwrap.dedent("""
+    _vcf_resource(tmp_path, f"""
         scores:
         - id: A
-    """))
+          {address}
+    """)
 
     with _build(tmp_path).open() as score:
         values = score.fetch_allele_scores("chr1", 5, "A", "T", ["A"])
@@ -158,62 +168,25 @@ def test_an_entry_stating_no_address_reads_the_info_field_named_by_its_id(
     assert values == {"A": 1}
 
 
-@pytest.mark.parametrize("spelling", ["column_name", "name"])
-def test_an_address_equal_to_the_id_is_accepted(
-    tmp_path: pathlib.Path, spelling: str,
+@pytest.mark.parametrize(
+    ("score_id", "refused_for"), [("NOPE", "##INFO"), ("PERGT", "Number=G")],
+    ids=["undeclared-id", "per-genotype-arity"])
+def test_an_entry_wrong_twice_is_refused_for_the_rule_that_comes_first(
+    tmp_path: pathlib.Path, score_id: str, refused_for: str,
 ) -> None:
-    """Redundant, not wrong: every deployed VCF resource (ClinVar, dbSNP)
-    spells ``column_name: <id>`` on each of its scores, and the legacy
-    ``name:`` is the same statement.  Both keep building and reading.
+    """Ordering: an entry whose ``id`` no ``##INFO`` line declares
+    (gain#1489), or whose field is declared ``Number=G`` (gain#1258), AND
+    whose address is not that id, is refused for the former.  The address
+    message says what the score "reads instead", and such a score reads
+    nothing; the edit it advises cannot make it readable.
     """
-    _vcf_resource(tmp_path, textwrap.dedent(f"""
+    _vcf_resource(tmp_path, f"""
         scores:
-        - id: A
-          {spelling}: A
-    """))
-
-    with _build(tmp_path).open() as score:
-        values = score.fetch_allele_scores("chr1", 5, "A", "T", ["A"])
-
-    assert values == {"A": 1}
-
-
-def test_an_undeclared_id_is_refused_for_the_id_whatever_its_address_says(
-    tmp_path: pathlib.Path,
-) -> None:
-    """Ordering: an entry that is wrong twice -- an ``id`` no ``##INFO``
-    line declares AND an address that is not that id -- is refused for the
-    id (gain#1489).  The address rule cannot say what such a score "reads
-    instead", because it reads nothing.
-    """
-    _vcf_resource(tmp_path, textwrap.dedent("""
-        scores:
-        - id: NOPE
-          column_name: A
-    """))
-
-    with pytest.raises(MalformedResourceError, match="##INFO") as excinfo:
-        _build(tmp_path)
-
-    assert "column_name" not in str(excinfo.value)
-
-
-def test_a_per_genotype_field_is_refused_for_its_arity_whatever_its_address(
-    tmp_path: pathlib.Path,
-) -> None:
-    """Ordering, the other side: a ``Number=G`` field is unreadable whatever
-    the entry states (gain#1258), so the arity refusal precedes the address
-    one, as it precedes the type one and for the same reason -- the address
-    message says what the score "reads instead", and this one reads nothing;
-    the edit it advises cannot make it readable.
-    """
-    _vcf_resource(tmp_path, textwrap.dedent("""
-        scores:
-        - id: PERGT
+        - id: {score_id}
           column_name: X
-    """))
+    """)
 
-    with pytest.raises(MalformedResourceError, match="Number=G") as excinfo:
+    with pytest.raises(MalformedResourceError, match=refused_for) as excinfo:
         _build(tmp_path)
 
     assert "column_name" not in str(excinfo.value)
@@ -232,16 +205,16 @@ def test_repo_repair_names_the_refused_resource_and_builds_the_rest(
     resource -- addressed by its id -- still builds its statistics.
     """
     repo = tmp_path / "repo"
-    bad = _vcf_resource(repo, textwrap.dedent("""
+    bad = _vcf_resource(repo, """
         scores:
         - id: A
           column_name: NO_SUCH_SCORE_IN_HEADER
-    """), resource_id="refused")
-    good = _vcf_resource(repo, textwrap.dedent("""
+    """, resource_id="refused")
+    good = _vcf_resource(repo, """
         scores:
         - id: A
           column_name: A
-    """), resource_id="agreeing")
+    """, resource_id="agreeing")
 
     with caplog.at_level("ERROR"), pytest.raises(SystemExit):
         cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
