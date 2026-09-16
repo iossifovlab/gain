@@ -361,6 +361,63 @@ def test_the_resource_failure_reporter_imports_only_leaves() -> None:
     )
 
 
+STATISTICS_PKG = pathlib.Path(GAIN_SRC) / "genomic_resources" / "statistics"
+
+
+def test_the_statistics_package_imports_nothing_from_histogram() -> None:
+    """``histogram`` is a client of the statistics package, spelled one way.
+
+    ``histogram`` imports the package's base class, its min/max statistic
+    and its chart style at module level.  For those three modules an
+    import back into ``histogram`` is a genuine cycle; for the rest of the
+    package it is the dependency spelled backwards -- ``alleles`` and
+    ``length_histogram`` did it, function-locally, for one integer the
+    client happened to define, the chart label font size (gain#1486).
+    That constant is a statistics-chart contract and lives in
+    ``statistics.chart_style`` now, a leaf both tiers import.  The fence
+    is the general rule with no allowlist so the direction stays spelled
+    one way: what ``histogram`` and a statistic share goes DOWN into a
+    leaf, never up into ``histogram``.
+
+    What this does not say is that the package sits below ``histogram``:
+    the statistics that read scores reach it transitively through
+    ``genomic_scores`` today.  The rule is about the direct spelling.
+
+    Read from the AST for the reason the ``scan`` rule above gives: the
+    import most likely to reappear is function-local, as both were.
+    """
+    offenders = _imports_of_layer(
+        STATISTICS_PKG, "gain.genomic_resources.histogram")
+    assert offenders == [], (
+        f"the statistics package imports histogram: {offenders}. "
+        f"histogram is a client of the package, so the package does not "
+        f"import histogram -- move the shared name down into a statistics "
+        f"leaf, as chart_style holds the label font size"
+    )
+
+
+def test_the_chart_style_leaf_imports_nothing_from_gain() -> None:
+    """``statistics.chart_style`` is the leaf the rule above relies on.
+
+    It exists so that ``histogram`` and the statistics that draw charts
+    have a module both may import for the typography they share.  That
+    only holds while it imports nothing of ``gain`` itself: ``histogram``
+    imports it at module level, so an import from ``histogram`` would be
+    a genuine cycle, and one from a statistic would hand every importer
+    of the leaf that statistic's imports too.
+    """
+    offenders = sorted(
+        imported
+        for imported in _imported_modules(STATISTICS_PKG / "chart_style.py")
+        if imported.startswith("gain.")
+    )
+    assert offenders == [], (
+        f"chart_style imports {offenders}. It is the leaf both histogram "
+        f"and the statistics package draw from, and stays one -- a chart "
+        f"constant that needs a gain import does not belong there"
+    )
+
+
 def _table_reaches(py: pathlib.Path) -> list[str]:
     """``<file>:<line>`` for every ``<expr>.table`` in ``py``.
 

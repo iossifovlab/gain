@@ -56,6 +56,9 @@ from gain.genomic_resources.statistics.base_statistic import (
     RegionFoldedStatistic,
     refuse_unmergeable,
 )
+from gain.genomic_resources.statistics.chart_style import (
+    HISTOGRAM_LABELS_FONT_SIZE,
+)
 from gain.genomic_resources.statistics.indel_lengths import (
     NO_INDELS,
     IndelLengths,
@@ -1211,10 +1214,6 @@ def plot_complex_grid(
     matplotlib.use("agg")
     import matplotlib.colors
     import matplotlib.pyplot as plt
-
-    from gain.genomic_resources.histogram import (
-        HISTOGRAM_LABELS_FONT_SIZE,
-    )
 
     side = COMPLEX_LENGTH_CLAMP
     # Lengths are 1-based and the clamp is inclusive, so cell (r, a)

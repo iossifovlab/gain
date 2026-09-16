@@ -27,6 +27,10 @@ from typing import IO, Any, TypeGuard
 
 import numpy as np
 
+from gain.genomic_resources.statistics.chart_style import (
+    HISTOGRAM_LABELS_FONT_SIZE,
+)
+
 # Fixed log2 bins: bin ``i`` holds lengths in ``[2**i, 2**(i + 1))``, and
 # the last bin is open-ended.  The edges are part of the stored format --
 # histograms binned on different edges cannot be merged -- so this
@@ -153,10 +157,6 @@ def plot_length_histogram(
     import matplotlib
     matplotlib.use("agg")
     import matplotlib.pyplot as plt
-
-    from gain.genomic_resources.histogram import (
-        HISTOGRAM_LABELS_FONT_SIZE,
-    )
 
     # The bins from the cap up are drawn as one bar; the counts move,
     # never vanish, so the bars still total the histogram.
