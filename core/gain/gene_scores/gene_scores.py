@@ -26,6 +26,7 @@ from gain.genomic_resources.repository_factory import (
 from gain.genomic_resources.resource_implementation import (
     get_base_resource_schema,
 )
+from gain.genomic_resources.score_def import refuse_unfoldable_histograms
 from gain.genomic_resources.score_resource import ScoreDef, ScoreResource
 from gain.templates import get_template
 
@@ -109,12 +110,6 @@ class GeneScore(ScoreResource[GeneScoreDef]):
                     f"Missing histogram config for {score_id} in "
                     f"{self.resource.resource_id}")
 
-            if isinstance(hist_conf, NumberHistogramConfig) and \
-                    not hist_conf.has_view_range():
-                min_value = self.get_min(score_name)
-                max_value = self.get_max(score_name)
-                hist_conf.view_range = (min_value, max_value)
-
             self.score_definitions[score_conf["id"]] = GeneScoreDef(
                 score_id=score_conf["id"],
                 column_name=score_name,
@@ -126,6 +121,22 @@ class GeneScore(ScoreResource[GeneScoreDef]):
                 small_values_desc=score_conf.get("small_values_desc"),
                 large_values_desc=score_conf.get("large_values_desc"),
             )
+
+        # Refused BEFORE any number histogram is auto-ranged below: the
+        # min/max pass reads the column through ``float()``, and over a
+        # text column that raised naming neither resource nor score
+        # (gain#1308).  Same rule as a genomic score (gain#1336).
+        refuse_unfoldable_histograms(
+            self.score_definitions, self.resource.resource_id)
+
+        for score_def in self.score_definitions.values():
+            hist_conf = score_def.hist_conf
+            if isinstance(hist_conf, NumberHistogramConfig) and \
+                    not hist_conf.has_view_range():
+                min_value = self.get_min(score_def.column_name)
+                max_value = self.get_max(score_def.column_name)
+                hist_conf.view_range = (min_value, max_value)
+
         self.df = self.df.rename(columns={
             score_def.column_name: score_def.score_id
             for score_def in self.score_definitions.values()

@@ -4,7 +4,10 @@ import pathlib
 import textwrap
 
 import pytest
-from gain.gene_scores.gene_scores import GeneScoreDef
+from gain.gene_scores.gene_scores import (
+    GeneScoreDef,
+    build_gene_score_from_resource,
+)
 from gain.gene_scores.implementations.gene_scores_impl import (
     GeneScoreImplementation,
 )
@@ -16,8 +19,10 @@ from gain.genomic_resources.histogram import (
 )
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
+    GenomicResource,
     GenomicResourceRepo,
 )
+from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     build_inmemory_test_repository,
@@ -476,6 +481,71 @@ def test_calc_histogram_number_over_a_boolean_column(
         getattr(histogram, "reason", histogram)
     assert histogram.bars[0] == 1, "False folds as 0"
     assert histogram.bars[1] == 2, "True folds as 1"
+
+
+_TEXT_GENE_SCORE_RESOURCE_ID = "genes/text"
+
+
+def _a_str_gene_score_under_a_number_histogram(
+    tmp_path: pathlib.Path,
+    histogram: dict | None = None,
+) -> GenomicResource:
+    """A ``type: str`` gene score whose config asks for a number histogram.
+
+    Text values, so nothing about the column is numeric: the auto-ranging
+    min/max pass is what used to die over it (gain#1308).
+    """
+    builder = (
+        a_gene_score()
+        .with_score("s", "str")
+        .with_histogram(
+            histogram or {"type": "number", "number_of_bins": 4})
+        .with_data(textwrap.dedent("""
+            gene  s
+            g1    A
+            g2    B
+            g3    C
+        """))
+    )
+    return (
+        a_grr()
+        .with_resource(_TEXT_GENE_SCORE_RESOURCE_ID, builder)
+        .build_repo(tmp_path)
+        .get_resource(_TEXT_GENE_SCORE_RESOURCE_ID)
+    )
+
+
+def test_a_number_histogram_over_a_str_gene_score_is_refused_at_construction(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The pairing is a configuration error, named, and raised on load.
+
+    gain#1308: a gene score auto-ranges a number histogram in its
+    constructor, by running min/max over the pandas column before the
+    definition exists.  Over text that died in the ``float()`` wrapper --
+    ``could not convert string to float: 'A'`` -- naming neither the
+    resource nor the score, and since it fired at CONSTRUCTION every
+    consumer died the same way: annotation, ``GeneScoresDb``, the info
+    page and the statistics build.
+
+    gain#1336 settled what this pairing IS for a genomic score: a config
+    stating something the score cannot do, refused where the score is
+    built, naming the resource and the score.  A gene score is held to the
+    same rule, so what it raises is that error, not the anonymous one.
+    """
+    res = _a_str_gene_score_under_a_number_histogram(tmp_path)
+
+    with pytest.raises(MalformedResourceError) as excinfo:
+        build_gene_score_from_resource(res)
+
+    message = str(excinfo.value)
+    assert _TEXT_GENE_SCORE_RESOURCE_ID in message
+    assert "'s'" in message
+    assert "could not convert string to float" not in message, (
+        "the auto-ranging min/max pass ran over the text column; the "
+        "refusal has to fire before it, so the anonymous ValueError "
+        "never surfaces"
+    )
 
 
 def test_calc_histogram_categorical() -> None:
