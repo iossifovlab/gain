@@ -7,14 +7,10 @@ from gain.annotation.annotatable import VCFAllele
 from gain.annotation.annotation_config import (
     AnnotationConfigurationError,
     AnnotatorInfo,
-    Attribute,
     AttributeConfig,
 )
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
-from gain.annotation.annotation_pipeline import (
-    AnnotationPipeline,
-    AttributeSpec,
-)
+from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.annotation.gene_set_annotator import (
     GeneSetAnnotator,
     build_gene_set_annotator,
@@ -26,7 +22,10 @@ from gain.genomic_resources.repository_factory import (
 from gain.genomic_resources.testing import setup_directories
 from gain.testing.foobar_import import foobar_genes, foobar_genome
 
-from tests.small.annotation.conftest import DummyAnnotator
+from tests.small.annotation.conftest import (
+    DummyAnnotator,
+    typed_attribute,
+)
 
 
 @pytest.fixture(scope="module")
@@ -286,9 +285,7 @@ def test_gene_set_annotator_refuses_a_gene_list_the_pipeline_lacks(
     test_grr: GenomicResourceRepo,
 ) -> None:
     # The effect annotator upstream produces ``gene_list`` (and more);
-    # ``genes_of_interest`` is a name nobody upstream produces.  The
-    # refusal lists what IS there, with its attribute type, so the holder
-    # can see which of them is a gene list (gain#1490).
+    # ``genes_of_interest`` is a name nobody upstream produces.
     pipeline = load_pipeline_from_yaml(textwrap.dedent(
         """
         - effect_annotator:
@@ -310,57 +307,29 @@ def test_gene_set_annotator_refuses_a_gene_list_the_pipeline_lacks(
     assert "'worst_effect' [attribute]" in message
 
 
-def test_gene_set_annotator_refuses_a_gene_list_that_is_not_an_object(
-    test_grr: GenomicResourceRepo,
+@pytest.mark.parametrize("name,value_type", [
+    ("worst_effect", "str"),
+    # An object without the ``gene_list`` mark is refused too (gain#1490).
+    ("gene_effects", "object"),
+])
+def test_gene_set_annotator_refuses_an_attribute_that_is_not_a_gene_list(
+    test_grr: GenomicResourceRepo, name: str, value_type: str,
 ) -> None:
-    # The effect annotator provides ``worst_effect`` as a str, so it is
-    # an attribute the pipeline DOES have -- just not one that holds
-    # a list of genes.
-    pipeline = load_pipeline_from_yaml(textwrap.dedent(
-        """
-        - effect_annotator:
-            genome: foobar_genome
-            gene_models: foobar_genes
-        """),
-        test_grr)
-    info = AnnotatorInfo(
-        "gene_set_annotator", [],
-        {"resource_id": "foobar_gene_set_collection",
-         "input_gene_list": "worst_effect"})
-
-    with pytest.raises(ValueError) as excinfo:
-        build_gene_set_annotator(pipeline, info)
-
-    message = str(excinfo.value)
-    assert "worst_effect" in message
-    assert "expected to be of type gene_list" in message
-
-
-def test_gene_set_annotator_refuses_an_object_that_is_not_a_gene_list(
-    test_grr: GenomicResourceRepo,
-) -> None:
-    # ``value_type="object"`` is what a gene list is stored as, but it is
-    # what any structured attribute is stored as too.  Only the
-    # ``gene_list`` attribute type marks an object as a list of genes --
-    # the mark the web editor offers for ``input_gene_list`` -- so an
-    # object without it is refused (gain#1490).
+    # An upstream annotator provides the attribute, so it is one the
+    # pipeline DOES have -- just not one marked as a list of genes.
     pipeline = AnnotationPipeline(test_grr)
-    pipeline.add_annotator(DummyAnnotator(attributes=[Attribute(
-        name="gene_effects", source="gene_effects",
-        spec=AttributeSpec(
-            source="gene_effects", value_type="object",
-            description="", is_default=True),
-    )]))
+    pipeline.add_annotator(DummyAnnotator(
+        attributes=[typed_attribute(name, value_type)]))
     info = AnnotatorInfo(
         "gene_set_annotator", [],
         {"resource_id": "foobar_gene_set_collection",
-         "input_gene_list": "gene_effects"})
+         "input_gene_list": name})
 
     with pytest.raises(ValueError) as excinfo:
         build_gene_set_annotator(pipeline, info)
 
     message = str(excinfo.value)
-    assert "gene_effects" in message
+    assert name in message
     assert "expected to be of type gene_list" in message
 
 

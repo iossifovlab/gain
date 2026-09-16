@@ -620,21 +620,21 @@ def test_input_annotatable_decorator_no_param() -> None:
 def test_input_annotatable_decorator_refuses_a_child_without_the_parameter(
     test_repo: GenomicResourceRepo,
 ) -> None:
-    # ``decorate()`` only wraps a child whose parameters carry
-    # ``input_annotatable``; a direct construction around one that does
-    # not is refused the way the gene-list builders refuse a missing
-    # ``input_gene_list`` -- naming the annotator and the parameter, not
-    # with a bare AssertionError (gain#1490).
+    """Direct construction without the parameter names the annotator.
+
+    ``decorate()`` never wraps such a child; a ValueError rather than
+    a bare AssertionError, as for a missing ``input_gene_list``
+    (gain#1490).
+    """
     pipeline = AnnotationPipeline(test_repo)
     annotator = DummyAnnotator()
     annotator.pipeline = pipeline
 
-    with pytest.raises(ValueError) as excinfo:
+    with pytest.raises(
+        ValueError,
+        match=r"dummy_annotator.*must have an 'input_annotatable' parameter",
+    ):
         InputAnnotableAnnotatorDecorator(annotator)
-
-    message = str(excinfo.value)
-    assert "input_annotatable" in message
-    assert "dummy" in message
 
 
 def test_input_annotatable_decorator_no_pipeline() -> None:
