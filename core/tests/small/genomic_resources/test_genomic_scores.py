@@ -52,7 +52,6 @@ from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     build_filesystem_test_resource,
-    build_inmemory_test_protocol,
     build_inmemory_test_repository,
     build_inmemory_test_resource,
     convert_to_tab_separated,
@@ -404,7 +403,7 @@ def test_forbid_column_names_in_scores_when_no_header_configured(
     a score naming one is a configuration error -- refused by name, for the
     modern spelling as for the legacy one (gain#1498).
     """
-    proto = build_inmemory_test_protocol({"headerless": {
+    repo = build_inmemory_test_repository({"headerless": {
         "genomic_resource.yaml": f"""
             type: position_score
             table:
@@ -424,7 +423,7 @@ def test_forbid_column_names_in_scores_when_no_header_configured(
     }})
 
     with pytest.raises(MalformedResourceError, match="header_mode") as excinfo:
-        build_score_from_resource(proto.get_resource("headerless")).open()
+        build_score_from_resource(repo.get_resource("headerless")).open()
 
     message = str(excinfo.value)
     assert "headerless" in message

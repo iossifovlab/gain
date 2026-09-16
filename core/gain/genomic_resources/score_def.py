@@ -29,6 +29,7 @@ it are there.
 from __future__ import annotations
 
 import contextlib
+import functools
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -743,9 +744,12 @@ def validate_scoredefs(
 
     A score is refused -- through :func:`score_configuration_error`, naming
     the resource and the score, never by ``assert`` (a resource config is
-    data, and ``python -O`` strips an assert) -- when it names a column
-    under ``header_mode: none``, names one the header lacks, indexes past
-    the header, or states no address at all.
+    data, and ``python -O`` strips an assert) -- when it names a column of
+    a table that has no header (``header_mode: none`` is the one way a
+    tabular table is still headerless once open), names one the header
+    lacks, indexes past the header, or states no address at all.  A
+    headerless table's index addresses are not checked here: there is no
+    header to bound them by.
 
     Also rewrites the legacy ``name:``/``index:`` spellings into
     ``column_name:``/``column_index:`` IN the config it is given -- which is
@@ -753,58 +757,49 @@ def validate_scoredefs(
     hand it the same dict the score keeps.
     """
     assert "scores" in config
-    if table.header_mode == "none":
-        for score in config["scores"]:
-            stated = score.get("column_name", score.get("name"))
-            if stated is not None:
-                raise score_configuration_error(
-                    resource.resource_id, score["id"],
-                    f"states column_name '{stated}' (or its legacy "
-                    f"'name:' spelling), but the table's header_mode is "
-                    f"'none', so it has no column names; address the "
-                    f"score by column_index.")
-    elif table.header is None:
-        # Table has no header (e.g. BigWig); column-name references are
-        # invalid, but index-based scores are fine — open() validates them.
-        return
-    else:
-        for score in config["scores"]:
+    for score in config["scores"]:
+        if "name" in score:
+            score["column_name"] = score["name"]
+            logger.debug(
+                "%s: Using 'name' to configure score columns is"
+                " outdated, use 'column_name' instead.",
+                resource.get_full_id(),
+            )
+        elif "index" in score:
+            score["column_index"] = score["index"]
+            logger.debug(
+                "%s: Using 'index' to configure score columns is"
+                " outdated, use 'column_index' instead.",
+                resource.get_full_id(),
+            )
+        refuse = functools.partial(
+            score_configuration_error, resource.resource_id, score["id"])
 
-            if "name" in score:
-                score["column_name"] = score["name"]
-                logger.debug(
-                    "%s: Using 'name' to configure score columns is"
-                    " outdated, use 'column_name' instead.",
-                    resource.get_full_id(),
-                )
-            elif "index" in score:
-                score["column_index"] = score["index"]
-                logger.debug(
-                    "%s: Using 'index' to configure score columns is"
-                    " outdated, use 'column_index' instead.",
-                    resource.get_full_id(),
-                )
-
+        if table.header is None:
             if "column_name" in score:
-                if score["column_name"] not in table.header:
-                    raise score_configuration_error(
-                        resource.resource_id, score["id"],
-                        f"states column_name '{score['column_name']}', "
-                        f"which the table's header does not have; its "
-                        f"columns are: {', '.join(table.header)}.")
-            elif "column_index" in score:
-                if not 0 <= score["column_index"] < len(table.header):
-                    raise score_configuration_error(
-                        resource.resource_id, score["id"],
-                        f"states column_index {score['column_index']}, "
-                        f"but the table has {len(table.header)} columns "
-                        f"(indexed from 0).")
-            else:
-                raise score_configuration_error(
-                    resource.resource_id, score["id"],
-                    "states neither a column_name nor a column_index; a "
-                    "score over a table with a header has to say which "
-                    "column it reads.")
+                raise refuse(
+                    f"states column_name '{score['column_name']}', but "
+                    f"the table's header_mode is 'none', so it has no "
+                    f"column names; address the score by column_index.")
+            continue
+
+        if "column_name" in score:
+            if score["column_name"] not in table.header:
+                raise refuse(
+                    f"states column_name '{score['column_name']}', which "
+                    f"the table's header does not have; its columns are: "
+                    f"{', '.join(table.header)}.")
+        elif "column_index" in score:
+            if not 0 <= score["column_index"] < len(table.header):
+                raise refuse(
+                    f"states column_index {score['column_index']}, but "
+                    f"the table has {len(table.header)} columns (indexed "
+                    f"from 0).")
+        else:
+            raise refuse(
+                "states neither a column_name nor a column_index; a score "
+                "over a table with a header has to say which column it "
+                "reads.")
 
 
 def finish_scoredefs(
