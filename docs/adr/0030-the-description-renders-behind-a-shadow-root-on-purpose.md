@@ -109,13 +109,10 @@ the monospace family for `pre` and `code`. Those live in the content-styles
 partial, which `base_styles.jinja` includes for the page and the shadow
 root's `<style>` includes for the description, so both sides read one text
 and cannot drift. Which side a rule lives on is decided by its *selector*,
-mechanically: a rule naming only elements and pseudo-elements belongs in the
-partial, because elements are all rendered Markdown is made of; a rule naming
-a class, id or attribute addresses markup a template emits and stays with the
-page. The partial's own header states that rule and its one exception
-(`body`, which a shadow root has no element to match); this record does not
-restate the mechanism, it records why the mechanism is the right answer to
-"how does a description get the page's look" rather than removing the wall.
+mechanically; the partial's own header states that rule and its one
+exception, and this record does not restate it. What it records is why the
+partial is the right answer to "how does a description get the page's look"
+rather than removing the wall.
 
 The mechanism has been exercised twice since gain#1279 without being re-cut:
 gain#1452 added the monospace rules for `pre` and `code` to the partial and

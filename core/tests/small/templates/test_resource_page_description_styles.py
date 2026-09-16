@@ -41,9 +41,9 @@ from gain.genomic_resources.repository import GenomicResource
 
 from tests.small.templates.conftest import (
     basic_resource_described_by,
-    declared_for,
     description_shadow_root,
 )
+from tests.small.templates.page_css import declared_for
 
 
 def assert_shared_with_page(
