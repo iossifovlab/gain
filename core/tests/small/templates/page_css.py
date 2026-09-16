@@ -17,8 +17,10 @@ shared is the raw material both need:
   split and its declarations as ``(property, value)`` pairs.  A rule
   stated twice arrives twice; a selector list arrives as a list.  Folding
   later rules over earlier ones (the cascade a page's own tables resolve
-  to) or letting every rule that names a selector contribute (comparing
-  what two sheets say) is each consumer's projection, written once there.
+  to) is its one consumer's projection, written there.
+* :func:`declared_for` is the other projection, shared by the modules
+  that compare a page's sheet with its description's: every rule that
+  names a selector contributes, and the declarations come back sorted.
 
 It takes **markup**, never a bare stylesheet.  Handing raw CSS to the rule
 regex would quietly make everything between one ``}`` and the next ``{``
@@ -138,3 +140,27 @@ def declarations_in(block: str) -> list[tuple[str, str]]:
         )
         if property_.strip()
     ]
+
+
+def declared_for(markup: str, selector: str) -> list[str]:
+    """Return what ``markup``'s first ``<style>`` declares for ``selector``.
+
+    Rules are matched on the selector appearing in the rule's selector
+    *list*, so ``td, th { ... }`` answers for ``td`` and for ``th`` alike,
+    and every rule that names it contributes.  Compound selectors that
+    would also reach the element -- ``#resource-table th``,
+    ``.scrollable-table-container td`` -- are deliberately left out: what
+    is compared is the rule a bare element gets on each side of the shadow
+    boundary, not the full cascade any one element resolves to.
+
+    Declarations come back as ``property: value`` strings, sorted, because
+    this is used to compare two sheets and neither the order rules were
+    written in nor the indentation they were written at is part of what a
+    reader gets.
+    """
+    return sorted(
+        f"{property_}: {value}"
+        for rule in rules_in(markup)
+        if selector in rule.selectors
+        for property_, value in rule.declarations
+    )

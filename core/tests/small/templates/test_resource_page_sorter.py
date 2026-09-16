@@ -26,16 +26,8 @@ statistics tables, in
 """
 from __future__ import annotations
 
-import pathlib
 import re
-import textwrap
 from html.parser import HTMLParser
-
-import pytest
-from gain.gene_scores.implementations.gene_scores_impl import (
-    GeneScoreImplementation,
-)
-from gain.genomic_resources.testing.builders import GeneScoreBuilder
 
 from tests.small.templates.page_css import font_faces_in
 from tests.small.templates.page_origins import (
@@ -83,22 +75,6 @@ def read_page(page: str) -> _PageReader:
     reader = _PageReader()
     reader.feed(page)
     return reader
-
-
-@pytest.fixture
-def gene_score_page(tmp_path: pathlib.Path) -> str:
-    """A resource page with no sortable table anywhere on it."""
-    resource = (
-        GeneScoreBuilder()
-        .with_score("sc984", column_name="sc")
-        .with_data(textwrap.dedent("""
-            gene sc
-            A  1.0
-            B  2.0
-        """))
-        .build_resource(tmp_path)
-    )
-    return GeneScoreImplementation(resource).get_info()
 
 
 def test_the_sorter_ships_inert_on_a_page_with_no_sortable_table(

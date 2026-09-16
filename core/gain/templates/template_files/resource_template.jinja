@@ -154,14 +154,11 @@
                 <td>
                     <div>
                         <template shadowrootmode="open">
-                            {# A shadow root on purpose (ADR 0030): a
-                               curator's own markup -- a raw `<style>`, an
-                               id -- stays local to the description, and the
-                               page's per-type layout rules stop here rather
-                               than reshaping a table they were never written
-                               for.  What the two sides share arrives through
-                               `content_styles.jinja`, included by both;
-                               its header says how the split is decided. #}
+                            {# A style boundary on purpose -- a curator's own
+                               markup stays local, and the page's per-type
+                               sheet stops here; ADR 0030 says why.  Shared
+                               rules arrive through `content_styles.jinja`,
+                               whose header says how the split is decided. #}
                              <style>
                               {% include "content_styles.jinja" %}
 
