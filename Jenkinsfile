@@ -1436,6 +1436,71 @@ pipeline {
                     }
                 }
 
+                stage('Trigger conda integration') {
+                    when { not { environment name: 'DOCS_ONLY', value: 'true' } }
+                    // Downstream gate for the gain-conda-integration job
+                    // (DSL at core/jenkins-jobs/conda_integration.groovy,
+                    // #1429). Same tier as core integration, but run
+                    // against the gain-core .conda THIS build archives
+                    // (`dist/conda/gain-core-*.conda`, in `post`), installed
+                    // from a file channel with no iossifovlab channel: a red
+                    // there that is green in gain-core-integration means
+                    // packaging or channel resolution, not code. Hence the
+                    // upstream identity pair, the same one web_e2e gets for
+                    // the wheels. `wait: false, propagate: false`: advisory
+                    // like its siblings; the release gate is #1431.
+                    steps {
+                        script {
+                            if (branchStillOnRemote()) {
+                                // gain-seed creates this job from master, so
+                                // it does not exist on the branch that
+                                // introduces it, nor on master until the
+                                // seed has run and its script is approved.
+                                // Tolerate that, the way the spliceai
+                                // trigger does -- the downstream run is
+                                // non-gating anyway. Once the job exists
+                                // this catches nothing the log does not
+                                // already show.
+                                catchError(
+                                    buildResult: 'SUCCESS',
+                                    stageResult: 'SUCCESS',
+                                    message: 'gain-conda-integration not ' +
+                                             'seeded yet',
+                                ) {
+                                    build(
+                                        job: '/gain-conda-integration',
+                                        parameters: [
+                                            string(
+                                                name: 'BRANCH_NAME',
+                                                value: env.BRANCH_NAME,
+                                            ),
+                                            string(
+                                                name: 'COMMIT_SHA',
+                                                value: env.GIT_COMMIT ?: '',
+                                            ),
+                                            string(
+                                                name: 'UPSTREAM_PROJECT',
+                                                value: env.JOB_NAME,
+                                            ),
+                                            string(
+                                                name: 'UPSTREAM_BUILD',
+                                                value: env.BUILD_NUMBER,
+                                            ),
+                                        ],
+                                        wait: false,
+                                        propagate: false,
+                                    )
+                                }
+                            } else {
+                                echo "Skipping gain-conda-integration: " +
+                                     "branch ${env.BRANCH_NAME} no longer " +
+                                     "exists on the remote — merged and " +
+                                     "deleted while this build ran (#489)."
+                            }
+                        }
+                    }
+                }
+
                 stage('Trigger spliceai integration') {
                     // Downstream gate for the gain-spliceai-integration job
                     // (DSL at spliceai_annotator/jenkins-jobs/
