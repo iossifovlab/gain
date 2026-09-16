@@ -442,10 +442,9 @@ def _refuse_overridden_type(
 
     ``resource_id`` is threaded in from
     :meth:`GenomicScore._build_scoredefs` for the refusal messages alone --
-    this one, the arity's and the undeclared id's (gain#1258, #1489) -- a parse
-    handed only a header and a config could name the field but not the
-    resource, which is not enough to find the file to edit in a repository
-    of thousands.
+    a parse handed only a header and a config could name the field but not
+    the resource, which is not enough to find the file to edit in a
+    repository of thousands.
     """
     if config_type is None or is_scalar or config_type == "str":
         return
@@ -496,11 +495,11 @@ def _refuse_undeclared_id(
 ) -> None:
     """Refuse a ``scores:`` entry whose ``id`` no ``##INFO`` line declares.
 
-    A VCF score IS its INFO key -- ``col_name``/``col_index`` are not
-    overridable, so the entry's ``id`` is the one thing that has to match
-    the header.  One that does not is a contradiction between the config
-    and the header, like the two rules above, and is refused the same way:
-    while the definitions are built, naming the resource and the score.
+    The entry's ``id`` is the one thing that has to match the header
+    (:func:`parse_vcf_scoredefs` says why), so one that does not is a
+    contradiction between the config and the header, like the two rules
+    above, and is refused the same way: while the definitions are built,
+    naming the resource and the score.
 
     It used to escape as a bare ``KeyError`` from whichever indexer reached
     it first -- pysam's header metadata in filter mode, the header-derived
