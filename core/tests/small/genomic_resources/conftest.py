@@ -23,7 +23,11 @@ from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
     FsspecRepositoryProtocol,
 )
-from gain.genomic_resources.genomic_scores import AlleleScore, PositionScore
+from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
+    PositionScore,
+    build_score_from_resource,
+)
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
@@ -767,6 +771,24 @@ def opened_allele_score(
     sees that refusal.
     """
     return AlleleScore(builder.build_resource(tmp_path)).open()
+
+
+def named_allele_score(
+    builder: VcfInfoScoreBuilder, tmp_path: pathlib.Path, resource_id: str,
+) -> AlleleScore:
+    """The allele score ``builder`` realizes as ``resource_id``, unopened.
+
+    The counterpart of :func:`opened_allele_score` for the files whose
+    refusal has to NAME the resource (gain#1258, gain#1489): those go
+    through a repository, because ``build_resource`` hands back the id
+    ``""``, which cannot show that the id reached the message.  Unopened,
+    because the refusal is raised where the score is built, and a test
+    that also opens puts the open inside its own ``raises``.
+    """
+    repo = a_grr().with_resource(resource_id, builder).build_repo(tmp_path)
+    score = build_score_from_resource(repo.get_resource(resource_id))
+    assert isinstance(score, AlleleScore)
+    return score
 
 
 def index_row(resource: GenomicResource) -> dict[str, str]:
