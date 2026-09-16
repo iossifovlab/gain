@@ -48,9 +48,11 @@ from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GenomicResource,
 )
+from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     build_filesystem_test_resource,
+    build_inmemory_test_protocol,
     build_inmemory_test_repository,
     build_inmemory_test_resource,
     convert_to_tab_separated,
@@ -394,9 +396,16 @@ def test_score_definition_list_header_tabix(tmp_path: pathlib.Path) -> None:
     assert score.get_score_value_from_record(score_line, "piscore") == 3.14
 
 
-def test_forbid_column_names_in_scores_when_no_header_configured() -> None:
-    res = build_inmemory_test_resource({
-        "genomic_resource.yaml": """
+@pytest.mark.parametrize("spelling", ["name", "column_name"])
+def test_forbid_column_names_in_scores_when_no_header_configured(
+    spelling: str,
+) -> None:
+    """A table declaring no header has no names to address a column by, so
+    a score naming one is a configuration error -- refused by name, for the
+    modern spelling as for the legacy one (gain#1498).
+    """
+    proto = build_inmemory_test_protocol({"headerless": {
+        "genomic_resource.yaml": f"""
             type: position_score
             table:
                 header_mode: none
@@ -407,16 +416,20 @@ def test_forbid_column_names_in_scores_when_no_header_configured() -> None:
                     index: 1
             scores:
             - id: c2
-              name: this_doesnt_make_sense
+              {spelling}: this_doesnt_make_sense
               type: float""",
         "data.mem": convert_to_tab_separated("""
             1   10  12  3.14
         """),
-    })
-    with pytest.raises(AssertionError) as excinfo:
-        build_score_from_resource(res).open()
-    assert str(excinfo.value) == ("Cannot configure score columns by name"
-                                  " when header_mode is 'none'!")
+    }})
+
+    with pytest.raises(MalformedResourceError, match="header_mode") as excinfo:
+        build_score_from_resource(proto.get_resource("headerless")).open()
+
+    message = str(excinfo.value)
+    assert "headerless" in message
+    assert "'c2'" in message
+    assert "this_doesnt_make_sense" in message
 
 
 def test_raise_error_when_missing_column_name_in_header() -> None:
@@ -437,7 +450,9 @@ def test_raise_error_when_missing_column_name_in_header() -> None:
             1     10  12   3.14
             """),
     })
-    with pytest.raises(AssertionError):
+    with pytest.raises(
+        MalformedResourceError, match="this_doesnt_exist_in_header",
+    ):
         build_score_from_resource(res).open()
 
 
@@ -459,7 +474,9 @@ def test_raise_error_when_missing_column_name_in_header_as_list() -> None:
             1   10  12  3.14
         """),
     })
-    with pytest.raises(AssertionError):
+    with pytest.raises(
+        MalformedResourceError, match="this_doesnt_exist_in_header",
+    ):
         build_score_from_resource(res).open()
 
 
