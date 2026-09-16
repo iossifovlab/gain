@@ -24,7 +24,8 @@ pipelineJob('gain-nightly') {
         'Cron-scheduled orchestrator that rebuilds master from ' +
         'scratch and re-runs gain-web-e2e, gain-vep-integration, ' +
         'gain-spliceai-integration and gain-python-matrix ' +
-        'unconditionally. Catches dependency drift / silently-' +
+        'unconditionally, plus gain-conda-integration once per ' +
+        'pinned Python (#1430). Catches dependency drift / silently-' +
         'stale caches on quiet days. If all of them pass, it then ' +
         'triggers gain-staging-deploy to put the image this build ' +
         'validated (pinned to the master rebuild\'s BUILD_NUMBER) ' +
