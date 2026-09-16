@@ -76,7 +76,6 @@ from gain.genomic_resources.score_def import (
     build_genomic_score_schema,
     finish_scoredefs,
     parse_scoredef_config,
-    refuse_unfoldable_histograms,
     validate_scoredefs,
 )
 from gain.genomic_resources.score_filter import (
@@ -84,7 +83,10 @@ from gain.genomic_resources.score_filter import (
     compile_score_filter,
     select_records,
 )
-from gain.genomic_resources.score_resource import ScoreResource
+from gain.genomic_resources.score_resource import (
+    ScoreResource,
+    refuse_unfoldable_histograms,
+)
 from gain.genomic_resources.vcf_scores import (
     parse_vcf_scoredefs,
 )
@@ -335,6 +337,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         else:
             scoredefs = config_scoredefs
 
+        # Refused AFTER finish_scoredefs, where an unstated ``type:``
+        # becomes ``float`` -- earlier would judge a score by a type it
+        # does not end up with -- and at the convergence of all three
+        # construction routes, so a ``scores:`` block, a VCF header and a
+        # bigWig are held to the one rule (gain#1336).
         return refuse_unfoldable_histograms(
             finish_scoredefs(scoredefs, self.DEFAULT_AGGREGATORS),
             self.resource_id)
