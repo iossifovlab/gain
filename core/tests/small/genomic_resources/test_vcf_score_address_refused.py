@@ -20,6 +20,7 @@ import pathlib
 import textwrap
 
 import pytest
+from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     build_score_from_resource,
@@ -191,3 +192,45 @@ def test_an_undeclared_id_is_refused_for_the_id_whatever_its_address_says(
         _build(tmp_path)
 
     assert "column_name" not in str(excinfo.value)
+
+
+def test_repo_repair_names_the_refused_resource_and_builds_the_rest(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Where the refusal is felt: the statistics build.
+
+    ``AssertionError`` is not in the tier ``report_resource_failure``
+    attributes to a resource, so ``repo-repair`` used to log an unexpected
+    internal error with a traceback -- and only once the score was OPENED,
+    inside a task.  Now the resource is refused before any task is planned,
+    reported by name as one attributed line, and the repository's other
+    resource -- addressed by its id -- still builds its statistics.
+    """
+    repo = tmp_path / "repo"
+    bad = _vcf_resource(repo, textwrap.dedent("""
+        scores:
+        - id: A
+          column_name: NO_SUCH_SCORE_IN_HEADER
+    """), resource_id="refused")
+    good = _vcf_resource(repo, textwrap.dedent("""
+        scores:
+        - id: A
+          column_name: A
+    """), resource_id="agreeing")
+
+    with caplog.at_level("ERROR"), pytest.raises(SystemExit):
+        cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
+
+    assert not (bad / "statistics").exists(), (
+        "the refused resource ran its statistics tasks"
+    )
+    assert (good / "statistics" / "histogram_A.json").exists(), (
+        "the valid resource lost its statistics; one refused resource must "
+        "not cost the rest of the repository its build"
+    )
+    reports = [
+        r.getMessage() for r in caplog.records
+        if "NO_SUCH_SCORE_IN_HEADER" in r.getMessage()]
+    assert len(reports) == 1, "the refusal is reported once, not per task"
+    assert "<refused>" in reports[0]
+    assert "unexpected internal error" not in caplog.text

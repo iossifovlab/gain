@@ -604,9 +604,13 @@ def parse_vcf_scoredefs(
     always come from the header side -- which is why an entry whose ``id``
     the header does not declare is a contradiction too, REFUSED by
     :func:`_refuse_undeclared_id` before anything else is asked of it
-    (gain#1489).  The third refusal, :func:`_refuse_genotype_arity`, is the
-    header's own claim rather than the config's (gain#1258).
-    ``resource_id`` is threaded in for those three messages alone.
+    (gain#1489), and why an entry that states an address OTHER than its
+    ``id`` -- a differing ``column_name:``, or any ``column_index:`` -- is
+    one as well, REFUSED next by :func:`_refuse_overridden_address`
+    (gain#1498); an address equal to the ``id`` is redundant and passes.
+    The fourth refusal, :func:`_refuse_genotype_arity`, is the header's own
+    claim rather than the config's (gain#1258).  ``resource_id`` is
+    threaded in for those four messages alone.
 
     ``merge`` decides what happens to header fields the config does not
     mention: ``False`` (the default) returns only the configured scores, so

@@ -737,7 +737,20 @@ def validate_scoredefs(
     table: GenomicPositionTable,
     resource: GenomicResource,
 ) -> None:
-    """Check each configured score against the table's header.
+    """Check each configured score's column address against the table's header.
+
+    For a TABULAR table only: a bigWig's scores are checked by
+    ``validate_bigwig_scoredefs`` and a VCF's have no column address at all
+    (each reads the INFO field named by its ``id``, and
+    ``parse_vcf_scoredefs`` refuses an address that says otherwise), so
+    :meth:`GenomicScore.open` does not send either here.  It runs at open
+    because the header is only known then.
+
+    A score is refused -- through :func:`score_configuration_error`, naming
+    the resource and the score, never by ``assert`` (a resource config is
+    data, and ``python -O`` strips an assert) -- when it names a column
+    under ``header_mode: none``, names one the header lacks, indexes past
+    the header, or states no address at all.
 
     Also rewrites the legacy ``name:``/``index:`` spellings into
     ``column_name:``/``column_index:`` IN the config it is given -- which is
@@ -746,10 +759,14 @@ def validate_scoredefs(
     """
     assert "scores" in config
     if table.header_mode == "none":
-        assert all("name" not in score
-                   for score in config["scores"]), \
-            ("Cannot configure score columns by"
-             " name when header_mode is 'none'!")
+        for score in config["scores"]:
+            stated = score.get("column_name", score.get("name"))
+            if stated is not None:
+                raise score_configuration_error(
+                    resource.resource_id, score["id"],
+                    f"states column_name '{stated}', but the table's "
+                    f"header_mode is 'none', so it has no column names; "
+                    f"address the score by column_index.")
     elif table.header is None:
         # Table has no header (e.g. BigWig); column-name references are
         # invalid, but index-based scores are fine — open() validates them.
@@ -773,13 +790,25 @@ def validate_scoredefs(
                 )
 
             if "column_name" in score:
-                assert score["column_name"] in table.header, (
-                    score, table.header)
+                if score["column_name"] not in table.header:
+                    raise score_configuration_error(
+                        resource.resource_id, score["id"],
+                        f"states column_name '{score['column_name']}', "
+                        f"which the table's header does not have; its "
+                        f"columns are: {', '.join(table.header)}.")
             elif "column_index" in score:
-                assert 0 <= score["column_index"] < len(table.header)
+                if not 0 <= score["column_index"] < len(table.header):
+                    raise score_configuration_error(
+                        resource.resource_id, score["id"],
+                        f"states column_index {score['column_index']}, "
+                        f"but the table has {len(table.header)} columns "
+                        f"(indexed from 0).")
             else:
-                raise AssertionError("Either an index or name must"
-                                     " be configured for scores!")
+                raise score_configuration_error(
+                    resource.resource_id, score["id"],
+                    "states neither a column_name nor a column_index; a "
+                    "score over a table with a header has to say which "
+                    "column it reads.")
 
 
 def finish_scoredefs(
