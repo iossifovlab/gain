@@ -202,10 +202,12 @@ pipeline {
                 axes {
                     axis {
                         name 'PY'
-                        // Same list as `pinnedPythons` in
+                        // Mirrored by `pinnedPythons` in
                         // Jenkinsfile.nightly, which pins the conda
-                        // integration runs to it (#1430). Bump both
-                        // together.
+                        // integration runs (#1430) — minus 3.14 until
+                        // bioconda ships a cp314 pybigwig (#1515); the
+                        // 3.14 cell here only passes because it builds
+                        // pyBigWig from source. Bump both together.
                         values '3.12', '3.13', '3.14'
                     }
                     axis {

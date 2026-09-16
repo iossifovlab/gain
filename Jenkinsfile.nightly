@@ -19,10 +19,11 @@
 //                                      Python 3.12/3.13/3.14 for
 //                                      core, demo_annotator,
 //                                      vep_annotator, web_api
-//   - /gain-conda-integration  (x3)  — core/tests/integration against
+//   - /gain-conda-integration  (xN)  — core/tests/integration against
 //                                      the master rebuild's archived
 //                                      gain-core .conda, one run per
-//                                      Python 3.12/3.13/3.14 pin. The
+//                                      Python pin (3.12/3.13 today;
+//                                      3.14 waits on #1515). The
 //                                      per-push run leaves Python
 //                                      unpinned (what a user's `mamba
 //                                      create` resolves to today);
@@ -214,8 +215,8 @@ pipeline {
         }
 
         stage('Run gain-conda-integration (pinned)') {
-            // Three parallel gain-conda-integration runs, one per Python
-            // pin, all against the gain-core .conda that `Rebuild master`
+            // Parallel gain-conda-integration runs, one per Python pin,
+            // all against the gain-core .conda that `Rebuild master`
             // archived (#1430). The per-push trigger in the root
             // Jenkinsfile leaves PYTHON_VERSION empty — that tests what a
             // user's `mamba create` resolves to today, which is the right
@@ -225,7 +226,7 @@ pipeline {
             // No new job: the pin is one solver constraint, which the job
             // already takes as a parameter. Each branch is wrapped in the
             // same `catchError` as the sibling stages so one red doesn't
-            // mask the other two, every failing pin is attributed in the
+            // mask the others, every failing pin is attributed in the
             // stage view, and — decided at triage — a pinned red keeps
             // `Deploy on pooh` from running, exactly as a python-matrix
             // red does. The job also posts its own alert on its own topic
@@ -233,12 +234,20 @@ pipeline {
             // the nightly alert is the one that ties the three together.
             steps {
                 script {
-                    // The pin list. Deliberately the same versions as the
+                    // The pin list. Meant to be the same versions as the
                     // `PY` axis in Jenkinsfile.python-matrix — a declarative
                     // `matrix` axis cannot be shared across pipeline
                     // scripts, so the two lists are kept in step by hand.
                     // Bump both together.
-                    List<String> pinnedPythons = ['3.12', '3.13', '3.14']
+                    //
+                    // 3.14 is deliberately absent (#1515): bioconda's
+                    // pybigwig has no cp314 build, so gain-core's conda
+                    // package cannot solve on 3.14 at all — the pin was
+                    // red at the solver, not in a test (gain-conda-
+                    // integration #7), and a red here blocks the staging
+                    // deploy below. The matrix job passes on 3.14 only
+                    // because its 3.14 cell builds pyBigWig from source.
+                    List<String> pinnedPythons = ['3.12', '3.13']
 
                     // Empty only when `Rebuild master` tripped its
                     // catchError, so no build number was captured; the job
