@@ -113,14 +113,11 @@ def resolve_aggregation_queries(
     second does.  The position kind keeps its own resolver because its
     query carries a third field, ``none_value_replacement``, that has to
     be judged between the two questions -- see that method for why the
-    two must not be merged.  The pair answered here has nowhere to put
-    that replacement, so a
-    :class:`~..aggregators.PositionScoreAggregationQuery` must not reach
-    this surface -- and it cannot: it is a SIBLING of the neutral query,
-    not a subclass, so it fails this signature under mypy, whether placed
-    in a ``list[ScoreAggregationQuery]`` or handed over as a list of its
-    own type (gain#1302).  gain#1158 refused it here at runtime while it
-    was still a subclass; that guard went with the subclassing.
+    two must not be merged.  A pair has nowhere to put that field, and
+    the signature keeps its query out: a
+    :class:`~..aggregators.PositionScoreAggregationQuery` is a sibling of
+    the neutral query, not a subclass, so it does not type-check here --
+    see :class:`~..aggregators.ScoreAggregationQuery` for why (gain#1302).
 
     Not routed through :func:`resolve_aggregator_requests`, though that
     returns exactly these pairs and already expands ``None``: it hardcodes
@@ -159,7 +156,9 @@ def score_def_for(
     The first of the two questions every aggregation request asks, and the
     one statement of the refusal when the answer is no.  Whether the
     request arrived as a bare score id, as a ``(score_id, aggregator)``
-    pair, or as a
+    pair, as a
+    :class:`~gain.genomic_resources.aggregators.ScoreAggregationQuery` or
+    as a
     :class:`~gain.genomic_resources.aggregators.PositionScoreAggregationQuery`
     changes nothing about it: the resource either defines that score or it
     does not, and the caller is told which ones it has either way.

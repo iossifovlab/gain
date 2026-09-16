@@ -269,20 +269,32 @@ def test_counter_aggregator_aggregate_method_none_input() -> None:
 
 def test_a_position_query_is_not_a_kind_neutral_score_aggregation_query(
 ) -> None:
-    # The position query asks the neutral query's two questions plus one
-    # of its own, and it is deliberately NOT a subclass (gain#1302).
-    # Substitution was the hazard: as a subclass it satisfied every
-    # ``Sequence[ScoreAggregationQuery]``, so a surface that answers
-    # ``(score_id, aggregator)`` pairs accepted it and had nowhere to put
-    # ``none_value_replacement`` -- gain#1158 had to refuse that at
-    # runtime.  As a sibling, mypy refuses both shapes on its own under
-    # this repo's ``mypy.ini``: a position query placed in a
-    # ``list[ScoreAggregationQuery]`` is ``[list-item]``, and a
-    # ``list[PositionScoreAggregationQuery]`` handed to the neutral
-    # resolver is ``[arg-type]``.  Re-introducing the base re-opens the
-    # door the type checker now keeps shut.
+    """Re-introducing the base would re-open the substitution door.
+
+    See ``ScoreAggregationQuery`` for what substitution costs (gain#1302).
+    The type checker is what keeps the door shut, and no test here runs
+    it; to re-check by hand under this repo's ``mypy.ini``, a position
+    query placed in a ``list[ScoreAggregationQuery]`` is ``[list-item]``
+    and a ``list[PositionScoreAggregationQuery]`` handed to the neutral
+    resolver is ``[arg-type]``.
+    """
     assert not issubclass(
         PositionScoreAggregationQuery, ScoreAggregationQuery)
+
+
+def test_the_position_query_opens_with_the_neutral_query_s_fields() -> None:
+    # Inheritance used to keep the two shared fields identical; as siblings
+    # only this does.  A rename or a default changed on one side passes
+    # every other test here and breaks a keyword call site of the other
+    # kind at runtime.
+    shared = [
+        (f.name, f.type, f.default) for f in fields(ScoreAggregationQuery)
+    ]
+
+    assert [
+        (f.name, f.type, f.default)
+        for f in fields(PositionScoreAggregationQuery)
+    ][:len(shared)] == shared
 
 
 def test_the_kind_neutral_query_carries_no_none_value_replacement() -> None:
