@@ -490,6 +490,44 @@ def _refuse_genotype_arity(
         f"header.")
 
 
+#: Above this many declared INFO ids the refusal reports a count, not a list.
+_LISTED_INFO_IDS = 10
+
+
+def _refuse_undeclared_id(
+    resource_id: str, score_id: str, vcf_header_info: dict[str, Any],
+) -> None:
+    """Refuse a ``scores:`` entry whose ``id`` no ``##INFO`` line declares.
+
+    A VCF score IS its INFO key -- ``col_name``/``col_index`` are not
+    overridable, so the entry's ``id`` is the one thing that has to match
+    the header.  One that does not is a contradiction between the config
+    and the header, like the two rules below, and is refused the same way:
+    while the definitions are built, naming the resource and the score.
+
+    It used to escape as a bare ``KeyError`` from whichever indexer reached
+    it first -- pysam's header metadata in filter mode, the header-derived
+    definitions in merge mode -- and ``KeyError`` is not a fault
+    ``report_resource_failure`` attributes to a resource, so ``repo-repair``
+    printed an unexpected internal error with a traceback (gain#1489).
+
+    The message lists what the header DOES declare when that is short
+    enough to read a typo off, and counts it otherwise.
+    """
+    if score_id in vcf_header_info:
+        return
+    declared = list(vcf_header_info)
+    if len(declared) <= _LISTED_INFO_IDS:
+        header_has = f"declares: {', '.join(declared)}"
+    else:
+        header_has = f"declares {len(declared)} INFO fields"
+    raise score_configuration_error(
+        resource_id, score_id,
+        f"names no ##INFO field of the VCF header, which {header_has}. "
+        f"A VCF score's 'id' is its INFO key; fix the 'scores:' entry or "
+        f"the header.")
+
+
 def parse_vcf_scoredefs(
     vcf_header_info: dict[str, Any] | None,
     config_scoredefs: dict[str, GenomicScoreDef] | None, *,
@@ -535,10 +573,12 @@ def parse_vcf_scoredefs(
     a joined field declaring ``int`` aborted its own statistics build in
     ``np.isnan`` (gain#1259).  An entry stating such a type is REFUSED by
     :func:`_refuse_overridden_type` -- it contradicts the header, and
-    gain#1336 raises rather than discarding it.  ``resource_id`` is threaded
-    in for that message alone.  Column addressing is NOT overridable --
-    a VCF score is its INFO key, so ``col_name``/``col_index`` always come from
-    the header side.
+    gain#1336 raises rather than discarding it.  Column addressing is NOT
+    overridable -- a VCF score is its INFO key, so ``col_name``/``col_index``
+    always come from the header side -- which is why an entry whose ``id``
+    the header does not declare is a contradiction too, REFUSED by
+    :func:`_refuse_undeclared_id` before anything else is asked of it
+    (gain#1489).  ``resource_id`` is threaded in for those messages alone.
 
     ``merge`` decides what happens to header fields the config does not
     mention: ``False`` (the default) returns only the configured scores, so
@@ -583,6 +623,14 @@ def parse_vcf_scoredefs(
             large_values_desc=None,
             hist_conf=None,
         )
+    # A configured id the header does not declare is refused before either
+    # loop below indexes the header by it: neither the arity nor the type
+    # can be asked of a field that is not there, and both indexers raised a
+    # bare KeyError naming neither the resource nor the block (gain#1489).
+    if config_scoredefs is not None:
+        for score in config_scoredefs:
+            _refuse_undeclared_id(resource_id, score, vcf_header_info)
+
     # Every field that becomes a definition -- all of them with no config or
     # a merging one, else the ones the config names -- is checked here,
     # before the override loop, so the arity refusal precedes the type

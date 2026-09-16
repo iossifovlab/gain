@@ -1984,16 +1984,14 @@ def test_vcf_info_score_amendment_renders_under_the_declared_score(
         "chr1", 10, "A", "T") == {"AF": 0.25}
 
 
-@pytest.mark.parametrize("score_id, value_type, refusal", [
-    # An entry naming no ``##INFO`` field.
-    pytest.param("NOT_IN_HEADER", None, LookupError, id="unknown-field"),
+@pytest.mark.parametrize("score_id, value_type", [
+    # An entry naming no ``##INFO`` field (gain#1489).
+    pytest.param("NOT_IN_HEADER", None, id="unknown-field"),
     # A joined field claiming a type the join cannot produce (gain#1336).
-    pytest.param("MANY", "int", MalformedResourceError,
-                 id="contradicting-type"),
+    pytest.param("MANY", "int", id="contradicting-type"),
 ])
 def test_vcf_info_score_leaves_a_contradicting_entry_to_the_resource(
     tmp_path: pathlib.Path, score_id: str, value_type: str | None,
-    refusal: type[Exception],
 ) -> None:
     # The builder renders what it is asked for and validates nothing against
     # the VCF text: these shapes are authored on purpose to watch the
@@ -2001,7 +1999,7 @@ def test_vcf_info_score_leaves_a_contradicting_entry_to_the_resource(
     resource = (
         _INFO_SHAPES.with_score(score_id, value_type).build_resource(tmp_path))
 
-    with pytest.raises(refusal, match=score_id):
+    with pytest.raises(MalformedResourceError, match=score_id):
         AlleleScore(resource).open()
 
 
