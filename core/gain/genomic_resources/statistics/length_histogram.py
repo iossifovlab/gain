@@ -28,7 +28,7 @@ from typing import IO, Any, TypeGuard
 import numpy as np
 
 from gain.genomic_resources.statistics.chart_style import (
-    HISTOGRAM_LABELS_FONT_SIZE,
+    CHART_LABEL_FONT_SIZE,
 )
 
 # Fixed log2 bins: bin ``i`` holds lengths in ``[2**i, 2**(i + 1))``, and
@@ -181,11 +181,11 @@ def plot_length_histogram(
     labels = [_bin_edge_label(2 ** tick) for tick in ticks[:-1]]
     labels.append(f"≥{_bin_edge_label(2 ** last)}")
     axes.set_xticks(ticks)
-    axes.set_xticklabels(labels, fontsize=HISTOGRAM_LABELS_FONT_SIZE)
-    axes.tick_params(axis="y", labelsize=HISTOGRAM_LABELS_FONT_SIZE)
+    axes.set_xticklabels(labels, fontsize=CHART_LABEL_FONT_SIZE)
+    axes.tick_params(axis="y", labelsize=CHART_LABEL_FONT_SIZE)
     axes.set_xlabel(
-        f"{item} length (bp)", fontsize=HISTOGRAM_LABELS_FONT_SIZE)
-    axes.set_ylabel(f"{item}s", fontsize=HISTOGRAM_LABELS_FONT_SIZE)
+        f"{item} length (bp)", fontsize=CHART_LABEL_FONT_SIZE)
+    axes.set_ylabel(f"{item}s", fontsize=CHART_LABEL_FONT_SIZE)
     # Counts span orders of magnitude on genome-scale scores, so the
     # axis is logarithmic.  Plain log, not symlog: nothing on a counts
     # axis lies between zero and one, and symlog spends a whole decade
