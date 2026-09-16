@@ -14,18 +14,23 @@
 // asserts `gain` imports from the conda prefix at the artefact's version
 // before pytest starts. See core/conda-integration/.
 //
-// Advisory: a red posts the Zulip alert and blocks nothing. The release
-// gate (#1431) and the nightly Python matrix (#1430) are separate slices;
-// PYTHON_VERSION is plumbed here for the latter and left empty per push.
+// Advisory per push: a red posts the Zulip alert and blocks nothing
+// there, and PYTHON_VERSION is left empty so the solve tests what a
+// user's `mamba create` resolves to today. Jenkinsfile.nightly runs this
+// job three more times against the master rebuild, pinned to each Python
+// of its `pinnedPythons` list (#1430) -- a red there gates the nightly's
+// staging deploy like every other nightly downstream. The release gate
+// (#1431) is a separate slice.
 //
 // Expected Jenkins job setup:
 //   - Script path: core/Jenkinsfile.conda-integration
 //   - Job DSL: core/jenkins-jobs/conda_integration.groovy (pipelineJob
 //     'gain-conda-integration'), seeded by gain-seed.
 //   - Triggered downstream from iossifovlab/gain/<branch> on every branch
-//     (see the 'Trigger conda integration' stage in the root Jenkinsfile),
-//     and safe to run manually (defaults: master, artefact from the last
-//     successful build of iossifovlab/gain/<BRANCH_NAME>).
+//     (see the 'Trigger conda integration' stage in the root Jenkinsfile)
+//     and from Jenkinsfile.nightly's pinned fan-out; safe to run manually
+//     (defaults: master, artefact from the last successful build of
+//     iossifovlab/gain/<BRANCH_NAME>, unpinned).
 
 // Zulip failure alert (seqpipe/infra#105). Builds that pass say nothing.
 //
@@ -174,13 +179,19 @@ pipeline {
             steps {
                 script {
                     // Replace the default '#42' with '#42 <branch>' (plus
-                    // '@<short-sha>' on manual COMMIT_SHA pins) so the build
-                    // list makes it obvious which branch a build is for. Set
-                    // before any stage that can fail so the label is visible
-                    // even on early aborts.
+                    // '@<short-sha>' on manual COMMIT_SHA pins, plus
+                    // 'py3.13' when the solve is pinned) so the build list
+                    // makes it obvious which branch -- and, for the
+                    // nightly's fan-out (#1430), which Python -- a build is
+                    // for; the job's own Zulip alert carries the same name.
+                    // Set before any stage that can fail so the label is
+                    // visible even on early aborts.
                     String label = params.BRANCH_NAME
                     if (params.COMMIT_SHA?.trim()) {
                         label += " @ ${params.COMMIT_SHA.take(7)}"
+                    }
+                    if (params.PYTHON_VERSION?.trim()) {
+                        label += " py${params.PYTHON_VERSION.trim()}"
                     }
                     currentBuild.displayName = \
                         "#${env.BUILD_NUMBER} ${label}"

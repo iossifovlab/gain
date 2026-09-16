@@ -202,6 +202,10 @@ pipeline {
                 axes {
                     axis {
                         name 'PY'
+                        // Same list as `pinnedPythons` in
+                        // Jenkinsfile.nightly, which pins the conda
+                        // integration runs to it (#1430). Bump both
+                        // together.
                         values '3.12', '3.13', '3.14'
                     }
                     axis {
