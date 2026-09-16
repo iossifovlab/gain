@@ -1762,6 +1762,19 @@ VCF field and equally a plain table score declaring ``type: str``. Give
 such a score ``histogram: {type: categorical}``, or no ``histogram:`` at
 all and let GAIn pick the default for its type.
 
+A ``scores:`` entry whose ``id`` matches no ``##INFO`` line is a
+configuration error too: a VCF score *is* its ``INFO`` key, and the entry
+cannot address a column by any other name. GAIn refuses the resource where
+the definitions are built -- ahead of the other checks on this list, since
+none of them can be asked of a field the header does not have -- and lists what
+the header does declare, so a typo reads off the line:
+
+.. code-block:: text
+
+    Invalid configuration: <resource id>: score 'NOPE' names no ##INFO
+    field of the VCF header, which declares: A, B, C. A VCF score's 'id'
+    is its INFO key; fix the 'scores:' entry or the header.
+
 A field declared with the genotype arity ``Number=G`` cannot be a score at
 all: pysam does not read a per-genotype ``INFO`` field, so any row carrying
 one would fail the read. GAIn refuses the resource when the field would

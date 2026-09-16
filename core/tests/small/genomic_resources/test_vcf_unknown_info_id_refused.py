@@ -105,10 +105,11 @@ def test_an_entry_naming_no_info_field_is_refused_by_name(
 def test_merging_the_header_in_does_not_excuse_the_entry(
     tmp_path: pathlib.Path,
 ) -> None:
-    """``merge_vcf_scores: true`` changes which indexer used to raise -- the
-    override loop rather than the arity loop -- not whether the entry is
-    wrong: the block is an override of header fields, and there is no
-    ``NOPE`` to override.
+    """``merge_vcf_scores: true`` turns the block from a filter into an
+    override of header fields, and there is no ``NOPE`` to override: the
+    entry is as wrong as in filter mode, and the refusal has to be the
+    same one.  A check that ran only on the filter path would let this
+    resource through to the override loop and its own bare ``KeyError``.
     """
     _vcf_resource(tmp_path, "merge_vcf_scores: true\n" + _NAMING_NOPE)
 
