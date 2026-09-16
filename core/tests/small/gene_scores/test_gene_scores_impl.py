@@ -486,193 +486,6 @@ def test_calc_histogram_number_over_a_boolean_column(
     assert histogram.bars[1] == 2, "True folds as 1"
 
 
-_TEXT_GENE_SCORE_RESOURCE_ID = "genes/text"
-
-
-def _a_str_gene_score_under_a_number_histogram(
-    tmp_path: pathlib.Path,
-    histogram: dict | None = None,
-) -> GenomicResource:
-    """A ``type: str`` gene score whose config asks for a number histogram.
-
-    Text values, so nothing about the column is numeric: the auto-ranging
-    min/max pass is what used to die over it (gain#1308).
-    """
-    builder = (
-        a_gene_score()
-        .with_score("s", "str")
-        .with_histogram(
-            histogram or {"type": "number", "number_of_bins": 4})
-        .with_data(textwrap.dedent("""
-            gene  s
-            g1    A
-            g2    B
-            g3    C
-        """))
-    )
-    return (
-        a_grr()
-        .with_resource(_TEXT_GENE_SCORE_RESOURCE_ID, builder)
-        .build_repo(tmp_path)
-        .get_resource(_TEXT_GENE_SCORE_RESOURCE_ID)
-    )
-
-
-@pytest.mark.parametrize(
-    "histogram",
-    [
-        {"type": "number", "number_of_bins": 4},
-        {"type": "number", "number_of_bins": 4,
-         "view_range": {"min": 0.0, "max": 10.0}},
-    ],
-    ids=["auto-ranged", "view-range"],
-)
-def test_a_number_histogram_over_a_str_gene_score_is_refused_at_construction(
-    tmp_path: pathlib.Path, histogram: dict,
-) -> None:
-    """The pairing is a configuration error, named, and raised on load.
-
-    gain#1308: a gene score auto-ranges a number histogram in its
-    constructor, by running min/max over the pandas column before the
-    definition exists.  Over text that died in the ``float()`` wrapper --
-    ``could not convert string to float: 'A'`` -- naming neither the
-    resource nor the score, and since it fired at CONSTRUCTION every
-    consumer died the same way: annotation, ``GeneScoresDb``, the info
-    page and the statistics build.
-
-    gain#1336 settled what this pairing IS for a genomic score: a config
-    stating something the score cannot do, refused where the score is
-    built, naming the resource and the score.  A gene score is held to the
-    same rule, so what it raises is that error, not the anonymous one.
-
-    Over both histogram shapes because ONE rule decides them.  Only the
-    auto-ranged shape ever ran the min/max pass and so only it died on
-    load; the ``view_range`` one loaded and was nullified later by the
-    per-value catch in the statistics build, with the raw histogram
-    message.  Refusing both at construction makes what a reader is told
-    independent of whether a range happened to be configured.
-    """
-    res = _a_str_gene_score_under_a_number_histogram(tmp_path, histogram)
-
-    with pytest.raises(MalformedResourceError) as excinfo:
-        build_gene_score_from_resource(res)
-
-    message = str(excinfo.value)
-    assert _TEXT_GENE_SCORE_RESOURCE_ID in message
-    assert "'s'" in message
-    assert "could not convert string to float" not in message, (
-        "the auto-ranging min/max pass ran over the text column; the "
-        "refusal has to fire before it, so the anonymous ValueError "
-        "never surfaces"
-    )
-
-
-def test_a_gene_score_and_a_genomic_score_refuse_the_pairing_alike(
-    tmp_path: pathlib.Path,
-) -> None:
-    """One rule, so one wording: the families differ only in the address.
-
-    The refusal is a fact about a score DEFINITION -- its value type and
-    the histogram configured over it -- and both families build theirs on
-    the same ``ScoreDef`` base, so the gene score calls the rule the
-    genomic score already had rather than restating it.  A second copy
-    would drift: a widening of the accepted types, or a reworded remedy,
-    made in one place and not the other.  So the two messages have to be
-    the same sentence once the resource id is stripped from each, and
-    that is what a copy could not keep true by accident.
-    """
-    gene_res = _a_str_gene_score_under_a_number_histogram(tmp_path)
-    genomic_res = (
-        a_grr()
-        .with_resource(
-            "scores/text",
-            a_position_score()
-            .with_score("s", "str")
-            .with_histogram({"type": "number", "number_of_bins": 4})
-            .with_data(textwrap.dedent("""
-                chrom  pos_begin  s
-                1      10         A
-                1      11         B
-            """)),
-        )
-        .build_repo(tmp_path)
-        .get_resource("scores/text")
-    )
-
-    with pytest.raises(MalformedResourceError) as gene_excinfo:
-        build_gene_score_from_resource(gene_res)
-    with pytest.raises(MalformedResourceError) as genomic_excinfo:
-        build_score_from_resource(genomic_res)
-
-    def without_address(excinfo: pytest.ExceptionInfo, res_id: str) -> str:
-        return str(excinfo.value).replace(res_id, "<resource>")
-
-    gene_message = without_address(gene_excinfo, gene_res.resource_id)
-    genomic_message = without_address(
-        genomic_excinfo, genomic_res.resource_id)
-    assert "a number histogram cannot accumulate" in gene_message
-    assert gene_message == genomic_message, (
-        "the two families phrase the same refusal differently; the rule "
-        "is one function on the shared ScoreDef base, not a copy per family"
-    )
-
-
-def test_repo_repair_names_the_refused_score_and_builds_the_rest(
-    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
-) -> None:
-    """What the build log says is the refusal, not the symptom.
-
-    ``repo-repair`` already held a failing gene score to its own resource
-    -- it skipped that one's statistics, built the sound one and exited
-    non-zero -- but the line it wrote was the symptom, ``could not convert
-    string to float: 'A'``: the resource named by the wrapper around it,
-    the score by nothing, the remedy by nothing.  The refusal reaching
-    that line, once, with the score and the remedy in it, is what an
-    author running the build actually reads; the other assertions say the
-    run kept the shape it had.
-    """
-    _a_str_gene_score_under_a_number_histogram(tmp_path)
-    sound = (
-        a_gene_score()
-        .with_score("s", "float")
-        .with_histogram({"type": "number", "number_of_bins": 4})
-        .with_data(textwrap.dedent("""
-            gene  s
-            g1    1.0
-            g2    2.0
-            g3    3.0
-        """))
-    )
-    a_grr().with_resource("genes/sound", sound).build_repo(tmp_path)
-
-    with caplog.at_level("ERROR"), pytest.raises(SystemExit):
-        cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
-
-    skipped = [
-        record.getMessage() for record in caplog.records
-        if "skipping statistics for <genes/text>" in record.getMessage()
-    ]
-    assert len(skipped) == 1, skipped
-    assert "score 's'" in skipped[0]
-    assert "a number histogram cannot accumulate" in skipped[0]
-    assert "could not convert string to float" not in skipped[0], (
-        "the build log carries the min/max pass's symptom rather than "
-        "the refusal; the author is told what broke, not what to change"
-    )
-
-    repo = build_filesystem_test_repository(tmp_path)
-    assert not repo.get_resource("genes/text").file_exists(
-        "statistics/histogram_s.json"), (
-        "the refused resource built a histogram; its config states a "
-        "pairing no value of it can feed and must not build"
-    )
-    assert repo.get_resource("genes/sound").file_exists(
-        "statistics/histogram_s.json"), (
-        "the sound resource lost its histogram; one resource's refused "
-        "config must not cost the rest of the repository its build"
-    )
-
-
 def test_calc_histogram_categorical() -> None:
     repo = build_inmemory_test_repository({
         "CatScore": {
@@ -814,6 +627,199 @@ def test_string_categorical_writes_json_and_png(
     assert hist_json["config"]["type"] == "categorical"
     assert (stats / "histogram_gs_cat.png").exists()
     assert (stats / "histogram_gs_cat.png").stat().st_size > 0
+
+
+# ---------------------------------------------------------------------------
+# A number histogram over a non-numeric score is refused at construction
+# (gain#1308) -- the construction and repo-repair seams
+# ---------------------------------------------------------------------------
+
+_TEXT_GENE_SCORE_RESOURCE_ID = "genes/text"
+
+
+def _a_str_gene_score_under_a_number_histogram(
+    tmp_path: pathlib.Path,
+    histogram: dict | None = None,
+) -> GenomicResource:
+    """A ``type: str`` gene score whose config asks for a number histogram.
+
+    Text values, so nothing about the column is numeric: the auto-ranging
+    min/max pass is what used to die over it (gain#1308).
+    """
+    builder = (
+        a_gene_score()
+        .with_score("s", "str")
+        .with_histogram(
+            histogram or {"type": "number", "number_of_bins": 4})
+        .with_data(textwrap.dedent("""
+            gene  s
+            g1    A
+            g2    B
+            g3    C
+        """))
+    )
+    return (
+        a_grr()
+        .with_resource(_TEXT_GENE_SCORE_RESOURCE_ID, builder)
+        .build_repo(tmp_path)
+        .get_resource(_TEXT_GENE_SCORE_RESOURCE_ID)
+    )
+
+
+@pytest.mark.parametrize(
+    "histogram",
+    [
+        {"type": "number", "number_of_bins": 4},
+        {"type": "number", "number_of_bins": 4,
+         "view_range": {"min": 0.0, "max": 10.0}},
+    ],
+    ids=["auto-ranged", "view-range"],
+)
+def test_a_number_histogram_over_a_str_gene_score_is_refused_at_construction(
+    tmp_path: pathlib.Path, histogram: dict,
+) -> None:
+    """The pairing is a configuration error, named, and raised on load.
+
+    gain#1308: a gene score auto-ranges a number histogram in its
+    constructor, by running min/max over the pandas column before the
+    definition exists.  Over text that died in the ``float()`` wrapper --
+    ``could not convert string to float: 'A'`` -- naming neither the
+    resource nor the score, and since it fired at CONSTRUCTION every
+    consumer died the same way: annotation, ``GeneScoresDb``, the info
+    page and the statistics build.
+
+    gain#1336 settled what this pairing IS for a genomic score: a config
+    stating something the score cannot do, refused where the score is
+    built, naming the resource and the score.  A gene score is held to the
+    same rule, so what it raises is that error, not the anonymous one.
+
+    Over both histogram shapes because ONE rule decides them.  Only the
+    auto-ranged shape ever ran the min/max pass and so only it died on
+    load; the ``view_range`` one loaded and was nullified later by the
+    per-value catch in the statistics build, with the raw histogram
+    message.  Refusing both at construction makes what a reader is told
+    independent of whether a range happened to be configured.
+    """
+    res = _a_str_gene_score_under_a_number_histogram(tmp_path, histogram)
+
+    with pytest.raises(MalformedResourceError) as excinfo:
+        build_gene_score_from_resource(res)
+
+    message = str(excinfo.value)
+    assert _TEXT_GENE_SCORE_RESOURCE_ID in message
+    assert "'s'" in message
+    assert "could not convert string to float" not in message, (
+        "the auto-ranging min/max pass ran over the text column; the "
+        "refusal has to fire before it, so the anonymous ValueError "
+        "never surfaces"
+    )
+
+
+def test_a_gene_score_and_a_genomic_score_refuse_the_pairing_alike(
+    tmp_path: pathlib.Path,
+) -> None:
+    """One rule, so one wording: the families differ only in the address.
+
+    The refusal is a fact about a score DEFINITION -- its value type and
+    the histogram configured over it -- and both families build theirs on
+    the same ``ScoreDef`` base, so the gene score calls the rule the
+    genomic score already had rather than restating it.  A second copy
+    would drift: a widening of the accepted types, or a reworded remedy,
+    made in one place and not the other.  So the two messages have to be
+    the same sentence once the resource id is stripped from each.  (That
+    pins the wording; that the accepted types are one list is what the
+    two families' ``bool`` tests pin, going red together.)
+    """
+    gene_res = _a_str_gene_score_under_a_number_histogram(tmp_path)
+    genomic_res = (
+        a_grr()
+        .with_resource(
+            "scores/text",
+            a_position_score()
+            .with_score("s", "str")
+            .with_histogram({"type": "number", "number_of_bins": 4})
+            .with_data(textwrap.dedent("""
+                chrom  pos_begin  s
+                1      10         A
+                1      11         B
+            """)),
+        )
+        .build_repo(tmp_path)
+        .get_resource("scores/text")
+    )
+
+    with pytest.raises(MalformedResourceError) as gene_excinfo:
+        build_gene_score_from_resource(gene_res)
+    with pytest.raises(MalformedResourceError) as genomic_excinfo:
+        build_score_from_resource(genomic_res)
+
+    def without_address(excinfo: pytest.ExceptionInfo, res_id: str) -> str:
+        return str(excinfo.value).replace(res_id, "<resource>")
+
+    gene_message = without_address(gene_excinfo, gene_res.resource_id)
+    genomic_message = without_address(
+        genomic_excinfo, genomic_res.resource_id)
+    assert "a number histogram cannot accumulate" in gene_message
+    assert gene_message == genomic_message, (
+        "the two families phrase the same refusal differently; the rule "
+        "is one function on the shared ScoreDef base, not a copy per family"
+    )
+
+
+def test_repo_repair_names_the_refused_score_and_builds_the_rest(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """What the build log says is the refusal, not the symptom.
+
+    ``repo-repair`` already held a failing gene score to its own resource
+    -- it skipped that one's statistics, built the sound one and exited
+    non-zero -- but the line it wrote was the symptom, ``could not convert
+    string to float: 'A'``: the resource named by the wrapper around it,
+    the score by nothing, the remedy by nothing.  The refusal reaching
+    that line, once, with the score and the remedy in it, is what an
+    author running the build actually reads; the other assertions say the
+    run kept the shape it had.
+    """
+    _a_str_gene_score_under_a_number_histogram(tmp_path)
+    sound = (
+        a_gene_score()
+        .with_score("s", "float")
+        .with_histogram({"type": "number", "number_of_bins": 4})
+        .with_data(textwrap.dedent("""
+            gene  s
+            g1    1.0
+            g2    2.0
+            g3    3.0
+        """))
+    )
+    a_grr().with_resource("genes/sound", sound).build_repo(tmp_path)
+
+    with caplog.at_level("ERROR"), pytest.raises(SystemExit):
+        cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
+
+    skipped = [
+        record.getMessage() for record in caplog.records
+        if "skipping statistics for <genes/text>" in record.getMessage()
+    ]
+    assert len(skipped) == 1, skipped
+    assert "score 's'" in skipped[0]
+    assert "a number histogram cannot accumulate" in skipped[0]
+    assert "could not convert string to float" not in skipped[0], (
+        "the build log carries the min/max pass's symptom rather than "
+        "the refusal; the author is told what broke, not what to change"
+    )
+
+    repo = build_filesystem_test_repository(tmp_path)
+    assert not repo.get_resource("genes/text").file_exists(
+        "statistics/histogram_s.json"), (
+        "the refused resource built a histogram; its config states a "
+        "pairing no value of it can feed and must not build"
+    )
+    assert repo.get_resource("genes/sound").file_exists(
+        "statistics/histogram_s.json"), (
+        "the sound resource lost its histogram; one resource's refused "
+        "config must not cost the rest of the repository its build"
+    )
 
 
 # ---------------------------------------------------------------------------
