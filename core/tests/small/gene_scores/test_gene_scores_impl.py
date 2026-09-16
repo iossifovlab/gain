@@ -515,8 +515,17 @@ def _a_str_gene_score_under_a_number_histogram(
     )
 
 
+@pytest.mark.parametrize(
+    "histogram",
+    [
+        {"type": "number", "number_of_bins": 4},
+        {"type": "number", "number_of_bins": 4,
+         "view_range": {"min": 0.0, "max": 10.0}},
+    ],
+    ids=["auto-ranged", "view-range"],
+)
 def test_a_number_histogram_over_a_str_gene_score_is_refused_at_construction(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, histogram: dict,
 ) -> None:
     """The pairing is a configuration error, named, and raised on load.
 
@@ -532,8 +541,15 @@ def test_a_number_histogram_over_a_str_gene_score_is_refused_at_construction(
     stating something the score cannot do, refused where the score is
     built, naming the resource and the score.  A gene score is held to the
     same rule, so what it raises is that error, not the anonymous one.
+
+    Over both histogram shapes because ONE rule decides them.  Only the
+    auto-ranged shape ever ran the min/max pass and so only it died on
+    load; the ``view_range`` one loaded and was nullified later by the
+    per-value catch in the statistics build, with the raw histogram
+    message.  Refusing both at construction makes what a reader is told
+    independent of whether a range happened to be configured.
     """
-    res = _a_str_gene_score_under_a_number_histogram(tmp_path)
+    res = _a_str_gene_score_under_a_number_histogram(tmp_path, histogram)
 
     with pytest.raises(MalformedResourceError) as excinfo:
         build_gene_score_from_resource(res)
