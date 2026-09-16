@@ -853,8 +853,10 @@ def refuse_unfoldable_histograms[ScoreDefT: ScoreDef](
     held to it as well (gain#1308): ``GeneScore`` calls it once its
     definitions are built and BEFORE it auto-ranges any number histogram
     over the pandas column, which is what lets that min/max pass assume a
-    numeric column rather than die in ``float()`` over text with neither
-    the resource nor the score named.
+    numerically DECLARED score rather than die in ``float()`` over text
+    with neither the resource nor the score named.  (A numeric declaration
+    over a column that turns out to be text is a fact about the data, not
+    the config, and still dies there.)
 
     **Why here, for a genomic score.**  It runs after
     :func:`finish_scoredefs`, which is where an unstated ``type:`` becomes
@@ -869,12 +871,14 @@ def refuse_unfoldable_histograms[ScoreDefT: ScoreDef](
     never unpacks score definitions, so a check living there tells an
     annotation run nothing.
 
-    Only an EXPLICIT config reaches this.  A score with no ``histogram:``
-    carries ``hist_conf=None`` here and is skipped: the default for its
-    type is chosen later, by ``build_default_histogram_conf`` where the
-    statistics build unpacks the definitions, and that never answers a
-    non-numeric type with a number histogram.  So the refusal cannot fire
-    on a resource that configured nothing.
+    The refusal cannot fire on a resource that configured nothing.  A
+    genomic score with no ``histogram:`` carries ``hist_conf=None`` here
+    and is skipped: the default for its type is chosen later, by
+    ``build_default_histogram_conf`` where the statistics build unpacks
+    the definitions.  A gene score fills that same default BEFORE calling
+    this, so its definition always arrives with a concrete config -- and
+    the default never answers a non-numeric type with a number histogram,
+    so it passes.
 
     A CATEGORICAL histogram over a number is deliberately NOT refused: it
     folds one value at a time and nullifies just that score, which is a
