@@ -222,6 +222,21 @@ def test_a_pair_names_the_aggregator_and_passes_through(
     ) == [("s", "max"), ("t", "mean")]
 
 
+def test_a_query_list_resolves_to_the_same_pairs(
+    score_definitions: dict[str, GenomicScoreDef],
+) -> None:
+    # The query surface of the pair surface above: what the fragment and
+    # allele folding reads hand in, answered as pairs in the order asked,
+    # a named aggregator kept and an unset one filled from the score's
+    # own default.
+    assert resolve_aggregation_queries(
+        [ScoreAggregationQuery("t", "max"), ScoreAggregationQuery("s")],
+        score_definitions=score_definitions,
+        all_scores=["s", "t"],
+        resource_id="two",
+    ) == [("t", "max"), ("s", "mean")]
+
+
 def test_no_request_list_asks_for_every_score(
     score_definitions: dict[str, GenomicScoreDef],
 ) -> None:
@@ -488,31 +503,6 @@ def test_each_aggregation_refusal_is_written_in_exactly_one_place() -> None:
             if (count := path.read_text().count(rule))
         )
         assert sites == [f"{_STATED_IN}:1"], (rule, sites)
-
-
-# -- The kind-neutral resolver answers the neutral query ------------------
-#
-# A position query is kept off this surface by the type checker, not by a
-# test: ``PositionScoreAggregationQuery`` is a sibling of the neutral query
-# and does not satisfy ``Sequence[ScoreAggregationQuery]`` (gain#1302; the
-# pin and the mypy error codes are in test_aggregators).  What can be
-# pinned at runtime is the half that says the ordinary query resolves.
-
-
-def test_the_neutral_query_the_two_folding_reads_send_resolves(
-    score_definitions: dict[str, GenomicScoreDef],
-) -> None:
-    """What the fragment and allele reads hand in comes back as pairs.
-
-    Named aggregator kept, unset one filled from the score's own default,
-    in the order asked.
-    """
-    assert resolve_aggregation_queries(
-        [ScoreAggregationQuery("t", "max"), ScoreAggregationQuery("s")],
-        score_definitions=score_definitions,
-        all_scores=["s", "t"],
-        resource_id="two",
-    ) == [("t", "max"), ("s", "mean")]
 
 
 # -- Resolving a query without reading, and without building (gain#1131) ---

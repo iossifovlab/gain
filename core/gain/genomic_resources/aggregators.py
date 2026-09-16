@@ -735,10 +735,9 @@ class ScoreAggregationQuery:
 class PositionScoreAggregationQuery:
     """The same request over a position score's expansion (gain#727).
 
-    Asks :class:`ScoreAggregationQuery`'s two questions -- which score, and
-    reduced how, ``aggregator`` of ``None`` resolving to the score's own
-    default -- plus the one part of a position score's request that no
-    other kind can ask.  ``none_value_replacement`` substitutes for every
+    Asks :class:`ScoreAggregationQuery`'s two questions, plus the one part
+    of a position score's request that no other kind can ask.
+    ``none_value_replacement`` substitutes for every
     null the per-position expansion holds -- uncovered and covered-but-NA
     alike -- before the aggregator sees it; unset, nulls stay inert for
     every aggregator, all of which already skip ``None``.
@@ -751,13 +750,11 @@ class PositionScoreAggregationQuery:
     covered-but-NA half of the field would ever apply to it.  That is why
     it lives here and not on the neutral query.
 
-    Deliberately NOT a subclass of :class:`ScoreAggregationQuery`, and the
-    two shared fields are repeated rather than inherited, so that a
-    position query does not type-check where a neutral one is expected --
-    see that class for what substitution would cost (gain#1302).  The
-    field order is the one the flat dataclass had (``score``,
-    ``aggregator``, ``none_value_replacement``), so every positional call
-    site keeps its meaning.
+    A sibling of :class:`ScoreAggregationQuery`, not a subclass -- see
+    that class for why (gain#1302).  The two shared fields are repeated
+    in its order, so the three land as the flat dataclass had them
+    (``score``, ``aggregator``, ``none_value_replacement``) and every
+    positional call site keeps its meaning.
     """
 
     score: str
