@@ -13,10 +13,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
-from gain.genomic_resources.aggregators import (
-    PositionScoreAggregationQuery,
-    ScoreAggregationQuery,
-)
+from gain.genomic_resources.aggregators import ScoreAggregationQuery
 from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_scores import (
     FragmentAggregate,
@@ -616,8 +613,6 @@ def test_a_query_list_given_as_an_iterator_is_remembered_whole(
      "score 'nope' is not defined by resource"),
     (ScoreAggregationQuery("flag"), ValueError,
      "score 'flag' of resource '.*' has no default aggregator"),
-    (PositionScoreAggregationQuery("v", "max", 0.0), TypeError,
-     "nowhere to put its none_value_replacement"),
 ])
 def test_a_query_list_that_was_refused_is_refused_again(
     tmp_path: pathlib.Path,
@@ -627,9 +622,7 @@ def test_a_query_list_that_was_refused_is_refused_again(
 ) -> None:
     # Only a RESOLVED list is remembered; a refusal is answered every time
     # it is asked, with the same words -- whichever of the two questions
-    # (which score, what reduces it) the list fails, and equally when the
-    # list is refused for its query CLASS rather than its contents
-    # (gain#1158), which the memo must not remember either.
+    # (which score, what reduces it) the list fails.
     fragments = FragmentScore(
         a_fragment_score()
         .with_score("v", "float")

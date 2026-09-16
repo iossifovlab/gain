@@ -267,31 +267,41 @@ def test_counter_aggregator_aggregate_method_none_input() -> None:
 # the score classes' own suites.
 
 
-def test_a_position_query_is_a_kind_neutral_score_aggregation_query() -> None:
-    # A reader should not have to infer the relationship from three
-    # overlapping fields: asking to reduce a score with an aggregator is
-    # the general request, and the position query IS one.
-    query = PositionScoreAggregationQuery("s", "max", 0.0)
-
-    assert isinstance(query, ScoreAggregationQuery)
-    assert (query.score, query.aggregator) == ("s", "max")
+def test_a_position_query_is_not_a_kind_neutral_score_aggregation_query(
+) -> None:
+    # The position query asks the neutral query's two questions plus one
+    # of its own, and it is deliberately NOT a subclass (gain#1302).
+    # Substitution was the hazard: as a subclass it satisfied every
+    # ``Sequence[ScoreAggregationQuery]``, so a surface that answers
+    # ``(score_id, aggregator)`` pairs accepted it and had nowhere to put
+    # ``none_value_replacement`` -- gain#1158 had to refuse that at
+    # runtime.  As a sibling, mypy refuses both shapes on its own under
+    # this repo's ``mypy.ini``: a position query placed in a
+    # ``list[ScoreAggregationQuery]`` is ``[list-item]``, and a
+    # ``list[PositionScoreAggregationQuery]`` handed to the neutral
+    # resolver is ``[arg-type]``.  Re-introducing the base re-opens the
+    # door the type checker now keeps shut.
+    assert not issubclass(
+        PositionScoreAggregationQuery, ScoreAggregationQuery)
 
 
 def test_the_kind_neutral_query_carries_no_none_value_replacement() -> None:
-    # Hoisting the field onto the base would break no call site and pass
-    # every other test here, while quietly undoing the split: a fragment
-    # or allele request would carry a field that can only speak for an
-    # uncovered position, which neither kind has.
+    # Hoisting the field onto the neutral query would break no call site
+    # and pass every other test here, while quietly undoing the split: a
+    # fragment or allele request would carry a field that can only speak
+    # for an uncovered position, which neither kind has.
     assert [f.name for f in fields(ScoreAggregationQuery)] == [
         "score", "aggregator",
     ]
 
 
 def test_the_position_query_still_binds_three_positional_arguments() -> None:
-    # The whole reason splitting a base type out needed no migration: the
-    # subclass's own field lands third, exactly where it was on the flat
-    # dataclass, so every positional call site keeps its meaning.  If this
-    # breaks, callers do not fail -- they silently bind the wrong field.
+    # The whole reason splitting the neutral type out needed no migration,
+    # and unpicking the subclassing (gain#1302) needed none either: the
+    # position query's own field lands third, exactly where it was on the
+    # flat dataclass, so every positional call site keeps its meaning.  If
+    # this breaks, callers do not fail -- they silently bind the wrong
+    # field.
     query = PositionScoreAggregationQuery("s", "max", 0.0)
 
     assert (

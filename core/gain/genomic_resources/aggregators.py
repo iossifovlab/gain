@@ -708,8 +708,23 @@ class ScoreAggregationQuery:
     It deliberately carries no ``none_value_replacement``.  That field
     speaks for a locus NO record covers, which only a kind that reads a
     value at every position of a region even has -- see
-    :class:`PositionScoreAggregationQuery`, which adds it.  Keeping it off
-    the base is what makes the base kind-neutral at all.
+    :class:`PositionScoreAggregationQuery`, which carries it.  Keeping it
+    off the neutral query is what makes the neutral query kind-neutral at
+    all.
+
+    :class:`PositionScoreAggregationQuery` is a SIBLING of this class, not
+    a subclass, though it asks these same two questions and repeats these
+    two fields (gain#1302).  A subclass would substitute for this one
+    everywhere -- every ``Sequence[ScoreAggregationQuery]`` would accept
+    a position query -- and the surfaces typed that way answer
+    ``(score_id, aggregator)`` PAIRS, which have nowhere to put a
+    replacement: the field would drop, invisibly, because the pair that
+    comes back is exactly the one a caller who never asked for a
+    replacement would get.  gain#1121 made it a subclass for what the
+    hierarchy states, and gain#1158 then had to close that door at
+    runtime.  As a sibling, mypy closes it: a position query in a
+    ``list[ScoreAggregationQuery]`` is a type error, and so is handing a
+    ``list[PositionScoreAggregationQuery]`` to a neutral resolver.
     """
 
     score: str
@@ -717,14 +732,16 @@ class ScoreAggregationQuery:
 
 
 @dataclass(frozen=True)
-class PositionScoreAggregationQuery(ScoreAggregationQuery):
+class PositionScoreAggregationQuery:
     """The same request over a position score's expansion (gain#727).
 
-    Adds the one part of a position score's request that no other kind
-    can ask.  ``none_value_replacement`` substitutes for every null the
-    per-position expansion holds -- uncovered and covered-but-NA alike --
-    before the aggregator sees it; unset, nulls stay inert for every
-    aggregator, all of which already skip ``None``.
+    Asks :class:`ScoreAggregationQuery`'s two questions -- which score, and
+    reduced how, ``aggregator`` of ``None`` resolving to the score's own
+    default -- plus the one part of a position score's request that no
+    other kind can ask.  ``none_value_replacement`` substitutes for every
+    null the per-position expansion holds -- uncovered and covered-but-NA
+    alike -- before the aggregator sees it; unset, nulls stay inert for
+    every aggregator, all of which already skip ``None``.
 
     A position score answers with a value at every position of the
     queried region, so a position no record covers is still a position,
@@ -732,13 +749,19 @@ class PositionScoreAggregationQuery(ScoreAggregationQuery):
     A kind whose records are either in the result or not -- a fragment, an
     allele -- has no such position to speak for, and only the
     covered-but-NA half of the field would ever apply to it.  That is why
-    it lives here and not on the base.
+    it lives here and not on the neutral query.
 
-    Declaring only this field preserves the field order the flat dataclass
-    had (``score``, ``aggregator``, ``none_value_replacement``), so every
-    positional call site keeps its meaning.
+    Deliberately NOT a subclass of :class:`ScoreAggregationQuery`, and the
+    two shared fields are repeated rather than inherited, so that a
+    position query does not type-check where a neutral one is expected --
+    see that class for what substitution would cost (gain#1302).  The
+    field order is the one the flat dataclass had (``score``,
+    ``aggregator``, ``none_value_replacement``), so every positional call
+    site keeps its meaning.
     """
 
+    score: str
+    aggregator: str | None = None
     none_value_replacement: ScoreValue | None = None
 
 
