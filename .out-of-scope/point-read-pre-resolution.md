@@ -1,4 +1,4 @@
-# The point read resolves its score definitions on every call
+# A score read resolves its request on every call
 
 `PositionScore.get_scores_at_position` resolves the ids it is asked for
 through `_resolve_score_defs` on each call, and it stays that way. There
@@ -6,6 +6,15 @@ is no "definitions already resolved" entry on the score, and the
 annotator's substitution branch keeps reading through the documented
 point read rather than through `fetch_records` +
 `get_score_values_from_record` with a list it resolved at construction.
+
+The same holds for the three aggregating reads --
+`PositionScore.get_scores_in_region_agg`,
+`AlleleScore.get_allele_scores_in_region_agg` and
+`FragmentScore.get_fragment_scores_overlapping_region_agg`. Each takes
+the UNRESOLVED query list and resolves it inside the call; no resolved
+request crosses the seam, and an annotator that resolves its constant
+list at pipeline load does so for the refusal alone and throws the
+answer away. See "The aggregating reads" below (gain#1300).
 
 (The point read was `fetch_position_scores` when this was written;
 gain#1268 removed it and made `get_scores_at_position` the only one. The
@@ -66,6 +75,52 @@ the declared API surface (`test_score_resource_api.py` pins it) whose only
 caller would be one annotator branch, for a saving no benchmark against a
 real table can see.
 
+## The aggregating reads
+
+gain#1300 (split out of gain#1158) asked the same question of the three
+folding reads: should a RESOLVED request be able to cross the seam, so
+that `PositionScoreAnnotator`, `AlleleScoreAnnotator` and
+`FragmentScoreAnnotator` -- each with one query list fixed for the life
+of the annotator -- resolve it once at pipeline load and hand the result
+to the read? If yes, `FragmentScore`'s per-instance query memo
+(`_resolve_fragment_aggregation_queries`, its `_RESOLVED_QUERIES_BOUND`
+and the three tests pinning the memo's mechanics) would go with it.
+
+No, for the reasons above, and the measurement the issue asked for
+confirms it is the same saving at the same size.
+
+What a resolved request could save is the bare NAME resolution -- the
+`score_def_for` / `resolve_aggregator_name` walk. It cannot save building
+the accumulators: those are mutable, so the read builds them fresh per
+call whatever the seam carries, and on the position kind that build is
+most of what `_resolve_aggregation_queries` costs.
+
+| Read, `max` on every score       | N   | Bare resolution | Whole read | Share |
+| -------------------------------- | --- | --------------- | ---------- | ----- |
+| Fragment, in-memory, 20 rows     | 5   | 2.7 µs          | 58 µs      | ~4.7% |
+| Fragment, in-memory, 20 rows     | 20  | 8.7 µs          | 202 µs     | ~4.3% |
+| Fragment, memo hit (as shipped)  | 20  | 2.7 µs          | 202 µs     | ~1.3% |
+| Position, in-memory, 20 rows     | 20  | 5.5 µs          | 186 µs     | ~3.0% |
+| Allele, in-memory, 20 rows       | 20  | 5.6 µs          | 166 µs     | ~3.4% |
+| Fragment, tabix, 200 rows        | 20  | 7.6 µs          | 258 µs     | ~3.0% |
+| Position, tabix, 200 rows        | 20  | 5.9 µs          | 278 µs     | ~2.1% |
+| Allele, tabix, 200 rows          | 20  | 5.6 µs          | 246 µs     | ~2.3% |
+
+(Measured 2026-09-16 at gain `ef302691a`, `timeit` min-of-7 over 2000
+calls, a 200 bp region, `float` scores built with the testing builders
+and `.with_tabix()` for the tabix rows.) The tabix rows are a 200-row
+local file; a GRR table is block-gunzipped per seek and usually remote,
+so the read there is milliseconds and the share drops under 1%. The
+fragment memo already takes its kind from ~4.5% to ~1.3% on the fixture,
+which is what the issue itself suspected: the remaining win is a tuple
+construction and an `lru_cache` lookup, 1-3 µs per annotator call.
+
+Against that, a resolved request crossing the seam is a second public
+input type on three reads whose contract is "the request is checked when
+this is called", and it moves the thread-safety rule -- fresh state per
+call -- from the read, where it is stated once, into every caller that
+opts in. The memo stays as the fragment kind's own, with its bound.
+
 ## What is still in scope
 
 **A real per-variant cost.** The refusal is of *this* saving at *this*
@@ -83,3 +138,5 @@ tests fast, not to stand in for a GRR.
 
 - iossifovlab/gain#1193 -- "Position annotator point read: resolve the
   score definitions once, not per call"
+- iossifovlab/gain#1300 -- "Should a resolved aggregation request cross
+  the read seam, superseding the fragment query memo?"
