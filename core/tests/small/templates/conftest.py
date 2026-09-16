@@ -58,10 +58,14 @@ def description_shadow_root(page: str) -> str:
     Addressed from the ``Description`` header cell rather than by index
     among the page's ``<template>`` elements, so that adding a shadow
     root elsewhere on the page cannot silently redirect these assertions
-    at someone else's markup.
+    at someone else's markup.  Its absence is named rather than left to
+    ``str.index``: the boundary is deliberate (ADR 0030), so a consumer
+    that cannot find it should say so, not report a broken lookup.
     """
     start = page.index("<th>Description</th>")
-    opening = page.index('<template shadowrootmode="open">', start)
+    opening = page.find('<template shadowrootmode="open">', start)
+    assert opening != -1, \
+        "no declarative shadow root after the Description cell (ADR 0030)"
     return page[opening:page.index("</template>", opening)]
 
 

@@ -1,12 +1,15 @@
 # 30. The resource page's description renders behind a shadow root, on purpose
 
-**Status:** accepted
-**Date:** 2026-09-16
-**Issues:** gain#1321 (this record); gain#1279 (the drift that raised the
-question); gain#1452, gain#1289 (the seam's first two test cases after
-gain#1279)
-**Related:** [0016](0016-grr-content-is-trusted-by-authorship.md), which is
-why the boundary below is *not* a security boundary
+- **Status:** accepted
+- **Date:** 2026-09-16
+- **Issues:** [gain#1321](https://github.com/iossifovlab/gain/issues/1321)
+  (this record); [gain#1279](https://github.com/iossifovlab/gain/issues/1279)
+  (the drift that raised the question);
+  [gain#1452](https://github.com/iossifovlab/gain/issues/1452) and
+  [gain#1289](https://github.com/iossifovlab/gain/issues/1289) (the seam's
+  first two test cases after gain#1279)
+- **Related:** [ADR 0016](0016-grr-content-is-trusted-by-authorship.md), which
+  is why the boundary below is *not* a security boundary
 
 ## Context
 
@@ -38,8 +41,9 @@ strong. Measured on a rendered gene-score page at triage:
   reach a description rendered in the light DOM: `#resource-table th
   { text-align: end; width: 100px }`, because a description's table headers
   are descendants of `#resource-table`. One more would reach it harmlessly —
-  the zero-specificity `:where(.page-content) img { max-width: 100% }` floor,
-  which the description's own stricter cap outranks. Everything else either
+  the `:where(.page-content) img { max-width: 100% }` floor, whose `:where()`
+  contributes nothing to specificity, so it ties the description's own bare
+  `img` cap and loses to it on source order. Everything else either
   names a class, id or attribute a description never carries, or is a bare
   element rule the description wants anyway. The four sheets added after
   gain#1279 (breadcrumb, copy button, two font faces — gain#1400, gain#1477)
@@ -90,8 +94,9 @@ Two per-type sheets — the gene score's and the genomic score's — set a bare
 tables, which have many columns of similar width. It is wrong for the
 two-column category table a curator writes into a description, which reads
 better sized by its content; gain#1279 looked at exactly this case on the
-SFARI pages and judged forcing equal columns on it worse than leaving it
-alone. The boundary is what lets a per-type sheet be written as a bare
+SFARI pages and judged the mismatch acceptable — forcing equal columns on
+that table being arguably the worse result — rather than a defect to fix.
+The boundary is what lets a per-type sheet be written as a bare
 element rule and still stop at the page's own markup. Without it every such
 rule would need scoping to the page's tables, by every author of every future
 per-type sheet, forever.
@@ -160,10 +165,18 @@ needs:
   th` is the standing example. That convenience is a debt against the
   boundary: whoever removes the boundary later inherits the scoping.
 * **The description is the only shadow root on a resource page**, and
-  `test_resource_page_shadow_root` names the decision when it goes missing.
-  A second one needs a reason of its own, written down.
+  `test_resource_page_shadow_root` names the decision when it goes missing
+  and counts the page's shadow roots to one. A second one needs a reason of
+  its own, written down.
 
-The cost this record carries forward: two `<style>` elements per page instead
+The cost this record carries forward. Two `<style>` elements per page instead
 of one, and a seam a newcomer has to learn — the page's look does not simply
-apply to the description, it is *shared into* it through the partial. The
-partial's header and the comment at the shadow root both point here.
+apply to the description, it is *shared into* it through the partial. And
+the flip side of the scripts not reaching in by mistake: they do not reach in
+on purpose either. The sortable-table script's `querySelectorAll("table")`,
+the modal image zoom and the copy handler all stop at the boundary, so a
+figure in a description gets the `img` cap and no zoom, and a description
+table gets no sorter however its headers are marked. That is accepted here,
+not overlooked; a description that needs page behaviour is the case that
+would reopen this record. The partial's header and the comment at the shadow
+root both point here.

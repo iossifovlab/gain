@@ -19,6 +19,7 @@ from __future__ import annotations
 import pathlib
 import textwrap
 
+import pytest
 from gain.gene_scores.implementations.gene_scores_impl import (
     GeneScoreImplementation,
 )
@@ -92,20 +93,14 @@ def test_the_summary_cell_renders_its_text_in_the_page_with_no_shadow_root(
         "the Summary cell is wrapped in a shadow root it has no use for"
 
 
-def test_a_pages_per_type_layout_rule_stops_at_the_description(
-    tmp_path: pathlib.Path,
-) -> None:
-    """What the boundary is kept for: page layout does not reach content.
+@pytest.fixture
+def gene_score_page(tmp_path: pathlib.Path) -> str:
+    """A gene-score page whose description carries a two-column table.
 
-    The gene-score sheet lays the page's own tables out ``fixed`` -- right
-    for a score table with many equal columns, wrong for the two-column
-    table a curator writes into a description, which reads better sized
-    by its content (gain#1279).  Both sides are asserted: the page's rule
-    is really there, so the description's lack of it is the boundary
-    holding and not the rule having gone.
-
-    Mutation-proved: including the per-type sheet inside the shadow root's
-    ``<style>`` turns this red.
+    A gene score rather than a basic resource because its per-type sheet
+    is one of the two that lay tables out ``fixed``, and because its page
+    carries a content block of its own below the resource table -- the
+    richest page a description shares with.
     """
     resource = (
         a_gene_score()
@@ -124,12 +119,46 @@ def test_a_pages_per_type_layout_rule_stops_at_the_description(
             """))
         .build_resource(tmp_path)
     )
-    page = GeneScoreImplementation(resource).get_info()
-    shadow_root = description_shadow_root(page)
+    return GeneScoreImplementation(resource).get_info()
+
+
+def test_a_pages_per_type_layout_rule_stops_at_the_description(
+    gene_score_page: str,
+) -> None:
+    """What the boundary is kept for: page layout does not reach content.
+
+    The gene-score sheet lays the page's own tables out ``fixed`` -- right
+    for a score table with many equal columns, wrong for the two-column
+    table a curator writes into a description, which reads better sized
+    by its content (gain#1279).  Both sides are asserted: the page's rule
+    is really there, so the description's lack of it is the boundary
+    holding and not the rule having gone.
+
+    Mutation-proved: including the per-type sheet inside the shadow root's
+    ``<style>`` turns this red.
+    """
+    shadow_root = description_shadow_root(gene_score_page)
     assert "<td>high confidence</td>" in shadow_root
 
-    assert "table-layout: fixed" in declared_for(page, "table")
+    assert "table-layout: fixed" in declared_for(gene_score_page, "table")
     assert not [
         d for d in declared_for(shadow_root, "table")
         if d.startswith("table-layout")
     ], "the page's per-type table layout reached the description"
+
+
+def test_the_description_is_the_only_shadow_root_on_the_page(
+    gene_score_page: str,
+) -> None:
+    """One boundary, with one reason written down.
+
+    A second shadow root anywhere on the page -- a content block, a
+    statistics partial -- would need a reason of its own (ADR 0030), and
+    would silently re-raise the question this one answers.  Counted on
+    the gene-score page rather than a basic one because it is the page
+    with the most markup of its own below the resource table.
+    """
+    assert "<td>high confidence</td>" in gene_score_page
+
+    assert gene_score_page.count("shadowrootmode") == 1, \
+        "a shadow root other than the description's is on the page"
