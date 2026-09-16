@@ -1961,18 +1961,18 @@ def test_vcf_info_score_with_merge_vcf_scores_turns_the_block_into_an_override(
     # field it does not name is merged back in as the header defined it.
     # The knob is a top-level resource key, a sibling of ``type:``, which
     # is where the schema declares it.
-    filtered = AlleleScore(
-        _INFO_SHAPES.with_score("AF", desc="amended")
-        .build_resource(tmp_path / "filtered")).open()
+    naming_af = _INFO_SHAPES.with_score("AF", desc="amended")
     merged_resource = (
-        _INFO_SHAPES.with_score("AF", desc="amended").with_merge_vcf_scores()
-        .build_resource(tmp_path / "merged"))
+        naming_af.with_merge_vcf_scores().build_resource(tmp_path / "merged"))
+
+    filtered = AlleleScore(
+        naming_af.build_resource(tmp_path / "filtered")).open()
+    merged = AlleleScore(merged_resource).open()
 
     config = merged_resource.get_config()
     assert config is not None
     assert config["merge_vcf_scores"] is True
     assert "merge_vcf_scores" not in config["table"]
-    merged = AlleleScore(merged_resource).open()
     assert set(filtered.score_definitions) == {"AF"}
     assert set(merged.score_definitions) == {"RV", "AF", "MANY"}
     assert merged.score_definitions["AF"].desc == "amended"
