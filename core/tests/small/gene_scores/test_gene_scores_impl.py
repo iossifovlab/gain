@@ -11,6 +11,7 @@ from gain.gene_scores.gene_scores import (
 from gain.gene_scores.implementations.gene_scores_impl import (
     GeneScoreImplementation,
 )
+from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.genomic_scores import build_score_from_resource
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
@@ -613,6 +614,62 @@ def test_a_gene_score_and_a_genomic_score_refuse_the_pairing_alike(
     assert gene_message == genomic_message, (
         "the two families phrase the same refusal differently; the rule "
         "is one function on the shared ScoreDef base, not a copy per family"
+    )
+
+
+def test_repo_repair_names_the_refused_score_and_builds_the_rest(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """What the build log says is the refusal, not the symptom.
+
+    ``repo-repair`` already held a failing gene score to its own resource
+    -- it skipped that one's statistics, built the sound one and exited
+    non-zero -- but the line it wrote was the symptom, ``could not convert
+    string to float: 'A'``: the resource named by the wrapper around it,
+    the score by nothing, the remedy by nothing.  The refusal reaching
+    that line, once, with the score and the remedy in it, is what an
+    author running the build actually reads; the other assertions say the
+    run kept the shape it had.
+    """
+    _a_str_gene_score_under_a_number_histogram(tmp_path)
+    sound = (
+        a_gene_score()
+        .with_score("s", "float")
+        .with_histogram({"type": "number", "number_of_bins": 4})
+        .with_data(textwrap.dedent("""
+            gene  s
+            g1    1.0
+            g2    2.0
+            g3    3.0
+        """))
+    )
+    a_grr().with_resource("genes/sound", sound).build_repo(tmp_path)
+
+    with caplog.at_level("ERROR"), pytest.raises(SystemExit):
+        cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
+
+    skipped = [
+        record.getMessage() for record in caplog.records
+        if "skipping statistics for <genes/text>" in record.getMessage()
+    ]
+    assert len(skipped) == 1, skipped
+    assert "score 's'" in skipped[0]
+    assert "a number histogram cannot accumulate" in skipped[0]
+    assert "could not convert string to float" not in skipped[0], (
+        "the build log carries the min/max pass's symptom rather than "
+        "the refusal; the author is told what broke, not what to change"
+    )
+
+    repo = build_filesystem_test_repository(tmp_path)
+    assert not repo.get_resource("genes/text").file_exists(
+        "statistics/histogram_s.json"), (
+        "the refused resource built a histogram; its config states a "
+        "pairing no value of it can feed and must not build"
+    )
+    assert repo.get_resource("genes/sound").file_exists(
+        "statistics/histogram_s.json"), (
+        "the sound resource lost its histogram; one resource's refused "
+        "config must not cost the rest of the repository its build"
     )
 
 
