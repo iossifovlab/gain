@@ -10,4 +10,4 @@ why (gain#1486).
 """
 
 #: Label font size shared by the statistics charts.
-HISTOGRAM_LABELS_FONT_SIZE = 20
+CHART_LABEL_FONT_SIZE = 20

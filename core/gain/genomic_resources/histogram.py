@@ -27,7 +27,7 @@ from gain.genomic_resources.statistics.base_statistic import (
     non_numeric_error,
 )
 from gain.genomic_resources.statistics.chart_style import (
-    HISTOGRAM_LABELS_FONT_SIZE,
+    CHART_LABEL_FONT_SIZE,
 )
 from gain.genomic_resources.statistics.min_max import MinMaxValue
 
@@ -630,13 +630,13 @@ class NumberHistogram(Statistic):
                 wrap=True,
                 color="gray",
                 style="italic",
-                fontsize=HISTOGRAM_LABELS_FONT_SIZE,
+                fontsize=CHART_LABEL_FONT_SIZE,
             )
 
-        ax.set_xlabel(f"\n{score_id}", fontsize=HISTOGRAM_LABELS_FONT_SIZE)
+        ax.set_xlabel(f"\n{score_id}", fontsize=CHART_LABEL_FONT_SIZE)
         ax.set_ylabel(
             "count" if y_axis_label is None else y_axis_label,
-            fontsize=HISTOGRAM_LABELS_FONT_SIZE)
+            fontsize=CHART_LABEL_FONT_SIZE)
 
         ax.grid(axis="y")
         ax.grid(axis="x")
@@ -1124,13 +1124,13 @@ class CategoricalHistogram(Statistic):
                 wrap=True,
                 color="gray",
                 style="italic",
-                fontsize=HISTOGRAM_LABELS_FONT_SIZE,
+                fontsize=CHART_LABEL_FONT_SIZE,
             )
 
-        ax.set_xlabel(f"\n{score_id}", fontsize=HISTOGRAM_LABELS_FONT_SIZE)
+        ax.set_xlabel(f"\n{score_id}", fontsize=CHART_LABEL_FONT_SIZE)
         ax.set_ylabel(
             "count" if y_axis_label is None else y_axis_label,
-            fontsize=HISTOGRAM_LABELS_FONT_SIZE)
+            fontsize=CHART_LABEL_FONT_SIZE)
 
         label_angle = self.config.label_rotation % 360
         if self.config.label_rotation < 0:
@@ -1143,7 +1143,7 @@ class CategoricalHistogram(Statistic):
                 ha="center",
                 va="top",
                 rotation_mode="default",
-                fontsize=HISTOGRAM_LABELS_FONT_SIZE,
+                fontsize=CHART_LABEL_FONT_SIZE,
             )
 
         fig.savefig(outfile)

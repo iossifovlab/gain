@@ -57,7 +57,7 @@ from gain.genomic_resources.statistics.base_statistic import (
     refuse_unmergeable,
 )
 from gain.genomic_resources.statistics.chart_style import (
-    HISTOGRAM_LABELS_FONT_SIZE,
+    CHART_LABEL_FONT_SIZE,
 )
 from gain.genomic_resources.statistics.indel_lengths import (
     NO_INDELS,
@@ -1243,13 +1243,13 @@ def plot_complex_grid(
         (axes.set_yticks, axes.set_yticklabels),
     ):
         set_ticks(ticks)
-        set_labels(labels, fontsize=HISTOGRAM_LABELS_FONT_SIZE)
+        set_labels(labels, fontsize=CHART_LABEL_FONT_SIZE)
     axes.set_xlabel(
-        "alternative length (bp)", fontsize=HISTOGRAM_LABELS_FONT_SIZE)
+        "alternative length (bp)", fontsize=CHART_LABEL_FONT_SIZE)
     axes.set_ylabel(
-        "reference length (bp)", fontsize=HISTOGRAM_LABELS_FONT_SIZE)
+        "reference length (bp)", fontsize=CHART_LABEL_FONT_SIZE)
     colorbar = figure.colorbar(image, ax=axes, shrink=0.8)
-    colorbar.set_label("alleles", fontsize=HISTOGRAM_LABELS_FONT_SIZE)
+    colorbar.set_label("alleles", fontsize=CHART_LABEL_FONT_SIZE)
     figure.tight_layout()
     figure.savefig(outfile, format="png")
     plt.close(figure)
