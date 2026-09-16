@@ -521,6 +521,39 @@ def _refuse_undeclared_id(
         f"key; fix the 'scores:' entry or the header.")
 
 
+def _refuse_overridden_address(
+    resource_id: str, config_scoredef: GenomicScoreDef,
+) -> None:
+    """Refuse a ``scores:`` entry addressing a column other than its ``id``.
+
+    A VCF score has no column address to give: it reads INFO ``<id>``, and
+    :func:`parse_vcf_scoredefs` takes ``col_name``/``col_index`` from the
+    header side unconditionally.  So a ``column_name:`` (or legacy
+    ``name:``) that differs from the ``id``, or any ``column_index:``
+    (``index:``), is a line the reader would ignore while the author reads
+    it as the score's source -- a contradiction between the config and the
+    header, refused like the rules above.  An address EQUAL to the ``id`` is
+    redundant, not wrong, and is the spelling every deployed VCF resource
+    uses, so it passes.
+    """
+    score_id = config_scoredef.score_id
+    if config_scoredef.col_index is not None:
+        raise score_configuration_error(
+            resource_id, score_id,
+            f"states column_index {config_scoredef.col_index}, but a VCF "
+            f"score has no column index: it reads the INFO field named by "
+            f"its 'id', so this score reads '{score_id}'. Drop the "
+            f"'column_index:' line.")
+    col_name = config_scoredef.col_name
+    if col_name is None or col_name == score_id:
+        return
+    raise score_configuration_error(
+        resource_id, score_id,
+        f"states column_name '{col_name}', but a VCF score reads the INFO "
+        f"field named by its 'id', so this score reads '{score_id}'. Drop "
+        f"the 'column_name:' line, or make it '{score_id}'.")
+
+
 def parse_vcf_scoredefs(
     vcf_header_info: dict[str, Any] | None,
     config_scoredefs: dict[str, GenomicScoreDef] | None, *,
@@ -625,6 +658,10 @@ def parse_vcf_scoredefs(
     if config_scoredefs is not None:
         for score in config_scoredefs:
             _refuse_undeclared_id(resource_id, score, vcf_header_info)
+        # ... and only then is its column address checked: an entry whose
+        # id is not there is wrong for that first, whatever else it states.
+        for config_scoredef in config_scoredefs.values():
+            _refuse_overridden_address(resource_id, config_scoredef)
 
     # Every field that becomes a definition -- all of them with no config or
     # a merging one, else the ones the config names -- is checked here,
