@@ -87,9 +87,10 @@ def score_configuration_error(
     The sibling of :func:`overlapping_records_error` for the other half of
     what makes a resource malformed: not a record that breaks its kind's
     promise, but a definition claiming a value the score cannot hold.
-    Three rules are detected in two layers -- in the VCF header/config
-    merge, a stated ``type:`` the header contradicts and a header field
-    declared ``Number=G``, which pysam will never read (gain#1258); at the
+    Four rules are detected in two layers -- in the VCF header/config
+    merge, an entry whose ``id`` no ``##INFO`` line declares (gain#1489), a
+    stated ``type:`` the header contradicts and a header field declared
+    ``Number=G``, which pysam will never read (gain#1258); at the
     construction convergence point, a number histogram over a value type no
     number histogram accumulates -- and each phrases its own ``detail``.
     The ``Number=G`` rule is the one a ``scores:`` entry need not have
