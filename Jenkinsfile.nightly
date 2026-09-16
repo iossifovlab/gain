@@ -2,7 +2,7 @@
 // and re-runs the integration jobs unconditionally. Catches
 // dependency drift / silently-stale caches on quiet days.
 //
-// Five validation downstreams are exercised, then the validated
+// Six validation downstreams are exercised, then the validated
 // image is deployed to staging:
 //   - iossifovlab/gain/master        — full rebuild, lint+tests+
 //                                      wheels+conda+prod images
@@ -19,14 +19,24 @@
 //                                      Python 3.12/3.13/3.14 for
 //                                      core, demo_annotator,
 //                                      vep_annotator, web_api
+//   - /gain-conda-integration  (x3)  — core/tests/integration against
+//                                      the master rebuild's archived
+//                                      gain-core .conda, one run per
+//                                      Python 3.12/3.13/3.14 pin. The
+//                                      per-push run leaves Python
+//                                      unpinned (what a user's `mamba
+//                                      create` resolves to today);
+//                                      the nightly adds the pinned
+//                                      view (#1430)
 //   - /gain-staging-deploy           — deploys gainweb to pooh
 //                                      (gain.seqpipe.org) pinned to
 //                                      the master rebuild's
 //                                      BUILD_NUMBER. Gated on all of
 //                                      the above being green.
 //
-// The five validation stages are wrapped in `catchError` so a
-// failure in one doesn't mask the others. By morning we want a
+// The validation stages (and each branch of the conda fan-out) are
+// wrapped in `catchError` so a failure in one doesn't mask the
+// others. By morning we want a
 // single Zulip alert whose linked build surfaces every failing
 // downstream, not just whichever broke first. The deploy stage uses
 // a `when` gate instead: "deploy the nightly image" means *verified*
@@ -189,6 +199,8 @@ pipeline {
         }
 
         stage('Run gain-python-matrix') {
+            // Its Python axis is the same list the conda fan-out below
+            // pins to — see `pinnedPythons` there.
             steps {
                 catchError(buildResult: 'FAILURE',
                            stageResult: 'FAILURE') {
@@ -201,12 +213,88 @@ pipeline {
             }
         }
 
+        stage('Run gain-conda-integration (pinned)') {
+            // Three parallel gain-conda-integration runs, one per Python
+            // pin, all against the gain-core .conda that `Rebuild master`
+            // archived (#1430). The per-push trigger in the root
+            // Jenkinsfile leaves PYTHON_VERSION empty — that tests what a
+            // user's `mamba create` resolves to today, which is the right
+            // per-push signal but drifts silently. This is the pinned
+            // view of the same package.
+            //
+            // No new job: the pin is one solver constraint, which the job
+            // already takes as a parameter. Each branch is wrapped in the
+            // same `catchError` as the sibling stages so one red doesn't
+            // mask the other two, every failing pin is attributed in the
+            // stage view, and — decided at triage — a pinned red keeps
+            // `Deploy on pooh` from running, exactly as a python-matrix
+            // red does. The job also posts its own alert on its own topic
+            // for each red, as every nightly-triggered downstream does;
+            // the nightly alert is the one that ties the three together.
+            steps {
+                script {
+                    // The pin list. Deliberately the same versions as the
+                    // `PY` axis in Jenkinsfile.python-matrix — a declarative
+                    // `matrix` axis cannot be shared across pipeline
+                    // scripts, so the two lists are kept in step by hand.
+                    // Bump both together.
+                    List<String> pinnedPythons = ['3.12', '3.13', '3.14']
+
+                    // Empty only when `Rebuild master` tripped its
+                    // catchError, so no build number was captured; the job
+                    // then falls back to lastSuccessful(). The nightly is
+                    // already FAILURE in that case and this stage runs for
+                    // the same reason the others still do: surface every
+                    // failing downstream, not just the first. A null
+                    // parameter value would throw instead of running.
+                    String upstreamBuild = env.MASTER_REBUILD_NUMBER ?: ''
+
+                    Map<String, Closure> pins = [:]
+                    for (String py in pinnedPythons) {
+                        // Fresh binding per iteration for the closure to
+                        // capture; branch names carry the pin so the stage
+                        // view says which Python broke.
+                        String pin = py
+                        pins["conda-integration py${pin}"] = {
+                            catchError(buildResult: 'FAILURE',
+                                       stageResult: 'FAILURE') {
+                                build(
+                                    job: '/gain-conda-integration',
+                                    wait: true,
+                                    propagate: true,
+                                    parameters: [
+                                        string(
+                                            name: 'BRANCH_NAME',
+                                            value: 'master',
+                                        ),
+                                        string(
+                                            name: 'UPSTREAM_PROJECT',
+                                            value: 'iossifovlab/gain/master',
+                                        ),
+                                        string(
+                                            name: 'UPSTREAM_BUILD',
+                                            value: upstreamBuild,
+                                        ),
+                                        string(
+                                            name: 'PYTHON_VERSION',
+                                            value: pin,
+                                        ),
+                                    ],
+                                )
+                            }
+                        }
+                    }
+                    parallel(pins)
+                }
+            }
+        }
+
         stage('Deploy on pooh') {
             // Deploys the gainweb stack to pooh (gain.seqpipe.org),
             // pinned to the master rebuild's BUILD_NUMBER.
             //
             // The gate is the feature. If the e2e / vep / spliceai /
-            // python-matrix stages tripped, this is skipped and
+            // python-matrix / pinned-conda stages tripped, this is skipped and
             // staging keeps yesterday's working build — `currentResult`
             // is already FAILURE/UNSTABLE by then, because every
             // catchError above sets it. UNSTABLE counts as "not green"
