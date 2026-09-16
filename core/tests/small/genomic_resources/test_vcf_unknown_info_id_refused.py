@@ -113,12 +113,14 @@ def test_repo_repair_names_the_refused_resource_and_builds_the_rest(
     repository's other resource -- whose block names a declared field --
     still builds its statistics.
     """
+    # Realized only -- no manifests, no index -- so ``repo-repair`` starts
+    # from the raw directory it would find on a fresh checkout.
     repo = tmp_path / "repo"
     (
         a_grr()
         .with_resource("refused", _NAMING_NOPE)
         .with_resource("agreeing", _vcf().with_score("CNT"))
-        .build_repo(repo)
+        .realize_all(repo)
     )
 
     with caplog.at_level("ERROR"), pytest.raises(SystemExit):

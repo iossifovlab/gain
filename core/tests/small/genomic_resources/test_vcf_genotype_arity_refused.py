@@ -161,12 +161,14 @@ def test_repo_repair_names_the_refused_resource_and_builds_the_rest(
     repository's other resource -- whose block omits the field -- still
     builds its statistics, reading through the row that carries ``PERGT``.
     """
+    # Realized only -- no manifests, no index -- so ``repo-repair`` starts
+    # from the raw directory it would find on a fresh checkout.
     repo = tmp_path / "repo"
     (
         a_grr()
         .with_resource("refused", _vcf())
         .with_resource("agreeing", _OMITTING_PERGT)
-        .build_repo(repo)
+        .realize_all(repo)
     )
 
     with caplog.at_level("ERROR"), pytest.raises(SystemExit):
