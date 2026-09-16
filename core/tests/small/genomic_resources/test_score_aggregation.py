@@ -437,9 +437,6 @@ def test_both_surfaces_state_the_missing_default_rule_identically(
 _REFUSAL_RULES = [
     "is not defined by resource",
     "has no default aggregator",
-    # gain#1158's, just as liable to be re-inlined at whichever surface
-    # next wants to reject a position query.
-    "nowhere to put its",
 ]
 
 _STATED_IN = "aggregation.py"
@@ -493,62 +490,22 @@ def test_each_aggregation_refusal_is_written_in_exactly_one_place() -> None:
         assert sites == [f"{_STATED_IN}:1"], (rule, sites)
 
 
-# -- The kind-neutral resolver refuses a position query (gain#1158) --------
+# -- The kind-neutral resolver answers the neutral query ------------------
 #
-# ``refuse_position_query`` states the rule and the reasoning; these pin
-# what it does.  No caller ever routed a position query here, so what is
-# pinned is a closed door rather than a repaired one.
+# A position query is kept off this surface by the type checker, not by a
+# test: ``PositionScoreAggregationQuery`` is a sibling of the neutral query
+# and does not satisfy ``Sequence[ScoreAggregationQuery]`` (gain#1302; the
+# pin and the mypy error codes are in test_aggregators).  What can be
+# pinned at runtime is the half that says the ordinary query resolves.
 
 
-def test_the_kind_neutral_resolver_refuses_a_position_query(
+def test_the_neutral_query_the_two_folding_reads_send_resolves(
     score_definitions: dict[str, GenomicScoreDef],
 ) -> None:
-    with pytest.raises(TypeError) as excinfo:
-        resolve_aggregation_queries(
-            [PositionScoreAggregationQuery("s", "max", 0.0)],
-            score_definitions=score_definitions,
-            all_scores=["s", "t"],
-            resource_id="two",
-        )
+    """What the fragment and allele reads hand in comes back as pairs.
 
-    assert str(excinfo.value) == (
-        "score 's' of resource 'two' is asked for with a "
-        "PositionScoreAggregationQuery, which resolves here to a "
-        "(score_id, aggregator) pair with nowhere to put its "
-        "none_value_replacement; resolve a position score's queries with "
-        "PositionScore.resolve_aggregation_queries")
-
-
-def test_a_position_query_is_refused_for_its_class_not_its_replacement(
-    score_definitions: dict[str, GenomicScoreDef],
-) -> None:
-    """An unset ``none_value_replacement`` is refused just the same.
-
-    The case that separates this guard from the field-keyed one it could
-    have been -- the only test here that a field-keyed guard fails.
-    """
-    query = PositionScoreAggregationQuery("s", "max")
-    assert query.none_value_replacement is None
-
-    with pytest.raises(TypeError) as excinfo:
-        resolve_aggregation_queries(
-            [query],
-            score_definitions=score_definitions,
-            all_scores=["s", "t"],
-            resource_id="two",
-        )
-
-    assert "nowhere to put its" in str(excinfo.value)
-
-
-def test_the_neutral_query_the_two_folding_reads_send_still_resolves(
-    score_definitions: dict[str, GenomicScoreDef],
-) -> None:
-    """What the fragment and allele reads hand in is untouched by the guard.
-
-    The refusal sits in the loop every query walks, so this is the half
-    that says it lets the ordinary one past.  A guard widened to the
-    neutral query reddens this before it reddens the reads.
+    Named aggregator kept, unset one filled from the score's own default,
+    in the order asked.
     """
     assert resolve_aggregation_queries(
         [ScoreAggregationQuery("t", "max"), ScoreAggregationQuery("s")],
