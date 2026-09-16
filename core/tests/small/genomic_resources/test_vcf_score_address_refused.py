@@ -32,11 +32,13 @@ from gain.genomic_resources.testing import (
     setup_vcf,
 )
 
-#: Two declared scalar fields, so an address can name the OTHER one.
+#: Two declared scalar fields, so an address can name the OTHER one, and a
+#: per-genotype field for the ordering test.
 _VCF = textwrap.dedent("""
 ##fileformat=VCFv4.1
 ##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">
 ##INFO=<ID=B,Number=1,Type=Integer,Description="Score B">
+##INFO=<ID=PERGT,Number=G,Type=Integer,Description="one per genotype">
 #CHROM POS ID REF ALT QUAL FILTER INFO
 chr1 5 . A T . . A=1;B=2
 """)
@@ -114,7 +116,9 @@ def test_an_address_naming_another_declared_field_is_refused_too(
     with pytest.raises(MalformedResourceError, match="'B'") as excinfo:
         _build(tmp_path)
 
-    assert "'A'" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert _RESOURCE_ID in message
+    assert "'A'" in message
 
 
 def test_a_column_index_is_refused_because_a_vcf_field_has_none(
@@ -189,6 +193,27 @@ def test_an_undeclared_id_is_refused_for_the_id_whatever_its_address_says(
     """))
 
     with pytest.raises(MalformedResourceError, match="##INFO") as excinfo:
+        _build(tmp_path)
+
+    assert "column_name" not in str(excinfo.value)
+
+
+def test_a_per_genotype_field_is_refused_for_its_arity_whatever_its_address(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Ordering, the other side: a ``Number=G`` field is unreadable whatever
+    the entry states (gain#1258), so the arity refusal precedes the address
+    one, as it precedes the type one and for the same reason -- the address
+    message says what the score "reads instead", and this one reads nothing;
+    the edit it advises cannot make it readable.
+    """
+    _vcf_resource(tmp_path, textwrap.dedent("""
+        scores:
+        - id: PERGT
+          column_name: X
+    """))
+
+    with pytest.raises(MalformedResourceError, match="Number=G") as excinfo:
         _build(tmp_path)
 
     assert "column_name" not in str(excinfo.value)

@@ -1775,6 +1775,22 @@ the header does declare, so a typo reads off the line:
     field of the VCF header, which declares: A, B, C. A VCF score's 'id'
     is its INFO key; fix the 'scores:' entry or the header.
 
+For the same reason a ``scores:`` entry needs no ``column_name:`` at all,
+and one that states an address **other than its id** is a configuration
+error: a ``column_name:`` (or legacy ``name:``) that differs from the
+``id``, whether or not the header declares that other name, or any
+``column_index:`` (``index:``), since an ``INFO`` field is not a column.
+The reader would ignore such a line while the author reads it as the
+score's source. An address equal to the ``id`` -- ``column_name: A`` on
+``id: A``, as in the spelled-out example above -- is redundant and passes:
+
+.. code-block:: text
+
+    Invalid configuration: <resource id>: score 'A' states column_name
+    'B', but a VCF score reads the INFO field named by its 'id', so this
+    score reads 'A'. Drop the 'column_name:' (or legacy 'name:') line, or
+    make it 'A'.
+
 A field declared with the genotype arity ``Number=G`` cannot be a score at
 all: pysam does not read a per-genotype ``INFO`` field, so any row carrying
 one would fail the read. GAIn refuses the resource when the field would

@@ -543,7 +543,7 @@ def _refuse_overridden_address(
             f"states column_index {config_scoredef.col_index}, but a VCF "
             f"score has no column index: it reads the INFO field named by "
             f"its 'id', so this score reads '{score_id}'. Drop the "
-            f"'column_index:' line.")
+            f"'column_index:' (or legacy 'index:') line.")
     col_name = config_scoredef.col_name
     if col_name is None or col_name == score_id:
         return
@@ -551,7 +551,8 @@ def _refuse_overridden_address(
         resource_id, score_id,
         f"states column_name '{col_name}', but a VCF score reads the INFO "
         f"field named by its 'id', so this score reads '{score_id}'. Drop "
-        f"the 'column_name:' line, or make it '{score_id}'.")
+        f"the 'column_name:' (or legacy 'name:') line, or make it "
+        f"'{score_id}'.")
 
 
 def parse_vcf_scoredefs(
@@ -606,11 +607,13 @@ def parse_vcf_scoredefs(
     :func:`_refuse_undeclared_id` before anything else is asked of it
     (gain#1489), and why an entry that states an address OTHER than its
     ``id`` -- a differing ``column_name:``, or any ``column_index:`` -- is
-    one as well, REFUSED next by :func:`_refuse_overridden_address`
-    (gain#1498); an address equal to the ``id`` is redundant and passes.
-    The fourth refusal, :func:`_refuse_genotype_arity`, is the header's own
-    claim rather than the config's (gain#1258).  ``resource_id`` is
-    threaded in for those four messages alone.
+    one as well, REFUSED by :func:`_refuse_overridden_address` (gain#1498);
+    an address equal to the ``id`` is redundant and passes.  The fourth
+    refusal, :func:`_refuse_genotype_arity`, is the header's own claim
+    rather than the config's (gain#1258), and it runs BEFORE the two
+    config-side ones, because a per-genotype field is unreadable whatever
+    the entry states and neither of their advised edits can change that.
+    ``resource_id`` is threaded in for those four messages alone.
 
     ``merge`` decides what happens to header fields the config does not
     mention: ``False`` (the default) returns only the configured scores, so
@@ -662,16 +665,14 @@ def parse_vcf_scoredefs(
     if config_scoredefs is not None:
         for score in config_scoredefs:
             _refuse_undeclared_id(resource_id, score, vcf_header_info)
-        # ... and only then is its column address checked: an entry whose
-        # id is not there is wrong for that first, whatever else it states.
-        for config_scoredef in config_scoredefs.values():
-            _refuse_overridden_address(resource_id, config_scoredef)
 
     # Every field that becomes a definition -- all of them with no config or
     # a merging one, else the ones the config names -- is checked here,
-    # before the override loop, so the arity refusal precedes the type
-    # refusal: a per-genotype field is unreadable whatever the entry states,
-    # and "state 'type: str'" is an edit that cannot make it readable.
+    # before the override loop, so the arity refusal precedes both of the
+    # config-side refusals in it, the address and the type: a per-genotype
+    # field is unreadable whatever the entry states, and "state 'type:
+    # str'" or "make the address the id" are edits that cannot make it
+    # readable.
     defined = (
         vcf_scoredefs if config_scoredefs is None or merge
         else config_scoredefs)
@@ -685,6 +686,10 @@ def parse_vcf_scoredefs(
     scoredefs = {}
     for score, config_scoredef in config_scoredefs.items():
         vcf_scoredef = vcf_scoredefs[score]
+        # The entry's id is in the header and its field is readable; what
+        # is left to refuse is what the entry itself claims, address first
+        # (a wrong address is wrong whatever type is stated), then type.
+        _refuse_overridden_address(resource_id, config_scoredef)
 
         # ONE rule for both, which is why neither is a ``config.x or vcf.x``
         # (a ``None`` on either side means "nothing to parse", not
