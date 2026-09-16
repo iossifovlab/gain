@@ -1792,10 +1792,14 @@ does an entry naming it, or ``merge_vcf_scores: true`` -- and names it:
 A ``scores:`` block that leaves the field out reads the rest of the file as
 usual, whatever the rows carry for it.
 
-These errors are raised for the **genomic** score types described in this
-section -- ``position_score``, ``np_score``, ``allele_score`` and
-``fragment_score``. A ``gene_score`` builds its definitions on its own
-path and reports a mismatched histogram differently.
+The two header rules -- a stated ``type:`` the ``##INFO`` line contradicts,
+and a ``Number=G`` field -- are about a VCF and so reach only the
+**genomic** score types described in this section: ``position_score``,
+``np_score``, ``allele_score`` and ``fragment_score``. The number-histogram
+rule is about a score's declared ``type:`` alone, so it reaches a
+``gene_score`` as well: a gene score pairing ``type: str`` with
+``histogram: {type: number}`` fails to build with the same error, naming
+the resource and the score, whether or not a ``view_range`` is given.
 
 
 
