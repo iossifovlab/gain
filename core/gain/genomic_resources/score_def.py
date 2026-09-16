@@ -837,9 +837,9 @@ def finish_scoredefs(
     return score_defs
 
 
-def refuse_unfoldable_histograms(
-    score_defs: dict[str, GenomicScoreDef], resource_id: str,
-) -> dict[str, GenomicScoreDef]:
+def refuse_unfoldable_histograms[ScoreDefT: ScoreDef](
+    score_defs: dict[str, ScoreDefT], resource_id: str,
+) -> dict[str, ScoreDefT]:
     """Refuse a configured NUMBER histogram no value of the score can feed.
 
     A ``histogram: {type: number}`` over a score whose value type is not one
@@ -848,12 +848,21 @@ def refuse_unfoldable_histograms(
     is a config stating something the score cannot do, so gain#1336 raises
     on it rather than working around it.
 
-    **Why here.**  It runs after :func:`finish_scoredefs`, which is where an
-    unstated ``type:`` becomes ``float`` -- checking before that would judge
-    a score by a type it does not end up with.  And it runs at the
-    convergence point of all three construction routes, so the ``scores:``
-    block, a VCF header and a bigWig are all held to it; a check on one
-    route only is the same bug in a new place.
+    **One rule for both score families.**  It reads only the ``value_type``
+    and ``hist_conf`` every :class:`ScoreDef` carries, so a gene score is
+    held to it as well (gain#1308): ``GeneScore`` calls it once its
+    definitions are built and BEFORE it auto-ranges any number histogram
+    over the pandas column, which is what lets that min/max pass assume a
+    numeric column rather than die in ``float()`` over text with neither
+    the resource nor the score named.
+
+    **Why here, for a genomic score.**  It runs after
+    :func:`finish_scoredefs`, which is where an unstated ``type:`` becomes
+    ``float`` -- checking before that would judge a score by a type it does
+    not end up with.  And it runs at the convergence point of all three
+    construction routes, so the ``scores:`` block, a VCF header and a
+    bigWig are all held to it; a check on one route only is the same bug
+    in a new place.
 
     Raising at CONSTRUCTION rather than where the statistics build reads
     the configs is what makes the refusal reach every consumer: annotation
