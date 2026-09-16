@@ -27,14 +27,19 @@ from typing import Any
 from urllib.parse import quote
 
 from gain.genomic_resources.histogram import (
+    NUMBER_HISTOGRAM_VALUE_TYPES,
     Histogram,
     HistogramConfig,
     NumberHistogram,
+    NumberHistogramConfig,
     load_histogram,
     truncated_histogram_filename,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.resource_errors import HistogramError
+from gain.genomic_resources.resource_errors import (
+    HistogramError,
+    score_configuration_error,
+)
 from gain.genomic_resources.resource_implementation import (
     ResourceConfigValidationMixin,
 )
@@ -59,6 +64,47 @@ class ScoreDef:
     large_values_desc: str | None
 
     hist_conf: HistogramConfig | None
+
+
+def refuse_unfoldable_histograms[ScoreDefT: ScoreDef](
+    score_defs: dict[str, ScoreDefT], resource_id: str,
+) -> dict[str, ScoreDefT]:
+    """Refuse a configured NUMBER histogram no value of the score can feed.
+
+    A ``histogram: {type: number}`` over a score whose value type is not one
+    a number histogram accumulates
+    (:data:`~gain.genomic_resources.histogram.NUMBER_HISTOGRAM_VALUE_TYPES`)
+    is a config stating something the score cannot do, so gain#1336 raises
+    on it rather than working around it, naming the resource and the score.
+
+    It is a fact about a score DEFINITION -- the ``value_type`` and
+    ``hist_conf`` every :class:`ScoreDef` carries -- so it lives here, on
+    the base both families share, and each family calls it once at its
+    own construction point (gain#1308): the caller decides *when* (after
+    the value type is final, before anything reads the column), and says
+    why there.  Raising at CONSTRUCTION rather than where the statistics
+    build reads the configs is what makes the refusal reach every
+    consumer: annotation never unpacks score definitions.
+
+    Two things it does not refuse.  A definition with ``hist_conf=None``
+    is skipped -- the default chosen for its type later never pairs a
+    non-numeric type with a number histogram.  And a CATEGORICAL histogram
+    over a number is deliberately let through: it folds one value at a
+    time and nullifies just that score, which is a fact about a value
+    rather than about the config.
+    """
+    for score_id, score_def in score_defs.items():
+        if not isinstance(score_def.hist_conf, NumberHistogramConfig):
+            continue
+        if score_def.value_type in NUMBER_HISTOGRAM_VALUE_TYPES:
+            continue
+        raise score_configuration_error(
+            resource_id, score_id,
+            f"has value type {score_def.value_type!r}, which a number "
+            f"histogram cannot accumulate; give the score a categorical "
+            f"histogram ('histogram: {{type: categorical}}') or no "
+            f"histogram at all")
+    return score_defs
 
 
 class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):

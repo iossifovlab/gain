@@ -26,8 +26,11 @@ from gain.genomic_resources.repository_factory import (
 from gain.genomic_resources.resource_implementation import (
     get_base_resource_schema,
 )
-from gain.genomic_resources.score_def import refuse_unfoldable_histograms
-from gain.genomic_resources.score_resource import ScoreDef, ScoreResource
+from gain.genomic_resources.score_resource import (
+    ScoreDef,
+    ScoreResource,
+    refuse_unfoldable_histograms,
+)
 from gain.templates import get_template
 
 logger = logging.getLogger(__name__)

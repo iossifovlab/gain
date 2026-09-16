@@ -840,7 +840,7 @@ def can_bulk_histogram(
 
     A number histogram over a ``str`` score never reaches either path: such
     a config is refused when the score is CONSTRUCTED
-    (:func:`~gain.genomic_resources.score_def.refuse_unfoldable_histograms`),
+    (:func:`~gain.genomic_resources.score_resource.refuse_unfoldable_histograms`),
     so no definition carrying it survives to be scanned.  The condition
     stays stated here because it is this gate's own -- the batch shapes it
     admits are not a consequence of that refusal, and a ``bool`` score
@@ -879,7 +879,7 @@ def can_bulk_min_max(
     A str score is never SCHEDULED for a min/max pass at all: the only
     thing that schedules one is a number histogram without a view range,
     and a score construction carrying that pairing raises
-    (:func:`~gain.genomic_resources.score_def.refuse_unfoldable_histograms`),
+    (:func:`~gain.genomic_resources.score_resource.refuse_unfoldable_histograms`),
     so no such resource reaches a scan.  The condition stays stated
     rather than assumed from that one, because it is this pass's own: left
     ungated, a column of nothing but NA sentinels would raise here, out of
