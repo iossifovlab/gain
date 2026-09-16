@@ -25,13 +25,11 @@ equally absent.
 **What that second half does not claim.**  These pages render through the
 *basic* implementation, whose per-type ``styles_template`` is an empty
 file.  A page's bare-element rules are the shared sheet *plus* that
-per-type sheet, and two of the per-type sheets add
-``table { table-layout: fixed }``.  So on a gene-score page the page's
-``table`` rule and its description's really do differ, deliberately: a
-two-column description table is better sized by its content than forced
-into equal columns.  What is pinned here is that the *shared* sheet
-reaches both sides, which is what gain#1279 was about -- not that every
-rule a page has reaches its description.
+per-type sheet, and the per-type sheet is meant to stop at the shadow
+root (ADR 0030 -- ``test_resource_page_shadow_root`` pins it).  What is
+pinned here is that the *shared* sheet reaches both sides, which is what
+gain#1279 was about -- not that every rule a page has reaches its
+description.
 """
 from __future__ import annotations
 
@@ -41,45 +39,11 @@ from gain.genomic_resources.implementations.basic_resource_impl import (
 )
 from gain.genomic_resources.repository import GenomicResource
 
-from tests.small.templates.conftest import basic_resource_described_by
-from tests.small.templates.page_css import rules_in
-
-
-def description_shadow_root(page: str) -> str:
-    """Return the declarative shadow root the description renders into.
-
-    Addressed from the ``Description`` header cell rather than by index
-    among the page's ``<template>`` elements, so that adding a shadow
-    root elsewhere on the page cannot silently redirect these assertions
-    at someone else's markup.
-    """
-    start = page.index("<th>Description</th>")
-    opening = page.index('<template shadowrootmode="open">', start)
-    return page[opening:page.index("</template>", opening)]
-
-
-def declared_for(markup: str, selector: str) -> list[str]:
-    """Return what ``markup``'s first ``<style>`` declares for ``selector``.
-
-    Rules are matched on the selector appearing in the rule's selector
-    *list*, so ``td, th { ... }`` answers for ``td`` and for ``th`` alike,
-    and every rule that names it contributes.  Compound selectors that
-    would also reach the element -- ``#resource-table th``,
-    ``.scrollable-table-container td`` -- are deliberately left out: what
-    is compared is the rule a bare element gets on each side of the shadow
-    boundary, not the full cascade any one element resolves to.
-
-    Declarations come back as ``property: value`` strings, sorted, because
-    this is used to compare two sheets and neither the order rules were
-    written in nor the indentation they were written at is part of what a
-    reader gets.
-    """
-    return sorted(
-        f"{property_}: {value}"
-        for rule in rules_in(markup)
-        if selector in rule.selectors
-        for property_, value in rule.declarations
-    )
+from tests.small.templates.conftest import (
+    basic_resource_described_by,
+    declared_for,
+    description_shadow_root,
+)
 
 
 def assert_shared_with_page(

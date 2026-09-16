@@ -8,7 +8,9 @@
    `<style>` includes this file too.  Both sides then read the same text
    -- the shadow root used to carry a hand-copied subset of these rules
    and it fell behind, leaving description tables borderless and
-   description headings unstyled (gain#1279).
+   description headings unstyled (gain#1279).  Why the boundary is kept
+   rather than removed -- which would have made this file unnecessary --
+   is ADR 0030's to say; this header only records how the split works.
 
    What belongs here is decided by the *selector*, not by intent: a rule
    whose selectors name only elements and pseudo-elements belongs here,

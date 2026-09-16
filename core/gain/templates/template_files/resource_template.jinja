@@ -138,15 +138,15 @@
             </tr>
             <tr>
                 <th>Summary</th>
+                {# No shadow root here, unlike the description below: a
+                   summary is autoescaped text, so there is no authored
+                   markup to keep local and no stylesheet to keep out
+                   (ADR 0030). #}
                 <td>
-                    <div>
-                        <template shadowrootmode="open">
-                            {%- set summary = resource.get_summary() -%}
-                            {{
-                                summary if summary else "N/A"
-                            }}
-                        </template>
-                    </div>
+                    {%- set summary = resource.get_summary() -%}
+                    {{
+                        summary if summary else "N/A"
+                    }}
                 </td>
             </tr>
             <tr>
@@ -154,11 +154,14 @@
                 <td>
                     <div>
                         <template shadowrootmode="open">
-                            {# A shadow root is a style boundary, so the
-                               page's stylesheet does not reach in here.
-                               It includes the shared content rules
-                               rather than restating them;
-                               `content_styles.jinja` says why. #}
+                            {# A shadow root on purpose (ADR 0030): a
+                               curator's own markup -- a raw `<style>`, an
+                               id -- stays local to the description, and the
+                               page's per-type layout rules stop here rather
+                               than reshaping a table they were never written
+                               for.  What the two sides share arrives through
+                               `content_styles.jinja`, included by both;
+                               its header says how the split is decided. #}
                              <style>
                               {% include "content_styles.jinja" %}
 
