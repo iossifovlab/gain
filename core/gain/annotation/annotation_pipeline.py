@@ -761,29 +761,13 @@ class InputAnnotableAnnotatorDecorator(AnnotatorDecorator):
     def __init__(self, child: Annotator):
         super().__init__(child)
 
-        assert "input_annotatable" in self._info.parameters
-        self.input_annotatable_name = \
-            self._info.parameters["input_annotatable"]
-
         if not self.pipeline:
             raise ValueError(
                 "InputAnnotableAnnotatorDecorator can only work "
                 "within a pipeline")
-        att_info = self.pipeline.get_attribute_info(
-            self.input_annotatable_name)
-        if att_info is None:
-            available_attributes = ",".join([
-                f"'{att.name}' [{att.spec.attribute_type if att.spec else '?'}]"
-                for att in self.pipeline.get_attributes()
-            ])
-            raise ValueError(f"The attribute '{self.input_annotatable_name}' "
-                             "has not been defined before its use. The "
-                             "available attributes are: "
-                             f"{available_attributes}")
-        if att_info.spec is None \
-                or att_info.spec.attribute_type != "annotatable":
-            raise ValueError(f"The attribute '{self.input_annotatable_name}' "
-                             "is expected to be of type annotatable.")
+        self.input_annotatable_name = self.pipeline.resolve_attribute_parameter(
+            self._info, "input_annotatable",
+            expected_attribute_type="annotatable")
         self.child._info.documentation += (  # ruff: ignore[private-member-access]
             f"\n* **input_annotatable**: `{self.input_annotatable_name}`"
         )
