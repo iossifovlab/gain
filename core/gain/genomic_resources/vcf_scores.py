@@ -441,7 +441,8 @@ def _refuse_overridden_type(
     pipeline naming it fails to load with the same message.
 
     ``resource_id`` is threaded in from
-    :meth:`GenomicScore._build_scoredefs` for the message alone -- a parse
+    :meth:`GenomicScore._build_scoredefs` for the refusal messages alone --
+    this one, the arity's and the undeclared id's (gain#1258, #1489) -- a parse
     handed only a header and a config could name the field but not the
     resource, which is not enough to find the file to edit in a repository
     of thousands.
@@ -490,10 +491,6 @@ def _refuse_genotype_arity(
         f"header.")
 
 
-#: Above this many declared INFO ids the refusal reports a count, not a list.
-_LISTED_INFO_IDS = 10
-
-
 def _refuse_undeclared_id(
     resource_id: str, score_id: str, vcf_header_info: dict[str, Any],
 ) -> None:
@@ -502,7 +499,7 @@ def _refuse_undeclared_id(
     A VCF score IS its INFO key -- ``col_name``/``col_index`` are not
     overridable, so the entry's ``id`` is the one thing that has to match
     the header.  One that does not is a contradiction between the config
-    and the header, like the two rules below, and is refused the same way:
+    and the header, like the two rules above, and is refused the same way:
     while the definitions are built, naming the resource and the score.
 
     It used to escape as a bare ``KeyError`` from whichever indexer reached
@@ -511,21 +508,18 @@ def _refuse_undeclared_id(
     ``report_resource_failure`` attributes to a resource, so ``repo-repair``
     printed an unexpected internal error with a traceback (gain#1489).
 
-    The message lists what the header DOES declare when that is short
-    enough to read a typo off, and counts it otherwise.
+    The message lists every id the header DOES declare, in header order,
+    so a typo reads off the line.  Not capped: the deployed VCF resources
+    declare forty-odd fields (ClinVar 39, dbSNP 48), so any cap short
+    enough to matter would hide the list exactly where it is needed.
     """
     if score_id in vcf_header_info:
         return
-    declared = list(vcf_header_info)
-    if len(declared) <= _LISTED_INFO_IDS:
-        header_has = f"declares: {', '.join(declared)}"
-    else:
-        header_has = f"declares {len(declared)} INFO fields"
     raise score_configuration_error(
         resource_id, score_id,
-        f"names no ##INFO field of the VCF header, which {header_has}. "
-        f"A VCF score's 'id' is its INFO key; fix the 'scores:' entry or "
-        f"the header.")
+        f"names no ##INFO field of the VCF header, which declares: "
+        f"{', '.join(vcf_header_info)}. A VCF score's 'id' is its INFO "
+        f"key; fix the 'scores:' entry or the header.")
 
 
 def parse_vcf_scoredefs(
@@ -578,7 +572,9 @@ def parse_vcf_scoredefs(
     always come from the header side -- which is why an entry whose ``id``
     the header does not declare is a contradiction too, REFUSED by
     :func:`_refuse_undeclared_id` before anything else is asked of it
-    (gain#1489).  ``resource_id`` is threaded in for those messages alone.
+    (gain#1489).  The third refusal, :func:`_refuse_genotype_arity`, is the
+    header's own claim rather than the config's (gain#1258).
+    ``resource_id`` is threaded in for those three messages alone.
 
     ``merge`` decides what happens to header fields the config does not
     mention: ``False`` (the default) returns only the configured scores, so
