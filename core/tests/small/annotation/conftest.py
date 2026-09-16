@@ -25,6 +25,23 @@ from gain.genomic_resources.testing import (
 )
 
 
+def typed_attribute(
+    name: str, value_type: str, *, attribute_type: str = "attribute",
+) -> Attribute:
+    """An attribute carrying a spec, so a ``DummyAnnotator`` has a TYPE.
+
+    The spec is what an upstream consumer checks -- the gene-list
+    builders gate on ``attribute_type``, and the pipeline's not-found
+    refusal lists it beside the name.
+    """
+    return Attribute(
+        name=name, source=name,
+        spec=AttributeSpec(
+            source=name, value_type=value_type, description="",
+            attribute_type=attribute_type),
+    )
+
+
 class DummyAnnotator(Annotator):
     """A dummy annotator that does nothing."""
 

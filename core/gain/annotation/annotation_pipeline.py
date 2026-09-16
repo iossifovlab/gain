@@ -431,13 +431,11 @@ class AnnotationPipeline:
     ) -> str:
         """Resolve ``info``'s ``parameter`` to the name of one of my attributes.
 
-        The parameter names an upstream attribute the annotator reads --
-        ``input_gene_list`` for the gene score and gene set annotators,
-        ``input_annotatable`` for any annotator wrapped in
-        :class:`InputAnnotableAnnotatorDecorator`.  Refused, as a
-        ``ValueError``, when ``info`` has no such parameter, when no
-        annotator before this one produces an attribute of that name, or
-        when the attribute's :attr:`AttributeSpec.attribute_type` is not
+        The parameter names an upstream attribute the annotator reads.
+        Refused, as a ``ValueError``, when ``info`` has no such
+        parameter, when no annotator in the pipeline produces an
+        attribute of that name, or when the attribute's
+        :attr:`AttributeSpec.attribute_type` is not
         ``expected_attribute_type``.
 
         One implementation rather than one per caller because the copies
