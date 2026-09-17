@@ -1,8 +1,8 @@
 """How a record's cell becomes a value: the two decisions taken at open.
 
 The seam between a score and its table's payload.  Both decisions are taken
-once per open, from the table's TYPE and the score definitions, and neither
-needs a ``GenomicScore``:
+once per open, from the table's declared ``payload_kind`` and the score
+definitions, and neither needs a ``GenomicScore``:
 
 - :func:`select_value_extractor` picks the per-record read, *before*
   ``table.open()``;

@@ -162,12 +162,12 @@ class GenomicPositionTable(abc.ABC):
     # False to select.
     #
     # So the flag's remaining job is to catch a new backend that has not
-    # migrated.  ``GenomicScore.open`` routes on it -- ``RecordScoreLine`` when
+    # migrated.  ``GenomicScore.open`` routes on it -- the column read when
     # it is True, and a ``TypeError`` refusing to open the score when it is
-    # False, rather than route the table to a score line that would misread
-    # whatever it does yield.  (A VCF table is routed to ``VCFScoreLine`` ahead
-    # of this check, by type; it sets the flag too, inheriting the tabix
-    # backend's True.)  A backend author overrides this to True *and* yields
+    # False, rather than route the table to a reader that would misread
+    # whatever it does yield.  (A VARIANT or VALUE ``payload_kind`` is routed
+    # to its own reader ahead of this check; both backends set the flag
+    # too.)  A backend author overrides this to True *and* yields
     # records -- the claim and the yielded shape are held together by
     # test_backend_record_contract.py, which fails a backend that leaves it
     # False as much as one whose records do not match its claim.

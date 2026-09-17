@@ -309,7 +309,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         The one piece of the scoredef lifecycle that did NOT move to
         :mod:`~gain.genomic_resources.score_def` in gain#1044: it dispatches
-        on the table's type into ``parse_vcf_scoredefs`` and
+        on the table's payload_kind into ``parse_vcf_scoredefs`` and
         ``build_bigwig_scoredefs``, and both of those modules import
         ``score_def``, so hosting this there would close an import cycle.
         Everything it calls is a function now, and the class's only
