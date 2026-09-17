@@ -51,9 +51,8 @@ from gain.genomic_resources.bigwig_scores import (
     validate_bigwig_scoredefs,
 )
 from gain.genomic_resources.genomic_position_table import (
-    BigWigTable,
     ChromLengthSource,
-    VCFGenomicPositionTable,
+    PayloadKind,
     build_genomic_position_table,
 )
 from gain.genomic_resources.genomic_position_table.record import (
@@ -323,7 +322,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             config_scoredefs = parse_scoredef_config(self.config)
 
         scoredefs: dict[str, GenomicScoreDef]
-        if isinstance(self.table, VCFGenomicPositionTable):
+        kind = self.table.payload_kind
+        if kind is PayloadKind.VARIANT:
             merge = bool(self.config.get("merge_vcf_scores", False))
 
             scoredefs = parse_vcf_scoredefs(
@@ -333,7 +333,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 merge=merge)
         elif config_scoredefs is None:
             raise ValueError("No scores configured and not using a VCF")
-        elif isinstance(self.table, BigWigTable):
+        elif kind is PayloadKind.VALUE:
             scoredefs = build_bigwig_scoredefs(self.config, config_scoredefs)
         else:
             scoredefs = config_scoredefs
@@ -437,10 +437,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 "opening already opened genomic score: %s",
                 self.resource.resource_id)
             return self
-        is_vcf = isinstance(self.table, VCFGenomicPositionTable)
-        is_bigwig = isinstance(self.table, BigWigTable)
+        kind = self.table.payload_kind
 
-        if is_bigwig:
+        if kind is PayloadKind.VALUE:
             validate_bigwig_scoredefs(
                 self.resource_id, self.score_definitions)
         self._extract_value = select_value_extractor(
@@ -461,14 +460,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         # A VCF's is skipped too: its scores have no column address to
         # check, and what an entry may say about one was already refused
         # where the definitions were built (``_refuse_overridden_address``
-        # says why).  The tabular route always has a ``scores:`` block --
+        # says why).  The ROW route always has a ``scores:`` block --
         # ``_build_scoredefs`` refuses a non-VCF resource without one.
-        if not (is_bigwig or is_vcf):
+        if kind is PayloadKind.ROW:
             validate_scoredefs(self.config, self.table, self.resource)
         resolve_score_indices(
             self.score_definitions,
-            is_vcf=is_vcf,
-            is_bigwig=is_bigwig,
             table=self.table,
             resource_id=self.resource_id)
 

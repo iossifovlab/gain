@@ -746,9 +746,26 @@ asks the implementation's ladder, whose records carry the member
 ``refusal`` is the one home of the two "no length" messages:
 ``get_chromosome_length`` raised them inline, and the score's method refuses
 the same two facts and must say them the same way.
+
+**New export ``PayloadKind``, and a new obligation on backend authors**
+(gain#1512).
+
+``PayloadKind`` names what a record's PAYLOAD slot holds on a backend -- a
+raw ``ROW``, a ``VARIANT`` with its INFO proxies, or the ``VALUE`` itself --
+and each backend declares its own as the class attribute ``payload_kind``,
+the way it declares ``chrom_length_source``: NO default on the base, so a
+backend that has not said is refused with an ``AttributeError`` the first
+time a score is opened over it.  The score layer routes on it at open --
+which construction path a resource's definitions take, which validator
+runs, which extractor reads a record, how a definition resolves to what it
+reads -- where it used to ask ``isinstance`` against ``BigWigTable`` and
+``VCFGenomicPositionTable`` at each of those sites.  The VCF backend
+subclasses the tabix one and yields a different payload, so the
+declaration is the one place the hierarchy is overridden, beside
+``supports_value_arrays`` which overrides it for the same reason.
 """
 from .line import LineBuffer
-from .table import ChromLengthSource, ContigExtent
+from .table import ChromLengthSource, ContigExtent, PayloadKind
 from .table_bigwig import BigWigTable
 from .table_tabix import TabixGenomicPositionTable
 from .table_vcf import VCFGenomicPositionTable
@@ -759,6 +776,7 @@ __all__ = [
     "ChromLengthSource",
     "ContigExtent",
     "LineBuffer",
+    "PayloadKind",
     "TabixGenomicPositionTable",
     "VCFGenomicPositionTable",
     "build_genomic_position_table",

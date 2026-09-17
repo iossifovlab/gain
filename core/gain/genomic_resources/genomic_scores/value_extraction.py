@@ -131,15 +131,15 @@ def select_value_extractor(
 def resolve_score_indices(
     score_definitions: dict[str, GenomicScoreDef],
     *,
-    is_vcf: bool,
-    is_bigwig: bool,
     table: GenomicPositionTable,
     resource_id: str,
 ) -> None:
     """Resolve each score's configured address to a payload column.
 
     Runs after ``table.open()``, because the by-NAME case is the one thing
-    here that has to consult the table's header.
+    here that has to consult the table's header.  What a definition's
+    address means -- an INFO key, nothing, or a column -- is the table's
+    :class:`~.table.PayloadKind`, read off the table.
 
     Writes ``score_index`` onto the definitions it is handed, and returns
     nothing: "the defs are finished in place at open" is the contract
@@ -166,7 +166,8 @@ def resolve_score_indices(
     refusals are reached through :meth:`~.base.GenomicScore.open` only by
     a definition edited after its config passed.
     """
-    if is_vcf:
+    kind = table.payload_kind
+    if kind is PayloadKind.VARIANT:
         # A VCF score has no column to resolve: it is addressed by INFO
         # KEY, which is ``col_name``, and :func:`extract_vcf_value` reads
         # that attribute directly.  All this enforces is that the key is
@@ -178,7 +179,7 @@ def resolve_score_indices(
                     "has no INFO key; a VCF score is addressed by name.")
         return
 
-    if is_bigwig:
+    if kind is PayloadKind.VALUE:
         # A bigWig has exactly one column -- the payload, which IS the
         # value -- so there is nothing to resolve: the answer is 0, and it
         # is the same 0 for the canonical config (which addresses no column
