@@ -1,11 +1,10 @@
 # pylint: disable=W0621,C0116
 """The per-attribute help a score annotator renders for its attributes.
 
-The help embeds the score's histogram image by its public-mirror address.
-An annulled histogram has no such address -- no PNG is ever written for
-it -- so the help must carry no image at all rather than a dangling one
-(gain#1025).  The oracle is the score definition, as for every other
-histogram address: nothing here builds statistics.
+The help embeds the score's histogram image by its public-mirror address,
+and an annulled histogram has none -- see
+``ScoreResource.get_histogram_config`` for what decides that -- so the
+help carries no image at all rather than a dangling one (gain#1025).
 """
 import pathlib
 

@@ -1,13 +1,12 @@
 # pylint: disable=C0116
 """Whether a score's histogram image has an address at all.
 
-A score whose histogram is annulled *by definition* -- ``histogram:
-{type: null}``, or no block and a value type with no default histogram --
-never gets a PNG written for it, so an address for one points at a file
-nobody writes (gain#1025).  The oracle is the score DEFINITION, never the
-loaded statistics: a page addressed on the GRR's public mirror is rendered
-from checkouts whose statistics were never built, and reading them would
-conflate "annulled" with "not built here".
+A score whose histogram is annulled *by definition* never gets a PNG
+written for it, so an address for one points at a file nobody writes
+(gain#1025).  What "by definition" means, and why the loaded statistics
+are the wrong oracle, is stated once on
+``ScoreResource.get_histogram_config``; these tests pin the two accessors
+that answer from it.
 """
 import pathlib
 
