@@ -94,7 +94,10 @@ def score_configuration_error(
     convergence point (``refuse_unfoldable_histograms``, for a number
     histogram over a value type none accumulates), and open, once a tabular
     table's header is known (``validate_scoredefs``, for a column address
-    the header cannot honour).  The ``Number=G`` rule is the one a
+    the header cannot honour, and ``resolve_score_indices``, which holds
+    the DEFINITIONS -- not the config -- to the same address rules as it
+    resolves each one to its payload column, and refuses a VCF definition
+    with no INFO key).  The ``Number=G`` rule is the one a
     ``scores:`` entry need not have caused: a header-only resource has
     none, and the claim is the header's.
 

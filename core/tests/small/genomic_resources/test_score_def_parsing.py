@@ -10,13 +10,16 @@ test_parse_array_agrees_with_parse_value_fuzz holds them to each other.
 # pylint: disable=C0116,W0212,W0621
 import logging
 import pathlib
+import re
 
 import numpy as np
 import pytest
 from gain.genomic_resources.genomic_scores import (
+    GenomicScore,
     PositionScore,
     build_score_from_resource,
 )
+from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.score_def import (
     GenomicScoreDef,
     _parse_column_address,
@@ -86,6 +89,17 @@ _TOKENS = [
     # starts matching "-1.0" too -- which parse_value never does.
     "-1.0",
 ]
+
+
+def _refusal_of(score: GenomicScore, score_id: str, *details: str) -> str:
+    """The regex a ``score_configuration_error`` for ``score_id`` matches.
+
+    Pins the shared address prefix and each operative phrase of the detail,
+    in any order -- not the whole sentence.
+    """
+    prefix = re.escape(
+        f"Invalid configuration: {score.resource_id}: score {score_id!r} ")
+    return prefix + "".join(f"(?=.*{re.escape(detail)})" for detail in details)
 
 
 def _as_floats(values: list) -> list[float]:
@@ -428,8 +442,12 @@ def test_a_score_addressing_nothing_is_refused_by_name() -> None:
             chr1  10  12  0.5
         """),
     })
-    with pytest.raises(ValueError, match="configures neither column_name"):
-        build_score_from_resource(res).open()
+    score = build_score_from_resource(res)
+    with pytest.raises(
+            MalformedResourceError,
+            match=_refusal_of(
+                score, "s", "neither column_name nor column_index")):
+        score.open()
 
 
 def test_a_score_addressing_two_things_is_refused() -> None:
@@ -499,7 +517,9 @@ def test_the_resolution_guard_refuses_a_doubly_addressed_score_def() -> None:
     # Score defs are built in __init__, so this is before any resolution.
     score.score_definitions["s"].col_name = "s"
 
-    with pytest.raises(ValueError, match="configures both a column name"):
+    with pytest.raises(
+            MalformedResourceError,
+            match=_refusal_of(score, "s", "mutually exclusive")):
         score.open()
 
 
@@ -527,8 +547,56 @@ def test_the_resolution_guard_refuses_a_name_with_no_header_to_resolve(
     score.score_definitions["s"].col_index = None
     score.score_definitions["s"].col_name = "s"
 
-    with pytest.raises(ValueError, match="has no header to resolve that name"):
+    with pytest.raises(
+            MalformedResourceError,
+            match=_refusal_of(score, "s", "no header", "column_index")):
         score.open()
+
+
+def test_the_resolution_guard_refuses_a_name_the_header_lacks(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A by-NAME score whose name is not a column is refused, and told so.
+
+    ``validate_scoredefs`` refuses this shape from the CONFIG before the
+    resolution block runs, so, like its siblings above, the guard here is
+    reachable only by renaming a definition in code after the config has
+    passed.  It is still a refusal the reader can act on: the message names
+    the resource, the score and the column that is not there.
+    """
+    score = build_score_from_resource(
+        a_position_score()
+        .with_score("s", "float", column_name="s")
+        .with_data("""
+            chrom  pos_begin  pos_end  s
+            chr1   10         12       0.5
+        """)
+        .build_resource(tmp_path),
+    )
+    # Score defs are built in __init__, so this is before any resolution.
+    score.score_definitions["s"].col_name = "nope"
+
+    with pytest.raises(
+            MalformedResourceError,
+            match=_refusal_of(score, "s", "'nope'", "header does not have")):
+        score.open()
+
+
+def test_a_by_name_score_resolves_to_its_header_position(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The happy path of the by-name branch: the name becomes an index."""
+    score = build_score_from_resource(
+        a_position_score()
+        .with_score("s", "float", column_name="s")
+        .with_data("""
+            chrom  pos_begin  pos_end  s
+            chr1   10         12       0.5
+        """)
+        .build_resource(tmp_path),
+    )
+    with score.open():
+        assert score.score_definitions["s"].score_index == 3
 
 
 def test_the_resolution_guard_refuses_a_vcf_score_with_no_info_key(
@@ -545,7 +613,9 @@ def test_the_resolution_guard_refuses_a_vcf_score_with_no_info_key(
         a_vcf_info_score().build_resource(tmp_path))
     score.score_definitions["score"].col_name = None
 
-    with pytest.raises(ValueError, match="has no INFO key"):
+    with pytest.raises(
+            MalformedResourceError,
+            match=_refusal_of(score, "score", "INFO key")):
         score.open()
 
 

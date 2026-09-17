@@ -31,6 +31,7 @@ returns nothing; its docstring says who reads what it wrote.
 
 from __future__ import annotations
 
+import functools
 from typing import TYPE_CHECKING
 
 from gain.genomic_resources.bigwig_scores import (
@@ -38,6 +39,7 @@ from gain.genomic_resources.bigwig_scores import (
     extract_bigwig_value,
     extract_bigwig_value_na,
 )
+from gain.genomic_resources.resource_errors import score_configuration_error
 from gain.genomic_resources.score_def import (
     GenomicScoreDef,
     ValueExtractor,
@@ -145,12 +147,21 @@ def resolve_score_indices(
     statistics scan reaches it through.  Handing back a mapping would only
     mean every caller writes it back.
 
-    These raise rather than assert: an assert reported a misconfigured
-    resource with a message-less AssertionError naming neither the resource
-    nor the score, and ``python -O`` strips it altogether, leaving the
-    by-name branch to call ``header.index(None)`` on a table whose header
-    may itself be ``None``.  A resource config is data, and bad data is
-    reported, not asserted away.
+    A definition it cannot resolve -- no address, two addresses, a name over
+    a table with no header, a name the header does not have, a VCF
+    definition with no INFO key -- is refused through
+    :func:`~gain.genomic_resources.resource_errors.score_configuration_error`,
+    so the refusal names the resource and the score in the shape every
+    other definition refusal shares and falls inside
+    ``cli_errors.RESOURCE_ERRORS`` by type.  Every check is an explicit
+    test, never an ``assert`` (``python -O`` strips those) and never a
+    lookup left to raise for itself: a resource config is data, and bad
+    data is reported.  For a tabular table, ``validate_scoredefs`` holds
+    the CONFIG to the address rules before this runs, but for a headerless
+    table it checks only that no name is stated -- so a definition with no
+    address at all reaches this from a real config, while the other
+    refusals are reached through :meth:`~.base.GenomicScore.open` only by
+    a definition edited after its config passed.
     """
     if is_vcf:
         # A VCF score has no column to resolve: it is addressed by INFO
@@ -159,10 +170,9 @@ def resolve_score_indices(
         # actually there.
         for score_def in score_definitions.values():
             if score_def.col_name is None:
-                raise ValueError(
-                    f"score {score_def.score_id!r} of VCF resource "
-                    f"{resource_id!r} has no INFO key; a VCF score "
-                    f"is addressed by name")
+                raise score_configuration_error(
+                    resource_id, score_def.score_id,
+                    "has no INFO key; a VCF score is addressed by name.")
         return
 
     if is_bigwig:
@@ -179,27 +189,32 @@ def resolve_score_indices(
 
     # Index first, because it needs nothing from the table.
     for score_def in score_definitions.values():
+        refuse = functools.partial(
+            score_configuration_error, resource_id, score_def.score_id)
         if score_def.col_index is not None:
             if score_def.col_name is not None:
-                raise ValueError(
-                    f"score {score_def.score_id!r} of resource "
-                    f"{resource_id!r} configures both a column "
-                    f"name ({score_def.col_name!r}) and a column "
-                    f"index ({score_def.col_index}); they are "
-                    f"mutually exclusive")
+                raise refuse(
+                    f"configures both a column name "
+                    f"({score_def.col_name!r}) and a column index "
+                    f"({score_def.col_index}); they are mutually "
+                    f"exclusive.")
             score_def.score_index = score_def.col_index
         elif score_def.col_name is not None:
             if table.header is None:
-                raise ValueError(
-                    f"score {score_def.score_id!r} of resource "
-                    f"{resource_id!r} is addressed by column "
-                    f"name ({score_def.col_name!r}), but its table "
-                    f"has no header to resolve that name against; "
-                    f"address it by column_index instead")
+                raise refuse(
+                    f"is addressed by column name "
+                    f"{score_def.col_name!r}, but its table has no "
+                    f"header to resolve that name against; address it "
+                    f"by column_index instead.")
+            if score_def.col_name not in table.header:
+                raise refuse(
+                    f"is addressed by column name "
+                    f"{score_def.col_name!r}, which the table's header "
+                    f"does not have; its columns are: "
+                    f"{', '.join(table.header)}.")
             score_def.score_index = table.header.index(
                 score_def.col_name)
         else:
-            raise ValueError(
-                f"score {score_def.score_id!r} of resource "
-                f"{resource_id!r} configures neither "
-                f"column_name nor column_index; one is required")
+            raise refuse(
+                "configures neither column_name nor column_index; one "
+                "is required.")
