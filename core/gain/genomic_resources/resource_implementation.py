@@ -30,6 +30,7 @@ from .repository import (
     _description_in,
     _summary_in,
 )
+from .resource_errors import MalformedResourceError
 from .resource_query import label_alternatives
 
 logger = logging.getLogger(__name__)
@@ -61,8 +62,8 @@ def get_base_resource_schema() -> dict[str, Any]:
                 "description": {"type": "string"},
                 # The keys of `labels` are constrained -- each one becomes a
                 # column of the repository's search index -- but deliberately
-                # NOT here: this schema is run by the three implementations
-                # that validate at all, and for scores it runs inside
+                # NOT here: this schema is run by every implementation that
+                # validates, and for scores it runs inside
                 # GenomicScore.__init__, on the annotation path.  A key that
                 # cannot name an index column would then make an otherwise
                 # sound resource unusable for annotation too.  The rule is
@@ -747,7 +748,12 @@ class ResourceConfigValidationMixin:
                 resource.resource_id,
                 resource.get_type(),
                 validator.errors)
-            raise ValueError(f"Invalid configuration: {resource.resource_id}")
+            # A config refusal is the resource's own fault (ADR 0008,
+            # decision 6): the type puts it in `RESOURCE_ERRORS`, and the
+            # prefix is the one `resource_errors` builds for a score's
+            # definition, so a reader sees one wording for both.
+            raise MalformedResourceError(
+                f"Invalid configuration: {resource.resource_id}")
 
         document = cast("dict", validator.document)
         CONFIG_VALIDATOR_CACHE.remember_document(
