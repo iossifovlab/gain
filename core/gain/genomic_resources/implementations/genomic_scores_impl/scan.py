@@ -25,7 +25,6 @@ from gain.genomic_resources.histogram import (
     NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
-    build_default_histogram_conf,
     build_empty_histogram,
 )
 from gain.genomic_resources.repository import (
@@ -273,12 +272,10 @@ def unpack_score_defs(
     all_min_max_scores = []
     all_hist_confs: dict[str, HistogramConfig] = {}
     with score.open():
-        for score_id, score_def in score.score_definitions.items():
-            if score_def.hist_conf is not None:
-                hist_conf = score_def.hist_conf
-            else:
-                hist_conf = build_default_histogram_conf(
-                    score_def.value_type)
+        for score_id in score.score_definitions:
+            # The same resolution the histogram ADDRESS is decided from,
+            # so the two cannot disagree about what gets plotted.
+            hist_conf = score.get_histogram_config(score_id)
             if isinstance(hist_conf, NullHistogramConfig):
                 all_hist_confs[score_id] = hist_conf
                 continue
