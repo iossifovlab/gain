@@ -754,8 +754,9 @@ the same two facts and must say them the same way.
 raw ``ROW``, a ``VARIANT`` with its INFO proxies, or the ``VALUE`` itself --
 and each backend declares its own as the class attribute ``payload_kind``,
 the way it declares ``chrom_length_source``: NO default on the base, so a
-backend that has not said is refused with an ``AttributeError`` the first
-time a score is opened over it.  The score layer routes on it at open --
+backend that has not said is refused with an ``AttributeError`` the moment
+a score is built over it.  The score layer routes on it when the score is
+built and again when it is opened --
 which construction path a resource's definitions take, which validator
 runs, which extractor reads a record, how a definition resolves to what it
 reads -- where it used to ask ``isinstance`` against ``BigWigTable`` and

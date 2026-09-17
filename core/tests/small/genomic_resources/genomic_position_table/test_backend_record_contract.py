@@ -515,8 +515,8 @@ def test_a_backend_serves_value_arrays_exactly_when_it_claims_to(
 
 
 # What a record's PAYLOAD slot holds on this backend -- the one fact the
-# score layer routes on at open: which scoredef construction path a resource
-# takes, which validator runs, which extractor reads a record, and how a
+# score layer routes on, at construction and at open: which scoredef path a
+# resource takes, which validator runs, which extractor reads a record, how a
 # definition resolves to what it reads.  Declared on the class like
 # ``chrom_length_source``, with NO default on the base, so a backend cannot
 # inherit a kind that is not its own:
@@ -563,6 +563,11 @@ def test_every_backend_in_the_tree_declares_its_payload_kind() -> None:
     backend is held to it the moment it exists -- _PAYLOAD_KINDS above can
     only hold the four that are listed.  (The sweep's own vacuity guard is
     ``test_the_backend_sweep_walks_the_backend_package``.)
+
+    The declaration has to be the class's OWN: the base carries no default,
+    but a backend that subclasses another backend inherits that one's kind,
+    and the VCF backend shows that the inherited kind can be wrong.  A
+    ``getattr`` would accept the inherited one and miss exactly that case.
     """
     # Function-local: test_table_lifetime imports this module's fixtures,
     # so a module-level import back would be a cycle.
@@ -571,7 +576,7 @@ def test_every_backend_in_the_tree_declares_its_payload_kind() -> None:
     undeclared = [
         klass.__name__
         for klass in _concrete_backends_in_the_tree()
-        if not isinstance(getattr(klass, "payload_kind", None), PayloadKind)
+        if not isinstance(vars(klass).get("payload_kind"), PayloadKind)
     ]
 
     assert undeclared == [], (

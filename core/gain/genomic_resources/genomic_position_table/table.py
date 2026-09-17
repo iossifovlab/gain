@@ -131,10 +131,10 @@ class PayloadKind(enum.Enum):
 
     A fact about the FORMAT, and every backend names its own in
     ``payload_kind`` the way it names ``chrom_length_source``: the score
-    layer routes on it at open -- which construction path a resource's
-    definitions take, which validator runs, which extractor reads a
-    record and how a definition resolves to what it reads -- without
-    knowing which backends exist.
+    layer routes on it when a score is built and again when it is opened
+    -- which construction path a resource's definitions take, which
+    validator runs, which extractor reads a record and how a definition
+    resolves to what it reads -- without knowing which backends exist.
     """
 
     ROW = "row"
@@ -204,9 +204,10 @@ class GenomicPositionTable(abc.ABC):
     # What a record's PAYLOAD slot holds on this backend -- a raw row, a
     # variant with its INFO proxies, or the value itself.  Declared, not
     # defaulted, for the same reason as ``chrom_length_source``: the score
-    # layer routes on it at open, and a backend that inherits a kind that
-    # is not its own would be read by an extractor that does not fit what
-    # it yields.  The VCF backend subclasses the tabix one and yields a
+    # layer routes on it from the moment a score is built over the table,
+    # and a backend that inherits a kind that is not its own would be read
+    # by an extractor that does not fit what it yields.  The VCF backend
+    # subclasses the tabix one and yields a
     # different payload, so this is the declaration that keeps the class
     # hierarchy from answering a question it cannot.
     payload_kind: ClassVar[PayloadKind]

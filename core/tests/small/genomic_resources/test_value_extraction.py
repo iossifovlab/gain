@@ -50,10 +50,12 @@ class _UndeclaredTable:
     Declared-not-defaulted on the base, so nothing in the tree lacks it;
     the stand-in reaches the refusal a fifth backend would hit before any
     other check -- the kind is consulted first, since every later decision
-    depends on it.
+    depends on it.  It ALSO yields no records, so that it would be refused
+    by the other check too: that is what makes the test below a pin on
+    which refusal wins, not merely on being refused.
     """
 
-    yields_records = True
+    yields_records = False
 
 
 def test_a_table_that_has_not_declared_its_payload_kind_is_refused() -> None:

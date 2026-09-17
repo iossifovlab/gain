@@ -404,8 +404,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """Open genomic score resource and returns it.
 
         **Validate and route BEFORE opening, and so before publishing.**  Every
-        input to both steps is known at construction -- the table's class, its
-        ``yields_records`` ClassVar, and the score definitions -- so neither
+        input to both steps is known at construction -- the table's
+        ``payload_kind`` and ``yields_records`` ClassVars, and the score
+        definitions -- so neither
         needs the open handle, and two things fall out of that order:
 
         * a refusal costs no handle.  Routing after ``table.open()`` would

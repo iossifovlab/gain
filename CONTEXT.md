@@ -214,9 +214,10 @@ name (tabix, in-memory); a **variant** — a pysam variant and its INFO
 proxies, whose score is an INFO field addressed by key (VCF); or the
 **value** itself, the one score a bigWig carries, addressed by nothing. A
 fact about the *format*, declared once on the backend and read by the score
-layer at open, which routes every per-format decision — how a resource's
-definitions are built, which validator runs, which extractor reads a
-record, how a definition resolves to what it reads — on it. The VCF backend
+layer when a score is built and opened, which routes every per-format
+decision — how a resource's definitions are built, which validator runs,
+which extractor reads a record, how a definition resolves to what it reads
+— on it. The VCF backend
 subclasses the tabix one and yields a different payload, so it must declare
 its own kind rather than inherit one; the base class carries no default for
 that reason.
