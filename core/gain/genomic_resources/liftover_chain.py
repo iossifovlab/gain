@@ -39,9 +39,9 @@ class LiftoverChain(ResourceConfigValidationMixin):
             raise ValueError(f"wrong resource type: {config}")
 
         # The chain declares a schema, so it runs it (ADR 0031).
-        config = self.validate_and_normalize_schema(config, resource)
+        self.config = self.validate_and_normalize_schema(config, resource)
 
-        chrom_prefix = config.get("chrom_prefix")
+        chrom_prefix = self.config.get("chrom_prefix")
         if chrom_prefix is None:
             self.chrom_variant_coordinates = None
             self.chrom_target_coordinates = None
@@ -76,7 +76,7 @@ class LiftoverChain(ResourceConfigValidationMixin):
             if self.is_open():
                 return self
 
-            filename: str = self.resource.get_config()["filename"]
+            filename: str = self.config["filename"]
             with self.resource.open_raw_file(
                     filename, "rb", compression=True) as chain_file:
                 self.liftover = LiftOver(chain_file)
@@ -88,7 +88,7 @@ class LiftoverChain(ResourceConfigValidationMixin):
 
     @property
     def files(self) -> set[str]:
-        return {self.resource.get_config()["filename"]}
+        return {self.config["filename"]}
 
     @staticmethod
     def map_chromosome(chrom: str, mapping: dict[str, str] | None) -> str:
@@ -132,7 +132,9 @@ class LiftoverChain(ResourceConfigValidationMixin):
         return {
             **get_base_resource_schema(),
             "filename": {"type": "string"},
-            "chrom_prefix": {"type": "dict", "schema": {
+            # Nullable for the bare `chrom_prefix:` line a curator leaves
+            # when commenting its subsections out; it reads as absent.
+            "chrom_prefix": {"type": "dict", "nullable": True, "schema": {
                 "variant_coordinates": {"type": "dict", "schema": {
                     "del_prefix": {"type": "string"},
                     "add_prefix": {"type": "string"},

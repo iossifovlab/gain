@@ -991,11 +991,12 @@ Resource-specific fields (**type**: liftover_chain):
        ``variant_coordinates`` (applied to the contig of the position being
        lifted, before the chain is consulted) and ``target_coordinates``
        (applied to the contig the chain answers with). Each takes
-       ``del_prefix`` (a prefix removed when present) and/or ``add_prefix``
-       (a prefix prepended); with both, the removal runs first. Use it when
-       the chain file's contig names differ from the genomes' -- a chain
-       written with ``chr`` on one side lifting into a genome without it.
-       Default: contig names pass through unchanged.
+       ``del_prefix`` (a leading ``chr``, say, to drop) and/or
+       ``add_prefix`` (a prefix to prepend); with both, the drop runs
+       first. Use it when the chain file's contig names differ from the
+       genomes' -- a chain written with ``chr`` on one side lifting into a
+       genome without it. Default, or a bare ``chrom_prefix:`` with no
+       subsections: contig names pass through unchanged.
 
 .. code-block:: yaml
 
@@ -1016,7 +1017,7 @@ A chain whose target side names contigs with a ``chr`` prefix the target genome 
     meta:
       summary: Liftover Chain hg38 to hg19
 
-The configuration is validated when the chain is loaded: a key outside this table, or a ``chrom_prefix`` that is not a mapping of these two subsections, refuses the resource with an error naming it.
+The configuration is validated when the chain object is built, before its file is opened: a resource-specific key not in this table, or a ``chrom_prefix`` that is not a mapping of these two subsections, refuses the resource with an error naming it.
 
 
 Annotation pipelines

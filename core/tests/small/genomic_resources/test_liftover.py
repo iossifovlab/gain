@@ -161,20 +161,15 @@ def _a_chain_under_a_real_id_configured(
 def test_a_chain_with_a_key_its_schema_does_not_know_is_refused(
     tmp_path: pathlib.Path,
 ) -> None:
-    """The chain runs the schema it declares (gain#1075).
-
-    It used to declare one and never run it, so a key the schema does not
-    know -- a typo of ``filename``, say -- was carried silently until the
-    first read of the key it shadowed. Refused at construction instead,
-    naming the resource, as every other validating type does.
-    """
+    """A key the chain's schema does not know -- a typo of ``filename``,
+    say -- refuses the chain at construction, naming the resource."""
     resource = _a_chain_under_a_real_id_configured(tmp_path, yaml.safe_dump({
         "type": "liftover_chain",
         "filename": "liftover.chain.gz",
         "file_name": "liftover.chain.gz",
     }))
 
-    with pytest.raises(ValueError, match=A_CHAIN_ID):
+    with pytest.raises(MalformedResourceError, match=A_CHAIN_ID):
         LiftoverChain(resource)
 
 
@@ -185,8 +180,7 @@ def test_a_chain_whose_chrom_prefix_is_the_genome_spelling_is_refused(
 
     A reference genome spells the same key as a flat string, and the
     two resource types sit side by side in a repository, so the genome's
-    spelling is the likely slip. Unrun, the schema let it through and the
-    chain died later on ``str.get``; run, it is refused with the id.
+    spelling is the likely slip. It is refused with the resource's id.
     """
     resource = _a_chain_under_a_real_id_configured(tmp_path, yaml.safe_dump({
         "type": "liftover_chain",
@@ -194,24 +188,36 @@ def test_a_chain_whose_chrom_prefix_is_the_genome_spelling_is_refused(
         "chrom_prefix": "chr",
     }))
 
-    with pytest.raises(ValueError, match=A_CHAIN_ID):
+    with pytest.raises(MalformedResourceError, match=A_CHAIN_ID):
         LiftoverChain(resource)
+
+
+def test_a_chain_whose_chrom_prefix_is_null_rewrites_nothing(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A bare ``chrom_prefix:`` line -- the key with its subsections
+    commented out -- means no rewrite on either side, as absence does."""
+    resource = _a_chain_under_a_real_id_configured(tmp_path, yaml.safe_dump({
+        "type": "liftover_chain",
+        "filename": "liftover.chain.gz",
+        "chrom_prefix": None,
+    }))
+
+    chain = LiftoverChain(resource)
+
+    assert chain.map_chromosome("chr1", chain.chrom_variant_coordinates) \
+        == "chr1"
+    assert chain.map_chromosome("chr1", chain.chrom_target_coordinates) \
+        == "chr1"
 
 
 @pytest.mark.parametrize("labels", ["some text", ["a", "b"], 2019])
 def test_a_chain_whose_labels_are_not_a_mapping_is_refused(
     tmp_path: pathlib.Path, labels: Any,
 ) -> None:
-    """A malformed ``meta.labels`` refuses the chain by name.
-
-    The chain used to index ``config["meta"]["labels"]`` itself, so a
-    scalar there ended a *liftover annotation* -- not merely a search --
-    in an ``AttributeError`` at construction that named nothing
-    (gain#654). Tolerating it was the first fix; now that the chain runs
-    its schema it is refused the way every validating type refuses a
-    non-mapping ``labels`` -- as the resource's own fault, with its id
-    (gain#1075).
-    """
+    """A non-mapping ``meta.labels`` refuses the chain as the resource's
+    own fault, naming it -- the way every validating type refuses one
+    (ADR 0031), and not the bare ``AttributeError`` of gain#654."""
     resource = _a_liftover_chain_under_a_real_id(tmp_path, labels)
 
     with pytest.raises(MalformedResourceError, match=A_CHAIN_ID):
