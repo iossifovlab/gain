@@ -5,9 +5,11 @@
 - **Issues:** [gain#1075](https://github.com/iossifovlab/gain/issues/1075)
   (this record); [gain#1067](https://github.com/iossifovlab/gain/issues/1067)
   (the genome, decided one type at a time);
-  [gain#654](https://github.com/iossifovlab/gain/issues/654) and
-  [gain#1053](https://github.com/iossifovlab/gain/issues/1053) (the chain's
-  tolerance of a malformed `labels`, which this record reverses)
+  [gain#654](https://github.com/iossifovlab/gain/issues/654) (the chain's
+  tolerance of a non-mapping `labels` block, which this record reverses;
+  the *value*-level tolerance of
+  [gain#1053](https://github.com/iossifovlab/gain/issues/1053) — an unusable
+  genome id warns and reads as absent — stands)
 - **Related:** [ADR 0008](0008-scan-owns-validation.md) — decision 6 names
   the exception a refusal raises, and its rejection of `ABCMeta` on the
   score hierarchy is why the obligation below is a rule, not a mechanism
@@ -23,9 +25,10 @@ and is free never to call the validator — and two types did exactly that.
 `LiftoverChain` declared a complete schema (base fields, `filename`, and a
 nested `chrom_prefix` of `variant_coordinates` / `target_coordinates`, each
 with `del_prefix` / `add_prefix`) and read its config raw. A comment in the
-constructor said so. A key the schema did not know, or a `chrom_prefix`
-spelled the way a *genome* spells it (a flat string), passed construction
-and failed later, at the first read that tripped on it. The published docs
+constructor said so. A key the schema did not know passed construction and
+was carried silently; a `chrom_prefix` spelled the way a *genome* spells it
+(a flat string) died in the constructor's own `.get` on it, with an
+`AttributeError` that named neither the resource nor the key. The published docs
 had drifted the other way: `grr.rst` documented `filename` alone and said
 the section had "only filename", while the runtime and the schema both read
 `chrom_prefix`, and one published chain in `grr_sfari` used it.
@@ -104,8 +107,10 @@ the schema, which is an import cycle.
 **Giving the mixin an `__init__`** does not help: a subclass must still call
 `super().__init__()`, so forgetting stays silent — the same failure, moved.
 It would also cost the mixin its statelessness, which is what lets it sit
-beside `GenomicResourceImplementation` and `InfoImplementationMixin` in a
-class's base list without an MRO argument about whose `__init__` runs.
+beside a base that has its own `__init__(resource)` — `ScoreResource` in
+gain, `BaseEnrichmentBackground` under gpf's enrichment resources — without
+an MRO argument about whose `__init__` runs, and what lets gain keep the
+mixin out of any type's base list without an `__init__` to unwind.
 
 **`ABCMeta` on the hierarchy** was examined and rejected in ADR 0008 for the
 score classes: nothing in that MRO is an `ABC`, and introducing one would
@@ -126,6 +131,12 @@ the mixin. A reviewer who sees the mixin in a base list looks for the call.
   A future type switching validation on should expect the same shape of
   change: some tolerance a reader added for one type becomes a refusal, and
   the test has to say which one was decided.
+- Readers that do not construct the chain keep degrading, per ADR 0008:
+  validation refuses, reading degrades. The annotation editor still offers
+  a liftover config for a chain whose `labels` is a scalar (it reads the
+  labels through `get_labels`, which narrows them to nothing), and building
+  that annotator is what refuses. The two are not in contradiction; they
+  are the two halves of 0008 meeting at one resource.
 - The published docs for a type are held to the schema. A key the runtime
   reads and the schema accepts is documented; a key documented is in the
   schema. `chrom_prefix` on the chain was the case in hand.

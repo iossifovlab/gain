@@ -64,7 +64,7 @@ def get_base_resource_schema() -> dict[str, Any]:
                 # column of the repository's search index -- but deliberately
                 # NOT here: this schema is run by every implementation that
                 # validates, and for scores it runs inside
-                # GenomicScore.__init__, on the annotation path.  A key that
+                # ScoreResource.__init__, on the annotation path.  A key that
                 # cannot name an index column would then make an otherwise
                 # sound resource unusable for annotation too.  The rule is
                 # enforced where it bites, in collect_index_info() (gain#464).
