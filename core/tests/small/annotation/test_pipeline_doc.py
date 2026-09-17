@@ -135,3 +135,49 @@ def test_no_pipeline_path_block_when_the_caller_names_no_file(
     html = render(public_repo, tmp_path / "work")
 
     assert "Pipeline path:" not in html
+
+
+@pytest.fixture
+def annulled_repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
+    """A GRR whose one score has its histogram annulled by definition."""
+    return (
+        a_grr()
+        .with_resource(
+            "scores/pos1",
+            a_position_score()
+            .with_score("score", "float")
+            .with_histogram({"type": "null", "reason": "annulled"}))
+        .with_public_url(PUBLIC_URL)
+        .build_repo(tmp_path / "grr")
+    )
+
+
+class NoHistogramStub(RelativeStub):
+    """A policy that has no histogram address for any score."""
+
+    def histogram_url(
+        self, score: GenomicScore, score_id: str,
+    ) -> str | None:
+        return None
+
+
+def test_an_annulled_histogram_renders_no_image(
+    annulled_repo: GenomicResourceRepo, tmp_path: pathlib.Path,
+) -> None:
+    # No PNG is ever written for an annulled histogram, so a page that
+    # addressed one would dangle (gain#1025).
+    html = render(annulled_repo, tmp_path / "work")
+
+    assert "<img" not in html
+
+
+def test_a_policy_with_no_histogram_address_renders_no_image(
+    public_repo: GenomicResourceRepo, tmp_path: pathlib.Path,
+) -> None:
+    # The renderer's half of the contract: whether an image has an
+    # address is the policy's answer, and "no address" is not a string.
+    html = render(
+        public_repo, tmp_path / "work", addresses=NoHistogramStub())
+
+    assert "<img" not in html
+    assert "None" not in html
