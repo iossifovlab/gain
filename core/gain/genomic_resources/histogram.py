@@ -27,6 +27,7 @@ from gain.genomic_resources.statistics.base_statistic import (
     non_numeric_error,
 )
 from gain.genomic_resources.statistics.chart_style import (
+    CHART_FIGSIZE,
     CHART_LABEL_FONT_SIZE,
 )
 from gain.genomic_resources.statistics.min_max import MinMaxValue
@@ -596,7 +597,7 @@ class NumberHistogram(Statistic):
         import matplotlib.pyplot as plt
         width = self.bins[1:] - self.bins[:-1]
 
-        fig, ax = plt.subplots(figsize=(15, 10), tight_layout=True)
+        fig, ax = plt.subplots(figsize=CHART_FIGSIZE, tight_layout=True)
         ax.bar(
             x=self.bins[:-1], height=self.bars,
             log=self.config.y_log_scale,
@@ -1093,7 +1094,7 @@ class CategoricalHistogram(Statistic):
         values = [str(k) for k in display_values]
         counts = list(display_values.values())
 
-        fig, ax = plt.subplots(figsize=(15, 10), tight_layout=True)
+        fig, ax = plt.subplots(figsize=CHART_FIGSIZE, tight_layout=True)
         ax.bar(
             x=values,
             height=counts,
