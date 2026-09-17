@@ -971,7 +971,7 @@ In the `Getting started with GRR gene models <https://iossifovlab.com/gaindocs/g
 Liftover chains
 ^^^^^^^^^^^^^^^
 
-For liftover chain resources, the ``genomic_resource.yaml`` file has a minimal resource-specific section with only filename.
+For liftover chain resources, the ``genomic_resource.yaml`` file names the chain file and, optionally, how contig names are rewritten on the way in and out of it.
 
 Resource-specific fields (**type**: liftover_chain):
 
@@ -985,6 +985,17 @@ Resource-specific fields (**type**: liftover_chain):
    * - **filename**
      - string
      - Path to the chain file, relative to the resource directory.
+   * - ``chrom_prefix``
+     - Optional subsection
+     - Contig-name rewrites applied around the chain, as two subsections:
+       ``variant_coordinates`` (applied to the contig of the position being
+       lifted, before the chain is consulted) and ``target_coordinates``
+       (applied to the contig the chain answers with). Each takes
+       ``del_prefix`` (a prefix removed when present) and/or ``add_prefix``
+       (a prefix prepended); with both, the removal runs first. Use it when
+       the chain file's contig names differ from the genomes' -- a chain
+       written with ``chr`` on one side lifting into a genome without it.
+       Default: contig names pass through unchanged.
 
 .. code-block:: yaml
 
@@ -992,6 +1003,20 @@ Resource-specific fields (**type**: liftover_chain):
     filename: hg38-chm13v2.over.chain.gz
     meta:
       summary: Liftover Chain hg38 to T2T
+
+A chain whose target side names contigs with a ``chr`` prefix the target genome does not use:
+
+.. code-block:: yaml
+
+    type: liftover_chain
+    filename: hg38ToHg19.over.chain.gz
+    chrom_prefix:
+      target_coordinates:
+        del_prefix: chr
+    meta:
+      summary: Liftover Chain hg38 to hg19
+
+The configuration is validated when the chain is loaded: a key outside this table, or a ``chrom_prefix`` that is not a mapping of these two subsections, refuses the resource with an error naming it.
 
 
 Annotation pipelines
