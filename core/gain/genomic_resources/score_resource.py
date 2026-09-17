@@ -117,11 +117,10 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
     ``GenomicScoreDef`` for genomic scores, a ``GeneScoreDef`` for gene
     scores) without either side having to override it.
 
-    A concrete subclass must set two attributes in its own ``__init__``:
-
-    * ``resource`` -- the underlying :class:`GenomicResource`, from which the
-      histogram accessors read the manifest and public URLs;
-    * ``score_definitions`` -- the ``score_id -> definition`` mapping.
+    Constructing one keeps the resource and validates its config against the
+    family's ``get_schema()``, so ``config`` is the normalized document. A
+    concrete subclass calls ``super().__init__(resource)`` and then sets
+    ``score_definitions`` -- the ``score_id -> definition`` mapping -- itself.
 
     Everything a subclass may add on top of this (a table, an open/close
     lifecycle, fetch methods, aggregators) is its own concern and must NOT be
@@ -134,7 +133,13 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
     # pylint: disable=abstract-method
 
     resource: GenomicResource
+    config: dict[str, Any]
     score_definitions: dict[str, ScoreDefT]
+
+    def __init__(self, resource: GenomicResource) -> None:
+        self.resource = resource
+        self.config = self.validate_and_normalize_schema(
+            resource.get_config(), resource)
 
     def get_all_scores(self) -> list[str]:
         return list(self.score_definitions)
