@@ -556,6 +556,36 @@ def test_a_backend_declares_the_payload_kind_it_yields(
     assert score.table.payload_kind is kind
 
 
+def test_every_backend_in_the_tree_declares_its_payload_kind() -> None:
+    """The declaration is an obligation on every concrete backend.
+
+    Swept from the backend package rather than listed by name, so a fifth
+    backend is held to it the moment it exists -- _PAYLOAD_KINDS above can
+    only hold the four that are listed.  (The sweep's own vacuity guard is
+    ``test_the_backend_sweep_walks_the_backend_package``.)
+    """
+    # Function-local: test_table_lifetime imports this module's fixtures,
+    # so a module-level import back would be a cycle.
+    from .test_table_lifetime import _concrete_backends_in_the_tree
+
+    undeclared = [
+        klass.__name__
+        for klass in _concrete_backends_in_the_tree()
+        if not isinstance(getattr(klass, "payload_kind", None), PayloadKind)
+    ]
+
+    assert undeclared == [], (
+        f"backend(s) {undeclared} do not declare payload_kind; say what a "
+        f"record's payload slot holds on that format")
+
+
+def test_the_base_table_declares_no_payload_kind() -> None:
+    """No default: an inherited kind would route a backend to a read that
+    does not fit what it yields."""
+    with pytest.raises(AttributeError, match="payload_kind"):
+        _ = GenomicPositionTable.payload_kind
+
+
 # ---------------------------------------------------------------------------
 # What a backend owes a region read that is ABANDONED part-way (gain#1120).
 # ---------------------------------------------------------------------------
