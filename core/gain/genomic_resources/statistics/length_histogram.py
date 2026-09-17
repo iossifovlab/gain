@@ -28,6 +28,7 @@ from typing import IO, Any, TypeGuard
 import numpy as np
 
 from gain.genomic_resources.statistics.chart_style import (
+    CHART_FIGSIZE,
     CHART_LABEL_FONT_SIZE,
 )
 
@@ -137,8 +138,9 @@ def plot_length_histogram(
     """Render a length histogram on the fixed log2 bins as PNG.
 
     Styled to sit beside the per-score value histograms on the resource
-    info page: same figure size and label font as
-    :mod:`gain.genomic_resources.histogram` renders.  ``item`` names
+    info page: the figure size and label font are the ones the
+    statistics charts share, read from
+    :mod:`gain.genomic_resources.statistics.chart_style`.  ``item`` names
     what was measured -- segments, fragments, insertions, deletions --
     and appears in both axis labels; the bins are the same ladder every
     time, which is what lets one renderer serve them all.  Required,
@@ -163,7 +165,7 @@ def plot_length_histogram(
     top = length_histogram_bin_index(display_cap)
     bars = [*histogram[:top], sum(histogram[top:])]
 
-    figure, axes = plt.subplots(figsize=(15, 10))
+    figure, axes = plt.subplots(figsize=CHART_FIGSIZE)
     axes.bar(range(len(bars)), bars, width=0.9, align="edge")
     # Ticks at each bar's lower edge, the last one -- open-ended,
     # whether by the ladder or by the cap -- labeled as a floor.  Up to

@@ -1,7 +1,8 @@
-# pylint: disable=C0114,C0116,W0621
+# pylint: disable=C0114,C0116
 import io
 
 import pytest
+from gain.genomic_resources.statistics.chart_style import CHART_FIGSIZE
 from gain.genomic_resources.statistics.length_histogram import (
     LENGTH_HISTOGRAM_BIN_COUNT,
     plot_length_histogram,
@@ -12,31 +13,6 @@ from gain.genomic_resources.statistics.length_histogram import (
 # on an all-zero set, so the callers refuse to plot one -- and these
 # tests fail rather than pass quietly if that ever stops holding.
 pytestmark = pytest.mark.filterwarnings("error::UserWarning")
-
-
-@pytest.fixture
-def drawn(monkeypatch):
-    """The Axes ``plot_length_histogram`` actually drew on.
-
-    The chart itself is the behaviour under test -- which scale, which
-    bars, which labels -- and a PNG cannot be asked.  So the figure the
-    plotter builds is captured on its way out of matplotlib and read
-    back afterwards; closing a figure does not discard its artists.
-    """
-    import matplotlib
-    matplotlib.use("agg")
-    import matplotlib.pyplot as plt
-
-    captured = []
-    subplots = plt.subplots
-
-    def capturing_subplots(*args, **kwargs):
-        figure, axes = subplots(*args, **kwargs)
-        captured.append(axes)
-        return figure, axes
-
-    monkeypatch.setattr(plt, "subplots", capturing_subplots)
-    return captured
 
 
 def a_histogram(**counts: int) -> list[int]:
@@ -119,3 +95,11 @@ def test_a_raised_cap_never_crowds_the_last_two_labels(
 
     ticks = list(drawn[0].get_xticks())
     assert ticks[-1] - ticks[-2] > 1
+
+
+def test_the_figure_is_the_size_the_statistics_charts_share(
+    drawn: list,
+) -> None:
+    plot_length_histogram(io.BytesIO(), a_histogram(bin0=1), "segment")
+
+    assert tuple(drawn[0].figure.get_size_inches()) == CHART_FIGSIZE

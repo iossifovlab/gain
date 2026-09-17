@@ -852,3 +852,29 @@ def indexed_repo(
     proto = build_filesystem_test_protocol(tmp_path, repair=False)
     assert _create_contents_db(proto) == frozenset()
     return GenomicResourceProtocolRepo(proto)
+
+
+@pytest.fixture
+def drawn(monkeypatch: pytest.MonkeyPatch) -> list:
+    """The Axes a statistics-chart plotter actually drew on.
+
+    The chart itself is the behaviour under test -- which scale, which
+    bars, which labels, what size -- and a PNG cannot be asked.  So the
+    figure the plotter builds is captured on its way out of matplotlib
+    and read back afterwards; closing a figure does not discard its
+    artists.
+    """
+    import matplotlib
+    matplotlib.use("agg")
+    import matplotlib.pyplot as plt
+
+    captured: list = []
+    subplots = plt.subplots
+
+    def capturing_subplots(*args: Any, **kwargs: Any) -> Any:
+        figure, axes = subplots(*args, **kwargs)
+        captured.append(axes)
+        return figure, axes
+
+    monkeypatch.setattr(plt, "subplots", capturing_subplots)
+    return captured
