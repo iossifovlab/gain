@@ -16,6 +16,12 @@ request crosses the seam, and an annotator that resolves its constant
 list at pipeline load does so for the refusal alone and throws the
 answer away. See "The aggregating reads" below (gain#1300).
 
+Nor does the fragment kind's query memo grow to remember MORE than the
+resolved names -- not the aggregator classes and parameters a name
+resolves to, and not the fold's column mapping. The memo remembers what
+resolution answers, and the read builds the rest fresh per call. See
+"Remembering what a name resolves to" below (gain#1172).
+
 (The point read was `fetch_position_scores` when this was written;
 gain#1268 removed it and made `get_scores_at_position` the only one. The
 refusal is unaffected — the plane's `_region_read_defs` calls the same
@@ -121,6 +127,53 @@ this is called", and it moves the thread-safety rule -- fresh state per
 call -- from the read, where it is stated once, into every caller that
 opts in. The memo stays as the fragment kind's own, with its bound.
 
+## Remembering what a name resolves to
+
+gain#1172 (from the efficiency review of gain#1161, the PR that added
+the fragment memo) asked the question one layer down. The memo remembers
+`(requests, score_ids)` -- aggregator NAMES -- and the read then builds
+each accumulator through `build_region_aggregators` →
+`Aggregator.build` → `_resolve`, which is an `isinstance` and an
+`lru_cache` lookup per aggregator before `cls(*params)`. Should the memo
+instead remember what each name resolves TO, the `(class, parameters)`
+pair, so the read builds `cls(*params)` directly? And, once it does,
+should the remembered entry also carry `fold_region_segments`'s
+`column_of` / `targets` mapping, which is pure over the same key and is
+rebuilt per call?
+
+No. This is the same remedy at the same size: a resolution cached across
+calls, whose ceiling is the per-aggregator lookup it skips. Measured at
+gain `23523d600`, `timeit` min-of-7, 20 `float` scores with `max` on
+every one (four times the query count a real annotator carries), a
+200-row table built with `a_fragment_score()`:
+
+| Fragment read, 20 queries        | Whole read | Item 1 ceiling | Item 2 ceiling |
+| -------------------------------- | ---------- | -------------- | -------------- |
+| tabix, region touching 5 rows    | 77 µs      | 3.7 µs (4.7%)  | 2.2 µs (2.8%)  |
+| tabix, region touching 40 rows   | 457 µs     | 3.6 µs (0.8%)  | 2.1 µs (0.5%)  |
+| tabix, region touching 200 rows  | 2260 µs    | 3.0 µs (0.1%)  | 2.7 µs (0.1%)  |
+| in-memory, 200 rows              | 1651 µs    | 3.7 µs (0.2%)  | 2.1 µs (0.1%)  |
+
+"Item 1 ceiling" is `build_region_aggregators(requests)` minus
+`[cls(*params) for cls, params in remembered]` -- the whole of what
+remembering the pair could save, since the accumulator is built fresh
+either way. "Item 2 ceiling" is the `column_of` / `targets`
+construction. Both are ~0.1-0.2 µs per aggregator, and the 4.7% row is a
+region that reads five rows off a local file; on a GRR table the read is
+milliseconds and both shares are well under 1%.
+
+Against that, the change has grown since it was filed.
+`build_region_aggregators` is now shared by all three folding reads, so
+a fragment memo that bypasses it spells aggregator construction a second
+way for the one kind that already differs; `build_region_aggregator`'s
+error wrapping (the `ValueError` naming the score and the resource) would
+have to move into the memo with the resolution, or the refusal loses the
+context that makes it useful; `Aggregator` would grow a public
+`(class, parameters)` accessor beside the `resolve_class` it already
+has; and the column mapping needs a new keyword on `fold_region_segments`
+that only the memoised caller would pass. The memo remembers names; the
+read builds from them.
+
 ## What is still in scope
 
 **A real per-variant cost.** The refusal is of *this* saving at *this*
@@ -140,3 +193,6 @@ tests fast, not to stand in for a GRR.
   score definitions once, not per call"
 - iossifovlab/gain#1300 -- "Should a resolved aggregation request cross
   the read seam, superseding the fragment query memo?"
+- iossifovlab/gain#1172 -- "After #1161: the fold memo should remember
+  aggregator classes, not names, and the fold should not rebuild its
+  columns per call"
