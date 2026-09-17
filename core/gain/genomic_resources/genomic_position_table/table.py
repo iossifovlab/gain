@@ -126,6 +126,30 @@ class ChromLengthSource(enum.Enum):
         )
 
 
+class PayloadKind(enum.Enum):
+    """What a record's PAYLOAD slot holds on a backend (see ``record.py``).
+
+    A fact about the FORMAT, and every backend names its own in
+    ``payload_kind`` the way it names ``chrom_length_source``: the score
+    layer routes on it at open -- which construction path a resource's
+    definitions take, which validator runs, which extractor reads a
+    record and how a definition resolves to what it reads -- without
+    knowing which backends exist.
+    """
+
+    ROW = "row"
+    """A raw row: a score is one CELL of it, addressed by column index or
+    header name."""
+
+    VARIANT = "variant"
+    """A variant and its INFO proxies: a score is an INFO field, addressed
+    by its key."""
+
+    VALUE = "value"
+    """The value itself: the one score the format carries, addressed by
+    nothing."""
+
+
 class GenomicPositionTable(abc.ABC):
     """Abstraction over genomic scores table."""
 
@@ -176,6 +200,16 @@ class GenomicPositionTable(abc.ABC):
     # new format cannot silently inherit a label (and, through the
     # member's ``is_exact``, a trust level) that is not its own.
     chrom_length_source: ClassVar[ChromLengthSource]
+
+    # What a record's PAYLOAD slot holds on this backend -- a raw row, a
+    # variant with its INFO proxies, or the value itself.  Declared, not
+    # defaulted, for the same reason as ``chrom_length_source``: the score
+    # layer routes on it at open, and a backend that inherits a kind that
+    # is not its own would be read by an extractor that does not fit what
+    # it yields.  The VCF backend subclasses the tabix one and yields a
+    # different payload, so this is the declaration that keeps the class
+    # hierarchy from answering a question it cannot.
+    payload_kind: ClassVar[PayloadKind]
 
     CHROM = "chrom"
     POS_BEGIN = "pos_begin"

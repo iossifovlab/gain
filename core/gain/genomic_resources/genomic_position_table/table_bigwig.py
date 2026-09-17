@@ -10,6 +10,7 @@ from gain.genomic_resources.genomic_position_table.table import (
     ChromLengthSource,
     ContigExtent,
     GenomicPositionTable,
+    PayloadKind,
 )
 from gain.genomic_resources.repository import GenomicResource
 
@@ -180,6 +181,10 @@ class BigWigTable(GenomicPositionTable):
     # serve as true denominators.
     chrom_length_source: ClassVar[ChromLengthSource] = \
         ChromLengthSource.BIGWIG
+
+    # A record's payload IS the interval's value: the format carries one
+    # score and no columns.
+    payload_kind: ClassVar[PayloadKind] = PayloadKind.VALUE
 
     # Serves the bulk column-array read; see get_region_value_arrays below.
     supports_value_arrays: ClassVar[bool] = True

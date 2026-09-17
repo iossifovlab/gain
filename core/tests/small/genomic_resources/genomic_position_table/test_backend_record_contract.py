@@ -61,6 +61,7 @@ from gain.genomic_resources.genomic_position_table.record import (
 )
 from gain.genomic_resources.genomic_position_table.table import (
     GenomicPositionTable,
+    PayloadKind,
 )
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
@@ -511,6 +512,48 @@ def test_a_backend_serves_value_arrays_exactly_when_it_claims_to(
         np.array([np.nan if v is None else v for v in expected],
                  dtype=np.float64),
         equal_nan=True), (values, expected)
+
+
+# What a record's PAYLOAD slot holds on this backend -- the one fact the
+# score layer routes on at open: which scoredef construction path a resource
+# takes, which validator runs, which extractor reads a record, and how a
+# definition resolves to what it reads.  Declared on the class like
+# ``chrom_length_source``, with NO default on the base, so a backend cannot
+# inherit a kind that is not its own:
+#
+#   * in-memory, tabix -- a raw row, cells addressed by column: ROW;
+#   * VCF -- INHERITS tabix's class but not its payload: a variant and its
+#     INFO proxies, scores addressed by INFO key, so it must say VARIANT;
+#   * bigWig -- the interval's value itself: VALUE.
+#
+# test_open_routes_a_backend_to_the_extractor_its_payload_needs is the
+# behavioural half: open() routes on this claim, and that test fails a
+# backend whose claim does not fit what it yields.
+_PAYLOAD_KINDS: list[pytest.param] = [  # type: ignore[valid-type]
+    pytest.param(_build_inmemory, PayloadKind.ROW, id="inmemory"),
+    pytest.param(_build_tabix, PayloadKind.ROW, id="tabix"),
+    pytest.param(_build_vcf, PayloadKind.VARIANT, id="vcf"),
+    pytest.param(_build_bigwig, PayloadKind.VALUE, id="bigwig"),
+]
+
+
+def test_every_backend_declares_its_payload_kind() -> None:
+    """_PAYLOAD_KINDS must cover every backend, so a fifth cannot slip in."""
+    assert {str(param.id) for param in _PAYLOAD_KINDS} == \
+        {str(param.id) for param in _BACKENDS}
+
+
+@pytest.mark.parametrize(("build_backend", "kind"), _PAYLOAD_KINDS)
+def test_a_backend_declares_the_payload_kind_it_yields(
+    build_backend: Callable[[pathlib.Path], Backend],
+    kind: PayloadKind,
+    tmp_path: pathlib.Path,
+) -> None:
+    score, _ = build_backend(tmp_path)
+
+    # Read off the UNOPENED table: it is a ClassVar, known at construction,
+    # and it is what open() will route on.
+    assert score.table.payload_kind is kind
 
 
 # ---------------------------------------------------------------------------
