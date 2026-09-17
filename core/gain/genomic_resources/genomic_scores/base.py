@@ -445,9 +445,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 self.resource_id, self.score_definitions)
         self._extract_value = select_value_extractor(
             score_definitions=self.score_definitions,
-            table=self.table,
-            is_vcf=is_vcf,
-            is_bigwig=is_bigwig)
+            table=self.table)
 
         self.table.open()
         self.table_loaded = True

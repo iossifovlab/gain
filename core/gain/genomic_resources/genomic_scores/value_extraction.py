@@ -39,6 +39,7 @@ from gain.genomic_resources.bigwig_scores import (
     extract_bigwig_value,
     extract_bigwig_value_na,
 )
+from gain.genomic_resources.genomic_position_table.table import PayloadKind
 from gain.genomic_resources.resource_errors import score_configuration_error
 from gain.genomic_resources.score_def import (
     GenomicScoreDef,
@@ -61,19 +62,17 @@ def select_value_extractor(
     *,
     score_definitions: dict[str, GenomicScoreDef],
     table: GenomicPositionTable,
-    is_vcf: bool,
-    is_bigwig: bool,
 ) -> ValueExtractor:
     """Pick the per-record value read for this table's payload.
 
     ONE decision, per table, taken at open rather than per line.  What it
-    turns on is what a record's PAYLOAD *is*, which is whatever the backend
-    that built it says it is:
+    turns on is what a record's PAYLOAD *is*, which the backend declares
+    in its :class:`~.table.PayloadKind`:
 
-    * a **VCF** record's payload carries the variant and the pysam INFO
-      proxies, and a VCF score is an INFO field addressed by name --
+    * a **VARIANT** payload carries the variant and the pysam INFO
+      proxies, and its score is an INFO field addressed by name --
       :func:`extract_vcf_value`;
-    * a **bigWig** record's payload IS the interval's value, so the read is
+    * a **VALUE** payload IS the interval's value, so the read is
       an identity (:func:`extract_bigwig_value`) -- or, for the rare
       resource that configures NA sentinels, an identity plus one
       membership test (:func:`extract_bigwig_value_na`).  Which of the two
@@ -82,23 +81,27 @@ def select_value_extractor(
       declares exactly one score (``validate_bigwig_scoredefs`` refuses
       more), so there is a single answer to give; ``any`` states that
       without depending on it;
-    * any other record-yielding table's payload is a raw row, read by
-      integer column -- :func:`extract_column_value`.
+    * a **ROW** payload is a raw row, read by integer column --
+      :func:`extract_column_value`.
 
-    The table's ``yields_records`` claim is simply believed: that every
-    backend's claim matches what it really yields is pinned statically,
-    over all four of them, by test_backend_record_contract.py, so the fetch
-    path pays nothing for it.
+    The declaration is read first, because every later decision depends
+    on it: a backend that has not made one is refused with the
+    ``AttributeError`` the undefaulted ClassVar raises, before any other
+    check.  The table's ``yields_records`` claim is then simply believed:
+    that every backend's claim matches what it really yields is pinned
+    statically, over all four of them, by test_backend_record_contract.py,
+    so the fetch path pays nothing for it.
 
-    A table that yields no records is a programming error, not a data
+    A ROW table that yields no records is a programming error, not a data
     error: there is no fallback reader, so a backend leaving the flag
     False has nothing that can read it and we refuse rather than guess.
     (Nothing in the tree reaches it: it guards a backend added later
     without its migration.)
     """
-    if is_vcf:
+    kind = table.payload_kind
+    if kind is PayloadKind.VARIANT:
         return extract_vcf_value
-    if is_bigwig:
+    if kind is PayloadKind.VALUE:
         # A bigWig value is a float, so only a NUMERIC sentinel can
         # ever match it -- the four text tokens a float score defaults
         # to ("", "nan", ".", "NA") cannot.  Testing for those rather
