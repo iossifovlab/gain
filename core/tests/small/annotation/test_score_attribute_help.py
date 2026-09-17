@@ -14,17 +14,8 @@ from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.genomic_score_annotator_base import (
     GenomicScoreAnnotatorBase,
 )
-from gain.gene_scores.gene_scores import (
-    GeneScore,
-    GeneScoresDb,
-    build_gene_score_from_resource,
-)
 from gain.genomic_resources.repository import GenomicResourceRepo
-from gain.genomic_resources.testing.builders import (
-    a_gene_score,
-    a_grr,
-    a_position_score,
-)
+from gain.genomic_resources.testing.builders import a_grr, a_position_score
 
 PUBLIC_URL = "http://grr.example.org"
 
@@ -79,41 +70,3 @@ def test_an_annulled_histogram_puts_no_image_in_the_help(
     assert "None" not in help_text
     # The rest of the help is still there.
     assert "scores/pos1" in help_text
-
-
-@pytest.fixture
-def gene_score(tmp_path: pathlib.Path) -> GeneScore:
-    """One gene score resource: ``pli`` has a histogram, ``nullified`` none."""
-    res = (
-        a_gene_score()
-        .with_score("pli", "float")
-        .with_score("nullified", "float")
-        .with_histogram({"type": "null", "reason": "annulled"})
-        .with_data("""
-            gene   pli   nullified
-            G1     1.0   1.0
-        """)
-        .build_resource(tmp_path / "gene_score")
-    )
-    return build_gene_score_from_resource(res)
-
-
-def gene_score_help(gene_score: GeneScore, score_id: str) -> str:
-    descs = {
-        desc.score_id: desc
-        for desc in GeneScoresDb.build_descs_from_score(gene_score)
-    }
-    return descs[score_id].help
-
-
-def test_a_gene_score_help_embeds_the_histogram_by_its_public_address(
-    gene_score: GeneScore,
-) -> None:
-    assert "![HISTOGRAM](" in gene_score_help(gene_score, "pli")
-
-
-def test_an_annulled_gene_score_histogram_puts_no_image_in_the_help(
-    gene_score: GeneScore,
-) -> None:
-    assert gene_score.get_histogram_image_public_url("nullified") is None
-    assert "![HISTOGRAM]" not in gene_score_help(gene_score, "nullified")

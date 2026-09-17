@@ -273,8 +273,10 @@ def unpack_score_defs(
     all_hist_confs: dict[str, HistogramConfig] = {}
     with score.open():
         for score_id in score.score_definitions:
-            # The same resolution the histogram ADDRESS is decided from,
-            # so the two cannot disagree about what gets plotted.
+            # The same resolution the histogram ADDRESS is decided from:
+            # a histogram annulled by definition is neither plotted nor
+            # addressed.  (One nullified further down, by its statistics,
+            # is still addressed -- that oracle is the definition's.)
             hist_conf = score.get_histogram_config(score_id)
             if isinstance(hist_conf, NullHistogramConfig):
                 all_hist_confs[score_id] = hist_conf

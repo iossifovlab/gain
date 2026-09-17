@@ -225,11 +225,11 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
         """The histogram config the score's DEFINITION resolves to.
 
         The stated ``histogram:`` block when there is one, else the default
-        for the score's value type -- which is a ``NullHistogramConfig``
-        for a type no histogram can fold.  So a ``NullHistogramConfig``
-        here means the histogram is annulled *by design*, decided from the
-        config alone: no statistics are read, and a checkout whose
-        statistics were never built answers the same as the published one.
+        for the score's value type -- a ``NullHistogramConfig`` for a type
+        with no default histogram.  So a ``NullHistogramConfig`` here means
+        the histogram is annulled *by design*, decided from the config
+        alone: no statistics are read, and a checkout whose statistics
+        were never built answers the same as the published one.
         """
         self._guard_score_id(score_id)
         score_def = self.score_definitions[score_id]

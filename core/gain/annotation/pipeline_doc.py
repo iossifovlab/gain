@@ -56,8 +56,8 @@ class PipelineDocAddresses(Protocol):
         """Address of the score's histogram image for ``score_id``.
 
         ``None`` when the score has no histogram to show -- an annulled
-        one is never plotted, so it has no image to address.  A gene
-        score's page goes through here too, hence the shared base.
+        one is never plotted, so it has no image to address.  A gene-score
+        annotator's attributes go through here too, hence the shared base.
         """
         ...
 
