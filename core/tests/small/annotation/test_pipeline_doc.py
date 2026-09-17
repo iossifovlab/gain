@@ -26,11 +26,11 @@ from typing import Any
 import pytest
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.pipeline_doc import render_pipeline_doc
-from gain.genomic_resources.genomic_scores import GenomicScore
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
 )
+from gain.genomic_resources.score_resource import ScoreResource
 from gain.genomic_resources.testing.builders import a_grr, a_position_score
 
 PIPELINE = "- position_score: scores/pos1\n"
@@ -50,7 +50,7 @@ class RelativeStub:
         return f"../{resource.resource_id}"
 
     def histogram_url(
-        self, score: GenomicScore, score_id: str,
+        self, score: ScoreResource, score_id: str,
     ) -> str | None:
         return f"../{score.resource.resource_id}/{score_id}.png"
 
@@ -156,7 +156,7 @@ class NoHistogramStub(RelativeStub):
     """A policy that has no histogram address for any score."""
 
     def histogram_url(
-        self, score: GenomicScore, score_id: str,
+        self, score: ScoreResource, score_id: str,
     ) -> str | None:
         return None
 
