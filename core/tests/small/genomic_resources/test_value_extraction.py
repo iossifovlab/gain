@@ -5,9 +5,10 @@ how a record's cell becomes a value: which extractor reads the payload, and
 which payload column each score def is addressed to.  Both used to be private
 methods on the class (gain#1114 moved them out; gain#1027 is the epic).
 
-What is pinned HERE is only what no opened score can reach at all: the
-refusal of a table that yields no records, which needs a backend that does
-not exist in the tree.  Everything the seam does for a resource somebody can
+What is pinned HERE is only what no opened score can reach at all: the two
+refusals of a backend that does not exist in the tree -- one that has not
+declared its payload kind, one that yields no records -- and which of them
+wins.  Everything the seam does for a resource somebody can
 actually build is pinned from the score's side, at the higher ``open()``
 seam, and is deliberately not duplicated here:
 

@@ -184,6 +184,17 @@ _BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
     pytest.param(_build_bigwig, extract_bigwig_value, id="bigwig"),
 ]
 
+# The extractor above is a pure function of the backend's ``payload_kind``
+# declaration -- that is what ``select_value_extractor`` is -- so the kind
+# each backend must declare is read off this list rather than kept in a
+# second one.  (Which kind an entry's fixture really builds is what
+# test_open_routes_a_backend_to_the_extractor_its_payload_needs checks.)
+_KIND_OF_EXTRACTOR = {
+    extract_column_value: PayloadKind.ROW,
+    extract_vcf_value: PayloadKind.VARIANT,
+    extract_bigwig_value: PayloadKind.VALUE,
+}
+
 
 def build_every_backend(
     tmp_path: pathlib.Path,
@@ -246,7 +257,8 @@ def test_every_record_backend_declares_whether_its_records_hash(
 
     Which backends must declare is asked of the **tables themselves**:
     ``yields_records`` is the claim this whole file exists to hold backends to,
-    and it is the same discriminator ``GenomicScore.open`` routes on.  Asking a
+    and it is the gate ``GenomicScore.open`` puts the column read behind
+    (the read itself is routed on ``payload_kind``).  Asking a
     built-but-unopened table is deliberate -- the flag is a ClassVar, so it
     needs no open handle, and a backend that leaves it False is one
     ``GenomicScore.open`` refuses outright.  Opening first would mean this loop
@@ -399,6 +411,10 @@ def test_open_routes_a_backend_to_the_extractor_its_payload_needs(
     # makes the routing correct for every backend, without any per-record
     # check.
     score, region = build_backend(tmp_path)
+    # The claim open() routes on, read off the UNOPENED table: a ClassVar,
+    # known at construction.  The VCF backend inherits the tabix class and
+    # would inherit its ROW without an override of its own.
+    assert score.table.payload_kind is _KIND_OF_EXTRACTOR[extractor]
     with score.open():
         # The choice is made once, at open: it is already installed before a
         # single record is fetched.
@@ -512,83 +528,6 @@ def test_a_backend_serves_value_arrays_exactly_when_it_claims_to(
         np.array([np.nan if v is None else v for v in expected],
                  dtype=np.float64),
         equal_nan=True), (values, expected)
-
-
-# What a record's PAYLOAD slot holds on this backend -- the one fact the
-# score layer routes on, at construction and at open: which scoredef path a
-# resource takes, which validator runs, which extractor reads a record, how a
-# definition resolves to what it reads.  Declared on the class like
-# ``chrom_length_source``, with NO default on the base, so a backend cannot
-# inherit a kind that is not its own:
-#
-#   * in-memory, tabix -- a raw row, cells addressed by column: ROW;
-#   * VCF -- INHERITS tabix's class but not its payload: a variant and its
-#     INFO proxies, scores addressed by INFO key, so it must say VARIANT;
-#   * bigWig -- the interval's value itself: VALUE.
-#
-# test_open_routes_a_backend_to_the_extractor_its_payload_needs is the
-# behavioural half: open() routes on this claim, and that test fails a
-# backend whose claim does not fit what it yields.
-_PAYLOAD_KINDS: list[pytest.param] = [  # type: ignore[valid-type]
-    pytest.param(_build_inmemory, PayloadKind.ROW, id="inmemory"),
-    pytest.param(_build_tabix, PayloadKind.ROW, id="tabix"),
-    pytest.param(_build_vcf, PayloadKind.VARIANT, id="vcf"),
-    pytest.param(_build_bigwig, PayloadKind.VALUE, id="bigwig"),
-]
-
-
-def test_every_backend_declares_its_payload_kind() -> None:
-    """_PAYLOAD_KINDS must cover every backend, so a fifth cannot slip in."""
-    assert {str(param.id) for param in _PAYLOAD_KINDS} == \
-        {str(param.id) for param in _BACKENDS}
-
-
-@pytest.mark.parametrize(("build_backend", "kind"), _PAYLOAD_KINDS)
-def test_a_backend_declares_the_payload_kind_it_yields(
-    build_backend: Callable[[pathlib.Path], Backend],
-    kind: PayloadKind,
-    tmp_path: pathlib.Path,
-) -> None:
-    score, _ = build_backend(tmp_path)
-
-    # Read off the UNOPENED table: it is a ClassVar, known at construction,
-    # and it is what open() will route on.
-    assert score.table.payload_kind is kind
-
-
-def test_every_backend_in_the_tree_declares_its_payload_kind() -> None:
-    """The declaration is an obligation on every concrete backend.
-
-    Swept from the backend package rather than listed by name, so a fifth
-    backend is held to it the moment it exists -- _PAYLOAD_KINDS above can
-    only hold the four that are listed.  (The sweep's own vacuity guard is
-    ``test_the_backend_sweep_walks_the_backend_package``.)
-
-    The declaration has to be the class's OWN: the base carries no default,
-    but a backend that subclasses another backend inherits that one's kind,
-    and the VCF backend shows that the inherited kind can be wrong.  A
-    ``getattr`` would accept the inherited one and miss exactly that case.
-    """
-    # Function-local: test_table_lifetime imports this module's fixtures,
-    # so a module-level import back would be a cycle.
-    from .test_table_lifetime import _concrete_backends_in_the_tree
-
-    undeclared = [
-        klass.__name__
-        for klass in _concrete_backends_in_the_tree()
-        if not isinstance(vars(klass).get("payload_kind"), PayloadKind)
-    ]
-
-    assert undeclared == [], (
-        f"backend(s) {undeclared} do not declare payload_kind; say what a "
-        f"record's payload slot holds on that format")
-
-
-def test_the_base_table_declares_no_payload_kind() -> None:
-    """No default: an inherited kind would route a backend to a read that
-    does not fit what it yields."""
-    with pytest.raises(AttributeError, match="payload_kind"):
-        _ = GenomicPositionTable.payload_kind
 
 
 # ---------------------------------------------------------------------------

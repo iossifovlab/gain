@@ -202,14 +202,17 @@ class GenomicPositionTable(abc.ABC):
     chrom_length_source: ClassVar[ChromLengthSource]
 
     # What a record's PAYLOAD slot holds on this backend -- a raw row, a
-    # variant with its INFO proxies, or the value itself.  Declared, not
-    # defaulted, for the same reason as ``chrom_length_source``: the score
-    # layer routes on it from the moment a score is built over the table,
-    # and a backend that inherits a kind that is not its own would be read
-    # by an extractor that does not fit what it yields.  The VCF backend
-    # subclasses the tabix one and yields a
-    # different payload, so this is the declaration that keeps the class
-    # hierarchy from answering a question it cannot.
+    # variant with its INFO proxies, or the value itself.  The score layer
+    # routes on it from the moment a score is built over the table (see
+    # ``PayloadKind``), and a backend read through a kind that is not its
+    # own is read by an extractor that does not fit what it yields.  Two
+    # guards, for the two ways that happens: no default here, so a fresh
+    # subclass of this base is refused with an AttributeError rather than
+    # routed; and test_table_lifetime.py's sweep demands each backend's OWN
+    # declaration, because a backend that subclasses another backend
+    # inherits that one's kind -- the VCF backend subclasses the tabix one
+    # and yields a different payload, so it overrides, as it overrides
+    # ``supports_value_arrays``.
     payload_kind: ClassVar[PayloadKind]
 
     CHROM = "chrom"

@@ -39,7 +39,7 @@ from gain.genomic_resources.bigwig_scores import (
     extract_bigwig_value,
     extract_bigwig_value_na,
 )
-from gain.genomic_resources.genomic_position_table.table import PayloadKind
+from gain.genomic_resources.genomic_position_table import PayloadKind
 from gain.genomic_resources.resource_errors import score_configuration_error
 from gain.genomic_resources.score_def import (
     GenomicScoreDef,

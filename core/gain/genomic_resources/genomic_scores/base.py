@@ -263,10 +263,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     """
 
     # How a value is read off a record.  Installed by :meth:`open`, from the
-    # table's ``yields_records`` claim, and declared here with NO default on
-    # purpose: a record's payload means two different things -- a raw row or a
-    # VCF (variant, allele index) pair -- so no single extractor reads both,
-    # and a default would have to be wrong for one of them.  Unset until open()
+    # table's ``payload_kind``, and declared here with NO default on
+    # purpose: a record's payload means different things -- a raw row, a
+    # VCF (variant, allele index) pair, a bigWig value -- so no single
+    # extractor reads them all, and a default would have to be wrong for
+    # one of them.  Unset until open()
     # routes, an unopened score raises AttributeError rather than silently
     # reading a VCF record as a row; open() installs it *before* publishing
     # table_loaded, so no caller can observe the gap (see open()).

@@ -755,15 +755,11 @@ raw ``ROW``, a ``VARIANT`` with its INFO proxies, or the ``VALUE`` itself --
 and each backend declares its own as the class attribute ``payload_kind``,
 the way it declares ``chrom_length_source``: NO default on the base, so a
 backend that has not said is refused with an ``AttributeError`` the moment
-a score is built over it.  The score layer routes on it when the score is
-built and again when it is opened --
-which construction path a resource's definitions take, which validator
-runs, which extractor reads a record, how a definition resolves to what it
-reads -- where it used to ask ``isinstance`` against ``BigWigTable`` and
-``VCFGenomicPositionTable`` at each of those sites.  The VCF backend
-subclasses the tabix one and yields a different payload, so the
-declaration is the one place the hierarchy is overridden, beside
-``supports_value_arrays`` which overrides it for the same reason.
+a score is built over it.  It is exported because the score layer routes
+on it (``PayloadKind``'s docstring lists the decisions) where it used to
+ask ``isinstance`` against ``BigWigTable`` and ``VCFGenomicPositionTable``
+at each site.  The obligation is a backend's OWN declaration, not an
+inherited one; the ``payload_kind`` comment on the base says why.
 """
 from .line import LineBuffer
 from .table import ChromLengthSource, ContigExtent, PayloadKind

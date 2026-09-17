@@ -84,8 +84,7 @@ class TabixGenomicPositionTable(GenomicPositionTable):
     chrom_length_source: ClassVar[ChromLengthSource] = \
         ChromLengthSource.TABIX_ESTIMATE
 
-    # A record's payload is the raw tabular row.  NOT inherited by the VCF
-    # backend, whose payload is a variant; it declares its own.
+    # A record's payload is the raw tabular row.
     payload_kind: ClassVar[PayloadKind] = PayloadKind.ROW
 
     # Serves the bulk column-array read; see get_region_value_arrays below.
