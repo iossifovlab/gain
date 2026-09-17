@@ -158,34 +158,25 @@ def _a_chain_under_a_real_id_configured(
     return build_filesystem_test_repository(tmp_path).get_resource(A_CHAIN_ID)
 
 
-def test_a_chain_with_a_key_its_schema_does_not_know_is_refused(
-    tmp_path: pathlib.Path,
+@pytest.mark.parametrize("field", [
+    # A typo of `filename`.
+    pytest.param({"file_name": "liftover.chain.gz"},
+                 id="a-key-the-schema-does-not-know"),
+    # A reference genome spells `chrom_prefix` as a flat string, and the
+    # two resource types sit side by side in a repository -- on a chain
+    # it is a mapping of two coordinate sides.
+    pytest.param({"chrom_prefix": "chr"},
+                 id="the-genome-spelling-of-chrom_prefix"),
+])
+def test_a_chain_config_outside_its_schema_is_refused(
+    tmp_path: pathlib.Path, field: dict[str, Any],
 ) -> None:
-    """A key the chain's schema does not know -- a typo of ``filename``,
-    say -- refuses the chain at construction, naming the resource."""
+    """The chain runs the schema it declares: a config outside it refuses
+    the chain at construction, naming the resource."""
     resource = _a_chain_under_a_real_id_configured(tmp_path, yaml.safe_dump({
         "type": "liftover_chain",
         "filename": "liftover.chain.gz",
-        "file_name": "liftover.chain.gz",
-    }))
-
-    with pytest.raises(MalformedResourceError, match=A_CHAIN_ID):
-        LiftoverChain(resource)
-
-
-def test_a_chain_whose_chrom_prefix_is_the_genome_spelling_is_refused(
-    tmp_path: pathlib.Path,
-) -> None:
-    """``chrom_prefix`` on a chain is a mapping of two coordinate sides.
-
-    A reference genome spells the same key as a flat string, and the
-    two resource types sit side by side in a repository, so the genome's
-    spelling is the likely slip. It is refused with the resource's id.
-    """
-    resource = _a_chain_under_a_real_id_configured(tmp_path, yaml.safe_dump({
-        "type": "liftover_chain",
-        "filename": "liftover.chain.gz",
-        "chrom_prefix": "chr",
+        **field,
     }))
 
     with pytest.raises(MalformedResourceError, match=A_CHAIN_ID):
