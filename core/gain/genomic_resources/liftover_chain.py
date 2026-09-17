@@ -38,6 +38,9 @@ class LiftoverChain(ResourceConfigValidationMixin):
                 resource.resource_id, resource.get_type(), config)
             raise ValueError(f"wrong resource type: {config}")
 
+        # The chain declares a schema, so it runs it (ADR 0031).
+        config = self.validate_and_normalize_schema(config, resource)
+
         chrom_prefix = config.get("chrom_prefix")
         if chrom_prefix is None:
             self.chrom_variant_coordinates = None
@@ -50,13 +53,10 @@ class LiftoverChain(ResourceConfigValidationMixin):
 
         self.liftover: LiftOver | None = None
 
-        # Asked of the resource rather than read off the raw config: the
-        # chain declares a schema but never runs it, and `get_labels` is
-        # where a free-form `meta.labels` gets narrowed (gain#654).
-        #
-        # And read through the label narrowing rather than straight off
-        # the mapping, because that accessor narrows the BLOCK and says
-        # nothing about the values in it: an int or a list here used to
+        # Asked of the resource rather than read off the config, and
+        # through the label narrowing rather than straight off the
+        # mapping: the schema just run holds `meta.labels` to a mapping,
+        # but says nothing about the values in it. An int or a list used to
         # satisfy these annotations and reach `get_resource` as itself,
         # where it raised `TypeError` naming neither the chain nor the
         # label.  The annotator that consumes both ids already handles
