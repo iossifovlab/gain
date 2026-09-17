@@ -42,6 +42,7 @@ from gain.genomic_resources.genomic_position_table.record import (
     Record,
 )
 from gain.genomic_resources.histogram import build_histogram_config
+from gain.genomic_resources.resource_errors import score_configuration_error
 from gain.genomic_resources.resource_implementation import (
     get_base_resource_schema,
 )
