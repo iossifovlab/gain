@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
+    AnnotationConfigurationError,
     AnnotatorInfo,
     Attribute,
     AttributeConfig,
@@ -40,6 +41,25 @@ def typed_attribute(
             source=name, value_type=value_type, description="",
             attribute_type=attribute_type),
     )
+
+
+def assert_refuses_empty_resource_id(
+    excinfo: pytest.ExceptionInfo[AnnotationConfigurationError],
+    annotator_type: str,
+    parameter: str,
+) -> None:
+    """The pipeline refused an explicit empty resource id by name.
+
+    The cause names the annotator and the parameter a curator has to
+    fix, and carries neither ``<>`` nor ``None`` -- the two spellings
+    the empty id takes when it is resolved instead of refused.
+    """
+    cause = excinfo.value.__cause__
+    assert isinstance(cause, ValueError)
+    assert annotator_type in str(cause)
+    assert parameter in str(cause)
+    assert "<>" not in str(cause)
+    assert "None" not in str(cause)
 
 
 class DummyAnnotator(Annotator):

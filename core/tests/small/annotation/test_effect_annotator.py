@@ -23,6 +23,8 @@ from gain.genomic_resources.testing import (
 )
 from gain.testing.t4c8_import import GENOME_CONTENT, GMM_CONTENT
 
+from tests.small.annotation.conftest import assert_refuses_empty_resource_id
+
 
 @pytest.fixture
 def grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
@@ -187,6 +189,43 @@ def test_effect_annotator_with_no_genome_anywhere_says_so(
     assert isinstance(cause, ValueError)
     assert "has no reference genome" in str(cause)
     assert "<>" not in str(cause)
+
+
+def test_effect_annotator_refuses_an_empty_gene_models_id(
+    grr: GenomicResourceRepo,
+) -> None:
+    """An explicit ``gene_models: ""`` is refused by name (gain#1101)."""
+    config = textwrap.dedent("""
+        - effect_annotator:
+            gene_models: ""
+        """)
+
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        load_pipeline_from_yaml(config, grr)
+
+    assert_refuses_empty_resource_id(excinfo, "effect_annotator", "gene_models")
+
+
+def test_effect_annotator_refuses_an_empty_genome_id(
+    grr: GenomicResourceRepo,
+) -> None:
+    """An explicit ``genome: ""`` is refused, not read as "not configured".
+
+    ``t4c8_genes`` carries a ``reference_genome`` label, so a fallback
+    is available: the refusal must win over it (gain#1101).  An empty id
+    is a templating accident; hiding it behind a fallback is the same
+    mistake as resolving it.
+    """
+    config = textwrap.dedent("""
+        - effect_annotator:
+            gene_models: t4c8_genes
+            genome: ""
+        """)
+
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        load_pipeline_from_yaml(config, grr)
+
+    assert_refuses_empty_resource_id(excinfo, "effect_annotator", "genome")
 
 
 def test_effect_annotator_genomeless_preamble_uses_the_context(

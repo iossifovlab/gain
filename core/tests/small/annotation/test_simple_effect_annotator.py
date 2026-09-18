@@ -2,6 +2,7 @@
 import textwrap
 
 import pytest
+import pytest_mock
 from gain.annotation.annotatable import Annotatable, Position, Region, VCFAllele
 from gain.annotation.annotation_config import (
     AnnotationConfigurationError,
@@ -11,6 +12,10 @@ from gain.annotation.simple_effect_annotator import (
     SimpleEffect,
     SimpleEffectAnnotator,
 )
+from gain.genomic_resources.gene_models.gene_models_factory import (
+    build_gene_models_from_resource_id,
+)
+from gain.genomic_resources.genomic_context import SimpleGenomicContext
 from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,
     GenomicResourceRepo,
@@ -20,6 +25,8 @@ from gain.genomic_resources.testing import (
     convert_to_tab_separated,
 )
 from gain.utils.regions import Region as BedRegion
+
+from tests.small.annotation.conftest import assert_refuses_empty_resource_id
 
 
 @pytest.fixture(scope="module")
@@ -284,6 +291,56 @@ def test_simple_effect_annotator_requires_gene_models_resource(
                 """),
             empty_repo,
         )
+
+
+def test_simple_effect_annotator_absent_gene_models_uses_the_context(
+    mocker: pytest_mock.MockerFixture,
+    grr: GenomicResourceProtocolRepo,
+) -> None:
+    """An *absent* ``gene_models`` still falls back to the context.
+
+    The refusal of an explicit empty id (gain#1101) must not reach the
+    key being left out altogether, which is how a pipeline defers the
+    choice of gene models to the environment it runs in.
+    """
+    gene_models = build_gene_models_from_resource_id("gene_models", grr)
+    mocker.patch(
+        "gain.annotation.utils.get_genomic_context",
+    ).return_value = SimpleGenomicContext(
+        context_objects={"gene_models": gene_models}, source="test_context")
+
+    annotation_pipeline = load_pipeline_from_yaml(
+        textwrap.dedent("""
+            - simple_effect_annotator: {}
+            """),
+        build_inmemory_test_repository({}),
+    )
+
+    with annotation_pipeline.open() as pipeline:
+        assert pipeline.annotators[0].resource_ids == {"gene_models"}
+
+
+def test_simple_effect_annotator_refuses_an_empty_gene_models_id(
+) -> None:
+    """An explicit ``gene_models: ""`` is a configuration error, not an id.
+
+    Nothing in the stack emits an empty id -- the web editor drops blank
+    fields before it renders YAML -- so one in a config is a hand-written
+    or templating accident (gain#1101), to be refused by name rather
+    than resolved.
+    """
+    empty_repo = build_inmemory_test_repository({})
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        load_pipeline_from_yaml(
+            textwrap.dedent("""
+                - simple_effect_annotator:
+                    gene_models: ""
+                """),
+            empty_repo,
+        )
+
+    assert_refuses_empty_resource_id(
+        excinfo, "simple_effect_annotator", "gene_models")
 
 
 @pytest.mark.parametrize(
