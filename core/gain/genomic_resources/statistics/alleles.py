@@ -350,20 +350,7 @@ def _serialized(counts: AlleleCounts) -> dict[str, Any]:
     ):
         if lengths is None:
             continue
-        # Keys SORTED and written as strings, as the complex grid's
-        # are: the map is sparse and two chunkings of one resource meet
-        # its lengths in different orders, so sorting is what makes the
-        # file byte-identical however the rows arrived.
-        entry[key] = {
-            "lengths": {
-                str(length): lengths.lengths[length]
-                for length in sorted(lengths.lengths)
-            },
-            "count": lengths.total,
-            "sum": lengths.sum,
-            "min": lengths.min,
-            "max": lengths.max,
-        }
+        entry[key] = lengths.stored()
     if counts.complex_grid is not None:
         # Written ref-then-alt SORTED, not in encounter order: the cells
         # are a sparse dict, and two chunkings of one resource meet the
@@ -429,23 +416,7 @@ def _deserialized_indels(
     stored = entry.get(key)
     if stored is None:
         return None
-    # ``min`` and ``max`` are read tolerantly and the other three are
-    # not, which is deliberate rather than sloppy: those two are
-    # legitimately ``null`` for a group that was scanned and found
-    # nothing, so absent and null must read alike.  A group missing its
-    # map, count or sum is a malformed file, and raising names it.
-    minimum = stored.get("min")
-    maximum = stored.get("max")
-    return ExactLengths(
-        {
-            int(length): int(count)
-            for length, count in stored["lengths"].items()
-        },
-        int(stored["count"]),
-        int(stored["sum"]),
-        None if minimum is None else int(minimum),
-        None if maximum is None else int(maximum),
-    )
+    return ExactLengths.from_stored(stored)
 
 
 def _deserialized_matrix(

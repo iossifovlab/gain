@@ -41,7 +41,6 @@ The test fails when it regenerates, so a regeneration can never be mistaken for
 a passing run.  Inspect the diff before committing it.
 """
 import json
-import os
 import pathlib
 
 import pytest
@@ -59,10 +58,11 @@ from gain.genomic_resources.testing.builders import (
     an_allele_score,
 )
 
+from tests.small.genomic_resources.conftest import assert_golden
+
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 HISTOGRAMS_GOLDEN = FIXTURES / "statistics_histograms_golden.txt"
 MIN_MAX_GOLDEN = FIXTURES / "statistics_min_max_golden.json"
-UPDATE_ENV = "GAIN_UPDATE_GOLDEN"
 
 # In-memory, 0-based.  Rows are [begin, end) half-open, so a record's base
 # span -- the weight each value carries into the histogram -- is end - begin
@@ -263,27 +263,12 @@ def _collect_min_max(repo_root: pathlib.Path) -> str:
     return json.dumps(result, indent=2, sort_keys=True) + "\n"
 
 
-def _assert_golden(golden_path: pathlib.Path, actual: str) -> None:
-    if os.environ.get(UPDATE_ENV):
-        golden_path.parent.mkdir(parents=True, exist_ok=True)
-        golden_path.write_text(actual)
-        pytest.fail(
-            f"golden file regenerated at {golden_path}; review the diff, "
-            f"then re-run without {UPDATE_ENV}")
-
-    assert golden_path.exists(), (
-        f"missing golden file {golden_path}; regenerate it with "
-        f"{UPDATE_ENV}=1")
-    expected = golden_path.read_text()
-    if actual != expected:
-        pytest.fail(
-            f"statistics output changed.\n"
-            f"--- expected ({golden_path})\n{expected}\n"
-            f"--- actual\n{actual}")
+def _golden(golden_path: pathlib.Path, actual: str) -> None:
+    assert_golden(golden_path, actual, what="statistics output")
 
 
 def test_statistics_histograms_golden(built_statistics: pathlib.Path) -> None:
-    _assert_golden(HISTOGRAMS_GOLDEN, _collect_histograms(built_statistics))
+    _golden(HISTOGRAMS_GOLDEN, _collect_histograms(built_statistics))
 
 
 def test_statistics_min_max_golden(built_statistics: pathlib.Path) -> None:
@@ -295,7 +280,7 @@ def test_statistics_min_max_golden(built_statistics: pathlib.Path) -> None:
     # test_statistics_histograms_golden compares byte-for-byte, so this test
     # cannot fail unless that one fails first.  Treat it as documentation, not
     # as a second, independent check.
-    _assert_golden(MIN_MAX_GOLDEN, _collect_min_max(built_statistics))
+    _golden(MIN_MAX_GOLDEN, _collect_min_max(built_statistics))
 
 
 # --- gain#430: the .tbi statistics hash must not drift -------------------
@@ -323,7 +308,7 @@ def test_tabix_score_statistics_hash_golden(tmp_path: pathlib.Path) -> None:
     statistics_hash = build_score_implementation_from_resource(
         resource).calc_statistics_hash().decode()
 
-    _assert_golden(
+    _golden(
         HASH_GOLDEN,
         statistics_hash
         .replace(data_md5, _DATA_MD5)

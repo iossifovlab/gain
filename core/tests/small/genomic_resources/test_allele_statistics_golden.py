@@ -2,30 +2,33 @@
 """Golden test locking the allele statistics file and page byte-for-byte.
 
 The indel groups of an allele score are stored as an exact ``{length:
-count}`` map plus four scalars (gain#1118), and gain#1542 lifts that record
-out of the indel module so segments and fragments can share it.  That move
-is a pure refactor, and this file is what makes "pure" checkable: the
-``alleles.json`` a statistics build writes and the ``index.html`` the info
-build renders from it are pinned against checked-in expected files that
-were generated BEFORE the move.  A rename that leaked into the file, a
+count}`` map plus four scalars, and gain#1542 lifts that record out of the
+indel module so segments and fragments can share it.  That move is a pure
+refactor, and this file is what makes "pure" checkable: the ``alleles.json``
+a statistics build writes and the Alleles section of the ``index.html`` the
+info build renders from it are pinned against checked-in expected files
+that were generated BEFORE the move.  A rename that leaked into the file, a
 map written unsorted, a row cell that changed how a length is spelled --
 each shows up here as a diff.
 
 Two allele scores, because the page has two answers per indel group:
 
-* ``mixed`` carries insertions and deletions, one deletion longer than the
-  length-map clamp, so the overflow bucket, the ``>=`` median floor and the
-  unclamped ``max`` all reach the file and the page.  Tabix-backed, so it
-  takes the vectorized scan.
+* ``mixed`` carries insertions and deletions, two deletions longer than
+  the length-map clamp, so the overflow bucket, the ``>=`` median floor
+  and the unclamped ``max`` all reach the file and the page.
+  Tabix-backed, so it takes the vectorized scan.
 * ``substitutions`` carries no indel at all: both groups are SCANNED and
   EMPTY, which the page renders as a count of ``0`` beside empty length
   cells -- distinct from the "not computed" a pre-map file gets.  Plain
   text, so it takes the per-record scan.
 
-The indel PNGs are deliberately not pinned here.  Their bytes depend on the
-matplotlib and freetype the run happens to have, so a checked-in image
-would fail CI for reasons that have nothing to do with the statistics.
-The chart's BINS are pinned by the ladder tests beside this file.
+Only the Alleles SECTION of the page is pinned, not the whole page.  The
+section is exactly what ``alleles.json`` renders into; the rest is shared
+CSS and script that every page carries, and a Files table whose bgzip and
+tabix md5s are the local htslib's output -- environment-dependent, and
+nothing to do with the statistics.  The indel PNGs are not pinned for the
+same reason: their bytes depend on the matplotlib and freetype of the run.
+Which images EXIST is pinned, because that is machine-independent.
 
 Regenerate the expected files with::
 
@@ -35,21 +38,17 @@ test_allele_statistics_golden.py
 The test fails when it regenerates, so a regeneration can never be mistaken
 for a passing run.  Inspect the diff before committing it.
 """
-import os
 import pathlib
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
-from gain.genomic_resources.testing.builders import (
-    GRRBuilder,
-    a_grr,
-    an_allele_score,
-)
+from gain.genomic_resources.testing.builders import a_grr, an_allele_score
+
+from tests.small.genomic_resources.conftest import assert_golden
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 ALLELES_GOLDEN = FIXTURES / "allele_statistics_alleles_golden.json"
 PAGE_GOLDEN = FIXTURES / "allele_statistics_page_golden.html"
-UPDATE_ENV = "GAIN_UPDATE_GOLDEN"
 
 #: Longer than the length-map clamp (8192), so the deletions that remove
 #: them land in the overflow bucket while ``max`` and ``sum`` keep their
@@ -84,9 +83,22 @@ SUBSTITUTIONS_DATA = """
     chr1   20         C          T            0.2
 """
 
+RESOURCE_IDS = ("mixed", "substitutions")
 
-def _golden_grr_builder() -> GRRBuilder:
-    return (
+INDEL_IMAGES = (
+    "statistics/allele_insertion_lengths.png",
+    "statistics/allele_deletion_lengths.png",
+)
+
+
+@pytest.fixture(scope="module")
+def built_repo(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
+    """The GRR, its statistics and its pages, built once for the module.
+
+    Every test here only reads the built tree, so one build serves all.
+    """
+    root = tmp_path_factory.mktemp("allele_statistics_golden")
+    (
         a_grr()
         .with_resource(
             "mixed",
@@ -101,85 +113,54 @@ def _golden_grr_builder() -> GRRBuilder:
             .with_score("score", "float")
             .with_data(SUBSTITUTIONS_DATA),
         )
-    )
+    ).build_repo(root)
+    cli_manage(["repo-stats", "-R", str(root), "-j", "1"])
+    cli_manage(["repo-info", "-R", str(root), "-j", "1"])
+    return root
 
 
-@pytest.fixture
-def built_repo(tmp_path: pathlib.Path) -> pathlib.Path:
-    """Build the GRR, its statistics and its pages; return the repo root."""
-    _golden_grr_builder().build_repo(tmp_path)
-    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
-    cli_manage(["repo-info", "-R", str(tmp_path), "-j", "1"])
-    return tmp_path
+def _alleles_section(page: str) -> str:
+    """The page from its Alleles heading up to the next top heading."""
+    start = page.index("<h2>Alleles</h2>")
+    end = page.index("<h2", start + 1)
+    return page[start:end]
 
 
-def _collect(repo_root: pathlib.Path, relative: str) -> str:
-    """Concatenate one file from every resource, keyed by resource id.
-
-    Sorted by resource id so the blob is stable across runs; the repo's
-    temporary root is scrubbed out so a page that happened to embed it
-    would not differ from run to run.
-    """
-    parts: list[str] = []
-    for resource_dir in sorted(p for p in repo_root.iterdir() if p.is_dir()):
-        path = resource_dir / relative
-        if not path.exists():
-            continue
-        text = path.read_text(encoding="utf-8")
-        parts.append(
-            f"# {resource_dir.name}/{relative}\n"
-            + text.replace(str(repo_root), "<repo>"))
-    # Not a bare ``assert`` -- that is stripped under ``python -O``, which
-    # would let a build that wrote nothing pass this test vacuously.
-    if len(parts) != 2:
-        pytest.fail(
-            f"expected {relative} under both resources, found {len(parts)}")
+def _collect(repo_root: pathlib.Path, relative: str, *,
+             section: bool = False) -> str:
+    """One file from each resource, concatenated under a ``# id`` header."""
+    parts = []
+    for resource_id in RESOURCE_IDS:
+        text = (repo_root / resource_id / relative).read_text(
+            encoding="utf-8")
+        if section:
+            text = _alleles_section(text)
+        parts.append(f"# {resource_id}/{relative}\n{text}")
     return "\n\n".join(parts) + "\n"
 
 
-def _assert_golden(golden_path: pathlib.Path, actual: str) -> None:
-    if os.environ.get(UPDATE_ENV):
-        golden_path.parent.mkdir(parents=True, exist_ok=True)
-        golden_path.write_text(actual, encoding="utf-8")
-        pytest.fail(
-            f"golden file regenerated at {golden_path}; review the diff, "
-            f"then re-run without {UPDATE_ENV}")
-
-    assert golden_path.exists(), (
-        f"missing golden file {golden_path}; regenerate it with "
-        f"{UPDATE_ENV}=1")
-    expected = golden_path.read_text(encoding="utf-8")
-    if actual != expected:
-        pytest.fail(
-            f"allele statistics output changed.\n"
-            f"--- expected ({golden_path})\n{expected}\n"
-            f"--- actual\n{actual}")
-
-
 def test_alleles_json_golden(built_repo: pathlib.Path) -> None:
-    _assert_golden(
-        ALLELES_GOLDEN, _collect(built_repo, "statistics/alleles.json"))
+    assert_golden(
+        ALLELES_GOLDEN,
+        _collect(built_repo, "statistics/alleles.json"),
+        what="alleles.json")
 
 
-def test_allele_page_golden(built_repo: pathlib.Path) -> None:
-    _assert_golden(PAGE_GOLDEN, _collect(built_repo, "index.html"))
+def test_allele_page_section_golden(built_repo: pathlib.Path) -> None:
+    assert_golden(
+        PAGE_GOLDEN,
+        _collect(built_repo, "index.html", section=True),
+        what="the page's Alleles section")
 
 
 def test_an_indel_image_is_written_exactly_when_the_group_has_alleles(
     built_repo: pathlib.Path,
 ) -> None:
-    """The PNG bytes are not pinned (see the module docstring), but WHICH
-    images exist is machine-independent and is the half of the build the
-    page golden cannot see: the build's gate and the template's gate are
-    separate code, and a build that wrote an image for an empty group --
-    or skipped one for a populated group -- would leave a file nothing
-    links or a thumbnail linking nothing."""
-    images = [
-        "statistics/allele_insertion_lengths.png",
-        "statistics/allele_deletion_lengths.png",
-    ]
-
-    assert [(built_repo / "mixed" / image).exists() for image in images] \
-        == [True, True]
+    """The half of the build the page golden cannot see: the build's gate
+    and the template's gate are separate code, and a build that wrote an
+    image for an empty group -- or skipped one for a populated group --
+    would leave a file nothing links or a thumbnail linking nothing."""
+    assert [(built_repo / "mixed" / image).exists()
+            for image in INDEL_IMAGES] == [True, True]
     assert [(built_repo / "substitutions" / image).exists()
-            for image in images] == [False, False]
+            for image in INDEL_IMAGES] == [False, False]

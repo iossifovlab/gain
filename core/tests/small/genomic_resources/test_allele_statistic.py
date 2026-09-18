@@ -11,10 +11,10 @@ from gain.genomic_resources.statistics.alleles import (
     RegionAlleles,
     build_allele_section_display,
 )
-from gain.genomic_resources.statistics.indel_lengths import (
-    INDEL_LENGTH_CLAMP,
-    IndelStatisticsRow,
-    indel_length_ladder,
+from gain.genomic_resources.statistics.exact_lengths import (
+    LENGTH_MAP_CLAMP,
+    LengthStatisticsRow,
+    length_ladder,
 )
 from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
@@ -691,7 +691,7 @@ def test_an_indel_past_the_clamp_folds_into_the_overflow_bucket() -> None:
 
     deletions = region.counts().deletion_lengths
     assert deletions is not None
-    assert deletions.lengths == {3: 1, INDEL_LENGTH_CLAMP: 1}
+    assert deletions.lengths == {3: 1, LENGTH_MAP_CLAMP: 1}
     assert (deletions.min, deletions.max) == (3, 40000)
     assert deletions.sum == 40003
     assert deletions.mean == pytest.approx(20001.5)
@@ -708,8 +708,8 @@ def test_a_median_in_the_overflow_bucket_is_read_as_a_floor() -> None:
     deletions = region.counts().deletion_lengths
     assert deletions is not None
     assert deletions.median_is_clamped
-    assert IndelStatisticsRow.of("deletions", deletions).median \
-        == f"≥{INDEL_LENGTH_CLAMP}"
+    assert LengthStatisticsRow.of("deletions", deletions).median \
+        == f"≥{LENGTH_MAP_CLAMP}"
 
 
 def test_a_median_straddling_the_clamp_is_read_as_a_floor() -> None:
@@ -729,7 +729,7 @@ def test_a_median_straddling_the_clamp_is_read_as_a_floor() -> None:
     deletions = region.counts().deletion_lengths
     assert deletions is not None
     assert deletions.median_is_clamped
-    row = IndelStatisticsRow.of("deletions", deletions)
+    row = LengthStatisticsRow.of("deletions", deletions)
     assert row.median == "≥4096.5"
     # The three that stay exact past the clamp say so by carrying the
     # real numbers, which is what makes the hedged one legible.
@@ -746,7 +746,7 @@ def test_an_even_allele_count_takes_the_mean_of_the_middle_two() -> None:
     insertions = region.counts().insertion_lengths
     assert insertions is not None
     assert insertions.median == 1.5
-    assert IndelStatisticsRow.of("insertions", insertions).median == "1.5"
+    assert LengthStatisticsRow.of("insertions", insertions).median == "1.5"
 
 
 def test_a_whole_number_average_carries_no_trailing_zeros() -> None:
@@ -758,7 +758,7 @@ def test_a_whole_number_average_carries_no_trailing_zeros() -> None:
 
     insertions = region.counts().insertion_lengths
     assert insertions is not None
-    row = IndelStatisticsRow.of("insertions", insertions)
+    row = LengthStatisticsRow.of("insertions", insertions)
     assert (row.mean, row.median, row.min, row.max) == ("2", "2", "2", "2")
     assert row.total == "3"
 
@@ -796,7 +796,7 @@ def test_the_chart_bins_are_derived_from_the_map() -> None:
 
     insertions = region.counts().insertion_lengths
     assert insertions is not None
-    ladder = indel_length_ladder(insertions)
+    ladder = length_ladder(insertions)
 
     assert ladder[length_histogram_bin_index(1)] == 1
     assert ladder[length_histogram_bin_index(2)] == 2, \
@@ -816,9 +816,9 @@ def test_a_clamped_length_lands_in_the_bin_the_chart_would_have_drawn(
 
     deletions = region.counts().deletion_lengths
     assert deletions is not None
-    ladder = indel_length_ladder(deletions)
+    ladder = length_ladder(deletions)
 
-    assert ladder[length_histogram_bin_index(INDEL_LENGTH_CLAMP)] == 1
+    assert ladder[length_histogram_bin_index(LENGTH_MAP_CLAMP)] == 1
     assert sum(ladder) == 1
 
 

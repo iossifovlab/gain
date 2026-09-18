@@ -14,14 +14,14 @@ map at render time by :func:`length_ladder` rather than stored beside
 it, so the picture and the numbers beneath it cannot drift.
 
 Nothing here knows what KIND of thing has a length.  The indel groups of
-an allele score are the first users; :mod:`.indel_lengths` spells this
-module's names for them.  The record's stored key for the count is
-``count`` whatever the kind, and the row formatter takes the group label
-from its caller, so "alleles", "segments" and "fragments" all fit.
+an allele score are the first users.  The record's stored key for the
+count is ``count`` whatever the kind, and the row formatter takes the
+group label from its caller, so "alleles", "segments" and "fragments"
+all fit.
 """
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -171,6 +171,48 @@ class ExactLengths(NamedTuple):
         file nothing references.
         """
         return bool(self.total)
+
+    def stored(self) -> dict[str, Any]:
+        """This record as the statistics file writes it.
+
+        Keys SORTED and written as strings: the map is sparse and two
+        chunkings of one resource meet its lengths in different orders,
+        so sorting is what makes the file byte-identical however the
+        rows arrived.  The count is written under ``count``.
+        """
+        return {
+            "lengths": {
+                str(length): self.lengths[length]
+                for length in sorted(self.lengths)
+            },
+            "count": self.total,
+            "sum": self.sum,
+            "min": self.min,
+            "max": self.max,
+        }
+
+    @classmethod
+    def from_stored(cls, stored: dict[str, Any]) -> ExactLengths:
+        """The record a statistics file holds under one group's key.
+
+        ``min`` and ``max`` are read tolerantly and the other three are
+        not, which is deliberate rather than sloppy: those two are
+        legitimately ``null`` for a group that was scanned and found
+        nothing, so absent and null must read alike.  A group missing
+        its map, count or sum is a malformed file, and raising names it.
+        """
+        minimum = stored.get("min")
+        maximum = stored.get("max")
+        return cls(
+            {
+                int(length): int(count)
+                for length, count in stored["lengths"].items()
+            },
+            int(stored["count"]),
+            int(stored["sum"]),
+            None if minimum is None else int(minimum),
+            None if maximum is None else int(maximum),
+        )
 
     @property
     def median_is_clamped(self) -> bool:
@@ -370,7 +412,7 @@ class LengthArrayTally:
         self._counts += np.bincount(
             np.minimum(lengths, LENGTH_MAP_CLAMP),
             minlength=LENGTH_MAP_CLAMP + 1)
-        self.total += int(lengths.size)
+        self.total += lengths.size
         # On the UNCLAMPED lengths, which is what keeps these exact.
         self.sum += int(lengths.sum(dtype=np.int64))
         if self.min is None or smallest < self.min:
@@ -400,7 +442,9 @@ class LengthArrayTally:
         """
         populated = np.flatnonzero(self._counts)
         return ExactLengths(
-            {int(length): int(self._counts[length]) for length in populated},
+            dict(zip(
+                populated.tolist(), self._counts[populated].tolist(),
+                strict=True)),
             self.total, self.sum, self.min, self.max)
 
 
