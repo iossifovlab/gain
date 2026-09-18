@@ -33,6 +33,18 @@ rejected to keep it that way; see
 backends, not about the package: :class:`~.position.PositionScore` folds
 its own segments for the aggregated plane, and converging the two is
 gain#1027's remaining work, not this module's promise.
+
+Every refusal here is of a REQUEST, never of a definition: a score the
+resource does not define, an aggregator a caller names that does not
+build, a ``bool`` score asked for with no aggregator named.  The
+definitions a request is resolved against were held to their own rules
+when the score was built (a ``scores:`` ``aggregator:`` that cannot be
+built is refused there, through ``score_configuration_error``), so by the
+time a request arrives every definition is one the resource can reduce
+by.  That is why these refusals carry the request family's address,
+``score '<id>' of resource '<resource>'``, and not the configuration
+prefix: the file to edit is the caller's, and ``Invalid configuration:
+<resource>`` would send the reader to a yaml that is fine.
 """
 
 from __future__ import annotations
@@ -264,7 +276,11 @@ def build_region_aggregator(
     this cannot assume the same.
 
     ``Aggregator.build`` raises a bare ``KeyError('mediann')`` for an
-    unknown name, saying nothing about which score asked for it.
+    unknown name, saying nothing about which score asked for it.  The
+    name refused is the CALLER's: a definition's own ``aggregator:`` was
+    built once when the score was constructed
+    (``score_def.refuse_unbuildable_aggregators``), so a resolved
+    request never carries a definition-side spelling that fails here.
     """
     try:
         return Aggregator.build(aggregator)

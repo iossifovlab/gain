@@ -92,7 +92,9 @@ def score_configuration_error(
     ``vcf_scores``, for an ``id``, an address or a ``type:`` the header
     contradicts, and for a field declared ``Number=G``), the construction
     convergence point (``refuse_unfoldable_histograms``, for a number
-    histogram over a value type none accumulates), and open, once a tabular
+    histogram over a value type none accumulates, and
+    ``refuse_unbuildable_aggregators``, for an ``aggregator:`` no
+    accumulator can be built from), and open, once a tabular
     table's header is known (``validate_scoredefs``, for a column address
     the header cannot honour, and ``resolve_score_indices``, which holds
     the DEFINITIONS -- not the config -- to the same address rules as it
@@ -105,6 +107,16 @@ def score_configuration_error(
     That is the half a reader needs to find the file to edit, it is the half
     no raise site can word differently without sending someone to the
     wrong place, and it is why it is built here rather than at each site.
+
+    Not built here, on purpose: a refusal of a REQUEST -- a score id the
+    resource does not define, an aggregator a caller names that does not
+    build, a ``bool`` score asked for with no aggregator named, a
+    ``none_value_replacement`` of the wrong type.  Those fire at read time
+    against a definition that is fine, so the resource's config is not the
+    file to edit, and this prefix would send the reader there.  They carry
+    the other address, ``score '<id>' … resource '<resource>'``, worded at
+    each site in :mod:`~gain.genomic_resources.genomic_scores.aggregation`
+    and on the position score.
 
     The prefix matches ``ResourceConfigValidationMixin`` so that a caller
     reading a config error sees one wording; the TYPE is
