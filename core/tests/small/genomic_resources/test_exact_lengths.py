@@ -8,7 +8,9 @@ file written from either must be indistinguishable -- which is what these
 tests pin, along with the batch fold's own rules.
 """
 import numpy as np
+import pytest
 from gain.genomic_resources.statistics.exact_lengths import (
+    LENGTH_MAP_CLAMP,
     LengthArrayTally,
     LengthTally,
 )
@@ -53,3 +55,42 @@ def test_the_array_tally_freezes_to_plain_python_ints() -> None:
                               record.max)} == {int}
     assert {type(k) for k in record.lengths} == {int}
     assert {type(v) for v in record.lengths.values()} == {int}
+
+
+def test_lengths_past_the_clamp_share_the_overflow_bucket() -> None:
+    tally = LengthArrayTally()
+
+    tally.add_batch(np.array([LENGTH_MAP_CLAMP, 8200, 40_000]))
+
+    record = tally.frozen()
+    assert record.lengths == {LENGTH_MAP_CLAMP: 3}
+    # The scalars are taken on the UNCLAMPED lengths: a max of 40,000
+    # is the whole reason they are stored beside the map.
+    assert (record.total, record.sum, record.min, record.max) \
+        == (3, LENGTH_MAP_CLAMP + 8200 + 40_000, LENGTH_MAP_CLAMP, 40_000)
+
+
+@pytest.mark.parametrize("bad_length", [0, -1])
+def test_a_batch_with_a_length_below_one_is_refused_whole(
+    bad_length: int,
+) -> None:
+    """A 0 would land in counter 0 -- which is not a length -- and a
+    negative one would make ``bincount`` raise its own error halfway
+    through the fold.  Both are refused BEFORE anything is folded, so the
+    tally is exactly what it was."""
+    tally = LengthArrayTally()
+    tally.add_batch(np.array([1, 2]))
+    before = tally.frozen()
+
+    with pytest.raises(ValueError, match="length must be positive"):
+        tally.add_batch(np.array([3, bad_length]))
+
+    assert tally.frozen() == before
+
+
+def test_an_empty_batch_leaves_the_tally_as_it_was() -> None:
+    tally = LengthArrayTally()
+
+    tally.add_batch(np.array([], dtype=np.int64))
+
+    assert tally.frozen() == LengthTally().frozen()
