@@ -42,9 +42,13 @@ def gene_models_to_gtf(
     gene_models: GeneModels, *,
     sort_by_position: bool = True,
 ) -> StringIO:
-    """Output a GTF format string representation."""
-    if not gene_models.gene_models:
-        logger.warning("Serializing empty (probably not loaded) gene models!")
+    """Output a GTF format string representation.
+
+    Refuses a model nobody loaded; a loaded, empty model serializes to
+    an empty string, with a warning.
+    """
+    _refuse_never_loaded_or_warn_empty(gene_models)
+    if not gene_models.transcript_models:
         return StringIO()
 
     record_buffer: list[GTFRecord] = []
@@ -335,6 +339,37 @@ def transcript_to_gtf(transcript: TranscriptModel) -> list[GTFRecord]:
     return record_buffer
 
 
+def _refuse_never_loaded_or_warn_empty(gene_models: GeneModels) -> None:
+    """Decide what an empty ``GeneModels`` means before it is serialized.
+
+    Holding transcripts is what makes a model serializable, not the
+    loaded flag: ``join_gene_models`` and hand-filled fixture models
+    populate ``transcript_models`` directly and never set it, so a
+    populated model passes whichever way it was populated.
+
+    An empty one is one of two things. Never loaded, it is the
+    forgotten ``load()`` -- refused, naming the resource, because
+    serializing it yields output whose only symptom on read is "can't
+    infer gene models file format", with the cause nowhere in it.
+    Loaded, it is a real outcome -- a source with no usable records, a
+    chrom mapping that removes every transcript -- and the empty output
+    is the faithful serialization of that; worth a word all the same,
+    because that output is the one a caller least expects.
+
+    Both serializers call this first, so the refusal happens before any
+    output file is opened.
+    """
+    if gene_models.transcript_models:
+        return
+    if not gene_models.is_loaded():
+        raise ValueError(
+            f"gene models {gene_models.resource_id} hold no transcripts "
+            f"and were never loaded; call load() before serializing them")
+    logger.warning(
+        "serializing empty gene models %s: they loaded and hold no "
+        "transcripts", gene_models.resource_id)
+
+
 def _no_frame_message(transcript_model: TranscriptModel) -> str:
     """What an exon with no frame is refused with, wherever it is met.
 
@@ -385,29 +420,19 @@ def _format_exon_frames(transcript_model: TranscriptModel) -> str:
     return ",".join(frames)
 
 
+#: The header row of the default format, in column order.
+DEFAULT_FORMAT_COLUMNS = (
+    "chr", "trID", "trOrigId", "gene", "strand",
+    "tsBeg", "txEnd", "cdsStart", "cdsEnd",
+    "exonStarts", "exonEnds", "exonFrames", "atts",
+)
+
+
 def _save_as_default_gene_models(
     gene_models: GeneModels,
     outfile: IO,
 ) -> None:
-    outfile.write(
-        "\t".join(
-            [
-                "chr",
-                "trID",
-                "trOrigId",
-                "gene",
-                "strand",
-                "tsBeg",
-                "txEnd",
-                "cdsStart",
-                "cdsEnd",
-                "exonStarts",
-                "exonEnds",
-                "exonFrames",
-                "atts",
-            ],
-        ),
-    )
+    outfile.write("\t".join(DEFAULT_FORMAT_COLUMNS))
     outfile.write("\n")
 
     for transcript_model in gene_models.transcript_models.values():
@@ -465,13 +490,12 @@ def _check_default_format_can_express(gene_models: GeneModels) -> None:
     token the format cannot express either (gain#951).
 
     This runs before the output file is opened, which is the whole
-    point of it being a separate pass. gain#965 prototyped refusing
-    from inside the write loop and rejected it: both open branches
-    create and truncate, so a refusal part-way through leaves a
-    truncated file holding every record up to the offender -- one that
-    loads cleanly and is simply missing data. Refusing here creates
-    nothing and truncates nothing, and a file already at the path is
-    left as it was.
+    point of it being a separate pass. Both open branches create and
+    truncate, so a refusal raised from inside the write loop would
+    leave a truncated file holding every record up to the offender --
+    one that loads cleanly and is simply missing data. Refusing here
+    creates nothing and truncates nothing, and a file already at the
+    path is left as it was.
 
     It does not make the write atomic. A failure during the write
     itself -- a full disk, an encoding error -- still leaves a partial
@@ -499,7 +523,13 @@ def save_as_default_gene_models(
     output_filename: str, *,
     gzipped: bool = True,
 ) -> None:
-    """Save gene models in a file in default file format."""
+    """Save gene models in a file in default file format.
+
+    Refuses a model nobody loaded, and two transcript shapes the format
+    has no spelling for, before the output file is opened. A loaded,
+    empty model is written as the header row alone, with a warning.
+    """
+    _refuse_never_loaded_or_warn_empty(gene_models)
     _check_default_format_can_express(gene_models)
 
     if gzipped:

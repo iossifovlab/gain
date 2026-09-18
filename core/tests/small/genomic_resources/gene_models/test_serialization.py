@@ -14,6 +14,7 @@ from gain.genomic_resources.gene_models.parsers import (
     parse_default_gene_models_format,
 )
 from gain.genomic_resources.gene_models.serialization import (
+    DEFAULT_FORMAT_COLUMNS,
     GTF_FEATURE_ORDER,
     _save_as_default_gene_models,
     build_gtf_record,
@@ -31,10 +32,13 @@ from gain.genomic_resources.gene_models.transcript_models import (
     TranscriptModel,
 )
 from gain.genomic_resources.testing import (
+    build_inmemory_test_repository,
     build_inmemory_test_resource,
     convert_to_tab_separated,
 )
 from gain.utils.regions import BedRegion
+
+from ..conftest import captured_warnings
 
 
 @pytest.fixture
@@ -247,6 +251,58 @@ def test_gene_models_to_gtf_empty() -> None:
     # Empty models should return empty StringIO
     content_str = result.read()
     assert content_str == ""
+
+
+#: Named, so the warning can be seen to say which resource is empty.
+LOADED_AND_EMPTY = "loaded/and/empty"
+
+
+def loaded_and_empty() -> GeneModels:
+    """Models that loaded and came out holding no transcripts.
+
+    A real outcome -- a source with no usable records, a chrom mapping
+    that drops every transcript -- and not a caller bug, so both
+    serializers say so and serialize the nothing there is (gain#1097).
+    """
+    grr = build_inmemory_test_repository({
+        LOADED_AND_EMPTY: {
+            "genomic_resource.yaml":
+                "{type: gene_models, filename: genes.txt, format: refflat}",
+            "genes.txt": convert_to_tab_separated("""
+#geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
+"""),  # ruff: ignore[line-too-long]
+        },
+    })
+    return build_gene_models_from_resource(
+        grr.get_resource(LOADED_AND_EMPTY)).load()
+
+
+def test_save_as_default_gene_models_loaded_and_empty_warns(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    gene_models = loaded_and_empty()
+    output = tmp_path / "out.txt"
+
+    save_as_default_gene_models(gene_models, str(output), gzipped=False)
+
+    [warning] = captured_warnings(caplog)
+    assert "empty gene models" in warning
+    assert LOADED_AND_EMPTY in warning
+    assert output.read_text() == "\t".join(DEFAULT_FORMAT_COLUMNS) + "\n"
+
+
+def test_gene_models_to_gtf_loaded_and_empty_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    gene_models = loaded_and_empty()
+
+    result = gene_models_to_gtf(gene_models)
+
+    [warning] = captured_warnings(caplog)
+    assert "empty gene models" in warning
+    assert LOADED_AND_EMPTY in warning
+    assert result.getvalue() == ""
 
 
 def test_gene_models_to_gtf_basic(simple_gene_models: GeneModels) -> None:
