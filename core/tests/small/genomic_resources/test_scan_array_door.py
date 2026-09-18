@@ -16,6 +16,7 @@ import pathlib
 from typing import ClassVar
 
 import numpy as np
+import pyBigWig
 import pytest
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
@@ -421,3 +422,72 @@ def test_the_backwards_rule_is_refused_the_same_way_down_both_paths(
 
     assert str(arrays.value) == str(per_record.value)
     assert f"{possessive} records must not move backwards" in str(arrays.value)
+
+
+# The array door makes no inverted-span check of its own; the bound the two
+# backends impose stands in for it (``validate_record_arrays`` says which
+# bound, and why the one row it admits is gain#1526).  The three tests below
+# pin that bound on the indexer and the writer the fixtures go through.
+
+
+def _a_second_row_ending_at(pos_end: int) -> str:
+    return f"""
+        chrom  pos_begin  pos_end  s
+        chr1   10         20       0.1
+        chr1   30         {pos_end}       0.2
+        chr1   35         40       0.3
+    """
+
+
+def test_tabix_refuses_to_index_a_row_ending_two_below_its_begin(
+    tmp_path: pathlib.Path,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # ``pysam`` raises the same "building of index" for an unsorted table,
+    # so the reason is read off fd 2, where htslib alone writes it.
+    with pytest.raises(OSError, match="building of index"):
+        _position_score_resource(
+            tmp_path, "inverted", _a_second_row_ending_at(28))
+
+    assert "Invalid record on sequence #1: end 28 < begin 30" \
+        in capfd.readouterr().err
+
+
+def test_the_two_doors_disagree_on_a_tabix_row_ending_one_below_its_begin(
+    tmp_path: pathlib.Path,
+) -> None:
+    # htslib checks zero-based, where the 1-based ``30 29`` is the empty
+    # interval ``[29, 29)`` and not inverted, so the array door receives
+    # this row and passes it; the per-record door refuses it (gain#1526).
+    score = _position_score(tmp_path, "empty", _a_second_row_ending_at(29))
+
+    batches = list(validate_record_arrays(
+        score, score.fetch_region_value_arrays("chr1", 1, 100, ["s"]),
+        "chr1"))
+
+    assert [(b[0].tolist(), b[1].tolist()) for b in batches] == [
+        ([10, 30, 35], [20, 29, 40]),
+    ]
+    with pytest.raises(OSError, match="end 29 smaller than the beginning 30"):
+        list(validate_records(score, score.fetch_records("chr1", 1, 100)))
+
+
+def test_a_bigwig_cannot_be_written_with_an_inverted_interval(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Asked of ``pyBigWig`` itself rather than of ``a_bigwig_score()``: the
+    # bigWig test helper asserts ``start < end`` before the writer sees the
+    # row.  Both refused intervals begin past the first one's end, so their
+    # own two ends are all that is wrong with them; the second shows the
+    # bound is ``end <= start``.
+    bigwig = pyBigWig.open(  # pylint: disable=I1101
+        str(tmp_path / "inverted.bw"), "w")
+    bigwig.addHeader([("chr1", 100)])
+    bigwig.addEntries(["chr1"], [9], ends=[20], values=[0.1])
+
+    with pytest.raises(RuntimeError, match="illegal values"):
+        bigwig.addEntries(["chr1"], [40], ends=[30], values=[0.2])
+    with pytest.raises(RuntimeError, match="illegal values"):
+        bigwig.addEntries(["chr1"], [30], ends=[30], values=[0.2])
+
+    bigwig.close()

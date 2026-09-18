@@ -199,7 +199,13 @@ them, and their tests reach them by substituting the backend.  *[Since ADR
 methods on them; which rule fires on which kind is unchanged.]* They are written
 anyway, because the alternative is a kind that states no rule on one of its two
 paths, and because "the backend happens to prevent it" is a property of today's
-backends rather than of the kind. What #591 genuinely changed on that path is
+backends rather than of the kind. *[The inverted-span refusal is the one check
+still left to the backends on the vectorized path, and their bound is not quite
+the per-record one: tabix checks zero-based, so a 1-based row with
+`pos_end == pos_begin - 1` does index, and the array door accepts what the
+per-record door refuses -- #1526, to be settled by the reasoning of this
+paragraph. #668 established that the pairwise position comparison stays
+complete under either bound.]* What #591 genuinely changed on that path is
 the *position* rule: it moved from clipped spans to raw ones, and from the kept
 records to all of them, which is a verdict that really did differ between the
 two paths. Do not restate this as "the bulk scan used to certify backwards
