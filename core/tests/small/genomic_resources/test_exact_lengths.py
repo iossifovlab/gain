@@ -14,6 +14,9 @@ from gain.genomic_resources.statistics.exact_lengths import (
     LengthArrayTally,
     LengthTally,
 )
+from gain.genomic_resources.statistics.length_histogram import (
+    LENGTH_HISTOGRAM_DISPLAY_CAP,
+)
 
 # Lengths on both sides of the clamp, with repeats, so the record's map
 # has a shared key below the clamp and an overflow bucket that two
@@ -94,3 +97,23 @@ def test_an_empty_batch_leaves_the_tally_as_it_was() -> None:
     tally.add_batch(np.array([], dtype=np.int64))
 
     assert tally.frozen() == LengthTally().frozen()
+
+
+def test_the_clamp_never_falls_below_the_charts_display_cap() -> None:
+    """The chart's bins are derived from the clamped map.  A clamp below
+    the display cap would leave bins between the two to be drawn from
+    lengths the map had already folded away -- so raising the cap means
+    raising the clamp first, and that is a stored-format change."""
+    assert LENGTH_MAP_CLAMP >= LENGTH_HISTOGRAM_DISPLAY_CAP
+
+
+def test_a_stored_record_restores_into_the_array_tally_and_merges_on() -> None:
+    """The roll-up of a region already in the file with one just scanned:
+    the stored record comes back as a tally, the scanned batch folds on
+    top, and the result is what one tally fed everything would hold."""
+    stored = _dict_tally([2, 3, 40_000]).frozen()
+
+    tally = LengthArrayTally.restored(stored)
+    tally.add_batch(np.array([1, 8200]))
+
+    assert tally.frozen() == _dict_tally([2, 3, 40_000, 1, 8200]).frozen()

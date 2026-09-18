@@ -328,6 +328,22 @@ class LengthArrayTally:
         self.min: int | None = None
         self.max: int | None = None
 
+    @classmethod
+    def restored(cls, lengths: ExactLengths) -> LengthArrayTally:
+        """A tally holding what a stored group already counted.
+
+        Every key of a stored map is at most the clamp, so the map
+        scatters straight into the counters without re-clamping.
+        """
+        tally = cls()
+        for length, count in lengths.lengths.items():
+            tally._counts[length] = count
+        tally.total = lengths.total
+        tally.sum = lengths.sum
+        tally.min = lengths.min
+        tally.max = lengths.max
+        return tally
+
     def add_batch(self, lengths: np.ndarray) -> None:
         """Fold a whole batch of lengths in.
 
