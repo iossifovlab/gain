@@ -1,0 +1,282 @@
+# mixed/statistics/alleles.json
+{
+  "format_version": 1,
+  "chromosomes": {
+    "chr1": {
+      "allele_count": 8,
+      "class_counts": {
+        "substitution": 2,
+        "insertion": 2,
+        "deletion": 4,
+        "complex": 0,
+        "other": 0
+      },
+      "substitution_matrix": {
+        "A": {
+          "A": 0,
+          "C": 1,
+          "G": 1,
+          "T": 0
+        },
+        "C": {
+          "A": 0,
+          "C": 0,
+          "G": 0,
+          "T": 0
+        },
+        "G": {
+          "A": 0,
+          "C": 0,
+          "G": 0,
+          "T": 0
+        },
+        "T": {
+          "A": 0,
+          "C": 0,
+          "G": 0,
+          "T": 0
+        }
+      },
+      "insertion_lengths": {
+        "lengths": {
+          "1": 1,
+          "2": 1
+        },
+        "count": 2,
+        "sum": 3,
+        "min": 1,
+        "max": 2
+      },
+      "deletion_lengths": {
+        "lengths": {
+          "1": 1,
+          "3": 1,
+          "8192": 2
+        },
+        "count": 4,
+        "sum": 16405,
+        "min": 1,
+        "max": 8201
+      },
+      "complex_grid": {}
+    },
+    "chr2": {
+      "allele_count": 1,
+      "class_counts": {
+        "substitution": 1,
+        "insertion": 0,
+        "deletion": 0,
+        "complex": 0,
+        "other": 0
+      },
+      "substitution_matrix": {
+        "A": {
+          "A": 0,
+          "C": 0,
+          "G": 0,
+          "T": 0
+        },
+        "C": {
+          "A": 0,
+          "C": 0,
+          "G": 0,
+          "T": 0
+        },
+        "G": {
+          "A": 0,
+          "C": 0,
+          "G": 0,
+          "T": 1
+        },
+        "T": {
+          "A": 0,
+          "C": 0,
+          "G": 0,
+          "T": 0
+        }
+      },
+      "insertion_lengths": {
+        "lengths": {},
+        "count": 0,
+        "sum": 0,
+        "min": null,
+        "max": null
+      },
+      "deletion_lengths": {
+        "lengths": {},
+        "count": 0,
+        "sum": 0,
+        "min": null,
+        "max": null
+      },
+      "complex_grid": {}
+    }
+  },
+  "global": {
+    "allele_count": 9,
+    "class_counts": {
+      "substitution": 3,
+      "insertion": 2,
+      "deletion": 4,
+      "complex": 0,
+      "other": 0
+    },
+    "substitution_matrix": {
+      "A": {
+        "A": 0,
+        "C": 1,
+        "G": 1,
+        "T": 0
+      },
+      "C": {
+        "A": 0,
+        "C": 0,
+        "G": 0,
+        "T": 0
+      },
+      "G": {
+        "A": 0,
+        "C": 0,
+        "G": 0,
+        "T": 1
+      },
+      "T": {
+        "A": 0,
+        "C": 0,
+        "G": 0,
+        "T": 0
+      }
+    },
+    "insertion_lengths": {
+      "lengths": {
+        "1": 1,
+        "2": 1
+      },
+      "count": 2,
+      "sum": 3,
+      "min": 1,
+      "max": 2
+    },
+    "deletion_lengths": {
+      "lengths": {
+        "1": 1,
+        "3": 1,
+        "8192": 2
+      },
+      "count": 4,
+      "sum": 16405,
+      "min": 1,
+      "max": 8201
+    },
+    "complex_grid": {}
+  }
+}
+
+# substitutions/statistics/alleles.json
+{
+  "format_version": 1,
+  "chromosomes": {
+    "chr1": {
+      "allele_count": 2,
+      "class_counts": {
+        "substitution": 2,
+        "insertion": 0,
+        "deletion": 0,
+        "complex": 0,
+        "other": 0
+      },
+      "substitution_matrix": {
+        "A": {
+          "A": 0,
+          "C": 0,
+          "G": 1,
+          "T": 0
+        },
+        "C": {
+          "A": 0,
+          "C": 0,
+          "G": 0,
+          "T": 1
+        },
+        "G": {
+          "A": 0,
+          "C": 0,
+          "G": 0,
+          "T": 0
+        },
+        "T": {
+          "A": 0,
+          "C": 0,
+          "G": 0,
+          "T": 0
+        }
+      },
+      "insertion_lengths": {
+        "lengths": {},
+        "count": 0,
+        "sum": 0,
+        "min": null,
+        "max": null
+      },
+      "deletion_lengths": {
+        "lengths": {},
+        "count": 0,
+        "sum": 0,
+        "min": null,
+        "max": null
+      },
+      "complex_grid": {}
+    }
+  },
+  "global": {
+    "allele_count": 2,
+    "class_counts": {
+      "substitution": 2,
+      "insertion": 0,
+      "deletion": 0,
+      "complex": 0,
+      "other": 0
+    },
+    "substitution_matrix": {
+      "A": {
+        "A": 0,
+        "C": 0,
+        "G": 1,
+        "T": 0
+      },
+      "C": {
+        "A": 0,
+        "C": 0,
+        "G": 0,
+        "T": 1
+      },
+      "G": {
+        "A": 0,
+        "C": 0,
+        "G": 0,
+        "T": 0
+      },
+      "T": {
+        "A": 0,
+        "C": 0,
+        "G": 0,
+        "T": 0
+      }
+    },
+    "insertion_lengths": {
+      "lengths": {},
+      "count": 0,
+      "sum": 0,
+      "min": null,
+      "max": null
+    },
+    "deletion_lengths": {
+      "lengths": {},
+      "count": 0,
+      "sum": 0,
+      "min": null,
+      "max": null
+    },
+    "complex_grid": {}
+  }
+}
