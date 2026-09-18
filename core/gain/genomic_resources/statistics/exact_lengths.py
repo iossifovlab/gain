@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
+import numpy as np
+
 from gain.genomic_resources.statistics.length_histogram import (
     LENGTH_HISTOGRAM_BIN_COUNT,
     length_histogram_bin_index,
@@ -273,12 +275,7 @@ class LengthTally:
             self.lengths[length] = self.lengths.get(length, 0) + count
         self.total += other.total
         self.sum += other.sum
-        if other.min is not None:
-            self.min = other.min if self.min is None \
-                else min(self.min, other.min)
-        if other.max is not None:
-            self.max = other.max if self.max is None \
-                else max(self.max, other.max)
+        self.min, self.max = _merged_extremes(self, other)
 
     def add(self, length: int, multiplicity: int) -> None:
         """Fold ``multiplicity`` items of one exact length in.
@@ -305,6 +302,99 @@ class LengthTally:
         """This group as the inert record a region hands out."""
         return ExactLengths(
             dict(self.lengths), self.total, self.sum, self.min, self.max)
+
+
+class LengthArrayTally:
+    """A mutable group of lengths, accumulated a whole batch at a time.
+
+    The other scan-side counterpart to :class:`ExactLengths`, for a
+    statistic that meets its lengths as column arrays and in numbers
+    the dict tally cannot afford -- a position score's segments run to
+    billions.  One ``int64`` array of ``LENGTH_MAP_CLAMP + 1`` counters
+    stands in for the map, so a batch folds in with one ``bincount``
+    and the cost is bounded by the clamp, not by the run count.  The
+    map appears only when the group is frozen, sparse and with plain
+    Python ints, so a record from here is indistinguishable from one
+    the dict tally froze.
+
+    ``total``, ``sum``, ``min`` and ``max`` are the same four scalars
+    the dict tally keeps, accumulated on the UNCLAMPED batch.
+    """
+
+    def __init__(self) -> None:
+        self._counts = np.zeros(LENGTH_MAP_CLAMP + 1, dtype=np.int64)
+        self.total = 0
+        self.sum = 0
+        self.min: int | None = None
+        self.max: int | None = None
+
+    def add_batch(self, lengths: np.ndarray) -> None:
+        """Fold a whole batch of lengths in.
+
+        Every length must be at least 1: ``bincount`` would accept a 0
+        silently and put it in counter 0, which is not a length anything
+        can have, so the batch is checked before it is folded -- and a
+        refused batch leaves the tally as it was.
+        """
+        if not lengths.size:
+            return
+        smallest = int(lengths.min())
+        if smallest < 1:
+            raise ValueError(f"length must be positive: {smallest}")
+        self._counts += np.bincount(
+            np.minimum(lengths, LENGTH_MAP_CLAMP),
+            minlength=LENGTH_MAP_CLAMP + 1)
+        self.total += int(lengths.size)
+        # On the UNCLAMPED lengths, which is what keeps these exact.
+        self.sum += int(lengths.sum(dtype=np.int64))
+        if self.min is None or smallest < self.min:
+            self.min = smallest
+        largest = int(lengths.max())
+        if self.max is None or largest > self.max:
+            self.max = largest
+
+    def merge(self, other: LengthArrayTally) -> None:
+        """Fold another group of the same kind into this one.
+
+        :meth:`LengthTally.merge` over arrays: the counters add
+        elementwise, ``total`` and ``sum`` add, and the extremes take
+        the extreme through the same rule.
+        """
+        self._counts += other._counts
+        self.total += other.total
+        self.sum += other.sum
+        self.min, self.max = _merged_extremes(self, other)
+
+    def frozen(self) -> ExactLengths:
+        """This group as the inert record a region hands out.
+
+        The map is SPARSE -- a counter that stayed at zero is no key --
+        because that is the map the dict tally builds, and the file
+        must not say which tally wrote it.
+        """
+        populated = np.flatnonzero(self._counts)
+        return ExactLengths(
+            {int(length): int(self._counts[length]) for length in populated},
+            self.total, self.sum, self.min, self.max)
+
+
+def _merged_extremes(
+    left: LengthTally | LengthArrayTally,
+    right: LengthTally | LengthArrayTally,
+) -> tuple[int | None, int | None]:
+    """The ``min`` and ``max`` of two groups taken together.
+
+    A side that holds nothing has no extremes and contributes none;
+    two sides that both hold something take the smaller ``min`` and the
+    larger ``max``.  One function for both tallies, so the rule cannot
+    drift between them.
+    """
+    known_mins = [m for m in (left.min, right.min) if m is not None]
+    known_maxs = [m for m in (left.max, right.max) if m is not None]
+    return (
+        min(known_mins) if known_mins else None,
+        max(known_maxs) if known_maxs else None,
+    )
 
 
 def merged_lengths(
