@@ -303,10 +303,38 @@ services:
     # failing probe while in start_period only marks the container
     # `starting` (it does not burn a retry), so this is not added
     # latency on the warm path. Overall bound is the Jenkins timeout.
+    #
+    # The same generosity is a trap when the pipeline will NEVER
+    # build: pipeline_status answers a terminal 4xx the moment a
+    # build fails (400 "Pipeline could not be loaded: ..." -- the
+    # cache keeps the failed future -- or 404 for an id the GRR
+    # lacks), and a failing probe cannot cut start_period short, so
+    # compose would sit out the whole hour before reporting the
+    # dependency failed (gain-web-e2e #2779, gain#1519). So each
+    # probe prints a line of its own, `pipeline_status <code>`,
+    # AHEAD of the endpoint's body (Docker keeps only the first 4 KB
+    # of a probe's output), and the `Run e2e` stage in
+    # web_e2e/Jenkinsfile.e2e reads those lines out of the
+    # container's health log while the container is `starting`:
+    # three consecutive probes marked 4xx fail the build there and
+    # then. A timeout prints `pipeline_status 000` and a 5xx its own
+    # code; neither is terminal, and the stage keeps waiting on them
+    # exactly as compose does. `--fail-with-body` is what makes a 4xx
+    # or 5xx fail the probe while still saving the body for the
+    # human reading the log; `-sS` drops the progress meter and keeps
+    # curl's own error line. `$$` is compose's escape for a literal
+    # `$` -- the file is interpolated before the shell sees it.
     healthcheck:
-      test: ["CMD-SHELL",
-             "curl --fail --max-time 120 'http://localhost:9001/api/editor/pipeline_status?pipeline_id=pipeline/hg38_clinical_annotation'
-              && curl --fail --max-time 300 'http://localhost:9001/api/editor/pipeline_status?pipeline_id=pipeline/hs1_clinical_annotation'"]
+      test: >-
+        probe() {
+        : > /tmp/probe.body;
+        curl -sS --fail-with-body --max-time "$$1" -o /tmp/probe.body
+        -w 'pipeline_status %{http_code}\n'
+        "http://localhost:9001/api/editor/pipeline_status?pipeline_id=$$2";
+        rc=$$?; cat /tmp/probe.body; echo; return $$rc;
+        };
+        probe 120 pipeline/hg38_clinical_annotation &&
+        probe 300 pipeline/hs1_clinical_annotation
       interval: 10s
       timeout: 425s
       retries: 3

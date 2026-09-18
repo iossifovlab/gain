@@ -840,25 +840,78 @@ EOF
                             sh '''
                                 set -a; . ./web_infra/.env; set +a
                                 mkdir -p web_e2e/reports
+                                compose() {
+                                    docker compose \
+                                        --env-file web_infra/.env \
+                                        -p "$COMPOSE_PROJECT" \
+                                        -f web_infra/compose-jenkins.yaml \
+                                        "$@"
+                                }
+                                # Start backend-e2e on its own and watch
+                                # its health log from here, instead of
+                                # letting `compose run` below wait on it
+                                # blind: three consecutive probes marked
+                                # `pipeline_status 4xx` mean the pipeline
+                                # will never build, so fail now rather
+                                # than sit out the healthcheck's 3600s
+                                # start_period (build #2779 held this
+                                # lock 63 minutes over a backend that
+                                # had been dead for five seconds,
+                                # gain#1519). What the probe prints and
+                                # why a 4xx is terminal is documented at
+                                # the healthcheck in compose-jenkins.yaml.
+                                # A timeout or a 5xx keeps waiting as
+                                # before, and healthy, unhealthy or
+                                # exited falls through to `compose run`,
+                                # which proceeds or fails with its own
+                                # message as it always has. One
+                                # `docker inspect` per tick: line one is
+                                # the container state, then one line per
+                                # retained probe, `%q` keeping each on a
+                                # single line.
+                                compose up -d backend-e2e
+                                BACKEND="$(compose ps -q backend-e2e)"
+                                HEALTH='{{.State.Status}} {{.State.Health.Status}}{{range .State.Health.Log}}{{println}}{{.ExitCode}} {{printf "%q" .Output}}{{end}}'
+                                set +x
+                                SEEN=""
+                                while :; do
+                                    SNAPSHOT="$(docker inspect --format "$HEALTH" "$BACKEND")"
+                                    STATE="$(printf '%s' "$SNAPSHOT" | head -n 1)"
+                                    if [ "$STATE" != "$SEEN" ]; then
+                                        echo "$(date +%T) backend-e2e: $STATE"
+                                        SEEN="$STATE"
+                                    fi
+                                    [ "$STATE" = "running starting" ] || break
+                                    TERMINAL="$(printf '%s' "$SNAPSHOT" | tail -n 3 \
+                                        | grep -c 'pipeline_status 4[0-9][0-9]' || true)"
+                                    if [ "$TERMINAL" -eq 3 ]; then
+                                        echo "backend-e2e: three probes running have answered a 4xx" \
+                                             "-- that pipeline will not build, so not waiting out" \
+                                             "the healthcheck start_period. The retained probes:"
+                                        docker inspect \
+                                            --format '{{range .State.Health.Log}}--- probe exit {{.ExitCode}} at {{.End}}{{println}}{{.Output}}{{println}}{{end}}' \
+                                            "$BACKEND"
+                                        exit 1
+                                    fi
+                                    sleep 2
+                                done
+                                set -x
                                 # `compose run --rm e2e-tests` honours
                                 # backend-e2e-migrate / backend-e2e /
                                 # frontend-e2e healthcheck dependencies
                                 # (declared in compose-jenkins.yaml),
-                                # so it brings the stack up itself and
-                                # only invokes `npx playwright test`
-                                # once everything is ready.
+                                # so it brings the rest of the stack up
+                                # itself and only invokes
+                                # `npx playwright test` once everything
+                                # is ready.
                                 #
                                 # `|| TEST_RC=$?` keeps the script
                                 # going on test failure so the JUnit
                                 # report still gets copied — the build
                                 # #39 lesson.
                                 TEST_RC=0
-                                docker compose \
-                                    --env-file web_infra/.env \
-                                    -p "$COMPOSE_PROJECT" \
-                                    -f web_infra/compose-jenkins.yaml \
-                                    run --rm e2e-tests \
-                                        || TEST_RC=$?
+                                compose run --rm e2e-tests \
+                                    || TEST_RC=$?
                                 cp web_e2e/reports/junit-report.xml \
                                     reports/web_e2e/junit.xml \
                                     2>/dev/null || true
