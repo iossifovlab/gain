@@ -357,7 +357,10 @@ below 1.
 and keep it only as a rendering choice.* Each group now stores an **exact
 `{length: count}` map**, clamped at a code-level `INDEL_LENGTH_CLAMP` of 8192,
 alongside four exactly-mergeable scalars — `count`, `sum`, `min` and `max`, all
-accumulated on the *unclamped* length.
+accumulated on the *unclamped* length. *Since gain#1542 that record, its clamp
+(renamed `LENGTH_MAP_CLAMP`), the ladder derivation and the row formatter are
+kind-neutral, in `statistics/exact_lengths`, so segments and fragments can
+store the same shape; the amendment's substance is unchanged.*
 
 The ladder was wrong here for the reason it is wrong for the complex grid, and
 the two amendments are the same finding reached twice: its second bin is
