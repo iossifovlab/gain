@@ -59,13 +59,13 @@ from gain.genomic_resources.statistics.base_statistic import (
 from gain.genomic_resources.statistics.chart_style import (
     CHART_LABEL_FONT_SIZE,
 )
-from gain.genomic_resources.statistics.indel_lengths import (
-    NO_INDELS,
-    IndelLengths,
-    IndelStatisticsRow,
-    IndelTally,
-    indel_length_ladder,
-    merged_indels,
+from gain.genomic_resources.statistics.exact_lengths import (
+    NO_LENGTHS,
+    ExactLengths,
+    LengthStatisticsRow,
+    LengthTally,
+    length_ladder,
+    merged_lengths,
     merged_tallies,
 )
 from gain.genomic_resources.statistics.length_histogram import (
@@ -234,8 +234,8 @@ class AlleleCounts(NamedTuple):
     allele_count: int
     class_counts: dict[str, int]
     substitution_matrix: dict[tuple[str, str], int] | None
-    insertion_lengths: IndelLengths | None = None
-    deletion_lengths: IndelLengths | None = None
+    insertion_lengths: ExactLengths | None = None
+    deletion_lengths: ExactLengths | None = None
     complex_grid: dict[tuple[int, int], int] | None = None
 
     def display(self) -> AlleleDisplay | None:
@@ -310,16 +310,16 @@ def _total(counts: Iterable[AlleleCounts]) -> AlleleCounts:
     allele_count = 0
     matrix: dict[tuple[str, str], int] | None = dict.fromkeys(
         MATRIX_CELLS, 0)
-    insertions: IndelLengths | None = NO_INDELS
-    deletions: IndelLengths | None = NO_INDELS
+    insertions: ExactLengths | None = NO_LENGTHS
+    deletions: ExactLengths | None = NO_LENGTHS
     grid: dict[tuple[int, int], int] | None = {}
     for entry in counts:
         allele_count += entry.allele_count
         for name, count in entry.class_counts.items():
             class_counts[name] = class_counts.get(name, 0) + count
         matrix = _merged_matrix(matrix, entry.substitution_matrix)
-        insertions = merged_indels(insertions, entry.insertion_lengths)
-        deletions = merged_indels(deletions, entry.deletion_lengths)
+        insertions = merged_lengths(insertions, entry.insertion_lengths)
+        deletions = merged_lengths(deletions, entry.deletion_lengths)
         grid = _merged_grid(grid, entry.complex_grid)
     return AlleleCounts(
         allele_count, class_counts, matrix,
@@ -359,7 +359,7 @@ def _serialized(counts: AlleleCounts) -> dict[str, Any]:
                 str(length): lengths.lengths[length]
                 for length in sorted(lengths.lengths)
             },
-            "count": lengths.alleles,
+            "count": lengths.total,
             "sum": lengths.sum,
             "min": lengths.min,
             "max": lengths.max,
@@ -411,7 +411,7 @@ def _merged_grid(
 
 def _deserialized_indels(
     entry: dict[str, Any], key: str,
-) -> IndelLengths | None:
+) -> ExactLengths | None:
     """A stored indel group, ``None`` when the file carries none.
 
     The map is the ONLY thing read.  A file predating it -- one written
@@ -422,7 +422,7 @@ def _deserialized_indels(
 
     That is one reader rather than a compatibility branch, deliberately.
     A branch that read the old histograms would have to publish them as
-    an :class:`IndelLengths` whose exact map, sum, min and max are all
+    an :class:`ExactLengths` whose exact map, sum, min and max are all
     unrecoverable, so every statistic in the table would be a guess at
     bin resolution presented as a number.
     """
@@ -436,7 +436,7 @@ def _deserialized_indels(
     # map, count or sum is a malformed file, and raising names it.
     minimum = stored.get("min")
     maximum = stored.get("max")
-    return IndelLengths(
+    return ExactLengths(
         {
             int(length): int(count)
             for length, count in stored["lengths"].items()
@@ -496,8 +496,8 @@ class RegionAlleles:
         # would silently drop soft-masked rows no cell claims.
         self._substitution_matrix: dict[tuple[str, str], int] | None = \
             dict.fromkeys(MATRIX_CELLS, 0)
-        self._insertion_lengths: IndelTally | None = IndelTally()
-        self._deletion_lengths: IndelTally | None = IndelTally()
+        self._insertion_lengths: LengthTally | None = LengthTally()
+        self._deletion_lengths: LengthTally | None = LengthTally()
         self._complex_grid: dict[tuple[int, int], int] | None = {}
 
     @classmethod
@@ -508,8 +508,8 @@ class RegionAlleles:
         class_counts: dict[str, int],
         *,
         substitution_matrix: dict[tuple[str, str], int] | None = None,
-        insertion_lengths: IndelLengths | None = None,
-        deletion_lengths: IndelLengths | None = None,
+        insertion_lengths: ExactLengths | None = None,
+        deletion_lengths: ExactLengths | None = None,
         complex_grid: dict[tuple[int, int], int] | None = None,
     ) -> RegionAlleles:
         """A region restored from serialized counts, with no scan state.
@@ -526,9 +526,9 @@ class RegionAlleles:
                 cell: substitution_matrix.get(cell, 0)
                 for cell in MATRIX_CELLS}
         region._insertion_lengths = None if insertion_lengths is None \
-            else IndelTally.restored(insertion_lengths)
+            else LengthTally.restored(insertion_lengths)
         region._deletion_lengths = None if deletion_lengths is None \
-            else IndelTally.restored(deletion_lengths)
+            else LengthTally.restored(deletion_lengths)
         region._complex_grid = complex_grid
         return region
 
@@ -825,11 +825,11 @@ class AlleleDisplay(NamedTuple):
     substitution_percentages: dict[tuple[str, str], str] | None
     #: The three gain#779 groups, ``None`` when the file predates them.
     #: An empty grid is KNOWN and empty, which is not the same thing.
-    insertion_lengths: IndelLengths | None = None
-    deletion_lengths: IndelLengths | None = None
+    insertion_lengths: ExactLengths | None = None
+    deletion_lengths: ExactLengths | None = None
     complex_grid: dict[tuple[int, int], int] | None = None
 
-    def indel_rows(self) -> list[IndelStatisticsRow]:
+    def indel_rows(self) -> list[LengthStatisticsRow]:
         """The indel statistics table: one row per known group.
 
         Global only.  Per-chromosome indel statistics would add eight
@@ -843,7 +843,7 @@ class AlleleDisplay(NamedTuple):
         every other unknown group.
         """
         return [
-            IndelStatisticsRow.of(group, lengths)
+            LengthStatisticsRow.of(group, lengths)
             for group, lengths in (
                 ("insertions", self.insertion_lengths),
                 ("deletions", self.deletion_lengths),
@@ -1291,7 +1291,7 @@ def save_allele_statistics(
             continue
         with resource.open_raw_file(image, mode="wb") as imagefile:
             plot_length_histogram(
-                imagefile, indel_length_ladder(lengths), item)
+                imagefile, length_ladder(lengths), item)
     # The same question the page asks: a grid sparse enough to be
     # tabled publishes no image, so writing one would leave a file
     # nothing references (gain#989).

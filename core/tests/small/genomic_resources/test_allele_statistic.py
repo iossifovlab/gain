@@ -612,7 +612,7 @@ def test_an_insertion_is_recorded_at_the_exact_bases_it_adds() -> None:
     insertions = region.counts().insertion_lengths
     assert insertions is not None
     assert insertions.lengths == {1: 2, 3: 1}
-    assert (insertions.alleles, insertions.sum) == (3, 5)
+    assert (insertions.total, insertions.sum) == (3, 5)
     assert (insertions.min, insertions.max) == (1, 3)
 
 
@@ -624,7 +624,7 @@ def test_a_deletion_is_recorded_at_the_exact_bases_it_removes() -> None:
     deletions = region.counts().deletion_lengths
     assert deletions is not None
     assert deletions.lengths == {3: 1}
-    assert (deletions.alleles, deletions.sum) == (1, 3)
+    assert (deletions.total, deletions.sum) == (1, 3)
     assert (deletions.min, deletions.max) == (3, 3)
 
 
@@ -639,7 +639,7 @@ def test_the_global_roll_up_sums_the_length_histograms() -> None:
 
     assert lengths is not None
     assert lengths.lengths == {1: 2}
-    assert (lengths.alleles, lengths.sum) == (2, 2)
+    assert (lengths.total, lengths.sum) == (2, 2)
 
 
 def test_an_unknown_histogram_makes_the_whole_roll_up_unknown() -> None:
@@ -671,7 +671,7 @@ def test_merge_adds_the_length_maps_of_the_adjacent_region() -> None:
     counts = left.counts()
     assert counts.insertion_lengths is not None
     assert counts.insertion_lengths.lengths == {1: 1, 2: 1, 4: 1}
-    assert (counts.insertion_lengths.alleles, counts.insertion_lengths.sum) \
+    assert (counts.insertion_lengths.total, counts.insertion_lengths.sum) \
         == (3, 7)
     assert (counts.insertion_lengths.min, counts.insertion_lengths.max) \
         == (1, 4)
@@ -760,7 +760,7 @@ def test_a_whole_number_average_carries_no_trailing_zeros() -> None:
     assert insertions is not None
     row = IndelStatisticsRow.of("insertions", insertions)
     assert (row.mean, row.median, row.min, row.max) == ("2", "2", "2", "2")
-    assert row.alleles == "3"
+    assert row.total == "3"
 
 
 def test_the_serialized_group_carries_the_map_and_not_the_ladder() -> None:
@@ -802,7 +802,7 @@ def test_the_chart_bins_are_derived_from_the_map() -> None:
     assert ladder[length_histogram_bin_index(2)] == 2, \
         "the ladder lumps {2, 3}, which is why the map had to stop doing it"
     assert ladder[length_histogram_bin_index(4)] == 1
-    assert sum(ladder) == insertions.alleles
+    assert sum(ladder) == insertions.total
 
 
 def test_a_clamped_length_lands_in_the_bin_the_chart_would_have_drawn(

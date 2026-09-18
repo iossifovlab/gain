@@ -9,7 +9,7 @@ detail its sibling happens to import.
 
 **Indels** left the stored ladder in gain#1118 (ADR 0020 as amended).
 They keep an exact ``{length: count}`` map in
-:mod:`gain.genomic_resources.statistics.indel_lengths` and merge on
+:mod:`gain.genomic_resources.statistics.exact_lengths` and merge on
 that; what they still use from here is the RENDERING -- the map is
 projected onto these bins at draw time so the indel chart keeps the
 shape the stored histograms drew.  So the two callers now use this
