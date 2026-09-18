@@ -45,6 +45,26 @@ pipelineJob('gain-release') {
             'whose GIT_COMMIT matches the tagged commit. Override ' +
             'only if the multibranch folder layout has changed.',
         )
+        // Both booleans default to the gating, publishing release:
+        // the dispatcher in the root Jenkinsfile passes only
+        // TAG_NAME. Descriptions mirror Jenkinsfile.release.
+        booleanParam(
+            'SKIP_CONDA_GATE',
+            false,
+            'Release even though the gain-conda-integration run for ' +
+            'the tagged commit is red or missing. For a known ' +
+            'ecosystem-drift red only: the gate still reports what ' +
+            'it found, the skip is logged in the console and ' +
+            'announced in the Zulip release notification.',
+        )
+        booleanParam(
+            'DRY_RUN',
+            false,
+            'Run every pre-flight (tag checkout, master CI gate, ' +
+            'conda integration gate, tag freshness, credentials) ' +
+            'and stop: nothing is built past the conda-builder ' +
+            'image and nothing is published.',
+        )
     }
 
     definition {

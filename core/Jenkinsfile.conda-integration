@@ -19,8 +19,10 @@
 // user's `mamba create` resolves to today. Jenkinsfile.nightly runs this
 // job three more times against the master rebuild, pinned to each Python
 // of its `pinnedPythons` list (#1430) -- a red there gates the nightly's
-// staging deploy like every other nightly downstream. The release gate
-// (#1431) is a separate slice.
+// staging deploy like every other nightly downstream. gain-release
+// requires the most recent completed run for the commit it tags to be
+// SUCCESS, and triggers one itself when none exists (#1431) -- so a
+// red here is advisory for the branch and blocking for the release.
 //
 // Expected Jenkins job setup:
 //   - Script path: core/Jenkinsfile.conda-integration

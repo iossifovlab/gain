@@ -1448,7 +1448,8 @@ pipeline {
                     // packaging or channel resolution, not code. Hence the
                     // upstream identity pair, the same one web_e2e gets for
                     // the wheels. `wait: false, propagate: false`: advisory
-                    // like its siblings; the release gate is #1431.
+                    // like its siblings on the branch; gain-release gates
+                    // on this job's result for the tagged commit (#1431).
                     steps {
                         script {
                             if (branchStillOnRemote()) {

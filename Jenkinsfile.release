@@ -17,6 +17,20 @@
 //   - UPSTREAM_PROJECT — multibranch path used to find the master
 //                        CI build whose commit matches the tag
 //                        (default 'iossifovlab/gain/master').
+//   - SKIP_CONDA_GATE — operator override for the conda integration
+//                        gate (#1431): a would-be abort becomes a
+//                        warning, announced on Zulip. Default false.
+//   - DRY_RUN         — run every pre-flight, build nothing past
+//                        the conda-builder image, publish nothing.
+//                        Default false.
+//
+// Gates, in order: the master CI build for the tag's commit passed
+// (`Pre-flight: master CI gate`), and the gain-conda-integration run
+// for that commit — the one that installs the per-commit .conda from
+// a file channel and runs core/tests/integration against it — is
+// green (`Pre-flight: conda integration gate`, #1431). Both run
+// before the conda-builder image is built, so an abort has built and
+// uploaded nothing.
 //
 // Output: wheels published to nemo:/data/wheels/gain, conda
 // packages to anaconda.org/iossifovlab, and Docker images to
@@ -54,6 +68,56 @@ def findUpstreamBuildForCommit(String project, String sha) {
     return [found: false, reason: 'no-match']
 }
 
+// The gain-conda-integration runs that tested `sha`, reduced to the
+// two facts the gate decides on. Same @NonCPS rationale and the same
+// already-approved API signatures as findUpstreamBuildForCommit —
+// the job does a real `checkout` of the commit it tests, so its
+// BuildData carries that commit whether the run was the per-push
+// one, a manual re-run, or the nightly's pinned fan-out against
+// master head (#1430).
+//
+// getBuilds() is newest first. A run whose result is still null is
+// in progress. NOT_BUILT is "superseded" in that job — the commit
+// vanished from the branch before checkout — so such a run tested
+// nothing and is ignored.
+//
+// Returns [found: false] when the job is not on this controller,
+// otherwise [found: true, latestCompleted: [number, result] or
+// null, inProgress: [number] or null].
+@NonCPS
+def findCondaIntegrationRunsForCommit(String project, String sha) {
+    def job = jenkins.model.Jenkins.instance.getItemByFullName(project)
+    if (job == null) {
+        return [found: false]
+    }
+    def latestCompleted = null
+    def inProgress = null
+    for (b in job.getBuilds()) {
+        def gitData = b.getAction(hudson.plugins.git.util.BuildData)
+        if (gitData?.lastBuiltRevision?.sha1String != sha) {
+            continue
+        }
+        def result = b.result?.toString()
+        if (result == null) {
+            if (inProgress == null) {
+                inProgress = [number: b.number]
+            }
+            continue
+        }
+        if (result == 'NOT_BUILT') {
+            continue
+        }
+        if (latestCompleted == null) {
+            latestCompleted = [number: b.number, result: result]
+        }
+    }
+    return [
+        found:           true,
+        latestCompleted: latestCompleted,
+        inProgress:      inProgress,
+    ]
+}
+
 pipeline {
     // builder = general build agents; deploy targets don't carry it
     agent { label 'builder' }
@@ -73,6 +137,24 @@ pipeline {
                 'master CI build whose GIT_COMMIT matches the ' +
                 'tagged commit. Override only if the multibranch ' +
                 'folder layout has changed.',
+        )
+        booleanParam(
+            name: 'SKIP_CONDA_GATE',
+            defaultValue: false,
+            description: 'Release even though the gain-conda-' +
+                'integration run for the tagged commit is red or ' +
+                'missing. For a known ecosystem-drift red only: the ' +
+                'gate still reports what it found, the skip is ' +
+                'logged here and announced in the Zulip release ' +
+                'notification.',
+        )
+        booleanParam(
+            name: 'DRY_RUN',
+            defaultValue: false,
+            description: 'Run every pre-flight (tag checkout, master ' +
+                'CI gate, conda integration gate, tag freshness, ' +
+                'credentials) and stop: nothing is built past the ' +
+                'conda-builder image and nothing is published.',
         )
     }
 
@@ -114,6 +196,10 @@ pipeline {
         // independent build counters building and `docker rmi`-ing one
         // tag (#478).
         CONDA_BUILDER   = "gain-conda-builder-release:${env.BUILD_NUMBER}"
+        // The job the conda integration gate consults and, when no
+        // run exists for the tag's commit, triggers. Declared at the
+        // Jenkins root by core/jenkins-jobs/conda_integration.groovy.
+        CONDA_INTEGRATION_JOB = 'gain-conda-integration'
         // Lift params.TAG_NAME into env.TAG_NAME so the existing
         // shell heredocs (lifted from the embedded Release stage)
         // can keep using ${TAG_NAME} unchanged.
@@ -227,12 +313,158 @@ pipeline {
             }
         }
 
+        stage('Pre-flight: conda integration gate') {
+            // #1431: a package that failed its own integration run
+            // must not reach anaconda.org under a release tag. The
+            // most recent completed gain-conda-integration run for
+            // the tagged commit must be SUCCESS — a pytest failure
+            // exits that job's test container non-zero, so a red
+            // suite is FAILURE there, and UNSTABLE/ABORTED are not
+            // a pass either. "Most recent completed" is deliberate:
+            // a manual green re-run clears a flaky red without the
+            // override, a genuinely red package still blocks.
+            //
+            // No completed run but one in progress: abort naming
+            // it rather than wait or trigger a duplicate; the
+            // release is re-runnable. No run at all — never
+            // triggered (a docs-only tip) or discarded by the job's
+            // retention — trigger one now against the same master
+            // build the gate above matched and wait for it: the
+            // run takes minutes and the release has an hour.
+            //
+            // SKIP_CONDA_GATE turns each abort into a warning and
+            // skips the trigger (the release must never wait on a
+            // run it is going to ignore). Whatever happened is
+            // recorded in CONDA_GATE_NOTE for the build description
+            // and the Zulip notification.
+            steps {
+                script {
+                    String job = env.CONDA_INTEGRATION_JOB
+                    String tagSha = env.GIT_COMMIT
+                    String jobUrl = "${env.JENKINS_URL}job/${job}/"
+                    // null = pass; otherwise the reason the gate
+                    // would abort.
+                    String verdict = null
+                    String satisfiedBy = null
+                    def info = findCondaIntegrationRunsForCommit(
+                        job, tagSha)
+                    if (!info.found) {
+                        verdict = "job '${job}' is not on this " +
+                            'controller (has gain-seed run?)'
+                    } else if (info.latestCompleted != null) {
+                        def r = info.latestCompleted
+                        String run = "#${r.number} (${r.result}) " +
+                            "${jobUrl}${r.number}/"
+                        if (r.result == 'SUCCESS') {
+                            satisfiedBy = run
+                        } else {
+                            verdict = 'the most recent completed ' +
+                                "${job} run for commit ${tagSha} " +
+                                "is ${run}"
+                        }
+                    } else if (info.inProgress != null) {
+                        int n = info.inProgress.number
+                        verdict = "${job} #${n} for commit " +
+                            "${tagSha} is still running " +
+                            "(${jobUrl}${n}/); re-run gain-release " +
+                            "for TAG_NAME=${params.TAG_NAME} once " +
+                            'it finishes'
+                    } else if (params.SKIP_CONDA_GATE) {
+                        verdict = "no ${job} run exists for commit " +
+                            "${tagSha}, and none was triggered " +
+                            'because SKIP_CONDA_GATE is set'
+                    } else {
+                        echo(
+                            "No ${job} run exists for commit " +
+                            "${tagSha} (never triggered, or " +
+                            'discarded by retention). Triggering ' +
+                            'one against master build ' +
+                            "#${env.UPSTREAM_BUILD_NUMBER} and " +
+                            'waiting for it.'
+                        )
+                        // Same identity pair the root Jenkinsfile
+                        // passes; PYTHON_VERSION empty = unpinned,
+                        // what the per-push run tests.
+                        def triggered = build(
+                            job: "/${job}",
+                            parameters: [
+                                string(
+                                    name: 'BRANCH_NAME',
+                                    value: 'master',
+                                ),
+                                string(
+                                    name: 'COMMIT_SHA',
+                                    value: tagSha,
+                                ),
+                                string(
+                                    name: 'UPSTREAM_PROJECT',
+                                    value: params.UPSTREAM_PROJECT,
+                                ),
+                                string(
+                                    name: 'UPSTREAM_BUILD',
+                                    value: env.UPSTREAM_BUILD_NUMBER,
+                                ),
+                                string(
+                                    name: 'PYTHON_VERSION',
+                                    value: '',
+                                ),
+                            ],
+                            wait: true,
+                            propagate: false,
+                        )
+                        String run = "#${triggered.number} " +
+                            "(${triggered.result}) " +
+                            "${triggered.absoluteUrl}"
+                        if (triggered.result == 'SUCCESS') {
+                            satisfiedBy = "${run}, triggered by " +
+                                'this release'
+                        } else {
+                            verdict = "${job} ${run}, triggered by " +
+                                'this release for commit ' +
+                                "${tagSha}, did not pass"
+                        }
+                    }
+
+                    String note
+                    if (verdict == null) {
+                        note = "conda gate satisfied by ${job} " +
+                            "${satisfiedBy}"
+                        if (params.SKIP_CONDA_GATE) {
+                            note += ' (SKIP_CONDA_GATE was set but ' +
+                                'not needed)'
+                        }
+                        echo(note)
+                    } else if (params.SKIP_CONDA_GATE) {
+                        note = 'conda gate SKIPPED by operator ' +
+                            "(SKIP_CONDA_GATE) over: ${verdict}"
+                        echo(
+                            '*** WARNING: releasing without a ' +
+                            "green ${job} run. ${note} ***"
+                        )
+                    } else {
+                        error(
+                            "Conda integration gate: ${verdict}. " +
+                            'Refusing to release. Re-run ' +
+                            "${job} for this commit and then " +
+                            'gain-release, or set SKIP_CONDA_GATE ' +
+                            'for a known ecosystem-drift red.'
+                        )
+                    }
+                    env.CONDA_GATE_NOTE = note
+                    currentBuild.description =
+                        (params.DRY_RUN ? 'DRY RUN · ' : '') +
+                        "master #${env.UPSTREAM_BUILD_NUMBER} · " +
+                        note
+                }
+            }
+        }
+
         stage('Setup') {
             // Workspace prep + conda-builder image. Deferred until
-            // the master CI gate passes so doomed releases don't
-            // pay the docker-build cost. (In the embedded Release
-            // stage these prerequisites came from earlier
-            // multibranch CI stages for free.)
+            // both CI gates pass so doomed releases don't pay the
+            // docker-build cost. (In the embedded Release stage
+            // these prerequisites came from earlier multibranch CI
+            // stages for free.)
             steps {
                 sh '''
                     rm -rf reports dist conda
@@ -320,6 +552,8 @@ pipeline {
         }
 
         stage('Fetch base-images.lock') {
+            // DRY_RUN stops at the pre-flights.
+            when { expression { !params.DRY_RUN } }
             // Pull the digest lockfile from the master build
             // identified above. fingerprintArtifacts:true pairs
             // with the master archiveArtifacts' fingerprint:true
@@ -337,6 +571,8 @@ pipeline {
         }
 
         stage('Build wheels + sdists') {
+            // DRY_RUN stops at the pre-flights.
+            when { expression { !params.DRY_RUN } }
             // hatch-vcs derives the embedded version from `git
             // describe --tags`; at a tagged commit this resolves
             // to the clean ${TAG_NAME} with no .dev suffix.
@@ -395,6 +631,8 @@ pipeline {
         }
 
         stage('Build conda packages') {
+            // DRY_RUN stops at the pre-flights.
+            when { expression { !params.DRY_RUN } }
             // Reuses the rattler-build flow from the (now-deleted)
             // root multibranch Conda packages stage, with
             // VCS_VERSION pulled from the freshly built wheel
@@ -431,6 +669,8 @@ pipeline {
         }
 
         stage('Build prod Docker (digest-pinned)') {
+            // DRY_RUN stops at the pre-flights.
+            when { expression { !params.DRY_RUN } }
             // Same Dockerfiles the master build uses, but with
             // PYTHON_IMAGE / NODE_IMAGE / HTTPD_IMAGE pinned to
             // the digests captured by the upstream master build.
@@ -461,6 +701,14 @@ pipeline {
         }
 
         stage('Publish') {
+            // DRY_RUN stops at the pre-flights. beforeOptions:
+            // otherwise the lock below is taken before `when`
+            // is evaluated, and a dry run would queue behind a
+            // real publish for nothing.
+            when {
+                beforeOptions true
+                expression { !params.DRY_RUN }
+            }
             // Serialize across overlapping releases (D13). The
             // lock collides only with another gain-release
             // currently in Publish; pre-publish stages of other
@@ -603,20 +851,33 @@ EOF
         }
 
         stage('Notify') {
+            // A dry run says so and claims no release. An operator
+            // override of the conda gate is announced on the same
+            // line as the release it let through, so the audit
+            // trail is the releases topic itself.
             steps {
-                zulipSend(
-                    topic: 'releases',
-                    message:
-                        "Released ${env.TAG_NAME} — wheels: " +
-                        "https://${env.WHEELS_HOST}/gain/, " +
-                        "conda: https://anaconda.org/" +
-                            "${env.ANACONDA_USER}, " +
-                        "docker: ${env.BACKEND_REPO}:" +
-                            "${env.TAG_NAME} + " +
-                        "${env.FRONTEND_REPO}:" +
-                            "${env.TAG_NAME} " +
-                        "(also tagged :stable)",
-                )
+                script {
+                    String message
+                    if (params.DRY_RUN) {
+                        message = "DRY RUN of release ${env.TAG_NAME} " +
+                            'passed every pre-flight; nothing was ' +
+                            "built or published — ${env.BUILD_URL}"
+                    } else {
+                        message = "Released ${env.TAG_NAME} — wheels: " +
+                            "https://${env.WHEELS_HOST}/gain/, " +
+                            "conda: https://anaconda.org/" +
+                                "${env.ANACONDA_USER}, " +
+                            "docker: ${env.BACKEND_REPO}:" +
+                                "${env.TAG_NAME} + " +
+                            "${env.FRONTEND_REPO}:" +
+                                "${env.TAG_NAME} " +
+                            "(also tagged :stable)"
+                    }
+                    if (params.SKIP_CONDA_GATE) {
+                        message += " — ⚠️ ${env.CONDA_GATE_NOTE}"
+                    }
+                    zulipSend(topic: 'releases', message: message)
+                }
             }
         }
     }
@@ -627,7 +888,8 @@ EOF
             // so failures here never bubble up to the multibranch
             // tag-build. Announce on Zulip so the developer who
             // pushed the tag finds out without hunting for a build
-            // URL.
+            // URL. A dry run is named as one, so a deliberate red
+            // probe of the gates is not read as a broken release.
             //
             // Wrapped in an explicit node block: a failure during
             // pipeline init (e.g., a missing credential in the
@@ -641,7 +903,9 @@ EOF
                 zulipSend(
                     topic: 'releases',
                     message:
-                        "Release ${params.TAG_NAME} FAILED — " +
+                        (params.DRY_RUN ? 'DRY RUN of release '
+                                        : 'Release ') +
+                        "${params.TAG_NAME} FAILED — " +
                         "${env.BUILD_URL}",
                 )
             }
