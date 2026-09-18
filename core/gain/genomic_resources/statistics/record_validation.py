@@ -139,10 +139,15 @@ def validate_record_arrays(
     The ordering rule is all it states.  The per-record path additionally
     refuses a record whose end precedes its begin (see
     :func:`~gain.genomic_resources.resource_errors.inverted_span_error`);
-    there is no array counterpart, because no backend the bulk path reads can
-    produce one -- tabix refuses to index such a row, and a bigWig cannot
-    express it.  If that ever stops being true, this is where the check
-    belongs.
+    there is no array counterpart, because the backends the bulk path reads
+    all but cannot produce one: a bigWig holds no interval whose end is not
+    past its start, and tabix, checking its bounds zero-based, refuses a
+    1-based row with ``pos_end < pos_begin - 1``.  The one row tabix does
+    index, ``pos_end == pos_begin - 1``, this door accepts and its
+    per-record twin refuses -- gain#1526 (ADR 0008 on why a rule the
+    backend happens to enforce is still written).  ``test_scan_array_door.py``
+    pins both bounds; if the tabix refusal ever goes green, this is where
+    the check belongs.
 
     ``chrom`` is what the batches were read for.  A bulk scan reads one
     region, which lies within one contig, so the rules carry their ordering
@@ -181,12 +186,16 @@ def _position_records(
     ``begin <= prev_end`` and not ``<``: two records sharing a single base
     pair is the same error as two overlapping by a hundred.
 
-    Adjacent pairs only, as :func:`_position_record_arrays` also compares
-    them: each record is measured against the one before it, not against the
-    widest end seen so far.  A record whose own end precedes its own begin can
-    therefore hide an overlap between its two neighbours.  gain#668 carries
-    that, with the data survey it needs -- widening either rule to a running
-    maximum refuses strictly more than ``repo-stats`` accepts today.
+    Each record is compared with the one before it only, and that is
+    complete -- no running maximum over the ends seen so far is needed --
+    because :func:`_record_to_begin_end` has refused a record whose end
+    precedes its begin before the comparison runs.  Any bound as tight as
+    ``end >= begin - 1`` suffices: with ``begin > prev_end`` on top,
+    ``end >= begin - 1 >= prev_end``, so the ends never decrease and the
+    previous end IS the widest end seen.  Without such a bound the pairwise
+    rule would be incomplete: an inverted record sits between two
+    neighbours without touching either, and they may overlap each other
+    behind it.
     """
     prev_chrom: str | None = None
     prev_end: int | None = None
@@ -247,9 +256,10 @@ def _position_record_arrays(
     batches are a read-granularity artefact, and no rule may depend on where
     one happens to break.
 
-    Adjacent pairs only, exactly as :func:`_position_records` compares them --
-    the two agree on this limitation as they agree on the rule.  See that
-    function, and gain#668.
+    Adjacent pairs only, exactly as :func:`_position_records` compares them,
+    and complete for the reason given there -- with the backends' own bound
+    of ``end >= begin - 1`` (see :func:`validate_record_arrays`) standing in
+    for the refusal :func:`_record_to_begin_end` makes on the other path.
     """
     prev_end: int | None = None
     for batch in batches:

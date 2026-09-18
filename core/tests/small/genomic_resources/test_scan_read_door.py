@@ -651,6 +651,37 @@ def test_the_position_rule_carries_a_zero_end_rather_than_dropping_it(
     assert "at most one record per position" in str(excinfo.value)
 
 
+def test_the_position_rule_refuses_an_inverted_record_before_comparing_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Begin-sorted, so the adjacent comparison alone would pass all three:
+    # 25 > 20 and 30 > 5.  What refuses the middle record is the check on
+    # its OWN two ends, made before anything is compared -- which is why
+    # comparing adjacent pairs is complete (see ``_position_records``).  An
+    # in-memory table is the one backend that can deliver such a row
+    # (``test_scan_array_door.py`` pins the other two).  Asked of a position
+    # score: the registry's test asks it of an allele score only.
+    resource = (
+        a_position_score()
+        .with_score("s", "float")
+        .with_data("""
+            chrom  pos_begin  pos_end  s
+            chr1   10         20       0.1
+            chr1   25         5        0.2
+            chr1   30         40       0.3
+        """)
+        .build_resource(tmp_path)
+    )
+    score = build_position_score_from_resource(resource)
+    score.open()
+
+    with pytest.raises(OSError, match="end 5 smaller than the beginning 25") \
+            as excinfo:
+        list(validate_records(score, score.fetch_records("chr1", 1, 100)))
+
+    assert not isinstance(excinfo.value, MalformedResourceError)
+
+
 def test_the_fragment_rule_starts_each_contig_afresh(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
