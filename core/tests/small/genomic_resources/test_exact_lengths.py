@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from gain.genomic_resources.statistics.exact_lengths import (
     LENGTH_MAP_CLAMP,
+    ExactLengths,
     LengthArrayTally,
     LengthTally,
 )
@@ -117,3 +118,24 @@ def test_a_stored_record_restores_into_the_array_tally_and_merges_on() -> None:
     tally.add_batch(np.array([1, 8200]))
 
     assert tally.frozen() == _dict_tally([2, 3, 40_000, 1, 8200]).frozen()
+
+
+def test_a_stored_key_above_the_clamp_is_refused_by_name() -> None:
+    """A file whose map was built under a larger clamp has keys the array
+    has no counter for.  The dict tally would carry them silently; the
+    array tally cannot, and says which key rather than failing on an
+    array index."""
+    foreign = ExactLengths({LENGTH_MAP_CLAMP + 1: 1}, 1, 8193, 8193, 8193)
+
+    with pytest.raises(ValueError, match="above the clamp"):
+        LengthArrayTally.restored(foreign)
+
+
+def test_merging_an_empty_array_tally_changes_nothing() -> None:
+    tally = LengthArrayTally()
+    tally.add_batch(np.array([2, 40_000]))
+    before = tally.frozen()
+
+    tally.merge(LengthArrayTally())
+
+    assert tally.frozen() == before

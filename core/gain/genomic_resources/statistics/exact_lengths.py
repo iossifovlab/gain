@@ -84,9 +84,9 @@ class ExactLengths(NamedTuple):
     lengths: dict[int, int]
     #: How many items the map counts.  Spelled ``total`` rather than
     #: ``count``, which a :class:`tuple` already means something else
-    #: by -- the same rename, for the same reason, as
-    #: :class:`MatrixCell`'s.  The STORED key is ``count``, which is
-    #: what it is in the file.
+    #: by -- the reason :class:`MatrixCell` spells its count ``alleles``;
+    #: a record that does not know what it counts needs a neutral word.
+    #: The STORED key is ``count``, which is what it is in the file.
     total: int
     sum: int
     min: int | None
@@ -239,8 +239,9 @@ class LengthTally:
     quadratic in the lengths seen.
 
     Dict-backed, so its cost is in the DISTINCT lengths seen, not in
-    the clamp: right for a statistic that reaches it once per distinct
-    ref/alt pair per batch.
+    the clamp: right for a statistic that meets few distinct lengths
+    per batch and folds each with its multiplicity.  A statistic that
+    meets its lengths as whole arrays wants :class:`LengthArrayTally`.
     """
 
     def __init__(self) -> None:
@@ -332,11 +333,19 @@ class LengthArrayTally:
     def restored(cls, lengths: ExactLengths) -> LengthArrayTally:
         """A tally holding what a stored group already counted.
 
-        Every key of a stored map is at most the clamp, so the map
-        scatters straight into the counters without re-clamping.
+        Every key of a map built under this clamp is at most the clamp,
+        so the map scatters straight into the counters without
+        re-clamping.  A key above it can only come from a file built
+        under a larger clamp, and is refused by name: folding it would
+        need a counter the array does not have, and re-clamping it here
+        would silently make the record disagree with its file.
         """
         tally = cls()
         for length, count in lengths.lengths.items():
+            if length > LENGTH_MAP_CLAMP:
+                raise ValueError(
+                    f"stored length {length} is above the clamp "
+                    f"{LENGTH_MAP_CLAMP}")
             tally._counts[length] = count
         tally.total = lengths.total
         tally.sum = lengths.sum
@@ -347,10 +356,11 @@ class LengthArrayTally:
     def add_batch(self, lengths: np.ndarray) -> None:
         """Fold a whole batch of lengths in.
 
-        Every length must be at least 1: ``bincount`` would accept a 0
-        silently and put it in counter 0, which is not a length anything
-        can have, so the batch is checked before it is folded -- and a
-        refused batch leaves the tally as it was.
+        ``lengths`` is an integer array of any width; the fold widens to
+        ``int64`` itself.  Every length must be at least 1: ``bincount``
+        would accept a 0 silently and put it in counter 0, which is not
+        a length anything can have, so the batch is checked before it
+        is folded -- and a refused batch leaves the tally as it was.
         """
         if not lengths.size:
             return
@@ -499,10 +509,10 @@ class LengthStatisticsRow(NamedTuple):
             "" if mean is None else _trimmed(mean),
             # The one cell the clamp can blunt: past it the map knows
             # only "this long or longer", so the median is written as
-            # the floor it is -- with the sign the complex grid's
-            # clamped cells already use, so one page says one thing one
-            # way.  min, max and mean are exact from the scalars and
-            # need no such hedge.
+            # the floor it is -- with the same sign every clamped cell
+            # on these pages uses, so one page says one thing one way.
+            # min, max and mean are exact from the scalars and need no
+            # such hedge.
             #
             # The floor is the COMPUTED value, not the clamp.  With both
             # middles in the overflow bucket the two coincide and this

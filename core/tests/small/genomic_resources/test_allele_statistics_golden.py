@@ -125,9 +125,10 @@ def _collect(repo_root: pathlib.Path, relative: str) -> str:
         path = resource_dir / relative
         if not path.exists():
             continue
+        text = path.read_text(encoding="utf-8")
         parts.append(
             f"# {resource_dir.name}/{relative}\n"
-            + path.read_text().replace(str(repo_root), "<repo>"))
+            + text.replace(str(repo_root), "<repo>"))
     # Not a bare ``assert`` -- that is stripped under ``python -O``, which
     # would let a build that wrote nothing pass this test vacuously.
     if len(parts) != 2:
@@ -139,7 +140,7 @@ def _collect(repo_root: pathlib.Path, relative: str) -> str:
 def _assert_golden(golden_path: pathlib.Path, actual: str) -> None:
     if os.environ.get(UPDATE_ENV):
         golden_path.parent.mkdir(parents=True, exist_ok=True)
-        golden_path.write_text(actual)
+        golden_path.write_text(actual, encoding="utf-8")
         pytest.fail(
             f"golden file regenerated at {golden_path}; review the diff, "
             f"then re-run without {UPDATE_ENV}")
@@ -147,7 +148,7 @@ def _assert_golden(golden_path: pathlib.Path, actual: str) -> None:
     assert golden_path.exists(), (
         f"missing golden file {golden_path}; regenerate it with "
         f"{UPDATE_ENV}=1")
-    expected = golden_path.read_text()
+    expected = golden_path.read_text(encoding="utf-8")
     if actual != expected:
         pytest.fail(
             f"allele statistics output changed.\n"
@@ -162,3 +163,23 @@ def test_alleles_json_golden(built_repo: pathlib.Path) -> None:
 
 def test_allele_page_golden(built_repo: pathlib.Path) -> None:
     _assert_golden(PAGE_GOLDEN, _collect(built_repo, "index.html"))
+
+
+def test_an_indel_image_is_written_exactly_when_the_group_has_alleles(
+    built_repo: pathlib.Path,
+) -> None:
+    """The PNG bytes are not pinned (see the module docstring), but WHICH
+    images exist is machine-independent and is the half of the build the
+    page golden cannot see: the build's gate and the template's gate are
+    separate code, and a build that wrote an image for an empty group --
+    or skipped one for a populated group -- would leave a file nothing
+    links or a thumbnail linking nothing."""
+    images = [
+        "statistics/allele_insertion_lengths.png",
+        "statistics/allele_deletion_lengths.png",
+    ]
+
+    assert [(built_repo / "mixed" / image).exists() for image in images] \
+        == [True, True]
+    assert [(built_repo / "substitutions" / image).exists()
+            for image in images] == [False, False]
