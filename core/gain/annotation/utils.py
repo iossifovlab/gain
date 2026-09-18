@@ -23,12 +23,37 @@ from gain.genomic_resources.repository import (
 logger = logging.getLogger(__name__)
 
 
+def configured_resource_id(
+    info: AnnotatorInfo,
+    parameter: str,
+) -> str | None:
+    """The resource id an annotator's `parameter` names, if configured.
+
+    `None` when the parameter is absent -- the caller then falls back to
+    whatever its own chain provides.  An explicit empty string is neither:
+    nothing in the stack emits one (the web editor drops blank fields
+    before rendering YAML), so it is a hand-written or templating
+    accident, and it is refused here with the annotator and parameter
+    named rather than read as an id and resolved to nothing (gain#1101).
+    """
+    # The annotation is trust, not a check: a non-string value flows on
+    # to resolution and fails there.
+    resource_id: str | None = info.parameters.get(parameter)
+    if resource_id is None:
+        return None
+    if resource_id == "":
+        raise ValueError(
+            f"Can't create {info.type}: "
+            f"{parameter} is configured as an empty resource id")
+    return resource_id
+
+
 def find_annotator_gene_models(
     info: AnnotatorInfo,
     grr: GenomicResourceRepo,
 ) -> GeneModels:
     """Get gene models from the annotator info or genomic context."""
-    gene_models_resource_id = info.parameters.get("gene_models")
+    gene_models_resource_id = configured_resource_id(info, "gene_models")
     if gene_models_resource_id is not None:
         logger.debug(
             "Gene models for %s taken from %s",
@@ -78,11 +103,12 @@ def resolve_reference_genome(
     raised when nothing resolves; it is the one part of that error that
     cannot be stated here, since the chain is the caller's.
     """
-    # A truthiness check, not `is None`: an annotator's own `genome:`
-    # parameter is the raw YAML value, so `genome: ""` can still arrive
-    # here, and it means "not configured", not "the resource named the
-    # empty string" (gain#1055).  Narrowing that at its source is
-    # gain#1101's question.
+    # Every operand a caller can pass narrows `""` to `None` at its
+    # source (the annotator's own `genome:` parameter, a gene models'
+    # `reference_genome` label, the preamble's `input_reference_genome`),
+    # so truthiness and `is not None` agree here.  Truthiness stays so
+    # an operand that forgets to narrow falls back to the context rather
+    # than resolving the empty id (gain#1055).
     if genome_resource_id:
         logger.debug(
             "Reference genome for %s taken from %s",
@@ -105,7 +131,7 @@ def find_annotator_reference_genome(
     grr: GenomicResourceRepo,
 ) -> ReferenceGenome:
     """Get reference genome from the annotator info or genomic context."""
-    genome_resource_id = info.parameters.get("genome") or \
+    genome_resource_id = configured_resource_id(info, "genome") or \
         gene_models.reference_genome_id or \
         preamble_reference_genome_id(pipeline)
 

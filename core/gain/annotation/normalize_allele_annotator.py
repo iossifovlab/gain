@@ -11,6 +11,7 @@ from gain.annotation.annotation_pipeline import (
 )
 from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
 from gain.annotation.utils import (
+    configured_resource_id,
     preamble_reference_genome_id,
     resolve_reference_genome,
 )
@@ -35,7 +36,7 @@ class NormalizeAlleleAnnotator(AnnotatorBase):
         # after it is shared (gain#1102).
         genome = resolve_reference_genome(
             info,
-            info.parameters.get("genome")
+            configured_resource_id(info, "genome")
             or preamble_reference_genome_id(pipeline),
             pipeline.repository,
             searched="the annotation config's preamble or the context")

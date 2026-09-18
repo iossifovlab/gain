@@ -25,6 +25,8 @@ from gain.genomic_resources.testing import (
 )
 from gain.testing.t4c8_import import GENOME_CONTENT
 
+from tests.small.annotation.conftest import assert_refuses_empty_resource_id
+
 
 @pytest.fixture
 def grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
@@ -398,3 +400,35 @@ def test_normalize_allele_annotator_genome_parameter_wins_over_everything(
     with annotation_pipeline.open() as pipeline:
         annotator = pipeline.annotators[0]
         assert annotator.resource_ids == {parameter_genome}
+
+
+def test_normalize_allele_annotator_refuses_an_empty_genome_id(
+    mocker: pytest_mock.MockerFixture,
+    grr: GenomicResourceRepo,
+) -> None:
+    """An explicit ``genome: ""`` is refused, not read as "not configured".
+
+    The context holds a genome, so a fallback is available: the refusal
+    must win over it (gain#1101).  An empty id is a templating accident;
+    hiding it behind a fallback is the same mistake as resolving it.
+    """
+    config = textwrap.dedent("""
+        - normalize_allele_annotator:
+            genome: ""
+            attributes:
+            - source: normalized_allele
+              name: normalized_allele
+        """)
+
+    genome = build_reference_genome_from_resource_id(
+        "t4c8_genome_implicit_B", grr)
+    mocker.patch(
+        "gain.annotation.utils.get_genomic_context",
+    ).return_value = SimpleGenomicContext(
+        context_objects={"reference_genome": genome}, source="test_context")
+
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        load_pipeline_from_yaml(config, grr)
+
+    assert_refuses_empty_resource_id(
+        excinfo, "normalize_allele_annotator", "genome")
