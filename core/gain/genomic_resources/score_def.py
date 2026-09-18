@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from gain import logging
+from gain.genomic_resources.aggregators import Aggregator
 from gain.genomic_resources.genomic_position_table.record import (
     PAYLOAD,
     Record,
@@ -855,6 +856,40 @@ def finish_scoredefs(
                 score_def.na_values, score_def.value_type)
         if score_def.aggregator is None:
             score_def.aggregator = default_aggregators[score_def.value_type]
+    return score_defs
+
+
+def refuse_unbuildable_aggregators(
+    score_defs: dict[str, GenomicScoreDef], resource_id: str,
+) -> dict[str, GenomicScoreDef]:
+    """Refuse a configured ``aggregator:`` no accumulator can be built from.
+
+    The config schema admits a parametrized aggregator by name and a
+    parenthesis (``join(...)``), which is looser than the parser: a
+    ``join(a)(b)`` passes validation and fails only when an accumulator is
+    built from it.  That is a fact about the definition, so it is refused
+    at construction through
+    :func:`~gain.genomic_resources.resource_errors.score_configuration_error`
+    -- which says why a definition's refusal must not wait for a read.
+
+    Called after :func:`finish_scoredefs`, so the aggregator judged is
+    the one the score will reduce by, a class default included.  The
+    shipped defaults all build, so in practice what is refused is a
+    config-supplied spelling; the wording assumes as much, since a
+    default that did not build would be the class's defect, not the
+    yaml's.  Building once per definition is cheap: ``Aggregator.build``
+    remembers what a spelling resolves to.
+    """
+    for score_id, score_def in score_defs.items():
+        if score_def.aggregator is None:
+            continue
+        try:
+            Aggregator.build(score_def.aggregator)
+        except (KeyError, ValueError, TypeError) as err:
+            raise score_configuration_error(
+                resource_id, score_id,
+                f"states aggregator {score_def.aggregator!r}, which cannot "
+                f"be built: {err}") from err
     return score_defs
 
 

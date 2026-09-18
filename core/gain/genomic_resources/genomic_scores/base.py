@@ -76,6 +76,7 @@ from gain.genomic_resources.score_def import (
     build_genomic_score_schema,
     finish_scoredefs,
     parse_scoredef_config,
+    refuse_unbuildable_aggregators,
     validate_scoredefs,
 )
 from gain.genomic_resources.score_filter import (
@@ -337,14 +338,17 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         else:
             scoredefs = config_scoredefs
 
-        # Refused AFTER finish_scoredefs, where an unstated ``type:``
-        # becomes ``float`` -- earlier would judge a score by a type it
-        # does not end up with -- and at the convergence of all three
-        # construction routes, so a ``scores:`` block, a VCF header and a
-        # bigWig are held to the one rule (gain#1336).
-        return refuse_unfoldable_histograms(
-            finish_scoredefs(scoredefs, self.DEFAULT_AGGREGATORS),
-            self.resource_id)
+        # Both refusals come AFTER finish_scoredefs -- the histogram one
+        # because an unstated ``type:`` becomes ``float`` there, and
+        # earlier would judge a score by a type it does not end up with;
+        # the aggregator one so that what is built is the spelling the
+        # score will reduce by, class default included -- and at the
+        # convergence of all three construction routes, so a ``scores:``
+        # block, a VCF header and a bigWig are held to the one rule
+        # (gain#1336).
+        scoredefs = finish_scoredefs(scoredefs, self.DEFAULT_AGGREGATORS)
+        scoredefs = refuse_unfoldable_histograms(scoredefs, self.resource_id)
+        return refuse_unbuildable_aggregators(scoredefs, self.resource_id)
 
     def get_config(self) -> dict[str, Any]:
         """The configuration, validated and normalized at construction."""
