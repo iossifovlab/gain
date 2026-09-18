@@ -25,6 +25,7 @@ from gain.genomic_resources.resource_types import (
     equivalent_resource_types,
     retired_annotator_message,
 )
+from gain.genomic_resources.utils import read_resource_id_label
 from rest_framework.views import Request, Response, status
 
 from web_annotation.annotation_base_view import (
@@ -808,14 +809,15 @@ class ResourceAnnotators(EditorView):
                 resource.get_type() == "liftover_chain" and
                 annotator_type == "liftover_annotator"
             ):
-                # A mapping whatever the resource declared -- `get_labels`
-                # narrows it -- so `in` here asks for a KEY, and not for a
-                # substring of some string a curator wrote (gain#654).
-                labels = resource.get_labels()
-                if "source_genome" in labels:
-                    config["source_genome"] = labels["source_genome"]
-                if "target_genome" in labels:
-                    config["target_genome"] = labels["target_genome"]
+                # Read the way every other resource-id label is read: a
+                # mapping whatever the resource declared, and a value that
+                # is not a non-empty string reported and treated as absent
+                # (gain#654, gain#1053) -- so the config the editor offers
+                # never carries a value `get_resource` cannot even try.
+                for label in ("source_genome", "target_genome"):
+                    genome_id = read_resource_id_label(resource, label)
+                    if genome_id is not None:
+                        config[label] = genome_id
 
             if not matched:
                 continue
