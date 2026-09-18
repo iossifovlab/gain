@@ -22,10 +22,17 @@ pipelineJob('gain-conda-integration') {
         'channel priority and no iossifovlab channel. A red here that is ' +
         'green in gain-core-integration means packaging or channel ' +
         'resolution, not code. Triggered downstream of ' +
-        'iossifovlab/gain/<branch> on every branch; safe to run manually.')
+        'iossifovlab/gain/<branch> on every branch; safe to run manually. ' +
+        'gain-release requires a SUCCESS run of this job for the commit ' +
+        'it tags (#1431).')
 
     logRotator {
-        numToKeep(20)
+        // Matches the master multibranch. gain-release looks the
+        // per-push run for a tagged commit up here (#1431), and
+        // branch pushes alone got through 20 builds in half a day,
+        // so 20 meant a tag cut the day after its merge found
+        // nothing and had to trigger a fresh run.
+        numToKeep(100)
     }
 
     parameters {

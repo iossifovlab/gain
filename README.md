@@ -48,7 +48,11 @@ CI / release plumbing:
   packages, and digest-pinned prod Docker images for a
   tagged commit, then publishes wheels to
   `wheels.seqpipe.org`, conda to Anaconda.org, and
-  Docker images to `registry.seqpipe.org`.
+  Docker images to `registry.seqpipe.org`. Gated on the
+  master CI build and the `gain-conda-integration` run for
+  the tagged commit; `DRY_RUN` exercises the pre-flights
+  without publishing, `SKIP_CONDA_GATE` overrides the
+  conda gate (logged and announced on Zulip).
 - **`Jenkinsfile.nightly`** — cron-scheduled
   orchestrator (`gain-nightly`, ~02:00 UTC): rebuilds
   master and re-runs the integration jobs
