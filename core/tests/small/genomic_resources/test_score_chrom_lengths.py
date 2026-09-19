@@ -45,7 +45,7 @@ from .genomic_position_table.test_genomic_position_table import (
     _OnlyFindsLengths,
 )
 from .genomic_position_table.test_table_lifetime import (
-    _concrete_backends_in_the_tree,
+    _undeclared_backends,
 )
 
 # One score per backend, each carrying ``chr1``.  The tabix rows are far
@@ -405,12 +405,10 @@ def test_every_backend_in_the_tree_declares_its_chrom_length_source() -> None:
     backend is held to it the moment it exists (the sweep's own vacuity
     guard is ``test_the_backend_sweep_walks_the_backend_package``).
     """
-    undeclared = [
-        klass.__name__
-        for klass in _concrete_backends_in_the_tree()
-        if not isinstance(
-            getattr(klass, "chrom_length_source", None), ChromLengthSource)
-    ]
+    # Inherited counts: the VCF backend inherits the tabix probe, and so
+    # its claim (``_undeclared_backends`` says where that differs).
+    undeclared = _undeclared_backends(
+        "chrom_length_source", ChromLengthSource, own=False)
 
     assert undeclared == [], (
         f"backend(s) {undeclared} do not declare chrom_length_source; say "

@@ -1,8 +1,8 @@
 """How a record's cell becomes a value: the two decisions taken at open.
 
 The seam between a score and its table's payload.  Both decisions are taken
-once per open, from the table's TYPE and the score definitions, and neither
-needs a ``GenomicScore``:
+once per open, from the table's declared ``payload_kind`` and the score
+definitions, and neither needs a ``GenomicScore``:
 
 - :func:`select_value_extractor` picks the per-record read, *before*
   ``table.open()``;
@@ -39,6 +39,7 @@ from gain.genomic_resources.bigwig_scores import (
     extract_bigwig_value,
     extract_bigwig_value_na,
 )
+from gain.genomic_resources.genomic_position_table import PayloadKind
 from gain.genomic_resources.resource_errors import score_configuration_error
 from gain.genomic_resources.score_def import (
     GenomicScoreDef,
@@ -61,19 +62,17 @@ def select_value_extractor(
     *,
     score_definitions: dict[str, GenomicScoreDef],
     table: GenomicPositionTable,
-    is_vcf: bool,
-    is_bigwig: bool,
 ) -> ValueExtractor:
     """Pick the per-record value read for this table's payload.
 
     ONE decision, per table, taken at open rather than per line.  What it
-    turns on is what a record's PAYLOAD *is*, which is whatever the backend
-    that built it says it is:
+    turns on is what a record's PAYLOAD *is*, which the backend declares
+    in its :class:`~.table.PayloadKind`:
 
-    * a **VCF** record's payload carries the variant and the pysam INFO
-      proxies, and a VCF score is an INFO field addressed by name --
+    * a **VARIANT** payload carries the variant and the pysam INFO
+      proxies, and its score is an INFO field addressed by name --
       :func:`extract_vcf_value`;
-    * a **bigWig** record's payload IS the interval's value, so the read is
+    * a **VALUE** payload IS the interval's value, so the read is
       an identity (:func:`extract_bigwig_value`) -- or, for the rare
       resource that configures NA sentinels, an identity plus one
       membership test (:func:`extract_bigwig_value_na`).  Which of the two
@@ -82,23 +81,27 @@ def select_value_extractor(
       declares exactly one score (``validate_bigwig_scoredefs`` refuses
       more), so there is a single answer to give; ``any`` states that
       without depending on it;
-    * any other record-yielding table's payload is a raw row, read by
-      integer column -- :func:`extract_column_value`.
+    * a **ROW** payload is a raw row, read by integer column --
+      :func:`extract_column_value`.
 
-    The table's ``yields_records`` claim is simply believed: that every
-    backend's claim matches what it really yields is pinned statically,
-    over all four of them, by test_backend_record_contract.py, so the fetch
-    path pays nothing for it.
+    The declaration is read first, because every later decision depends
+    on it: a backend that has not made one is refused with the
+    ``AttributeError`` the undefaulted ClassVar raises, before any other
+    check.  The table's ``yields_records`` claim is then simply believed:
+    that every backend's claim matches what it really yields is pinned
+    statically, over all four of them, by test_backend_record_contract.py,
+    so the fetch path pays nothing for it.
 
-    A table that yields no records is a programming error, not a data
+    A ROW table that yields no records is a programming error, not a data
     error: there is no fallback reader, so a backend leaving the flag
     False has nothing that can read it and we refuse rather than guess.
     (Nothing in the tree reaches it: it guards a backend added later
     without its migration.)
     """
-    if is_vcf:
+    kind = table.payload_kind
+    if kind is PayloadKind.VARIANT:
         return extract_vcf_value
-    if is_bigwig:
+    if kind is PayloadKind.VALUE:
         # A bigWig value is a float, so only a NUMERIC sentinel can
         # ever match it -- the four text tokens a float score defaults
         # to ("", "nan", ".", "NA") cannot.  Testing for those rather
@@ -128,15 +131,15 @@ def select_value_extractor(
 def resolve_score_indices(
     score_definitions: dict[str, GenomicScoreDef],
     *,
-    is_vcf: bool,
-    is_bigwig: bool,
     table: GenomicPositionTable,
     resource_id: str,
 ) -> None:
     """Resolve each score's configured address to a payload column.
 
     Runs after ``table.open()``, because the by-NAME case is the one thing
-    here that has to consult the table's header.
+    here that has to consult the table's header.  What a definition's
+    address means -- an INFO key, nothing, or a column -- is the table's
+    :class:`~.table.PayloadKind`, read off the table.
 
     Writes ``score_index`` onto the definitions it is handed, and returns
     nothing: "the defs are finished in place at open" is the contract
@@ -163,7 +166,8 @@ def resolve_score_indices(
     refusals are reached through :meth:`~.base.GenomicScore.open` only by
     a definition edited after its config passed.
     """
-    if is_vcf:
+    kind = table.payload_kind
+    if kind is PayloadKind.VARIANT:
         # A VCF score has no column to resolve: it is addressed by INFO
         # KEY, which is ``col_name``, and :func:`extract_vcf_value` reads
         # that attribute directly.  All this enforces is that the key is
@@ -175,7 +179,7 @@ def resolve_score_indices(
                     "has no INFO key; a VCF score is addressed by name.")
         return
 
-    if is_bigwig:
+    if kind is PayloadKind.VALUE:
         # A bigWig has exactly one column -- the payload, which IS the
         # value -- so there is nothing to resolve: the answer is 0, and it
         # is the same 0 for the canonical config (which addresses no column

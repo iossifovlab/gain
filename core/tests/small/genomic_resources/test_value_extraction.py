@@ -5,9 +5,10 @@ how a record's cell becomes a value: which extractor reads the payload, and
 which payload column each score def is addressed to.  Both used to be private
 methods on the class (gain#1114 moved them out; gain#1027 is the epic).
 
-What is pinned HERE is only what no opened score can reach at all: the
-refusal of a table that yields no records, which needs a backend that does
-not exist in the tree.  Everything the seam does for a resource somebody can
+What is pinned HERE is only what no opened score can reach at all: the two
+refusals of a backend that does not exist in the tree -- one that has not
+declared its payload kind, one that yields no records -- and which of them
+wins.  Everything the seam does for a resource somebody can
 actually build is pinned from the score's side, at the higher ``open()``
 seam, and is deliberately not duplicated here:
 
@@ -24,6 +25,7 @@ seam, and is deliberately not duplicated here:
 from __future__ import annotations
 
 import pytest
+from gain.genomic_resources.genomic_position_table.table import PayloadKind
 from gain.genomic_resources.genomic_scores.value_extraction import (
     select_value_extractor,
 )
@@ -34,19 +36,42 @@ class _RecordlessTable:
 
     No table in the tree sets this: the flag guards a backend added later
     without the migration that would give it a reader.  A stand-in is the
-    only way to reach the branch, and the refusal names its class.
+    only way to reach the branch, and the refusal names its class.  It
+    declares a ROW payload because that is the one kind whose read needs
+    records: the other two are read by extractors that never index a row.
+    """
+
+    payload_kind = PayloadKind.ROW
+    yields_records = False
+
+
+class _UndeclaredTable:
+    """A backend that has not said what its payload holds.
+
+    Declared-not-defaulted on the base, so nothing in the tree lacks it;
+    the stand-in reaches the refusal a fifth backend would hit before any
+    other check -- the kind is consulted first, since every later decision
+    depends on it.  It ALSO yields no records, so that it would be refused
+    by the other check too: that is what makes the test below a pin on
+    which refusal wins, not merely on being refused.
     """
 
     yields_records = False
+
+
+def test_a_table_that_has_not_declared_its_payload_kind_is_refused() -> None:
+    with pytest.raises(AttributeError, match="payload_kind"):
+        select_value_extractor(
+            score_definitions={},
+            table=_UndeclaredTable(),  # type: ignore[arg-type]
+        )
 
 
 def test_a_table_that_yields_no_records_is_refused() -> None:
     with pytest.raises(TypeError) as exc_info:
         select_value_extractor(
             score_definitions={},
-            table=_RecordlessTable(),
-            is_vcf=False,
-            is_bigwig=False,
+            table=_RecordlessTable(),  # type: ignore[arg-type]
         )
 
     assert str(exc_info.value) == (

@@ -126,6 +126,30 @@ class ChromLengthSource(enum.Enum):
         )
 
 
+class PayloadKind(enum.Enum):
+    """What a record's PAYLOAD slot holds on a backend (see ``record.py``).
+
+    A fact about the FORMAT, and every backend names its own in
+    ``payload_kind`` the way it names ``chrom_length_source``: the score
+    layer routes on it when a score is built and again when it is opened
+    -- which construction path a resource's definitions take, which
+    validator runs, which extractor reads a record and how a definition
+    resolves to what it reads -- without knowing which backends exist.
+    """
+
+    ROW = "row"
+    """A raw row: a score is one CELL of it, addressed by column index or
+    header name."""
+
+    VARIANT = "variant"
+    """A variant and its INFO proxies: a score is an INFO field, addressed
+    by its key."""
+
+    VALUE = "value"
+    """The value itself: the one score the format carries, addressed by
+    nothing."""
+
+
 class GenomicPositionTable(abc.ABC):
     """Abstraction over genomic scores table."""
 
@@ -138,12 +162,12 @@ class GenomicPositionTable(abc.ABC):
     # False to select.
     #
     # So the flag's remaining job is to catch a new backend that has not
-    # migrated.  ``GenomicScore.open`` routes on it -- ``RecordScoreLine`` when
+    # migrated.  ``GenomicScore.open`` routes on it -- the column read when
     # it is True, and a ``TypeError`` refusing to open the score when it is
-    # False, rather than route the table to a score line that would misread
-    # whatever it does yield.  (A VCF table is routed to ``VCFScoreLine`` ahead
-    # of this check, by type; it sets the flag too, inheriting the tabix
-    # backend's True.)  A backend author overrides this to True *and* yields
+    # False, rather than route the table to a reader that would misread
+    # whatever it does yield.  (A VARIANT or VALUE ``payload_kind`` is routed
+    # to its own reader ahead of this check; both backends set the flag
+    # too.)  A backend author overrides this to True *and* yields
     # records -- the claim and the yielded shape are held together by
     # test_backend_record_contract.py, which fails a backend that leaves it
     # False as much as one whose records do not match its claim.
@@ -176,6 +200,20 @@ class GenomicPositionTable(abc.ABC):
     # new format cannot silently inherit a label (and, through the
     # member's ``is_exact``, a trust level) that is not its own.
     chrom_length_source: ClassVar[ChromLengthSource]
+
+    # What a record's PAYLOAD slot holds on this backend -- a raw row, a
+    # variant with its INFO proxies, or the value itself.  The score layer
+    # routes on it from the moment a score is built over the table (see
+    # ``PayloadKind``), and a backend read through a kind that is not its
+    # own is read by an extractor that does not fit what it yields.  Two
+    # guards, for the two ways that happens: no default here, so a fresh
+    # subclass of this base is refused with an AttributeError rather than
+    # routed; and test_table_lifetime.py's sweep demands each backend's OWN
+    # declaration, because a backend that subclasses another backend
+    # inherits that one's kind -- the VCF backend subclasses the tabix one
+    # and yields a different payload, so it overrides, as it overrides
+    # ``supports_value_arrays``.
+    payload_kind: ClassVar[PayloadKind]
 
     CHROM = "chrom"
     POS_BEGIN = "pos_begin"

@@ -10,6 +10,7 @@ from gain.genomic_resources.resource_errors import vcf_header_file_error
 from gain.utils.fs_utils import find_ci
 
 from .record import Record
+from .table import PayloadKind
 from .table_tabix import TabixGenomicPositionTable
 
 # Slot positions inside a VCF record's PAYLOAD.  The payload of a VCF record
@@ -144,6 +145,11 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
     # ``isinstance(Tabix) and not isinstance(VCF)`` said, said once and in the
     # place that knows why.
     supports_value_arrays: ClassVar[bool] = False
+
+    # The same override, for the same reason: the tabix parent's payload is
+    # a raw row, this backend's is a variant with its INFO proxies.  Left
+    # inherited, the score layer would route a VCF to the column read.
+    payload_kind: ClassVar[PayloadKind] = PayloadKind.VARIANT
 
     CHROM = "CHROM"
     POS_BEGIN = "POS"

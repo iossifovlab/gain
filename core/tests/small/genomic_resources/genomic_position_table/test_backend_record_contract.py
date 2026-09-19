@@ -61,6 +61,7 @@ from gain.genomic_resources.genomic_position_table.record import (
 )
 from gain.genomic_resources.genomic_position_table.table import (
     GenomicPositionTable,
+    PayloadKind,
 )
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
@@ -183,6 +184,17 @@ _BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
     pytest.param(_build_bigwig, extract_bigwig_value, id="bigwig"),
 ]
 
+# The extractor above is a pure function of the backend's ``payload_kind``
+# declaration -- that is what ``select_value_extractor`` is -- so the kind
+# each backend must declare is read off this list rather than kept in a
+# second one.  (Which kind an entry's fixture really builds is what
+# test_open_routes_a_backend_to_the_extractor_its_payload_needs checks.)
+_KIND_OF_EXTRACTOR = {
+    extract_column_value: PayloadKind.ROW,
+    extract_vcf_value: PayloadKind.VARIANT,
+    extract_bigwig_value: PayloadKind.VALUE,
+}
+
 
 def build_every_backend(
     tmp_path: pathlib.Path,
@@ -245,7 +257,8 @@ def test_every_record_backend_declares_whether_its_records_hash(
 
     Which backends must declare is asked of the **tables themselves**:
     ``yields_records`` is the claim this whole file exists to hold backends to,
-    and it is the same discriminator ``GenomicScore.open`` routes on.  Asking a
+    and it is the gate ``GenomicScore.open`` puts the column read behind
+    (the read itself is routed on ``payload_kind``).  Asking a
     built-but-unopened table is deliberate -- the flag is a ClassVar, so it
     needs no open handle, and a backend that leaves it False is one
     ``GenomicScore.open`` refuses outright.  Opening first would mean this loop
@@ -398,6 +411,10 @@ def test_open_routes_a_backend_to_the_extractor_its_payload_needs(
     # makes the routing correct for every backend, without any per-record
     # check.
     score, region = build_backend(tmp_path)
+    # The claim open() routes on, read off the UNOPENED table: a ClassVar,
+    # known at construction.  The VCF backend inherits the tabix class and
+    # would inherit its ROW without an override of its own.
+    assert score.table.payload_kind is _KIND_OF_EXTRACTOR[extractor]
     with score.open():
         # The choice is made once, at open: it is already installed before a
         # single record is fetched.

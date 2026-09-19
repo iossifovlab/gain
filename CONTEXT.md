@@ -204,6 +204,25 @@ ref or alt column at all. Counted rather than dropped.
 _Avoid_: unknown, invalid, unclassified, error (a row here is well-formed
 data the classification declines to interpret, not a fault)
 
+### Score tables
+
+**Payload kind**:
+What the last slot of a table's record (the `PAYLOAD` slot of the record
+contract in `genomic_position_table/record.py`) holds, declared by each backend
+as the class attribute `payload_kind` (a `PayloadKind` member): a **row** —
+a raw tabular row whose cells a score addresses by column index or header
+name (tabix, in-memory); a **variant** — a pysam variant and its INFO
+proxies, whose score is an INFO field addressed by key (VCF); or the
+**value** itself, the one score a bigWig carries, addressed by nothing. A
+fact about the *format*, declared once on the backend and read by the score
+layer, which routes every per-format decision on it (`PayloadKind`'s
+docstring lists them). It is each backend's *own* declaration, never an
+inherited one: the VCF backend subclasses the tabix one and yields a
+different payload.
+_Avoid_: score addressing (names the consequence, not the fact the table
+owns), table kind / table type (the class hierarchy, which the VCF backend
+shows is not the same thing), is_vcf / is_bigwig
+
 ### ann_data resources
 
 **Data matrix**:

@@ -1,3 +1,5 @@
+{#- An annulled histogram has no address, and so no image. -#}
+{% if hist_url is not none -%}
 <div class="modal-histogram">
 
 <div class="histogram-image">
@@ -7,3 +9,4 @@
 </div>
 
 </div>
+{%- endif %}

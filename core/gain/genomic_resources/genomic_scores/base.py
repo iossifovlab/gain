@@ -51,9 +51,8 @@ from gain.genomic_resources.bigwig_scores import (
     validate_bigwig_scoredefs,
 )
 from gain.genomic_resources.genomic_position_table import (
-    BigWigTable,
     ChromLengthSource,
-    VCFGenomicPositionTable,
+    PayloadKind,
     build_genomic_position_table,
 )
 from gain.genomic_resources.genomic_position_table.record import (
@@ -264,10 +263,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     """
 
     # How a value is read off a record.  Installed by :meth:`open`, from the
-    # table's ``yields_records`` claim, and declared here with NO default on
-    # purpose: a record's payload means two different things -- a raw row or a
-    # VCF (variant, allele index) pair -- so no single extractor reads both,
-    # and a default would have to be wrong for one of them.  Unset until open()
+    # table's ``payload_kind``, and declared here with NO default on
+    # purpose: a record's payload means different things -- a raw row, a
+    # VCF (variant, allele index) pair, a bigWig value -- so no single
+    # extractor reads them all, and a default would have to be wrong for
+    # one of them.  Unset until open()
     # routes, an unopened score raises AttributeError rather than silently
     # reading a VCF record as a row; open() installs it *before* publishing
     # table_loaded, so no caller can observe the gap (see open()).
@@ -310,7 +310,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         The one piece of the scoredef lifecycle that did NOT move to
         :mod:`~gain.genomic_resources.score_def` in gain#1044: it dispatches
-        on the table's type into ``parse_vcf_scoredefs`` and
+        on the table's payload_kind into ``parse_vcf_scoredefs`` and
         ``build_bigwig_scoredefs``, and both of those modules import
         ``score_def``, so hosting this there would close an import cycle.
         Everything it calls is a function now, and the class's only
@@ -323,7 +323,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             config_scoredefs = parse_scoredef_config(self.config)
 
         scoredefs: dict[str, GenomicScoreDef]
-        if isinstance(self.table, VCFGenomicPositionTable):
+        kind = self.table.payload_kind
+        if kind is PayloadKind.VARIANT:
             merge = bool(self.config.get("merge_vcf_scores", False))
 
             scoredefs = parse_vcf_scoredefs(
@@ -333,7 +334,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 merge=merge)
         elif config_scoredefs is None:
             raise ValueError("No scores configured and not using a VCF")
-        elif isinstance(self.table, BigWigTable):
+        elif kind is PayloadKind.VALUE:
             scoredefs = build_bigwig_scoredefs(self.config, config_scoredefs)
         else:
             scoredefs = config_scoredefs
@@ -404,8 +405,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """Open genomic score resource and returns it.
 
         **Validate and route BEFORE opening, and so before publishing.**  Every
-        input to both steps is known at construction -- the table's class, its
-        ``yields_records`` ClassVar, and the score definitions -- so neither
+        input to both steps is known at construction -- the table's
+        ``payload_kind`` and ``yields_records`` ClassVars, and the score
+        definitions -- so neither
         needs the open handle, and two things fall out of that order:
 
         * a refusal costs no handle.  Routing after ``table.open()`` would
@@ -437,17 +439,14 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 "opening already opened genomic score: %s",
                 self.resource.resource_id)
             return self
-        is_vcf = isinstance(self.table, VCFGenomicPositionTable)
-        is_bigwig = isinstance(self.table, BigWigTable)
+        kind = self.table.payload_kind
 
-        if is_bigwig:
+        if kind is PayloadKind.VALUE:
             validate_bigwig_scoredefs(
                 self.resource_id, self.score_definitions)
         self._extract_value = select_value_extractor(
             score_definitions=self.score_definitions,
-            table=self.table,
-            is_vcf=is_vcf,
-            is_bigwig=is_bigwig)
+            table=self.table)
 
         self.table.open()
         self.table_loaded = True
@@ -463,14 +462,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         # A VCF's is skipped too: its scores have no column address to
         # check, and what an entry may say about one was already refused
         # where the definitions were built (``_refuse_overridden_address``
-        # says why).  The tabular route always has a ``scores:`` block --
+        # says why).  The ROW route always has a ``scores:`` block --
         # ``_build_scoredefs`` refuses a non-VCF resource without one.
-        if not (is_bigwig or is_vcf):
+        if kind is PayloadKind.ROW:
             validate_scoredefs(self.config, self.table, self.resource)
         resolve_score_indices(
             self.score_definitions,
-            is_vcf=is_vcf,
-            is_bigwig=is_bigwig,
             table=self.table,
             resource_id=self.resource_id)
 
