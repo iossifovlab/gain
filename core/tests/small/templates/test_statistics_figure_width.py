@@ -298,11 +298,14 @@ def test_every_statistics_figure_carries_the_shared_figure_class(
     assert not _inline(figure)
 
 
-@pytest.mark.parametrize(
+_over_thumbnails = pytest.mark.parametrize(
     ("build_resource", "filename"),
     [(builder, filename) for _, builder, filename in _THUMBNAIL_FIGURES],
     ids=[name for name, _, _ in _THUMBNAIL_FIGURES],
 )
+
+
+@_over_thumbnails
 def test_the_thumbnails_are_sized_by_their_pair(
     build_resource: _Builder,
     filename: str,
@@ -331,11 +334,7 @@ def test_the_thumbnails_are_sized_by_their_pair(
         "a thumbnail sized by its pair must not also take the page-flow width"
 
 
-@pytest.mark.parametrize(
-    ("build_resource", "filename"),
-    [(builder, filename) for _, builder, filename in _THUMBNAIL_FIGURES],
-    ids=[name for name, _, _ in _THUMBNAIL_FIGURES],
-)
+@_over_thumbnails
 def test_a_thumbnail_opens_a_modal_rendered_exactly_once(
     build_resource: _Builder,
     filename: str,
@@ -359,25 +358,19 @@ def test_a_thumbnail_opens_a_modal_rendered_exactly_once(
     assert filename in modal
 
 
-def test_a_lone_thumbnail_keeps_half_the_pair(
+def test_a_thumbnail_takes_half_the_pair_whether_or_not_it_has_a_twin(
     tmp_path: pathlib.Path,
 ) -> None:
-    """A pair of one: the segment chart has no twin, and a flex child
-    that may grow would stretch to the whole row.  The lone-child rule
-    holds it to what one of two would get -- half the pair less its
-    share of the gap -- so the one chart is the size one indel chart
-    is (gain#1543)."""
+    """A thumbnail's width is half the pair less its share of the gap,
+    and it does not GROW: two of them fill the row exactly, and one on
+    its own -- the segment chart has no twin -- stays the size one of
+    two would be, rather than stretching to the whole row
+    (gain#1543)."""
     page = _built_page(_position_score_with_segments(tmp_path))
 
-    lone = _declarations(page, ".figure-pair > .figure-thumbnail:only-child")
-    pair_start = page.index('<div class="figure-pair">')
-    pair = page[pair_start + len('<div class="figure-pair">'):
-                page.index("</div>", pair_start)]
+    thumbnail = _declarations(page, ".figure-pair > .figure-thumbnail")
 
-    assert lone["flex"] == "0 1 calc(50% - 8px)"
-    # The rule applies only while the thumbnail IS the pair's only
-    # child: one <img> and nothing else between the div's tags.
-    assert re.fullmatch(r"\s*<img\b[^>]*>\s*", pair, flags=re.DOTALL), pair
+    assert thumbnail["flex"] == "0 1 calc(50% - 8px)"
 
 
 def test_page_flow_images_are_capped_at_the_content_width(

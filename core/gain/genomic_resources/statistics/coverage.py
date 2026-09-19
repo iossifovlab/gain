@@ -75,6 +75,25 @@ def normalize_values(values: Iterable[Any]) -> tuple:
         for value in values)
 
 
+class SegmentSummary(NamedTuple):
+    """A region's segments as its statistics file stores them.
+
+    ``lengths`` is ``None`` for a region read from a file that stored
+    the count without the exact record (format version 1): the count
+    is still true, the length distribution is unknown.  The count is
+    spelled ``total`` for the reason :class:`ExactLengths` gives -- a
+    :class:`tuple` already means something else by ``count``.
+    """
+
+    total: int
+    lengths: ExactLengths | None
+
+
+def _run_length(run: tuple[int, int, tuple]) -> int:
+    begin, end, _ = run
+    return end - begin + 1
+
+
 class RegionCoverage:
     """Coverage of one scanned region, accumulated row by row.
 
@@ -128,24 +147,21 @@ class RegionCoverage:
         # merge boundary; their lengths are only final at read time.
         self._interior = LengthArrayTally()
         # A deserialized region's segment data, frozen as read; it
-        # carries no scan state.  The count is always known here; the
-        # lengths are ``None`` for a file that carried none.
-        self._frozen_segments: tuple[int, ExactLengths | None] | None = None
+        # carries no scan state.
+        self._frozen_segments: SegmentSummary | None = None
 
     @classmethod
     def frozen(
         cls,
         chrom: str,
         covered: int,
-        segments: tuple[int, ExactLengths | None] | None,
+        segments: SegmentSummary | None,
     ) -> RegionCoverage:
         """A region restored from serialized counts, with no scan state.
 
         ``segments`` of ``None`` marks the segments wholly unknown -- the
         file predates them -- and is the one way a region comes to
-        publish no segments.  A count with ``None`` for its lengths is
-        the file that stored the count and the ladder but no exact
-        record (format version 1): the count reads, the lengths do not.
+        publish no segments.
         """
         region = cls(
             chrom, None, None,
@@ -165,7 +181,7 @@ class RegionCoverage:
         """
         return self._publishes_segments
 
-    def segment_summary(self) -> tuple[int, ExactLengths | None] | None:
+    def segment_summary(self) -> SegmentSummary | None:
         """Segment count and exact lengths, or ``None`` if unknown.
 
         Unknown means the region was deserialized from a statistics
@@ -173,12 +189,11 @@ class RegionCoverage:
         form of the gate the count and lengths accessors refuse through
         -- ``None`` here, an exception there, because a caller that
         asks may not know and one that reaches straight for a number
-        has asserted it does.  The lengths inside are ``None`` on their
-        own when the file carried the count but no exact record.
+        has asserted it does.
         """
         if not self._publishes_segments:
             return None
-        return self.segment_count, self.segment_lengths()
+        return SegmentSummary(self.segment_count, self.segment_lengths())
 
     def segment_lengths(self) -> ExactLengths | None:
         """The exact record of the region's segment lengths.
@@ -192,24 +207,16 @@ class RegionCoverage:
         """
         self._refuse_without_segments("answer segment lengths")
         if self._frozen_segments is not None:
-            return self._frozen_segments[1]
+            return self._frozen_segments.lengths
         lengths = LengthArrayTally()
         lengths.merge(self._interior)
         if self._closed_segments:
             first = self._first_run
             assert first is not None
-            self._add_to(lengths, first)
+            lengths.add(_run_length(first))
         if self._run is not None:
-            self._add_to(lengths, self._run)
+            lengths.add(_run_length(self._run))
         return lengths.frozen()
-
-    @staticmethod
-    def _add_to(
-        lengths: LengthArrayTally,
-        run: tuple[int, int, tuple],
-    ) -> None:
-        begin, end, _ = run
-        lengths.add(end - begin + 1)
 
     def _record_closed(self, run: tuple[int, int, tuple]) -> None:
         """A run closed: freeze the first, tally the interior ones.
@@ -221,7 +228,7 @@ class RegionCoverage:
         if not self._closed_segments:
             self._first_run = run
         else:
-            self._add_to(self._interior, run)
+            self._interior.add(_run_length(run))
 
     @property
     def segment_count(self) -> int:
@@ -232,7 +239,7 @@ class RegionCoverage:
         """
         self._refuse_without_segments("answer a segment count")
         if self._frozen_segments is not None:
-            return self._frozen_segments[0]
+            return self._frozen_segments.total
         return self._closed_segments + (1 if self._run is not None else 0)
 
     def _refuse_without_segments(self, doing: str) -> None:
@@ -279,7 +286,6 @@ class RegionCoverage:
             self._closed_segments = other._closed_segments
             self._first_run = other._first_run
             self._run = other._run
-            self._interior = LengthArrayTally()
             self._interior.merge(other._interior)
         else:
             self._merge_runs(other)
@@ -336,7 +342,7 @@ class RegionCoverage:
                 # The other region's first run closed there without
                 # being tallied -- it could still have stitched.  It did
                 # not, so it is interior of the merged region now.
-                self._add_to(self._interior, other_first)
+                self._interior.add(_run_length(other_first))
             self._closed_segments += \
                 1 + other._closed_segments
         self._run = other._run
@@ -423,7 +429,7 @@ class RegionCoverage:
         # Gathered vectorized, then handed over as plain Python objects:
         # per-run numpy scalar indexing would put the object churn ADR
         # 0001 deleted back on the hot path.
-        edges = starts[[0, -1]] if runs > 1 else starts[[0]]
+        edges = starts[[0, -1]]
         columns = []
         for column in cells:
             gathered = column[edges]
@@ -437,7 +443,7 @@ class RegionCoverage:
                         np.isnan(gathered).tolist(), strict=True)
                 ])
         edge_values = list(zip(*columns, strict=True)) if columns \
-            else [()] * len(edges)
+            else [(), ()]
         self.add_interval(
             int(run_begins[0]), int(run_ends[0]), edge_values[0])
         if runs > 1:
@@ -452,42 +458,32 @@ class RegionCoverage:
         """Fold a batch's remaining runs, the open one closing first.
 
         The runs follow one :meth:`add_interval` has just made the open
-        run, and none of them touches its predecessor with equal values
-        -- that is what made them separate runs -- so every one of them
-        except the last closes INSIDE the batch, at exactly its own
-        length.  Exact because the rows are pairwise disjoint (see the
-        class docstring): a run collapsed against the batch's own
-        running maximum could otherwise still overlap the open run and
-        belong to it.  Those lengths fold into the tally as one array
-        (decision 4 of gain#1541): the cost of a batch is bounded by
-        the clamp, not by the run count, where one tally call per run
-        would put microseconds back on a path walked once per segment.
-        The last run becomes the open run, values and all, for the
-        next batch to stitch onto or not.
+        run, and every one of them except the last closes INSIDE the
+        batch at its own length -- exact because the rows are pairwise
+        disjoint (see the class docstring) -- so those lengths fold
+        into the tally as one array.  The last run becomes the open
+        run, values and all, for the next batch to stitch onto or not.
 
         The open run closes first, through :meth:`_record_closed`,
-        because it may be the region's FIRST -- the one run whose
-        length stays undecided until the region's left neighbour is
-        known.  The union is folded here too, under the same running
-        maximum :meth:`add_interval` keeps row by row.
+        because it may be the region's FIRST: the one run whose length
+        stays undecided until the region's left neighbour is known.
+        The union is folded here too, under the same running maximum
+        :meth:`add_interval` keeps row by row.
         """
         assert self._run is not None
         self._record_closed(self._run)
-        self._closed_segments += 1
-        interior = len(begins) - 1
-        if interior:
+        if len(begins) > 1:
             self._interior.add_batch(ends[:-1] - begins[:-1] + 1)
-            self._closed_segments += interior
+        self._closed_segments += len(begins)
         through = self._covered_through
         assert through is not None
         # What each run adds to the union is the part of it past the
-        # rightmost position covered before it -- the running maximum
-        # over the runs ahead of it in this batch, or the region's mark.
-        reach = np.maximum.accumulate(ends)
-        prior = np.concatenate(([through], np.maximum(reach[:-1], through)))
+        # rightmost position covered before it: the region's mark, or
+        # the furthest end among the runs ahead of it in this batch.
+        prior = np.maximum.accumulate(np.concatenate(([through], ends[:-1])))
         gained = np.maximum(ends - np.maximum(begins - 1, prior), 0)
         self.covered += int(gained.sum())
-        self._covered_through = max(through, int(reach[-1]))
+        self._covered_through = max(through, int(ends.max()))
         self._run = (int(begins[-1]), int(ends[-1]), last_values)
 
 
@@ -514,19 +510,12 @@ class CoverageStatistics(RegionFoldedStatistic[RegionCoverage]):
     def covered_global(self) -> int:
         return sum(region.covered for region in self._regions.values())
 
-    def _segment_summaries(
-        self,
-    ) -> dict[str, tuple[int, ExactLengths | None]] | None:
+    def _segment_summaries(self) -> dict[str, SegmentSummary] | None:
         """Per-chromosome segment summaries, or ``None`` if any
         chromosome lacks them -- a partial global would silently
-        understate.
-
-        All-or-nothing, and that is the whole rule the four accessors
-        below share.  It was once parameterised over a table of optional
-        GROUPS, because fragments were a second one; they became a
-        statistic of their own in gain#1127 and segments are the only
-        group left, so the table and its ``summary_of`` callable went
-        with them.
+        understate.  All-or-nothing, and that is the whole rule the
+        accessors below share; the lengths inside have a second gate
+        of the same shape, :func:`_global_lengths`.
         """
         summaries = {}
         for chrom, region in self._regions.items():
@@ -540,73 +529,69 @@ class CoverageStatistics(RegionFoldedStatistic[RegionCoverage]):
         summaries = self._segment_summaries()
         if summaries is None:
             return {}
-        return {chrom: count for chrom, (count, _) in summaries.items()}
+        return {chrom: s.total for chrom, s in summaries.items()}
 
     def segments_global(self) -> int | None:
         summaries = self._segment_summaries()
         if summaries is None:
             return None
-        return sum(count for count, _ in summaries.values())
-
-    def _segment_lengths(self) -> dict[str, ExactLengths] | None:
-        """Per-chromosome exact records, or ``None`` if any chromosome
-        lacks them -- the second all-or-nothing gate, over the lengths
-        alone.  A format version 1 file passes the first gate (every
-        chromosome has its count) and fails this one."""
-        summaries = self._segment_summaries()
-        if summaries is None:
-            return None
-        records = {}
-        for chrom, (_, lengths) in summaries.items():
-            if lengths is None:
-                return None
-            records[chrom] = lengths
-        return records
+        return _global_count(summaries)
 
     def segment_lengths_by_chromosome(self) -> dict[str, ExactLengths]:
         """Per-chromosome exact length records -- the read API for the
         per-chromosome data the statistics file stores (rendered
-        consumers use the global roll-up; gain#776 reads these)."""
-        return self._segment_lengths() or {}
+        consumers use the global roll-up; gain#776 reads these).  Empty
+        when any chromosome's lengths are unknown."""
+        summaries = self._segment_summaries()
+        if summaries is None or _global_lengths(summaries) is None:
+            return {}
+        return {
+            chrom: s.lengths for chrom, s in summaries.items()
+            if s.lengths is not None
+        }
 
     def segment_lengths_global(self) -> ExactLengths | None:
         """The fold of the per-chromosome records, unknown if any is."""
-        records = self._segment_lengths()
-        if records is None:
+        summaries = self._segment_summaries()
+        if summaries is None:
             return None
-        result: ExactLengths | None = NO_LENGTHS
-        for lengths in records.values():
-            result = merged_lengths(result, lengths)
-        return result
+        return _global_lengths(summaries)
 
     def serialize(self) -> str:
-        # One walk of the regions serves the per-chromosome entries and
-        # the global roll-up.  The segment keys are written per
-        # chromosome wherever that chromosome has them, and globally only
-        # when EVERY chromosome does -- a partial global would silently
+        # Each region's segments are finalised ONCE, and both the
+        # per-chromosome entries and the global roll-up are read off
+        # that.  The segment keys are written per chromosome wherever
+        # that chromosome has them, and globally only when EVERY
+        # chromosome does -- a partial global would silently
         # understate.  Format version 2 (gain#1543) stores the exact
         # length record where version 1 stored the log2 ladder.
+        summaries = {
+            chrom: region.segment_summary()
+            for chrom, region in self._regions.items()
+        }
         chromosomes: dict[str, dict[str, Any]] = {}
         for chrom, region in self._regions.items():
             entry: dict[str, Any] = {
                 "covered_positions": region.covered,
             }
-            summary = region.segment_summary()
+            summary = summaries[chrom]
             if summary is not None:
-                count, lengths = summary
-                entry["segment_count"] = count
-                if lengths is not None:
-                    entry["segment_lengths"] = lengths.stored()
+                entry["segment_count"] = summary.total
+                if summary.lengths is not None:
+                    entry["segment_lengths"] = summary.lengths.stored()
             chromosomes[chrom] = entry
         global_entry: dict[str, Any] = {
             "covered_positions": self.covered_global(),
         }
-        global_segments = self.segments_global()
-        if global_segments is not None:
-            global_entry["segment_count"] = global_segments
-        global_lengths = self.segment_lengths_global()
-        if global_lengths is not None:
-            global_entry["segment_lengths"] = global_lengths.stored()
+        if all(summary is not None for summary in summaries.values()):
+            known = {
+                chrom: summary for chrom, summary in summaries.items()
+                if summary is not None
+            }
+            global_entry["segment_count"] = _global_count(known)
+            global_lengths = _global_lengths(known)
+            if global_lengths is not None:
+                global_entry["segment_lengths"] = global_lengths.stored()
         return json.dumps({
             "format_version": 2,
             "chromosomes": chromosomes,
@@ -1082,20 +1067,37 @@ def save_and_plot_coverage(
         plot_length_histogram(outfile, length_ladder(lengths), "segment")
 
 
-def _read_stored_summary(
-    entry: dict[str, Any],
-) -> tuple[int, ExactLengths | None] | None:
+def _read_stored_summary(entry: dict[str, Any]) -> SegmentSummary | None:
     """The segment count and exact lengths out of a chromosome entry.
 
     The count reads at any format version; the lengths only where the
-    exact record is stored (version 2).  A version 1 file's ladder is
-    deliberately NOT read -- one reader, not a compatibility branch,
-    the rule ADR 0020's gain#1118 amendment states for the indel
-    groups: a ladder can publish no exact sum, min or max, so every
-    figure in the table would be a guess at bin resolution.
+    exact record is stored.  A version 1 file's ladder is not read --
+    one reader, no compatibility branch (ADR 0020, the gain#1543
+    amendment).
     """
     if "segment_count" not in entry:
         return None
     stored = entry.get("segment_lengths")
     lengths = None if stored is None else ExactLengths.from_stored(stored)
-    return (int(entry["segment_count"]), lengths)
+    return SegmentSummary(int(entry["segment_count"]), lengths)
+
+
+def _global_count(summaries: dict[str, SegmentSummary]) -> int:
+    return sum(summary.total for summary in summaries.values())
+
+
+def _global_lengths(
+    summaries: dict[str, SegmentSummary],
+) -> ExactLengths | None:
+    """The fold of every chromosome's record, ``None`` if any is unknown.
+
+    The second all-or-nothing gate, over the lengths alone: a format
+    version 1 file passes the first (every chromosome has its count)
+    and fails this one.
+    """
+    result: ExactLengths | None = NO_LENGTHS
+    for summary in summaries.values():
+        if summary.lengths is None:
+            return None
+        result = merged_lengths(result, summary.lengths)
+    return result

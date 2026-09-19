@@ -72,18 +72,13 @@
       }
 
       /* Sized by the row rather than by the image: each takes half the
-         pair minus the gap, and shrinks together with it. */
+         pair less its share of the gap, and shrinks together with it.
+         It never grows, so a pair of one -- the segment-lengths chart
+         has no twin -- is the size one of two would be. */
       .figure-pair > .figure-thumbnail {
-        flex: 1 1 calc(50% - 16px);
+        flex: 0 1 calc(50% - 8px);
         min-width: 0;
         height: auto;
-      }
-
-      /* A pair of one -- the segment-lengths chart has no twin -- keeps
-         the width one of two would get, half the pair less its share of
-         the gap, instead of growing to fill the row. */
-      .figure-pair > .figure-thumbnail:only-child {
-        flex: 0 1 calc(50% - 8px);
       }
 
       /* One number worth reading on its own, with the quantities it

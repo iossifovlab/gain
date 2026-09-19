@@ -397,26 +397,23 @@ class LengthArrayTally:
         return tally
 
     def add(self, length: int) -> None:
-        """Fold one length in, without touching numpy.
+        """Fold one length in, with no numpy vector call.
 
-        The scalar path beside :meth:`add_batch`, for the lengths a
-        caller meets one at a time: the per-record scan's runs, and the
-        runs a region can only measure once its neighbours are known.
-        Written like :meth:`LengthTally.add` -- comparisons in place,
-        no ``min()``/``max()`` calls -- and for the same reason: it runs
-        once per segment, and a position score's segments run to
-        billions.  A numpy call here, even a one-element ``bincount``,
-        would cost microseconds where this costs nanoseconds.
+        The scalar twin of :meth:`add_batch`, for the lengths a caller
+        meets one at a time -- the per-record scan's runs, and the runs
+        a region can only measure once its neighbours are known.  It
+        runs once per segment, and a position score's segments run to
+        billions: a vector call here, even a one-element ``bincount``,
+        would cost microseconds where a counter increment costs a few
+        hundred nanoseconds.  The extremes are updated longhand for the
+        reason :meth:`LengthTally.add` gives.
 
         No check that ``length`` is positive, again like the dict
         tally: a run's length is ``end - begin + 1`` over a row span, at
         least 1 by construction, and the check belongs where lengths
         arrive from outside -- :meth:`add_batch`.
         """
-        if length > LENGTH_MAP_CLAMP:
-            self._counts[LENGTH_MAP_CLAMP] += 1
-        else:
-            self._counts[length] += 1
+        self._counts[min(length, LENGTH_MAP_CLAMP)] += 1
         self.total += 1
         # On the UNCLAMPED length, which is what keeps these exact.
         self.sum += length
