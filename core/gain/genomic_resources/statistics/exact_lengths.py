@@ -14,7 +14,8 @@ map at render time by :func:`length_ladder` rather than stored beside
 it, so the picture and the numbers beneath it cannot drift.
 
 Nothing here knows what KIND of thing has a length.  The indel groups of
-an allele score are the first users.  The record's stored key for the
+an allele score were the first users and a position score's segments
+the second (gain#1543).  The record's stored key for the
 count is ``count`` whatever the kind, and the row formatter takes the
 group label from its caller, so "alleles", "segments" and "fragments"
 all fit.

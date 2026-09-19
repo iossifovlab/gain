@@ -16,7 +16,9 @@
   [gain#1448](https://github.com/iossifovlab/gain/issues/1448)
   (the stored-lengths amendment and its reversal),
   [gain#1414](https://github.com/iossifovlab/gain/issues/1414)
-  (the score-rung amendment)
+  (the score-rung amendment),
+  [gain#1543](https://github.com/iossifovlab/gain/issues/1543)
+  (the segment-lengths amendment)
 
 ## Context
 
@@ -164,8 +166,10 @@ alt-minus-ref, not an absolute value.
   (segments, fragments, ~~indels~~) use one fixed binning everywhere, so
   per-chromosome results merge into exact global ones at build time — no
   second pass, no approximate merge, and chunked scans merge exactly for the
-  same reason. *(The indel groups left the stored ladder in gain#1118; see
-  the amendment below. Segments and fragments still store it.)*
+  same reason. *(The indel groups left the stored ladder in gain#1118 and
+  the segments in gain#1543; see the amendments below. Fragments still store
+  it, and the ladder is otherwise a rendering choice: what the charts are
+  drawn on.)*
 - **Raw counts stored; fractions at render.** The statistics file holds
   counts only. Coverage *fractions* need chromosome lengths, which belong to
   a reference genome, not to the score — so they are computed at render time
@@ -371,12 +375,13 @@ keep the clamp from becoming a lie: min, max and the mean stay exact however
 far the tail runs, and only a median landing in the overflow bucket degrades,
 which the page renders as a floor rather than as a number.
 
-The ladder remains the **stored** format for segments and fragments, and
-remains what the indel *chart* is drawn on — derived from the map at render
-time rather than stored beside it, so the picture and the statistics beneath it
-cannot drift. The derived bins are identical to the stored ones, because the
-plot already sums every bin at or above its display cap into one overflow bar
-and the clamp is equal to that cap.
+The ladder remains the **stored** format for fragments (segments left it too;
+see the gain#1543 amendment below), and remains what the indel *chart* is drawn
+on — derived from the map at render time rather than stored beside it, so the
+picture and the statistics beneath it cannot drift. The derived bins are
+identical to the stored ones, because the plot already sums every bin at or
+above its display cap into one overflow bar and the clamp is equal to that
+cap.
 
 The rollout is the one this ADR already describes: **deserialization reads the
 map only**, so an allele score built before this renders "not computed" for its
@@ -384,6 +389,32 @@ indel groups until it is rebuilt with `--force`. One reader rather than a
 compatibility branch, deliberately — a branch reading the old histograms could
 publish no exact sum, min or max at all, so every figure in the table would be
 a guess at bin resolution presented as a number.
+
+*Amended by gain#1543: segments leave the ladder as a stored format the way
+the indel groups did.* `coverage.json` is at **format version 2**: each
+chromosome entry stores its segments as the same kind-neutral record —
+`segment_lengths`, the exact map clamped at `LENGTH_MAP_CLAMP` beside `count`,
+`sum`, `min` and `max` on the unclamped length — and no longer stores
+`segment_length_histogram`; `segment_count` stays. The record's `count` is the
+segment count, the first-run / open-run bookkeeping that lets a segment span
+scan windows is unchanged and folds into the record at finalisation, so a
+chunked scan writes the same file as an unchunked one. The per-region
+accumulator is one array of `LENGTH_MAP_CLAMP + 1` counters that a batch's
+closed runs fold into at once: a position score's segments run to billions
+(phastCons100way: 1.84 × 10⁹), and the cost of tallying a batch is bounded by
+the clamp, not by the run count. The position-score page shows the same
+six-column table the indel section shows — count, min, max, mean, median, the
+median a floor when it lands past the clamp — above the chart, which is drawn
+from the ladder derived from the record and is now a half-width thumbnail
+opening the page's modal.
+
+The rollout is the one described above, with one difference from the indel
+groups: **the reader has two gates.** `segment_count` is read at any format
+version, `segment_lengths` only where it is stored, and the stored ladder is
+not read at all — one reader, no compatibility branch, for the reason given
+above. So a position score built before this keeps its Segments column and
+total, and its "Segment lengths" subsection reads "not computed" until the
+score is rebuilt with `--force`. Fragments follow in gain#1544.
 
 The **complex `(len_ref, len_alt)` grid deliberately does not share the
 ladder either.** Its cells are
