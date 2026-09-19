@@ -108,6 +108,7 @@ from gain.genomic_resources.genomic_position_table.record import (
 from gain.genomic_resources.genomic_position_table.table import (
     ContigExtent,
     GenomicPositionTable,
+    PayloadKind,
 )
 from gain.genomic_resources.genomic_position_table.table_bigwig import (
     BigWigTable,
@@ -393,6 +394,30 @@ def _concrete_backends_in_the_tree() -> set[type]:
     }
 
 
+def _undeclared_backends(
+    attribute: str, member_type: type, *, own: bool,
+) -> list[str]:
+    """The concrete backends whose ``attribute`` is not a ``member_type``.
+
+    The one shape of every "each backend declares X" sweep, so that a fifth
+    backend is held to each declaration the moment it exists.  ``own`` is
+    where the sweeps differ: a fact a subclass may rightly inherit
+    (``chrom_length_source`` -- the VCF backend inherits the tabix probe and
+    its claim with it) is read through the class, while one it must state
+    for itself (``payload_kind`` -- the VCF backend yields a payload the
+    tabix class does not) is read from the class's own namespace, so that
+    an inherited member does not pass for a declaration.
+    """
+    return sorted(
+        klass.__name__
+        for klass in _concrete_backends_in_the_tree()
+        if not isinstance(
+            vars(klass).get(attribute) if own
+            else getattr(klass, attribute, None),
+            member_type)
+    )
+
+
 def test_the_backend_sweep_walks_the_backend_package() -> None:
     """The sweep's vacuity guard, and it guards the WALK.
 
@@ -485,6 +510,26 @@ def test_every_backend_in_the_tree_is_in_the_backend_list(
         f"(A backend made ABSTRACT does not reach here: building its fixture "
         f"above raises TypeError first.)"
     )
+
+
+def test_every_backend_in_the_tree_declares_its_payload_kind() -> None:
+    """The declaration is an obligation on every concrete backend, and it
+    has to be the class's OWN: a backend that subclasses another inherits
+    that one's kind, and the VCF backend shows the inherited kind can be
+    wrong.  (The sweep's vacuity guard is
+    test_the_backend_sweep_walks_the_backend_package.)
+    """
+    undeclared = _undeclared_backends("payload_kind", PayloadKind, own=True)
+
+    assert undeclared == [], (
+        f"backend(s) {undeclared} do not declare payload_kind; say what a "
+        f"record's payload slot holds on that format")
+
+
+def test_the_base_table_declares_no_payload_kind() -> None:
+    """No default: a fresh subclass of the base is refused, not routed."""
+    with pytest.raises(AttributeError, match="payload_kind"):
+        _ = GenomicPositionTable.payload_kind
 
 
 # The fields a CLOSED table is still allowed to hold, each with the reason it

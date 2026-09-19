@@ -16,9 +16,9 @@ The lifecycle joined it in gain#1044, from private methods on ``GenomicScore``.
 Only one of them was polymorphic, and only through the class attribute
 ``DEFAULT_AGGREGATORS``, so each is a function parametrized by what it used to
 read off ``self``.  The one piece that stayed behind is the dispatch over the
-table's TYPE (``GenomicScore._build_scoredefs``): it calls into ``vcf_scores``
-and ``bigwig_scores``, both of which import this module, so hosting it here
-would close a cycle.
+table's ``payload_kind`` (``GenomicScore._build_scoredefs``): it calls into
+``vcf_scores`` and ``bigwig_scores``, both of which import this module, so
+hosting it here would close a cycle.
 
 The other half of a definition's story is told elsewhere, for that same
 reason: ``genomic_scores.value_extraction`` (gain#1114) sits above this
@@ -914,5 +914,5 @@ def extract_column_value(
 
 # How a score's value is read off a record: one of these is bound per
 # opened score by ``value_extraction.select_value_extractor``, from the
-# table's type, and called per value.
+# table's payload_kind, and called per value.
 ValueExtractor = Callable[[Record, GenomicScoreDef], ScoreValue]

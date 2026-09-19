@@ -398,7 +398,8 @@ def extract_vcf_value(
 
 
 # How a score's value is read off a record: chosen once per opened score by
-# ``GenomicScore.open``, from the table's type, and called per value.
+# ``GenomicScore.open``, from the table's ``payload_kind``, and called per
+# value.
 #
 # This replaces the four score-line CLASSES the score layer used to route
 # between (#239 had already reduced them to records plus a wrapper; this

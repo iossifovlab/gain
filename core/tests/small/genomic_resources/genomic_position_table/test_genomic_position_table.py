@@ -363,11 +363,15 @@ def test_the_package_exports_only_what_still_exists() -> None:
     # reason: it is what the score layer's chromosome-length resolver
     # answers with, and it lives in this package because each backend
     # declares its own member as ``chrom_length_source``.
+    #
+    # ``PayloadKind`` likewise (gain#1512): each backend declares its own
+    # member as ``payload_kind``, and the score layer routes on it at open.
     assert gpt.__all__ == [
         "BigWigTable",
         "ChromLengthSource",
         "ContigExtent",
         "LineBuffer",
+        "PayloadKind",
         "TabixGenomicPositionTable",
         "VCFGenomicPositionTable",
         "build_genomic_position_table",

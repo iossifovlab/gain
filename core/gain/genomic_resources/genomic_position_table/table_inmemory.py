@@ -13,7 +13,12 @@ from .record import (
     build_tabular_parser,
     sort_key,
 )
-from .table import ChromLengthSource, ContigExtent, GenomicPositionTable
+from .table import (
+    ChromLengthSource,
+    ContigExtent,
+    GenomicPositionTable,
+    PayloadKind,
+)
 
 
 class InmemoryGenomicPositionTable(GenomicPositionTable):
@@ -67,6 +72,9 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
     # not how long the contig is.
     chrom_length_source: ClassVar[ChromLengthSource] = \
         ChromLengthSource.TABLE_EXTENT
+
+    # A record's payload is the parsed row, a tuple of its cells.
+    payload_kind: ClassVar[PayloadKind] = PayloadKind.ROW
 
     FORMAT_DEF: ClassVar[dict] = {
         # parameters are <column separator>, <strip_chars>, <space replacement>

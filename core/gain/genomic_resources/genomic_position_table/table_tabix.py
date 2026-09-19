@@ -32,7 +32,12 @@ from .record import (
     TabularParser,
     build_tabular_parser,
 )
-from .table import ChromLengthSource, ContigExtent, GenomicPositionTable
+from .table import (
+    ChromLengthSource,
+    ContigExtent,
+    GenomicPositionTable,
+    PayloadKind,
+)
 
 PysamFile = pysam.TabixFile | pysam.VariantFile
 logger = logging.getLogger(__name__)
@@ -78,6 +83,9 @@ class TabixGenomicPositionTable(GenomicPositionTable):
     # VCF backend inherits the probe, and so this claim with it.
     chrom_length_source: ClassVar[ChromLengthSource] = \
         ChromLengthSource.TABIX_ESTIMATE
+
+    # A record's payload is the raw tabular row.
+    payload_kind: ClassVar[PayloadKind] = PayloadKind.ROW
 
     # Serves the bulk column-array read; see get_region_value_arrays below.
     # NOT inherited in spirit by the VCF backend, which sets it back to False.
