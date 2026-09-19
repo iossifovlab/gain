@@ -878,3 +878,36 @@ def drawn(monkeypatch: pytest.MonkeyPatch) -> list:
 
     monkeypatch.setattr(plt, "subplots", capturing_subplots)
     return captured
+
+
+#: Set to regenerate a golden test's checked-in expectation instead of
+#: comparing against it.  The test then FAILS on purpose, so a
+#: regeneration can never be mistaken for a passing run.
+GOLDEN_UPDATE_ENV = "GAIN_UPDATE_GOLDEN"
+
+
+def assert_golden(golden_path: pathlib.Path, actual: str, *, what: str) -> None:
+    """Compare ``actual`` byte-for-byte with a checked-in golden file.
+
+    Under :data:`GOLDEN_UPDATE_ENV` the golden is rewritten from
+    ``actual`` and the test fails naming the file, so the diff gets
+    reviewed before it is committed.  Otherwise a missing golden fails
+    with the command that creates it, and a mismatch fails with both
+    texts in full.  ``what`` names the output in the mismatch message.
+    """
+    if os.environ.get(GOLDEN_UPDATE_ENV):
+        golden_path.parent.mkdir(parents=True, exist_ok=True)
+        golden_path.write_text(actual, encoding="utf-8")
+        pytest.fail(
+            f"golden file regenerated at {golden_path}; review the diff, "
+            f"then re-run without {GOLDEN_UPDATE_ENV}")
+
+    assert golden_path.exists(), (
+        f"missing golden file {golden_path}; regenerate it with "
+        f"{GOLDEN_UPDATE_ENV}=1")
+    expected = golden_path.read_text(encoding="utf-8")
+    if actual != expected:
+        pytest.fail(
+            f"{what} changed.\n"
+            f"--- expected ({golden_path})\n{expected}\n"
+            f"--- actual\n{actual}")

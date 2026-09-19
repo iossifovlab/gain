@@ -1099,9 +1099,9 @@ def test_build_stores_the_length_histograms_per_chromosome(
     assert chr1 is not None
     assert chr2 is not None
     assert chr1.lengths == {1: 1, 4: 1}
-    assert (chr1.alleles, chr1.sum, chr1.min, chr1.max) == (2, 5, 1, 4)
+    assert (chr1.total, chr1.sum, chr1.min, chr1.max) == (2, 5, 1, 4)
     assert chr2.lengths == {2: 1}
-    assert (chr2.alleles, chr2.sum, chr2.min, chr2.max) == (1, 2, 2, 2)
+    assert (chr2.total, chr2.sum, chr2.min, chr2.max) == (1, 2, 2, 2)
 
 
 def test_build_stores_the_complex_grid_per_chromosome(
@@ -1147,9 +1147,9 @@ def test_the_group_totals_reconcile_with_the_class_counts(
         assert counts.insertion_lengths is not None
         assert counts.deletion_lengths is not None
         assert counts.complex_grid is not None
-        assert counts.insertion_lengths.alleles == \
+        assert counts.insertion_lengths.total == \
             counts.class_counts["insertion"]
-        assert counts.deletion_lengths.alleles == \
+        assert counts.deletion_lengths.total == \
             counts.class_counts["deletion"]
         # The clamp is TOTAL: every indel lands in exactly one bucket,
         # so the map's values sum to the group's count too.

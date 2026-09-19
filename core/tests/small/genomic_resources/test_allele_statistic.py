@@ -11,10 +11,10 @@ from gain.genomic_resources.statistics.alleles import (
     RegionAlleles,
     build_allele_section_display,
 )
-from gain.genomic_resources.statistics.indel_lengths import (
-    INDEL_LENGTH_CLAMP,
-    IndelStatisticsRow,
-    indel_length_ladder,
+from gain.genomic_resources.statistics.exact_lengths import (
+    LENGTH_MAP_CLAMP,
+    LengthStatisticsRow,
+    length_ladder,
 )
 from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
@@ -612,7 +612,7 @@ def test_an_insertion_is_recorded_at_the_exact_bases_it_adds() -> None:
     insertions = region.counts().insertion_lengths
     assert insertions is not None
     assert insertions.lengths == {1: 2, 3: 1}
-    assert (insertions.alleles, insertions.sum) == (3, 5)
+    assert (insertions.total, insertions.sum) == (3, 5)
     assert (insertions.min, insertions.max) == (1, 3)
 
 
@@ -624,7 +624,7 @@ def test_a_deletion_is_recorded_at_the_exact_bases_it_removes() -> None:
     deletions = region.counts().deletion_lengths
     assert deletions is not None
     assert deletions.lengths == {3: 1}
-    assert (deletions.alleles, deletions.sum) == (1, 3)
+    assert (deletions.total, deletions.sum) == (1, 3)
     assert (deletions.min, deletions.max) == (3, 3)
 
 
@@ -639,7 +639,7 @@ def test_the_global_roll_up_sums_the_length_histograms() -> None:
 
     assert lengths is not None
     assert lengths.lengths == {1: 2}
-    assert (lengths.alleles, lengths.sum) == (2, 2)
+    assert (lengths.total, lengths.sum) == (2, 2)
 
 
 def test_an_unknown_histogram_makes_the_whole_roll_up_unknown() -> None:
@@ -671,7 +671,7 @@ def test_merge_adds_the_length_maps_of_the_adjacent_region() -> None:
     counts = left.counts()
     assert counts.insertion_lengths is not None
     assert counts.insertion_lengths.lengths == {1: 1, 2: 1, 4: 1}
-    assert (counts.insertion_lengths.alleles, counts.insertion_lengths.sum) \
+    assert (counts.insertion_lengths.total, counts.insertion_lengths.sum) \
         == (3, 7)
     assert (counts.insertion_lengths.min, counts.insertion_lengths.max) \
         == (1, 4)
@@ -691,7 +691,7 @@ def test_an_indel_past_the_clamp_folds_into_the_overflow_bucket() -> None:
 
     deletions = region.counts().deletion_lengths
     assert deletions is not None
-    assert deletions.lengths == {3: 1, INDEL_LENGTH_CLAMP: 1}
+    assert deletions.lengths == {3: 1, LENGTH_MAP_CLAMP: 1}
     assert (deletions.min, deletions.max) == (3, 40000)
     assert deletions.sum == 40003
     assert deletions.mean == pytest.approx(20001.5)
@@ -708,8 +708,8 @@ def test_a_median_in_the_overflow_bucket_is_read_as_a_floor() -> None:
     deletions = region.counts().deletion_lengths
     assert deletions is not None
     assert deletions.median_is_clamped
-    assert IndelStatisticsRow.of("deletions", deletions).median \
-        == f"≥{INDEL_LENGTH_CLAMP}"
+    assert LengthStatisticsRow.of("deletions", deletions).median \
+        == f"≥{LENGTH_MAP_CLAMP}"
 
 
 def test_a_median_straddling_the_clamp_is_read_as_a_floor() -> None:
@@ -729,7 +729,7 @@ def test_a_median_straddling_the_clamp_is_read_as_a_floor() -> None:
     deletions = region.counts().deletion_lengths
     assert deletions is not None
     assert deletions.median_is_clamped
-    row = IndelStatisticsRow.of("deletions", deletions)
+    row = LengthStatisticsRow.of("deletions", deletions)
     assert row.median == "≥4096.5"
     # The three that stay exact past the clamp say so by carrying the
     # real numbers, which is what makes the hedged one legible.
@@ -746,7 +746,7 @@ def test_an_even_allele_count_takes_the_mean_of_the_middle_two() -> None:
     insertions = region.counts().insertion_lengths
     assert insertions is not None
     assert insertions.median == 1.5
-    assert IndelStatisticsRow.of("insertions", insertions).median == "1.5"
+    assert LengthStatisticsRow.of("insertions", insertions).median == "1.5"
 
 
 def test_a_whole_number_average_carries_no_trailing_zeros() -> None:
@@ -758,9 +758,9 @@ def test_a_whole_number_average_carries_no_trailing_zeros() -> None:
 
     insertions = region.counts().insertion_lengths
     assert insertions is not None
-    row = IndelStatisticsRow.of("insertions", insertions)
+    row = LengthStatisticsRow.of("insertions", insertions)
     assert (row.mean, row.median, row.min, row.max) == ("2", "2", "2", "2")
-    assert row.alleles == "3"
+    assert row.total == "3"
 
 
 def test_the_serialized_group_carries_the_map_and_not_the_ladder() -> None:
@@ -796,13 +796,13 @@ def test_the_chart_bins_are_derived_from_the_map() -> None:
 
     insertions = region.counts().insertion_lengths
     assert insertions is not None
-    ladder = indel_length_ladder(insertions)
+    ladder = length_ladder(insertions)
 
     assert ladder[length_histogram_bin_index(1)] == 1
     assert ladder[length_histogram_bin_index(2)] == 2, \
         "the ladder lumps {2, 3}, which is why the map had to stop doing it"
     assert ladder[length_histogram_bin_index(4)] == 1
-    assert sum(ladder) == insertions.alleles
+    assert sum(ladder) == insertions.total
 
 
 def test_a_clamped_length_lands_in_the_bin_the_chart_would_have_drawn(
@@ -816,9 +816,9 @@ def test_a_clamped_length_lands_in_the_bin_the_chart_would_have_drawn(
 
     deletions = region.counts().deletion_lengths
     assert deletions is not None
-    ladder = indel_length_ladder(deletions)
+    ladder = length_ladder(deletions)
 
-    assert ladder[length_histogram_bin_index(INDEL_LENGTH_CLAMP)] == 1
+    assert ladder[length_histogram_bin_index(LENGTH_MAP_CLAMP)] == 1
     assert sum(ladder) == 1
 
 
