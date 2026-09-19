@@ -68,55 +68,18 @@ tests:
   # fresh env solved from the run deps above (rattler-build needs
   # `-c conda-forge -c bioconda` for that -- pysam, pybigwig and pyliftover
   # live only on bioconda), then walk the whole surface the wheel declares.
-  # Everything walked is discovered from the installed dist's metadata, so
-  # a script or plugin added to core/pyproject.toml is covered without
-  # touching this recipe; only the `gain.` group prefix is known here.
-  # A run dep missing from the list above surfaces as an ImportError.
+  # The walk is tests/entry_point_walk.py, copied in from this recipe
+  # directory and embedded in the package's tests; gain-release's
+  # post-publish smoke runs the same file against the package as installed
+  # from anaconda.org (#1432). Everything walked is discovered from the
+  # installed dist's metadata, so a script or plugin added to
+  # core/pyproject.toml is covered without touching this recipe. A run dep
+  # missing from the list above surfaces as an ImportError.
   - script:
-      interpreter: python
-      content: |
-        import subprocess
-        import sys
-        from importlib.metadata import distribution
-
-        # Keep the per-item lines in order in a captured (non-tty) log.
-        sys.stdout.reconfigure(line_buffering=True)
-
-        entry_points = list(distribution("gain-core").entry_points)
-        failures = []
-
-        scripts = [e for e in entry_points if e.group == "console_scripts"]
-        for ep in scripts:
-            result = subprocess.run(
-                [ep.name, "--help"], capture_output=True, text=True,
-                check=False,
-            )
-            status = "ok" if result.returncode == 0 else "FAILED"
-            print(f"console script {ep.name} --help: {status}")
-            if result.returncode != 0:
-                failures.append(
-                    f"{ep.name} --help exited {result.returncode}:\n"
-                    f"{result.stderr}")
-
-        plugins = [e for e in entry_points if e.group.startswith("gain.")]
-        for ep in plugins:
-            try:
-                ep.load()
-                print(f"entry point {ep.group}:{ep.name}: ok")
-            except Exception as exc:
-                print(f"entry point {ep.group}:{ep.name}: FAILED")
-                failures.append(f"{ep.group}:{ep.name}: {exc!r}")
-
-        groups = sorted({e.group for e in plugins})
-        print(
-            f"walked {len(scripts)} console scripts and "
-            f"{len(plugins)} entry points in {len(groups)} groups: "
-            f"{', '.join(groups)}")
-        assert scripts, "no console_scripts found in gain-core metadata"
-        assert plugins, "no gain.* entry points found in gain-core metadata"
-        if failures:
-            print("\n\n".join(failures))
-            sys.exit(1)
+      - python tests/entry_point_walk.py
+    files:
+      recipe:
+        - tests/entry_point_walk.py
 
   # The walk never imports the run deps that only a lazy or engine-style
   # import reaches (openpyxl, docker, dask-jobqueue, s3fs); `pip check`
