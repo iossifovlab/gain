@@ -46,6 +46,28 @@ def test_the_array_tally_freezes_to_the_record_the_dict_tally_does() -> None:
     assert first.frozen() == expected
 
 
+def test_the_array_tally_folds_one_length_at_a_time_like_the_dict_tally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scalar path (gain#1543): a segment scan meets most of its
+    lengths one run at a time, and ``add`` must land each where
+    ``add_batch`` would have -- including past the clamp, where the
+    counter is the overflow bucket but the scalars keep the true
+    length.  It is also pinned NOT to route through ``add_batch``: a
+    one-element bincount per segment is the microsecond-scale cost the
+    scalar path exists to avoid, on scores with billions of segments."""
+    def no_batches(*_: object) -> None:
+        raise AssertionError("add() must not fold through add_batch()")
+    monkeypatch.setattr(LengthArrayTally, "add_batch", no_batches)
+    expected = _dict_tally(_LENGTHS).frozen()
+
+    tally = LengthArrayTally()
+    for length in _LENGTHS:
+        tally.add(length)
+
+    assert tally.frozen() == expected
+
+
 def test_the_array_tally_freezes_to_plain_python_ints() -> None:
     """Equality is not enough: ``np.int64(1) == 1`` but only one of them
     serialises.  The file writer hands the record to ``json``, so every
