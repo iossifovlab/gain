@@ -7,6 +7,7 @@ from gain.genomic_resources.statistics.coverage import (
     CoverageStatistics,
     RegionCoverage,
 )
+from gain.genomic_resources.statistics.exact_lengths import ExactLengths
 from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
 )
@@ -24,7 +25,7 @@ def test_the_log2_bins_cover_one_basepair_to_beyond_a_gigabase() -> None:
         length_histogram_bin_index(0)
 
 
-def test_serialization_round_trips_segments_and_histograms() -> None:
+def test_serialization_round_trips_segments_and_their_lengths() -> None:
     stats = CoverageStatistics()
     chr1 = RegionCoverage("chr1", 1, 100)
     chr1.add_interval(10, 12, (0.5,))
@@ -39,14 +40,11 @@ def test_serialization_round_trips_segments_and_histograms() -> None:
     assert restored.segments_by_chromosome() == {"chr1": 2, "chr2": 1}
     assert restored.segments_global() == 3
     lengths = restored.segment_lengths_by_chromosome()
-    assert sum(lengths["chr1"]) == 2
-    assert lengths["chr1"][1] == 1
-    assert lengths["chr1"][3] == 1
-    assert lengths["chr2"][0] == 1
+    assert lengths["chr1"] == ExactLengths({3: 1, 8: 1}, 2, 11, 3, 8)
+    assert lengths["chr2"] == ExactLengths({1: 1}, 1, 1, 1, 1)
 
 
-def test_the_global_histogram_is_the_binwise_sum_of_the_chromosomes(
-) -> None:
+def test_the_global_record_is_the_fold_of_the_chromosomes() -> None:
     stats = CoverageStatistics()
     chr1 = RegionCoverage("chr1", 1, 100)
     chr1.add_interval(10, 12, (0.5,))
@@ -56,14 +54,11 @@ def test_the_global_histogram_is_the_binwise_sum_of_the_chromosomes(
     stats.fold_region(chr1)
     stats.fold_region(chr2)
 
-    per_chrom = stats.segment_lengths_by_chromosome()
-    merged = [
-        sum(counts) for counts in
-        zip(*per_chrom.values(), strict=True)
-    ]
-
-    assert stats.segment_lengths_global() == merged
-    assert sum(merged) == stats.segments_global() == 3
+    # Lengths 3 on chr1, 3 and 21 on chr2: the map adds where the
+    # chromosomes share a length, and the scalars fold exactly.
+    assert stats.segment_lengths_global() \
+        == ExactLengths({3: 2, 21: 1}, 3, 27, 3, 21)
+    assert stats.segments_global() == 3
 
 
 @pytest.mark.parametrize("feed", ["row-by-row", "batch"])
@@ -115,28 +110,32 @@ def test_a_region_read_without_segments_refuses_both_accessors() -> None:
     with pytest.raises(ValueError, match="publishes no segment statistics"):
         _ = region.segment_count
     with pytest.raises(ValueError, match="publishes no segment statistics"):
-        region.segment_length_histogram()
+        region.segment_lengths()
 
 
-def test_deserializing_a_histogram_of_foreign_length_drops_it(
-) -> None:
-    # A histogram binned on different edges cannot be merged or
-    # rendered against this code's fixed bins; reading it degrades to
-    # segments-unknown rather than crashing downstream.
-    foreign = json.dumps({
+def test_a_version_1_file_reads_its_counts_and_not_its_ladder() -> None:
+    """The gain#1543 rollout (ADR 0020, decision 5 of gain#1541): a file
+    that stored the segment count and the log2 ladder still yields its
+    count -- the Coverage table keeps its Segments column -- while the
+    lengths read as unknown.  The ladder is not read at all: it can
+    publish no exact sum, min or max, and one reader is the rule.  Not
+    a crash, and not "no segments" either, which is a different claim."""
+    version_1 = json.dumps({
         "format_version": 1,
         "chromosomes": {"chr1": {
             "covered_positions": 7,
             "segment_count": 2,
-            "segment_length_histogram": [1, 1],
+            "segment_length_histogram": [1, 1] + [0] * 30,
         }},
         "global": {"covered_positions": 7},
     })
 
-    restored = CoverageStatistics.deserialize(foreign)
+    restored = CoverageStatistics.deserialize(version_1)
 
     assert restored.covered_by_chromosome() == {"chr1": 7}
-    assert restored.segments_by_chromosome() == {}
+    assert restored.segments_by_chromosome() == {"chr1": 2}
+    assert restored.segments_global() == 2
+    assert not restored.segment_lengths_by_chromosome()
     assert restored.segment_lengths_global() is None
 
 
@@ -295,12 +294,9 @@ def test_a_segment_spanning_three_chunks_is_one_segment() -> None:
     # The stitched run's SPAN is the load-bearing part: a merge that
     # treats a fully-covered middle chunk's head and tail as two open
     # runs keeps the count right here but loses the run's true begin,
-    # which the length histogram consumes: one segment 4-25, length 22,
-    # in the [16, 32) bin.
+    # which the length record consumes: one segment 4-25, length 22.
     assert first._run == (4, 25, (0.5,))
-    hist = first.segment_length_histogram()
-    assert sum(hist) == 1
-    assert hist[4] == 1
+    assert first.segment_lengths() == ExactLengths({22: 1}, 1, 22, 22, 22)
 
 
 def test_merge_refuses_regions_out_of_order() -> None:
@@ -382,39 +378,32 @@ def test_sequential_and_pairwise_folds_agree() -> None:
 
     assert seq_acc.covered == pairwise[0].covered == 54
     assert seq_acc.segment_count == pairwise[0].segment_count == 5
-    assert seq_acc.segment_length_histogram() \
-        == pairwise[0].segment_length_histogram()
-    assert sum(seq_acc.segment_length_histogram()) == 5
+    assert seq_acc.segment_lengths() == pairwise[0].segment_lengths()
+    assert seq_acc.segment_lengths().total == 5
 
 
-def test_a_single_segment_length_lands_in_its_log2_bin() -> None:
+def test_a_single_segment_is_recorded_at_its_exact_length() -> None:
     cov = RegionCoverage("chr1", 1, 100)
 
     cov.add_interval(10, 12, (0.5,))
 
-    # Length 3 falls in the [2, 4) bin -- index 1 of the log2 binning.
-    hist = cov.segment_length_histogram()
-    assert sum(hist) == 1
-    assert hist[1] == 1
+    assert cov.segment_lengths() == ExactLengths({3: 1}, 1, 3, 3, 3)
 
 
-def test_histogram_totals_match_the_segment_count() -> None:
+def test_the_record_counts_every_segment_at_its_length() -> None:
     cov = RegionCoverage("chr1", 1, 100)
 
     cov.add_interval(10, 12, (0.5,))
     cov.add_interval(13, 20, (0.7,))
     cov.add_interval(30, 30, (0.9,))
 
-    # Lengths 3, 8 and 1 -> bins [2, 4), [8, 16) and [1, 2).
-    hist = cov.segment_length_histogram()
+    # Lengths 3, 8 and 1; the record's total is the segment count.
+    lengths = cov.segment_lengths()
     assert cov.segment_count == 3
-    assert sum(hist) == 3
-    assert hist[0] == 1
-    assert hist[1] == 1
-    assert hist[3] == 1
+    assert lengths == ExactLengths({1: 1, 3: 1, 8: 1}, 3, 12, 1, 8)
 
 
-def test_a_stitched_merge_bins_the_combined_length_once() -> None:
+def test_a_stitched_merge_records_the_combined_length_once() -> None:
     left = RegionCoverage("chr1", 1, 10)
     left.add_interval(4, 10, (0.5,))
     right = RegionCoverage("chr1", 11, 20)
@@ -425,15 +414,11 @@ def test_a_stitched_merge_bins_the_combined_length_once() -> None:
     left.merge(right)
 
     # Segments: stitched 4-12 (length 9), 13-15 (3), 16-20 (5).
-    hist = left.segment_length_histogram()
     assert left.segment_count == 3
-    assert sum(hist) == 3
-    assert hist[3] == 1
-    assert hist[1] == 1
-    assert hist[2] == 1
+    assert left.segment_lengths().lengths == {9: 1, 3: 1, 5: 1}
 
 
-def test_an_unstitched_merge_bins_both_boundary_runs() -> None:
+def test_an_unstitched_merge_records_both_boundary_runs() -> None:
     left = RegionCoverage("chr1", 1, 10)
     left.add_interval(4, 9, (0.5,))
     right = RegionCoverage("chr1", 11, 20)
@@ -444,11 +429,8 @@ def test_an_unstitched_merge_bins_both_boundary_runs() -> None:
 
     # Segments: 4-9 (length 6), 11-13 (3), 14-20 (7); the gap at the
     # boundary keeps 4-9 and 11-13 apart despite equal values.
-    hist = left.segment_length_histogram()
     assert left.segment_count == 3
-    assert sum(hist) == 3
-    assert hist[2] == 2
-    assert hist[1] == 1
+    assert left.segment_lengths().lengths == {6: 1, 3: 1, 7: 1}
 
 
 def test_na_values_compare_equal_when_extending_a_segment() -> None:
@@ -475,10 +457,8 @@ def test_a_stitch_never_shortens_the_run_it_merges_into() -> None:
     left.merge(right)
 
     assert left.segment_count == 1
-    histogram = left.segment_length_histogram()
-    # 5..100 is 96bp; taking the other end would have binned 5..15's 11.
-    assert histogram[length_histogram_bin_index(96)] == 1
-    assert sum(histogram) == 1
+    # 5..100 is 96bp; taking the other end would have recorded 5..15's 11.
+    assert left.segment_lengths() == ExactLengths({96: 1}, 1, 96, 96, 96)
 
 
 def test_a_stitch_that_closes_a_run_also_keeps_the_wider_end() -> None:
@@ -494,8 +474,5 @@ def test_a_stitch_that_closes_a_run_also_keeps_the_wider_end() -> None:
     left.merge(right)
 
     assert left.segment_count == 2
-    histogram = left.segment_length_histogram()
     # The stitched run is 5..100, and 30..40 closes behind it.
-    assert histogram[length_histogram_bin_index(96)] == 1
-    assert histogram[length_histogram_bin_index(11)] == 1
-    assert sum(histogram) == 2
+    assert left.segment_lengths().lengths == {96: 1, 11: 1}
