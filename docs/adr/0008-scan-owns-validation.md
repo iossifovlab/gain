@@ -125,6 +125,10 @@ as the resource's fault rather than as an unexpected internal error. It is named
 for the resource's state rather than for a rule, because it covers both refusal
 points.
 
+> **Extended by [ADR 0031](0031-declaring-a-config-schema-obliges-a-type-to-run-it.md).**
+> The config-schema refusal in `ResourceConfigValidationMixin` raises this
+> same type, and a type that declares a schema is obliged to run it.
+
 ### Why it is scoped this way
 
 **Why the scan rather than a separate validation pass.** The statistics build

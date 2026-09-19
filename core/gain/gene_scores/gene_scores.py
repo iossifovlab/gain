@@ -52,17 +52,13 @@ class GeneScore(ScoreResource[GeneScoreDef]):
     """Class used to represent gene scores."""
 
     def __init__(self, resource: GenomicResource) -> None:
-        super().__init__()
-
         if resource.get_type() != "gene_score":
             logger.error(
                 "invalid resource type for gene score %s",
                 resource.resource_id)
             raise ValueError(f"invalid resource type {resource.resource_id}")
 
-        self.resource = resource
-        config = resource.get_config()
-        self.config = self.validate_and_normalize_schema(config, resource)
+        super().__init__(resource)
         assert "filename" in self.config
         self.filename = self.config["filename"]
 

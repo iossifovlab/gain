@@ -17,7 +17,6 @@ from gain.genomic_resources.repository import (
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
     InfoImplementationMixin,
-    ResourceConfigValidationMixin,
 )
 from gain.task_graph.graph import TaskDesc, TaskGraph
 from gain.templates.markdown_support import render_markdown as markdown
@@ -26,9 +25,14 @@ from gain.templates.markdown_support import render_markdown as markdown
 class GeneSetCollectionImpl(
     GenomicResourceImplementation,
     InfoImplementationMixin,
-    ResourceConfigValidationMixin,
 ):
-    """Gene sets collection resource implementations."""
+    """Gene sets collection resource implementations.
+
+    Not a ``ResourceConfigValidationMixin``: a gene-set collection validates
+    its config on construction through pydantic's ``GeneSetResourceSchema``,
+    in the collection this builds, so there is no cerberus schema to declare
+    (ADR 0031).
+    """
 
     def __init__(self, resource: GenomicResource) -> None:
         super().__init__(resource)
@@ -318,7 +322,3 @@ class GeneSetCollectionImpl(
             "number of genes",
         )
         return histogram
-
-    @staticmethod
-    def get_schema() -> dict[str, Any]:
-        raise NotImplementedError

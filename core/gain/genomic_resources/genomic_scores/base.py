@@ -286,13 +286,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {}
 
     def __init__(self, resource: GenomicResource):
-        self.resource = resource
+        super().__init__(resource)
         self.resource_id = resource.resource_id
-        assert self.resource.config is not None
-        self.config: dict = self.resource.config
-        self.config = self.validate_and_normalize_schema(
-            self.config, resource,
-        )
         self.config["id"] = resource.resource_id
         self.table_loaded = False
         self.table = build_genomic_position_table(

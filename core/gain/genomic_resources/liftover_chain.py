@@ -38,7 +38,10 @@ class LiftoverChain(ResourceConfigValidationMixin):
                 resource.resource_id, resource.get_type(), config)
             raise ValueError(f"wrong resource type: {config}")
 
-        chrom_prefix = config.get("chrom_prefix")
+        # The chain declares a schema, so it runs it (ADR 0031).
+        self.config = self.validate_and_normalize_schema(config, resource)
+
+        chrom_prefix = self.config.get("chrom_prefix")
         if chrom_prefix is None:
             self.chrom_variant_coordinates = None
             self.chrom_target_coordinates = None
@@ -50,13 +53,10 @@ class LiftoverChain(ResourceConfigValidationMixin):
 
         self.liftover: LiftOver | None = None
 
-        # Asked of the resource rather than read off the raw config: the
-        # chain declares a schema but never runs it, and `get_labels` is
-        # where a free-form `meta.labels` gets narrowed (gain#654).
-        #
-        # And read through the label narrowing rather than straight off
-        # the mapping, because that accessor narrows the BLOCK and says
-        # nothing about the values in it: an int or a list here used to
+        # Asked of the resource rather than read off the config, and
+        # through the label narrowing rather than straight off the
+        # mapping: the schema just run holds `meta.labels` to a mapping,
+        # but says nothing about the values in it. An int or a list used to
         # satisfy these annotations and reach `get_resource` as itself,
         # where it raised `TypeError` naming neither the chain nor the
         # label.  The annotator that consumes both ids already handles
@@ -76,7 +76,7 @@ class LiftoverChain(ResourceConfigValidationMixin):
             if self.is_open():
                 return self
 
-            filename: str = self.resource.get_config()["filename"]
+            filename: str = self.config["filename"]
             with self.resource.open_raw_file(
                     filename, "rb", compression=True) as chain_file:
                 self.liftover = LiftOver(chain_file)
@@ -88,7 +88,7 @@ class LiftoverChain(ResourceConfigValidationMixin):
 
     @property
     def files(self) -> set[str]:
-        return {self.resource.get_config()["filename"]}
+        return {self.config["filename"]}
 
     @staticmethod
     def map_chromosome(chrom: str, mapping: dict[str, str] | None) -> str:
@@ -132,7 +132,9 @@ class LiftoverChain(ResourceConfigValidationMixin):
         return {
             **get_base_resource_schema(),
             "filename": {"type": "string"},
-            "chrom_prefix": {"type": "dict", "schema": {
+            # Nullable for the bare `chrom_prefix:` line a curator leaves
+            # when commenting its subsections out; it reads as absent.
+            "chrom_prefix": {"type": "dict", "nullable": True, "schema": {
                 "variant_coordinates": {"type": "dict", "schema": {
                     "del_prefix": {"type": "string"},
                     "add_prefix": {"type": "string"},
