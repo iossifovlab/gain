@@ -15,10 +15,10 @@ per-child-repo hosts and the no-``public_url`` fallback belong to
 """
 # pylint: disable=W0621,C0116
 import pathlib
-from unittest.mock import patch
 
 import pytest
 from gain.annotation.pipeline_doc import (
+    PublicMirrorAddresses,
     RepositoryRelativeAddresses,
 )
 from gain.genomic_resources.genomic_scores import build_score_from_resource
@@ -27,7 +27,11 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import a_grr, a_position_score
+from gain.genomic_resources.testing.builders import (
+    PositionScoreBuilder,
+    a_grr,
+    a_position_score,
+)
 
 
 def a_pipeline(filename: str = "annotation.yaml") -> dict[str, str]:
@@ -41,6 +45,24 @@ def a_pipeline(filename: str = "annotation.yaml") -> dict[str, str]:
     }
 
 
+def a_score_resource() -> PositionScoreBuilder:
+    """Three scores: two with a histogram to address, one annulled.
+
+    An address is a fact about a score's DEFINITION, so every id the
+    tests ask about is declared here.  ``score id`` carries the space the
+    quoting test is about; ``nullified`` has no image to address at all.
+    """
+    return (
+        a_position_score()
+        .with_score("s1", "float")
+        .with_score("score id", "float", column_name="sid")
+        .with_score("nullified", "float")
+        .with_histogram({"type": "null", "reason": "annulled by design"})
+        .with_score_line(chrom="1", pos_begin=10, s1=0.1, sid=0.2,
+                         nullified=0.3)
+    )
+
+
 @pytest.fixture
 def grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
     """A GRR holding a score and two pipelines, one of them nested."""
@@ -49,7 +71,7 @@ def grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
         "pipeline": a_pipeline(),
         "nested/deep/pipeline": a_pipeline("config.yaml"),
     })
-    a_position_score().realize_into(root_path / "one")
+    a_score_resource().realize_into(root_path / "one")
     return build_filesystem_test_repository(root_path)
 
 
@@ -64,7 +86,7 @@ def other_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
     """A second, unmanaged GRR -- nothing in it is addressable relatively."""
     return (
         a_grr()
-        .with_resource("other_score", a_position_score())
+        .with_resource("other_score", a_score_resource())
         .with_public_url(OTHER_PUBLIC_URL)
         .build_repo(tmp_path / "other_grr")
     )
@@ -141,20 +163,34 @@ def test_a_histogram_outside_the_managed_grr_falls_back_to_the_mirror(
     assert "Referencing resource outside managed GRR" in caplog.text
 
 
-def test_a_score_with_no_histogram_image_has_no_address_and_no_warning(
+def test_an_annulled_histogram_has_no_relative_address_and_no_warning(
     grr: GenomicResourceRepo,
+    other_grr: GenomicResourceRepo,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # The guard has to fire *before* the containment rule: absence of an
-    # image is not a complaint about which repository the score lives in.
+    # image is not a complaint about which repository the score lives in
+    # -- so the stranger's annulled score draws no warning either.
     addresses = RepositoryRelativeAddresses(grr.get_resource("pipeline"))
-    score = build_score_from_resource(grr.get_resource("one"))
+    managed = build_score_from_resource(grr.get_resource("one"))
+    stranger = build_score_from_resource(
+        other_grr.get_resource("other_score"))
 
-    with patch.object(score, "get_histogram_image_url", return_value=None):
-        url = addresses.histogram_url(score, "score")
-
-    assert url is None
+    assert addresses.histogram_url(managed, "nullified") is None
+    assert addresses.histogram_url(stranger, "nullified") is None
     assert "Referencing resource outside managed GRR" not in caplog.text
+
+
+def test_an_annulled_histogram_has_no_public_mirror_address(
+    other_grr: GenomicResourceRepo,
+) -> None:
+    score = build_score_from_resource(
+        other_grr.get_resource("other_score"))
+
+    assert PublicMirrorAddresses().histogram_url(score, "s1") == (
+        f"{OTHER_PUBLIC_URL}/other_score/statistics/histogram_s1.png"
+    )
+    assert PublicMirrorAddresses().histogram_url(score, "nullified") is None
 
 
 @pytest.mark.parametrize("pipeline_id,prefix", [

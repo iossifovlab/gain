@@ -30,8 +30,10 @@ from gain.genomic_resources.histogram import (
     NUMBER_HISTOGRAM_VALUE_TYPES,
     Histogram,
     HistogramConfig,
+    NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
+    build_default_histogram_conf,
     load_histogram,
     truncated_histogram_filename,
 )
@@ -219,25 +221,55 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
                 )
         return load_histogram(self.resource, hist_filename)
 
+    def get_histogram_config(self, score_id: str) -> HistogramConfig:
+        """The histogram config the score's DEFINITION resolves to.
+
+        The stated ``histogram:`` block when there is one, else the default
+        for the score's value type -- a ``NullHistogramConfig`` for a type
+        with no default histogram.  So a ``NullHistogramConfig`` here means
+        the histogram is annulled *by design*, decided from the config
+        alone: no statistics are read, and a checkout whose statistics
+        were never built answers the same as the published one.
+        """
+        self._guard_score_id(score_id)
+        score_def = self.score_definitions[score_id]
+        if score_def.hist_conf is not None:
+            return score_def.hist_conf
+        return build_default_histogram_conf(score_def.value_type)
+
     def get_histogram_image_filename(self, score_id: str) -> str:
         return f"statistics/histogram_{score_id}.png"
 
-    def _histogram_image_url(self, score_id: str, repo_url: str) -> str:
+    def _histogram_image_url(
+        self, score_id: str, repo_url: str,
+    ) -> str | None:
+        # An annulled histogram is never plotted, so it has no address:
+        # a page that got one would point at a file nobody writes
+        # (gain#1025).  Decided from the definition, not the statistics --
+        # see get_histogram_config.
+        if isinstance(self.get_histogram_config(score_id),
+                      NullHistogramConfig):
+            return None
         return (
             f"{repo_url}/"
             f"{quote(self.get_histogram_image_filename(score_id))}"
         )
 
     def get_histogram_image_url(self, score_id: str) -> str | None:
+        """Return the histogram image URL on the repository's own url.
+
+        ``None`` when the score's histogram is annulled by definition.
+        """
         return self._histogram_image_url(
             score_id, self.resource.get_url())
 
-    def get_histogram_image_public_url(self, score_id: str) -> str:
+    def get_histogram_image_public_url(self, score_id: str) -> str | None:
         """Return the histogram image URL on the resource's public mirror.
 
         Unlike :meth:`get_histogram_image_url`, this is built from the
         resource's public URL so it is reachable from a browser even when
-        the GRR is a local directory repository.
+        the GRR is a local directory repository.  ``None`` when the score's
+        histogram is annulled by definition, exactly as for the other.
         """
         return self._histogram_image_url(
             score_id, self.resource.get_public_url())

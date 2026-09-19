@@ -108,13 +108,10 @@ class GeneScoreImplementation(ScoreImplementationBase):
     def _calc_histogram(
         gene_score: GeneScore, score_id: str,
     ) -> NumberHistogram | CategoricalHistogram | None:
-        if score_id not in gene_score.score_definitions:
-            raise ValueError(
-                f"Score ID {score_id} not found in gene score definitions")
-        score_def = gene_score.score_definitions.get(score_id)
-        assert score_def is not None
-        hist_conf = score_def.hist_conf
-        if hist_conf is None or isinstance(hist_conf, NullHistogramConfig):
+        # Resolved the same way the histogram ADDRESS is, so an annulled
+        # score neither gets a histogram nor an image address for one.
+        hist_conf = gene_score.get_histogram_config(score_id)
+        if isinstance(hist_conf, NullHistogramConfig):
             return None
         histogram: NumberHistogram | CategoricalHistogram
 

@@ -27,8 +27,8 @@ from urllib.parse import quote
 
 from gain import logging
 from gain.annotation.annotation_pipeline import AnnotationPipeline
-from gain.genomic_resources.genomic_scores import GenomicScore
 from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.score_resource import ScoreResource
 from gain.templates import get_template
 
 logger = logging.getLogger(__name__)
@@ -51,11 +51,13 @@ class PipelineDocAddresses(Protocol):
         ...
 
     def histogram_url(
-        self, score: GenomicScore, score_id: str,
+        self, score: ScoreResource, score_id: str,
     ) -> str | None:
         """Address of the score's histogram image for ``score_id``.
 
-        ``None`` when the score has no histogram to show.
+        ``None`` when the score has no histogram to show -- an annulled
+        one is never plotted, so it has no image to address.  A gene-score
+        annotator's attributes go through here too, hence the shared base.
         """
         ...
 
@@ -72,7 +74,7 @@ class PublicMirrorAddresses:
         return resource.get_public_url()
 
     def histogram_url(
-        self, score: GenomicScore, score_id: str,
+        self, score: ScoreResource, score_id: str,
     ) -> str | None:
         return score.get_histogram_image_public_url(score_id)
 
@@ -124,7 +126,9 @@ class RepositoryRelativeAddresses:
             return resource.get_public_url()
         return "/".join([self._prefix_to_root_dir, resource.resource_id])
 
-    def histogram_url(self, score: GenomicScore, score_id: str) -> str | None:
+    def histogram_url(
+        self, score: ScoreResource, score_id: str,
+    ) -> str | None:
         """Address the score's histogram image, if it has one.
 
         Probed differently from :meth:`resource_url`, and deliberately:
@@ -133,7 +137,7 @@ class RepositoryRelativeAddresses:
         """
         # The probe doubles as the "is there an image at all" guard, and
         # has to answer that *before* the containment rule is consulted:
-        # a score with no histogram has no address either way, managed or
+        # an annulled histogram has no address either way, managed or
         # not, and must not draw a warning about the repository it is in.
         image_url = score.get_histogram_image_url(score_id)
         if image_url is None:
