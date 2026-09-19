@@ -38,6 +38,7 @@ from gain.genomic_resources.statistics.base_statistic import (
 from gain.genomic_resources.statistics.exact_lengths import (
     ExactLengths,
     LengthArrayTally,
+    LengthStatisticsRow,
     length_ladder,
     merged_lengths,
 )
@@ -792,6 +793,18 @@ class CoverageDisplay(NamedTuple):
     @property
     def has_segments(self) -> bool:
         return self.global_segments is not None
+
+    @property
+    def segment_row(self) -> LengthStatisticsRow | None:
+        """The Segment lengths table's one row, ``None`` when unknown.
+
+        Global only, as the indel rows are: per chromosome this would
+        be four more columns on the Coverage table above, to answer a
+        question nobody asks.
+        """
+        if self.segment_lengths is None:
+            return None
+        return LengthStatisticsRow.of("segments", self.segment_lengths)
 
 
 def resolve_chrom_lengths(
