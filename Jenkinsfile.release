@@ -22,7 +22,8 @@
 //                        warning, announced on Zulip. Default false.
 //   - DRY_RUN         — run every pre-flight, build nothing past
 //                        the conda-builder image, publish nothing.
-//                        Default false.
+//                        An already-published tag is reported, not
+//                        rejected. Default false.
 //
 // Gates, in order: the master CI build for the tag's commit passed
 // (`Pre-flight: master CI gate`), and the gain-conda-integration run
@@ -154,7 +155,8 @@ pipeline {
             description: 'Run every pre-flight (tag checkout, master ' +
                 'CI gate, conda integration gate, tag freshness, ' +
                 'credentials) and stop: nothing is built past the ' +
-                'conda-builder image and nothing is published.',
+                'conda-builder image and nothing is published. An ' +
+                'already-published tag is reported, not rejected.',
         )
     }
 
@@ -478,39 +480,73 @@ pipeline {
         stage('Pre-flight: tag freshness') {
             // Reject tag mutation: if any destination already has
             // an artefact for ${TAG_NAME}, abort. D14.
+            //
+            // A dry run reports the finding instead of aborting on
+            // it. A fresh tag fires the real release on its own, so
+            // every dry run is against a tag that is already out,
+            // and "already published" is the expected answer there,
+            // not a defect in the tag — the point of the dry run is
+            // the gates before this one and the credentials after.
+            //
+            // The probe script exits non-zero for exactly one
+            // reason, an artefact already published: network and
+            // index failures are treated as "not there yet" inside
+            // it, so returnStatus loses nothing.
             steps {
-                sh '''
-                    # HEAD on the wheels index — 200 means already
-                    # published. Anything else (404, 5xx, network)
-                    # is treated as "not there yet, proceed" so a
-                    # flaky index doesn't block releases.
-                    code=$(curl -sS -o /dev/null \
-                        -w '%{http_code}' \
-                        "https://${WHEELS_HOST}/gain/gain_core-${TAG_NAME}-py3-none-any.whl")
-                    echo "Wheel index probe: HTTP $code"
-                    if [ "$code" = "200" ]; then
-                        echo "ERROR: gain-core ${TAG_NAME} already" \
-                             "at https://${WHEELS_HOST}/gain/"
-                        echo "Tag mutation is rejected." \
-                             "Cut a new tag instead."
-                        exit 1
-                    fi
+                script {
+                    int published = sh(
+                        returnStatus: true,
+                        script: '''
+                            # HEAD on the wheels index — 200 means
+                            # already published. Anything else (404,
+                            # 5xx, network) is treated as "not there
+                            # yet, proceed" so a flaky index doesn't
+                            # block releases.
+                            code=$(curl -sS -o /dev/null \
+                                -w '%{http_code}' \
+                                "https://${WHEELS_HOST}/gain/gain_core-${TAG_NAME}-py3-none-any.whl")
+                            echo "Wheel index probe: HTTP $code"
+                            if [ "$code" = "200" ]; then
+                                echo "gain-core ${TAG_NAME} is already" \
+                                     "at https://${WHEELS_HOST}/gain/"
+                                exit 1
+                            fi
 
-                    # Anaconda check: exit 0 means the package
-                    # exists; non-zero (1, 2, network) is treated
-                    # as "not there yet". Use --no-progress + 2>&1
-                    # to keep the build log readable.
-                    if docker run --rm "${CONDA_BUILDER}" \
-                        anaconda show \
-                            "${ANACONDA_USER}/gain-core/${TAG_NAME}" \
-                            >/dev/null 2>&1; then
-                        echo "ERROR: gain-core ${TAG_NAME} already" \
-                             "on Anaconda.org/${ANACONDA_USER}"
-                        echo "Tag mutation is rejected." \
-                             "Cut a new tag instead."
-                        exit 1
-                    fi
-                '''
+                            # Anaconda check: exit 0 means the
+                            # package exists; non-zero (1, 2,
+                            # network) is treated as "not there
+                            # yet". Output discarded to keep the
+                            # build log readable.
+                            if docker run --rm "${CONDA_BUILDER}" \
+                                anaconda show \
+                                    "${ANACONDA_USER}/gain-core/${TAG_NAME}" \
+                                    >/dev/null 2>&1; then
+                                echo "gain-core ${TAG_NAME} is already" \
+                                     "on Anaconda.org/${ANACONDA_USER}"
+                                exit 1
+                            fi
+                        ''',
+                    )
+                    if (published != 0) {
+                        if (params.DRY_RUN) {
+                            env.TAG_FRESHNESS_NOTE =
+                                "${params.TAG_NAME} is already " +
+                                'published; a real release would ' +
+                                'be rejected here as tag mutation'
+                            echo(
+                                'DRY RUN: ' + env.TAG_FRESHNESS_NOTE +
+                                '. Continuing.'
+                            )
+                        } else {
+                            error(
+                                "gain-core ${params.TAG_NAME} is " +
+                                'already published (see above). ' +
+                                'Tag mutation is rejected. Cut a ' +
+                                'new tag instead.'
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -862,6 +898,9 @@ EOF
                         message = "DRY RUN of release ${env.TAG_NAME} " +
                             'passed every pre-flight; nothing was ' +
                             "built or published — ${env.BUILD_URL}"
+                        if (env.TAG_FRESHNESS_NOTE) {
+                            message += " (${env.TAG_FRESHNESS_NOTE})"
+                        }
                     } else {
                         message = "Released ${env.TAG_NAME} — wheels: " +
                             "https://${env.WHEELS_HOST}/gain/, " +
