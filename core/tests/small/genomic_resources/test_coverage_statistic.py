@@ -7,7 +7,10 @@ from gain.genomic_resources.statistics.coverage import (
     CoverageStatistics,
     RegionCoverage,
 )
-from gain.genomic_resources.statistics.exact_lengths import ExactLengths
+from gain.genomic_resources.statistics.exact_lengths import (
+    ExactLengths,
+    LengthArrayTally,
+)
 from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
 )
@@ -81,6 +84,45 @@ def test_a_region_publishing_no_segments_refuses_a_span(feed: str) -> None:
         feed_span()
 
     assert region.covered == 0
+
+
+def test_a_batch_folds_its_interior_runs_with_one_array_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Decision 4 of gain#1541: the cost of tallying a batch is bounded
+    by the clamp, not by the run count.  Of a batch's runs, the first
+    may still stitch onto the region's open run and the last stays
+    open, so only the ones between -- which close INSIDE the batch, at
+    their own length -- can be folded together; they go in as one
+    ``add_batch``, never one call per run.  Same record as feeding the
+    rows one at a time, which is what makes the shortcut a shortcut."""
+    batches: list[list[int]] = []
+    fold = LengthArrayTally.add_batch
+
+    def spy(self: LengthArrayTally, lengths: np.ndarray) -> None:
+        batches.append(lengths.tolist())
+        fold(self, lengths)
+    monkeypatch.setattr(LengthArrayTally, "add_batch", spy)
+    # Six rows, six different values: six runs of lengths 3, 5, 1, 2,
+    # 4, 7 -- the region's open run before the batch is stitched onto
+    # by the first (equal value, touching).
+    left = np.array([10, 13, 18, 19, 21, 25])
+    right = np.array([12, 17, 18, 20, 24, 31])
+    values = np.array([0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+    batched = RegionCoverage("chr1", 1, 100)
+    batched.add_interval(5, 9, (0.5,))
+    row_by_row = RegionCoverage("chr1", 1, 100)
+    row_by_row.add_interval(5, 9, (0.5,))
+    for begin, end, value in zip(left, right, values, strict=True):
+        row_by_row.add_interval(int(begin), int(end), (float(value),))
+
+    batched.add_interval_batch(left, right, [values])
+
+    assert batches == [[5, 1, 2, 4]]
+    assert batched.segment_count == row_by_row.segment_count == 6
+    assert batched.covered == row_by_row.covered == 27
+    assert batched.segment_lengths() == row_by_row.segment_lengths() \
+        == ExactLengths({1: 1, 2: 1, 4: 1, 5: 1, 7: 1, 8: 1}, 6, 27, 1, 8)
 
 
 def test_merging_in_a_region_without_segments_loses_them() -> None:
@@ -378,8 +420,8 @@ def test_sequential_and_pairwise_folds_agree() -> None:
 
     assert seq_acc.covered == pairwise[0].covered == 54
     assert seq_acc.segment_count == pairwise[0].segment_count == 5
-    assert seq_acc.segment_lengths() == pairwise[0].segment_lengths()
-    assert seq_acc.segment_lengths().total == 5
+    assert seq_acc.segment_lengths() == pairwise[0].segment_lengths() \
+        == ExactLengths({3: 1, 5: 1, 9: 1, 17: 1, 20: 1}, 5, 54, 3, 20)
 
 
 def test_a_single_segment_is_recorded_at_its_exact_length() -> None:
@@ -415,7 +457,8 @@ def test_a_stitched_merge_records_the_combined_length_once() -> None:
 
     # Segments: stitched 4-12 (length 9), 13-15 (3), 16-20 (5).
     assert left.segment_count == 3
-    assert left.segment_lengths().lengths == {9: 1, 3: 1, 5: 1}
+    assert left.segment_lengths() \
+        == ExactLengths({3: 1, 5: 1, 9: 1}, 3, 17, 3, 9)
 
 
 def test_an_unstitched_merge_records_both_boundary_runs() -> None:
@@ -430,7 +473,8 @@ def test_an_unstitched_merge_records_both_boundary_runs() -> None:
     # Segments: 4-9 (length 6), 11-13 (3), 14-20 (7); the gap at the
     # boundary keeps 4-9 and 11-13 apart despite equal values.
     assert left.segment_count == 3
-    assert left.segment_lengths().lengths == {6: 1, 3: 1, 7: 1}
+    assert left.segment_lengths() \
+        == ExactLengths({3: 1, 6: 1, 7: 1}, 3, 16, 3, 7)
 
 
 def test_na_values_compare_equal_when_extending_a_segment() -> None:
@@ -475,4 +519,5 @@ def test_a_stitch_that_closes_a_run_also_keeps_the_wider_end() -> None:
 
     assert left.segment_count == 2
     # The stitched run is 5..100, and 30..40 closes behind it.
-    assert left.segment_lengths().lengths == {96: 1, 11: 1}
+    assert left.segment_lengths() \
+        == ExactLengths({11: 1, 96: 1}, 2, 107, 11, 96)
