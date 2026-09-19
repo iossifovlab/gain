@@ -411,15 +411,19 @@ class RegionCoverage:
                 equal &= same
             boundary[1:] = ~equal
         starts = np.flatnonzero(boundary)
-        run_begins = left[starts].tolist()
-        run_ends = np.maximum.reduceat(right, starts).tolist()
-        # Gather per-run values vectorized, then hand the loop plain
-        # Python objects: per-run numpy scalar indexing would put the
-        # object churn ADR 0001 deleted back on the hot path for the
-        # common one-value-per-row score, where runs are rows.
+        run_begins = left[starts]
+        run_ends = np.maximum.reduceat(right, starts)
+        runs = len(starts)
+        # Only the batch's two end runs need their values: the first,
+        # to decide whether it stitches onto the region's open run, and
+        # the last, which becomes the open run for the next batch.
+        # Gathered vectorized, then handed over as plain Python objects:
+        # per-run numpy scalar indexing would put the object churn ADR
+        # 0001 deleted back on the hot path.
+        edges = starts[[0, -1]] if runs > 1 else starts[[0]]
         columns = []
         for column in cells:
-            gathered = column[starts]
+            gathered = column[edges]
             if gathered.dtype == object:
                 columns.append(gathered.tolist())
             else:
@@ -429,11 +433,56 @@ class RegionCoverage:
                         gathered.tolist(),
                         np.isnan(gathered).tolist(), strict=True)
                 ])
-        run_values = list(zip(*columns, strict=True)) if columns \
-            else [()] * len(run_begins)
-        for begin, end, values in zip(
-                run_begins, run_ends, run_values, strict=True):
-            self.add_interval(begin, end, values)
+        edge_values = list(zip(*columns, strict=True)) if columns \
+            else [()] * len(edges)
+        self.add_interval(
+            int(run_begins[0]), int(run_ends[0]), edge_values[0])
+        if runs > 1:
+            self._close_through(run_begins[1:], run_ends[1:], edge_values[-1])
+
+    def _close_through(
+        self,
+        begins: np.ndarray,
+        ends: np.ndarray,
+        last_values: tuple,
+    ) -> None:
+        """Fold a batch's remaining runs, the open one closing first.
+
+        The runs follow one :meth:`add_interval` has just made the open
+        run, and none of them touches its predecessor with equal values
+        -- that is what made them separate runs -- so every one of them
+        except the last closes INSIDE the batch, at exactly its own
+        length.  Those lengths fold into the tally as one array
+        (decision 4 of gain#1541): the cost of a batch is bounded by
+        the clamp, not by the run count, where one tally call per run
+        would put microseconds back on a path walked once per segment.
+        The last run becomes the open run, values and all, for the
+        next batch to stitch onto or not.
+
+        The open run closes first, through :meth:`_record_closed`,
+        because it may be the region's FIRST -- the one run whose
+        length stays undecided until the region's left neighbour is
+        known.  The union is folded here too, under the same running
+        maximum :meth:`add_interval` keeps row by row.
+        """
+        assert self._run is not None
+        self._record_closed(self._run)
+        self._closed_segments += 1
+        interior = len(begins) - 1
+        if interior:
+            self._interior.add_batch(ends[:-1] - begins[:-1] + 1)
+            self._closed_segments += interior
+        through = self._covered_through
+        assert through is not None
+        # What each run adds to the union is the part of it past the
+        # rightmost position covered before it -- the running maximum
+        # over the runs ahead of it in this batch, or the region's mark.
+        reach = np.maximum.accumulate(ends)
+        prior = np.concatenate(([through], np.maximum(reach[:-1], through)))
+        gained = np.maximum(ends - np.maximum(begins - 1, prior), 0)
+        self.covered += int(gained.sum())
+        self._covered_through = max(through, int(reach[-1]))
+        self._run = (int(begins[-1]), int(ends[-1]), last_values)
 
 
 class CoverageStatistics(RegionFoldedStatistic[RegionCoverage]):
