@@ -36,6 +36,7 @@ from gain.genomic_resources.statistics.base_statistic import (
     refuse_unmergeable,
 )
 from gain.genomic_resources.statistics.exact_lengths import (
+    NO_LENGTHS,
     ExactLengths,
     LengthArrayTally,
     LengthStatisticsRow,
@@ -569,7 +570,7 @@ class CoverageStatistics(RegionFoldedStatistic[RegionCoverage]):
         records = self._segment_lengths()
         if records is None:
             return None
-        result: ExactLengths | None = ExactLengths({}, 0, 0, None, None)
+        result: ExactLengths | None = NO_LENGTHS
         for lengths in records.values():
             result = merged_lengths(result, lengths)
         return result
