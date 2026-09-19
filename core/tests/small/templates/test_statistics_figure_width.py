@@ -370,8 +370,14 @@ def test_a_lone_thumbnail_keeps_half_the_pair(
     page = _built_page(_position_score_with_segments(tmp_path))
 
     lone = _declarations(page, ".figure-pair > .figure-thumbnail:only-child")
+    pair_start = page.index('<div class="figure-pair">')
+    pair = page[pair_start + len('<div class="figure-pair">'):
+                page.index("</div>", pair_start)]
 
     assert lone["flex"] == "0 1 calc(50% - 8px)"
+    # The rule applies only while the thumbnail IS the pair's only
+    # child: one <img> and nothing else between the div's tags.
+    assert re.fullmatch(r"\s*<img\b[^>]*>\s*", pair, flags=re.DOTALL), pair
 
 
 def test_page_flow_images_are_capped_at_the_content_width(

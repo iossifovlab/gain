@@ -430,21 +430,23 @@ def test_the_chart_ladder_derived_from_the_record_is_the_stored_one(
     """The one place the ladder survives gain#1543 is the chart, drawn
     from the record rather than from a stored histogram.  For that to
     change no pixel, the derived ladder must equal what the scan used
-    to bin: here three segments in two bins, two of them past the clamp
+    to bin: here four segments in three bins, two of them past the clamp
     -- folded to one key in the map, yet the same bin as before, because
     the clamp is the bin the plot already sums everything above into."""
     cov = RegionCoverage("chr1", 1, 20_000)
     cov.add_interval(1, 3, (0.1,))
-    cov.add_interval(10, 9009, (0.2,))
-    cov.add_interval(9020, 18519, (0.3,))
+    cov.add_interval(4, 103, (0.4,))
+    cov.add_interval(110, 9109, (0.2,))
+    cov.add_interval(9120, 18619, (0.3,))
     stored_ladder = [0] * 32
-    for length in (3, 9000, 9500):
+    for length in (3, 100, 9000, 9500):
         stored_ladder[length_histogram_bin_index(length)] += 1
 
     lengths = cov.segment_lengths()
 
     assert lengths is not None
-    assert lengths.lengths == {3: 1, 8192: 2}
+    assert lengths.lengths == {3: 1, 100: 1, 8192: 2}
+    assert sum(map(bool, stored_ladder)) == 3
     assert length_ladder(lengths) == stored_ladder
 
 

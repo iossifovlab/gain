@@ -142,9 +142,10 @@ and its length is its own span, `pos_end - pos_begin + 1`. That is the
 deliberate opposite of a **segment**, which is *computed* by merging
 equal-valued rows. Only a fragment score publishes fragment statistics — a
 count and a length histogram on the fixed log2 bins (which segment lengths
-left for an exact record in gain#1543), in a file of their own. Its **own** statistic since gain#1127: it used to ride
-inside the covered-position one, which meant a fragment score could not stop
-publishing covered positions without losing its fragment counts too. Nothing
+left for an exact record in gain#1543), in a file of their own. Its **own**
+statistic since gain#1127: it used to ride inside the covered-position one,
+which meant a fragment score could not stop publishing covered positions
+without losing its fragment counts too. Nothing
 publishes fragment *segments*, and nothing will: they would need an exact run
 algebra fragments do not have, and no consumer question survives that the
 fragment count and length histogram cannot already answer (ADR 0020, amended
