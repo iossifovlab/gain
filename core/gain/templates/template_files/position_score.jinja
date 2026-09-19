@@ -127,7 +127,7 @@
 {# Known-and-empty states itself, as the indel groups do: with
    no positive count there is nothing to draw and no image is written,
    so linking one would dangle. #}
-{% if coverage.segment_lengths and coverage.segment_lengths | sum %}
+{% if coverage.segment_lengths and coverage.segment_lengths.has_counts_to_plot %}
 <img src="{{ impl.get_coverage_segment_lengths_image_filename() }}"
     alt="global segment-length histogram"
     class="statistics-figure"
