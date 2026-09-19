@@ -408,6 +408,60 @@ def test_a_median_past_the_clamp_renders_as_a_floor(
         == ["segments", "3", "3", "9500", "6167.67", "≥8192"]
 
 
+def _version_1_file() -> str:
+    """A coverage.json as gain wrote it before gain#1543: the segment
+    count beside the log2 ladder, no exact record."""
+    return json.dumps({
+        "format_version": 1,
+        "chromosomes": {"chr1": {
+            "covered_positions": COVERED,
+            "segment_count": SEGMENTS,
+            "segment_length_histogram": [0, 1, 2, 1] + [0] * 28,
+        }},
+        "global": {
+            "covered_positions": COVERED,
+            "segment_count": SEGMENTS,
+            "segment_length_histogram": [0, 1, 2, 1] + [0] * 28,
+        },
+    })
+
+
+def test_a_version_1_file_keeps_its_segment_counts_on_the_page(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Decision 5 of gain#1541: a position score built before the exact
+    record renders its Coverage table WITH the Segments column and
+    total -- the counts are still true -- and the Segment lengths
+    subsection says "not computed", which is what a rebuild acts on.
+    Not "no segments": the table right above says there are four."""
+    resource = _multivalued_tabix(tmp_path)
+    with resource.open_raw_file(COVERAGE_STATISTICS_FILE, mode="wt") as out:
+        out.write(_version_1_file())
+
+    page = PositionScoreImplementation(resource).get_info()
+
+    coverage_table = page[page.index("<h2>Coverage</h2>"):
+                          page.index("<h3>Segment lengths</h3>")]
+    assert '<th data-sort="number">Segments</th>' in coverage_table
+    assert f"<td>{SEGMENTS}</td>" in coverage_table
+    segment_lengths = page[page.index("<h3>Segment lengths</h3>"):
+                           page.index("<h2", page.index("<h3>Segment"))]
+    assert "<p>not computed</p>" in segment_lengths
+    assert "no segments" not in segment_lengths
+    assert COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE not in page
+
+
+def test_a_version_1_file_rebuilds_no_image(tmp_path: pathlib.Path) -> None:
+    """Lengths unknown is not lengths empty, but it draws the same
+    nothing: there is no record to derive a ladder from."""
+    resource = _multivalued_tabix(tmp_path)
+
+    save_and_plot_coverage(
+        resource, CoverageStatistics.deserialize(_version_1_file()))
+
+    assert not resource.file_exists(COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE)
+
+
 def test_info_page_without_the_statistics_file_says_not_computed(
     tmp_path: pathlib.Path,
 ) -> None:
