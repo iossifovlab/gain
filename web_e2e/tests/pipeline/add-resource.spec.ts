@@ -74,9 +74,21 @@ test.describe('Add resource to pipeline tests', () => {
   test('should filter resources by resource type', async({ page }) => {
     const resourceModal = new ResourceDialog(page);
     await resourceModal.open();
-    await expect(resourceModal.resourceCount).toHaveText('267 resources');
+
+    // The unfiltered total is the live GRR's whole inventory (minus the
+    // types the dialog does not offer), so it moves whenever a resource
+    // of ANY type is published -- pinning it turned every branch red the
+    // day hg38/scores/AVI landed (gain#1549). What this test is about is
+    // that choosing a type narrows the list, so only the shape and the
+    // narrowing are asserted here; the gene_score count is still pinned,
+    // since it moves only when a gene score is added, which is the kind
+    // of drift the rest of this spec already accepts.
+    await expect(resourceModal.resourceCount).toHaveText(/^\d+ resources$/);
+    const unfiltered = parseInt(await resourceModal.resourceCount.innerText(), 10);
+
     await resourceModal.selectResourceType('gene_score');
     await expect(resourceModal.resourceCount).toHaveText('10 resources');
+    expect(unfiltered).toBeGreaterThan(10);
   });
 
   test('should navigate past select annotator step after clicking continue', async({ page }) => {
