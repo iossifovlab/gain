@@ -1,6 +1,7 @@
 # pylint: disable=C0114,C0116,W0212,W0621
 import json
 import pathlib
+import re
 
 import numpy as np
 import pytest
@@ -346,6 +347,65 @@ def test_info_page_renders_the_coverage_section(
     assert "Coverage" in page
     assert "chr1" in page
     assert f">{COVERED}<" in page
+
+
+def _segment_lengths_table(page: str) -> list[list[str]]:
+    """The rows of the table under the Segment lengths heading, header
+    first, each as its cells' text -- whole rows, so a cell that moved
+    column or a column that vanished is a failure, not a pass on a
+    substring that happens to still occur somewhere on the page."""
+    start = page.index("<h3>Segment lengths</h3>")
+    next_heading = re.compile(r"<h[23]").search(page, start + 1)
+    section = page[start:next_heading.start() if next_heading else None]
+    return [
+        re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", row, flags=re.DOTALL)
+        for row in re.findall(r"<tr>(.*?)</tr>", section, flags=re.DOTALL)
+    ]
+
+
+def test_info_page_tables_the_segment_lengths_exactly(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The four numbers the exact record exists for (gain#1543), read
+    straight off the fixture's rows: lengths 2, 4, 6 and 10 have a mean
+    of 5.5 and a median halfway between 4 and 6."""
+    resource = _multivalued_tabix(tmp_path)
+    scan.do_noregion_histograms(resource)
+
+    page = PositionScoreImplementation(resource).get_info()
+
+    assert _segment_lengths_table(page) == [
+        ["", "segments", "min", "max", "mean", "median"],
+        ["segments", "4", "2", "10", "5.5", "5"],
+    ]
+
+
+def test_a_median_past_the_clamp_renders_as_a_floor(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Segments of 3, 9000 and 9500 bp: the middle one is longer than
+    the map's clamp, so the median is only known to be at least the
+    clamp and the page says so -- while min, max and the mean, taken on
+    the unclamped lengths, stay exact."""
+    resource = (
+        a_position_score()
+        .with_score("score", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  score
+            chr1   1          3        0.1
+            chr1   10         9009     0.2
+            chr1   9020       18519    0.3
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    scan.do_noregion_histograms(resource)
+
+    page = PositionScoreImplementation(resource).get_info()
+
+    assert _segment_lengths_table(page)[1] \
+        == ["segments", "3", "3", "9500", "6167.67", "≥8192"]
 
 
 def test_info_page_without_the_statistics_file_says_not_computed(
