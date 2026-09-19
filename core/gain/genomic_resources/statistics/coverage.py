@@ -385,8 +385,9 @@ class RegionCoverage:
         applies row by row — it lives HERE, beside that rule, so the
         equality algebra has one home: rows collapse into a run while
         they touch or overlap the positions covered so far and every
-        column compares equal, nan equal to nan (ADR 0020), and each
-        run costs one :meth:`add_interval` rather than one per row.
+        column compares equal, nan equal to nan (ADR 0020).  Only the
+        batch's first run then goes through :meth:`add_interval`; the
+        rest close together in :meth:`_close_through`.
 
         The touching test reads the running maximum end, which is exact
         for a position score (whose validators refuse overlap, so the
@@ -454,7 +455,10 @@ class RegionCoverage:
         run, and none of them touches its predecessor with equal values
         -- that is what made them separate runs -- so every one of them
         except the last closes INSIDE the batch, at exactly its own
-        length.  Those lengths fold into the tally as one array
+        length.  Exact because the rows are pairwise disjoint (see the
+        class docstring): a run collapsed against the batch's own
+        running maximum could otherwise still overlap the open run and
+        belong to it.  Those lengths fold into the tally as one array
         (decision 4 of gain#1541): the cost of a batch is bounded by
         the clamp, not by the run count, where one tally call per run
         would put microseconds back on a path walked once per segment.

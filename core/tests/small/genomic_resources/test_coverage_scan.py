@@ -214,6 +214,9 @@ def test_the_file_stores_each_chromosomes_segment_lengths_exactly(
     entry = data["chromosomes"]["chr1"]
     assert entry["segment_lengths"] == STORED_SEGMENT_LENGTHS
     assert entry["segment_lengths"]["count"] == entry["segment_count"]
+    # One chromosome, so the global fold is that chromosome's record.
+    assert data["global"]["segment_lengths"] == STORED_SEGMENT_LENGTHS
+    assert data["global"]["segment_count"] == SEGMENTS
     assert "segment_length_histogram" not in json.dumps(data)
 
 
@@ -442,8 +445,12 @@ def test_a_version_1_file_keeps_its_segment_counts_on_the_page(
 
     coverage_table = page[page.index("<h2>Coverage</h2>"):
                           page.index("<h3>Segment lengths</h3>")]
-    assert '<th data-sort="number">Segments</th>' in coverage_table
-    assert f"<td>{SEGMENTS}</td>" in coverage_table
+    rows = [
+        re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", row, flags=re.DOTALL)
+        for row in re.findall(r"<tr>(.*?)</tr>", coverage_table, re.DOTALL)
+    ]
+    assert rows[0] == ["Chromosome", "Covered positions", "Segments"]
+    assert rows[1] == ["all chromosomes", str(COVERED), str(SEGMENTS)]
     segment_lengths = page[page.index("<h3>Segment lengths</h3>"):
                            page.index("<h2", page.index("<h3>Segment"))]
     assert "<p>not computed</p>" in segment_lengths

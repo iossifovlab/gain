@@ -56,9 +56,11 @@ def test_the_array_tally_folds_one_length_at_a_time_like_the_dict_tally(
     length.  It is also pinned NOT to route through ``add_batch``: a
     one-element bincount per segment is the microsecond-scale cost the
     scalar path exists to avoid, on scores with billions of segments."""
-    def no_batches(*_: object) -> None:
-        raise AssertionError("add() must not fold through add_batch()")
-    monkeypatch.setattr(LengthArrayTally, "add_batch", no_batches)
+    def no_vector_call(*_: object, **__: object) -> None:
+        raise AssertionError("add() must make no numpy vector call")
+    monkeypatch.setattr(LengthArrayTally, "add_batch", no_vector_call)
+    monkeypatch.setattr(np, "bincount", no_vector_call)
+    monkeypatch.setattr(np, "minimum", no_vector_call)
     expected = _dict_tally(_LENGTHS).frozen()
 
     tally = LengthArrayTally()

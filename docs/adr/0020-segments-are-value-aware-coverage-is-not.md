@@ -163,7 +163,7 @@ alt-minus-ref, not an absolute value.
 ### Bins, storage, rollout
 
 - **Fixed log-scale bins, a code-level constant.** Length histograms
-  (segments, fragments, ~~indels~~) use one fixed binning everywhere, so
+  (~~segments~~, fragments, ~~indels~~) use one fixed binning everywhere, so
   per-chromosome results merge into exact global ones at build time — no
   second pass, no approximate merge, and chunked scans merge exactly for the
   same reason. *(The indel groups left the stored ladder in gain#1118 and
