@@ -52,7 +52,9 @@ CI / release plumbing:
   master CI build and the `gain-conda-integration` run for
   the tagged commit; `DRY_RUN` exercises the pre-flights
   without publishing, `SKIP_CONDA_GATE` overrides the
-  conda gate (logged and announced on Zulip).
+  conda gate (logged and announced on Zulip). After the
+  upload, an advisory smoke installs the released
+  `gain-core` from anaconda.org and walks its entry points.
 - **`Jenkinsfile.nightly`** — cron-scheduled
   orchestrator (`gain-nightly`, ~02:00 UTC): rebuilds
   master and re-runs the integration jobs

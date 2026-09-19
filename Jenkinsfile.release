@@ -35,7 +35,11 @@
 //
 // Output: wheels published to nemo:/data/wheels/gain, conda
 // packages to anaconda.org/iossifovlab, and Docker images to
-// registry.seqpipe.org tagged :${TAG_NAME} + :stable.
+// registry.seqpipe.org tagged :${TAG_NAME} + :stable. After the
+// upload, `Post-publish: install smoke` installs gain-core==TAG_NAME
+// from anaconda.org the way the docs say and walks its entry points
+// (#1432) — advisory: a red is UNSTABLE plus a Zulip line, never a
+// rollback.
 
 import com.cloudbees.groovy.cps.NonCPS
 
@@ -886,11 +890,123 @@ EOF
             }
         }
 
+        stage('Post-publish: install smoke') {
+            // #1432: the only check that exercises the real channel.
+            // Do what the getting-started docs tell a user to do —
+            // a fresh env from `-c conda-forge -c bioconda
+            // -c iossifovlab`, pinned to this tag — then run the
+            // recipe's console-script / entry-point walk against
+            // what got installed. Proves the upload landed, the
+            // version resolves, and the live solve with iossifovlab
+            // present still works.
+            //
+            // Advisory: the upload has happened and is not rolled
+            // back. A red marks the build UNSTABLE (never FAILURE),
+            // fails this stage by name, and posts one line to the
+            // releases topic saying which of two things happened —
+            // the version never resolved, or it installed and the
+            // walk failed. anaconda.org's repodata lags an upload by
+            // minutes, so the solve is retried for up to 10 min
+            // before that first verdict is given.
+            //
+            // The walk is core/conda-recipe/tests/entry_point_walk.py,
+            // the same file rattler-build embeds in the package's
+            // tests; it is mounted alone at /smoke so nothing but the
+            // installed package is on the walk's sys.path. Exit codes
+            // from the driver: 2 = never resolved, 3 = walk failed.
+            when { expression { !params.DRY_RUN } }
+            steps {
+                script {
+                    int rc = sh(
+                        returnStatus: true,
+                        script: '''
+                            DOCKER_USER="$(id -u):$(id -g)"
+                            docker run --rm -i \
+                                --user "$DOCKER_USER" \
+                                -e HOME=/tmp \
+                                -e TAG_NAME \
+                                -v "$PWD/core/conda-recipe/tests:/smoke:ro" \
+                                -w /tmp \
+                                "${CONDA_BUILDER}" \
+                                bash -s <<'EOF'
+set -u
+# Package cache under /tmp: we run as the Jenkins uid, which cannot
+# write the image's /opt/conda/pkgs. Set here, after the image
+# entrypoint has activated base from the original root prefix.
+export MAMBA_ROOT_PREFIX=/tmp/mamba
+prefix=/tmp/smoke-env
+spec="gain-core==${TAG_NAME}"
+deadline=$(( $(date +%s) + 600 ))
+attempt=0
+while :; do
+    attempt=$((attempt + 1))
+    rm -rf "$prefix"
+    echo "attempt $attempt: micromamba create -p $prefix -c conda-forge -c bioconda -c iossifovlab $spec"
+    if micromamba create -y -p "$prefix" \
+            -c conda-forge -c bioconda -c iossifovlab \
+            "$spec" > /tmp/solve.log 2>&1; then
+        break
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+        cat /tmp/solve.log
+        echo "SMOKE: $spec did not resolve from anaconda.org/iossifovlab" \
+             "within 10 min ($attempt attempts); last solve output above"
+        exit 2
+    fi
+    echo "  solve failed; repodata may still lag the upload. Retrying in 30s."
+    sleep 30
+done
+micromamba list -p "$prefix" | grep -i -E '^\\s*(gain-core|python)\\s'
+"$prefix/bin/python" /smoke/entry_point_walk.py || {
+    echo "SMOKE: $spec installed, but the entry-point walk failed"
+    exit 3
+}
+EOF
+                        ''',
+                    )
+                    String note
+                    if (rc == 0) {
+                        note = 'install smoke: ok'
+                    } else if (rc == 2) {
+                        note = 'install smoke: UNSTABLE — ' +
+                            "gain-core==${env.TAG_NAME} did not " +
+                            'resolve from anaconda.org/iossifovlab ' +
+                            'within 10 min'
+                    } else {
+                        note = 'install smoke: UNSTABLE — installed, ' +
+                            'but the entry-point walk failed ' +
+                            "(exit ${rc})"
+                    }
+                    env.INSTALL_SMOKE_NOTE = note
+                    if (rc != 0) {
+                        zulipSend(
+                            topic: 'releases',
+                            message:
+                                "Release ${env.TAG_NAME}: stage " +
+                                "'Post-publish: install smoke' " +
+                                "failed — ${note}. The upload is " +
+                                'complete and untouched. ' +
+                                "${env.BUILD_URL}",
+                        )
+                        // Build UNSTABLE, this stage FAILURE, the
+                        // pipeline carries on to Notify.
+                        catchError(
+                            buildResult: 'UNSTABLE',
+                            stageResult: 'FAILURE',
+                        ) {
+                            error(note)
+                        }
+                    }
+                }
+            }
+        }
+
         stage('Notify') {
-            // A dry run says so and claims no release. An operator
-            // override of the conda gate is announced on the same
-            // line as the release it let through, so the audit
-            // trail is the releases topic itself.
+            // A dry run says so and claims no release. A real
+            // release's line carries the post-publish smoke result,
+            // and an operator override of the conda gate is announced
+            // on the same line as the release it let through, so the
+            // audit trail is the releases topic itself.
             steps {
                 script {
                     String message
@@ -910,7 +1026,8 @@ EOF
                                 "${env.TAG_NAME} + " +
                             "${env.FRONTEND_REPO}:" +
                                 "${env.TAG_NAME} " +
-                            "(also tagged :stable)"
+                            "(also tagged :stable) — " +
+                            "${env.INSTALL_SMOKE_NOTE}"
                     }
                     if (params.SKIP_CONDA_GATE) {
                         message += " — ⚠️ ${env.CONDA_GATE_NOTE}"
