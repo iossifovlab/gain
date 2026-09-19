@@ -910,7 +910,14 @@ def test_coverage_tables_are_sortable(built_grr: BuiltGRR) -> None:
 
 
 def _coverage_tables(built: BuiltGRR) -> list[tuple[str, list[_Event]]]:
-    """The Coverage section of every resource that has a computed one."""
+    """The Coverage TABLE of every resource that has a computed one.
+
+    The first table of the section: since gain#1543 the section also
+    carries the Segment lengths statistics table under its own ``<h3>``,
+    which is a one-row table the way the Alleles section's indel table
+    is, and neither sortable nor a per-chromosome table -- so it is not
+    held to the Coverage table's contract.
+    """
     tables = []
     for resource_id in _RESOURCE_IDS:
         if not (built.path / resource_id / "statistics"
@@ -921,7 +928,9 @@ def _coverage_tables(built: BuiltGRR) -> list[tuple[str, list[_Event]]]:
             continue
         events = _parse(page_path, built.path).section_events("Coverage")
         if events:
-            tables.append((resource_id, events))
+            table = _section_slice(events, "table")
+            if table:
+                tables.append((resource_id, table))
     return tables
 
 
