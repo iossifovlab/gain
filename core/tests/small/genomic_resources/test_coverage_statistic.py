@@ -10,6 +10,7 @@ from gain.genomic_resources.statistics.coverage import (
 from gain.genomic_resources.statistics.exact_lengths import (
     ExactLengths,
     LengthArrayTally,
+    length_ladder,
 )
 from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
@@ -422,6 +423,29 @@ def test_sequential_and_pairwise_folds_agree() -> None:
     assert seq_acc.segment_count == pairwise[0].segment_count == 5
     assert seq_acc.segment_lengths() == pairwise[0].segment_lengths() \
         == ExactLengths({3: 1, 5: 1, 9: 1, 17: 1, 20: 1}, 5, 54, 3, 20)
+
+
+def test_the_chart_ladder_derived_from_the_record_is_the_stored_one(
+) -> None:
+    """The one place the ladder survives gain#1543 is the chart, drawn
+    from the record rather than from a stored histogram.  For that to
+    change no pixel, the derived ladder must equal what the scan used
+    to bin: here three segments in two bins, two of them past the clamp
+    -- folded to one key in the map, yet the same bin as before, because
+    the clamp is the bin the plot already sums everything above into."""
+    cov = RegionCoverage("chr1", 1, 20_000)
+    cov.add_interval(1, 3, (0.1,))
+    cov.add_interval(10, 9009, (0.2,))
+    cov.add_interval(9020, 18519, (0.3,))
+    stored_ladder = [0] * 32
+    for length in (3, 9000, 9500):
+        stored_ladder[length_histogram_bin_index(length)] += 1
+
+    lengths = cov.segment_lengths()
+
+    assert lengths is not None
+    assert lengths.lengths == {3: 1, 8192: 2}
+    assert length_ladder(lengths) == stored_ladder
 
 
 def test_a_single_segment_is_recorded_at_its_exact_length() -> None:
