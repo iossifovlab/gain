@@ -312,6 +312,13 @@ def test_coverage_is_chunk_invariant(
     merged = stats._regions["chr1"]
     assert merged.segment_count == SEGMENTS
     assert merged.segment_lengths() == SEGMENT_LENGTHS
+    # Down to the bytes: the file a chunked scan writes is the file an
+    # unchunked one writes, so a repository rebuilt at another
+    # ``--region-size`` commits no spurious diff.
+    whole = merge_region_coverage(resource.resource_id, [
+        scan.do_histogram_task(resource, confs, "chr1", 1, 60).coverage])
+    assert whole is not None
+    assert stats.serialize() == whole.serialize()
 
 
 def test_statistics_hash_is_untouched_by_the_coverage_build(
