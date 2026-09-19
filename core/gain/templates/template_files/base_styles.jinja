@@ -79,6 +79,13 @@
         height: auto;
       }
 
+      /* A pair of one -- the segment-lengths chart has no twin -- keeps
+         the width one of two would get, half the pair less its share of
+         the gap, instead of growing to fill the row. */
+      .figure-pair > .figure-thumbnail:only-child {
+        flex: 0 1 calc(50% - 8px);
+      }
+
       /* One number worth reading on its own, with the quantities it
          was computed from underneath it.  Sized to sit under a table
          without competing with the <h3> above it: inline-block so the

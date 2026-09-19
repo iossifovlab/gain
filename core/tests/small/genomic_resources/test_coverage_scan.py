@@ -449,6 +449,8 @@ def test_a_version_1_file_keeps_its_segment_counts_on_the_page(
     assert "<p>not computed</p>" in segment_lengths
     assert "no segments" not in segment_lengths
     assert COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE not in page
+    # No thumbnail, so no modal either: the two are gated together.
+    assert "modal-coverage-segment-lengths" not in page
 
 
 def test_a_version_1_file_rebuilds_no_image(tmp_path: pathlib.Path) -> None:
