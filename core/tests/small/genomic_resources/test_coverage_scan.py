@@ -1,7 +1,6 @@
 # pylint: disable=C0114,C0116,W0212,W0621
 import json
 import pathlib
-import re
 
 import numpy as np
 import pytest
@@ -33,6 +32,11 @@ from gain.genomic_resources.testing.builders import (
     a_fragment_score,
     a_position_score,
     an_allele_score,
+)
+
+from tests.small.genomic_resources.info_page_html import (
+    section_after,
+    table_after,
 )
 
 _HIST_DICT: dict = {
@@ -353,17 +357,12 @@ def test_info_page_renders_the_coverage_section(
 
 
 def _segment_lengths_table(page: str) -> list[list[str]]:
-    """The rows of the table under the Segment lengths heading, header
-    first, each as its cells' text -- whole rows, so a cell that moved
+    """The table under the Segment lengths heading, header row first,
+    each row as its cells' text -- whole rows, so a cell that moved
     column or a column that vanished is a failure, not a pass on a
     substring that happens to still occur somewhere on the page."""
-    start = page.index("<h3>Segment lengths</h3>")
-    next_heading = re.compile(r"<h[23]").search(page, start + 1)
-    section = page[start:next_heading.start() if next_heading else None]
-    return [
-        re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", row, flags=re.DOTALL)
-        for row in re.findall(r"<tr>(.*?)</tr>", section, flags=re.DOTALL)
-    ]
+    table = table_after(page, "<h3>Segment lengths</h3>")
+    return [[cell.text for cell in row] for row in table.head + table.rows]
 
 
 def test_info_page_tables_the_segment_lengths_exactly(
@@ -443,16 +442,13 @@ def test_a_version_1_file_keeps_its_segment_counts_on_the_page(
 
     page = PositionScoreImplementation(resource).get_info()
 
-    coverage_table = page[page.index("<h2>Coverage</h2>"):
-                          page.index("<h3>Segment lengths</h3>")]
-    rows = [
-        re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", row, flags=re.DOTALL)
-        for row in re.findall(r"<tr>(.*?)</tr>", coverage_table, re.DOTALL)
+    # The totals row sits in the thead beside the header row.
+    coverage_table = table_after(page, "<h2>Coverage</h2>")
+    assert [[cell.text for cell in row] for row in coverage_table.head] == [
+        ["Chromosome", "Covered positions", "Segments"],
+        ["all chromosomes", str(COVERED), str(SEGMENTS)],
     ]
-    assert rows[0] == ["Chromosome", "Covered positions", "Segments"]
-    assert rows[1] == ["all chromosomes", str(COVERED), str(SEGMENTS)]
-    segment_lengths = page[page.index("<h3>Segment lengths</h3>"):
-                           page.index("<h2", page.index("<h3>Segment"))]
+    segment_lengths = section_after(page, "<h3>Segment lengths</h3>")
     assert "<p>not computed</p>" in segment_lengths
     assert "no segments" not in segment_lengths
     assert COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE not in page
@@ -676,16 +672,8 @@ def test_an_empty_segment_record_writes_no_image(
     # logarithmic, which no all-zero dataset can be drawn on.  The
     # statistics file is still written -- only the image is skipped.
     resource = _multivalued_tabix(tmp_path)
-    statistics = CoverageStatistics.deserialize(json.dumps({
-        "format_version": 2,
-        "chromosomes": {"chr1": {
-            "covered_positions": 0,
-            "segment_count": 0,
-            "segment_lengths": NO_LENGTHS.stored(),
-        }},
-    }))
 
-    save_and_plot_coverage(resource, statistics)
+    save_and_plot_coverage(resource, _all_zero_segment_statistics())
 
     assert not resource.file_exists(COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE)
     assert resource.file_exists(COVERAGE_STATISTICS_FILE)
