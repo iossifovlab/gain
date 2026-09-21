@@ -451,7 +451,7 @@ def test_get_chrom_regions_splits_on_the_genome_where_it_lists_the_contig(
     is resolved through the cached genome and handed to the resolver, so
     chr1 splits on the genome's exact 3000 rather than the probe's 4000
     (the tabix pin above), and chrM -- unknown to the genome -- on the
-    probe's bound.  The per-contig fallthrough rule itself is pinned at
+    probe's bound.  Which rung's answer a contig splits on is pinned at
     the resolver, in test_score_chrom_lengths.  Measured on the caller
     before the rung moved into the resolver (gain#1418), then required to
     hold after.

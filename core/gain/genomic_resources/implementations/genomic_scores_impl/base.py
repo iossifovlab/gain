@@ -222,13 +222,14 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def get_chrom_lengths(
         self, grr: GenomicResourceRepo | None,
     ) -> dict[str, ChromLength]:
-        """The ladder's answer per contig of the score, in table order.
+        """Every rung's answer per contig of the score, in table order.
 
         The genome the ``reference_genome`` label names -- resolved
         through ``grr`` -- is the top rung; the table's own answer (the
-        bigWig header, the tabix probe) the rest, per contig.  A contig
-        with no length keeps the reason (``EMPTY`` / ``UNDETERMINED``)
-        in its record.
+        bigWig header, the tabix probe) the other.  Both are asked for
+        every contig and each record holds what each answered, its
+        ``best`` by rank; a contig with no length keeps the table's
+        reason (``EMPTY`` / ``UNDETERMINED``) in its record.
 
         Opens the score if it is closed, and closes it again only in
         that case -- an already-open score stays open for its owner.
@@ -289,6 +290,15 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> list[Region]:
         regions = []
         for chrom, resolved in lengths.items():
+            best = resolved.best
+            if best is not None:
+                # Any rung's answer is a length to split by, the genome's
+                # ahead of the table's; the table's extent, if it also
+                # reported one, is a fact about the table's rows and not
+                # a reason to skip a contig the genome vouches for.
+                regions.extend(
+                    split_into_regions(chrom, best.length, region_size))
+                continue
             if resolved.extent is ContigExtent.EMPTY:
                 # PROVEN to hold no records -- only a backend holding the
                 # whole file can say this (e.g. a chrom_mapping onto a file
@@ -300,30 +310,20 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 logger.info(
                     "contig %s holds no records; not scanned", chrom)
                 continue
-            if resolved.extent is ContigExtent.UNDETERMINED:
-                # The length could not be determined for a contig that may well
-                # hold records -- skipping it would leave them out of the
-                # statistics AND out of the ordering checks the scan performs on
-                # the way, while the resource still reported its statistics as
-                # freshly built.  A length is what SPLITTING needs, not what
-                # READING needs, so scan the contig whole.  An unbounded region
-                # keeps the per-record path (see scan.do_histogram_task):
-                # slower than a split contig, never wrong.
-                logger.warning(
-                    "unable to find chromosome length for %s; "
-                    "scanning it as a single unbounded region", chrom)
-                regions.append(Region(chrom))
-                continue
-
-            # The record's two shapes: no extent means the length is set.
-            assert resolved.length is not None
-            regions.extend(
-                split_into_regions(
-                    chrom,
-                    resolved.length,
-                    region_size,
-                ),
-            )
+            # No answer from any rung, so the record carries the table's
+            # reason, and not EMPTY means UNDETERMINED: the length could
+            # not be determined for a contig that may well hold records --
+            # skipping it would leave them out of the statistics AND out
+            # of the ordering checks the scan performs on the way, while
+            # the resource still reported its statistics as freshly built.
+            # A length is what SPLITTING needs, not what READING needs, so
+            # scan the contig whole.  An unbounded region keeps the
+            # per-record path (see scan.do_histogram_task): slower than a
+            # split contig, never wrong.
+            logger.warning(
+                "unable to find chromosome length for %s; "
+                "scanning it as a single unbounded region", chrom)
+            regions.append(Region(chrom))
         return regions
 
     @property

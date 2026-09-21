@@ -20,8 +20,9 @@ and decomposing the class itself (gain#1027) has since added two more:
   value: which extractor reads the payload, and which payload column each
   score def is addressed to
 - :mod:`.chrom_lengths` (gain#1413) -- the chromosome-length resolver a
-  caller with a genome hands it to: a length per contig with its source,
-  or the ``ContigExtent`` reason there is none
+  caller with a genome hands it to: per contig, every source's length
+  with the best by rank, and the ``ContigExtent`` reason when the table
+  has none
 
 **This module is a permanent facade, not a deprecation shim.**  It
 re-exports every name the pre-split module DEFINED, so each
