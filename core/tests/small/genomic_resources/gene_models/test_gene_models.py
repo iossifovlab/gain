@@ -18,6 +18,7 @@ from gain.genomic_resources.gene_models.parsers import (
     infer_gene_model_parser,
 )
 from gain.genomic_resources.gene_models.serialization import (
+    gene_models_to_gtf,
     save_as_default_gene_models,
 )
 from gain.genomic_resources.gene_models.transcript_models import (
@@ -598,6 +599,7 @@ def test_joined_gene_models_are_loaded_and_survive_load(
     t4c8_gene_models.load()
     combined = GeneModels.join_gene_models(example_gencode, t4c8_gene_models)
     assert combined.is_loaded()
+    assert len(combined.transcript_models) == 3
 
     combined.load()
 
@@ -607,16 +609,20 @@ def test_joined_gene_models_are_loaded_and_survive_load(
         "chr1", 1, 200)] == ["t4", "c8"]
 
 
+@pytest.mark.parametrize("forgotten_first", [True, False])
 def test_join_gene_models_refuses_a_never_loaded_input(
     fixture_dirname: Callable,
     tmp_path: pathlib.Path,
+    *,
+    forgotten_first: bool,
 ) -> None:
     """A forgotten ``load()`` is refused, not merged as an empty set.
 
     Silently copying the empty ``transcript_models`` of an unloaded
     input would build a loaded model missing everything that input was
     meant to bring, and the join has no way to tell that from a source
-    that really holds nothing.
+    that really holds nothing. Both positions, so the refusal is
+    proved for the first input as much as for the rest.
     """
     filename = fixture_dirname("gene_models/example_gencode.txt")
     example_gencode = build_gene_models_from_file(filename, "gtf").load()
@@ -624,9 +630,12 @@ def test_join_gene_models_refuses_a_never_loaded_input(
         "forgotten/genes", a_gene_models()).build_repo(tmp_path)
     forgotten = build_gene_models_from_resource(
         grr.get_resource("forgotten/genes"))
+    inputs = [example_gencode, forgotten]
+    if forgotten_first:
+        inputs.reverse()
 
     with pytest.raises(ValueError, match="never loaded") as error:
-        GeneModels.join_gene_models(example_gencode, forgotten)
+        GeneModels.join_gene_models(*inputs)
 
     assert "forgotten/genes" in str(error.value)
     assert len(example_gencode.transcript_models) == 1
@@ -636,6 +645,7 @@ def test_join_gene_models_refuses_a_never_loaded_input(
 def test_from_transcript_models_is_loaded_and_indexed(
     fixture_dirname: Callable,
     t4c8_gene_models: GeneModels,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Transcripts handed in directly make a queryable, loaded model.
 
@@ -661,6 +671,10 @@ def test_from_transcript_models_is_loaded_and_indexed(
     assert c8.gene == "c8"
     assert [tm.gene for tm in built.gene_models_by_location(
         "chr1", 1, 200)] == ["t4", "c8"]
+    save_as_default_gene_models(
+        built, str(tmp_path / "built.txt"), gzipped=False)
+    assert (tmp_path / "built.txt").read_text().count("\n") == 4
+    assert gene_models_to_gtf(built).getvalue().count("\ttranscript\t") == 3
 
 
 def test_is_loaded(fixture_dirname: Callable) -> None:

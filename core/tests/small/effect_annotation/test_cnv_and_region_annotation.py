@@ -100,3 +100,20 @@ def test_region_annotation_accepts_a_joined_model(
         "chr1", 5, 84, effect_type="CNV+")
 
     assert [effect.gene for effect in effects] == ["t4"]
+
+
+def test_region_annotation_refuses_a_never_loaded_model(
+    t4c8_genome: ReferenceGenome,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The annotator asks ``is_loaded()``, as the serializers do.
+
+    A model nobody loaded is refused here as it is there, so "usable
+    gene models" means one thing across gain.
+    """
+    never_loaded = build_gene_models_from_resource(
+        a_gene_models().build_resource(tmp_path))
+
+    with pytest.raises(ValueError, match="not loaded"):
+        EffectAnnotator(t4c8_genome, never_loaded).annotate_region(
+            "chr1", 5, 84, effect_type="CNV+")

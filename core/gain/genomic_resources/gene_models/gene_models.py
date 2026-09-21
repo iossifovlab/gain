@@ -71,8 +71,10 @@ class GeneModels(
         >>> transcripts = gene_models.gene_models_by_location("chr17", 7676592)
 
     Note:
-        The gene models must be loaded using the load() method before queries
-        can be performed. The class is thread-safe for concurrent access.
+        The gene models must be loaded before queries can be performed:
+        by ``load()``, or by being built loaded through
+        ``join_gene_models`` / ``from_transcript_models``. The class is
+        thread-safe for concurrent access.
     """
 
     def __init__(self, resource: GenomicResource):
