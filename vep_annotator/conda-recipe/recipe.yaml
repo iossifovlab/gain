@@ -15,6 +15,12 @@ source:
   - path: ../../dist/vep_annotator
     use_gitignore: false
   - path: ../../LICENSE
+  # The console-script + entry-point walk every gain recipe runs in its
+  # test phase is defined once, beside the core recipe (#1433); pulling
+  # that directory into the work dir is how this recipe's `tests:` gets
+  # to copy the file in.
+  - path: ../../core/conda-recipe/tests
+    target_directory: tests
 
 build:
   noarch: python
@@ -32,6 +38,24 @@ requirements:
   run:
     - python >=3.12
     - gain-core
+
+tests:
+  # rattler-build's test phase installs the just-built package into a fresh
+  # env solved from the run deps above. gain-core is not on conda-forge or
+  # bioconda: the Jenkinsfiles offer the core recipe's output dir as a
+  # channel so the gain-core built moments earlier is what resolves here.
+  # The walk runs every console script with --help and loads every gain.*
+  # entry point this dist declares (see core/conda-recipe/tests/).
+  - script:
+      - python tests/entry_point_walk.py ${{ name }}
+    files:
+      source:
+        - tests/entry_point_walk.py
+
+  - python:
+      imports:
+        - vep_annotator
+      pip_check: true
 
 about:
   homepage: https://github.com/IossifovLab/gain
