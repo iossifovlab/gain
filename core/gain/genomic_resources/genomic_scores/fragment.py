@@ -172,6 +172,8 @@ class FragmentScore(GenomicScore):
     """
 
     # As AlleleScore, except that strings join rather than list -- a fragment
+    RECORD_WEIGHT_UNIT: ClassVar[str] = "fragments"
+
     # score's string attributes are rendered into one cell.  Owned by the
     # score class, so no score-definition subclass is needed to carry them.
     DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {

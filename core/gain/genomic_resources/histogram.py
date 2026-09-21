@@ -446,6 +446,19 @@ class NumberHistogram(Statistic):
         """
         return None if self._moments is None else self._moments.std
 
+    def moments_summary(self) -> str | None:
+        """``n / mean / sd``, rendered for the summary page.
+
+        The counterpart of :meth:`values_domain` for the accumulators:
+        ``None`` when they are unknown or nothing was folded, so the page
+        can leave the cell empty rather than guess.
+        """
+        mean = self.mean
+        std = self.std
+        if mean is None or std is None:
+            return None
+        return f"{self.count:,} / {mean:0.3g} / {std:0.3g}"
+
     def values_domain(self) -> str:
         """The observed value range, rendered for the summary page.
 

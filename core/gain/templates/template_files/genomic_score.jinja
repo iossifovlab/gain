@@ -14,7 +14,8 @@
         <col style="width: 15%">
         <col>
         <col style="width: 220px">
-        <col style="width: 15%">
+        <col style="width: 12%">
+        <col style="width: 12%">
     </colgroup>
     <thead>
         <tr>
@@ -24,6 +25,7 @@
             <th>Description</th>
             <th>Histogram</th>
             <th>Range</th>
+            <th>n / mean / sd</th>
         </tr>
     </thead>
 
@@ -75,6 +77,14 @@
                 NO DOMAIN
             {%- endif -%}
             </td>
+            {#- Only a number histogram has moments, and one loaded from a
+               file that predates them has none: the cell is then empty
+               rather than a guess from bin midpoints (gain#1589). #}
+            <td>
+            {%- if hist.type == 'number_histogram' %}
+                {{ hist.moments_summary() or "" }}
+            {%- endif -%}
+            </td>
         </tr>
     {%- endfor %}
     {#- An annulled histogram has no image on disk, so it gets no modal --
@@ -96,6 +106,10 @@
     {%- endfor %}
 </table>
 </div>
+{#- What n counts is the kind's weighting rule (``record_weight``): a
+   position-score record once per base pair it spans, an allele or a
+   fragment once.  The score class names the unit beside that rule. #}
+<p class="text-muted">n counts {{ scores.RECORD_WEIGHT_UNIT }}; sd is the population standard deviation.</p>
 
 {# Empty by default, as the two blocks below are.  Covered positions are
    a POSITION SCORE statistic and only that: the union measures what a

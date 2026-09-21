@@ -512,6 +512,26 @@ def test_the_weight_rule_is_stated_once_per_kind(
 
 
 @pytest.mark.parametrize(
+    ("score_class", "unit"),
+    [
+        (PositionScore, "base pairs"),
+        (AlleleScore, "alleles"),
+        (FragmentScore, "fragments"),
+    ],
+)
+def test_each_kind_names_the_unit_its_weight_rule_counts_in(
+    score_class: type[GenomicScore],
+    unit: str,
+) -> None:
+    # The word beside the rule: what the ``n`` of a histogram's
+    # ``n / mean / sd`` counts is whatever ``record_weight`` counts, and
+    # the page says so in the kind's own noun (gain#1589).  Read off the
+    # kind's OWN namespace, so a kind inheriting a sibling's word passes
+    # nothing.
+    assert vars(score_class)["RECORD_WEIGHT_UNIT"] == unit
+
+
+@pytest.mark.parametrize(
     "score_class", [PositionScore, AlleleScore, FragmentScore])
 def test_a_batch_is_weighed_as_int64_whatever_the_columns_are(
     score_class: type[GenomicScore],

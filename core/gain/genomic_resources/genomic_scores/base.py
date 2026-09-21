@@ -296,6 +296,13 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     # deployed score: 0 of 16502 resource configs set one.
     DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {}
 
+    #: The noun for what :meth:`record_weight` counts in -- the unit of
+    #: the ``n`` a histogram's ``n / mean / sd`` reports, since the
+    #: statistics scan weighs each record by that rule.  Stated on every
+    #: kind beside the rule itself; pinned by
+    #: test_each_kind_names_the_unit_its_weight_rule_counts_in.
+    RECORD_WEIGHT_UNIT: ClassVar[str]
+
     def __init__(self, resource: GenomicResource):
         super().__init__(resource)
         self.resource_id = resource.resource_id

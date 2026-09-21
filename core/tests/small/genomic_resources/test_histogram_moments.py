@@ -147,6 +147,23 @@ def test_mean_and_std_are_unknown_before_anything_is_folded() -> None:
     assert hist.std is None
 
 
+def test_moments_summary_renders_n_mean_sd_for_the_page() -> None:
+    hist = NumberHistogram(_a_config(lo=0, hi=100))
+    hist.add_batch(np.array([1.0, 4.0]), np.array([1_000_000, 234_567]))
+
+    # n with thousands separators, mean and sd at the three significant
+    # digits ``values_domain`` uses.
+    assert hist.moments_summary() == "1,234,567 / 1.57 / 1.18"
+
+
+def test_moments_summary_is_none_when_the_moments_are_unknown() -> None:
+    assert NumberHistogram(_a_config()).moments_summary() is None
+    old = NumberHistogram.from_dict({
+        key: value for key, value in _folded(3.0).to_dict().items()
+        if key not in ("count", "sum", "sum_of_squares")})
+    assert old.moments_summary() is None
+
+
 def test_a_negative_variance_from_cancellation_is_clamped_and_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
