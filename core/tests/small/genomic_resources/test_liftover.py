@@ -158,26 +158,31 @@ def _a_chain_under_a_real_id_configured(
     return build_filesystem_test_repository(tmp_path).get_resource(A_CHAIN_ID)
 
 
-@pytest.mark.parametrize("field", [
+@pytest.mark.parametrize("config", [
     # A typo of `filename`.
-    pytest.param({"file_name": "liftover.chain.gz"},
+    pytest.param({"type": "liftover_chain",
+                  "filename": "liftover.chain.gz",
+                  "file_name": "liftover.chain.gz"},
                  id="a-key-the-schema-does-not-know"),
     # A reference genome spells `chrom_prefix` as a flat string, and the
     # two resource types sit side by side in a repository -- on a chain
     # it is a mapping of two coordinate sides.
-    pytest.param({"chrom_prefix": "chr"},
+    pytest.param({"type": "liftover_chain",
+                  "filename": "liftover.chain.gz",
+                  "chrom_prefix": "chr"},
                  id="the-genome-spelling-of-chrom_prefix"),
+    # No `filename` key at all: the one field a chain cannot do without,
+    # refused here rather than on first use of the file.
+    pytest.param({"type": "liftover_chain"},
+                 id="no-filename"),
 ])
 def test_a_chain_config_outside_its_schema_is_refused(
-    tmp_path: pathlib.Path, field: dict[str, Any],
+    tmp_path: pathlib.Path, config: dict[str, Any],
 ) -> None:
     """The chain runs the schema it declares: a config outside it refuses
     the chain at construction, naming the resource."""
-    resource = _a_chain_under_a_real_id_configured(tmp_path, yaml.safe_dump({
-        "type": "liftover_chain",
-        "filename": "liftover.chain.gz",
-        **field,
-    }))
+    resource = _a_chain_under_a_real_id_configured(
+        tmp_path, yaml.safe_dump(config))
 
     with pytest.raises(MalformedResourceError, match=A_CHAIN_ID):
         LiftoverChain(resource)

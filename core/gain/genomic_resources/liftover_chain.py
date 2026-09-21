@@ -131,7 +131,7 @@ class LiftoverChain(ResourceConfigValidationMixin):
     def get_schema() -> dict[str, Any]:
         return {
             **get_base_resource_schema(),
-            "filename": {"type": "string"},
+            "filename": {"type": "string", "required": True},
             # Nullable for the bare `chrom_prefix:` line a curator leaves
             # when commenting its subsections out; it reads as absent.
             "chrom_prefix": {"type": "dict", "nullable": True, "schema": {
