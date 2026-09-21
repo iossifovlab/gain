@@ -50,8 +50,7 @@ from gain.genomic_resources.statistics.exact_lengths import (
     ExactLengths,
     LengthArrayTally,
     LengthStatisticsRow,
-    folded_tallies,
-    merged_tallies,
+    folded_groups,
     stored_lengths,
     write_length_chart,
 )
@@ -79,19 +78,27 @@ class RegionFragments:
         chrom: str,
         start: int | None,
         end: int | None,
+        *,
+        accumulates: bool = True,
     ) -> None:
         self.chrom = chrom
         self.start = start
         self.end = end
         self._fragments = 0
-        # ``None`` is the unknown state, reached only through
-        # :meth:`frozen` for a file that stored the count without the
-        # exact record (format version 1): the count stays exact while
-        # the lengths read as unknown.  Held as the absence of the tally
-        # rather than as a flag beside it, so the two cannot disagree
-        # and accumulating into discarded state is an assertion rather
-        # than silent work.
-        self._lengths: LengthArrayTally | None = LengthArrayTally()
+        # The region's lengths, in whichever form it holds them.  A
+        # scanned region holds the array tally it accumulates into,
+        # built here.  A region restored through :meth:`frozen` -- the
+        # one caller that clears ``accumulates`` -- holds the stored
+        # record as read: never a tally, which at a clamp-sized counter
+        # block per contig would cost a draft assembly gigabytes just
+        # to render an info page (gain#1565).  ``None`` is a restored
+        # region whose file stored the count without the record (format
+        # version 1): the count stays exact while the lengths read as
+        # unknown.  Held as one value rather than a tally beside a
+        # flag, so the forms cannot disagree and accumulating into a
+        # frozen region is an assertion rather than silent work.
+        self._lengths: LengthArrayTally | ExactLengths | None = \
+            LengthArrayTally() if accumulates else None
 
     @classmethod
     def frozen(
@@ -106,11 +113,21 @@ class RegionFragments:
         file stored the count alone.  The COUNT is unaffected and still
         reads, so a file like that renders its table and no image.
         """
-        region = cls(chrom, None, None)
+        region = cls(chrom, None, None, accumulates=False)
         region._fragments = fragments
-        region._lengths = (
-            None if lengths is None else LengthArrayTally.restored(lengths))
+        region._lengths = lengths
         return region
+
+    def _accumulating(self) -> LengthArrayTally:
+        """The tally a scanned region folds its lengths into.
+
+        The one gate behind every feed and the merge: a region restored
+        from a file holds counts, not scan state, so a length reaching
+        it is a wiring error.
+        """
+        assert isinstance(self._lengths, LengthArrayTally), \
+            "a frozen region does not accumulate"
+        return self._lengths
 
     def add_fragment(self, length: int) -> None:
         """Count one fragment of that many base pairs.
@@ -120,10 +137,8 @@ class RegionFragments:
         fragment is counted once at its true length however the contig
         was split.
         """
-        assert self._lengths is not None, \
-            "a frozen region does not accumulate"
+        self._accumulating().add(length)
         self._fragments += 1
-        self._lengths.add(length)
 
     def add_fragment_batch(self, lengths: np.ndarray) -> None:
         """Count a whole batch of fragment lengths at once.
@@ -134,9 +149,7 @@ class RegionFragments:
         ADR 0001 deleted the per-row object churn from.  A length below
         1 is refused by the tally itself.
         """
-        assert self._lengths is not None, \
-            "a frozen region does not accumulate"
-        self._lengths.add_batch(lengths)
+        self._accumulating().add_batch(lengths)
         self._fragments += lengths.size
 
     @property
@@ -145,19 +158,20 @@ class RegionFragments:
         return self._fragments
 
     @property
-    def length_tally(self) -> LengthArrayTally | None:
-        """The region's tally as it stands, ``None`` if unknown.
+    def held_lengths(self) -> LengthArrayTally | ExactLengths | None:
+        """The region's lengths as it holds them: the scan's tally, the
+        stored record, or ``None`` if unknown.
 
-        For the statistic's global fold, which adds the regions' tallies
-        counter by counter; a region's own record is :meth:`fragment_lengths`.
+        For the statistic's global fold, which folds each form in its
+        own domain; a region's own record is :meth:`fragment_lengths`.
         """
         return self._lengths
 
     def fragment_lengths(self) -> ExactLengths | None:
         """The region's fragment lengths as a record, ``None`` if unknown."""
-        if self._lengths is None:
-            return None
-        return self._lengths.frozen()
+        if isinstance(self._lengths, LengthArrayTally):
+            return self._lengths.frozen()
+        return self._lengths
 
     def merge(self, other: RegionFragments) -> None:
         """Fold the adjacent region to the right into this one.
@@ -168,12 +182,14 @@ class RegionFragments:
 
         No stitch is needed: a row is owned whole by exactly one region,
         so the merged count is a plain sum and the merged lengths are the
-        tallies' own merge -- unknown if either side is.
+        tallies' own merge.  Only scanned regions get this far: a
+        region restored from a file has no extents, and the adjacency
+        rule refuses it.
         """
         refuse_unmergeable(_MERGE_FAILURE, self, other)
 
         self._fragments += other._fragments
-        self._lengths = merged_tallies(self._lengths, other._lengths)
+        self._accumulating().merge(other._accumulating())
         self.end = other.end
 
 
@@ -212,10 +228,10 @@ class FragmentStatistics(RegionFoldedStatistic[RegionFragments]):
         }
 
     def fragment_lengths_global(self) -> ExactLengths | None:
-        """The fold of every chromosome's lengths -- :func:`folded_tallies`,
+        """The fold of every chromosome's lengths -- :func:`folded_groups`,
         so the all-or-nothing rule is the coverage twin's."""
-        return folded_tallies(
-            region.length_tally for region in self._regions.values())
+        return folded_groups(
+            region.held_lengths for region in self._regions.values())
 
     def serialize(self) -> str:
         # The global record is written only when EVERY chromosome has

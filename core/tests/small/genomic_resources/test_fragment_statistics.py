@@ -185,6 +185,40 @@ def test_fragment_lengths_bin_the_rows_own_span_and_merge_exactly(
     assert GLOBAL_LENGTHS.total == stats.fragments_global() == 5
 
 
+def test_reading_the_file_builds_no_array_tally(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The array tally is the SCAN's: one clamp-sized counter block per
+    # region, so a batch of billions of rows folds at a cost bounded by
+    # the clamp.  A region restored from the file never accumulates, so
+    # it has no use for one -- and at 64 KB a piece, a draft assembly
+    # with 100k scaffolds would need gigabytes just to render its info
+    # page (gain#1565).  Pinned as a count of constructions rather than
+    # a memory bound, which would be a flaky pin.
+    resource = _fragments(tmp_path)
+    scan.do_noregion_histograms(resource)
+    content = resource.get_file_content(FRAGMENT_STATISTICS_FILE)
+    constructions: list[LengthArrayTally] = []
+    build = LengthArrayTally.__init__
+
+    def spy(self: LengthArrayTally) -> None:
+        constructions.append(self)
+        build(self)
+    monkeypatch.setattr(LengthArrayTally, "__init__", spy)
+
+    stats = FragmentStatistics.deserialize(content)
+    global_lengths = stats.fragment_lengths_global()
+
+    assert not constructions, \
+        f"the reader built {len(constructions)} array tallies"
+    assert global_lengths == GLOBAL_LENGTHS
+    assert stats.fragment_lengths_by_chromosome() == {
+        "chr1": CHR1_LENGTHS,
+        "chr2": CHR2_LENGTHS,
+    }
+
+
 def test_bulk_and_per_record_scans_produce_the_same_fragment_statistics(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

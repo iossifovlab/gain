@@ -531,24 +531,37 @@ def merged_tallies[T: (LengthTally, LengthArrayTally)](
     return left
 
 
-def folded_tallies(
-    tallies: Iterable[LengthArrayTally | None],
+def folded_groups(
+    groups: Iterable[LengthArrayTally | ExactLengths | None],
 ) -> ExactLengths | None:
-    """:func:`folded_lengths` over the regions' own array tallies.
+    """:func:`folded_lengths` over whatever each region holds.
 
-    The same all-or-nothing rule, in the array domain: the counters add
-    elementwise and the sum is frozen ONCE.  A statistic whose regions
-    hold their tallies folds this way rather than record by record,
-    because a fragment score can carry thousands of contigs with
-    thousands of distinct lengths each, and a dict fold per contig would
-    cost every build and every page render the product of the two.
+    The same all-or-nothing rule, over the two forms a region's lengths
+    take: a scanned region holds its array tally and a region restored
+    from a statistics file holds the stored record.  Tallies add
+    elementwise in the array domain, into ONE counter block allocated
+    only if there is a tally to fold; records add per length in the map
+    domain; and the two halves meet once at the end.  So a scan's fold
+    costs the clamp per region rather than a dict fold per contig --
+    a fragment score can carry thousands of contigs with thousands of
+    distinct lengths each -- while a file's fold costs the keys
+    ``json.loads`` already parsed and builds no array at all
+    (gain#1565).
     """
-    total = LengthArrayTally()
-    for tally in tallies:
-        if tally is None:
+    arrays: LengthArrayTally | None = None
+    records = LengthTally()
+    for group in groups:
+        if group is None:
             return None
-        total.merge(tally)
-    return total.frozen()
+        if isinstance(group, LengthArrayTally):
+            if arrays is None:
+                arrays = LengthArrayTally()
+            arrays.merge(group)
+        else:
+            records.merge(LengthTally.restored(group))
+    if arrays is not None:
+        records.merge(LengthTally.restored(arrays.frozen()))
+    return records.frozen()
 
 
 def folded_lengths(
