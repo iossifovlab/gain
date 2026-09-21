@@ -12,6 +12,7 @@ import apsw
 from cerberus import Validator
 
 from gain import logging
+from gain.genomic_resources.statistics.schema import StatisticsFile
 from gain.task_graph.graph import TaskDesc
 from gain.templates import get_template
 from gain.templates.breadcrumb import Crumb, page_breadcrumb
@@ -276,6 +277,16 @@ class GenomicResourceImplementation(ABC):
     def files(self) -> set[str]:
         """Return a list of resource files the implementation utilises."""
         return set()
+
+    def statistics_files(self) -> list[StatisticsFile]:
+        """The versioned statistics files this resource's build writes.
+
+        Each carries the ``format_version`` its writer currently stamps,
+        so the repair flow can report a resource whose stored statistics
+        predate the schema (gain#1586).  A kind with no such files
+        declares none and is never reported.
+        """
+        return []
 
     @abstractmethod
     def calc_statistics_hash(self) -> bytes:

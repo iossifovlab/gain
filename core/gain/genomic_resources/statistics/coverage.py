@@ -45,11 +45,14 @@ from gain.genomic_resources.statistics.exact_lengths import (
 )
 from gain.genomic_resources.statistics.percentages import percentage_of
 from gain.genomic_resources.statistics.region_fold import merge_regions
+from gain.genomic_resources.statistics.schema import StatisticsFile
 from gain.utils.chromosome_order import natural_chromosome_key
 
 logger = logging.getLogger(__name__)
 
 COVERAGE_STATISTICS_FILE = "statistics/coverage.json"
+#: The ``format_version`` :meth:`CoverageStatistics.serialize` stamps.
+COVERAGE_FORMAT_VERSION = 2
 
 #: How a failed fold of these regions is named in the message.
 _MERGE_FAILURE = "coverage"
@@ -590,7 +593,7 @@ class CoverageStatistics(RegionFoldedStatistic[RegionCoverage]):
             if global_lengths is not None:
                 global_entry["segment_lengths"] = global_lengths.stored()
         return json.dumps({
-            "format_version": 2,
+            "format_version": COVERAGE_FORMAT_VERSION,
             "chromosomes": chromosomes,
             "global": global_entry,
         }, indent=2)
@@ -987,6 +990,17 @@ def region_coverage_for(
     if not isinstance(score, PositionScore):
         return None
     return RegionCoverage(chrom, start, end)
+
+
+def coverage_statistics_file_for(score: GenomicScore) -> StatisticsFile | None:
+    """The file a build writes for this score, ``None`` for other kinds.
+
+    Gated as :func:`region_coverage_for` is, so the declaration names a
+    file exactly when the build writes one.
+    """
+    if not isinstance(score, PositionScore):
+        return None
+    return StatisticsFile(COVERAGE_STATISTICS_FILE, COVERAGE_FORMAT_VERSION)
 
 
 def accumulate_coverage(

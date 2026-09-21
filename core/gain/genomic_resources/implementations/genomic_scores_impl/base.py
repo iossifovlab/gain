@@ -29,6 +29,10 @@ from gain.genomic_resources.resource_implementation import (
 from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
 )
+from gain.genomic_resources.statistics.coverage import (
+    coverage_statistics_file_for,
+)
+from gain.genomic_resources.statistics.schema import StatisticsFile
 from gain.genomic_resources.utils import read_resource_id_label
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
 from gain.utils.log_safety import escape_unsafe_characters
@@ -192,6 +196,21 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         # manifest, and the score's table resolves its index against that
         # same manifest, so the two cannot disagree (gain#595).
         return self.score.resource_files()
+
+    def statistics_files(self) -> list[StatisticsFile]:
+        """The files :func:`scan.merge_and_save_histograms` writes here.
+
+        Which kinds get which file is not decided here: each statistics
+        module answers for its own, gated on the built score's class as
+        its writer is, so the declaration and the write cannot disagree
+        on the kind.
+        """
+        return [
+            file for file in (
+                coverage_statistics_file_for(self.score),
+            )
+            if file is not None
+        ]
 
     @staticmethod
     def _get_reference_genome_cached(
