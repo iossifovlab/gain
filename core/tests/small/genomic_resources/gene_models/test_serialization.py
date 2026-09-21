@@ -305,6 +305,31 @@ def test_gene_models_to_gtf_loaded_and_empty_warns(
     assert result.getvalue() == ""
 
 
+def test_from_no_transcript_models_is_loaded_and_empty(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Handing in no transcripts builds a loaded model, not a forgotten load.
+
+    So both serializers give it the loaded-and-empty word, not the
+    refusal.
+    """
+    resource = loaded_and_empty().resource
+    gene_models = GeneModels.from_transcript_models(resource, {})
+    assert gene_models.is_loaded()
+    output = tmp_path / "out.txt"
+
+    save_as_default_gene_models(gene_models, str(output), gzipped=False)
+    gtf = gene_models_to_gtf(gene_models)
+
+    assert [
+        LOADED_AND_EMPTY in warning and "empty gene models" in warning
+        for warning in captured_warnings(caplog)
+    ] == [True, True]
+    assert output.read_text() == "\t".join(DEFAULT_FORMAT_COLUMNS) + "\n"
+    assert gtf.getvalue() == ""
+
+
 def test_gene_models_to_gtf_basic(simple_gene_models: GeneModels) -> None:
     """Test gene_models_to_gtf with basic gene models."""
     result = gene_models_to_gtf(simple_gene_models)

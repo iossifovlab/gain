@@ -15,10 +15,9 @@ The two branches of the public function open the file by different
 calls, and a guard in only one of them would be a half-fix, so
 everything here runs against both.
 
-The third refusal -- a model that is empty because nobody loaded it
-(gain#1097) -- is shared with the GTF serializer, and its GTF tests
-sit here beside the default-format ones so that the shared message is
-pinned in one place.
+The third refusal -- a model nobody loaded (gain#1097) -- is shared
+with the GTF serializer, and its GTF tests sit here beside the
+default-format ones so that the shared message is pinned in one place.
 """
 
 import pathlib
@@ -251,9 +250,30 @@ def test_never_loaded_models_are_refused_naming_the_resource(
         serialize(gene_models, tmp_path)
 
     assert str(error.value) == (
-        f"gene models {RESOURCE_ID} hold no transcripts and were never "
-        f"loaded; call load() before serializing them"
+        f"gene models {RESOURCE_ID} were never loaded; "
+        f"call load() before serializing them"
     )
+
+
+@pytest.mark.parametrize("serialize", SERIALIZERS)
+def test_the_refusal_asks_only_whether_the_model_is_loaded(
+    serialize: Serialize,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Holding transcripts does not stand in for ``load()``.
+
+    A model whose ``transcript_models`` were filled in without going
+    through ``load()`` or ``from_transcript_models`` is not a
+    supported shape, and the gate does not carve one out for it: it
+    asks ``is_loaded()`` and nothing else, so that "usable" means the
+    same thing here as it does to the effect annotators.
+    """
+    loaded = models_damaged_by(leave_as_parsed)
+    gene_models = models_never_loaded()
+    gene_models.transcript_models = dict(loaded.transcript_models)
+
+    with pytest.raises(ValueError, match="never loaded"):
+        serialize(gene_models, tmp_path)
 
 
 def test_joined_models_serialize_through_both_writers(
