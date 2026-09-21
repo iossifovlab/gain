@@ -18,6 +18,7 @@ from typing import ClassVar
 import numpy as np
 import pyBigWig
 import pytest
+from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     FragmentScore,
@@ -65,6 +66,20 @@ def _batch(begins: list[int], ends: list[int]) -> RecordArrays:
     )
 
 
+def _records_of(batches: list[RecordArrays]) -> list[Record]:
+    """The per-record stream carrying exactly the rows of ``batches``.
+
+    Both doors then read the same rows, so a comparison of their refusals
+    is of the two rules and not of two fixtures.
+    """
+    return [
+        ("chr1", int(begin), int(end), None, None,
+         ("chr1", str(begin), str(end), "0.5"))
+        for pos_begin, pos_end, _cells in batches
+        for begin, end in zip(pos_begin, pos_end, strict=True)
+    ]
+
+
 TOUCHING_RECORDS = """
     chrom  pos_begin  pos_end  s
     chr1   1          5        0.1
@@ -89,7 +104,7 @@ def _position_score_resource(
 
 
 def _position_score(
-    tmp_path: pathlib.Path, resource_id: str, data: str,
+    tmp_path: pathlib.Path, resource_id: str, data: str = TOUCHING_RECORDS,
 ) -> PositionScore:
     score = build_position_score_from_resource(
         _position_score_resource(tmp_path, resource_id, data))
@@ -149,8 +164,16 @@ def test_a_score_kind_must_state_its_own_record_rules(
         _KindStatingNothing.record_weight(10, 19)
 
 
-def _allele_score(tmp_path: pathlib.Path, resource_id: str) -> AlleleScore:
-    # The resource itself is well formed -- a table whose positions decrease
+ONE_ALLELE = """
+    chrom  pos_begin  reference  alternative  s
+    chr1   10         A          G            0.1
+"""
+
+
+def _allele_score(
+    tmp_path: pathlib.Path, resource_id: str, data: str = ONE_ALLELE,
+) -> AlleleScore:
+    # The default resource is well formed -- a table whose positions decrease
     # cannot be tabix-indexed, so the backwards stream is supplied directly,
     # as the per-record tests of this rule also do.
     score = build_allele_score_from_resource(
@@ -160,10 +183,7 @@ def _allele_score(tmp_path: pathlib.Path, resource_id: str) -> AlleleScore:
             an_allele_score()
             .with_score("s", "float")
             .with_tabix()
-            .with_data("""
-                chrom  pos_begin  reference  alternative  s
-                chr1   10         A          G            0.1
-            """))
+            .with_data(data))
         .build_repo(tmp_path)
         .get_resource(resource_id))
     score.open()
@@ -409,25 +429,21 @@ def test_the_backwards_rule_is_refused_the_same_way_down_both_paths(
     # following one at 20 -- so the comparison is of the two code paths and
     # not of two fixtures.
     score = builder(tmp_path, f"backwards_{kind}")  # type: ignore[operator]
-    records = [
-        ("chr1", 20, 29, None, None, ("chr1", "20", "29", "0.2")),
-        ("chr1", 10, 19, None, None, ("chr1", "10", "19", "0.1")),
-    ]
+    batches = [_batch([20, 10], [29, 19])]
 
     with pytest.raises(MalformedResourceError) as per_record:
-        list(validate_records(score, iter(records)))
+        list(validate_records(score, iter(_records_of(batches))))
     with pytest.raises(MalformedResourceError) as arrays:
-        list(validate_record_arrays(score,
-            iter([_batch([20, 10], [29, 19])]), "chr1"))
+        list(validate_record_arrays(score, iter(batches), "chr1"))
 
     assert str(arrays.value) == str(per_record.value)
     assert f"{possessive} records must not move backwards" in str(arrays.value)
 
 
-# The array door makes no inverted-span check of its own; the bound the two
-# backends impose stands in for it (``validate_record_arrays`` says which
-# bound, and why the one row it admits is gain#1526).  The three tests below
-# pin that bound on the indexer and the writer the fixtures go through.
+# The backends the array door reads keep almost every inverted span out, and
+# the two tests below pin how much: tabix, checking zero-based, admits a
+# 1-based row ending exactly one below its begin, and a bigWig admits none.
+# The tests after them are what the door says to the row tabix lets through.
 
 
 def _a_second_row_ending_at(pos_end: int) -> str:
@@ -453,25 +469,6 @@ def test_tabix_refuses_to_index_a_row_ending_two_below_its_begin(
         in capfd.readouterr().err
 
 
-def test_the_two_doors_disagree_on_a_tabix_row_ending_one_below_its_begin(
-    tmp_path: pathlib.Path,
-) -> None:
-    # htslib checks zero-based, where the 1-based ``30 29`` is the empty
-    # interval ``[29, 29)`` and not inverted, so the array door receives
-    # this row and passes it; the per-record door refuses it (gain#1526).
-    score = _position_score(tmp_path, "empty", _a_second_row_ending_at(29))
-
-    batches = list(validate_record_arrays(
-        score, score.fetch_region_value_arrays("chr1", 1, 100, ["s"]),
-        "chr1"))
-
-    assert [(b[0].tolist(), b[1].tolist()) for b in batches] == [
-        ([10, 30, 35], [20, 29, 40]),
-    ]
-    with pytest.raises(OSError, match="end 29 smaller than the beginning 30"):
-        list(validate_records(score, score.fetch_records("chr1", 1, 100)))
-
-
 def test_a_bigwig_cannot_be_written_with_an_inverted_interval(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -491,3 +488,209 @@ def test_a_bigwig_cannot_be_written_with_an_inverted_interval(
         bigwig.addEntries(["chr1"], [30], ends=[30], values=[0.2])
 
     bigwig.close()
+
+
+def test_a_tabix_row_ending_one_below_its_begin_is_refused_down_both_doors(
+    tmp_path: pathlib.Path,
+) -> None:
+    # htslib checks zero-based, where the 1-based ``30 29`` is the empty
+    # interval ``[29, 29)`` and not inverted, so this is the one inverted
+    # row a backend hands the array door.  It must be refused there exactly
+    # as the per-record door refuses it (gain#1526).
+    score = _position_score(tmp_path, "empty", _a_second_row_ending_at(29))
+
+    with pytest.raises(OSError) as per_record:
+        list(validate_records(score, score.fetch_records("chr1", 1, 100)))
+    with pytest.raises(OSError) as arrays:
+        list(validate_record_arrays(
+            score, score.fetch_region_value_arrays("chr1", 1, 100, ["s"]),
+            "chr1"))
+
+    assert str(arrays.value) == str(per_record.value)
+    assert "chr1:30-29" in str(arrays.value)
+    assert "end 29 smaller than the beginning 30" in str(arrays.value)
+
+
+def test_the_histogram_scan_refuses_the_inverted_row_down_both_paths(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The same row through the scan's own entry points, so the claim is
+    # about what ``repo-stats`` says and not only about the two validators.
+    # The histogram pass stands for both bulk passes: the min/max pass reads
+    # through the same door, as the allele-rule tests above show.
+    resource = _position_score_resource(
+        tmp_path, "empty", _a_second_row_ending_at(29))
+    confs: dict = {"s": _hist_conf()}
+
+    with pytest.raises(OSError) as per_record:
+        scan.do_histogram(resource, confs, "chr1", 1, 100)
+    with pytest.raises(OSError) as bulk:
+        scan.do_histogram_bulk(resource, confs, "chr1", 1, 100)
+
+    assert str(bulk.value) == str(per_record.value)
+    assert "chr1:30-29" in str(bulk.value)
+
+
+@pytest.mark.parametrize("kind,builder", [
+    ("position", _position_score),
+    ("allele", _allele_score),
+    ("fragment", _fragment_score),
+])
+def test_every_kind_refuses_an_inverted_span_at_the_array_door(
+    tmp_path: pathlib.Path,
+    kind: str,
+    builder: object,
+) -> None:
+    # A record's own two ends are a claim about that record, not about the
+    # kind's ordering, so every kind's rule refuses it -- as every kind's
+    # per-record rule does, through one shared reader.  The stream is
+    # supplied directly: no allele fixture carries a ``pos_end`` column.
+    score = builder(tmp_path, f"inverted_{kind}")  # type: ignore[operator]
+
+    with pytest.raises(OSError, match="chr1:30-29") as excinfo:
+        list(validate_record_arrays(score,
+            iter([_batch([10, 30, 35], [20, 29, 40])]), "chr1"))
+
+    assert "end 29 smaller than the beginning 30" in str(excinfo.value)
+
+
+def test_an_allele_inverted_span_loses_its_ref_alt_at_the_array_door(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The one place the two doors' refusals differ in wording: an allele
+    # record carries its ref and alt, and the per-record door names them;
+    # the column batches the array door reads carry neither, so its message
+    # stops at the position.  Same type, same record, one suffix apart --
+    # pinned so the narrowing is a stated fact rather than a surprise.
+    score = _allele_score(tmp_path, "inverted_allele_with_ends", """
+        chrom  pos_begin  pos_end  reference  alternative  s
+        chr1   10         10       A          G            0.1
+        chr1   30         29       C          T            0.2
+    """)
+
+    with pytest.raises(OSError) as per_record:
+        list(validate_records(score, score.fetch_records("chr1", 1, 100)))
+    with pytest.raises(OSError) as arrays:
+        list(validate_record_arrays(
+            score, score.fetch_region_value_arrays("chr1", 1, 100, ["s"]),
+            "chr1"))
+
+    assert "chr1:30-29 C->T has" in str(per_record.value)
+    assert str(arrays.value) == str(per_record.value).replace(" C->T", "")
+
+
+@pytest.mark.parametrize("data,batch_size,first_fault", [
+    pytest.param("""
+        chrom  pos_begin  pos_end  s
+        chr1   10         20       0.1
+        chr1   15         25       0.2
+        chr1   30         29       0.3
+    """, 10, "at most one record per position", id="overlap-first"),
+    pytest.param("""
+        chrom  pos_begin  pos_end  s
+        chr1   10         20       0.1
+        chr1   30         29       0.2
+        chr1   32         35       0.3
+        chr1   33         40       0.4
+    """, 10, "end 29 smaller than the beginning 30", id="inverted-first"),
+    pytest.param("""
+        chrom  pos_begin  pos_end  s
+        chr1   10         20       0.1
+        chr1   15         14       0.2
+    """, 10, "end 14 smaller than the beginning 15", id="same-record"),
+    pytest.param("""
+        chrom  pos_begin  pos_end  s
+        chr1   5          8        0.1
+        chr1   10         20       0.2
+        chr1   15         25       0.3
+        chr1   30         29       0.4
+    """, 2, "at most one record per position", id="overlap-across-a-batch"),
+    pytest.param("""
+        chrom  pos_begin  pos_end  s
+        chr1   10         20       0.1
+        chr1   15         25       0.2
+        chr1   30         29       0.3
+        chr1   35         40       0.4
+    """, 2, "at most one record per position",
+        id="overlap-in-an-earlier-batch"),
+    pytest.param("""
+        chrom  pos_begin  pos_end  s
+        chr1   5          8        0.1
+        chr1   30         29       0.2
+        chr1   32         40       0.3
+        chr1   33         45       0.4
+    """, 2, "end 29 smaller than the beginning 30",
+        id="inverted-in-an-earlier-batch"),
+])
+def test_both_doors_name_the_same_first_fault_of_a_two_fault_resource(
+    tmp_path: pathlib.Path,
+    data: str,
+    batch_size: int,
+    first_fault: str,
+) -> None:
+    # A resource may break two rules at once, and "refused the same way"
+    # then means the same FIRST fault in record order.  The per-record door
+    # reads a record's own span before comparing it with its predecessor,
+    # so a span fault wins a tie on one record (``same-record``); the array
+    # door must reach the same answer whichever batch either fault lands
+    # in.  The three ``batch_size=2`` cases read two records per batch:
+    # the overlap caught on the carried end with the inverted row after it
+    # in the same batch, and each fault alone in the batch before the other.
+    score = _position_score(tmp_path, "two_faults", data)
+
+    with pytest.raises((OSError, MalformedResourceError)) as per_record:
+        list(validate_records(score, score.fetch_records("chr1", 1, 100)))
+    with pytest.raises((OSError, MalformedResourceError)) as arrays:
+        list(validate_record_arrays(
+            score,
+            score.fetch_region_value_arrays(
+                "chr1", 1, 100, ["s"], batch_size=batch_size),
+            "chr1"))
+
+    assert type(arrays.value) is type(per_record.value)
+    assert str(arrays.value) == str(per_record.value)
+    assert first_fault in str(arrays.value)
+
+
+@pytest.mark.parametrize("batches,first_fault", [
+    pytest.param(
+        [_batch([20, 10, 30], [29, 19, 29])],
+        "must not move backwards", id="backwards-first"),
+    pytest.param(
+        [_batch([20], [29]), _batch([10, 30], [19, 29])],
+        "must not move backwards", id="backwards-first-across-a-batch"),
+    pytest.param(
+        [_batch([10, 30, 5], [20, 29, 6])],
+        "end 29 smaller than the beginning 30", id="inverted-first"),
+    pytest.param(
+        [_batch([10, 30], [20, 29]), _batch([5], [6])],
+        "end 29 smaller than the beginning 30",
+        id="inverted-first-in-an-earlier-batch"),
+    pytest.param(
+        [_batch([20, 10], [29, 9])],
+        "end 9 smaller than the beginning 10", id="same-record"),
+    pytest.param(
+        [_batch([20], [29]), _batch([10], [9])],
+        "end 9 smaller than the beginning 10",
+        id="same-record-across-a-batch"),
+])
+def test_both_doors_name_the_same_first_fault_of_a_two_fault_stream(
+    tmp_path: pathlib.Path,
+    batches: list[RecordArrays],
+    first_fault: str,
+) -> None:
+    # The backwards rule's half of the claim above, over the same
+    # arrangements: the faults in either order, on one record, and split
+    # across a batch boundary.  Supplied directly, since a table whose
+    # positions decrease cannot be tabix-indexed; both doors read the same
+    # rows, so the comparison is of the two rules and not of two fixtures.
+    score = _fragment_score(tmp_path, "two_fault_fragment")
+
+    with pytest.raises((OSError, MalformedResourceError)) as per_record:
+        list(validate_records(score, iter(_records_of(batches))))
+    with pytest.raises((OSError, MalformedResourceError)) as arrays:
+        list(validate_record_arrays(score, iter(batches), "chr1"))
+
+    assert type(arrays.value) is type(per_record.value)
+    assert str(arrays.value) == str(per_record.value)
+    assert first_fault in str(arrays.value)
