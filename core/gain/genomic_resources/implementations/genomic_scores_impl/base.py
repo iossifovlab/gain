@@ -267,12 +267,23 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         resolves from and the manifest md5 of every table file -- is
         the resource's key today.  Otherwise ``STALE`` when every table
         file is here to rebuild it from, and ``PAYLOAD_ABSENT`` when
-        one is missing beside its ``.dvc`` sidecar: an unpulled DVC
-        checkout, reported once as a WARNING here, where the missing
-        file is known.  A file missing with no sidecar is not that --
-        the resource is broken and the rebuild fails it, as any read
-        would.  Compares keys and looks for files; opens no table.
+        the missing ones are all beside their ``.dvc`` sidecars: an
+        unpulled DVC checkout, reported once as a WARNING here, where
+        the missing files are known.  A file missing with no sidecar
+        is not that -- the resource is broken, whatever the stored key
+        says, and the rebuild fails it, as any read would.  Looks for
+        files and compares keys; opens no table.
         """
+        missing = [
+            file_name for file_name in sorted(self.files)
+            if not self.resource.file_exists(file_name)]
+        unpulled = [
+            file_name for file_name in missing
+            if self.resource.file_exists(file_name + DVC_SUFFIX)]
+        if len(unpulled) < len(missing):
+            # A file nothing vouches for: the resource is broken, and
+            # the rebuild is what fails it, as any read of it would.
+            return DerivedFilesState.STALE
         stored = load_chrom_lengths(self.resource)
         if stored is not None and self._is_derived_from_now(
                 stored.derived_from, grr):
@@ -281,16 +292,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             "stored chromosome lengths of <%s> are %s; needs update",
             self.resource.get_full_id(),
             "absent" if stored is None else "outdated")
-        for file_name in sorted(self.files):
-            if (not self.resource.file_exists(file_name)
-                    and self.resource.file_exists(
-                        file_name + DVC_SUFFIX)):
-                logger.warning(
-                    "<%s>: %s is a .dvc pointer whose payload is not "
-                    "here; its chromosome lengths will be stored by the "
-                    "next repair that has it",
-                    self.resource.get_full_id(), file_name)
-                return DerivedFilesState.PAYLOAD_ABSENT
+        if unpulled:
+            logger.warning(
+                "<%s>: %s is a .dvc pointer whose payload is not here; "
+                "its chromosome lengths will be stored by the next "
+                "repair that has it",
+                self.resource.get_full_id(), ", ".join(unpulled))
+            return DerivedFilesState.PAYLOAD_ABSENT
         return DerivedFilesState.STALE
 
     def rebuild_derived_files(

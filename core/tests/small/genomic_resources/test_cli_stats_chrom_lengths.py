@@ -238,26 +238,38 @@ def test_a_table_file_missing_without_a_sidecar_still_fails_the_resource(
 
 
 @pytest.mark.parametrize("content", [
-    pytest.param("", id="truncated"),
-    pytest.param('{"format": 0, "sources": {}}', id="another-format"),
+    pytest.param(b"", id="truncated"),
+    pytest.param(b"\xff\xfe{", id="not-utf8"),
+    pytest.param(b'{"format": 0, "sources": {}}', id="another-format"),
     pytest.param(
-        '{"format": 1, "derived_from": {"reference_genome": null, '
-        '"files_md5": {}}, "table_source": "tabix_estimate", '
-        '"sources": {"nonsense": {"chr1": 1}, "tabix_estimate": {}}}',
+        b'{"format": true, "derived_from": {"reference_genome": null, '
+        b'"files_md5": {}}, "table_source": "tabix_estimate", '
+        b'"sources": {"tabix_estimate": {"chr1": 1}}}',
+        id="format-that-merely-equals-one"),
+    pytest.param(
+        b'{"format": 1, "derived_from": {"reference_genome": null, '
+        b'"files_md5": {}}, "table_source": "tabix_estimate", '
+        b'"sources": {"reference_genome": {"chr1": "empty"}, '
+        b'"tabix_estimate": {"chr1": 1}}}',
+        id="reason-outside-the-tables-block"),
+    pytest.param(
+        b'{"format": 1, "derived_from": {"reference_genome": null, '
+        b'"files_md5": {}}, "table_source": "tabix_estimate", '
+        b'"sources": {"nonsense": {"chr1": 1}, "tabix_estimate": {}}}',
         id="unknown-source"),
     pytest.param(
-        '{"format": 1, "derived_from": {"reference_genome": null, '
-        '"files_md5": {}}, "table_source": "tabix_estimate", '
-        '"sources": {"tabix_estimate": {"chr1": null}}}',
+        b'{"format": 1, "derived_from": {"reference_genome": null, '
+        b'"files_md5": {}}, "table_source": "tabix_estimate", '
+        b'"sources": {"tabix_estimate": {"chr1": null}}}',
         id="neither-length-nor-reason"),
 ])
 def test_an_unreadable_lengths_file_is_rewritten_by_an_ordinary_run(
-    tmp_path: pathlib.Path, content: str,
+    tmp_path: pathlib.Path, content: bytes,
 ) -> None:
     """Unreadable is stale, not fatal: every other statistics file is
     recoverable by a run, and this one must not need a manual rm."""
     statistics = repair_the_labelled_score(tmp_path)
-    (statistics / "chrom_lengths.json").write_text(content)
+    (statistics / "chrom_lengths.json").write_bytes(content)
     resync_the_manifest(tmp_path, "score")
 
     resource_stats(tmp_path, "score")

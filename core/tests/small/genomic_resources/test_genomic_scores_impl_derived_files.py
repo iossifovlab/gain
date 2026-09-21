@@ -168,6 +168,35 @@ def test_a_genome_that_turns_up_later_makes_the_stored_lengths_stale(
     assert impl.derived_files_state(repo) is DerivedFilesState.STALE
 
 
+def test_a_current_file_whose_table_file_is_gone_is_stale_not_an_error(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The manifest no longer lists the file, so the key cannot even be
+    computed; the missing input is classified before the key is read."""
+    _a_repaired_labelled_score(tmp_path)
+    (tmp_path / "score" / "data.txt.gz").unlink()
+
+    impl, repo = _resynced(tmp_path)
+
+    assert impl.derived_files_state(repo) is DerivedFilesState.STALE
+
+
+def test_one_unpulled_and_one_plainly_missing_input_is_a_broken_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A sidecar vouches for the index; nothing vouches for the data
+    file.  (The other way round the index drops out of the manifest and
+    so out of the file set, and there is only one missing file.)"""
+    _a_repaired_labelled_score(tmp_path)
+    (tmp_path / "score" / "statistics" / "chrom_lengths.json").unlink()
+    leave_as_a_pointer(tmp_path / "score" / "data.txt.gz.tbi")
+    (tmp_path / "score" / "data.txt.gz").unlink()
+
+    impl, repo = _resynced(tmp_path)
+
+    assert impl.derived_files_state(repo) is DerivedFilesState.STALE
+
+
 def test_a_table_file_missing_without_a_sidecar_is_not_an_unpulled_payload(
     tmp_path: pathlib.Path,
 ) -> None:

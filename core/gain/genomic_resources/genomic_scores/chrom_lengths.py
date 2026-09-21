@@ -41,6 +41,7 @@ from gain.genomic_resources.genomic_position_table import (
     ChromLengthSource,
     ContigExtent,
 )
+from gain.utils.log_safety import escape_unsafe_characters
 
 if TYPE_CHECKING:
     from gain.genomic_resources.reference_genome import ReferenceGenome
@@ -226,12 +227,19 @@ def _serialize(stored: StoredChromLengths) -> str:
     }, indent=2)
 
 
+def _is_a_count(value: object) -> bool:
+    """An ``int`` that is not a ``bool``, which is an ``int`` too."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _deserialize(content: str) -> StoredChromLengths:
     """The stored lengths.  Raises on a document that is not one -- of
     another format, or of the wrong shape -- and the caller reads that
     as absent."""
     document = json.loads(content)
-    if document["format"] != CHROM_LENGTHS_FORMAT:
+    # ``True`` and ``1.0`` compare equal to ``1``; neither is the format.
+    if not _is_a_count(document["format"]) or \
+            document["format"] != CHROM_LENGTHS_FORMAT:
         raise ValueError(
             f"format {document['format']!r} is not {CHROM_LENGTHS_FORMAT}")
     table_source = ChromLengthSource(document["table_source"])
@@ -242,14 +250,14 @@ def _deserialize(content: str) -> StoredChromLengths:
     for source_name, block in document["sources"].items():
         source = ChromLengthSource(source_name)
         for chrom, value in block.items():
-            if isinstance(value, str):
+            if isinstance(value, str) and source is table_source:
                 extents[chrom] = ContigExtent[value.upper()]
-            elif isinstance(value, int) and not isinstance(value, bool):
+            elif _is_a_count(value):
                 answers[chrom][source] = value
             else:
                 raise TypeError(
                     f"{source_name}/{chrom}: {value!r} is neither a "
-                    "length nor a reason")
+                    "length nor the table's reason")
     derived_from = document["derived_from"]
     return StoredChromLengths(
         lengths={
@@ -285,17 +293,18 @@ def load_chrom_lengths(resource: GenomicResource) -> StoredChromLengths | None:
     the repair is about to replace.
     """
     try:
-        content = resource.get_file_content(CHROM_LENGTHS_FILE)
+        return _deserialize(resource.get_file_content(CHROM_LENGTHS_FILE))
     except FileNotFoundError:
         return None
-    try:
-        return _deserialize(content)
     except (ValueError, KeyError, TypeError, AttributeError) as err:
-        # ``json.JSONDecodeError`` is a ``ValueError``; so is an enum
-        # member the name does not match.  The others are a document
-        # of the wrong shape.
+        # ``json.JSONDecodeError`` and ``UnicodeDecodeError`` are
+        # ``ValueError``s; so is an enum member the name does not
+        # match.  The others are a document of the wrong shape.  The
+        # cause quotes the file, which is repository content: escaped
+        # so it cannot end the line and start a forged record (gain#642).
         logger.warning(
             "resource <%s>: %s cannot be read as stored chromosome "
             "lengths (%s); treating it as absent",
-            resource.resource_id, CHROM_LENGTHS_FILE, err)
+            resource.resource_id, CHROM_LENGTHS_FILE,
+            escape_unsafe_characters(str(err)))
         return None
