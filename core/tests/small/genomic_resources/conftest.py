@@ -3,12 +3,14 @@
 import contextlib
 import functools
 import gzip
+import hashlib
 import http.server
 import itertools
 import logging
 import os
 import pathlib
 import shutil
+import textwrap
 import threading
 from collections.abc import Callable, Generator, Iterable, Iterator
 from types import ModuleType
@@ -640,6 +642,38 @@ def captured_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
         record.getMessage() for record in caplog.records
         if record.levelno >= logging.WARNING
     ]
+
+
+def _as_bytes(content: bytes | str) -> bytes:
+    return content if isinstance(content, bytes) else content.encode("utf8")
+
+
+def md5_of(content: bytes | str) -> str:
+    """The manifest's digest of ``content``, computed independently."""
+    return hashlib.md5(  # ruff: ignore[hashlib-insecure-hash-function]
+        _as_bytes(content)).hexdigest()
+
+
+def size_of(content: bytes | str) -> int:
+    return len(_as_bytes(content))
+
+
+def dvc_sidecar(path: str, content: bytes | str) -> str:
+    """The ``.dvc`` sidecar DVC writes for ``path`` holding ``content``."""
+    return textwrap.dedent(f"""
+        outs:
+        - md5: {md5_of(content)}
+          size: {size_of(content)}
+          path: {path}
+    """)
+
+
+def leave_as_a_pointer(payload: pathlib.Path) -> None:
+    """Replace ``payload`` with the ``.dvc`` sidecar that describes it:
+    an unpulled DVC checkout of the same resource."""
+    payload.with_name(payload.name + ".dvc").write_text(
+        dvc_sidecar(payload.name, payload.read_bytes()))
+    payload.unlink()
 
 
 #: Every value a curator can write for a label that names a resource

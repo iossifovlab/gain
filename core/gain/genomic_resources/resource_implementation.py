@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import enum
 import threading
 import weakref
 from abc import ABC, abstractmethod
@@ -27,6 +28,7 @@ from .repository import (
     INDEX_COLUMN_PATTERN,
     INDEX_COLUMN_RE,
     GenomicResource,
+    GenomicResourceRepo,
     _description_in,
     _summary_in,
 )
@@ -229,6 +231,27 @@ def merge_index_columns(
     return merged
 
 
+class DerivedFilesState(enum.Enum):
+    """Whether a kind's derived files describe the resource as it is now.
+
+    A derived file is one a kind computes at repair from inputs the
+    statistics hash must not learn about, under a freshness gate of its
+    own; a genomic score keeps its chromosome lengths this way.  The gate
+    answers one of three states and never derives anything.
+    """
+
+    CURRENT = enum.auto()
+    """Present and derived from the resource as it is now."""
+
+    STALE = enum.auto()
+    """Absent or out of date, and every input to rebuild it is here."""
+
+    PAYLOAD_ABSENT = enum.auto()
+    """Absent or out of date, and an input is a ``.dvc`` sidecar whose
+    payload has not been pulled: nothing can be rebuilt here, and there
+    is nothing wrong with the resource."""
+
+
 class ResourceStatistics:
     """
     Base class for statistics.
@@ -298,6 +321,33 @@ class GenomicResourceImplementation(ABC):
     def calc_info_hash(self) -> bytes:
         """Compute and return the info hash."""
         raise NotImplementedError
+
+    def derived_files_state(
+        self, grr: GenomicResourceRepo | None,  # ruff: ignore[unused-method-argument]
+    ) -> DerivedFilesState:
+        """Whether the files this kind derives at repair, under a
+        freshness gate of its own rather than the statistics hash's,
+        describe the resource as it is now.
+
+        Cheap by contract: the gate compares what a file was derived
+        from with what is there now, and never derives anything -- nor
+        opens the resource's payload, so a pointer-only DVC checkout
+        can be asked.  Most kinds have no such file and answer
+        ``CURRENT``; a genomic score keeps its chromosome lengths this
+        way (gain#1576).
+        """
+        return DerivedFilesState.CURRENT
+
+    def rebuild_derived_files(
+        self, grr: GenomicResourceRepo | None,  # ruff: ignore[unused-method-argument]
+    ) -> None:
+        """Rewrite the files :meth:`derived_files_state` gates.
+
+        Called by a repair that found them ``STALE`` while the statistics
+        themselves are current; a full statistics rebuild writes them on
+        its own.  A no-op for a kind that derives nothing.
+        """
+        return
 
     @abstractmethod
     def get_info(self, **kwargs: Any) -> str:

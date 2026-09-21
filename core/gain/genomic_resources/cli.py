@@ -69,6 +69,7 @@ from gain.genomic_resources.repository_factory import (
 )
 from gain.genomic_resources.resource_errors import HistogramError
 from gain.genomic_resources.resource_implementation import (
+    DerivedFilesState,
     GenomicResourceImplementation,
     IndexColumn,
     ResourceStatistics,
@@ -989,6 +990,35 @@ def _statistics_not_built(
     return frozenset(not_built)
 
 
+def _run_stats_graph(
+    graph: TaskGraph, proto: ReadWriteRepositoryProtocol,
+    **kwargs: bool | int | str,
+) -> bool:
+    """Run the statistics tasks; whether the run failed as a whole.
+
+    An empty graph is nothing to run.  Otherwise the graph runs to the
+    end whatever fails (``keep_going``), and the only report of a
+    failed task is the return value -- discarding it was the whole of
+    gain#364 for an execution failure.  Task logs go under the
+    repository's ``.task-log`` unless the caller named a directory.
+    """
+    if len(graph.tasks) == 0:
+        return False
+    modified_kwargs = copy.copy(kwargs)
+    modified_kwargs["command"] = "run"
+    modified_kwargs["keep_going"] = True
+    if modified_kwargs.get("task_log_dir") is None:
+        repo_url = proto.get_url()
+        modified_kwargs["task_log_dir"] = \
+            fs_utils.join(repo_url, ".task-log")
+    if not TaskGraphCli.process_graph(
+            graph, task_progress_mode=False, **modified_kwargs):
+        logger.error("building the statistics of GRR <%s> failed",
+                     proto.get_url())
+        return True
+    return False
+
+
 def _run_stats_core(
         repo: GenomicResourceRepo,
         proto: ReadWriteRepositoryProtocol,
@@ -1015,8 +1045,15 @@ def _run_stats_core(
     graph = TaskGraph()
 
     needs_update = 0
+    # Out of date, but with a payload this checkout does not have: a
+    # dry run counts them apart, a real run leaves them for a checkout
+    # that has it.
+    not_buildable = 0
     failed: set[str] = set(outcome.failed)
     stats_resources: list[GenomicResource] = []
+    # Resources whose derived files alone were rewritten: no task ran for
+    # them, but their manifests have new content to record all the same.
+    derived_resources: list[GenomicResource] = []
     for res in resources:
         if res.resource_id in failed:
             # Its manifest could not be built, so there is nothing to
@@ -1026,24 +1063,39 @@ def _run_stats_core(
                 "not building the statistics of <%s>: "
                 "it already failed in this run", res.resource_id)
             continue
-        # Four operations under one `try` -- building the implementation,
-        # looking up the manifest update, comparing the statistics hash and
-        # collecting the statistics tasks -- so the message names none of
-        # them and carries the cause instead (gain#364).
+        # Five operations under one `try` -- building the implementation,
+        # looking up the manifest update, comparing the statistics hash,
+        # checking the derived files and collecting the statistics tasks
+        # -- so the message names none of them and carries the cause
+        # instead (gain#364).
         try:
             impl = build_resource_implementation(res)
             manifest_updated = updates_needed[res.resource_id]
             needs_rebuild = manifest_updated or _stats_need_rebuild(proto, impl)
+            # A second gate, beside the hash's and independent of it: a
+            # file the kind derives at repair from inputs the hash must
+            # not learn about (a score's chromosome lengths from its
+            # `reference_genome` label).  Stale on its own, it is
+            # rewritten on its own -- never at the price of a rebuild,
+            # which rewrites it anyway -- and one whose payload is not
+            # here is left alone: the kind says so, and this loop
+            # decides nothing about DVC (gain#1576).
+            derived = impl.derived_files_state(repo)
             if dry_run:
-                if needs_rebuild:
+                if needs_rebuild or derived is not DerivedFilesState.CURRENT:
                     logger.info(
                         "Statistics of <%s> needs update", res.resource_id)
                     needs_update += 1
+                if derived is DerivedFilesState.PAYLOAD_ABSENT:
+                    not_buildable += 1
             elif force or needs_rebuild:
                 _collect_impl_stats_tasks(
                     graph, proto, impl, repo,
                     region_size=region_size)
                 stats_resources.append(res)
+            elif derived is DerivedFilesState.STALE:
+                impl.rebuild_derived_files(repo)
+                derived_resources.append(res)
         except Exception as err:  # ruff: ignore[blind-except]
             # Collected, not raised: the resources after this one in the
             # repository are still repaired.
@@ -1056,28 +1108,15 @@ def _run_stats_core(
         # date, so it counts towards the "how many need an update" status a
         # dry run exits with -- that keeps the status a COUNT rather than
         # collapsing it to a bare 1 (gain#364).
+        needs_update += len(failed)
+        if needs_update:
+            logger.info(
+                "%d resources need update, %d of them not buildable here",
+                needs_update, not_buildable)
         return CommandResult(
-            needs_update=needs_update + len(failed),
-            failed=frozenset(failed))
+            needs_update=needs_update, failed=frozenset(failed))
 
-    repo_failed = False
-    if len(graph.tasks) > 0:
-        modified_kwargs = copy.copy(kwargs)
-        modified_kwargs["command"] = "run"
-        modified_kwargs["keep_going"] = True
-        if modified_kwargs.get("task_log_dir") is None:
-            repo_url = proto.get_url()
-            modified_kwargs["task_log_dir"] = \
-                fs_utils.join(repo_url, ".task-log")
-
-        # `keep_going=True` means a failing task does not raise -- the
-        # only report of it is this return value, and discarding it was
-        # the whole of gain#364 for an execution failure.
-        if not TaskGraphCli.process_graph(
-                graph, task_progress_mode=False, **modified_kwargs):
-            logger.error("building the statistics of GRR <%s> failed",
-                         proto.get_url())
-            repo_failed = True
+    repo_failed = _run_stats_graph(graph, proto, **kwargs)
 
     if stats_resources:
         # Run unconditionally, not only when the graph reported failure: a
@@ -1090,8 +1129,11 @@ def _run_stats_core(
             # the per-resource list does not say better.
             repo_failed = False
 
-        # Rebuilding the statistics wrote new files into these resources, so
-        # their manifests have to be rebuilt. `use_dvc=True` (the size and
+    written = [*stats_resources, *derived_resources]
+    if written:
+        # Rebuilding the statistics (or the derived files alone) wrote new
+        # files into these resources, so their manifests have to be
+        # rebuilt. `use_dvc=True` (the size and
         # timestamp fast path) is deliberate even under `--without-dvc`: the
         # manifest pass above has just verified the content of every
         # materialised file of this very repository, in this very command,
@@ -1104,13 +1146,13 @@ def _run_stats_core(
         # resource must not be published from the manifest this pass
         # declined to write (gain#503).
         stats_manifest_outcome = _run_repo_manifest_command_internal(
-            proto, stats_resources,
+            proto, written,
             dry_run=False, force=True, use_dvc=True)
         failed |= set(stats_manifest_outcome.failed)
 
     return CommandResult(
         failed=frozenset(failed), repo_failed=repo_failed,
-        wrote=outcome.wrote or bool(stats_resources))
+        wrote=outcome.wrote or bool(written))
 
 
 def _publish_repository_contents(
