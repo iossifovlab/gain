@@ -48,6 +48,45 @@ def test_serialization_round_trips_segments_and_their_lengths() -> None:
     assert lengths["chr2"] == ExactLengths({1: 1}, 1, 1, 1, 1)
 
 
+def test_reading_the_file_builds_no_array_tally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The array tally is the SCAN's: one clamp-sized counter block per
+    # region, so the interior runs of a batch fold at a cost bounded by
+    # the clamp.  A region restored from the file never closes a run, so
+    # it has no use for one -- and at 64 KB a piece, a draft assembly
+    # with 100k scaffolds would need gigabytes just to render its info
+    # page (gain#1565).  Pinned as a count of constructions rather than
+    # a memory bound, which would be a flaky pin.
+    stats = CoverageStatistics()
+    chr1 = RegionCoverage("chr1", 1, 100)
+    chr1.add_interval(10, 12, (0.5,))
+    chr1.add_interval(13, 20, (0.7,))
+    chr2 = RegionCoverage("chr2", 1, 100)
+    chr2.add_interval(5, 5, (0.1,))
+    stats.fold_region(chr1)
+    stats.fold_region(chr2)
+    content = stats.serialize()
+    constructions: list[LengthArrayTally] = []
+    build = LengthArrayTally.__init__
+
+    def spy(self: LengthArrayTally) -> None:
+        constructions.append(self)
+        build(self)
+    monkeypatch.setattr(LengthArrayTally, "__init__", spy)
+
+    restored = CoverageStatistics.deserialize(content)
+    global_lengths = restored.segment_lengths_global()
+
+    assert not constructions, \
+        f"the reader built {len(constructions)} array tallies"
+    assert global_lengths == ExactLengths({1: 1, 3: 1, 8: 1}, 3, 12, 1, 8)
+    assert restored.segment_lengths_by_chromosome() == {
+        "chr1": ExactLengths({3: 1, 8: 1}, 2, 11, 3, 8),
+        "chr2": ExactLengths({1: 1}, 1, 1, 1, 1),
+    }
+
+
 def test_the_global_record_is_the_fold_of_the_chromosomes() -> None:
     stats = CoverageStatistics()
     chr1 = RegionCoverage("chr1", 1, 100)
