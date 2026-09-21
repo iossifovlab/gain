@@ -492,14 +492,14 @@ def merged_lengths(
     return tally.frozen()
 
 
-def merged_tallies[T: (LengthTally, LengthArrayTally)](
-    left: T | None,
-    right: T | None,
-) -> T | None:
+def merged_tallies(
+    left: LengthTally | None,
+    right: LengthTally | None,
+) -> LengthTally | None:
     """The same rule between two SCANNED groups, folded left in place.
 
-    Either tally: the two have the same ``merge`` and are never mixed,
-    a statistic keeping the one kind its scan feeds.
+    For a statistic whose regions hold a dict tally that may be unknown
+    -- the allele score's indel groups.
     """
     if left is None or right is None:
         return None

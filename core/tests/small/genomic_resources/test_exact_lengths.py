@@ -11,8 +11,11 @@ import numpy as np
 import pytest
 from gain.genomic_resources.statistics.exact_lengths import (
     LENGTH_MAP_CLAMP,
+    NO_LENGTHS,
+    ExactLengths,
     LengthArrayTally,
     LengthTally,
+    folded_groups,
     length_ladder,
 )
 from gain.genomic_resources.statistics.length_histogram import (
@@ -166,3 +169,53 @@ def test_merging_an_empty_array_tally_changes_nothing() -> None:
     tally.merge(LengthArrayTally())
 
     assert tally.frozen() == before
+
+
+def _array_tally(lengths: list[int]) -> LengthArrayTally:
+    tally = LengthArrayTally()
+    tally.add_batch(np.array(lengths))
+    return tally
+
+
+@pytest.mark.parametrize("order", ["tally-first", "record-first"])
+def test_a_fold_over_tallies_and_records_is_the_fold_of_the_lengths(
+    order: str,
+) -> None:
+    # A statistic's regions hold their lengths as a scan's array tally
+    # or as a stored record, and the fold does not care which comes
+    # first: the tallies add in the array domain, the records in the
+    # map domain, and the two meet once.  Same record as one tally fed
+    # everything, extremes included -- the record side carries the
+    # global minimum, the tally side the global maximum.
+    tally = _array_tally([2, 8200, 40_000])
+    record = _dict_tally([1, 2, 3, 8191]).frozen()
+    groups = [tally, record] if order == "tally-first" else [record, tally]
+
+    folded = folded_groups(groups)
+
+    assert folded == _dict_tally([1, 2, 2, 3, 8191, 8200, 40_000]).frozen()
+
+
+@pytest.mark.parametrize("groups", [
+    [],
+    [LengthArrayTally()],
+    [LengthTally().frozen()],
+], ids=["nothing", "an-empty-tally", "an-empty-record"])
+def test_a_fold_over_nothing_is_the_empty_record(
+    groups: list[LengthArrayTally | ExactLengths],
+) -> None:
+    assert folded_groups(groups) == NO_LENGTHS
+
+
+@pytest.mark.parametrize("groups", [
+    [None],
+    [_array_tally([2]), None],
+    [None, _array_tally([2])],
+    [_dict_tally([2]).frozen(), None],
+], ids=["only-unknown", "after-a-tally", "before-a-tally", "after-a-record"])
+def test_one_unknown_group_makes_the_whole_fold_unknown(
+    groups: list[LengthArrayTally | ExactLengths | None],
+) -> None:
+    # All or nothing, wherever the unknown sits: a partial roll-up would
+    # silently understate.
+    assert folded_groups(groups) is None
