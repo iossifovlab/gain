@@ -18,6 +18,7 @@ import pathlib
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.testing.gene_models_builder import a_gene_models
 from gain.genomic_resources.testing.builders import (
     PositionScoreBuilder,
     a_fragment_score,
@@ -199,3 +200,73 @@ def test_a_missing_declared_file_is_reported_and_a_current_one_is_not(
     assert "<fragments>" in line
     assert "statistics/fragments.json missing -> 2" in line
     assert not any("<alleles>" in line for line in _schema_lines(caplog))
+
+
+def test_a_resource_the_hash_gate_rebuilds_is_not_also_schema_stale(
+    position_score_at_coverage_v1: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One resource, one verdict: the hash gate's, when it fires."""
+    repo = position_score_at_coverage_v1
+    # ... whose hash is gone as well -- and the manifest brought current
+    # again, so the hash is the ONE reason the gate fires
+    (repo / "one" / "statistics" / "stats_hash").unlink()
+    _bring_manifest_current(repo, "one")
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"), \
+            pytest.raises(SystemExit) as excinfo:
+        cli_manage(["repo-repair", "--dry-run", "-R", str(repo), "-j", "1"])
+
+    assert excinfo.value.code == 1
+    assert "Statistics of <one> needs update" in caplog.text
+    assert _schema_lines(caplog) == []
+
+
+@pytest.fixture
+def two_stale_scores_and_gene_models(tmp_path: pathlib.Path) -> pathlib.Path:
+    """Two position scores at coverage version 1 beside a gene models resource."""
+    (
+        a_grr()
+        .with_resource("one", _a_position_score())
+        .with_resource("two", _a_position_score())
+        .with_resource("genes", a_gene_models())
+        .build_repo(tmp_path)
+    )
+    cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
+    for resource_id in ("one", "two"):
+        _rewrite_format_version(
+            tmp_path / resource_id / "statistics" / "coverage.json", 1)
+        _bring_manifest_current(tmp_path, resource_id)
+    return tmp_path
+
+
+@pytest.mark.parametrize("mode", [["--dry-run"], []])
+def test_a_repository_run_ends_with_one_summary_naming_the_count(
+    two_stale_scores_and_gene_models: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    mode: list[str],
+) -> None:
+    repo = two_stale_scores_and_gene_models
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", *mode, "-R", str(repo), "-j", "1"])
+
+    per_resource = [
+        line for line in _schema_lines(caplog) if line.startswith("Statistics")
+    ]
+    assert [line[len("Statistics of <"):].split(">")[0] for line in per_resource] \
+        == ["one", "two"]
+    # A gene models resource declares no statistics files: never reported
+    assert not any("genes" in line for line in per_resource)
+    # ... and ONE summary, at WARNING, after the loop -- where an operator
+    # running over a whole repository reads
+    [summary] = [
+        record for record in caplog.records
+        if record.levelno == logging.WARNING
+        and "predate the current schema" in record.getMessage()
+    ]
+    assert "2 resource(s)" in summary.getMessage()
+    assert "resource-stats -f" in summary.getMessage()
+    assert caplog.records.index(summary) > max(
+        caplog.records.index(record) for record in caplog.records
+        if record.getMessage() in per_resource)

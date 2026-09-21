@@ -1038,6 +1038,7 @@ def _run_stats_core(
     graph = TaskGraph()
 
     needs_update = 0
+    schema_stale = 0
     failed: set[str] = set(outcome.failed)
     stats_resources: list[GenomicResource] = []
     for res in resources:
@@ -1063,20 +1064,29 @@ def _run_stats_core(
                         "Statistics of <%s> needs update", res.resource_id)
                     needs_update += 1
                 else:
-                    _report_stale_schema(impl)
+                    schema_stale += _report_stale_schema(impl)
             elif force or needs_rebuild:
                 _collect_impl_stats_tasks(
                     graph, proto, impl, repo,
                     region_size=region_size)
                 stats_resources.append(res)
             else:
-                _report_stale_schema(impl)
+                schema_stale += _report_stale_schema(impl)
         except Exception as err:  # ruff: ignore[blind-except]
             # Collected, not raised: the resources after this one in the
             # repository are still repaired.
             report_resource_failure(
                 err, "skipping statistics for", res.resource_id)
             failed.add(res.resource_id)
+
+    if schema_stale:
+        # Once, after the loop, where an operator running over a whole
+        # repository reads -- and at WARNING, unlike the per-resource
+        # lines, because it is the one thing in this run they must act on
+        # by hand.
+        logger.warning(
+            "%d resource(s) carry statistics that predate the current "
+            "schema; rebuild them with `resource-stats -f`", schema_stale)
 
     if dry_run:
         # A resource that could not even be checked is certainly not up to
