@@ -1,4 +1,6 @@
 # pylint: disable=C0114,C0116,W0212
+import math
+
 import numpy as np
 from gain.genomic_resources.histogram import (
     NumberHistogram,
@@ -45,6 +47,23 @@ def _assert_same(batched: NumberHistogram, ref: NumberHistogram) -> None:
         [batched.min_value], [ref.min_value], equal_nan=True)
     assert np.array_equal(
         [batched.max_value], [ref.max_value], equal_nan=True)
+    # The three accumulators (gain#1589).  ``count`` is integer arithmetic
+    # and exact.  The two sums are the same per-term products added in a
+    # different order -- sequentially per value against numpy's pairwise
+    # ``sum`` over the batch -- so they agree to rounding, not to the bit;
+    # the tolerance is far below the 1e-12 the issue measured between the
+    # two arms over 1.2e8 real values.
+    assert batched.count == ref.count
+    assert batched.sum is not None and ref.sum is not None
+    assert batched.sum_of_squares is not None
+    assert ref.sum_of_squares is not None
+    assert math.isclose(
+        batched.sum, ref.sum, rel_tol=1e-12, abs_tol=1e-9), \
+        (batched.sum, ref.sum)
+    assert math.isclose(
+        batched.sum_of_squares, ref.sum_of_squares,
+        rel_tol=1e-12, abs_tol=1e-9), \
+        (batched.sum_of_squares, ref.sum_of_squares)
 
 
 def test_add_batch_matches_add_value_loop_linear() -> None:

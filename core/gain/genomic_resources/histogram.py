@@ -34,6 +34,7 @@ from gain.genomic_resources.statistics.chart_style import (
     CHART_LABEL_FONT_SIZE,
 )
 from gain.genomic_resources.statistics.min_max import MinMaxValue
+from gain.genomic_resources.statistics.moments import Moments
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +295,9 @@ class NumberHistogram(Statistic):
         self.config = config
         self.out_of_range_values: list[float] = []
         self.out_of_range_bins: list[int] = [0, 0]
+        # ``None`` for a histogram loaded from a file that predates the
+        # accumulators: unknown, never empty (gain#1589).
+        self._moments: Moments | None = Moments()
 
         self.min_value: float = np.nan
         self.max_value: float = np.nan
@@ -394,6 +398,54 @@ class NumberHistogram(Statistic):
         else:
             self.max_value = max(self.max_value, other.max_value)
 
+        # Unknown on either side is unknown for the whole: a partial sum
+        # would read as the sum of everything the bars count.
+        theirs = other._moments  # ruff: ignore[private-member-access]
+        if self._moments is None or theirs is None:
+            self._moments = None
+        else:
+            self._moments.merge(theirs)
+
+    @property
+    def count(self) -> int | None:
+        """How many weighted values were folded; ``None`` when unknown.
+
+        The same weighting as the bars -- base pairs for a position score,
+        alleles for an allele score, genes for a gene score -- so this is
+        ``bars.sum()`` plus both out-of-range counts.  Unknown for a
+        histogram loaded from a file that predates the accumulators.
+        """
+        return None if self._moments is None else self._moments.count
+
+    @property
+    def sum(self) -> float | None:
+        """The weighted sum of the folded values; ``None`` when unknown."""
+        return None if self._moments is None else self._moments.sum
+
+    @property
+    def sum_of_squares(self) -> float | None:
+        """The weighted sum of the squared values; ``None`` when unknown."""
+        return None if self._moments is None \
+            else self._moments.sum_of_squares
+
+    @property
+    def mean(self) -> float | None:
+        """The weighted mean of the folded values.
+
+        ``None`` when the accumulators are unknown or nothing was folded.
+        """
+        return None if self._moments is None else self._moments.mean
+
+    @property
+    def std(self) -> float | None:
+        """The POPULATION standard deviation of the folded values.
+
+        Divides by ``count``, not ``count - 1``: the histogram describes the
+        whole resource, not a sample drawn from it.  ``None`` exactly when
+        :attr:`mean` is.
+        """
+        return None if self._moments is None else self._moments.std
+
     def values_domain(self) -> str:
         """The observed value range, rendered for the summary page.
 
@@ -442,6 +494,16 @@ class NumberHistogram(Statistic):
         self.min_value = min(value, self.min_value)
         self.max_value = max(value, self.max_value)
 
+        # Inline rather than a method on ``_Moments``: this runs per value
+        # of every record, and a call costs more than the three updates.
+        # The products are ordered as :meth:`add_batch` orders them, so
+        # the two arms round each term identically.
+        moments = self._moments
+        if moments is not None:
+            moments.count += count
+            moments.sum += value * count
+            moments.sum_of_squares += value * value * count
+
         index = self.choose_bin_index(value)
         if index < 0:
             logger.warning(
@@ -464,6 +526,12 @@ class NumberHistogram(Statistic):
         split, the same ``min_value``/``max_value`` tracking, and the same
         nan-skip.  This is the hot path for the statistics scan, where a
         per-value Python call dominates the cost.
+
+        The one thing NOT bit-for-bit is the three accumulators behind
+        :attr:`count` / :attr:`mean` / :attr:`std`: ``count`` is, being
+        integer arithmetic, but the two sums are the same per-term products
+        added in a different order -- pairwise here, sequentially there --
+        and agree to rounding (1e-11 over 1.2e8 real values).
 
         The equivalence covers dtype as well as arithmetic: the ``float64``
         coercion below is what ``add_value`` reproduces by normalizing a
@@ -500,6 +568,13 @@ class NumberHistogram(Statistic):
             else min(self.min_value, batch_min)
         self.max_value = batch_max if np.isnan(self.max_value) \
             else max(self.max_value, batch_max)
+
+        # Over EVERY finite value, out-of-range ones included, at its real
+        # value -- as ``add_value`` folds it before it decides the bin.
+        # ``value * count`` and ``value * value * count``, per term, are
+        # what that arm rounds; only the order of the additions differs.
+        if self._moments is not None:
+            self._moments.add_batch(values, weights)
 
         below = values < self.view_min()
         above = values > self.view_max()
@@ -579,6 +654,13 @@ class NumberHistogram(Statistic):
             "out_of_range_bins": self.out_of_range_bins,
             "min_value": float(self.min_value),
             "max_value": float(self.max_value),
+            # The accumulators, never the mean or sd derived from them.
+            # ``null`` when unknown, which :meth:`from_dict` reads back as
+            # exactly that.
+            **(
+                self._moments.to_dict() if self._moments is not None
+                else dict.fromkeys(("count", "sum", "sum_of_squares"))
+            ),
         }
 
     def serialize(self) -> str:
@@ -661,6 +743,7 @@ class NumberHistogram(Statistic):
         hist.min_value = data.get("min_value", np.nan)
         hist.max_value = data.get("max_value", np.nan)
         hist.out_of_range_bins = data.get("out_of_range_bins", [0, 0])
+        hist._moments = Moments.from_dict(data)
 
         return hist
 
