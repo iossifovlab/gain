@@ -33,7 +33,9 @@ test.describe('Add resource to pipeline tests', () => {
 
     await resourceModal.searchResource('CADD');
 
-    await expect(resourceModal.resourceCount).toHaveText('2 resources');
+    await utils.expectInventoryCountText(
+      resourceModal.resourceCount, 2, 'FTS search "CADD" (CADD_v1.7 by id, dbNSFP4.9a by description text)'
+    );
     await expect(page.getByTitle('hg38/scores/CADD_v1.7')).toBeVisible();
     await expect(page.getByTitle('hg38/scores/dbNSFP4.9a')).toBeVisible();
   });
@@ -51,7 +53,9 @@ test.describe('Add resource to pipeline tests', () => {
     await resourceModal.searchResource('CADD');
 
     await expect(resourceModal.resourceSearchError).toHaveText('');
-    await expect(resourceModal.resourceCount).toHaveText('2 resources');
+    await utils.expectInventoryCountText(
+      resourceModal.resourceCount, 2, 'FTS search "CADD" (CADD_v1.7 by id, dbNSFP4.9a by description text)'
+    );
     await expect(page.getByTitle('hg38/scores/CADD_v1.7')).toBeVisible();
   });
 
@@ -87,7 +91,7 @@ test.describe('Add resource to pipeline tests', () => {
     const unfiltered = parseInt(await resourceModal.resourceCount.innerText(), 10);
 
     await resourceModal.selectResourceType('gene_score');
-    await expect(resourceModal.resourceCount).toHaveText('10 resources');
+    await utils.expectInventoryCountText(resourceModal.resourceCount, 10, 'type filter gene_score');
     expect(unfiltered).toBeGreaterThan(10);
   });
 

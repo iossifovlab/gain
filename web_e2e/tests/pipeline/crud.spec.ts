@@ -292,7 +292,9 @@ test.describe('Pipeline tests', () => {
   test('should search pipeline from dropdown', async({ page }) => {
     const editor = new PipelineEditor(page);
     await editor.pipelineInput.fill('clini');
-    await expect(page.locator('mat-option')).toHaveCount(3);
+    await utils.expectInventoryOptionCount(
+      page.locator('mat-option'), 3, 'pipeline dropdown "clini" (one option per *clinical* pipeline)'
+    );
     await expect(page.getByRole('option', { name: 'circle pipeline/hs1_clinical_annotation' })).toBeVisible();
     await expect(page.getByRole('option', { name: 'circle pipeline/hg38_clinical_annotation' })).toBeVisible();
     await expect(page.getByRole('option', { name: 'circle pipeline/hg19_clinical_annotation' })).toBeVisible();

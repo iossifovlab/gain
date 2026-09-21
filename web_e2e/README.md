@@ -42,3 +42,19 @@ A pin on Markdown the page renders (the annotator modal,
 `tests/single-annotation/annotator-modal.spec.ts`) is registered whole
 and compared the way `toHaveText` compares, whitespace collapsed on both
 sides.
+
+## Counts the specs pin
+
+The suite runs against the node-local grr-sync mirror of the live
+`iossifovlab/grr`, so a few assertions pin a *count* that belongs to that
+GRR's inventory, not to the UI: how many resources a search matches, how
+many `genome` resources fill a selector, how many `*clinical*` pipelines a
+dropdown offers. Those literals are kept on purpose and move the day the
+GRR does. Each goes through `expectInventoryCountText` /
+`expectInventoryOptionCount` in `utils.ts`, whose failure starts with
+`GRR inventory drift` and names what to count against the mirror; the
+helpers' docstring says which failures are drift and which stay UI
+failures, and `tests/inventory-pin.spec.ts` pins that contract. A new
+inventory pin goes through the same helpers. The unfiltered resource
+total is deliberately *not* pinned: it moves whenever a resource of any
+type lands.

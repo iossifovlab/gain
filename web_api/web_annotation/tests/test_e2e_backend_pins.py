@@ -89,7 +89,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 E2E_ROOT = REPO_ROOT / "web_e2e"
 
 #: The directories under ``web_e2e/`` that assert text -- the ones the
-#: ``web_api`` Dockerfile copies.  ``utils.ts`` asserts nothing;
+#: ``web_api`` Dockerfile copies.  ``utils.ts`` asserts no backend text;
 #: ``node_modules`` and ``reports`` are neither copied nor scanned.
 SPEC_DIRS = ("tests", "pages")
 

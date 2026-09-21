@@ -1,4 +1,4 @@
-import { expect, Page } from '@playwright/test';
+import { expect, Locator, Page } from '@playwright/test';
 
 export const backendUrl = process.env['CI'] === '1' ? 'http://backend:9001' : 'http://localhost:8000';
 export const mailpitUrl = process.env['CI'] === '1' ? 'http://mail:8025' : 'http://localhost:8025';
@@ -115,6 +115,84 @@ export async function waitForLoadedEditor(page: Page): Promise<void> {
   await waitForSuccessOrError(page, '.loaded-editor', PIPELINE_ERROR, {
     description: 'the pipeline editor to finish loading',
   });
+}
+
+/** Greppable token every inventory-drift failure message carries. */
+export const GRR_INVENTORY_DRIFT = 'GRR inventory drift';
+
+/** The shape a live-GRR counter renders: a non-zero count of resources. */
+const INVENTORY_COUNT_TEXT = /^[1-9]\d* resources$/;
+
+/**
+ * Run `assertion` on a live-GRR inventory pin; if it fails, decide whether
+ * the GRR is to blame.
+ *
+ * The literal being asserted is a property of the GRR the suite reads, not
+ * of the UI, so a settled value that has the pinned shape and a different
+ * number is reported as inventory drift, with the re-baseline remedy and
+ * Playwright's own failure text underneath. `readSettled` reads that value
+ * after the retry budget is spent, without waiting, and returns `undefined`
+ * when the element no longer has the shape -- it never rendered a count,
+ * reads zero (no GRR change empties a search or a type filter; a broken one
+ * does), vanished or emptied while the assertion was retrying. That is a UI
+ * failure, and `assertion`'s own error is rethrown untouched.
+ */
+async function withInventoryDrift(
+  what: string,
+  pinned: number,
+  assertion: Promise<void>,
+  readSettled: () => Promise<string | undefined>,
+): Promise<void> {
+  try {
+    await assertion;
+  } catch (error) {
+    const received = await readSettled().catch(() => undefined);
+    if (received === undefined) {
+      throw error;
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `${GRR_INVENTORY_DRIFT}: ${what} -- pinned ${pinned}, received ${received}. ` +
+      'This number is a property of the GRR the suite reads (the node-local ' +
+      'grr-sync mirror of iossifovlab/grr, synced daily), not of the UI. ' +
+      'Verify the new value against the mirror\'s inventory, then re-baseline ' +
+      `the literal in this spec -- this is not a UI bug.\n\n${detail}`
+    );
+  }
+}
+
+/** Pin a "N resources" counter to a live-GRR inventory count; see above. */
+export async function expectInventoryCountText(
+  counter: Locator,
+  pinned: number,
+  what: string,
+  options: { timeout?: number } = {},
+): Promise<void> {
+  await withInventoryDrift(
+    what, pinned,
+    expect(counter).toHaveText(`${pinned} resources`, options),
+    async() => {
+      const text = await counter.evaluateAll((els: HTMLElement[]) => els[0]?.innerText);
+      return text !== undefined && INVENTORY_COUNT_TEXT.test(text) ? text : undefined;
+    },
+  );
+}
+
+/** Pin an option list's length to a live-GRR inventory count; see above. */
+export async function expectInventoryOptionCount(
+  entries: Locator,
+  pinned: number,
+  what: string,
+  options: { timeout?: number } = {},
+): Promise<void> {
+  await withInventoryDrift(
+    what, pinned,
+    expect(entries).toHaveCount(pinned, options),
+    async() => {
+      const count = await entries.count();
+      return count > 0 ? `${count}` : undefined;
+    },
+  );
 }
 
 export async function registerUser(page: Page, email: string, password: string): Promise<void> {
