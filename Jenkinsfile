@@ -1448,8 +1448,9 @@ pipeline {
                     when { not { environment name: 'DOCS_ONLY', value: 'true' } }
                     // Downstream gate for the gain-conda-integration job
                     // (DSL at core/jenkins-jobs/conda_integration.groovy,
-                    // #1429). Same tier as core integration, but run
-                    // against the gain-core .conda THIS build archives
+                    // #1429). The small tier (#1514) and then the
+                    // integration tier, both run against the gain-core
+                    // .conda THIS build archives
                     // (`dist/conda/gain-core-*.conda`, in `post`), installed
                     // from a file channel with no iossifovlab channel: a red
                     // there that is green in gain-core-integration means

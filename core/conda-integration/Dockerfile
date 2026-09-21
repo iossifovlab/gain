@@ -1,6 +1,7 @@
 # CI image for the gain-conda-integration job (#1429): installs the
 # gain-core .conda the root build archived, the way a user would, and
-# runs core/tests/integration against the INSTALLED package.
+# runs core/tests -- the small tier, then tests/integration -- against
+# the INSTALLED package (#1514).
 #
 # Same micromamba base as conda-builder/ (which builds the .conda this
 # image consumes). The image carries only tooling plus a copy of the
@@ -42,13 +43,27 @@ RUN micromamba install -n base -y -c conda-forge rattler-index \
 
 ENV PATH="/opt/conda/bin:$PATH"
 
-# The test bed: core/tests + core/pytest.ini and NOTHING else from the
-# source tree, so core/gain/ can never end up on sys.path and shadow
-# the installed package. run.sh asserts that before pytest starts.
-COPY --chown=mambauser:mambauser core/tests /testbed/tests
-COPY --chown=mambauser:mambauser core/pytest.ini /testbed/pytest.ini
+# The test bed mirrors the repo's shape -- core/tests, core/pytest.ini,
+# core/pyproject.toml and test_fixtures/mini-GRR under one root -- and
+# NOTHING else from the source tree, so core/gain/ can never end up on
+# sys.path and shadow the installed package. run.sh asserts that before
+# pytest starts. The shape matters: the info-page suite finds the
+# mini-GRR fixture by walking up from its conftest to the root shared
+# with test_fixtures/, and a few tests read core/pyproject.toml to check
+# the entry points the installed package declares against the source's
+# (#1514). Both are data, not code.
+#
+# The tests write under the working directory (task-graph logs, scratch
+# work dirs, the pytest cache) and the container runs as the agent's
+# UID, not the image's user, so the bed is made writable by anyone.
+COPY --chown=mambauser:mambauser core/tests /testbed/core/tests
+COPY --chown=mambauser:mambauser core/pytest.ini core/pyproject.toml \
+    /testbed/core/
+COPY --chown=mambauser:mambauser test_fixtures/mini-GRR \
+    /testbed/test_fixtures/mini-GRR
+RUN chmod -R a+rwX /testbed
 COPY --chown=mambauser:mambauser core/conda-integration/run.sh \
     core/conda-integration/assert_installed.py /opt/conda-integration/
 
-WORKDIR /testbed
+WORKDIR /testbed/core
 ENTRYPOINT ["/bin/bash", "/opt/conda-integration/run.sh"]

@@ -1787,6 +1787,11 @@ def test_md5_sum_reads_a_multi_chunk_file_in_bounded_reads(
 _TABIX_FILE_NAME = "data.txt.gz"
 _VCF_FILE_NAME = "data.vcf.gz"
 _BIGWIG_FILE_NAME = "data.bw"
+# pyBigWig's own wording for a failed open, matched as a prefix: 0.3.26
+# appends "Unknown error during file opening." to what 0.3.25 raised, and
+# what these tests pin is that the exception is the library's, with no
+# url of gain's added -- not the library's exact sentence.
+_PYBIGWIG_OPEN_ERROR = "Received an error during file opening!"
 
 #: The bearer half of a presigned url. Distinct from ``_SECRET`` because it
 #: leaks through a different door: an s3 GRR has no userinfo at all, and
@@ -2181,7 +2186,7 @@ def test_bigwig_open_survives_a_closed_stderr(
     with pytest.raises(RuntimeError) as excinfo:
         proto.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
 
-    assert str(excinfo.value) == "Received an error during file opening!"
+    assert str(excinfo.value).startswith(_PYBIGWIG_OPEN_ERROR)
 
 
 def test_bigwig_open_failure_still_reports_the_failure(
@@ -2195,7 +2200,7 @@ def test_bigwig_open_failure_still_reports_the_failure(
     with pytest.raises(RuntimeError) as excinfo:
         proto.open_bigwig_file(resource, _BIGWIG_FILE_NAME)
 
-    assert str(excinfo.value) == "Received an error during file opening!"
+    assert str(excinfo.value).startswith(_PYBIGWIG_OPEN_ERROR)
     _assert_no_credential_escaped(excinfo.value)
     assert _SECRET not in capfd.readouterr().err
 
