@@ -1,4 +1,4 @@
-"""The stored form of a length statistic: an exact length map plus scalars.
+"""A length statistic's exact record: stored, folded, read and charted.
 
 ADR 0020 gave **segments**, **fragments** and **indels** one log2
 binning for their length histograms.  The ladder lumps {2, 3} into one
@@ -163,9 +163,10 @@ class ExactLengths(NamedTuple):
     def has_counts_to_plot(self) -> bool:
         """Whether this group has anything to draw a chart of.
 
-        Unknown and known-and-empty are one answer to this question:
-        the counts axis is logarithmic and can render neither, and a
-        chart of nothing under a lengths heading states nothing either.
+        Asked of a KNOWN record; an unknown group is the callers' ``None``
+        and gets the same answer, because the counts axis is logarithmic
+        and can render neither, and a chart of nothing under a lengths
+        heading states nothing either.
 
         One spelling, because the statistics build and the page must
         agree exactly -- a build that skips the image while the page
@@ -515,15 +516,39 @@ def merged_lengths(
     return tally.frozen()
 
 
-def merged_tallies(
-    left: LengthTally | None,
-    right: LengthTally | None,
-) -> LengthTally | None:
-    """The same rule between two SCANNED groups, folded left in place."""
+def merged_tallies[T: (LengthTally, LengthArrayTally)](
+    left: T | None,
+    right: T | None,
+) -> T | None:
+    """The same rule between two SCANNED groups, folded left in place.
+
+    Either tally: the two have the same ``merge`` and are never mixed,
+    a statistic keeping the one kind its scan feeds.
+    """
     if left is None or right is None:
         return None
     left.merge(right)
     return left
+
+
+def folded_tallies(
+    tallies: Iterable[LengthArrayTally | None],
+) -> ExactLengths | None:
+    """:func:`folded_lengths` over the regions' own array tallies.
+
+    The same all-or-nothing rule, in the array domain: the counters add
+    elementwise and the sum is frozen ONCE.  A statistic whose regions
+    hold their tallies folds this way rather than record by record,
+    because a fragment score can carry thousands of contigs with
+    thousands of distinct lengths each, and a dict fold per contig would
+    cost every build and every page render the product of the two.
+    """
+    total = LengthArrayTally()
+    for tally in tallies:
+        if tally is None:
+            return None
+        total.merge(tally)
+    return total.frozen()
 
 
 def folded_lengths(

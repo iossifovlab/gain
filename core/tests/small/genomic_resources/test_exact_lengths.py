@@ -14,9 +14,12 @@ from gain.genomic_resources.statistics.exact_lengths import (
     ExactLengths,
     LengthArrayTally,
     LengthTally,
+    length_ladder,
 )
 from gain.genomic_resources.statistics.length_histogram import (
+    LENGTH_HISTOGRAM_BIN_COUNT,
     LENGTH_HISTOGRAM_DISPLAY_CAP,
+    length_histogram_bin_index,
 )
 
 # Lengths on both sides of the clamp, with repeats, so the record's map
@@ -122,6 +125,30 @@ def test_an_empty_batch_leaves_the_tally_as_it_was() -> None:
     tally.add_batch(np.array([], dtype=np.int64))
 
     assert tally.frozen() == LengthTally().frozen()
+
+
+def test_the_chart_ladder_derived_from_the_record_is_the_stored_one(
+) -> None:
+    """The one place the ladder survives is the chart, drawn from the
+    record rather than from a stored histogram (gain#1118, gain#1543,
+    gain#1544).  For that to change no pixel, the derived ladder must
+    equal what a scan used to bin: here four lengths in three bins, two
+    of them past the clamp -- folded to one key in the map, yet the same
+    bin as before, because the clamp is the bin the plot already sums
+    everything above into."""
+    lengths = [3, 100, 9000, 9500]
+    stored_ladder = [0] * LENGTH_HISTOGRAM_BIN_COUNT
+    for length in lengths:
+        stored_ladder[length_histogram_bin_index(length)] += 1
+    tally = LengthArrayTally()
+
+    tally.add_batch(np.array(lengths, dtype=np.int64))
+
+    record = tally.frozen()
+    assert record.lengths == {3: 1, 100: 1, LENGTH_MAP_CLAMP: 2}
+    assert record.max == 9500
+    assert sum(map(bool, stored_ladder)) == 3
+    assert length_ladder(record) == stored_ladder
 
 
 def test_the_clamp_never_falls_below_the_charts_display_cap() -> None:

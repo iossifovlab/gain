@@ -137,22 +137,11 @@
 {% elif not coverage.segment_lengths.has_counts_to_plot %}
 <p>no segments</p>
 {% else %}
-{% call lengths.statistics_table("segments") %}
-        {{ lengths.statistics_row(coverage.segment_row) }}
-{%- endcall %}
-{#- The chart as a thumbnail the size one indel chart has, opening the
-   full-size image in the modal this page already uses for the score
-   histograms -- so the smaller size costs no detail.  A pair of one:
-   the shared thumbnail rule does not grow, so it keeps half the row. -#}
-<div class="figure-pair">
-{{ lengths.figure_thumbnail(
+{{ lengths.single_group(
+       "segments", coverage.segment_row,
        impl.get_coverage_segment_lengths_image_filename(),
-       "global segment-length histogram", "modal-coverage-segment-lengths") }}
-</div>
-{{ lengths.figure_modal(
-       "modal-coverage-segment-lengths", "segment lengths",
-       impl.get_coverage_segment_lengths_image_filename(),
-       "global segment-length histogram") }}
+       "global segment-length histogram",
+       "modal-coverage-segment-lengths", "segment lengths") }}
 {% endif %}
 {%- endif %}
 {% else %}

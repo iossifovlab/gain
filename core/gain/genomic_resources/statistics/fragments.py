@@ -50,7 +50,8 @@ from gain.genomic_resources.statistics.exact_lengths import (
     ExactLengths,
     LengthArrayTally,
     LengthStatisticsRow,
-    folded_lengths,
+    folded_tallies,
+    merged_tallies,
     stored_lengths,
     write_length_chart,
 )
@@ -133,17 +134,24 @@ class RegionFragments:
         ADR 0001 deleted the per-row object churn from.  A length below
         1 is refused by the tally itself.
         """
-        if not lengths.size:
-            return
         assert self._lengths is not None, \
             "a frozen region does not accumulate"
         self._lengths.add_batch(lengths)
-        self._fragments += int(lengths.size)
+        self._fragments += lengths.size
 
     @property
     def fragments(self) -> int:
         """How many rows this region counted."""
         return self._fragments
+
+    @property
+    def length_tally(self) -> LengthArrayTally | None:
+        """The region's tally as it stands, ``None`` if unknown.
+
+        For the statistic's global fold, which adds the regions' tallies
+        counter by counter; a region's own record is :meth:`fragment_lengths`.
+        """
+        return self._lengths
 
     def fragment_lengths(self) -> ExactLengths | None:
         """The region's fragment lengths as a record, ``None`` if unknown."""
@@ -165,10 +173,7 @@ class RegionFragments:
         refuse_unmergeable(_MERGE_FAILURE, self, other)
 
         self._fragments += other._fragments
-        if self._lengths is None or other._lengths is None:
-            self._lengths = None
-        else:
-            self._lengths.merge(other._lengths)
+        self._lengths = merged_tallies(self._lengths, other._lengths)
         self.end = other.end
 
 
@@ -207,34 +212,25 @@ class FragmentStatistics(RegionFoldedStatistic[RegionFragments]):
         }
 
     def fragment_lengths_global(self) -> ExactLengths | None:
-        """The fold of every chromosome's record, ``None`` if any is unknown.
-
-        A partial roll-up would silently understate, the same
-        all-or-nothing rule the coverage twin applies to its segments.
-        """
-        return folded_lengths(
-            region.fragment_lengths() for region in self._regions.values())
+        """The fold of every chromosome's lengths -- :func:`folded_tallies`,
+        so the all-or-nothing rule is the coverage twin's."""
+        return folded_tallies(
+            region.length_tally for region in self._regions.values())
 
     def serialize(self) -> str:
-        # Each region is finalised once, and that one record serves its
-        # chromosome's entry and the global fold.  The global record is
-        # written only when EVERY chromosome has one, for the reason
-        # ``fragment_lengths_global`` gives.
-        records = {
-            chrom: region.fragment_lengths()
-            for chrom, region in self._regions.items()
-        }
+        # The global record is written only when EVERY chromosome has
+        # one, for the reason ``fragment_lengths_global`` gives.
         chromosomes: dict[str, dict[str, Any]] = {}
         for chrom, region in self._regions.items():
             entry: dict[str, Any] = {"fragment_count": region.fragments}
-            lengths = records[chrom]
+            lengths = region.fragment_lengths()
             if lengths is not None:
                 entry["fragment_lengths"] = lengths.stored()
             chromosomes[chrom] = entry
         global_entry: dict[str, Any] = {
             "fragment_count": self.fragments_global(),
         }
-        global_lengths = folded_lengths(records.values())
+        global_lengths = self.fragment_lengths_global()
         if global_lengths is not None:
             global_entry["fragment_lengths"] = global_lengths.stored()
         return json.dumps({

@@ -121,6 +121,17 @@ class Table(NamedTuple):
         """
         return self.body or self.loose
 
+    @property
+    def text(self) -> list[list[str]]:
+        """Header rows then data rows, each as its cells' text.
+
+        Whole rows, so a cell that moved column or a column that
+        vanished is a failure, not a pass on a substring that happens to
+        still occur somewhere on the page.  ``foot`` is excluded, as
+        :attr:`rows` excludes it.
+        """
+        return [[cell.text for cell in row] for row in self.head + self.rows]
+
     def column(self, name: str) -> list[Cell]:
         """The data cells under the header named ``name``.
 

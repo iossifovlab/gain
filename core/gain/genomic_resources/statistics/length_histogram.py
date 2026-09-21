@@ -37,9 +37,9 @@ LENGTH_HISTOGRAM_BIN_COUNT = 32
 # die at ~1K and deletions at ~512, and segment lengths have the same
 # shape -- so a full-ladder axis draws three quarters of nothing.  Bins
 # at or above this length are summed into one overflow bar, whose height
-# is itself the signal that something runs past the cap.  The exact
-# map's clamp (``LENGTH_MAP_CLAMP``) is equal to it, so a map clamped
-# there projects onto these bins exactly as the unclamped lengths would.
+# is itself the signal that something runs past the cap.  Not free to
+# raise above ``LENGTH_MAP_CLAMP`` -- see that constant for why the two
+# are equal.
 LENGTH_HISTOGRAM_DISPLAY_CAP = 2 ** 13
 
 
@@ -78,9 +78,8 @@ def plot_length_histogram(
     ``display_cap`` is the length the drawn axis stops at: every bin at
     or above it becomes one overflow bar.  A parameter rather than a
     constant so a resource kind whose lengths genuinely run longer can
-    raise its own axis -- though not above the exact map's clamp, which
-    is where the stored record stops resolving.  It is snapped down to
-    its own bin on the ladder, so a cap between two edges caps at the
+    raise its own axis, up to ``LENGTH_MAP_CLAMP``.  It is snapped down
+    to its own bin on the ladder, so a cap between two edges caps at the
     lower one -- pass a power of two to get the axis the number reads as.
     """
     # pylint: disable=import-outside-toplevel

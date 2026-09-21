@@ -382,8 +382,7 @@ indel *chart* is drawn on — derived from the map at render time rather than
 stored beside it, so the picture and the statistics beneath it cannot drift.
 The derived bins are identical to the stored ones, because the plot already
 sums every bin at or above its display cap into one overflow bar and the clamp
-is equal to that
-cap.
+is equal to that cap.
 
 The rollout is the one this ADR already describes: **deserialization reads the
 map only**, so an allele score built before this renders "not computed" for its

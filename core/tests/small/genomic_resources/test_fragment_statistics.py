@@ -12,11 +12,9 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
 from gain.genomic_resources.statistics.exact_lengths import (
-    LENGTH_MAP_CLAMP,
     NO_LENGTHS,
     ExactLengths,
     LengthArrayTally,
-    length_ladder,
 )
 from gain.genomic_resources.statistics.fragments import (
     FRAGMENT_LENGTHS_IMAGE_FILE,
@@ -25,10 +23,6 @@ from gain.genomic_resources.statistics.fragments import (
     RegionFragments,
     merge_region_fragments,
     save_and_plot_fragments,
-)
-from gain.genomic_resources.statistics.length_histogram import (
-    LENGTH_HISTOGRAM_BIN_COUNT,
-    length_histogram_bin_index,
 )
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
@@ -145,6 +139,7 @@ STORED_GLOBAL_LENGTHS = {
     "count": 5, "sum": 148, "min": 4, "max": 91,
 }
 CHR1_LENGTHS = ExactLengths({11: 2, 31: 1, 91: 1}, 4, 144, 11, 91)
+CHR2_LENGTHS = ExactLengths({4: 1}, 1, 4, 4, 4)
 GLOBAL_LENGTHS = ExactLengths({4: 1, 11: 2, 31: 1, 91: 1}, 5, 148, 4, 91)
 
 
@@ -158,7 +153,8 @@ def test_the_file_stores_each_chromosomes_fragment_lengths_exactly(
 
     scan.do_noregion_histograms(resource)
 
-    data = json.loads(resource.get_file_content(FRAGMENT_STATISTICS_FILE))
+    content = resource.get_file_content(FRAGMENT_STATISTICS_FILE)
+    data = json.loads(content)
     assert data["format_version"] == 2
     chromosomes = data["chromosomes"]
     assert chromosomes["chr1"]["fragment_lengths"] == STORED_CHR1_LENGTHS
@@ -167,7 +163,7 @@ def test_the_file_stores_each_chromosomes_fragment_lengths_exactly(
         assert entry["fragment_lengths"]["count"] == entry["fragment_count"]
     assert data["global"]["fragment_lengths"] == STORED_GLOBAL_LENGTHS
     assert data["global"]["fragment_count"] == 5
-    assert "fragment_length_histogram" not in json.dumps(data)
+    assert "fragment_length_histogram" not in content
 
 
 def test_fragment_lengths_bin_the_rows_own_span_and_merge_exactly(
@@ -183,7 +179,7 @@ def test_fragment_lengths_bin_the_rows_own_span_and_merge_exactly(
     stats = _stored(resource)
     assert stats.fragment_lengths_by_chromosome() == {
         "chr1": CHR1_LENGTHS,
-        "chr2": ExactLengths({4: 1}, 1, 4, 4, 4),
+        "chr2": CHR2_LENGTHS,
     }
     assert stats.fragment_lengths_global() == GLOBAL_LENGTHS
     assert GLOBAL_LENGTHS.total == stats.fragments_global() == 5
@@ -309,15 +305,6 @@ def test_the_info_page_renders_a_fragments_section(
     assert resource.file_exists(FRAGMENT_LENGTHS_IMAGE_FILE)
 
 
-def _fragment_lengths_table(page: str) -> list[list[str]]:
-    """The table under the Fragment lengths heading, header row first,
-    each row as its cells' text -- whole rows, so a cell that moved
-    column or a column that vanished is a failure, not a pass on a
-    substring that happens to still occur somewhere on the page."""
-    table = table_after(page, "<h3>Fragment lengths</h3>")
-    return [[cell.text for cell in row] for row in table.head + table.rows]
-
-
 def test_the_info_page_tables_the_fragment_lengths_exactly(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -329,7 +316,7 @@ def test_the_info_page_tables_the_fragment_lengths_exactly(
 
     page = _info_page(resource)
 
-    assert _fragment_lengths_table(page) == [
+    assert table_after(page, "<h3>Fragment lengths</h3>").text == [
         ["", "fragments", "min", "max", "mean", "median"],
         ["fragments", "5", "4", "91", "29.6", "11"],
     ]
@@ -359,7 +346,7 @@ def test_a_median_past_the_clamp_renders_as_a_floor(
 
     page = _info_page(resource)
 
-    assert _fragment_lengths_table(page) == [
+    assert table_after(page, "<h3>Fragment lengths</h3>").text == [
         ["", "fragments", "min", "max", "mean", "median"],
         ["fragments", "3", "3", "9500", "6167.67", "≥8192"],
     ]
@@ -573,36 +560,6 @@ def test_the_info_page_says_a_resource_genuinely_has_no_fragments(
     assert "<p>no fragments</p>" in section
     assert "not computed" not in section
     assert FRAGMENT_LENGTHS_IMAGE_FILE not in page
-
-
-def test_the_chart_ladder_derived_from_the_record_is_the_stored_one(
-) -> None:
-    """The one place the ladder survives gain#1544 is the chart, drawn
-    from the record rather than from a stored histogram.  For that to
-    change no pixel, the derived ladder must equal what the scan used
-    to bin: here four fragments in three bins, two of them past the
-    clamp -- folded to one key in the map, yet the same bin as before,
-    because the clamp is the bin the plot already sums everything above
-    into.  Batched and one at a time alike."""
-    lengths = [3, 100, 9000, 9500]
-    stored_ladder = [0] * LENGTH_HISTOGRAM_BIN_COUNT
-    for length in lengths:
-        stored_ladder[length_histogram_bin_index(length)] += 1
-    per_length = RegionFragments("chr1", 1, 10)
-    for length in lengths:
-        per_length.add_fragment(length)
-    batched = RegionFragments("chr1", 1, 10)
-
-    batched.add_fragment_batch(np.array(lengths, dtype=np.int64))
-
-    record = batched.fragment_lengths()
-    assert record is not None
-    assert record == per_length.fragment_lengths()
-    assert record.lengths == {3: 1, 100: 1, LENGTH_MAP_CLAMP: 2}
-    assert record.max == 9500
-    assert batched.fragments == per_length.fragments == len(lengths)
-    assert sum(map(bool, stored_ladder)) == 3
-    assert length_ladder(record) == stored_ladder
 
 
 def test_the_batch_binning_refuses_a_non_positive_length() -> None:

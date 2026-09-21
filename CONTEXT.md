@@ -141,9 +141,8 @@ runs, so they overlap, nest and duplicate freely: each is its own fragment,
 and its length is its own span, `pos_end - pos_begin + 1`. That is the
 deliberate opposite of a **segment**, which is *computed* by merging
 equal-valued rows. Only a fragment score publishes fragment statistics — a
-count and the exact fragment lengths (the kind-neutral record segments and
-indels also store, gain#1544; the chart is drawn on the fixed log2 bins at
-render time), in a file of their own. Its **own** statistic since gain#1127:
+count and a **length record** of the fragments (gain#1544), in a file of their
+own. Its **own** statistic since gain#1127:
 it used to ride inside the covered-position one, which meant a fragment score
 could not stop publishing covered positions without losing its fragment counts
 too. Nothing publishes fragment *segments*, and nothing will: they would need
@@ -191,11 +190,30 @@ unanchored indels alike — carrying both alleles' lengths rather than one
 length. Those two lengths are published as a **complex grid**: a sparse
 `(len_ref, len_alt) → count` map whose cells are *exact* lengths, each clamped
 at 64, so a cell on the diagonal is an MNV of exactly that many bases (ADR
-0020 as amended by gain#779). Deliberately not the fixed log2 bins the
-**segment**, **fragment** and ins/del length histograms share — those would
-merge a 2→3 complex into the same cell as a 3bp MNV.
+0020 as amended by gain#779). Not a **length record**: that holds one length
+per item, clamped at 8192, and a grid of two lengths clamped that high would
+be a field of white; and never the fixed log2 bins the charts are drawn on —
+those would merge a 2→3 complex into the same cell as a 3bp MNV.
 _Avoid_: other (a different class), MNV, substitution of length n, complex
 histogram (it is a two-dimensional map, not a binned histogram)
+
+**Length record**:
+What a statistic stores about one group of lengths — a position score's
+**segments**, a fragment score's **fragments**, an allele score's insertions
+and its deletions: an exact `length → count` map clamped at 8192 (the key *at*
+the clamp means "that long or longer") beside `count`, `sum`, `min` and `max`
+taken on the unclamped lengths, so min, max and the mean stay exact however
+far the tail runs and only a median landing past the clamp degrades — to a
+floor, which the page prints as one. Stored per chromosome; the global record
+is the fold of the per-chromosome ones, unknown if any is; tabled on the info
+page as count / min / max / mean / median; charted on the fixed log2
+**ladder** derived from the map at render time, so picture and numbers cannot
+drift (ADR 0020, amended by gain#1118, gain#1543 and gain#1544). A statistics
+file built before its kind stored the record carries only the count, and the
+page reads "not computed" for the lengths until the resource is rebuilt.
+_Avoid_: length histogram (the stored log2 ladder every kind has now left;
+the ladder is what the *chart* is drawn on, not what is stored), length
+distribution, indel lengths (one group, not the record)
 
 **Other**:
 The allele class for a ref/alt pair that does not parse as alleles: `N`, a

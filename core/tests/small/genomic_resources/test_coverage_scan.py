@@ -356,15 +356,6 @@ def test_info_page_renders_the_coverage_section(
     assert f">{COVERED}<" in page
 
 
-def _segment_lengths_table(page: str) -> list[list[str]]:
-    """The table under the Segment lengths heading, header row first,
-    each row as its cells' text -- whole rows, so a cell that moved
-    column or a column that vanished is a failure, not a pass on a
-    substring that happens to still occur somewhere on the page."""
-    table = table_after(page, "<h3>Segment lengths</h3>")
-    return [[cell.text for cell in row] for row in table.head + table.rows]
-
-
 def test_info_page_tables_the_segment_lengths_exactly(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -376,7 +367,7 @@ def test_info_page_tables_the_segment_lengths_exactly(
 
     page = PositionScoreImplementation(resource).get_info()
 
-    assert _segment_lengths_table(page) == [
+    assert table_after(page, "<h3>Segment lengths</h3>").text == [
         ["", "segments", "min", "max", "mean", "median"],
         ["segments", "4", "2", "10", "5.5", "5"],
     ]
@@ -406,7 +397,7 @@ def test_a_median_past_the_clamp_renders_as_a_floor(
 
     page = PositionScoreImplementation(resource).get_info()
 
-    assert _segment_lengths_table(page)[1] \
+    assert table_after(page, "<h3>Segment lengths</h3>").text[1] \
         == ["segments", "3", "3", "9500", "6167.67", "≥8192"]
 
 

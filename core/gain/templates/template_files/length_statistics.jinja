@@ -63,3 +63,20 @@
     </div>
 </div>
 {%- endmacro %}
+
+{#- The whole subsection for a kind with ONE group -- segments,
+   fragments: its one-row table, then the chart as a pair of one.  The
+   shared thumbnail rule does not grow, so the lone thumbnail keeps half
+   the row, the size one indel chart has.  The allele page composes the
+   bricks itself, its pair being two. -#}
+{% macro single_group(count_header, row, src, alt, modal_id, title) -%}
+{% call statistics_table(count_header) %}
+        {{ statistics_row(row) }}
+{%- endcall %}
+{#- The comment strips both ways, so the pair follows the table's
+   closing tag with nothing between. -#}
+<div class="figure-pair">
+{{ figure_thumbnail(src, alt, modal_id) }}
+</div>
+{{ figure_modal(modal_id, title, src, alt) }}
+{%- endmacro %}

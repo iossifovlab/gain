@@ -45,22 +45,11 @@
 {% elif not fragments.fragment_lengths.has_counts_to_plot %}
 <p>no fragments</p>
 {% else %}
-{% call lengths.statistics_table("fragments") %}
-        {{ lengths.statistics_row(fragments.fragment_row) }}
-{%- endcall %}
-{#- The chart as a thumbnail the size one indel chart has, opening the
-   full-size image in the modal this page already uses for the score
-   histograms -- so the smaller size costs no detail.  A pair of one:
-   the shared thumbnail rule does not grow, so it keeps half the row. -#}
-<div class="figure-pair">
-{{ lengths.figure_thumbnail(
+{{ lengths.single_group(
+       "fragments", fragments.fragment_row,
        impl.get_fragment_lengths_image_filename(),
-       "global fragment-length histogram", "modal-fragment-lengths") }}
-</div>
-{{ lengths.figure_modal(
-       "modal-fragment-lengths", "fragment lengths",
-       impl.get_fragment_lengths_image_filename(),
-       "global fragment-length histogram") }}
+       "global fragment-length histogram",
+       "modal-fragment-lengths", "fragment lengths") }}
 {%- endif %}
 {% else %}
 <p>not computed</p>
