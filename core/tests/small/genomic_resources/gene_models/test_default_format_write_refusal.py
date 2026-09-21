@@ -15,10 +15,9 @@ The two branches of the public function open the file by different
 calls, and a guard in only one of them would be a half-fix, so
 everything here runs against both.
 
-The third refusal -- a model that is empty because nobody loaded it
-(gain#1097) -- is shared with the GTF serializer, and its GTF tests
-sit here beside the default-format ones so that the shared message is
-pinned in one place.
+The third refusal -- a model nobody loaded (gain#1097) -- is shared
+with the GTF serializer, and its GTF tests sit here beside the
+default-format ones so that the shared message is pinned in one place.
 """
 
 import pathlib
@@ -180,7 +179,7 @@ def test_the_refusal_creates_no_output_file(
         save_as_default_gene_models(
             gene_models, str(tmp_path / ASKED_FOR), gzipped=gzipped)
 
-    assert list(tmp_path.iterdir()) == []
+    assert not list(tmp_path.iterdir())
 
 
 @pytest.mark.parametrize("gzipped", [True, False])
@@ -251,28 +250,59 @@ def test_never_loaded_models_are_refused_naming_the_resource(
         serialize(gene_models, tmp_path)
 
     assert str(error.value) == (
-        f"gene models {RESOURCE_ID} hold no transcripts and were never "
-        f"loaded; call load() before serializing them"
+        f"gene models {RESOURCE_ID} were never loaded; "
+        f"call load() before serializing them"
     )
 
 
-def test_populated_models_that_were_never_loaded_are_not_refused(
+@pytest.mark.parametrize("serialize", SERIALIZERS)
+def test_the_refusal_asks_only_whether_the_model_is_loaded(
+    serialize: Serialize,
     tmp_path: pathlib.Path,
 ) -> None:
-    """Holding transcripts is what makes a model serializable, not ``load()``.
+    """Holding transcripts does not stand in for ``load()``.
 
-    ``join_gene_models`` builds a populated model that was never marked
-    loaded, as do fixture builders that fill ``transcript_models`` by
-    hand. The refusal is for the forgotten load -- unloaded *and*
-    empty -- so a populated model passes through either serializer,
-    whichever way it was populated.
+    A model whose ``transcript_models`` were filled in without going
+    through ``load()`` or ``from_transcript_models`` is not a
+    supported shape, and the gate does not carve one out for it: it
+    asks ``is_loaded()`` and nothing else, so that "usable" means the
+    same thing here as it does to the effect annotators.
     """
-    loaded = models_damaged_by(leave_as_parsed)
-    joined = GeneModels.join_gene_models(loaded, loaded)
-    assert not joined.is_loaded()
+    gene_models = models_never_loaded()
+    gene_models.transcript_models = \
+        models_damaged_by(leave_as_parsed).transcript_models
 
-    to_default_format(joined, tmp_path)
-    gtf = gene_models_to_gtf(joined)
+    with pytest.raises(ValueError, match="never loaded"):
+        serialize(gene_models, tmp_path)
+
+
+def joined(loaded: GeneModels) -> GeneModels:
+    return GeneModels.join_gene_models(loaded, loaded)
+
+
+def from_transcripts(loaded: GeneModels) -> GeneModels:
+    return GeneModels.from_transcript_models(
+        loaded.resource, loaded.transcript_models)
+
+
+#: The two ways to a model nobody called ``load()`` on that is loaded
+#: all the same, because it was built out of loaded transcripts.
+BUILT_LOADED = [
+    pytest.param(joined, id="join_gene_models"),
+    pytest.param(from_transcripts, id="from_transcript_models"),
+]
+
+
+@pytest.mark.parametrize("built_from", BUILT_LOADED)
+def test_models_built_loaded_serialize_through_both_writers(
+    built_from: Callable[[GeneModels], GeneModels],
+    tmp_path: pathlib.Path,
+) -> None:
+    """A model built loaded is loaded, so neither writer refuses it."""
+    gene_models = built_from(models_damaged_by(leave_as_parsed))
+
+    to_default_format(gene_models, tmp_path)
+    gtf = gene_models_to_gtf(gene_models)
 
     assert (tmp_path / ASKED_FOR).read_text().count("\n") == 2
     assert "\ttranscript\t" in gtf.getvalue()

@@ -28,12 +28,21 @@ from gain.genomic_resources.testing import (
     build_inmemory_test_resource,
     convert_to_tab_separated,
 )
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.gene_models_builder import a_gene_models
 from gain.testing.t4c8_import import t4c8_genes
 
 
 @pytest.fixture
 def t4c8_gene_models(tmp_path: pathlib.Path) -> GeneModels:
     return t4c8_genes(tmp_path / "gene_models")
+
+
+@pytest.fixture
+def example_gencode(fixture_dirname: Callable) -> GeneModels:
+    """The one-transcript GENCODE fixture, loaded."""
+    filename = fixture_dirname("gene_models/example_gencode.txt")
+    return build_gene_models_from_file(filename, "gtf").load()
 
 
 pytestmark = pytest.mark.usefixtures("clean_gene_models_cache")
@@ -578,6 +587,87 @@ def test_join_gene_models(
     combined = GeneModels.join_gene_models(example_gencode, t4c8_gene_models)
     assert combined.gene_names() == ["C2CD4C", "t4", "c8"]
     assert len(combined.transcript_models) == 3
+
+
+def test_joined_gene_models_are_loaded_and_survive_load(
+    example_gencode: GeneModels,
+    t4c8_gene_models: GeneModels,
+) -> None:
+    """A joined model is loaded, so ``load()`` on it changes nothing.
+
+    ``load()`` re-parses the resource the model wraps -- the first
+    input's -- so on a joined model it would silently replace the
+    merged set with that one source's transcripts. Being loaded is
+    what makes ``load()`` the no-op it is on any loaded model.
+    """
+    combined = GeneModels.join_gene_models(example_gencode, t4c8_gene_models)
+    assert combined.is_loaded()
+    assert len(combined.transcript_models) == 3
+
+    combined.load()
+
+    assert len(combined.transcript_models) == 3
+    assert combined.gene_names() == ["C2CD4C", "t4", "c8"]
+    assert [tm.gene for tm in combined.gene_models_by_location(
+        "chr1", 1, 200)] == ["t4", "c8"]
+
+
+@pytest.mark.parametrize("forgotten_first", [True, False])
+def test_join_gene_models_refuses_a_never_loaded_input(
+    example_gencode: GeneModels,
+    tmp_path: pathlib.Path,
+    *,
+    forgotten_first: bool,
+) -> None:
+    """A forgotten ``load()`` is refused, not merged as an empty set.
+
+    Silently copying the empty ``transcript_models`` of an unloaded
+    input would build a loaded model missing everything that input was
+    meant to bring, and the join has no way to tell that from a source
+    that really holds nothing. Both positions, so the refusal is
+    proved for the first input as much as for the rest.
+    """
+    grr = a_grr().with_resource(
+        "forgotten/genes", a_gene_models()).build_repo(tmp_path)
+    forgotten = build_gene_models_from_resource(
+        grr.get_resource("forgotten/genes"))
+    inputs = [example_gencode, forgotten]
+    if forgotten_first:
+        inputs.reverse()
+
+    with pytest.raises(ValueError, match="never loaded") as error:
+        GeneModels.join_gene_models(*inputs)
+
+    assert "forgotten/genes" in str(error.value)
+    assert len(example_gencode.transcript_models) == 1
+    assert not forgotten.is_loaded()
+
+
+def test_from_transcript_models_is_loaded_and_indexed(
+    example_gencode: GeneModels,
+    t4c8_gene_models: GeneModels,
+) -> None:
+    """Transcripts handed in directly make a queryable, loaded model.
+
+    The dict is kept in the order given: the default-format writer
+    emits records in that order, so what a caller assembled is what
+    gets written.
+    """
+    transcripts = {
+        **t4c8_gene_models.transcript_models,
+        **example_gencode.transcript_models,
+    }
+
+    built = GeneModels.from_transcript_models(
+        example_gencode.resource, transcripts)
+
+    assert built.is_loaded()
+    assert built.resource_id == example_gencode.resource_id
+    assert list(built.transcript_models) == list(transcripts)
+    [c8] = built.gene_models_by_gene_name("c8") or []
+    assert c8.gene == "c8"
+    assert [tm.gene for tm in built.gene_models_by_location(
+        "chr1", 1, 200)] == ["t4", "c8"]
 
 
 def test_is_loaded(fixture_dirname: Callable) -> None:

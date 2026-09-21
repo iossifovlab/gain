@@ -71,8 +71,9 @@ class GeneModels(
         >>> transcripts = gene_models.gene_models_by_location("chr17", 7676592)
 
     Note:
-        The gene models must be loaded using the load() method before queries
-        can be performed. The class is thread-safe for concurrent access.
+        The gene models must be loaded (see ``is_loaded()``) before
+        queries can be performed. The class is thread-safe for concurrent
+        access.
     """
 
     def __init__(self, resource: GenomicResource):
@@ -281,11 +282,22 @@ class GeneModels(
             if self._is_loaded:
                 return self
             self._reset()
-            transcript_models = load_transcript_models(self.resource)
-            self.transcript_models = self._chrom_mapping(transcript_models)
-            self._update_indexes()
-            self._is_loaded = True
+            self._install(
+                self._chrom_mapping(load_transcript_models(self.resource)))
             return self
+
+    def _install(
+        self, transcript_models: dict[str, TranscriptModel],
+    ) -> None:
+        """Make these the model's transcripts, indexed and loaded.
+
+        The one transition to loaded, as ``_reset()`` is the one
+        transition back: transcripts, indexes and the loaded flag move
+        together or not at all.
+        """
+        self.transcript_models = transcript_models
+        self._update_indexes()
+        self._is_loaded = True
 
     def _chrom_mapping(
         self, transcript_models: dict[str, TranscriptModel],
@@ -309,10 +321,16 @@ class GeneModels(
         return result
 
     def is_loaded(self) -> bool:
-        """Check if gene models have been loaded.
+        """Check whether this object holds usable gene models.
+
+        True once the model holds indexed transcripts, however it got
+        them: ``load()`` parsed its resource, or it was built loaded by
+        ``join_gene_models`` or ``from_transcript_models``. ``load()``
+        on a loaded model is a no-op.
 
         Returns:
-            bool: True if load() has been called and completed, False otherwise.
+            bool: True if the models are loaded and indexed, False if
+            nobody loaded them yet.
 
         Example:
             >>> if not gene_models.is_loaded():
@@ -323,42 +341,70 @@ class GeneModels(
 
     @staticmethod
     def join_gene_models(*gene_models: GeneModels) -> GeneModels:
-        """Merge multiple gene models into a single GeneModels object.
+        """Merge loaded gene models into a single, loaded GeneModels object.
 
-        This combines transcript models from multiple sources into one
-        unified gene models object.
+        The result holds every input's transcripts, answers to the first
+        input's resource, and is loaded (see ``is_loaded()``).
 
         Args:
-            *gene_models (GeneModels): Two or more GeneModels objects to
-            merge.
+            *gene_models (GeneModels): Two or more loaded GeneModels
+            objects to merge.
 
         Returns:
             GeneModels: New GeneModels object containing all transcripts.
 
         Raises:
-            ValueError: If fewer than 2 gene models provided.
+            ValueError: If fewer than 2 gene models are provided, or if
+                any of them was never loaded -- merging its empty
+                transcripts would silently drop everything it was meant
+                to bring.
 
         Example:
-            >>> gm1 = build_gene_models_from_file("genes1.gtf")
-            >>> gm2 = build_gene_models_from_file("genes2.gtf")
+            >>> gm1 = build_gene_models_from_file("genes1.gtf").load()
+            >>> gm2 = build_gene_models_from_file("genes2.gtf").load()
             >>> merged = GeneModels.join_gene_models(gm1, gm2)
 
         Note:
-            Transcript IDs should be unique across all input gene models.
+            Transcript IDs should be unique across all input gene models;
+            a later input's transcript replaces an earlier one's under
+            the same ID.
         """
         if len(gene_models) < 2:
             raise ValueError("The function needs at least 2 arguments!")
+        for gm in gene_models:
+            if not gm.is_loaded():
+                raise ValueError(
+                    f"gene models {gm.resource_id} were never loaded; "
+                    f"call load() before joining them")
 
-        gm = GeneModels(gene_models[0].resource)
-        gm._reset()
+        transcript_models: dict[str, TranscriptModel] = {}
+        for gm in gene_models:
+            transcript_models.update(gm.transcript_models)
+        return GeneModels.from_transcript_models(
+            gene_models[0].resource, transcript_models)
 
-        gm.transcript_models = gene_models[0].transcript_models.copy()
+    @classmethod
+    def from_transcript_models(
+        cls, resource: GenomicResource,
+        transcript_models: dict[str, TranscriptModel],
+    ) -> GeneModels:
+        """Build a loaded, indexed gene models object over ``resource``.
 
-        for i in gene_models[1:]:
-            gm.transcript_models.update(i.transcript_models)
+        The transcripts are taken as given, in the order given (the
+        serializers write them in that order); the resource's chrom
+        mapping is not applied.
 
-        gm._update_indexes()
+        Args:
+            resource (GenomicResource): The gene models resource the
+                result answers to (``resource_id``, reference genome).
+            transcript_models (dict[str, TranscriptModel]): Transcript
+                ID to transcript model.
 
+        Returns:
+            GeneModels: A loaded model over ``resource``.
+        """
+        gm = cls(resource)
+        gm._install(dict(transcript_models))
         return gm
 
 
