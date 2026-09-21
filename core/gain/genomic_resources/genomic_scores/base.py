@@ -305,9 +305,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             self.resource, self.config["table"],
         )
         self.score_definitions = self._build_scoredefs()
-        #: The stored ``chrom_lengths.json``, loaded by :meth:`open` when
-        #: it describes the resource as it is now and dropped by
-        #: :meth:`close`; ``None`` means the length reads resolve live.
+        # Loaded by open() when current, dropped by close(); None: live.
         self._stored_chrom_lengths: StoredChromLengths | None = None
 
     @staticmethod
@@ -943,21 +941,14 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     def chrom_length_sources(self) -> list[ChromLengthSource]:
         """The sources this score can answer a length from, best first.
 
-        Every source with an answer in the ``chrom_lengths.json`` the
-        last repair stored, when :meth:`open` found it current -- the
-        genome's rung among them; without it, the table's own source
-        alone.  Answered on an open score only: which file is current is
-        decided at :meth:`open`, so a closed score could only guess.
-        Raises ``ValueError`` on a score that is not open.
+        The stored file's, or the table's own source alone -- stored or
+        live as :meth:`get_chrom_length` says.  Answered on an open score
+        only: which file is current is decided at :meth:`open`, so a
+        closed score could only guess.  Raises ``ValueError`` otherwise.
         """
         self._require_open()
         stored = self._stored_chrom_lengths
-        if stored is None:
-            return [self.chrom_length_source]
-        sources = {stored.table_source}
-        for resolved in stored.lengths.values():
-            sources.update(resolved.answers)
-        return sorted(sources, key=lambda s: s.rank, reverse=True)
+        return [self.chrom_length_source] if stored is None else stored.sources
 
     def get_chrom_length(
         self, chrom: str,
@@ -1017,14 +1008,15 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """
         self._require_open()
         wanted = as_chrom_length_source(source)
+        if wanted is not None:
+            self._require_answerable_source(wanted)
+        records = self._chrom_length_records()
         if wanted is None:
             return {
                 chrom: resolved.best.length
-                for chrom, resolved in self._chrom_length_records().items()
+                for chrom, resolved in records.items()
                 if resolved.best is not None
             }
-        self._require_answerable_source(wanted)
-        records = self._chrom_length_records()
         return {
             chrom: resolved.answers[wanted]
             for chrom, resolved in records.items()
@@ -1041,17 +1033,16 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         return self._best_chrom_length(chrom).source
 
     def _chrom_length_records(self) -> dict[str, ChromLength]:
-        """Every contig's record: stored, or resolved live.  Screened by
-        the caller."""
+        """Every contig's record, stored or live; screened by the caller."""
         stored = self._stored_chrom_lengths
         if stored is not None:
             return stored.lengths
         return derive_chrom_lengths(self)
 
     def _chrom_length_record(self, chrom: str) -> ChromLength:
-        """One contig's record: stored, or resolved live.  Screened by the
-        caller -- the file is loaded only when its contig list is the
-        table's, so a contig that screen admitted is in it."""
+        """One contig's record, stored or live; screened by the caller --
+        the file is loaded only when its contig list is the table's, so
+        a contig that screen admitted is in it."""
         stored = self._stored_chrom_lengths
         if stored is not None:
             return stored.lengths[chrom]
@@ -1063,12 +1054,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             self.get_all_chromosomes())
 
     def _require_answerable_source(self, source: ChromLengthSource) -> None:
-        """Refuse the genome's rung on a score with no stored lengths.
-
-        The score holds no genome and resolves none; that rung reaches
-        it only through the file a repair stores, so its absence is
-        actionable and said so.  The other sources are the table's, and
-        one the table does not measure simply answers nothing.
+        """Refuse the genome's rung on a score with no stored lengths:
+        the one source that reaches the score only through the file a
+        repair stores, so its absence is actionable and said so.  A
+        table source the table does not measure simply answers nothing.
         """
         if (source is ChromLengthSource.REFERENCE_GENOME
                 and self._stored_chrom_lengths is None):

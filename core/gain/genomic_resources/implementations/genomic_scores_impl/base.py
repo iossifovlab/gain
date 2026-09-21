@@ -401,23 +401,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def _is_derived_from_now(
         self, key: DerivedFrom, grr: GenomicResourceRepo | None,
     ) -> bool:
-        """Whether ``key`` describes the resource as it is today.
-
-        The files by their manifest md5; the genome by the label.  A key
-        derived from a genome stands while the label still names it,
-        whether or not the genome is still in the repository -- the
-        record is the record.  One derived with none stands only while
-        there is still none to resolve: a genome that turns up later
-        reads as a change, and that is the one case the label has to be
-        resolved to tell.
-        """
-        if key.files_md5 != self._files_md5():
-            return False
-        genome_id = read_resource_id_label(
-            self.resource, "reference_genome")
-        if key.reference_genome is not None:
-            return key.reference_genome == genome_id
-        return genome_id is None or self._labelled_genome(grr)[1] is None
+        """Whether ``key`` describes the resource as it is today -- with
+        the label resolved through ``grr`` in the one case that needs
+        it, a key derived with no genome under a label now present."""
+        return key.describes(
+            self.resource, self.resource.get_manifest(), self.files,
+            genome_resolves=lambda: self._labelled_genome(grr)[1] is not None)
 
     def _files_md5(self) -> dict[str, str | None]:
         """The manifest md5 of every table file, keyed by name -- what

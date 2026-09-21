@@ -91,18 +91,71 @@ def a_labelled_tabix_score_grr(*, genome_id: Any = "genome") -> GRRBuilder:
     )
 
 
-def set_label(
-    tmp_path: pathlib.Path, resource_id: str, label: str, value: Any,
+#: The bigWig header's lengths and the genome's for chr1 -- two exact
+#: sources that disagree, so which one answered shows.
+BIGWIG_HEADER_LENGTHS = {"chr1": 100, "chr2": 200}
+BIGWIG_GENOME_CHR1_LENGTH = 90
+
+
+def a_labelled_bigwig_score_grr() -> GRRBuilder:
+    """A bigWig score ``score`` whose header lists chr1 and chr2,
+    labelled with a genome listing chr1 only."""
+    return (
+        a_grr()
+        .with_resource(
+            "genome",
+            a_reference_genome()
+            .with_chromosome("chr1", "A" * BIGWIG_GENOME_CHR1_LENGTH))
+        .with_resource(
+            "score",
+            a_bigwig_score()
+            .with_data("""
+                chr1  10  20  0.1
+                chr2  10  20  0.2
+            """)
+            .with_chrom_lens(BIGWIG_HEADER_LENGTHS)
+            .with_labels(reference_genome="genome"))
+    )
+
+
+def an_empty_mapped_contig_score() -> PositionScoreBuilder:
+    """'kept' maps onto a file contig with rows, 'empty' onto one with
+    none.  Only the in-memory backend, holding the whole file, can PROVE
+    a listed contig empty (gain#509)."""
+    return (
+        a_position_score()
+        .with_score("score", "float")
+        .with_data("""
+            chrom  pos_begin  score
+            chr1   10         0.1
+        """)
+        .with_chrom_mapping_file(kept="chr1", empty="chr99")
+    )
+
+
+def rewrite_config(
+    tmp_path: pathlib.Path, resource_id: str,
+    mutate: Callable[[dict[str, Any]], None],
 ) -> None:
-    """Rewrite one ``meta.labels`` entry of a realized resource, as YAML.
+    """Edit a realized resource's config as YAML, as the curator would.
 
     Through the YAML rather than a text replace, so any value -- an id,
-    an int, a list -- lands as the curator would have written it.
+    an int, a list -- lands as they would have written it.
     """
     config = tmp_path / resource_id / GR_CONF_FILE_NAME
     document = yaml.safe_load(config.read_text())
-    document["meta"]["labels"][label] = value
+    mutate(document)
     config.write_text(yaml.safe_dump(document))
+
+
+def set_label(
+    tmp_path: pathlib.Path, resource_id: str, label: str, value: Any,
+) -> None:
+    """Rewrite one ``meta.labels`` entry of a realized resource."""
+    rewrite_config(
+        tmp_path, resource_id,
+        lambda document: document["meta"]["labels"].__setitem__(
+            label, value))
 
 
 def patch_tabix_probe(
@@ -220,16 +273,8 @@ def test_a_bigwig_score_answers_its_header(
 def test_a_contig_proven_empty_keeps_the_reason(
     tmp_path: pathlib.Path,
 ) -> None:
-    # 'kept' maps onto a file contig with rows, 'empty' onto one with none;
-    # only the in-memory backend, holding the whole file, can prove that.
     impl, repo = _the_impl(tmp_path, _an_unlabelled_score_grr(
-        a_position_score()
-        .with_score("score", "float")
-        .with_data("""
-            chrom  pos_begin  score
-            chr1   10         0.1
-        """)
-        .with_chrom_mapping_file(kept="chr1", empty="chr99")))
+        an_empty_mapped_contig_score()))
 
     lengths = impl.get_chrom_lengths(repo)
 

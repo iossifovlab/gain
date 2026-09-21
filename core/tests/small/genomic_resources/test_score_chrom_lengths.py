@@ -50,6 +50,9 @@ from .genomic_position_table.test_genomic_position_table import (
 from .genomic_position_table.test_table_lifetime import (
     _undeclared_backends,
 )
+from .test_genomic_scores_impl_chrom_lengths import (
+    an_empty_mapped_contig_score,
+)
 
 # One score per backend, each carrying ``chr1``.  The tabix rows are far
 # enough apart (10 and 2500) that the probe's bound is visibly a bound.
@@ -93,17 +96,8 @@ def _a_bigwig_score(tmp_path: pathlib.Path) -> GenomicScore:
 def _a_score_with_an_empty_mapped_contig(
     tmp_path: pathlib.Path,
 ) -> GenomicScore:
-    # 'kept' maps onto a file contig with rows, 'empty' onto one with none.
-    # Only the in-memory backend, holding the whole file, can PROVE a listed
-    # contig empty (gain#509).
     return build_score_from_resource(
-        a_position_score()
-        .with_data("""
-            chrom  pos_begin  score
-            chr1   10         0.1
-        """)
-        .with_chrom_mapping_file(kept="chr1", empty="chr99")
-        .build_resource(tmp_path))
+        an_empty_mapped_contig_score().build_resource(tmp_path))
 
 
 def _the_probe_fails_for(
