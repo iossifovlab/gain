@@ -17,6 +17,16 @@
 // version before pytest starts. One JUnit file per tier; a red in either
 // makes the build red. See core/conda-integration/.
 //
+// The small tier runs with the http/s3 scheme parametrizations enabled,
+// against the same `apache` + `minio` fixtures from docker-compose.yaml
+// the root pipeline's `core` stage brings up (#1571), so it collects the
+// same items as the root's run of the same commit -- the protocol
+// plumbing (fsspec http, s3fs, htslib over http) is exactly where a
+// conda-forge build can differ from the PyPI wheel. The compose project
+// is scoped to this build: the nightly's pinned fan-out (#1430) runs
+// three builds of this job at once, possibly on one agent, next to the
+// root pipeline's own `gain-ci-*` projects.
+//
 // Advisory per push: a red posts the Zulip alert and blocks nothing
 // there, and PYTHON_VERSION is left empty so the solve tests what a
 // user's `mamba create` resolves to today. Jenkinsfile.nightly runs this
@@ -147,6 +157,16 @@ pipeline {
 
         IMAGE_TAG = "gain-conda-integration-ci:${env.BUILD_NUMBER}"
 
+        // The http/s3 fixture stack (apache + minio from the repo's
+        // docker-compose.yaml) is namespaced per build, like the root
+        // pipeline's `gain-ci-<tag>`: the job name keeps it apart from the
+        // root's projects on a shared agent, the build number from the
+        // nightly's three concurrent pinned runs of this job (#1430). The
+        // network name is what compose derives from the project name; the
+        // test container joins it to reach the services by name.
+        COMPOSE_PROJECT = "gain-conda-integration-${env.BUILD_NUMBER}"
+        COMPOSE_NETWORK = "gain-conda-integration-${env.BUILD_NUMBER}_default"
+
         // GRR_ROOT is the node-local grr-sync root holding the stable
         // per-repo symlink <root>/grr_seqpipe, published by grr-sync (atomic
         // mode, iossifovlab/grr-sync#20) and provisioned per agent by
@@ -246,10 +266,17 @@ pipeline {
                 // root is only involved when there is genuinely root-owned
                 // state to remove. `rm -rf` on an absent path succeeds, so
                 // a cold workspace does not reach for it.
+                //
+                // core/tests/.test_grr is the third bind source: the tree
+                // the http fixture writes and apache serves (#1571). The
+                // suite removes what it wrote, but an aborted run does not
+                // get to, and its per-invocation directories carry the
+                // agent's uid only because the run created the source
+                // first -- so it is wiped here on the same terms.
                 sh '''
-                    rm -rf reports dist \
+                    rm -rf reports dist core/tests/.test_grr \
                         || docker run --rm -v "$PWD:/wd" -w /wd alpine \
-                               rm -rf reports dist
+                               rm -rf reports dist core/tests/.test_grr
                 '''
             }
         }
@@ -453,55 +480,112 @@ pipeline {
         stage('Conda integration tests') {
             when { expression { env.SUPERSEDED != 'true' } }
             steps {
-                sh '''
-                    # Create the bind source as the agent user, immediately
-                    # before the run that consumes it. dockerd creates a
-                    # MISSING one as root:root, and that root-owned directory
-                    # is what wedges every subsequent build in this workspace
-                    # (gain#921) -- so the fix is simply to never let it be
-                    # missing. It cannot live in `Wipe workspace`: that runs
-                    # before `Checkout`, whose cold-workspace clone path
-                    # deletes the whole workspace (gain#917). Keeping it in
-                    # the same script as the `docker run` is what stops the
-                    # two drifting apart again.
-                    mkdir -p reports/conda-integration
+                script {
+                    try {
+                        // The http/s3 fixtures the small tier's scheme
+                        // parametrizations need (#1571): apache serves
+                        // core/tests/.test_grr, minio is the S3 endpoint,
+                        // and minio-client is the one-shot bucket setup --
+                        // run inline rather than via `up --wait`, which
+                        // races with short-lived services. Same recipe as
+                        // the root pipeline's `core` stage, including
+                        // `-f docker-compose.yaml`, which skips the
+                        // override file's host-port publishing so
+                        // concurrent builds on one agent cannot collide.
+                        //
+                        // Both bind sources are created here as the agent
+                        // user, immediately before what consumes them.
+                        // dockerd creates a MISSING one as root:root, and
+                        // that root-owned directory is what wedges every
+                        // subsequent build in this workspace (gain#921) --
+                        // so the fix is simply to never let it be missing.
+                        // It cannot live in `Wipe workspace`: that runs
+                        // before `Checkout`, whose cold-workspace clone
+                        // path deletes the whole workspace (gain#917).
+                        // Keeping each mkdir in the same script as the
+                        // mount that needs it is what stops the two
+                        // drifting apart again.
+                        sh '''
+                            mkdir -p core/tests/.test_grr
+                            docker compose -f docker-compose.yaml \
+                                -p "$COMPOSE_PROJECT" \
+                                up -d --wait apache minio
+                            docker compose -f docker-compose.yaml \
+                                -p "$COMPOSE_PROJECT" \
+                                run --rm minio-client
+                        '''
+                        sh '''
+                            mkdir -p reports/conda-integration
 
-                    # Run as the agent user, not the image's mambauser, so
-                    # the reports land on the host owned by the agent (same
-                    # reason the root Jenkinsfile's `Conda packages` stage
-                    # does it). HOME and MAMBA_ROOT_PREFIX point at /tmp
-                    # because /opt/conda is not writable by an arbitrary UID;
-                    # the env is solved under /tmp/env inside the container
-                    # and discarded with it.
-                    #
-                    # The grr_seqpipe bind resolves the atomic-publish symlink
-                    # (<root>/grr_seqpipe -> <root>/grr_seqpipe.<sha>) on the
-                    # host at container start, so a sync landing mid-build
-                    # cannot swap files under the suite -- the old snapshot is
-                    # retained for a window (grr-sync#20). Mounted read-only;
-                    # GRR_INTEGRATION_DIR makes the grr_seqpipe fixture read it
-                    # as a directory repo instead of the http one.
-                    #
-                    # The image entrypoint (core/conda-integration/run.sh)
-                    # indexes the channel, solves, asserts the installed gain
-                    # is the artefact's, and runs the small tier, then
-                    # tests/integration -- both always, so one tier's red
-                    # cannot hide the other's. Its exit code is non-zero if
-                    # either tier's was. It writes pytest-small.xml,
-                    # pytest-integration.xml and the explicit env lockfile
-                    # into /reports.
-                    docker run --rm \
-                        --name gain-conda-integration-${BUILD_NUMBER} \
-                        --user "$(id -u):$(id -g)" \
-                        -e HOME=/tmp \
-                        -e MAMBA_ROOT_PREFIX=/tmp/mamba \
-                        -e PYTHON_VERSION="${PYTHON_VERSION}" \
-                        -v "$PWD/dist/conda:/dist/conda:ro" \
-                        -v "${GRR_ROOT}/grr_seqpipe:/grr/grr_seqpipe:ro" \
-                        -v "$PWD/reports/conda-integration:/reports" \
-                        -e GRR_INTEGRATION_DIR=/grr/grr_seqpipe \
-                        ${IMAGE_TAG}
-                '''
+                            # Run as the agent user, not the image's
+                            # mambauser, so the reports land on the host
+                            # owned by the agent (same reason the root
+                            # Jenkinsfile's `Conda packages` stage does
+                            # it). HOME and MAMBA_ROOT_PREFIX point at /tmp
+                            # because /opt/conda is not writable by an
+                            # arbitrary UID; the env is solved under
+                            # /tmp/env inside the container and discarded
+                            # with it.
+                            #
+                            # The grr_seqpipe bind resolves the
+                            # atomic-publish symlink (<root>/grr_seqpipe ->
+                            # <root>/grr_seqpipe.<sha>) on the host at
+                            # container start, so a sync landing mid-build
+                            # cannot swap files under the suite -- the old
+                            # snapshot is retained for a window
+                            # (grr-sync#20). Mounted read-only;
+                            # GRR_INTEGRATION_DIR makes the grr_seqpipe
+                            # fixture read it as a directory repo instead
+                            # of the http one.
+                            #
+                            # The image entrypoint
+                            # (core/conda-integration/run.sh) indexes the
+                            # channel, solves, asserts the installed gain
+                            # is the artefact's, and runs the small tier,
+                            # then tests/integration -- both always, so one
+                            # tier's red cannot hide the other's. Its exit
+                            # code is non-zero if either tier's was. It
+                            # writes pytest-small.xml, pytest-integration.xml
+                            # and the explicit env lockfile into /reports.
+                            #
+                            # The container joins the fixture stack's
+                            # network and reaches apache and minio by
+                            # service name. The http fixture in the
+                            # INSTALLED gain derives its serving directory
+                            # from its own location -- site-packages here,
+                            # not the source tree -- so HTTP_GRR_DIR points
+                            # it at the test bed's core/tests/.test_grr,
+                            # where the host directory apache serves is
+                            # bound (#1571).
+                            docker run --rm \
+                                --name gain-conda-integration-${BUILD_NUMBER} \
+                                --network "$COMPOSE_NETWORK" \
+                                --user "$(id -u):$(id -g)" \
+                                -e HOME=/tmp \
+                                -e MAMBA_ROOT_PREFIX=/tmp/mamba \
+                                -e PYTHON_VERSION="${PYTHON_VERSION}" \
+                                -e HTTP_HOST=apache:80 \
+                                -e MINIO_HOST=minio:9000 \
+                                -e HTTP_GRR_DIR=/testbed/core/tests/.test_grr \
+                                -v "$PWD/dist/conda:/dist/conda:ro" \
+                                -v "${GRR_ROOT}/grr_seqpipe:/grr/grr_seqpipe:ro" \
+                                -v "$PWD/reports/conda-integration:/reports" \
+                                -v "$PWD/core/tests/.test_grr:/testbed/core/tests/.test_grr" \
+                                -e GRR_INTEGRATION_DIR=/grr/grr_seqpipe \
+                                ${IMAGE_TAG}
+                        '''
+                    } finally {
+                        // Every exit path -- green, red, aborted mid-run --
+                        // passes through here; `|| true` because a stack
+                        // that never came up has nothing to take down and
+                        // must not turn a test verdict into a teardown one.
+                        sh '''
+                            docker compose -f docker-compose.yaml \
+                                -p "$COMPOSE_PROJECT" \
+                                down -v --remove-orphans || true
+                        '''
+                    }
+                }
             }
         }
     }

@@ -19,6 +19,12 @@
 #       -e GRR_INTEGRATION_DIR=/grr/grr_seqpipe \
 #       gain-conda-integration-ci
 #
+# The small tier runs with the http/s3 schemes enabled, so the job also
+# joins the container to the apache + minio compose network, passes
+# HTTP_HOST / MINIO_HOST, and binds the directory apache serves at
+# /testbed/core/tests/.test_grr with HTTP_GRR_DIR naming it (#1571).
+# Without those the http/s3 cases fail on connection, not skip.
+#
 # The container is run as the Jenkins user (not the image's mambauser)
 # so the reports it writes are owned by the agent on the host, the same
 # reason the root Jenkinsfile's `Conda packages` stage does it. That is

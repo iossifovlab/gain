@@ -339,7 +339,12 @@ Services defined in `docker-compose.yaml`:
   `minioadmin/minioadmin`, bucket `test-bucket`
 - **Apache httpd** (port 28080) — HTTP fixture server
   for `grr_http` tests; serves
-  `core/tests/.test_grr/`
+  `core/tests/.test_grr/`. The http fixture finds that
+  directory relative to the `gain` package, which is the
+  source tree only under an editable install; a run
+  against an *installed* `gain` sets `HTTP_GRR_DIR` to the
+  directory Apache actually serves (the conda-integration
+  job does), the way `HTTP_HOST` names the server.
 
 ## Architecture
 

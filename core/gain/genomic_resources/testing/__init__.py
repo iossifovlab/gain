@@ -608,13 +608,26 @@ def build_http_test_protocol(
     The Apache2 is used to serve the GRR.
     This root_path directory should be a valid filesystem genomic resource
     repository.
+
+    The copy Apache serves is written under ``HTTP_GRR_DIR`` when that
+    environment variable is set (and non-empty), otherwise under the
+    package's own ``core/tests/.test_grr`` -- the directory
+    ``docker-compose.yaml`` mounts into ``httpd``. That default reaches the
+    source tree only through an editable install; a job that tests an
+    installed ``gain`` imports it from site-packages and has to name the
+    mounted directory itself. ``HTTP_HOST`` names the server the same way.
     """
     source_proto = build_filesystem_test_protocol(root_path, repair=repair)
-    # This module lives at core/gain/genomic_resources/testing/__init__.py,
-    # so four parents up from __file__ is the ``core`` package root.
-    http_path = pathlib.Path(__file__).parent.parent.parent.parent
-    http_path = http_path / "tests" / ".test_grr"
-    assert http_path.parts[-2:] == ("tests", ".test_grr"), http_path
+    served_root = os.environ.get("HTTP_GRR_DIR")
+    if served_root:
+        http_path = pathlib.Path(served_root)
+    else:
+        # This module lives at core/gain/genomic_resources/testing/
+        # __init__.py, so four parents up from __file__ is the ``core``
+        # package root.
+        http_path = pathlib.Path(__file__).parent.parent.parent.parent
+        http_path = http_path / "tests" / ".test_grr"
+        assert http_path.parts[-2:] == ("tests", ".test_grr"), http_path
     # Unique per invocation: the python-matrix runs the three core cells
     # (py3.12/3.13/3.14) in parallel against a single host-mounted
     # .test_grr, all running the same tests. Keying the serving directory
