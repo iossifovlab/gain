@@ -173,10 +173,11 @@ class RegionFragments:
 
 
 class FragmentStatistics(RegionFoldedStatistic[RegionFragments]):
-    """A resource's fragment counts, per chromosome and global.
+    """A resource's fragment counts and lengths, per chromosome and global.
 
     Folds :class:`RegionFragments` the way the base class does, and
-    serializes to :data:`FRAGMENT_STATISTICS_FILE` as raw counts.
+    serializes to :data:`FRAGMENT_STATISTICS_FILE` as raw counts beside
+    each chromosome's exact length record.
     """
 
     def __init__(self) -> None:
@@ -269,10 +270,11 @@ class FragmentRow(NamedTuple):
 class FragmentDisplay(NamedTuple):
     """The Fragments section's render payload.
 
-    Counts only -- nothing to resolve: a fragment is a table row, and
-    rows have no natural total to be a fraction of.  The global count is
-    the sum of the rows, exactly as the stored statistic's global entry
-    is the merge of its per-chromosome ones.
+    Counts and the global length record -- nothing to resolve: a
+    fragment is a table row, and rows have no natural total to be a
+    fraction of.  The global count is the sum of the rows, exactly as
+    the stored statistic's global entry is the merge of its
+    per-chromosome ones.
     """
 
     rows: list[FragmentRow]

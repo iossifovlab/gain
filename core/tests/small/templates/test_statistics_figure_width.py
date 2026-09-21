@@ -276,8 +276,8 @@ _THUMBNAIL_FIGURES: list[tuple[str, _Builder, str]] = [
      _indel_allele_score, ALLELE_DELETION_LENGTHS_IMAGE_FILE),
     ("segment lengths",
      _position_score_with_segments, COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE),
-    # The fragments section lives in a child template, so this is the
-    # one thumbnail the genomic-score page itself never renders.
+    # The one thumbnail on a page none of the genomic-score fixtures
+    # above build: a fragment score's.
     ("fragment lengths",
      _fragment_score, FRAGMENT_LENGTHS_IMAGE_FILE),
 ]

@@ -86,14 +86,14 @@ def _stored(resource: GenomicResource) -> FragmentStatistics:
         resource.get_file_content(FRAGMENT_STATISTICS_FILE))
 
 
-def test_an_unknown_histogram_round_trips_as_unknown_not_as_zero(
+def test_an_unknown_record_round_trips_as_unknown_not_as_empty(
     tmp_path: pathlib.Path,
 ) -> None:
     # The shape ``serialize`` actually emits for a chromosome whose
-    # lengths are unknown: the key is OMITTED, not zero-filled.  Read
-    # back as an all-zero histogram it would claim the fragments were
-    # measured and had no lengths, which is a different -- and false --
-    # statement from "this file cannot say".  Written through the
+    # lengths are unknown: the key is OMITTED, not written as an empty
+    # record.  Read back as an empty record it would claim the fragments
+    # were measured and had no lengths, which is a different -- and
+    # false -- statement from "this file cannot say".  Written through the
     # statistic's own serializer rather than by hand, so the reader and
     # the writer are pinned against each other and not against a fixture
     # that could drift from either.
@@ -106,7 +106,7 @@ def test_an_unknown_histogram_round_trips_as_unknown_not_as_zero(
 
     restored = FragmentStatistics.deserialize(unknown.serialize())
 
-    assert "fragment_length_histogram" not in unknown.serialize()
+    assert "fragment_lengths" not in unknown.serialize()
     assert restored.fragments_by_chromosome() == {"chr1": 4, "chr2": 1}
     assert restored.fragments_global() == 5
     assert restored.fragment_lengths_by_chromosome() == {}
@@ -407,18 +407,23 @@ def test_a_fragment_resource_with_no_statistics_file_says_not_computed(
 
 
 def _version_1_file() -> str:
-    """A fragments.json as gain wrote it before gain#1544: the fragment
-    count beside the log2 ladder, no exact record."""
-    ladder = [0, 0, 1, 2, 1, 0, 1] + [0] * 25
+    """A fragments.json as gain wrote it before gain#1544 for the
+    ``_fragments`` fixture: the fragment count beside the log2 ladder
+    (chr1's 11, 11, 31 and 91 in bins 3, 3, 4 and 6; chr2's 4 in bin 2),
+    no exact record."""
+    chr1_ladder = [0, 0, 0, 2, 1, 0, 1] + [0] * 25
+    chr2_ladder = [0, 0, 1, 0, 0, 0, 0] + [0] * 25
+    global_ladder = [0, 0, 1, 2, 1, 0, 1] + [0] * 25
     return json.dumps({
         "format_version": 1,
         "chromosomes": {
             "chr1": {"fragment_count": 4,
-                     "fragment_length_histogram": ladder},
+                     "fragment_length_histogram": chr1_ladder},
             "chr2": {"fragment_count": 1,
-                     "fragment_length_histogram": ladder},
+                     "fragment_length_histogram": chr2_ladder},
         },
-        "global": {"fragment_count": 5, "fragment_length_histogram": ladder},
+        "global": {"fragment_count": 5,
+                   "fragment_length_histogram": global_ladder},
     })
 
 

@@ -379,9 +379,10 @@ which the page renders as a floor rather than as a number.
 The ladder remained the **stored** format for fragments until gain#1544
 (segments left it in gain#1543; see the amendments below), and remains what the
 indel *chart* is drawn on — derived from the map at render time rather than
-stored beside it, so the picture and the statistics beneath it cannot drift. The derived bins are
-identical to the stored ones, because the plot already sums every bin at or
-above its display cap into one overflow bar and the clamp is equal to that
+stored beside it, so the picture and the statistics beneath it cannot drift.
+The derived bins are identical to the stored ones, because the plot already
+sums every bin at or above its display cap into one overflow bar and the clamp
+is equal to that
 cap.
 
 The rollout is the one this ADR already describes: **deserialization reads the

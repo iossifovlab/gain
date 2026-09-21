@@ -78,10 +78,10 @@ def plot_length_histogram(
     ``display_cap`` is the length the drawn axis stops at: every bin at
     or above it becomes one overflow bar.  A parameter rather than a
     constant so a resource kind whose lengths genuinely run longer can
-    raise its own axis without anything touching the stored format,
-    which the fold never reads back.  It is snapped down to its own bin
-    on the ladder, so a cap between two edges caps at the lower one --
-    pass a power of two to get the axis the number reads as.
+    raise its own axis -- though not above the exact map's clamp, which
+    is where the stored record stops resolving.  It is snapped down to
+    its own bin on the ladder, so a cap between two edges caps at the
+    lower one -- pass a power of two to get the axis the number reads as.
     """
     # pylint: disable=import-outside-toplevel
     import matplotlib
