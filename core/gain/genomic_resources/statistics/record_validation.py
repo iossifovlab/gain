@@ -136,18 +136,16 @@ def validate_record_arrays(
     two is what ADR 0008 records as the reason the shared class attribute was
     removed.
 
-    The ordering rule is all it states.  The per-record path additionally
-    refuses a record whose end precedes its begin (see
-    :func:`~gain.genomic_resources.resource_errors.inverted_span_error`);
-    there is no array counterpart, because the backends the bulk path reads
-    all but cannot produce one: a bigWig holds no interval whose end is not
-    past its start, and tabix, checking its bounds zero-based, refuses a
-    1-based row with ``pos_end < pos_begin - 1``.  The one row tabix does
-    index, ``pos_end == pos_begin - 1``, this door accepts and its
-    per-record twin refuses -- gain#1526 (ADR 0008 on why a rule the
-    backend happens to enforce is still written).  ``test_scan_array_door.py``
-    pins both bounds; if the tabix refusal ever goes green, this is where
-    the check belongs.
+    It also refuses a record whose end precedes its begin, as the per-record
+    door does (see
+    :func:`~gain.genomic_resources.resource_errors.inverted_span_error`),
+    although the backends the bulk path reads keep all but one such row out
+    -- a rule the backend happens to enforce is still the kind's to state
+    (ADR 0008; ``test_scan_array_door.py`` pins what each backend admits).
+    The refusal is the per-record door's, one suffix short of it for an
+    allele record: the batches carry no ref/alt columns, so it cannot name
+    them.  A resource breaking both rules is refused for the same fault on
+    both doors; :func:`_refuse_first_fault` says which.
 
     ``chrom`` is what the batches were read for.  A bulk scan reads one
     region, which lies within one contig, so the rules carry their ordering
@@ -243,6 +241,57 @@ def _backwards_records(
         yield record
 
 
+#: What precedes a batch's first record before any record was seen: a value
+#: no begin can sit at or before, so neither ordering rule can fire on it.
+_NO_PREDECESSOR = np.iinfo(np.int64).min
+
+
+def _predecessors(column: np.ndarray, carried: int | None) -> np.ndarray:
+    """Each record's predecessor's value of ``column``, as a column.
+
+    The first record's predecessor is the one ``carried`` in from the batch
+    before -- or, when there is none, :data:`_NO_PREDECESSOR`.  A rule
+    compares ``pos_begin`` against this column in one vectorized step, so a
+    violation straddling a batch boundary is found at index 0 like any other:
+    batches are a read-granularity artefact, and no rule may depend on where
+    one happens to break.
+    """
+    first = _NO_PREDECESSOR if carried is None else carried
+    return np.concatenate(([first], column[:-1]))
+
+
+def _refuse_first_fault(
+    chrom: str, pos_begin: np.ndarray, pos_end: np.ndarray,
+    disorder: np.ndarray,
+) -> int | None:
+    """Name a batch's first faulty record: raise for its span, or return it.
+
+    ``disorder`` marks the records that break the kind's ordering rule.  A
+    record whose end precedes its begin breaks the rule every kind shares
+    (:func:`~gain.genomic_resources.resource_errors.inverted_span_error`), so
+    this is the array-side twin of :func:`_record_to_begin_end`, and shared
+    by both array rules as that reader is by both per-record rules.  The
+    batches carry no ref/alt columns, so the refusal names none.
+
+    The precedence is the per-record door's: a record's own span is read
+    before the record is compared with its predecessor, so of a batch's
+    faults the earliest in record order is named, and a record breaking both
+    rules is named for its span.  Returns the index of the first record
+    breaking the ordering rule when that comes first -- the caller raises,
+    since it alone knows the words -- and ``None`` when no record breaks
+    either.
+    """
+    inverted = pos_end < pos_begin
+    faults = disorder | inverted
+    if not bool(faults.any()):
+        return None
+    at = int(np.argmax(faults))
+    if inverted[at]:
+        raise inverted_span_error(
+            chrom, int(pos_begin[at]), int(pos_end[at]), None, None)
+    return at
+
+
 def _position_record_arrays(
     score: PositionScore, batches: Iterator[RecordArrays], chrom: str,
 ) -> Generator[RecordArrays, None, None]:
@@ -252,28 +301,22 @@ def _position_record_arrays(
     instead of over records.  Both read the RAW begin and end, which is the
     only layer at which the two can say the same thing.
 
-    A violation straddling a batch boundary is caught on the carried end:
-    batches are a read-granularity artefact, and no rule may depend on where
-    one happens to break.
-
     Adjacent pairs only, exactly as :func:`_position_records` compares them,
-    and complete for the reason given there -- with the backends' own bound
-    of ``end >= begin - 1`` (see :func:`validate_record_arrays`) standing in
-    for the refusal :func:`_record_to_begin_end` makes on the other path.
+    and complete for the reason given there: :func:`_refuse_first_fault`
+    names a record whose end precedes its begin unless a touching record
+    comes first, so up to the first touching record the ends never decrease.
     """
     prev_end: int | None = None
     for batch in batches:
         pos_begin, pos_end, _cells = batch
         if pos_begin.size:
-            if prev_end is not None and int(pos_begin[0]) <= prev_end:
+            taken = _predecessors(pos_end, prev_end)
+            at = _refuse_first_fault(
+                chrom, pos_begin, pos_end, pos_begin <= taken)
+            if at is not None:
                 raise overlapping_records_error(
-                    score.resource_id, chrom, int(pos_begin[0]), prev_end)
-            touching = pos_begin[1:] <= pos_end[:-1]
-            if bool(touching.any()):
-                first = int(np.argmax(touching))
-                raise overlapping_records_error(
-                    score.resource_id, chrom,
-                    int(pos_begin[first + 1]), int(pos_end[first]))
+                    score.resource_id, chrom, int(pos_begin[at]),
+                    int(taken[at]))
             prev_end = int(pos_end[-1])
         yield batch
 
@@ -288,25 +331,24 @@ def _backwards_record_arrays(
     shared by the same two kinds for the same reason.  The comparison is
     strict: several records at ONE position are what these kinds are made of.
 
-    Only the begins take part, and only the RAW ones -- the ends an optional
-    ``pos_end`` column carries are not what an allele record means, and a
-    fragment's own end is not what its ordering is about.  A violation
-    straddling a batch boundary is caught on the carried begin.
+    Only the begins take part in the ordering, and only the RAW ones -- the
+    ends an optional ``pos_end`` column carries are not what an allele
+    record means, and a fragment's own end is not what its ordering is
+    about.  The ends are read for one thing only: :func:`_refuse_first_fault`
+    refuses a record whose end precedes its begin, as
+    :func:`_record_to_begin_end` does for the other path.
     """
     prev_begin: int | None = None
     for batch in batches:
-        pos_begin, _pos_end, _cells = batch
+        pos_begin, pos_end, _cells = batch
         if pos_begin.size:
-            if prev_begin is not None and int(pos_begin[0]) < prev_begin:
+            before = _predecessors(pos_begin, prev_begin)
+            at = _refuse_first_fault(
+                chrom, pos_begin, pos_end, pos_begin < before)
+            if at is not None:
                 raise backwards_records_error(
-                    score.resource_id, chrom, int(pos_begin[0]), prev_begin,
-                    kind)
-            backwards = pos_begin[1:] < pos_begin[:-1]
-            if bool(backwards.any()):
-                first = int(np.argmax(backwards))
-                raise backwards_records_error(
-                    score.resource_id, chrom, int(pos_begin[first + 1]),
-                    int(pos_begin[first]), kind)
+                    score.resource_id, chrom, int(pos_begin[at]),
+                    int(before[at]), kind)
             prev_begin = int(pos_begin[-1])
         yield batch
 
