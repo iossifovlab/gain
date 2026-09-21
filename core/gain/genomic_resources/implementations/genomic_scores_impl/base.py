@@ -263,13 +263,26 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         ``best`` by rank; a contig with no length keeps the table's
         reason (``EMPTY`` / ``UNDETERMINED``) in its record.
 
-        With a genome that resolved, the contigs it does not list are
-        reported too (gain#1575): some of them is one WARNING per call,
-        all of them a ``ValueError``.
+        Answered from the stored ``CHROM_LENGTHS_FILE`` while the gate
+        (:meth:`derived_files_state`) calls it ``CURRENT``: the records
+        the repair wrote, with no table opened and no genome resolved --
+        the repair that wrote them already warned or failed over the
+        contig overlap.  In every other state the ladder runs live, as
+        below.  A CURRENT file whose contig list is no longer the
+        table's cannot be told apart without opening the table, and is
+        not looked for here: the key's manifest md5s cover the table
+        files, and a ``chrom_mapping`` change is a config change, which
+        the repair gate is the place to catch (gain#1578).
 
-        Opens the score if it is closed, and closes it again only in
-        that case -- an already-open score stays open for its owner.
+        Live, with a genome that resolved, the contigs it does not list
+        are reported too (gain#1575): some of them is one WARNING per
+        call, all of them a ``ValueError``.
+
+        Live, opens the score if it is closed, and closes it again only
+        in that case -- an already-open score stays open for its owner.
         """
+        if (stored := self._stored_lengths_if_current(grr)) is not None:
+            return stored.lengths
         return self._derive_chrom_lengths(self._resolve_labelled_genome(grr))
 
     def derived_files_state(
@@ -288,19 +301,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         says, and the rebuild fails it, as any read would.  Looks for
         files and compares keys; opens no table.
         """
-        missing = [
-            file_name for file_name in sorted(self.files)
-            if not self.resource.file_exists(file_name)]
-        unpulled = [
-            file_name for file_name in missing
-            if self.resource.file_exists(file_name + DVC_SUFFIX)]
-        if len(unpulled) < len(missing):
+        unpulled = self._unpulled_table_files()
+        if unpulled is None:
             # A file nothing vouches for: the resource is broken, and
             # the rebuild is what fails it, as any read of it would.
             return DerivedFilesState.STALE
         stored = load_chrom_lengths(self.resource)
-        if stored is not None and self._is_derived_from_now(
-                stored.derived_from, grr):
+        if self._describes_now(stored, grr):
             return DerivedFilesState.CURRENT
         logger.info(
             "stored chromosome lengths of <%s> are %s; needs update",
@@ -314,6 +321,36 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 self.resource.get_full_id(), ", ".join(unpulled))
             return DerivedFilesState.PAYLOAD_ABSENT
         return DerivedFilesState.STALE
+
+    def _stored_lengths_if_current(
+        self, grr: GenomicResourceRepo | None,
+    ) -> StoredChromLengths | None:
+        """The stored lengths when the gate would call them ``CURRENT``,
+        else ``None`` -- the same three questions the gate asks, asked
+        quietly: this is the readers' branch, and a page render is not
+        where a stale or unpulled resource gets reported."""
+        if self._unpulled_table_files() is None:
+            return None
+        stored = load_chrom_lengths(self.resource)
+        return stored if self._describes_now(stored, grr) else None
+
+    def _unpulled_table_files(self) -> list[str] | None:
+        """The table files missing beside their ``.dvc`` sidecar, or
+        ``None`` when one is missing with no sidecar to vouch for it."""
+        missing = [
+            file_name for file_name in sorted(self.files)
+            if not self.resource.file_exists(file_name)]
+        unpulled = [
+            file_name for file_name in missing
+            if self.resource.file_exists(file_name + DVC_SUFFIX)]
+        return unpulled if len(unpulled) == len(missing) else None
+
+    def _describes_now(
+        self, stored: StoredChromLengths | None,
+        grr: GenomicResourceRepo | None,
+    ) -> bool:
+        return stored is not None and self._is_derived_from_now(
+            stored.derived_from, grr)
 
     def rebuild_derived_files(
         self, grr: GenomicResourceRepo | None,
