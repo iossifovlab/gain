@@ -532,7 +532,7 @@ def test_an_unusable_genome_label_still_builds_statistics_tasks(
     # Reported by every reader of the label (gain#1053): the build's own
     # resolution, and the score's open, which compares the stored key.
     warnings = label_warnings(caplog)
-    assert warnings
+    assert len(warnings) == 2
     for warning in warnings:
         assert "scores/one" in warning
         assert "reference_genome" in warning

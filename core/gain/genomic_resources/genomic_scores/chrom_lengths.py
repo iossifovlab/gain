@@ -198,18 +198,21 @@ class DerivedFrom:
         """Whether ``resource``, as it is now, is what this was derived from.
 
         The check a reader with no repository can make: the label as the
-        resource carries it today, and the manifest's md5 of every one of
-        the table's ``files``.  A label whose genome did not resolve at
-        repair was recorded as none, so it reads as stale here until it
-        does -- conservative on purpose (gain#1419); the answer then
-        costs the live probe and nothing more.  The implementation's
-        gate, which holds a repository, resolves that one case instead.
+        resource carries it today, and the STORED manifest's md5 of every
+        one of the table's ``files`` -- a resource with no stored
+        manifest is never described, since a read path builds none.  A
+        label whose genome did not resolve at repair was recorded as
+        none, so it reads as stale here until it does -- conservative on
+        purpose (gain#1419); the answer then costs the live probe and
+        nothing more.  The implementation's gate, which holds a
+        repository, resolves that one case instead.
         """
         if read_resource_id_label(
                 resource, "reference_genome") != self.reference_genome:
             return False
-        manifest = resource.get_manifest()
-        return all(file_name in manifest for file_name in files) and \
+        manifest = resource.get_loaded_manifest()
+        return manifest is not None and \
+            all(file_name in manifest for file_name in files) and \
             self.files_md5 == files_md5_of(manifest, files)
 
 
@@ -355,12 +358,15 @@ def load_current_chrom_lengths(
             "genomic score %s has no stored chromosome lengths; "
             "resolving them live", score.resource_id)
         return None
-    if not stored.derived_from.describes(
-            score.resource, score.resource_files()):
+    # The manifest first, and only the stored one: the table's file set
+    # is read off the manifest too, and a read path builds none.
+    if score.resource.get_loaded_manifest() is None or \
+            not stored.derived_from.describes(
+                score.resource, score.resource_files()):
         logger.info(
-            "stored chromosome lengths of genomic score %s are stale; "
-            "resolving them live until the next repair",
-            score.resource_id)
+            "stored chromosome lengths of genomic score %s are stale "
+            "(another label, other table files, or no manifest to compare "
+            "against); resolving them live", score.resource_id)
         return None
     if list(stored.lengths) != score.get_all_chromosomes():
         logger.info(
@@ -395,9 +401,10 @@ def refuse_unanswered_source(
     """
     if source is table_source and resolved.extent is not None:
         raise ValueError(resolved.extent.refusal(chrom, contigs))
+    answering = sorted(resolved.answers, key=lambda s: s.rank, reverse=True)
     raise ValueError(
         f"{source.value} has no length for {chrom}; the sources that "
-        f"answer it: {[s.value for s in resolved.answers]}")
+        f"answer it: {[s.value for s in answering]}")
 
 
 def save_chrom_lengths(
@@ -423,12 +430,15 @@ def load_chrom_lengths(resource: GenomicResource) -> StoredChromLengths | None:
         return _deserialize(resource.get_file_content(CHROM_LENGTHS_FILE))
     except FileNotFoundError:
         return None
-    except (ValueError, KeyError, TypeError, AttributeError) as err:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as err:
         # ``json.JSONDecodeError`` and ``UnicodeDecodeError`` are
         # ``ValueError``s; so is an enum member the name does not
-        # match.  The others are a document of the wrong shape.  The
-        # cause quotes the file, which is repository content: escaped
-        # so it cannot end the line and start a forged record (gain#642).
+        # match.  The others are a document of the wrong shape -- and
+        # ``OSError`` a fetch that failed, which a remote protocol
+        # reports a transient 5xx as: the optional file must not fail
+        # the open of a score that reads fine without it.  The cause
+        # quotes the file, which is repository content: escaped so it
+        # cannot end the line and start a forged record (gain#642).
         logger.warning(
             "resource <%s>: %s cannot be read as stored chromosome "
             "lengths (%s); treating it as absent",

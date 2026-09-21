@@ -23,8 +23,14 @@ from gain.genomic_resources.genomic_scores import (
 from gain.genomic_resources.genomic_scores.chrom_lengths import (
     CHROM_LENGTHS_FILE,
 )
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME
-from gain.genomic_resources.testing import build_filesystem_test_repository
+from gain.genomic_resources.repository import (
+    GR_CONF_FILE_NAME,
+    GenomicResourceProtocolRepo,
+)
+from gain.genomic_resources.testing import (
+    build_filesystem_test_protocol,
+    build_filesystem_test_repository,
+)
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
     a_grr,
@@ -143,8 +149,15 @@ def _remap_the_contigs(tmp_path: pathlib.Path) -> None:
     config.write_text(yaml.safe_dump(document))
 
 
+def _a_genome_turns_up(tmp_path: pathlib.Path) -> None:
+    """Repaired under a label naming a genome the repository lacks, so
+    the key says no genome; the label now names one that is there."""
+    set_label(tmp_path, "score", "reference_genome", "genome")
+
+
 @pytest.mark.parametrize(("make_it_stale", "reason"), [
     pytest.param(_repoint_the_label, "stale", id="label-repointed"),
+    pytest.param(_a_genome_turns_up, "stale", id="genome-turns-up"),
     pytest.param(_replace_the_index, "stale", id="table-file-replaced"),
     pytest.param(_remap_the_contigs, "other contigs", id="contigs-remapped"),
 ])
@@ -155,7 +168,10 @@ def test_a_file_that_no_longer_describes_the_score_is_ignored_with_an_info(
     """Trusted, a re-pointed label's file would answer the OLD genome's
     lengths; every mismatch reads as no file, and says so once, as
     INFO -- an unrepaired resource is a normal state."""
-    _a_repaired_labelled_tabix_score(tmp_path)
+    a_labelled_tabix_score_grr(
+        genome_id="nowhere" if make_it_stale is _a_genome_turns_up
+        else "genome").build_repo(tmp_path)
+    resource_stats(tmp_path, "score")
     make_it_stale(tmp_path)
     score = _the_score(tmp_path)
     caplog.clear()  # the repair's own lines
@@ -213,6 +229,7 @@ def test_a_closed_score_refuses_every_read(tmp_path: pathlib.Path) -> None:
         lambda: score.get_chrom_length("chr1"),
         lambda: score.get_chrom_length_source("chr1"),
         lambda: score.get_all_chrom_lengths(),
+        lambda: score.get_chrom_length("chr1", source="bogus"),
         lambda: score.chrom_length_sources,
     ):
         with pytest.raises(ValueError, match="score <score> is not open"):
@@ -295,6 +312,8 @@ def test_a_contig_the_table_proved_empty_is_refused_in_the_tables_words(
         score.get_chrom_length("empty")
     with pytest.raises(ValueError, match="contig empty has no records"):
         score.get_chrom_length_source("empty")
+    with pytest.raises(ValueError, match="contig empty has no records"):
+        score.get_chrom_length("empty", source=score.chrom_length_source)
     assert list(score.get_all_chrom_lengths()) == ["kept"]
 
 
@@ -344,10 +363,89 @@ def test_a_bigwig_score_answers_its_header_live_and_the_genome_once_repaired(
         live.get_chrom_length_source("chr1"))
     live.close()
     resource_stats(tmp_path, "score")
-    repaired = _the_score(tmp_path).open()
 
     assert live_answer == ([BIGWIG], 100, BIGWIG)
-    assert repaired.chrom_length_sources == [GENOME, BIGWIG]
-    assert repaired.get_all_chrom_lengths() == {"chr1": 90, "chr2": 200}
-    assert repaired.get_all_chrom_lengths(source=BIGWIG) == {
-        "chr1": 100, "chr2": 200}
+    with _the_score(tmp_path).open() as repaired:
+        assert repaired.chrom_length_sources == [GENOME, BIGWIG]
+        assert repaired.get_all_chrom_lengths() == {"chr1": 90, "chr2": 200}
+        assert repaired.get_all_chrom_lengths(source=BIGWIG) == {
+            "chr1": 100, "chr2": 200}
+
+
+def test_a_resource_with_no_manifest_answers_live_and_builds_none(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The key compares against the STORED manifest only: a read path
+    never builds one (an md5 scan of the whole resource that writes
+    state files, and a raise on a read-only mount)."""
+    _a_repaired_labelled_tabix_score(tmp_path)
+    manifest = tmp_path / "score" / ".MANIFEST"
+    manifest.unlink()
+    score = build_score_from_resource(
+        GenomicResourceProtocolRepo(
+            build_filesystem_test_protocol(tmp_path, repair=False),
+        ).get_resource("score"))
+    caplog.clear()
+
+    with caplog.at_level(logging.INFO):
+        score.open()
+
+    assert score.chrom_length_sources == [ESTIMATE]
+    assert not manifest.exists()
+    assert [
+        record.levelno for record in caplog.records
+        if "stale" in record.getMessage()
+    ] == [logging.INFO]
+
+
+def test_a_file_the_protocol_cannot_fetch_is_ignored_with_a_warning(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A transient failure fetching the optional file -- a 5xx a remote
+    protocol rebuilds as ``OSError`` -- must not fail an open() that
+    would otherwise read fine."""
+    score = _a_repaired_labelled_tabix_score(tmp_path)
+    mocker.patch.object(
+        type(score.resource), "get_file_content",
+        side_effect=OSError("HTTP 503"))
+    caplog.clear()
+
+    with caplog.at_level(logging.INFO):
+        score.open()
+
+    assert score.chrom_length_sources == [ESTIMATE]
+    assert len(captured_warnings(caplog)) == 1
+
+
+def test_an_absent_file_is_said_below_info(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Until its next repair that is every resource, and a line per open
+    of every one of them is noise at the level an operator reads."""
+    score = _an_unrepaired_labelled_tabix_score(tmp_path)
+    caplog.clear()
+
+    with caplog.at_level(logging.DEBUG):
+        score.open()
+
+    assert [
+        record.levelno for record in caplog.records
+        if "no stored chromosome lengths" in record.getMessage()
+    ] == [logging.DEBUG]
+
+
+def test_table_extent_is_a_legal_source_that_answers_nothing_here(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A tabix score never measures a table extent: no contig has one,
+    and the refusal names, best first, the sources that do."""
+    score = _a_repaired_labelled_tabix_score(tmp_path).open()
+
+    assert score.get_all_chrom_lengths(source="table_extent") == {}
+    with pytest.raises(ValueError) as refusal:
+        score.get_chrom_length("chr1", source=ChromLengthSource.TABLE_EXTENT)
+
+    assert str(refusal.value) == (
+        "table_extent has no length for chr1; the sources that answer it: "
+        "['reference_genome', 'tabix_estimate']")
