@@ -11,6 +11,11 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
+from gain.genomic_resources.statistics.exact_lengths import (
+    NO_LENGTHS,
+    ExactLengths,
+    LengthArrayTally,
+)
 from gain.genomic_resources.statistics.fragments import (
     FRAGMENT_LENGTHS_IMAGE_FILE,
     FRAGMENT_STATISTICS_FILE,
@@ -18,9 +23,6 @@ from gain.genomic_resources.statistics.fragments import (
     RegionFragments,
     merge_region_fragments,
     save_and_plot_fragments,
-)
-from gain.genomic_resources.statistics.length_histogram import (
-    LENGTH_HISTOGRAM_BIN_COUNT,
 )
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
@@ -78,21 +80,14 @@ def _stored(resource: GenomicResource) -> FragmentStatistics:
         resource.get_file_content(FRAGMENT_STATISTICS_FILE))
 
 
-def _bins(counts: dict[int, int]) -> list[int]:
-    histogram = [0] * LENGTH_HISTOGRAM_BIN_COUNT
-    for index, count in counts.items():
-        histogram[index] = count
-    return histogram
-
-
-def test_an_unknown_histogram_round_trips_as_unknown_not_as_zero(
+def test_an_unknown_record_round_trips_as_unknown_not_as_empty(
     tmp_path: pathlib.Path,
 ) -> None:
     # The shape ``serialize`` actually emits for a chromosome whose
-    # lengths are unknown: the key is OMITTED, not zero-filled.  Read
-    # back as an all-zero histogram it would claim the fragments were
-    # measured and had no lengths, which is a different -- and false --
-    # statement from "this file cannot say".  Written through the
+    # lengths are unknown: the key is OMITTED, not written as an empty
+    # record.  Read back as an empty record it would claim the fragments
+    # were measured and had no lengths, which is a different -- and
+    # false -- statement from "this file cannot say".  Written through the
     # statistic's own serializer rather than by hand, so the reader and
     # the writer are pinned against each other and not against a fixture
     # that could drift from either.
@@ -105,7 +100,7 @@ def test_an_unknown_histogram_round_trips_as_unknown_not_as_zero(
 
     restored = FragmentStatistics.deserialize(unknown.serialize())
 
-    assert "fragment_length_histogram" not in unknown.serialize()
+    assert "fragment_lengths" not in unknown.serialize()
     assert restored.fragments_by_chromosome() == {"chr1": 4, "chr2": 1}
     assert restored.fragments_global() == 5
     assert restored.fragment_lengths_by_chromosome() == {}
@@ -130,32 +125,82 @@ def test_every_row_counts_as_one_fragment_per_chromosome_and_global(
     assert stats.fragments_global() == 5
 
 
+#: The ``_fragments`` fixture's chr1 rows span 91, 11, 11 and 31 base
+#: pairs; chr2's one row spans 4.  Stored form (string keys: JSON).
+STORED_CHR1_LENGTHS = {
+    "lengths": {"11": 2, "31": 1, "91": 1},
+    "count": 4, "sum": 144, "min": 11, "max": 91,
+}
+STORED_CHR2_LENGTHS = {
+    "lengths": {"4": 1}, "count": 1, "sum": 4, "min": 4, "max": 4,
+}
+STORED_GLOBAL_LENGTHS = {
+    "lengths": {"4": 1, "11": 2, "31": 1, "91": 1},
+    "count": 5, "sum": 148, "min": 4, "max": 91,
+}
+CHR1_LENGTHS = ExactLengths({11: 2, 31: 1, 91: 1}, 4, 144, 11, 91)
+CHR2_LENGTHS = ExactLengths({4: 1}, 1, 4, 4, 4)
+GLOBAL_LENGTHS = ExactLengths({4: 1, 11: 2, 31: 1, 91: 1}, 5, 148, 4, 91)
+
+
+def test_the_file_stores_each_chromosomes_fragment_lengths_exactly(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Format version 2: the ladder leaves the file, the exact record
+    enters it, and the record's count is the fragment count -- the same
+    rows, counted twice by two different routes."""
+    resource = _fragments(tmp_path)
+
+    scan.do_noregion_histograms(resource)
+
+    content = resource.get_file_content(FRAGMENT_STATISTICS_FILE)
+    data = json.loads(content)
+    assert data["format_version"] == 2
+    chromosomes = data["chromosomes"]
+    assert chromosomes["chr1"]["fragment_lengths"] == STORED_CHR1_LENGTHS
+    assert chromosomes["chr2"]["fragment_lengths"] == STORED_CHR2_LENGTHS
+    for entry in chromosomes.values():
+        assert entry["fragment_lengths"]["count"] == entry["fragment_count"]
+    assert data["global"]["fragment_lengths"] == STORED_GLOBAL_LENGTHS
+    assert data["global"]["fragment_count"] == 5
+    assert "fragment_length_histogram" not in content
+
+
 def test_fragment_lengths_bin_the_rows_own_span_and_merge_exactly(
     tmp_path: pathlib.Path,
 ) -> None:
-    # Each row is binned by its OWN span on the fixed log2 ladder: 91 in
-    # [64, 128), the two 11s in [8, 16), 31 in [16, 32) and 4 in [4, 8).
-    # Because both chromosomes are binned on the same ladder, the global
-    # histogram is their bin-wise merge and nothing is re-scanned.
+    # Each row is counted at its OWN span -- 91, 11, 11 and 31 on chr1,
+    # 4 on chr2 -- and the global record is the fold of the two
+    # chromosomes' records: nothing is re-scanned.
     resource = _fragments(tmp_path)
 
     scan.do_noregion_histograms(resource)
 
     stats = _stored(resource)
     assert stats.fragment_lengths_by_chromosome() == {
-        "chr1": _bins({3: 2, 4: 1, 6: 1}),
-        "chr2": _bins({2: 1}),
+        "chr1": CHR1_LENGTHS,
+        "chr2": CHR2_LENGTHS,
     }
-    assert stats.fragment_lengths_global() == _bins({2: 1, 3: 2, 4: 1, 6: 1})
-    assert sum(stats.fragment_lengths_global() or []) \
-        == stats.fragments_global() == 5
+    assert stats.fragment_lengths_global() == GLOBAL_LENGTHS
+    assert GLOBAL_LENGTHS.total == stats.fragments_global() == 5
 
 
 def test_bulk_and_per_record_scans_produce_the_same_fragment_statistics(
     tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Two paths read the same region; a resource is served by whichever
-    # it is eligible for, so they must not measure differently.
+    # it is eligible for, so they must not measure differently.  And
+    # the bulk path folds a batch's lengths with ONE array call, never
+    # one per row (decision 4 of gain#1541): the cost of tallying a
+    # batch is bounded by the clamp, not by the row count.
+    batches: list[list[int]] = []
+    fold = LengthArrayTally.add_batch
+
+    def spy(self: LengthArrayTally, lengths: np.ndarray) -> None:
+        batches.append(sorted(lengths.tolist()))
+        fold(self, lengths)
+    monkeypatch.setattr(LengthArrayTally, "add_batch", spy)
     resource = _fragments(tmp_path)
     confs: dict = {"s": _hist_conf()}
     per_record = RegionFragments("chr1", 1, 200)
@@ -163,15 +208,17 @@ def test_bulk_and_per_record_scans_produce_the_same_fragment_statistics(
 
     scan.do_histogram(
         resource, confs, "chr1", 1, 200, fragments=per_record)
+    assert not batches, f"the per-record path made an array call: {batches}"
     scan.do_histogram_bulk(
         resource, confs, "chr1", 1, 200, fragments=bulk)
 
+    assert batches == [[11, 11, 31, 91]]
     assert bulk.fragments == per_record.fragments
-    assert bulk.length_histogram() == per_record.length_histogram()
+    assert bulk.fragment_lengths() == per_record.fragment_lengths()
     # Pinned absolutely, not just against each other: the four chr1 rows
-    # span 91, 11, 11 and 31 base pairs on the fixed log2 ladder.
+    # span 91, 11, 11 and 31 base pairs.
     assert per_record.fragments == 4
-    assert per_record.length_histogram() == _bins({3: 2, 4: 1, 6: 1})
+    assert per_record.fragment_lengths() == CHR1_LENGTHS
 
 
 def test_the_per_record_fragment_scan_normalizes_no_values(
@@ -247,10 +294,62 @@ def test_the_info_page_renders_a_fragments_section(
     # Counted over the WHOLE Fragments section, subsection included, which
     # is what makes this "one global image and no per-chromosome ones":
     # a per-chromosome image would render beside the table above, inside
-    # this section but outside the Fragment lengths subheading.
-    assert section_after(page, "<h2>Fragments</h2>").count(
-        FRAGMENT_LENGTHS_IMAGE_FILE) == 1
+    # this section but outside the Fragment lengths subheading.  The one
+    # image is referenced twice -- once as the thumbnail, once full-size
+    # inside the modal the thumbnail opens (gain#1544).
+    section = section_after(page, "<h2>Fragments</h2>")
+    assert section.count(FRAGMENT_LENGTHS_IMAGE_FILE) == 2
+    assert section.count('class="figure-thumbnail"') == 1
+    assert section.count('data-modal-trigger="modal-fragment-lengths"') == 1
+    assert section.count('id="modal-fragment-lengths"') == 1
     assert resource.file_exists(FRAGMENT_LENGTHS_IMAGE_FILE)
+
+
+def test_the_info_page_tables_the_fragment_lengths_exactly(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The four numbers the exact record exists for (gain#1544), read
+    straight off the fixture's rows: lengths 4, 11, 11, 31 and 91 have
+    a mean of 29.6 and a median of 11."""
+    resource = _fragments(tmp_path)
+    scan.do_noregion_histograms(resource)
+
+    page = _info_page(resource)
+
+    assert table_after(page, "<h3>Fragment lengths</h3>").text == [
+        ["", "fragments", "min", "max", "mean", "median"],
+        ["fragments", "5", "4", "91", "29.6", "11"],
+    ]
+
+
+def test_a_median_past_the_clamp_renders_as_a_floor(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Fragments of 3, 9000 and 9500 bp: the middle one is longer than
+    the map's clamp, so the median is only known to be at least the
+    clamp and the page says so -- while min, max and the mean, taken on
+    the unclamped lengths, stay exact."""
+    resource = (
+        a_fragment_score()
+        .with_score("s", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  s
+            chr1   1          3        0.1
+            chr1   10         9009     0.2
+            chr1   20         9519     0.3
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    scan.do_noregion_histograms(resource)
+
+    page = _info_page(resource)
+
+    assert table_after(page, "<h3>Fragment lengths</h3>").text == [
+        ["", "fragments", "min", "max", "mean", "median"],
+        ["fragments", "3", "3", "9500", "6167.67", "≥8192"],
+    ]
 
 
 def test_the_fragments_section_is_absent_on_a_position_score(
@@ -294,43 +393,67 @@ def test_a_fragment_resource_with_no_statistics_file_says_not_computed(
     assert FRAGMENT_LENGTHS_IMAGE_FILE not in page
 
 
-def test_a_file_binned_on_foreign_edges_keeps_counts_and_drops_the_image(
+def _version_1_file() -> str:
+    """A fragments.json as gain wrote it before gain#1544 for the
+    ``_fragments`` fixture: the fragment count beside the log2 ladder
+    (chr1's 11, 11, 31 and 91 in bins 3, 3, 4 and 6; chr2's 4 in bin 2),
+    no exact record."""
+    chr1_ladder = [0, 0, 0, 2, 1, 0, 1] + [0] * 25
+    chr2_ladder = [0, 0, 1, 0, 0, 0, 0] + [0] * 25
+    global_ladder = [0, 0, 1, 2, 1, 0, 1] + [0] * 25
+    return json.dumps({
+        "format_version": 1,
+        "chromosomes": {
+            "chr1": {"fragment_count": 4,
+                     "fragment_length_histogram": chr1_ladder},
+            "chr2": {"fragment_count": 1,
+                     "fragment_length_histogram": chr2_ladder},
+        },
+        "global": {"fragment_count": 5,
+                   "fragment_length_histogram": global_ladder},
+    })
+
+
+def test_a_version_1_file_keeps_its_counts_and_reads_lengths_unknown(
     tmp_path: pathlib.Path,
 ) -> None:
-    # A histogram of another length was binned on edges this code cannot
-    # merge with, so the LENGTHS read as unknown -- but the counts are
-    # exact whatever the bins were, so the table still renders and only
-    # the image goes.  Deleting the whole file (above) does not exercise
-    # this: the two are read independently.
+    """Decision 5 of gain#1541: a fragment score built before the exact
+    record keeps its Fragments table -- the counts are still true -- and
+    the subsection says the LENGTHS are not computed, which is what a
+    rebuild acts on.  The stored ladder is not read at all: one reader,
+    no compatibility branch.  Not "no fragments": the table right above
+    says there are five."""
     resource = _fragments(tmp_path)
     scan.do_noregion_histograms(resource)
-    stored = json.loads(
-        resource.get_file_content(FRAGMENT_STATISTICS_FILE))
-    for entry in [*stored["chromosomes"].values(), stored["global"]]:
-        entry["fragment_length_histogram"] = [0] * 7
     with resource.proto.open_raw_file(
             resource, FRAGMENT_STATISTICS_FILE, mode="wt") as outfile:
-        outfile.write(json.dumps(stored))
+        outfile.write(_version_1_file())
 
     stats = _stored(resource)
+    page = _info_page(resource)
+
     assert stats.fragments_by_chromosome() == {"chr1": 4, "chr2": 1}
+    assert stats.fragment_lengths_by_chromosome() == {}
     assert stats.fragment_lengths_global() is None
-
-    section = section_after(_info_page(resource), "<h2>Fragments</h2>")
-
-    # The counts are exact whatever the bins were, so the table renders:
-    # the section's own "nothing at all" fallback is NOT what shows.
-    assert "<p>not computed</p>" not in section
-    assert table_after(
-        _info_page(resource), "<h2>Fragments</h2>").head[1][1].text == "5"
-    assert FRAGMENT_LENGTHS_IMAGE_FILE not in section
-    # And the subsection says the LENGTHS are unknown -- not "there are
-    # no fragments", which would contradict the table right above it.
-    # Unknown and empty are different answers, and the allele sections
-    # already distinguish them; conflating them here would put "no
-    # fragments" under a row reading 5.
-    assert "no fragments" not in section
+    table = table_after(page, "<h2>Fragments</h2>")
+    assert [cell.text for cell in table.head[0]] == ["Chromosome", "Fragments"]
+    assert [cell.text for cell in table.head[1]] == ["all chromosomes", "5"]
+    section = section_after(page, "<h3>Fragment lengths</h3>")
     assert "<p>fragment lengths not computed</p>" in section
+    assert "no fragments" not in section
+    assert FRAGMENT_LENGTHS_IMAGE_FILE not in section
+    assert "modal-fragment-lengths" not in page
+
+
+def test_a_version_1_file_rebuilds_no_image(tmp_path: pathlib.Path) -> None:
+    """Lengths unknown is not lengths empty, but it draws the same
+    nothing: there is no record to derive a ladder from."""
+    resource = _fragments(tmp_path)
+
+    save_and_plot_fragments(
+        resource, FragmentStatistics.deserialize(_version_1_file()))
+
+    assert not resource.file_exists(FRAGMENT_LENGTHS_IMAGE_FILE)
 
 
 # Five fragments over chr1, scanned to 200.  Overlapping (10-100 and
@@ -395,8 +518,14 @@ def test_fragment_statistics_are_chunk_invariant(
         resource.resource_id, (result.fragments for result in results))
     assert stats is not None
     assert stats.fragments_global() == len(_FRAGMENT_ROWS)
-    # 91, 11, 11, 31 and 2 base pairs on the fixed log2 bins.
-    assert stats.fragment_lengths_global() == _bins({1: 1, 3: 2, 4: 1, 6: 1})
+    # 91, 11, 11, 31 and 2 base pairs, each once.
+    assert stats.fragment_lengths_global() == ExactLengths(
+        {2: 1, 11: 2, 31: 1, 91: 1}, 5, 146, 2, 91)
+    # And the FILE is the same bytes whatever the region size: the
+    # single-region scan is the reference the chunked ones must match.
+    single = merge_region_fragments(resource.resource_id, [whole.fragments])
+    assert single is not None
+    assert stats.serialize() == single.serialize()
 
 
 def test_the_info_page_says_a_resource_genuinely_has_no_fragments(
@@ -418,41 +547,19 @@ def test_the_info_page_says_a_resource_genuinely_has_no_fragments(
     )
     save_and_plot_fragments(
         resource, FragmentStatistics.deserialize(json.dumps({
-            "format_version": 1,
+            "format_version": 2,
             "chromosomes": {"chr1": {
                 "fragment_count": 0,
-                "fragment_length_histogram": [0] * LENGTH_HISTOGRAM_BIN_COUNT,
+                "fragment_lengths": NO_LENGTHS.stored(),
             }},
         })))
 
     page = build_score_implementation_from_resource(resource).get_info()
 
-    assert "no fragments" in page
+    section = section_after(page, "<h3>Fragment lengths</h3>")
+    assert "<p>no fragments</p>" in section
+    assert "not computed" not in section
     assert FRAGMENT_LENGTHS_IMAGE_FILE not in page
-
-
-def test_the_batch_binning_agrees_with_the_per_length_one() -> None:
-    # Two statements of one ladder -- the per-record scan bins lengths
-    # one at a time, the bulk scan a whole array -- so they are pinned
-    # against each other across the edges, the ends and the clamp.
-    lengths = [
-        1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 96, 1000,
-        2 ** 30, 2 ** 31 - 1, 2 ** 31, 2 ** 31 + 1, 2 ** 40,
-    ]
-    per_length = RegionFragments("chr1", 1, 10)
-    for length in lengths:
-        per_length.add_fragment(length)
-    batched = RegionFragments("chr1", 1, 10)
-
-    batched.add_fragment_batch(np.array(lengths, dtype=np.int64))
-
-    histogram = batched.length_histogram()
-    assert histogram == per_length.length_histogram()
-    assert histogram is not None
-    assert batched.fragments == per_length.fragments == len(lengths)
-    assert sum(histogram) == len(lengths)
-    # The clamp: 2**31, 2**31 + 1 and 2**40 all land in the last bin.
-    assert histogram[-1] == 3
 
 
 def test_the_batch_binning_refuses_a_non_positive_length() -> None:

@@ -1,10 +1,10 @@
-"""The stored form of a length statistic: an exact length map plus scalars.
+"""A length statistic's exact record: stored, folded, read and charted.
 
-ADR 0020 gives **segments**, **fragments** and **indels** one log2
+ADR 0020 gave **segments**, **fragments** and **indels** one log2
 binning for their length histograms.  The ladder lumps {2, 3} into one
 bin and {4, 5, 6, 7} into the next, so no exact minimum, maximum, mean
 or median survives it -- and those four are what the statistics table
-on an info page exists to show.  A statistic that wants them stores an
+on an info page exists to show.  So each statistic stores an
 :class:`ExactLengths` record instead: an exact ``{length: count}`` map
 clamped at :data:`LENGTH_MAP_CLAMP`, beside four scalars accumulated on
 the unclamped length.
@@ -14,21 +14,24 @@ map at render time by :func:`length_ladder` rather than stored beside
 it, so the picture and the numbers beneath it cannot drift.
 
 Nothing here knows what KIND of thing has a length.  The indel groups of
-an allele score were the first users and a position score's segments
-the second (gain#1543).  The record's stored key for the
-count is ``count`` whatever the kind, and the row formatter takes the
-group label from its caller, so "alleles", "segments" and "fragments"
-all fit.
+an allele score were the first users (gain#1118), a position score's
+segments the second (gain#1543) and a fragment score's fragments the
+third (gain#1544).  The record's stored key for the count is ``count``
+whatever the kind, and the row formatter takes the group label from its
+caller, so "alleles", "segments" and "fragments" all fit.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from typing import Any, NamedTuple
 
 import numpy as np
 
+from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.length_histogram import (
     LENGTH_HISTOGRAM_BIN_COUNT,
     length_histogram_bin_index,
+    plot_length_histogram,
 )
 
 #: The longest length the stored map resolves exactly.  A length at or
@@ -160,11 +163,10 @@ class ExactLengths(NamedTuple):
     def has_counts_to_plot(self) -> bool:
         """Whether this group has anything to draw a chart of.
 
-        The exact-map side of
-        :func:`~gain.genomic_resources.statistics.length_histogram.
-        has_counts_to_plot`, which asks the same question of a stored
-        ladder.  Unknown and known-and-empty are one answer for the same
-        reason: the counts axis is logarithmic and can render neither.
+        Asked of a KNOWN record; an unknown group is the callers' ``None``
+        and gets the same answer, because the counts axis is logarithmic
+        and can render neither, and a chart of nothing under a lengths
+        heading states nothing either.
 
         One spelling, because the statistics build and the page must
         agree exactly -- a build that skips the image while the page
@@ -514,15 +516,105 @@ def merged_lengths(
     return tally.frozen()
 
 
-def merged_tallies(
-    left: LengthTally | None,
-    right: LengthTally | None,
-) -> LengthTally | None:
-    """The same rule between two SCANNED groups, folded left in place."""
+def merged_tallies[T: (LengthTally, LengthArrayTally)](
+    left: T | None,
+    right: T | None,
+) -> T | None:
+    """The same rule between two SCANNED groups, folded left in place.
+
+    Either tally: the two have the same ``merge`` and are never mixed,
+    a statistic keeping the one kind its scan feeds.
+    """
     if left is None or right is None:
         return None
     left.merge(right)
     return left
+
+
+def folded_tallies(
+    tallies: Iterable[LengthArrayTally | None],
+) -> ExactLengths | None:
+    """:func:`folded_lengths` over the regions' own array tallies.
+
+    The same all-or-nothing rule, in the array domain: the counters add
+    elementwise and the sum is frozen ONCE.  A statistic whose regions
+    hold their tallies folds this way rather than record by record,
+    because a fragment score can carry thousands of contigs with
+    thousands of distinct lengths each, and a dict fold per contig would
+    cost every build and every page render the product of the two.
+    """
+    total = LengthArrayTally()
+    for tally in tallies:
+        if tally is None:
+            return None
+        total.merge(tally)
+    return total.frozen()
+
+
+def folded_lengths(
+    records: Iterable[ExactLengths | None],
+) -> ExactLengths | None:
+    """The fold of every chromosome's record, ``None`` if any is unknown.
+
+    What a statistic's ``global`` entry IS for a length group: the
+    :func:`merged_lengths` rule over all the chromosomes, so a partial
+    roll-up can never silently understate.  A file that stored the
+    counts without the records (format version 1 of ``coverage.json``
+    and ``fragments.json``) passes its count gate and fails this one.
+    """
+    result: ExactLengths | None = NO_LENGTHS
+    for lengths in records:
+        if lengths is None:
+            return None
+        result = merged_lengths(result, lengths)
+    return result
+
+
+def stored_lengths(
+    entry: Mapping[str, Any], key: str,
+) -> ExactLengths | None:
+    """A stored record under ``key``, ``None`` when the entry carries none.
+
+    The record is the ONLY thing read.  A file predating it -- one
+    written with the log2 ladder histogram the record replaced
+    (``insertion_length_histogram``, ``segment_length_histogram``,
+    ``fragment_length_histogram``) -- carries no record, so the group
+    reads as unknown and the page says "not computed" until the resource
+    is rebuilt.
+
+    That is one reader rather than a compatibility branch, deliberately
+    (ADR 0020 as amended by gain#1118).  A branch that read the old
+    histograms would have to publish them as an :class:`ExactLengths`
+    whose exact map, sum, min and max are all unrecoverable, so every
+    statistic in the table would be a guess at bin resolution presented
+    as a number.
+    """
+    stored = entry.get(key)
+    if stored is None:
+        return None
+    return ExactLengths.from_stored(stored)
+
+
+def write_length_chart(
+    resource: GenomicResource,
+    filename: str,
+    lengths: ExactLengths | None,
+    kind: str,
+) -> None:
+    """Draw the group's chart into the resource, exactly when it has one.
+
+    A group that is unknown, or known and empty, writes no image -- the
+    info page's section is what says which, and it asks
+    :attr:`ExactLengths.has_counts_to_plot` too, so the build and the
+    page cannot disagree about whether an image exists.  What skipping
+    costs is a previous build's image left behind when a group empties
+    out, and nothing links the leftover: the page reads the stored
+    record, not the directory.
+    """
+    if lengths is None or not lengths.has_counts_to_plot:
+        return
+    with resource.open_raw_file(filename, mode="wb") as outfile:
+        plot_length_histogram(outfile, length_ladder(lengths), kind)
 
 
 def _trimmed(value: float) -> str:

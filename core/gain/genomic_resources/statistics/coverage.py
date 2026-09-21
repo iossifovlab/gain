@@ -36,15 +36,12 @@ from gain.genomic_resources.statistics.base_statistic import (
     refuse_unmergeable,
 )
 from gain.genomic_resources.statistics.exact_lengths import (
-    NO_LENGTHS,
     ExactLengths,
     LengthArrayTally,
     LengthStatisticsRow,
-    length_ladder,
-    merged_lengths,
-)
-from gain.genomic_resources.statistics.length_histogram import (
-    plot_length_histogram,
+    folded_lengths,
+    stored_lengths,
+    write_length_chart,
 )
 from gain.genomic_resources.statistics.percentages import percentage_of
 from gain.genomic_resources.statistics.region_fold import merge_regions
@@ -1057,14 +1054,9 @@ def save_and_plot_coverage(
     with resource.open_raw_file(
             COVERAGE_STATISTICS_FILE, mode="wt") as outfile:
         outfile.write(statistics.serialize())
-    # A group the resource publishes nothing for writes no image; the
-    # info page's section is what says so.
-    lengths = statistics.segment_lengths_global()
-    if lengths is None or not lengths.has_counts_to_plot:
-        return
-    with resource.open_raw_file(
-            COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE, mode="wb") as outfile:
-        plot_length_histogram(outfile, length_ladder(lengths), "segment")
+    write_length_chart(
+        resource, COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
+        statistics.segment_lengths_global(), "segment")
 
 
 def _read_stored_summary(entry: dict[str, Any]) -> SegmentSummary | None:
@@ -1077,9 +1069,8 @@ def _read_stored_summary(entry: dict[str, Any]) -> SegmentSummary | None:
     """
     if "segment_count" not in entry:
         return None
-    stored = entry.get("segment_lengths")
-    lengths = None if stored is None else ExactLengths.from_stored(stored)
-    return SegmentSummary(int(entry["segment_count"]), lengths)
+    return SegmentSummary(
+        int(entry["segment_count"]), stored_lengths(entry, "segment_lengths"))
 
 
 def _global_count(summaries: dict[str, SegmentSummary]) -> int:
@@ -1095,9 +1086,4 @@ def _global_lengths(
     version 1 file passes the first (every chromosome has its count)
     and fails this one.
     """
-    result: ExactLengths | None = NO_LENGTHS
-    for summary in summaries.values():
-        if summary.lengths is None:
-            return None
-        result = merged_lengths(result, summary.lengths)
-    return result
+    return folded_lengths(summary.lengths for summary in summaries.values())

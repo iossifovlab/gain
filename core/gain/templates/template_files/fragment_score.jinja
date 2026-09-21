@@ -1,4 +1,5 @@
 {% extends "genomic_score.jinja" %}
+{% import "length_statistics.jinja" as lengths %}
 {# A fragment score's page IS the genomic-score page, plus one section. #}
 
 {% block fragments %}
@@ -33,22 +34,23 @@
 </table>
 </div>
 <h3>Fragment lengths</h3>
-{#- Three answers, not two.  The counts and the histogram are read
-   independently: a stored histogram binned on foreign edges cannot
-   merge with this code's fixed bins, so the LENGTHS are unknown while
-   the counts above stay exact.  Collapsing that into the empty branch
-   would print "no fragments" directly beneath a table saying there are
-   several.  The allele sections draw the same three-way distinction. -#}
+{#- Three answers, not two.  The counts and the lengths are read
+   independently: a file that stored the counts alone (format version
+   1) leaves the LENGTHS unknown while the counts above stay exact.
+   Collapsing that into the empty branch would print "no fragments"
+   directly beneath a table saying there are several.  The coverage
+   and allele sections draw the same three-way distinction. -#}
 {% if fragments.fragment_lengths is none %}
 <p>fragment lengths not computed</p>
-{% elif fragments.fragment_lengths | sum %}
-<img src="{{ impl.get_fragment_lengths_image_filename() }}"
-    alt="global fragment-length histogram"
-    class="statistics-figure"
-    title="Fragment lengths across all chromosomes, fixed log2 bins">
-{% else %}
+{% elif not fragments.fragment_lengths.has_counts_to_plot %}
 <p>no fragments</p>
-{% endif %}
+{% else %}
+{{ lengths.single_group(
+       "fragments", fragments.fragment_row,
+       impl.get_fragment_lengths_image_filename(),
+       "global fragment-length histogram",
+       "modal-fragment-lengths", "fragment lengths") }}
+{%- endif %}
 {% else %}
 <p>not computed</p>
 {% endif %}
