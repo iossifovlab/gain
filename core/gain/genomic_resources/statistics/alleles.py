@@ -54,6 +54,7 @@ from gain.genomic_resources.genomic_scores import (
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.base_statistic import (
     RegionFoldedStatistic,
+    StoredStatistic,
     refuse_unmergeable,
 )
 from gain.genomic_resources.statistics.chart_style import (
@@ -77,6 +78,10 @@ from gain.genomic_resources.statistics.region_fold import merge_regions
 from gain.utils.chromosome_order import natural_chromosome_key
 
 ALLELE_STATISTICS_FILE = "statistics/alleles.json"
+#: The ``format_version`` the writer stamps; 1 since gain#1118 (exact
+#: indel lengths).  Read by
+#: :func:`allele_stored_statistic_for` too.
+ALLELE_FORMAT_VERSION = 1
 
 #: The global images the statistics build renders beside the file.  One
 #: each, never per chromosome (ADR 0020): the per-chromosome numbers are
@@ -673,7 +678,7 @@ class AlleleStatistics(RegionFoldedStatistic[RegionAlleles]):
         # the global roll-up.
         chromosomes = self.by_chromosome()
         return json.dumps({
-            "format_version": 1,
+            "format_version": ALLELE_FORMAT_VERSION,
             "chromosomes": {
                 chrom: _serialized(counts)
                 for chrom, counts in chromosomes.items()
@@ -1053,6 +1058,19 @@ def region_alleles_for(
     if not isinstance(score, AlleleScore):
         return None
     return RegionAlleles(chrom, start, end)
+
+
+def allele_stored_statistic_for(
+    score: GenomicScore,
+) -> StoredStatistic | None:
+    """The alleles file a build writes for ``score``; ``None`` otherwise.
+
+    The same class gate as :func:`region_alleles_for`, stated beside it: a
+    kind gets the file exactly when it gets the accumulator (gain#1586).
+    """
+    if not isinstance(score, AlleleScore):
+        return None
+    return StoredStatistic(ALLELE_STATISTICS_FILE, ALLELE_FORMAT_VERSION)
 
 
 def serves_allele_arrays(score: GenomicScore, score_ids: list[str]) -> bool:

@@ -44,6 +44,7 @@ from gain.genomic_resources.genomic_scores import (
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.base_statistic import (
     RegionFoldedStatistic,
+    StoredStatistic,
     refuse_unmergeable,
 )
 from gain.genomic_resources.statistics.exact_lengths import (
@@ -58,6 +59,10 @@ from gain.genomic_resources.statistics.region_fold import merge_regions
 from gain.utils.chromosome_order import natural_chromosome_key
 
 FRAGMENT_STATISTICS_FILE = "statistics/fragments.json"
+#: The ``format_version`` the writer stamps; 2 since gain#1544 (exact
+#: fragment lengths).  Read by
+#: :func:`fragment_stored_statistic_for` too.
+FRAGMENT_FORMAT_VERSION = 2
 FRAGMENT_LENGTHS_IMAGE_FILE = "statistics/fragment_lengths.png"
 
 #: How a failed fold of these regions is named in the message.
@@ -244,7 +249,7 @@ class FragmentStatistics(RegionFoldedStatistic[RegionFragments]):
         if global_lengths is not None:
             global_entry["fragment_lengths"] = global_lengths.stored()
         return json.dumps({
-            "format_version": 2,
+            "format_version": FRAGMENT_FORMAT_VERSION,
             "chromosomes": chromosomes,
             "global": global_entry,
         }, indent=2)
@@ -347,6 +352,19 @@ def region_fragments_for(
     if not isinstance(score, FragmentScore):
         return None
     return RegionFragments(chrom, start, end)
+
+
+def fragment_stored_statistic_for(
+    score: GenomicScore,
+) -> StoredStatistic | None:
+    """The fragments file a build writes for ``score``; ``None`` otherwise.
+
+    The same class gate as :func:`region_fragments_for`, stated beside it: a
+    kind gets the file exactly when it gets the accumulator (gain#1586).
+    """
+    if not isinstance(score, FragmentScore):
+        return None
+    return StoredStatistic(FRAGMENT_STATISTICS_FILE, FRAGMENT_FORMAT_VERSION)
 
 
 def accumulate_fragments(

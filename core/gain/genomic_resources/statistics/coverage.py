@@ -1015,7 +1015,7 @@ def region_coverage_for(
 def coverage_stored_statistic_for(
     score: GenomicScore,
 ) -> StoredStatistic | None:
-    """The coverage file a build writes for ``score``, ``None`` for other kinds.
+    """The coverage file a build writes for ``score``; ``None`` otherwise.
 
     The same class gate as :func:`region_coverage_for`, stated beside
     it: a kind gets a coverage file exactly when it gets a coverage

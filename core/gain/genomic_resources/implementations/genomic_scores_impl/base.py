@@ -35,9 +35,15 @@ from gain.genomic_resources.resource_implementation import (
 from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
 )
+from gain.genomic_resources.statistics.alleles import (
+    allele_stored_statistic_for,
+)
 from gain.genomic_resources.statistics.base_statistic import StoredStatistic
 from gain.genomic_resources.statistics.coverage import (
     coverage_stored_statistic_for,
+)
+from gain.genomic_resources.statistics.fragments import (
+    fragment_stored_statistic_for,
 )
 from gain.genomic_resources.utils import read_resource_id_label
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
@@ -216,6 +222,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         return [
             stored for stored in (
                 coverage_stored_statistic_for(self.score),
+                fragment_stored_statistic_for(self.score),
+                allele_stored_statistic_for(self.score),
             )
             if stored is not None
         ]

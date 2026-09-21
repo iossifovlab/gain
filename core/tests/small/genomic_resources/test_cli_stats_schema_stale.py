@@ -17,9 +17,14 @@ from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.statistics.coverage import (
     COVERAGE_STATISTICS_FILE,
 )
+from gain.genomic_resources.statistics.fragments import (
+    FRAGMENT_STATISTICS_FILE,
+)
 from gain.genomic_resources.testing.builders import (
+    a_fragment_score,
     a_grr,
     a_position_score,
+    an_allele_score,
 )
 
 
@@ -118,3 +123,59 @@ def test_a_forced_repair_rebuilds_the_file_and_reports_nothing(
     assert "is consistent" in caplog.text
     assert "predate the current schema" not in caplog.text
     assert json.loads(coverage_file.read_text())["format_version"] == 2
+
+
+@pytest.fixture
+def fragment_missing_and_allele_current(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> pathlib.Path:
+    """A repaired GRR: a fragment score whose fragments file was never
+    written -- the shape of a resource built before the statistic existed
+    -- beside an allele score at the current version."""
+    path = tmp_path_factory.mktemp("schema_stale_missing_grr")
+    (
+        a_grr()
+        .with_resource(
+            "frag",
+            a_fragment_score()
+            .with_score("v", "float")
+            .with_tabix()
+            .with_data("""
+                chrom  pos_begin  pos_end  v
+                1      10         30       0.5
+                1      12         40       0.7
+            """))
+        .with_resource(
+            "alle",
+            an_allele_score()
+            .with_score("s", "float")
+            .with_tabix()
+            .with_data("""
+                chrom  pos_begin  reference  alternative  s
+                1      10         A          G            0.1
+            """))
+        .build_repo(path)
+    )
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
+    (path / "frag" / FRAGMENT_STATISTICS_FILE).unlink()
+    cli_manage(["repo-manifest", "-R", str(path)])
+    return path
+
+
+def test_a_missing_file_is_reported_and_a_current_one_is_not(
+    fragment_missing_and_allele_current: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = fragment_missing_and_allele_current
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "--dry-run", "-R", str(path), "-j", "1"])
+
+    stale_lines = [
+        record.getMessage() for record in caplog.records
+        if "predate the current schema" in record.getMessage()
+    ]
+    assert len(stale_lines) == 1
+    assert "<frag>" in stale_lines[0]
+    assert f"{FRAGMENT_STATISTICS_FILE} is missing" in stale_lines[0]
+    assert "resource-stats -r frag -f" in stale_lines[0]
