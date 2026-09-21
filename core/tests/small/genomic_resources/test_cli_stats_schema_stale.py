@@ -11,9 +11,13 @@ remedy -- and rebuild nothing.
 import json
 import logging
 import pathlib
+from collections.abc import Callable
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.repository_factory import (
+    build_resource_implementation,
+)
 from gain.genomic_resources.statistics.coverage import (
     COVERAGE_STATISTICS_FILE,
 )
@@ -22,12 +26,65 @@ from gain.genomic_resources.statistics.fragments import (
 )
 from gain.genomic_resources.testing.builders import (
     PositionScoreBuilder,
+    ResourceBuilder,
     a_fragment_score,
     a_grr,
     a_position_score,
     a_reference_genome,
     an_allele_score,
 )
+
+
+@pytest.mark.parametrize("kind, builder", [
+    ("position", lambda: _a_position_score()),
+    ("fragment", lambda: (
+        a_fragment_score()
+        .with_score("v", "float")
+        .with_tabix()
+        .with_data("""
+            chrom  pos_begin  pos_end  v
+            1      10         30       0.5
+            1      12         40       0.7
+        """))),
+    ("allele", lambda: (
+        an_allele_score()
+        .with_score("s", "float")
+        .with_tabix()
+        .with_data("""
+            chrom  pos_begin  reference  alternative  s
+            1      10         A          G            0.1
+        """))),
+])
+def test_each_kind_declares_exactly_the_versioned_files_its_build_writes(
+    tmp_path: pathlib.Path,
+    kind: str,
+    builder: Callable[[], ResourceBuilder],
+) -> None:
+    # The drift guard: the declaration the check reads and the files the
+    # scan writes are stated in two places, and this is what holds them
+    # together.  Both directions -- a declared file must be written at
+    # the declared version, and every versioned file written must be
+    # declared, or a new statistic would roll out unreported.
+    repo = a_grr().with_resource(kind, builder()).build_repo(tmp_path)
+    cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
+    resource = repo.get_resource(kind)
+    assert resource is not None
+    impl = build_resource_implementation(resource)
+
+    declared = {
+        stored.file: stored.format_version
+        for stored in impl.stored_statistics()
+    }
+    written = {}
+    for statistics_file in sorted(
+            (tmp_path / kind / "statistics").glob("*.json")):
+        data = json.loads(statistics_file.read_text())
+        if isinstance(data, dict) and "format_version" in data:
+            written[f"statistics/{statistics_file.name}"] = \
+                data["format_version"]
+
+    assert declared
+    assert declared == written
 
 
 def _downgrade_format_version(statistics_file: pathlib.Path) -> None:
