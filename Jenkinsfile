@@ -1129,6 +1129,13 @@ pipeline {
                             # redirected to /tmp because /home/mambauser is not
                             # writable by an arbitrary UID.
                             DOCKER_USER="$(id -u):$(id -g)"
+                            # Every recipe's test phase installs the built
+                            # package into a fresh env. The annotators
+                            # depend on gain-core, which is on neither
+                            # public channel, so the core recipe's output
+                            # dir (built first in this loop) is offered as
+                            # a channel ahead of them; for core itself it
+                            # is just its own output dir again (#1433).
                             for proj in core demo_annotator vep_annotator spliceai_annotator; do
                                 mkdir -p conda/$proj
                                 docker run --rm \
@@ -1143,6 +1150,7 @@ pipeline {
                                     rattler-build build \
                                         --recipe $proj/conda-recipe/recipe.yaml \
                                         --output-dir conda/$proj \
+                                        -c file:///workspace/conda/core \
                                         -c conda-forge -c bioconda
                                 # Promote the final .conda artefact(s) out of
                                 # rattler-build's working tree. conda/$proj/bld/

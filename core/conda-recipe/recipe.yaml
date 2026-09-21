@@ -69,14 +69,16 @@ tests:
   # `-c conda-forge -c bioconda` for that -- pysam, pybigwig and pyliftover
   # live only on bioconda), then walk the whole surface the wheel declares.
   # The walk is tests/entry_point_walk.py, copied in from this recipe
-  # directory and embedded in the package's tests; gain-release's
-  # post-publish smoke runs the same file against the package as installed
-  # from anaconda.org (#1432). Everything walked is discovered from the
-  # installed dist's metadata, so a script or plugin added to
+  # directory and embedded in the package's tests. It is the one definition
+  # for the whole repo: the three annotator recipes pull this directory in
+  # as a source and run the same file for their own dist (#1433), and
+  # gain-release's post-publish smoke runs it against the package as
+  # installed from anaconda.org (#1432). Everything walked is discovered
+  # from the installed dist's metadata, so a script or plugin added to
   # core/pyproject.toml is covered without touching this recipe. A run dep
   # missing from the list above surfaces as an ImportError.
   - script:
-      - python tests/entry_point_walk.py
+      - python tests/entry_point_walk.py ${{ name }}
     files:
       recipe:
         - tests/entry_point_walk.py

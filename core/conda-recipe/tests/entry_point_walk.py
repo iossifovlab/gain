@@ -1,17 +1,20 @@
-"""Walk every console script and entry point an installed gain-core declares.
+"""Walk every console script and entry point an installed gain dist declares.
 
-Run with the Python of the environment gain-core is installed in; no
-arguments, nothing else on ``sys.path``. Everything walked is discovered
-from the installed distribution's metadata, so a script or plugin added
-to ``core/pyproject.toml`` is covered without touching this file; only
-the ``gain.`` group prefix is known here. A run dependency missing from
-the environment surfaces as an ImportError on the entry point that
-needs it.
+Usage: ``python entry_point_walk.py <distribution-name>``, run with the
+Python of the environment the distribution is installed in, nothing else
+on ``sys.path``. Everything walked is discovered from the installed
+distribution's metadata, so a script or plugin added to a project's
+``pyproject.toml`` is covered without touching this file; only the
+``gain.`` group prefix is known here. A run dependency missing from the
+environment surfaces as an ImportError on the entry point that needs it.
 
-Two callers share this file: the recipe's ``tests:`` section runs it in
-rattler-build's test phase against the just-built package, and
+One definition, several callers: every gain conda recipe (``gain-core``
+and the three annotators) runs it in rattler-build's test phase against
+the just-built package, each passing its own ``${{ name }}``; and
 ``gain-release``'s post-publish smoke runs it against ``gain-core`` as
-installed from anaconda.org with the documented channel line.
+installed from anaconda.org with the documented channel line. A dist may
+declare no console scripts (``gain-spliceai-annotator`` is entry points
+only), but every gain dist declares at least one ``gain.*`` entry point.
 """
 import subprocess
 import sys
@@ -21,7 +24,10 @@ from pathlib import Path
 # Keep the per-item lines in order in a captured (non-tty) log.
 sys.stdout.reconfigure(line_buffering=True)
 
-entry_points = list(distribution("gain-core").entry_points)
+if len(sys.argv) != 2:
+    sys.exit(f"usage: {sys.argv[0]} <distribution-name>")
+dist_name = sys.argv[1]
+entry_points = list(distribution(dist_name).entry_points)
 failures = []
 
 # Console scripts are looked up next to this interpreter, not on PATH:
@@ -62,8 +68,7 @@ print(
     f"walked {len(scripts)} console scripts and "
     f"{len(plugins)} entry points in {len(groups)} groups: "
     f"{', '.join(groups)}")
-assert scripts, "no console_scripts found in gain-core metadata"
-assert plugins, "no gain.* entry points found in gain-core metadata"
+assert plugins, f"no gain.* entry points found in {dist_name} metadata"
 if failures:
     print("\n\n".join(failures))
     sys.exit(1)

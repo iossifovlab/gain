@@ -687,6 +687,9 @@ pipeline {
 
                     mkdir -p dist/conda
                     DOCKER_USER="$(id -u):$(id -g)"
+                    # The core output dir is a channel so the annotator
+                    # recipes' test envs can resolve gain-core -- see the
+                    # root Jenkinsfile's Conda packages stage (#1433).
                     for proj in core demo_annotator \
                                 vep_annotator \
                                 spliceai_annotator; do
@@ -701,6 +704,7 @@ pipeline {
                             rattler-build build \
                                 --recipe $proj/conda-recipe/recipe.yaml \
                                 --output-dir conda/$proj \
+                                -c file:///workspace/conda/core \
                                 -c conda-forge -c bioconda
                         cp conda/$proj/noarch/*.conda dist/conda/
                     done
@@ -957,7 +961,7 @@ while :; do
     sleep 30
 done
 micromamba list -p "$prefix" | grep -i -E '^\\s*(gain-core|python)\\s'
-"$prefix/bin/python" /smoke/entry_point_walk.py || {
+"$prefix/bin/python" /smoke/entry_point_walk.py gain-core || {
     echo "SMOKE: $spec installed, but the entry-point walk failed"
     exit 3
 }
