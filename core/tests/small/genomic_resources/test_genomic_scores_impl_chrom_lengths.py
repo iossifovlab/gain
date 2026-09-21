@@ -1,9 +1,10 @@
 """Chromosome lengths resolved on the implementation (gain#1448).
 
 ``GenomicScoreImplementation.get_chrom_lengths(grr)`` is where a caller
-that holds a GRR asks for the ladder's answer per contig of the score: the
-genome the ``reference_genome`` label names first, resolved through that
-GRR, then whatever the table can say.
+that holds a GRR asks for the ladder's answers per contig of the score: the
+genome the ``reference_genome`` label names, resolved through that GRR,
+and whatever the table can say, both kept in the record with the genome's
+ranked best (gain#1574).
 """
 
 import logging
@@ -19,7 +20,10 @@ from gain.genomic_resources.genomic_position_table import (
     ChromLengthSource,
     ContigExtent,
 )
-from gain.genomic_resources.genomic_scores.chrom_lengths import ChromLength
+from gain.genomic_resources.genomic_scores.chrom_lengths import (
+    ChromLength,
+    ChromLengthAnswer,
+)
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
     build_score_implementation_from_resource,
@@ -48,8 +52,11 @@ from .conftest import (
 CHR1_GENOME_LENGTH = 3000
 #: The other genome's, distinct so a re-pointed label is seen to answer.
 OTHER_GENOME_CHR1_LENGTH = 3500
-#: The tabix probe's bound for a lone chrM row at 40, as the region-split
-#: pin in test_genomic_scores_impl measures for the same rows.
+#: The tabix probe's bounds for chr1's rows at 10 and 2500 and for a lone
+#: chrM row at 40: measured, since the probe brackets a length on its own
+#: geometric ladder and then bisects (gain#509).  The region-split pin in
+#: test_genomic_scores_impl reads the same chrM bound off the same rows.
+CHR1_PROBE_BOUND = 3052
 CHRM_PROBE_BOUND = 48
 
 
@@ -121,20 +128,28 @@ def _the_impl(
         repo.get_resource(resource_id)), repo
 
 
-def test_a_labelled_tabix_score_answers_the_genome_then_the_probe(
+def test_a_labelled_tabix_score_answers_the_genome_and_the_probe(
     tmp_path: pathlib.Path,
 ) -> None:
-    """chr1 is the genome's exact length; chrM, which the genome does not
-    list, falls through to the probe's bound -- in table order."""
+    """chr1 carries the genome's exact length AND the probe's bound, and
+    the genome's is best; chrM, which the genome does not list, carries
+    the probe's bound alone -- in table order (gain#1574)."""
     impl, repo = _the_impl(tmp_path, a_labelled_tabix_score_grr())
 
     lengths = impl.get_chrom_lengths(repo)
 
     assert list(lengths) == ["chr1", "chrM"]
-    assert (lengths["chr1"].length, lengths["chr1"].source) == (
+    assert lengths["chr1"] == ChromLength(
+        answers={
+            ChromLengthSource.REFERENCE_GENOME: CHR1_GENOME_LENGTH,
+            ChromLengthSource.TABIX_ESTIMATE: CHR1_PROBE_BOUND,
+        },
+        extent=None)
+    assert lengths["chr1"].best == ChromLengthAnswer(
         CHR1_GENOME_LENGTH, ChromLengthSource.REFERENCE_GENOME)
-    assert (lengths["chrM"].length, lengths["chrM"].source) == (
-        CHRM_PROBE_BOUND, ChromLengthSource.TABIX_ESTIMATE)
+    assert lengths["chrM"] == ChromLength(
+        answers={ChromLengthSource.TABIX_ESTIMATE: CHRM_PROBE_BOUND},
+        extent=None)
 
 
 def test_a_closed_score_is_opened_for_the_answer_and_left_closed(
@@ -179,9 +194,9 @@ def test_an_unlabelled_tabix_score_answers_the_probes_bound(
 
     lengths = impl.get_chrom_lengths(repo)
 
-    assert lengths["chr1"].source is ChromLengthSource.TABIX_ESTIMATE
-    assert lengths["chr1"].length is not None
-    assert lengths["chr1"].length >= 2500
+    assert list(lengths["chr1"].answers) == [ChromLengthSource.TABIX_ESTIMATE]
+    assert lengths["chr1"].best is not None
+    assert lengths["chr1"].best.length >= 2500
 
 
 def test_a_bigwig_score_answers_its_header(
@@ -194,7 +209,7 @@ def test_a_bigwig_score_answers_its_header(
     lengths = impl.get_chrom_lengths(repo)
 
     assert lengths["chr1"] == ChromLength(
-        length=1000, source=ChromLengthSource.BIGWIG, extent=None)
+        answers={ChromLengthSource.BIGWIG: 1000}, extent=None)
 
 
 # The region split reads EMPTY and UNDETERMINED oppositely (gain#509), so
@@ -218,9 +233,9 @@ def test_a_contig_proven_empty_keeps_the_reason(
     lengths = impl.get_chrom_lengths(repo)
 
     assert list(lengths) == ["kept", "empty"]
-    assert lengths["kept"].source is ChromLengthSource.TABLE_EXTENT
+    assert list(lengths["kept"].answers) == [ChromLengthSource.TABLE_EXTENT]
     assert lengths["empty"] == ChromLength(
-        length=None, source=None, extent=ContigExtent.EMPTY)
+        answers={}, extent=ContigExtent.EMPTY)
 
 
 def test_a_contig_of_undeterminable_length_keeps_the_reason(
@@ -241,9 +256,10 @@ def test_a_contig_of_undeterminable_length_keeps_the_reason(
     lengths = impl.get_chrom_lengths(repo)
 
     assert list(lengths) == ["chr1", "chr2"]
-    assert lengths["chr1"].length == 100
+    assert lengths["chr1"].best == ChromLengthAnswer(
+        100, ChromLengthSource.TABIX_ESTIMATE)
     assert lengths["chr2"] == ChromLength(
-        length=None, source=None, extent=ContigExtent.UNDETERMINED)
+        answers={}, extent=ContigExtent.UNDETERMINED)
 
 
 def test_the_label_as_written_now_is_the_genome_that_answers(
@@ -259,9 +275,8 @@ def test_the_label_as_written_now_is_the_genome_that_answers(
 
     lengths = impl.get_chrom_lengths(repo)
 
-    assert lengths["chr1"] == ChromLength(
-        length=OTHER_GENOME_CHR1_LENGTH,
-        source=ChromLengthSource.REFERENCE_GENOME, extent=None)
+    assert lengths["chr1"].best == ChromLengthAnswer(
+        OTHER_GENOME_CHR1_LENGTH, ChromLengthSource.REFERENCE_GENOME)
 
 
 def test_a_label_naming_no_resource_falls_through_to_the_table(
@@ -272,7 +287,7 @@ def test_a_label_naming_no_resource_falls_through_to_the_table(
 
     lengths = impl.get_chrom_lengths(repo)
 
-    assert lengths["chr1"].source is ChromLengthSource.TABIX_ESTIMATE
+    assert list(lengths["chr1"].answers) == [ChromLengthSource.TABIX_ESTIMATE]
 
 
 def test_a_label_naming_a_non_genome_resource_falls_through_and_says_so(
@@ -291,7 +306,7 @@ def test_a_label_naming_a_non_genome_resource_falls_through_and_says_so(
     with caplog.at_level(logging.WARNING):
         lengths = impl.get_chrom_lengths(repo)
 
-    assert lengths["chr1"].source is ChromLengthSource.TABIX_ESTIMATE
+    assert list(lengths["chr1"].answers) == [ChromLengthSource.TABIX_ESTIMATE]
     assert label_warnings(caplog) == [(
         "meta.labels.reference_genome of score names 'score', "
         "which is not a genome resource; ignoring it"
@@ -313,7 +328,7 @@ def test_an_unusable_label_falls_through_to_the_table_and_says_so_once(
     with caplog.at_level(logging.WARNING):
         lengths = impl.get_chrom_lengths(repo)
 
-    assert lengths["chr1"].source is ChromLengthSource.TABIX_ESTIMATE
+    assert list(lengths["chr1"].answers) == [ChromLengthSource.TABIX_ESTIMATE]
     warnings = label_warnings(caplog)
     assert len(warnings) == 1
     assert "score" in warnings[0]

@@ -96,6 +96,12 @@ class ChromLengthSource(enum.Enum):
     Only :attr:`REFERENCE_GENOME` and :attr:`BIGWIG` are exact.  Callers
     ask :attr:`is_exact` rather than enumerating members, so a new source
     needs no edits at the call sites.
+
+    The members are declared in the ladder's order, most trusted first,
+    and :attr:`rank` reads that order back (gain#1574): a record that
+    holds every source's answer for a contig picks its best by rank, so
+    a new source is placed by where it is declared, not by edits at the
+    call sites.
     """
 
     REFERENCE_GENOME = "reference_genome"
@@ -124,6 +130,18 @@ class ChromLengthSource(enum.Enum):
             ChromLengthSource.REFERENCE_GENOME,
             ChromLengthSource.BIGWIG,
         )
+
+    @property
+    def rank(self) -> int:
+        """Trust against the other members; higher wins, nothing more."""
+        return _RANK_BY_SOURCE[self]
+
+
+# The definition order read back once, most trusted first.
+_RANK_BY_SOURCE = {
+    member: len(ChromLengthSource) - index
+    for index, member in enumerate(ChromLengthSource)
+}
 
 
 class PayloadKind(enum.Enum):

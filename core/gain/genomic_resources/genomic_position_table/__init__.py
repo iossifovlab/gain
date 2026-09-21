@@ -740,7 +740,9 @@ than inheriting a label -- and a trust level -- that is not its own.  The
 trust level is the member's ``is_exact``; the exactness bool that used to
 sit beside the declaration (#776) had one reader -- the coverage
 denominator -- and that reader now asks the implementation's ladder,
-whose records carry the member (gain#1414).
+whose records carry the member (gain#1414).  ``rank`` reads the members'
+definition order back as the ladder's order, most trusted first, for the
+record that holds every source's answer and picks its best (gain#1574).
 
 ``refusal`` is the one home of the two "no length" messages:
 ``get_chromosome_length`` raised them inline, and the score's method refuses

@@ -826,21 +826,20 @@ def resolve_chrom_lengths(
     records come from the implementation's ladder
     (:meth:`GenomicScoreImplementation.get_chrom_lengths`), which
     opens the score to ask -- so they are asked for, through
-    ``score_lengths``, only once the genome rung has nothing.  Which of
-    a record's sources may serve as a denominator is
-    ``ChromLengthSource.is_exact``'s call, not this function's
-    (gain#1414): a tabix probe's upper bound and an in-memory table's
-    extent are dropped here, and a contig with no length at all
-    (proven empty, or one the probe could not bracket) with them.
+    ``score_lengths``, only once the genome rung has nothing.  Each
+    record's ``best`` answer is the candidate, and whether its source
+    may serve as a denominator is ``ChromLengthSource.is_exact``'s
+    call, not this function's (gain#1414): a tabix probe's upper bound
+    and an in-memory table's extent are dropped here, and a contig with
+    no length at all (proven empty, or one the probe could not bracket)
+    with them.
     """
     if ref_genome is not None:
         return dict(ref_genome.get_all_chrom_lengths())
     lengths = {
-        chrom: resolved.length
+        chrom: best.length
         for chrom, resolved in score_lengths().items()
-        if resolved.length is not None
-        and resolved.source is not None
-        and resolved.source.is_exact
+        if (best := resolved.best) is not None and best.source.is_exact
     }
     if not lengths:
         logger.info(
