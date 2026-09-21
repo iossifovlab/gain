@@ -1,10 +1,10 @@
 """The stored form of a length statistic: an exact length map plus scalars.
 
-ADR 0020 gives **segments**, **fragments** and **indels** one log2
+ADR 0020 gave **segments**, **fragments** and **indels** one log2
 binning for their length histograms.  The ladder lumps {2, 3} into one
 bin and {4, 5, 6, 7} into the next, so no exact minimum, maximum, mean
 or median survives it -- and those four are what the statistics table
-on an info page exists to show.  A statistic that wants them stores an
+on an info page exists to show.  So each statistic stores an
 :class:`ExactLengths` record instead: an exact ``{length: count}`` map
 clamped at :data:`LENGTH_MAP_CLAMP`, beside four scalars accumulated on
 the unclamped length.
@@ -14,11 +14,11 @@ map at render time by :func:`length_ladder` rather than stored beside
 it, so the picture and the numbers beneath it cannot drift.
 
 Nothing here knows what KIND of thing has a length.  The indel groups of
-an allele score were the first users and a position score's segments
-the second (gain#1543).  The record's stored key for the
-count is ``count`` whatever the kind, and the row formatter takes the
-group label from its caller, so "alleles", "segments" and "fragments"
-all fit.
+an allele score were the first users (gain#1118), a position score's
+segments the second (gain#1543) and a fragment score's fragments the
+third (gain#1544).  The record's stored key for the count is ``count``
+whatever the kind, and the row formatter takes the group label from its
+caller, so "alleles", "segments" and "fragments" all fit.
 """
 from __future__ import annotations
 
@@ -160,11 +160,9 @@ class ExactLengths(NamedTuple):
     def has_counts_to_plot(self) -> bool:
         """Whether this group has anything to draw a chart of.
 
-        The exact-map side of
-        :func:`~gain.genomic_resources.statistics.length_histogram.
-        has_counts_to_plot`, which asks the same question of a stored
-        ladder.  Unknown and known-and-empty are one answer for the same
-        reason: the counts axis is logarithmic and can render neither.
+        Unknown and known-and-empty are one answer to this question:
+        the counts axis is logarithmic and can render neither, and a
+        chart of nothing under a lengths heading states nothing either.
 
         One spelling, because the statistics build and the page must
         agree exactly -- a build that skips the image while the page

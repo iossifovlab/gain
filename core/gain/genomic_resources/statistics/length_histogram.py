@@ -1,18 +1,17 @@
 """The one fixed length ladder, and the chart drawn on it.
 
-ADR 0020 gives **fragments** this binning as their STORED form, so that
-per-chromosome results merge into exact global ones and chunked scans
-merge exactly for the same reason.  The ladder lives here rather than
-in :mod:`gain.genomic_resources.statistics.fragments` because it is the
-shared contract every length chart is drawn on, not a fragment detail.
-
-**Indels** left the stored ladder in gain#1118 and **segments** in
-gain#1543 (ADR 0020 as amended).  They keep an exact ``{length: count}``
-map in :mod:`gain.genomic_resources.statistics.exact_lengths` and merge
-on that; what they still use from here is the RENDERING -- the map is
-projected onto these bins at draw time so the chart keeps the shape the
-stored histograms drew.  So the callers use this module for different
-things, and only fragments depend on the edges being part of any file.
+ADR 0020 gave every length histogram this binning as its STORED form,
+so that per-chromosome results merged into exact global ones and
+chunked scans merged exactly for the same reason.  No kind stores it
+any more: **indels** left the stored ladder in gain#1118, **segments**
+in gain#1543 and **fragments** in gain#1544 (ADR 0020 as amended).
+All three keep an exact ``{length: count}`` map in
+:mod:`gain.genomic_resources.statistics.exact_lengths` and merge on
+that; what they use from here is the RENDERING -- the map is projected
+onto these bins at draw time, so the chart keeps the shape the stored
+histograms drew.  The ladder lives here rather than beside any one
+statistic because it is the shared contract every length chart is
+drawn on, not a detail of one kind.
 
 What the ladder does NOT bin at all is the complex allele grid: its
 cells are exact lengths (ADR 0020 as amended by gain#779), for reasons
@@ -20,10 +19,7 @@ that belong with that grid rather than here.
 """
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import IO, Any, TypeGuard
-
-import numpy as np
+from typing import IO
 
 from gain.genomic_resources.statistics.chart_style import (
     CHART_FIGSIZE,
@@ -31,9 +27,9 @@ from gain.genomic_resources.statistics.chart_style import (
 )
 
 # Fixed log2 bins: bin ``i`` holds lengths in ``[2**i, 2**(i + 1))``, and
-# the last bin is open-ended.  The edges are part of the stored format --
-# histograms binned on different edges cannot be merged -- so this
-# constant must not change once resources carry statistics built from it.
+# the last bin is open-ended.  A rendering choice, not a stored format:
+# the exact maps the files hold are projected onto these bins at draw
+# time, so changing the ladder changes every chart and breaks no file.
 LENGTH_HISTOGRAM_BIN_COUNT = 32
 
 # Where the length axis stops on the chart.  Real data dies long before
@@ -41,9 +37,9 @@ LENGTH_HISTOGRAM_BIN_COUNT = 32
 # die at ~1K and deletions at ~512, and segment lengths have the same
 # shape -- so a full-ladder axis draws three quarters of nothing.  Bins
 # at or above this length are summed into one overflow bar, whose height
-# is itself the signal that something runs past the cap.  Display only:
-# the stored histogram keeps all 32 bins, so the exact tail remains
-# readable in the statistics file.
+# is itself the signal that something runs past the cap.  The exact
+# map's clamp (``LENGTH_MAP_CLAMP``) is equal to it, so a map clamped
+# there projects onto these bins exactly as the unclamped lengths would.
 LENGTH_HISTOGRAM_DISPLAY_CAP = 2 ** 13
 
 
@@ -54,77 +50,11 @@ def length_histogram_bin_index(length: int) -> int:
     return min(length.bit_length() - 1, LENGTH_HISTOGRAM_BIN_COUNT - 1)
 
 
-# The same ladder as an array of lower edges, for vectorized binning over
-# a batch of lengths.  Pinned equal to ``length_histogram_bin_index`` by
-# test_the_batch_binning_agrees_with_the_per_length_one.
-LENGTH_BIN_EDGES = 2 ** np.arange(LENGTH_HISTOGRAM_BIN_COUNT, dtype=np.int64)
-
-
-def accumulate_bins(target: list[int], source: Iterable[int]) -> None:
-    """Add one length histogram into another, bin for bin.
-
-    The one statement of "counts are added, not replaced", for every
-    place two histograms on the fixed ladder come together: a merge of
-    two regions, a batch of fresh counts, a global roll-up.
-    """
-    for index, count in enumerate(source):
-        target[index] += count
-
-
-def binwise_sum(histograms: Iterable[Iterable[int]]) -> list[int]:
-    """Merge any number of histograms on this ladder into one.
-
-    Exact rather than approximate, and that is the point of the fixed
-    edges: every histogram is binned the same way, so a global roll-up
-    is a merge and never a re-scan.
-    """
-    merged = [0] * LENGTH_HISTOGRAM_BIN_COUNT
-    for histogram in histograms:
-        accumulate_bins(merged, histogram)
-    return merged
-
-
-def histogram_on_this_ladder(counts: Iterable[Any] | None) -> list[int] | None:
-    """A stored histogram, or ``None`` when it is not one of ours.
-
-    ``None`` in means the key was absent; ``None`` out additionally
-    covers a histogram of the wrong length, which was binned on foreign
-    edges and so cannot merge with these fixed bins.  Either way the
-    reader learns *unknown*, which is a different answer from an
-    all-zero histogram -- that one says the thing was measured and found
-    empty.  Stated once here because both stored statistics apply it.
-    """
-    if counts is None:
-        return None
-    histogram = [int(count) for count in counts]
-    if len(histogram) != LENGTH_HISTOGRAM_BIN_COUNT:
-        return None
-    return histogram
-
-
 def _bin_edge_label(edge: int) -> str:
     for unit, factor in (("G", 2 ** 30), ("M", 2 ** 20), ("K", 2 ** 10)):
         if edge >= factor:
             return f"{edge // factor}{unit}"
     return str(edge)
-
-
-def has_counts_to_plot(
-    histogram: list[int] | None,
-) -> TypeGuard[list[int]]:
-    """Whether a length histogram has a positive count to draw.
-
-    Unknown and known-and-empty are one answer here: the counts axis is
-    logarithmic and can render neither, and a chart of nothing under a
-    "Segment lengths" heading states nothing either.
-
-    Fragments are the one caller left.  The indel groups asked this
-    too until gain#1118 took them off the stored ladder, and segments
-    until gain#1543: they carry an exact length map now, so the same
-    question is ``lengths is None or not lengths.total``, read off the
-    thing they actually store rather than off bins derived from it.
-    """
-    return histogram is not None and any(histogram)
 
 
 def plot_length_histogram(
