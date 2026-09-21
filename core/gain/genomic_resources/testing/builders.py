@@ -70,6 +70,7 @@ from gain.genomic_resources.testing import (
     setup_tabix,
     setup_vcf,
 )
+from gain.genomic_resources.testing.extra_files import ExtraFilesMixin
 from gain.genomic_resources.testing.resource_meta import (
     MetaMixin,
     append_config_block,
@@ -144,7 +145,7 @@ _HEADER_MODES = ("file", "none", "list")
 
 
 @dataclasses.dataclass(frozen=True)
-class _TableScoreBuilder(MetaMixin):
+class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
     """Immutable base for the tabular position/allele score builders.
 
     The three table-score resource types share nearly everything: score
@@ -516,7 +517,10 @@ class _TableScoreBuilder(MetaMixin):
         # that do not write it into the file still resolve their indices
         # from it.
         write_header = self._effective_header_mode() == "file"
-        sidecars = self._render_chrom_mapping_file()
+        sidecars = {
+            **self._render_chrom_mapping_file(),
+            **self.render_extra_files(),
+        }
         if self.tabix:
             setup_directories(resource_dir, {
                 GR_CONF_FILE_NAME: self._render_config(
@@ -1266,7 +1270,7 @@ _DEFAULT_GENE_COLUMN = "gene"
 
 
 @dataclasses.dataclass(frozen=True)
-class GeneScoreBuilder(MetaMixin):
+class GeneScoreBuilder(ExtraFilesMixin, MetaMixin):
     """Immutable builder for a single ``gene_score`` resource.
 
     Built on the shared score-declaration base (:class:`ScoreSpec`): scores
@@ -1345,7 +1349,10 @@ class GeneScoreBuilder(MetaMixin):
         Raises a ``ResourceValidationError`` on invalid content;
         ``GRRBuilder`` annotates it with the resource id.
         """
-        setup_directories(resource_dir, _build_gene_score_content(self))
+        setup_directories(resource_dir, {
+            **_build_gene_score_content(self),
+            **self.render_extra_files(),
+        })
 
     def build_resource(
         self, tmp_path: pathlib.Path,

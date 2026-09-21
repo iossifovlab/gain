@@ -255,10 +255,11 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
         if isinstance(self.get_histogram_config(score_id),
                       NullHistogramConfig):
             return None
-        return (
-            f"{repo_url}/"
-            f"{quote(self.get_histogram_image_filename(score_id))}"
-        )
+        image_filename = self.get_histogram_image_filename(score_id)
+        manifest = self.resource.get_loaded_manifest()
+        if manifest is not None and image_filename not in manifest:
+            return None
+        return f"{repo_url}/{quote(image_filename)}"
 
     def get_histogram_image_url(self, score_id: str) -> str | None:
         """Return the histogram image URL on the repository's own url.
