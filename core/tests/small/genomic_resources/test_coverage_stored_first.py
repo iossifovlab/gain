@@ -15,9 +15,11 @@ import pytest
 import pytest_mock
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     PositionScoreImplementation,
+    scan,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import (
+    a_bigwig_score,
     a_grr,
     a_position_score,
     a_reference_genome,
@@ -151,4 +153,98 @@ def test_an_unrepaired_tabix_score_whose_genome_is_gone_renders_raw_counts(
 
     assert f">{COVERED}<" in page
     assert "Covered %" not in page
+    opened.assert_not_called()
+
+
+def _a_bigwig_repo(
+    where: pathlib.Path, *, labelled: bool = True,
+) -> GenomicResourceRepo:
+    """The same chr1 rows as a bigWig whose header lists chr1 alone,
+    with the genome of chr1 and chr2 beside it, labelled or not."""
+    score = (
+        a_bigwig_score()
+        .with_data(
+            """
+            chr1  4   9   0.1
+            chr1  29  33  0.2
+            """)
+        .with_chrom_lens({"chr1": 100}))
+    if labelled:
+        score = score.with_labels(reference_genome=GENOME)
+    return (
+        a_grr()
+        .with_resource(SCORE, score)
+        .with_resource(
+            GENOME,
+            a_reference_genome()
+            .with_chromosome("chr1", "A" * 100)
+            .with_chromosome("chr2", "A" * 300))
+        .build_repo(where)
+    )
+
+
+def test_a_repaired_bigwig_score_with_its_genome_at_hand_is_unchanged(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    _a_bigwig_repo(tmp_path)
+    impl, repo = _repaired(tmp_path)
+    opened = mocker.spy(impl.score, "open")
+
+    page = impl.get_info(repo=repo)
+
+    assert page.count(">9.00%<") == 1  # the chr1 row: 9 of 100
+    assert ">2.25%<" in page  # the global row: 9 of the genome's 400
+    assert "1 contig with no values (300 bp)" in page
+    opened.assert_not_called()
+
+
+def test_a_bigwig_score_whose_genome_is_gone_is_priced_from_the_file(
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Over the score's own contig, so no roll-up of the genome's chr2;
+    the header is not read for what the file already says."""
+    _a_bigwig_repo(tmp_path)
+    impl, _ = _repaired(tmp_path)
+    repo = _without_the_genome(tmp_path)
+    opened = mocker.spy(impl.score, "open")
+
+    with caplog.at_level(logging.WARNING):
+        page = impl.get_info(repo=repo)
+
+    assert page.count(">9.00%<") == 2  # the chr1 row and the global row
+    assert "contig with no values" not in page
+    opened.assert_not_called()
+    assert captured_warnings(caplog).count(
+        f"Couldn't find reference genome {GENOME}") == 1
+
+
+def test_an_unrepaired_unlabelled_bigwig_score_opens_once_for_its_header(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Nothing stored: the header is the one exact thing a live render
+    reads, as before (gain#1448) -- and the page is priced by it."""
+    repo = _a_bigwig_repo(tmp_path, labelled=False)
+    resource = repo.get_resource(SCORE)
+    scan.do_noregion_histograms(resource)
+    impl = PositionScoreImplementation(resource)
+    opened = mocker.spy(impl.score, "open")
+
+    page = impl.get_info(repo=repo)
+
+    assert page.count(">9.00%<") == 2  # the chr1 row and the global row
+    opened.assert_called_once()
+
+
+def test_a_repaired_unlabelled_bigwig_score_is_priced_without_opening(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    _a_bigwig_repo(tmp_path, labelled=False)
+    impl, repo = _repaired(tmp_path)
+    opened = mocker.spy(impl.score, "open")
+
+    page = impl.get_info(repo=repo)
+
+    assert page.count(">9.00%<") == 2  # the chr1 row and the global row
     opened.assert_not_called()
