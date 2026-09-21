@@ -207,6 +207,29 @@ def test_a_chain_whose_chrom_prefix_is_null_rewrites_nothing(
         == "chr1"
 
 
+@pytest.mark.parametrize("chrom, mapping, expected", [
+    # The prefix comes off once; a contig that goes on with the prefix's
+    # own characters keeps them (gain#1530).
+    pytest.param("chrchr1", {"del_prefix": "chr"}, "chr1",
+                 id="the-rest-repeats-the-prefix"),
+    # With both keys the drop runs first, then the prepend; what sits
+    # between them is the contig minus one prefix, untouched.
+    pytest.param("chrrr1", {"del_prefix": "chr", "add_prefix": "ch"},
+                 "chrr1", id="del-then-add"),
+    # Only a contig that *starts* with the prefix is a match.
+    pytest.param("1", {"del_prefix": "chr"}, "1",
+                 id="shorter-than-prefix"),
+    pytest.param("hr1", {"del_prefix": "chr"}, "hr1",
+                 id="shares-characters"),
+    pytest.param("1chr", {"del_prefix": "chr"}, "1chr",
+                 id="carries-it-not-at-the-start"),
+])
+def test_del_prefix_is_removed_as_a_prefix_once(
+    chrom: str, mapping: dict[str, str], expected: str,
+) -> None:
+    assert LiftoverChain.map_chromosome(chrom, mapping) == expected
+
+
 @pytest.mark.parametrize("labels", ["some text", ["a", "b"], 2019])
 def test_a_chain_whose_labels_are_not_a_mapping_is_refused(
     tmp_path: pathlib.Path, labels: Any,
