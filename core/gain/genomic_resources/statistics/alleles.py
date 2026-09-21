@@ -78,9 +78,8 @@ from gain.genomic_resources.statistics.region_fold import merge_regions
 from gain.utils.chromosome_order import natural_chromosome_key
 
 ALLELE_STATISTICS_FILE = "statistics/alleles.json"
-#: The ``format_version`` the writer stamps; 1 since gain#1118 (exact
-#: indel lengths).  Read by
-#: :func:`allele_stored_statistic_for` too.
+#: The ``format_version`` the writer stamps; what
+#: :func:`allele_stored_statistic_for` declares, so the two cannot drift.
 ALLELE_FORMAT_VERSION = 1
 
 #: The global images the statistics build renders beside the file.  One

@@ -986,13 +986,43 @@ def _schema_stale_statistics(
             # Not this check's finding: a file that does not parse is
             # reported by whatever reads it, not as "behind the schema".
             continue
-        version = data.get("format_version", 0) \
-            if isinstance(data, dict) else 0
+        version = _stored_format_version(data)
         if version < stored.format_version:
             stale.append(
                 f"{stored.file} is at format version {version} "
                 f"(current is {stored.format_version})")
     return stale
+
+
+def _stored_format_version(data: Any) -> int:
+    """The ``format_version`` a parsed statistics file carries, else 0.
+
+    Anything that is not an integer -- a file written before the field
+    existed, a non-object document, a null -- predates every schema.
+    A report is never the reason a resource fails, so this raises on
+    nothing.
+    """
+    if not isinstance(data, dict):
+        return 0
+    version = data.get("format_version")
+    if isinstance(version, bool) or not isinstance(version, int):
+        return 0
+    return version
+
+
+def _warn_schema_stale(count: int) -> None:
+    """One WARNING per run, last, counting the resources behind the schema.
+
+    Nothing when the count is zero.  Last, where a repository-wide
+    run's operator reads; the per-resource lines name the files.
+    """
+    if not count:
+        return
+    logger.warning(
+        "%d resource(s) carry statistics that predate the current "
+        "schema; rebuild them with "
+        "`grr_manage resource-stats -r <resource_id> -f`",
+        count)
 
 
 def _report_schema_stale_statistics(
@@ -1168,16 +1198,8 @@ def _run_stats_core(
                 err, "skipping statistics for", res.resource_id)
             failed.add(res.resource_id)
 
-    if schema_stale:
-        # Once, at the end, where a repository-wide run's operator reads;
-        # the per-resource lines above name the files.
-        logger.warning(
-            "%d resource(s) carry statistics that predate the current "
-            "schema; rebuild them with "
-            "`grr_manage resource-stats -r <resource_id> -f`",
-            schema_stale)
-
     if dry_run:
+        _warn_schema_stale(schema_stale)
         # A resource that could not even be checked is certainly not up to
         # date, so it counts towards the "how many need an update" status a
         # dry run exits with -- that keeps the status a COUNT rather than
@@ -1224,6 +1246,7 @@ def _run_stats_core(
             dry_run=False, force=True, use_dvc=True)
         failed |= set(stats_manifest_outcome.failed)
 
+    _warn_schema_stale(schema_stale)
     return CommandResult(
         failed=frozenset(failed), repo_failed=repo_failed,
         wrote=outcome.wrote or bool(written))

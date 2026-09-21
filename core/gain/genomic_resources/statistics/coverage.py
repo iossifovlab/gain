@@ -51,8 +51,8 @@ from gain.utils.chromosome_order import natural_chromosome_key
 logger = logging.getLogger(__name__)
 
 COVERAGE_STATISTICS_FILE = "statistics/coverage.json"
-#: The ``format_version`` the writer stamps; 2 since gain#1543 (exact
-#: segment lengths).  Read by :func:`coverage_stored_statistic_for` too.
+#: The ``format_version`` the writer stamps; what
+#: :func:`coverage_stored_statistic_for` declares, so the two cannot drift.
 COVERAGE_FORMAT_VERSION = 2
 
 #: How a failed fold of these regions is named in the message.

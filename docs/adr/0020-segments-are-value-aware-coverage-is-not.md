@@ -344,13 +344,11 @@ alt-minus-ref, not an absolute value.
   not enter the statistics hash, so no existing resource is invalidated.
   Statistics appear as resources are rebuilt; the page renders "not computed"
   where they are absent. *Since gain#1586 (decided on gain#1545) the gap is
-  visible rather than silent: an unforced repair and `--dry-run` report a
+  visible rather than silent: an unforced repair and `--dry-run` name each
   hash-current resource whose stored statistics predate the schema — a
-  file the kind builds is missing, or its `format_version` is behind the
-  writer's — naming the file, the versions and the `-f` remedy, and
-  rebuild nothing; the dry run's exit count stays the hash's alone. Each
-  statistic declares its file and version beside the accumulator gate the
-  scan reads, so what is checked is what is written.*
+  file the kind builds missing, or its `format_version` behind the
+  writer's — with the file, the versions and the `-f` remedy, rebuild
+  nothing, and leave the dry run's exit count the hash's alone.*
 - **The rollout lever is a forced rebuild** — verified and pinned in #774.
   Forcing is therefore the only deliberate way to put the new statistics on
   an already-built resource: `grr_manage resource-stats -r <resource_id> -f`

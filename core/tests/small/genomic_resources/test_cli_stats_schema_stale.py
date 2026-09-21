@@ -1,4 +1,4 @@
-# pylint: disable=W0621,C0114,C0116,W0212,W0613
+# pylint: disable=W0621,C0114,C0116
 """The repair flow REPORTS statistics that predate the current schema.
 
 ``calc_statistics_hash`` is an input hash and stays one (gain#706, ADR
@@ -25,6 +25,8 @@ from gain.genomic_resources.statistics.fragments import (
     FRAGMENT_STATISTICS_FILE,
 )
 from gain.genomic_resources.testing.builders import (
+    AlleleScoreBuilder,
+    FragmentScoreBuilder,
     PositionScoreBuilder,
     ResourceBuilder,
     a_fragment_score,
@@ -33,65 +35,6 @@ from gain.genomic_resources.testing.builders import (
     a_reference_genome,
     an_allele_score,
 )
-
-
-@pytest.mark.parametrize("kind, builder", [
-    ("position", lambda: _a_position_score()),
-    ("fragment", lambda: (
-        a_fragment_score()
-        .with_score("v", "float")
-        .with_tabix()
-        .with_data("""
-            chrom  pos_begin  pos_end  v
-            1      10         30       0.5
-            1      12         40       0.7
-        """))),
-    ("allele", lambda: (
-        an_allele_score()
-        .with_score("s", "float")
-        .with_tabix()
-        .with_data("""
-            chrom  pos_begin  reference  alternative  s
-            1      10         A          G            0.1
-        """))),
-])
-def test_each_kind_declares_exactly_the_versioned_files_its_build_writes(
-    tmp_path: pathlib.Path,
-    kind: str,
-    builder: Callable[[], ResourceBuilder],
-) -> None:
-    # The drift guard: the declaration the check reads and the files the
-    # scan writes are stated in two places, and this is what holds them
-    # together.  Both directions -- a declared file must be written at
-    # the declared version, and every versioned file written must be
-    # declared, or a new statistic would roll out unreported.
-    repo = a_grr().with_resource(kind, builder()).build_repo(tmp_path)
-    cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
-    resource = repo.get_resource(kind)
-    assert resource is not None
-    impl = build_resource_implementation(resource)
-
-    declared = {
-        stored.file: stored.format_version
-        for stored in impl.stored_statistics()
-    }
-    written = {}
-    for statistics_file in sorted(
-            (tmp_path / kind / "statistics").glob("*.json")):
-        data = json.loads(statistics_file.read_text())
-        if isinstance(data, dict) and "format_version" in data:
-            written[f"statistics/{statistics_file.name}"] = \
-                data["format_version"]
-
-    assert declared
-    assert declared == written
-
-
-def _downgrade_format_version(statistics_file: pathlib.Path) -> None:
-    """Rewrite a stored statistic as an older GAIn would have left it."""
-    data = json.loads(statistics_file.read_text())
-    data["format_version"] = 1
-    statistics_file.write_text(json.dumps(data, indent=2))
 
 
 def _a_position_score() -> PositionScoreBuilder:
@@ -105,6 +48,74 @@ def _a_position_score() -> PositionScoreBuilder:
             1      10         15       0.02
             1      17         19       0.03
         """))
+
+
+def _a_fragment_score() -> FragmentScoreBuilder:
+    return (
+        a_fragment_score()
+        .with_score("v", "float")
+        .with_tabix()
+        .with_data("""
+            chrom  pos_begin  pos_end  v
+            1      10         30       0.5
+            1      12         40       0.7
+        """))
+
+
+def _an_allele_score() -> AlleleScoreBuilder:
+    return (
+        an_allele_score()
+        .with_score("s", "float")
+        .with_tabix()
+        .with_data("""
+            chrom  pos_begin  reference  alternative  s
+            1      10         A          G            0.1
+        """))
+
+
+@pytest.mark.parametrize("kind, builder", [
+    ("position", _a_position_score),
+    ("fragment", _a_fragment_score),
+    ("allele", _an_allele_score),
+])
+def test_each_kind_declares_exactly_the_statistics_files_its_build_writes(
+    tmp_path: pathlib.Path,
+    kind: str,
+    builder: Callable[[], ResourceBuilder],
+) -> None:
+    # The drift guard: the declaration the check reads and the files the
+    # scan writes are stated in two places, and this is what holds them
+    # together.  Both directions -- a declared file must be written at
+    # the declared version, and every statistics document written must
+    # be declared, at a version -- or a new statistic would roll out
+    # unreported.  Only the per-score histogram files are exempt: they
+    # are addressed by score id, not by kind.
+    repo = a_grr().with_resource(kind, builder()).build_repo(tmp_path)
+    cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
+    resource = repo.get_resource(kind)
+    assert resource is not None
+    impl = build_resource_implementation(resource)
+
+    declared = {
+        stored.file: stored.format_version
+        for stored in impl.stored_statistics()
+    }
+    written = {
+        f"statistics/{statistics_file.name}":
+            json.loads(statistics_file.read_text()).get("format_version")
+        for statistics_file in (tmp_path / kind / "statistics").glob("*.json")
+        if not statistics_file.name.startswith("histogram_")
+    }
+
+    assert declared
+    assert declared == written
+
+
+def _downgrade_format_version(statistics_file: pathlib.Path) -> None:
+    """Rewrite a stored statistic as an older GAIn would have left it."""
+    data = json.loads(statistics_file.read_text())
+    data["format_version"] = 1
+    statistics_file.write_text(json.dumps(data, indent=2))
 
 
 @pytest.fixture
@@ -260,25 +271,8 @@ def fragment_missing_and_allele_current(
     path = tmp_path_factory.mktemp("schema_stale_missing_grr")
     (
         a_grr()
-        .with_resource(
-            "frag",
-            a_fragment_score()
-            .with_score("v", "float")
-            .with_tabix()
-            .with_data("""
-                chrom  pos_begin  pos_end  v
-                1      10         30       0.5
-                1      12         40       0.7
-            """))
-        .with_resource(
-            "alle",
-            an_allele_score()
-            .with_score("s", "float")
-            .with_tabix()
-            .with_data("""
-                chrom  pos_begin  reference  alternative  s
-                1      10         A          G            0.1
-            """))
+        .with_resource("frag", _a_fragment_score())
+        .with_resource("alle", _an_allele_score())
         .build_repo(path)
     )
     cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
@@ -305,6 +299,28 @@ def test_a_missing_file_is_reported_and_a_current_one_is_not(
     assert "<frag>" in stale_lines[0]
     assert f"{FRAGMENT_STATISTICS_FILE} is missing" in stale_lines[0]
     assert "resource-stats -r frag -f" in stale_lines[0]
+
+
+def test_a_file_whose_version_is_not_a_number_is_reported_not_failed(
+    position_score_at_v1: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A report must never be the reason a resource FAILS: an unreadable
+    # version counts as predating every schema, and the dry run still
+    # exits zero.
+    path = position_score_at_v1
+    coverage_file = path / "pos" / COVERAGE_STATISTICS_FILE
+    data = json.loads(coverage_file.read_text())
+    data["format_version"] = None
+    coverage_file.write_text(json.dumps(data))
+    cli_manage(["repo-manifest", "-R", str(path)])
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "--dry-run", "-R", str(path), "-j", "1"])
+
+    assert "is consistent" in caplog.text
+    assert "skipping statistics for" not in caplog.text
+    assert "statistics of <pos> predate the current schema" in caplog.text
 
 
 def test_a_resource_whose_hash_is_stale_is_only_reported_as_needing_update(

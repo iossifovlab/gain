@@ -59,9 +59,8 @@ from gain.genomic_resources.statistics.region_fold import merge_regions
 from gain.utils.chromosome_order import natural_chromosome_key
 
 FRAGMENT_STATISTICS_FILE = "statistics/fragments.json"
-#: The ``format_version`` the writer stamps; 2 since gain#1544 (exact
-#: fragment lengths).  Read by
-#: :func:`fragment_stored_statistic_for` too.
+#: The ``format_version`` the writer stamps; what
+#: :func:`fragment_stored_statistic_for` declares, so the two cannot drift.
 FRAGMENT_FORMAT_VERSION = 2
 FRAGMENT_LENGTHS_IMAGE_FILE = "statistics/fragment_lengths.png"
 
