@@ -46,6 +46,7 @@ from gain.genomic_resources.testing.builders import (
 from .conftest import (
     UNUSABLE_RESOURCE_ID_LABELS,
     label_warnings,
+    overlap_warnings,
 )
 
 #: The genome's exact length for chr1, past every row of the score.
@@ -334,3 +335,165 @@ def test_an_unusable_label_falls_through_to_the_table_and_says_so_once(
     assert "score" in warnings[0]
     assert "reference_genome" in warnings[0]
     assert reported_as in warnings[0]
+
+
+# -- the score's contigs against the genome's (gain#1575) ------------------
+
+#: The genome every overlap test labels its score with.
+GENOME_CONTIGS = ("chr1", "chr2")
+
+
+def a_score_over(
+    *chroms: str, tabix: bool = True,
+    renamed: dict[str, str] | None = None,
+) -> GRRBuilder:
+    """A score ``score`` with one row per contig of ``chroms``, in that
+    order, labelled with ``genome``, which lists ``GENOME_CONTIGS``.
+    Tabix unless told otherwise -- a tabix file with no rows at all is
+    not a thing the backend opens, so the empty score is in-memory.
+    ``renamed`` ships a ``chrom_mapping`` file, score name -> file contig,
+    for a contig name the data file itself could not carry."""
+    genome = a_reference_genome()
+    for chrom in GENOME_CONTIGS:
+        genome = genome.with_chromosome(chrom, "A" * CHR1_GENOME_LENGTH)
+    rows = "\n".join(f"{chrom}  10  0.1" for chrom in chroms)
+    score = (
+        a_position_score()
+        .with_score("score", "float")
+        .with_data(f"chrom  pos_begin  score\n{rows}\n")
+        .with_labels(reference_genome="genome")
+    )
+    if tabix:
+        score = score.with_tabix()
+    if renamed is not None:
+        score = score.with_chrom_mapping_file(**renamed)
+    return (
+        a_grr()
+        .with_resource("genome", genome)
+        .with_resource("score", score)
+    )
+
+
+def test_a_contig_the_genome_does_not_list_is_warned_about_once(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Partial overlap: the resource repairs, the unlisted contig falls to
+    the table's own source, and one WARNING says which and how many."""
+    impl, repo = _the_impl(tmp_path, a_score_over("chr1", "chr2", "chrUn_x"))
+
+    with caplog.at_level(logging.WARNING):
+        lengths = impl.get_chrom_lengths(repo)
+
+    best = lengths["chrUn_x"].best
+    assert best is not None
+    assert best.source is ChromLengthSource.TABIX_ESTIMATE
+    assert overlap_warnings(caplog) == [(
+        "reference_genome genome of score does not list 1 of the score's "
+        "3 contigs (chrUn_x); their lengths fall to the table's own source"
+    )]
+
+
+def test_a_genome_listing_none_of_the_contigs_fails_the_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Zero overlap is a mis-authored label -- typically a chrom_mapping
+    that does not produce the genome's names -- and the resource's
+    statistics fail rather than quietly repair off the table's estimates.
+    ``ValueError`` is what ``repo-repair`` reports as a one-line resource
+    failure and carries on from."""
+    impl, repo = _the_impl(tmp_path, a_score_over("1", "2"))
+
+    with pytest.raises(ValueError, match=(
+        r"^reference_genome genome of score lists none of the score's "
+        r"contigs \(1, 2\); a chrom_mapping that does not produce the "
+        r"genome's contig names is the usual cause$"
+    )):
+        impl.get_chrom_lengths(repo)
+
+
+def test_a_genome_listing_every_contig_is_not_warned_about(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    impl, repo = _the_impl(tmp_path, a_score_over(*GENOME_CONTIGS))
+
+    with caplog.at_level(logging.WARNING):
+        impl.get_chrom_lengths(repo)
+
+    assert overlap_warnings(caplog) == []
+
+
+@pytest.mark.parametrize("genome_id", [None, "no/such/genome", "score"])
+def test_a_score_without_a_resolved_genome_is_not_checked_for_overlap(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+    genome_id: str | None,
+) -> None:
+    """The check is against a genome that RESOLVED: no label, a label
+    naming a missing resource, or one that is not a genome, keeps
+    today's label warning and nothing more -- and never raises, since
+    the score's contigs cannot be compared with anything."""
+    impl, repo = _the_impl(
+        tmp_path, a_labelled_tabix_score_grr(genome_id=genome_id))
+
+    with caplog.at_level(logging.WARNING):
+        impl.get_chrom_lengths(repo)
+
+    assert overlap_warnings(caplog) == []
+
+
+def test_the_warning_samples_the_first_five_unlisted_contigs(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A mapping that covers hg38's alts leaves hundreds unlisted: the
+    count is exact, the names are a bounded sample in table order."""
+    # Authored against lexicographic order, so a sorted sample is seen.
+    unlisted = tuple(f"chrUn_{index}" for index in range(6, -1, -1))
+    impl, repo = _the_impl(tmp_path, a_score_over("chr1", *unlisted))
+
+    with caplog.at_level(logging.WARNING):
+        impl.get_chrom_lengths(repo)
+
+    assert overlap_warnings(caplog) == [(
+        "reference_genome genome of score does not list 7 of the score's "
+        "8 contigs (chrUn_6, chrUn_5, chrUn_4, chrUn_3, chrUn_2, ...); "
+        "their lengths fall to the table's own source"
+    )]
+
+
+def test_a_labelled_score_with_no_contigs_is_not_a_mismatch(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Nothing to compare: an empty table is not a chrom_mapping that
+    missed the genome, and is left to whatever an empty score does."""
+    impl, repo = _the_impl(tmp_path, a_score_over(tabix=False))
+
+    with caplog.at_level(logging.WARNING):
+        lengths = impl.get_chrom_lengths(repo)
+
+    assert lengths == {}
+    assert overlap_warnings(caplog) == []
+
+
+def test_a_contig_name_that_could_forge_a_log_line_is_escaped(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The names come from the table or its chrom_mapping -- repository
+    content -- and a control character in one would end the line and
+    start a forged record; the warning and the failure both show it
+    escaped (the gain#642 policy)."""
+    impl, repo = _the_impl(tmp_path, a_score_over(
+        "chr1", "chr2", renamed={"chr1": "chr1", "chrUn\x1b[31m": "chr2"}))
+
+    with caplog.at_level(logging.WARNING):
+        impl.get_chrom_lengths(repo)
+
+    assert overlap_warnings(caplog) == [(
+        "reference_genome genome of score does not list 1 of the score's "
+        "2 contigs (chrUn\\x1b[31m); their lengths fall to the table's "
+        "own source"
+    )]
+
+    impl, repo = _the_impl(tmp_path / "none", a_score_over(
+        "chr1", "chr2", renamed={"1\x1b": "chr1", "2\x1b": "chr2"}))
+
+    with pytest.raises(ValueError, match=r"contigs \(1\\x1b, 2\\x1b\)"):
+        impl.get_chrom_lengths(repo)

@@ -30,7 +30,10 @@ from gain.genomic_resources.testing import (
 from gain.genomic_resources.testing.builders import (
     a_grr,
     a_position_score,
+    a_reference_genome,
 )
+
+from .conftest import overlap_warnings
 
 
 @pytest.fixture
@@ -879,3 +882,88 @@ def test_a_repository_with_only_a_legacy_index_is_still_readable(
     contents = build_filesystem_test_protocol(path).load_contents()
 
     assert [entry["id"] for entry in contents] == ["one"]
+
+
+# -- a labelled score against the genome its label names (gain#1575) ------
+
+
+def _a_genome_listing(*chroms: str) -> Any:
+    genome = a_reference_genome()
+    for chrom in chroms:
+        genome = genome.with_chromosome(chrom, "A" * 100)
+    return genome
+
+
+def test_repo_repair_fails_a_score_whose_genome_lists_none_of_its_contigs(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Zero overlap between a score and its labelled genome -- the shape
+    a forgotten ``chrom_mapping`` leaves -- is reported the way any
+    failed resource is, one line naming the genome and the usual cause,
+    while the rest of the repository still repairs."""
+    (
+        a_grr()
+        .with_resource("genome", _a_genome_listing("chr1"))
+        .with_resource(
+            "mislabelled",
+            _healthy_position_score()
+            .with_labels(reference_genome="genome")
+            .with_data("""
+                chrom  pos_begin  pos_end  phastCons
+                1      10         15       0.02
+            """))
+        .with_resource("healthy", _healthy_position_score())
+        .build_repo(tmp_path)
+    )
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"), \
+            pytest.raises(SystemExit) as excinfo:
+        cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
+
+    assert excinfo.value.code != 0
+    failures = [
+        record.getMessage() for record in caplog.records
+        if record.levelno == logging.ERROR
+        and "skipping statistics for <mislabelled>" in record.getMessage()
+    ]
+    assert len(failures) == 1
+    assert "reference_genome genome" in failures[0]
+    assert "chrom_mapping" in failures[0]
+    assert (tmp_path / "healthy" / "statistics"
+            / "histogram_phastCons.json").is_file()
+    assert not (tmp_path / "mislabelled" / "statistics"
+                / "histogram_phastCons.json").exists()
+
+
+def test_repo_repair_warns_once_about_the_contigs_a_genome_does_not_list(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Partial overlap is a warning, not a failure: the score repairs,
+    and the operator is told once per resource -- not again for every
+    page the repair renders -- which contigs the genome does not list."""
+    (
+        a_grr()
+        .with_resource("genome", _a_genome_listing("chr1", "chr2"))
+        .with_resource(
+            "score",
+            _healthy_position_score()
+            .with_labels(reference_genome="genome")
+            .with_data("""
+                chrom    pos_begin  pos_end  phastCons
+                chr1     10         15       0.02
+                chr2     10         15       0.03
+                chrUn_x  10         15       0.04
+            """))
+        .build_repo(tmp_path)
+    )
+
+    with caplog.at_level(logging.WARNING):
+        cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
+
+    assert (tmp_path / "score" / "statistics"
+            / "histogram_phastCons.json").is_file()
+    warnings = overlap_warnings(caplog)
+    assert len(warnings) == 1
+    assert "does not list 1 of the score's 3 contigs (chrUn_x)" in warnings[0]
