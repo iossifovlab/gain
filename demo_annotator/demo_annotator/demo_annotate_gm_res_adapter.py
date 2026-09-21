@@ -15,6 +15,7 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
+from gain.annotation.utils import configured_resource_id
 from gain.genomic_resources.cached_repository import GenomicResourceCachedRepo
 
 
@@ -29,7 +30,7 @@ class DemoAnnotateGeneModelsAdapter(AnnotatorBase):
         self.cache_repo = GenomicResourceCachedRepo(
             pipeline.repository, str(self.work_dir / "grr_cache"),
         )
-        gene_models_id = info.parameters.get("gene_models")
+        gene_models_id = configured_resource_id(info, "gene_models")
         if gene_models_id is None:
             raise ValueError(
                 f"The {info} annotator needs a 'gene_models' parameter.",
