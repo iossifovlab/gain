@@ -374,30 +374,6 @@ class LengthArrayTally:
         self.min: int | None = None
         self.max: int | None = None
 
-    @classmethod
-    def restored(cls, lengths: ExactLengths) -> LengthArrayTally:
-        """A tally holding what a stored group already counted.
-
-        Every key of a map built under this clamp is at most the clamp,
-        so the map scatters straight into the counters without
-        re-clamping.  A key above it can only come from a file built
-        under a larger clamp, and is refused by name: folding it would
-        need a counter the array does not have, and re-clamping it here
-        would silently make the record disagree with its file.
-        """
-        tally = cls()
-        for length, count in lengths.lengths.items():
-            if length > LENGTH_MAP_CLAMP:
-                raise ValueError(
-                    f"stored length {length} is above the clamp "
-                    f"{LENGTH_MAP_CLAMP}")
-            tally._counts[length] = count
-        tally.total = lengths.total
-        tally.sum = lengths.sum
-        tally.min = lengths.min
-        tally.max = lengths.max
-        return tally
-
     def add(self, length: int) -> None:
         """Fold one length in, with no numpy vector call.
 
