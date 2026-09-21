@@ -142,7 +142,10 @@ class RegionCoverage:
         # except the first -- tallied exactly.  The first and the open
         # run are excluded because either may still stitch across a
         # merge boundary; their lengths are only final at read time.
-        self._interior = LengthArrayTally()
+        # Built by the first interior run rather than here: a region
+        # that closes fewer than two runs -- every region restored from
+        # a file, which closes none -- has nothing to put in it.
+        self._interior: LengthArrayTally | None = None
         # A deserialized region's segment data, frozen as read; it
         # carries no scan state.
         self._frozen_segments: SegmentSummary | None = None
@@ -206,7 +209,8 @@ class RegionCoverage:
         if self._frozen_segments is not None:
             return self._frozen_segments.lengths
         lengths = LengthArrayTally()
-        lengths.merge(self._interior)
+        if self._interior is not None:
+            lengths.merge(self._interior)
         if self._closed_segments:
             first = self._first_run
             assert first is not None
@@ -225,7 +229,22 @@ class RegionCoverage:
         if not self._closed_segments:
             self._first_run = run
         else:
-            self._interior.add(_run_length(run))
+            self._interior_tally().add(_run_length(run))
+
+    def _interior_tally(self) -> LengthArrayTally:
+        """The interior tally, built by the first run that needs it."""
+        if self._interior is None:
+            self._interior = LengthArrayTally()
+        return self._interior
+
+    def _merge_interior(self, other: RegionCoverage) -> None:
+        """Fold the other region's interior tally into this one's.
+
+        A region that never closed an interior run has no tally, and
+        contributes nothing rather than an empty block.
+        """
+        if other._interior is not None:
+            self._interior_tally().merge(other._interior)
 
     @property
     def segment_count(self) -> int:
@@ -283,7 +302,7 @@ class RegionCoverage:
             self._closed_segments = other._closed_segments
             self._first_run = other._first_run
             self._run = other._run
-            self._interior.merge(other._interior)
+            self._merge_interior(other)
         else:
             self._merge_runs(other)
         self._covered_through = other._covered_through
@@ -328,7 +347,7 @@ class RegionCoverage:
             self._run = (
                 last_begin, max(last_end, other._run[1]), last_values)
             return
-        self._interior.merge(other._interior)
+        self._merge_interior(other)
         if stitch:
             self._record_closed(
                 (last_begin, max(last_end, first_end), last_values))
@@ -339,7 +358,7 @@ class RegionCoverage:
                 # The other region's first run closed there without
                 # being tallied -- it could still have stitched.  It did
                 # not, so it is interior of the merged region now.
-                self._interior.add(_run_length(other_first))
+                self._interior_tally().add(_run_length(other_first))
             self._closed_segments += \
                 1 + other._closed_segments
         self._run = other._run
@@ -470,7 +489,7 @@ class RegionCoverage:
         assert self._run is not None
         self._record_closed(self._run)
         if len(begins) > 1:
-            self._interior.add_batch(ends[:-1] - begins[:-1] + 1)
+            self._interior_tally().add_batch(ends[:-1] - begins[:-1] + 1)
         self._closed_segments += len(begins)
         through = self._covered_through
         assert through is not None

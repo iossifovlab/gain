@@ -11,9 +11,11 @@ import numpy as np
 import pytest
 from gain.genomic_resources.statistics.exact_lengths import (
     LENGTH_MAP_CLAMP,
+    NO_LENGTHS,
     ExactLengths,
     LengthArrayTally,
     LengthTally,
+    folded_lengths,
     length_ladder,
 )
 from gain.genomic_resources.statistics.length_histogram import (
@@ -159,29 +161,6 @@ def test_the_clamp_never_falls_below_the_charts_display_cap() -> None:
     assert LENGTH_MAP_CLAMP >= LENGTH_HISTOGRAM_DISPLAY_CAP
 
 
-def test_a_stored_record_restores_into_the_array_tally_and_merges_on() -> None:
-    """The roll-up of a region already in the file with one just scanned:
-    the stored record comes back as a tally, the scanned batch folds on
-    top, and the result is what one tally fed everything would hold."""
-    stored = _dict_tally([2, 3, 40_000]).frozen()
-
-    tally = LengthArrayTally.restored(stored)
-    tally.add_batch(np.array([1, 8200]))
-
-    assert tally.frozen() == _dict_tally([2, 3, 40_000, 1, 8200]).frozen()
-
-
-def test_a_stored_key_above_the_clamp_is_refused_by_name() -> None:
-    """A file whose map was built under a larger clamp has keys the array
-    has no counter for.  The dict tally would carry them silently; the
-    array tally cannot, and says which key rather than failing on an
-    array index."""
-    foreign = ExactLengths({LENGTH_MAP_CLAMP + 1: 1}, 1, 8193, 8193, 8193)
-
-    with pytest.raises(ValueError, match="above the clamp"):
-        LengthArrayTally.restored(foreign)
-
-
 def test_merging_an_empty_array_tally_changes_nothing() -> None:
     tally = LengthArrayTally()
     tally.add_batch(np.array([2, 40_000]))
@@ -190,3 +169,39 @@ def test_merging_an_empty_array_tally_changes_nothing() -> None:
     tally.merge(LengthArrayTally())
 
     assert tally.frozen() == before
+
+
+def test_a_fold_over_records_is_the_fold_of_their_lengths() -> None:
+    # Same record as one tally fed everything, extremes included -- the
+    # first record carries the global minimum, the second the maximum
+    # -- and the records themselves are left as they were.
+    first = _dict_tally([1, 2, 3, 8191]).frozen()
+    second = _dict_tally([2, 8200, 40_000]).frozen()
+
+    folded = folded_lengths([first, second])
+
+    assert folded == _dict_tally([1, 2, 2, 3, 8191, 8200, 40_000]).frozen()
+    assert first == _dict_tally([1, 2, 3, 8191]).frozen()
+
+
+@pytest.mark.parametrize("records", [
+    [],
+    [NO_LENGTHS],
+], ids=["nothing", "an-empty-record"])
+def test_a_fold_over_nothing_is_the_empty_record(
+    records: list[ExactLengths],
+) -> None:
+    assert folded_lengths(records) == NO_LENGTHS
+
+
+@pytest.mark.parametrize("records", [
+    [None],
+    [_dict_tally([2]).frozen(), None],
+    [None, _dict_tally([2]).frozen()],
+], ids=["only-unknown", "after-a-record", "before-a-record"])
+def test_one_unknown_record_makes_the_whole_fold_unknown(
+    records: list[ExactLengths | None],
+) -> None:
+    # All or nothing, wherever the unknown sits: a partial roll-up would
+    # silently understate.
+    assert folded_lengths(records) is None

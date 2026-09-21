@@ -28,6 +28,7 @@ from gain.genomic_resources.testing.builders import (
     a_fragment_score,
     a_position_score,
 )
+from pytest_mock import MockerFixture
 
 from tests.small.genomic_resources.info_page_html import (
     section_after,
@@ -183,6 +184,46 @@ def test_fragment_lengths_bin_the_rows_own_span_and_merge_exactly(
     }
     assert stats.fragment_lengths_global() == GLOBAL_LENGTHS
     assert GLOBAL_LENGTHS.total == stats.fragments_global() == 5
+
+
+def test_a_read_file_serializes_back_byte_for_byte(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A restored region hands out the record as read, and the global
+    # entry is recomputed from those records; both must land on the
+    # bytes the scan wrote, or a resource whose statistics are merely
+    # re-saved would look rebuilt.
+    resource = _fragments(tmp_path)
+    scan.do_noregion_histograms(resource)
+    written = resource.get_file_content(FRAGMENT_STATISTICS_FILE)
+
+    resaved = FragmentStatistics.deserialize(written).serialize()
+
+    assert resaved == written
+    assert '"fragment_lengths"' in written
+
+
+def test_reading_the_file_builds_no_array_tally(
+    tmp_path: pathlib.Path,
+    mocker: MockerFixture,
+) -> None:
+    # The array tally is the SCAN's: a clamp-sized counter block per
+    # region, so a batch of billions of rows folds at a cost bounded by
+    # the clamp.  A region restored from the file never accumulates, so
+    # it holds the record instead, and a resource with a hundred
+    # thousand contigs reads at the cost of its file rather than of a
+    # block per contig (gain#1565).  Pinned as a count of constructions
+    # rather than a memory bound, which would be a flaky pin.
+    resource = _fragments(tmp_path)
+    scan.do_noregion_histograms(resource)
+    content = resource.get_file_content(FRAGMENT_STATISTICS_FILE)
+    built = mocker.spy(LengthArrayTally, "__init__")
+
+    stats = FragmentStatistics.deserialize(content)
+    global_lengths = stats.fragment_lengths_global()
+
+    assert built.call_count == 0
+    assert global_lengths == GLOBAL_LENGTHS
 
 
 def test_bulk_and_per_record_scans_produce_the_same_fragment_statistics(

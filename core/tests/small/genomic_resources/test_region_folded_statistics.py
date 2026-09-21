@@ -25,8 +25,10 @@ from gain.genomic_resources.statistics.alleles import (
 from gain.genomic_resources.statistics.coverage import (
     CoverageStatistics,
     RegionCoverage,
+    SegmentSummary,
     merge_region_coverage,
 )
+from gain.genomic_resources.statistics.exact_lengths import ExactLengths
 from gain.genomic_resources.statistics.fragments import (
     FragmentStatistics,
     RegionFragments,
@@ -52,11 +54,18 @@ class RegionFolded(NamedTuple):
     """The phrase that fold must use when it cannot merge."""
 
 
+#: One item of length 1, as a restored region holds it: the frozen
+#: rows below carry a record, because a restored region holds its
+#: record as read rather than a mergeable tally, and the adjacency
+#: refusal is what keeps that from ever mattering.
+ONE_LENGTH = ExactLengths({1: 1}, 1, 1, 1, 1)
+
 REGION_FOLDED = [
     pytest.param(
         RegionFolded(
             CoverageStatistics,
-            lambda chrom: RegionCoverage.frozen(chrom, 1, None),
+            lambda chrom: RegionCoverage.frozen(
+                chrom, 1, SegmentSummary(1, ONE_LENGTH)),
             lambda stats: set(stats.covered_by_chromosome()),
             merge_region_coverage,
             "could not merge the coverage of"),
@@ -72,7 +81,7 @@ REGION_FOLDED = [
     pytest.param(
         RegionFolded(
             FragmentStatistics,
-            lambda chrom: RegionFragments.frozen(chrom, 1, None),
+            lambda chrom: RegionFragments.frozen(chrom, 1, ONE_LENGTH),
             lambda stats: set(stats.fragments_by_chromosome()),
             merge_region_fragments,
             "could not merge the fragment statistics of"),
