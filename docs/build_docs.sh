@@ -29,24 +29,6 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-# `sphinx_last_updated_by_git` shells out to git for each page's date. In CI
-# the checkout is bind-mounted into a container whose uid does not own it, so
-# git refuses the repository outright:
-#
-#     fatal: detected dubious ownership in repository at '/workspace'
-#
-# The extension degrades quietly -- the build still succeeds, but every page
-# loses its stamp and two warnings are emitted. Declare the repo safe.
-#
-# Passed as command-scope config through GIT_CONFIG_* rather than
-# `git config --global`, which would write to the invoking user's gitconfig
-# when this script is run locally. `safe.directory` is honoured only from
-# protected configuration; the command scope qualifies, the environment's
-# ordinary config does not.
-export GIT_CONFIG_COUNT=1
-export GIT_CONFIG_KEY_0=safe.directory
-export GIT_CONFIG_VALUE_0="${REPO_ROOT}"
-
 # Clean previous auto-generated tree so stale modules don't
 # linger if files were deleted upstream.
 rm -rf docs/source/development/gain

@@ -952,8 +952,8 @@ pipeline {
                     // Migrated from iossifovlab/gpf_documentation
                     // (iossifovlab/gain#6). The Sphinx source tree now
                     // lives in docs/. Build runs inside the core CI image
-                    // (which already has gain-core under /workspace/.venv);
-                    // the docs dependency group from the root pyproject.toml
+                    // with the checkout bind-mounted over /workspace; the
+                    // docs dependency group from the root pyproject.toml
                     // is layered on top at run-time.
                     //
                     // Unconditional: runs on every build of the CI
@@ -982,14 +982,89 @@ pipeline {
                     // image already exists and the docker build is a
                     // near-instant cache hit; we still re-issue it so the
                     // stage is self-contained and runnable in either mode.
+                    //
+                    // The docs container runs as the Jenkins user, like
+                    // the conda stages: the checkout is bind-mounted over
+                    // /workspace, which shadows the image's own .venv, so
+                    // `uv sync` builds a fresh venv INSIDE the checkout
+                    // and autodoc's imports drop __pycache__ into
+                    // core/gain. Running as root (the image default)
+                    // left ~7 900 root-owned directories per workspace,
+                    // and the jenkins user cannot delete the contents of
+                    // a root-owned directory: a later workspace wipe
+                    // died with `Operation not permitted`, whether in
+                    // `Checkout SCM` of another build that landed in the
+                    // slot (seqpipe/infra#295) or when Jenkins reaped a
+                    // deleted branch's workspace — ~130 undeletable
+                    // husks on one agent (gain#1552). HOME=/tmp because
+                    // uv's cache and any dotfiles land under $HOME, and
+                    // the image's /root is not writable by an arbitrary
+                    // UID.
+                    //
+                    // Reclaim first, permanently. Every workspace that
+                    // ran the root-owned stage still holds its root
+                    // .venv, docs/build and apidoc tree; a jenkins-UID
+                    // `uv sync` cannot write into that .venv and
+                    // build_docs.sh cannot `rm -rf` those trees, so the
+                    // agent-UID run would fail on its first build in
+                    // every existing workspace. A short root container
+                    // (same image, same mount) hands everything the
+                    // agent does not own back to it and PRINTS each
+                    // path. On the first build after the fix that list
+                    // is the inherited residue. On a full build it also
+                    // carries the reports and wheels the Sub-projects
+                    // stages wrote as root moments earlier — those are
+                    // deletable (`chmod -R a+rw`, 777 trees) and only a
+                    // docs-only build prints nothing — so the line to
+                    // watch is the count of entries that would have
+                    // blocked a workspace wipe: directories not owned
+                    // by the agent and not world-writable. That count
+                    // must be 0 on every build after the first, and a
+                    // non-zero one is the regression signal for any
+                    // stage that starts leaving undeletable trees
+                    // again. Not transitional — it is the pipeline's
+                    // backstop and costs seconds.
+                    // `chown -h` so a .venv symlink (bin/python → the
+                    // image's interpreter) is reowned itself rather than
+                    // followed. .git is mounted read-only and pruned.
+                    //
+                    // After the docs container the stage asserts the
+                    // invariant — nothing under the workspace (bar .git)
+                    // is owned by another UID — and fails loudly here
+                    // rather than in `Checkout SCM` weeks later. $PWD is
+                    // exactly what was bind-mounted, so it is exactly
+                    // what the check covers.
                     steps {
                         sh '''
                             docker build -f core/Dockerfile \
                                 -t gain-core-ci:${CI_TAG} .
                             mkdir -p dist/docs
+                            DOCKER_USER="$(id -u):$(id -g)"
+                            docker run --rm \
+                                --name gain-docs-reclaim-${CI_TAG} \
+                                --label ci-tag=${CI_TAG} \
+                                -e DOCKER_USER="$DOCKER_USER" \
+                                -v $PWD:/workspace \
+                                -v $PWD/.git:/workspace/.git:ro \
+                                -w /workspace \
+                                gain-core-ci:${CI_TAG} \
+                                sh -c '
+                                    set -eu
+                                    undeletable=$(find /workspace -path /workspace/.git -prune \
+                                        -o ! -user "${DOCKER_USER%:*}" -type d ! -perm -o+w -print \
+                                        | wc -l)
+                                    find /workspace -path /workspace/.git -prune \
+                                        -o ! -user "${DOCKER_USER%:*}" -print \
+                                        -exec chown -h "$DOCKER_USER" {} + \
+                                        > /tmp/reclaimed
+                                    cat /tmp/reclaimed
+                                    echo "Build docs: reclaimed $(wc -l < /tmp/reclaimed) workspace entries for uid ${DOCKER_USER%:*}, of which $undeletable directories would have blocked a workspace wipe"
+                                '
                             docker run --rm \
                                 --name gain-docs-build-${CI_TAG} \
                                 --label ci-tag=${CI_TAG} \
+                                --user "$DOCKER_USER" \
+                                -e HOME=/tmp \
                                 -v $PWD:/workspace \
                                 -v $PWD/.git:/workspace/.git:ro \
                                 -w /workspace \
@@ -1004,6 +1079,13 @@ pipeline {
                                     uv sync --group docs
                                     bash docs/build_docs.sh
                                 '
+                            foreign="$(find "$PWD" -path "$PWD/.git" -prune \
+                                -o ! -user "$(id -u)" -print)"
+                            if [ -n "$foreign" ]; then
+                                echo "Build docs: workspace entries left owned by another uid (gain#1552):" >&2
+                                echo "$foreign" >&2
+                                exit 1
+                            fi
                             cp docs/gaindocs-html.tar.gz dist/docs/
                         '''
                     }
