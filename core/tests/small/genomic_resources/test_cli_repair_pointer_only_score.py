@@ -9,10 +9,10 @@ must not want the bytes for anything (gain#1444: a gate that opened every
 score for its chromosome lengths failed each one on the absent payload).
 """
 
-import hashlib
+import contextlib
 import logging
 import pathlib
-import textwrap
+from unittest import mock
 
 import pytest
 import pytest_mock
@@ -24,9 +24,11 @@ from gain.genomic_resources.testing.builders import (
     a_reference_genome,
 )
 
+from .conftest import captured_warnings, dvc_sidecar
+
 
 def _a_repaired_bigwig_score_left_as_a_pointer(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, *, storing_lengths: bool = True,
 ) -> pathlib.Path:
     """A repository with one DVC-tracked bigWig score -- payload and
     sidecar both on disk, as after ``dvc pull`` -- repaired, and then
@@ -38,6 +40,11 @@ def _a_repaired_bigwig_score_left_as_a_pointer(
     UNLABELLED bigWig is a different case -- the page render takes its
     denominator from the header, which needs the bytes -- and is not
     what these tests claim anything about.
+
+    With ``storing_lengths`` off the repair is one from before
+    ``chrom_lengths.json`` existed: the file is never written and the
+    manifest never lists it -- the shape every DVC-backed GRR is in on
+    its first repair after the file appears (gain#1576).
     """
     (
         a_grr()
@@ -49,16 +56,17 @@ def _a_repaired_bigwig_score_left_as_a_pointer(
         .build_repo(tmp_path)
     )
     payload = tmp_path / "score" / "data.bw"
-    content = payload.read_bytes()
-    md5 = hashlib.md5(  # ruff: ignore[hashlib-insecure-hash-function]
-        content).hexdigest()
-    payload.with_suffix(".bw.dvc").write_text(textwrap.dedent(f"""
-        outs:
-        - md5: {md5}
-          size: {len(content)}
-          path: {payload.name}
-    """))
-    cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
+    payload.with_suffix(".bw.dvc").write_text(
+        dvc_sidecar(payload.name, payload.read_bytes()))
+    # Patched where the writer looks it up, the way patch_tabix_probe
+    # spells the probe: a move of the writer fails these tests loudly.
+    writer = (
+        contextlib.nullcontext() if storing_lengths
+        else mock.patch(
+            "gain.genomic_resources.implementations.genomic_scores_impl"
+            ".base.save_chrom_lengths"))
+    with writer:
+        cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
     payload.unlink()
     return tmp_path
 
@@ -67,22 +75,6 @@ def _every_file_of(root: pathlib.Path) -> dict[pathlib.Path, bytes]:
     return {
         path: path.read_bytes()
         for path in sorted(root.rglob("*")) if path.is_file()}
-
-
-def _as_repaired_before_the_lengths_file_existed(
-    root: pathlib.Path,
-) -> pathlib.Path:
-    """The same clone, as a repair that predates ``chrom_lengths.json``
-    left it: the file gone and the manifest not listing it, the
-    statistics hash still current.  The shape every DVC-backed GRR is
-    in on the first repair after the file appears (gain#1576)."""
-    (root / "score" / "statistics" / "chrom_lengths.json").unlink()
-    # Bring the manifest, the pages and the repository index up to date
-    # with the file gone, so that the only thing left for a repair to
-    # find is the lengths gate.  Neither stage wants the payload.
-    cli_manage(["repo-manifest", "-R", str(root)])
-    cli_manage(["repo-info", "-R", str(root)])
-    return root
 
 
 def test_a_statistics_build_persists_the_chromosome_lengths(
@@ -125,9 +117,7 @@ def test_repair_of_a_current_labelled_pointer_only_score_touches_nothing(
 
     opened.assert_not_called()
     assert _every_file_of(root) == before
-    assert [
-        record.getMessage() for record in caplog.records
-        if record.levelno >= logging.WARNING] == []
+    assert captured_warnings(caplog) == []
 
 
 def test_a_dry_run_of_a_current_labelled_pointer_only_score_needs_no_update(
@@ -151,8 +141,8 @@ def test_repair_of_a_pointer_only_score_without_the_lengths_file_skips_it(
     """Out of date, and not buildable here: the lengths need the bytes.
     Not a failure -- nothing is wrong with the resource -- and nothing
     is written, so the clone stays what ``git status`` says it is."""
-    root = _as_repaired_before_the_lengths_file_existed(
-        _a_repaired_bigwig_score_left_as_a_pointer(tmp_path))
+    root = _a_repaired_bigwig_score_left_as_a_pointer(
+        tmp_path, storing_lengths=False)
     before = _every_file_of(root)
     opened = mocker.spy(GenomicScore, "open")
     caplog.clear()
@@ -164,9 +154,7 @@ def test_repair_of_a_pointer_only_score_without_the_lengths_file_skips_it(
 
     opened.assert_not_called()
     assert _every_file_of(root) == before
-    warnings = [
-        record.getMessage() for record in caplog.records
-        if record.levelno == logging.WARNING]
+    warnings = captured_warnings(caplog)
     assert len(warnings) == 1
     assert "score" in warnings[0]
     assert "data.bw" in warnings[0]
@@ -179,8 +167,8 @@ def test_a_dry_run_of_a_pointer_only_score_without_the_lengths_file_counts_it(
     """Counted as needing an update -- it does -- and reported apart
     as one this checkout cannot build, so the operator knows the count
     will not go down here."""
-    root = _as_repaired_before_the_lengths_file_existed(
-        _a_repaired_bigwig_score_left_as_a_pointer(tmp_path))
+    root = _a_repaired_bigwig_score_left_as_a_pointer(
+        tmp_path, storing_lengths=False)
     opened = mocker.spy(GenomicScore, "open")
     caplog.clear()
 

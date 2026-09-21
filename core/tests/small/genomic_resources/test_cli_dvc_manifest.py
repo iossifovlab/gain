@@ -1,6 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import contextlib
-import hashlib
 import json
 import logging
 import os
@@ -29,19 +28,12 @@ from gain.genomic_resources.testing.builders import (
     a_position_score,
 )
 
+from .conftest import dvc_sidecar, md5_of, size_of
+
 ORIGINAL_DATA = "ORIGINAL DATA - trust me\n"
 TAMPERED_DATA = "TAMPERED DATA - not what the sidecar says!!\n"
 # Same length as ORIGINAL_DATA: an in-place edit that a size check cannot see.
 SAME_SIZE_TAMPERED_DATA = "TAMPERED DATA - trust me\n"
-
-
-def md5_of(content: str) -> str:
-    return hashlib.md5(  # ruff: ignore[hashlib-insecure-hash-function]
-        content.encode("utf8")).hexdigest()
-
-
-def size_of(content: str) -> int:
-    return len(content.encode("utf8"))
 
 
 def published_index(proto: ReadWriteRepositoryProtocol) -> str:
@@ -51,15 +43,6 @@ def published_index(proto: ReadWriteRepositoryProtocol) -> str:
     assertions go through the same reader the rest of GAIn uses.
     """
     return json.dumps(proto.load_contents())
-
-
-def dvc_sidecar(path: str, content: str) -> str:
-    return textwrap.dedent(f"""
-        outs:
-        - md5: {md5_of(content)}
-          size: {len(content.encode("utf8"))}
-          path: {path}
-    """)
 
 
 @pytest.fixture

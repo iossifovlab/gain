@@ -47,7 +47,7 @@ def test_every_source_gets_a_block_and_the_tables_carries_the_reasons(
     resource = _a_resource(tmp_path)
 
     save_chrom_lengths(
-        resource, StoredChromLengths(LENGTHS, DERIVED_FROM), ESTIMATE)
+        resource, StoredChromLengths(LENGTHS, DERIVED_FROM, ESTIMATE))
 
     assert json.loads((tmp_path / CHROM_LENGTHS_FILE).read_text()) == {
         "format": 1,
@@ -55,6 +55,7 @@ def test_every_source_gets_a_block_and_the_tables_carries_the_reasons(
             "reference_genome": "genome",
             "files_md5": {"data.txt.gz": "abc", "x.tbi": None},
         },
+        "table_source": "tabix_estimate",
         "sources": {
             "reference_genome": {"chr1": 3000, "chrUn": 500},
             "tabix_estimate": {
@@ -69,14 +70,14 @@ def test_what_was_saved_is_what_loads_in_the_same_order(
     tmp_path: pathlib.Path,
 ) -> None:
     """The round trip keeps every answer, every reason and the table's
-    contig order, which the table's block -- written first -- carries."""
+    contig order, which the table's block carries."""
     resource = _a_resource(tmp_path)
     save_chrom_lengths(
-        resource, StoredChromLengths(LENGTHS, DERIVED_FROM), ESTIMATE)
+        resource, StoredChromLengths(LENGTHS, DERIVED_FROM, ESTIMATE))
 
     loaded = load_chrom_lengths(resource)
 
-    assert loaded == StoredChromLengths(LENGTHS, DERIVED_FROM)
+    assert loaded == StoredChromLengths(LENGTHS, DERIVED_FROM, ESTIMATE)
     assert list(loaded.lengths) == list(LENGTHS)
 
 

@@ -1076,14 +1076,11 @@ def _run_stats_core(
             # file the kind derives at repair from inputs the hash must
             # not learn about (a score's chromosome lengths from its
             # `reference_genome` label).  Stale on its own, it is
-            # rewritten on its own -- never at the price of a rebuild --
-            # and one whose payload is not here is left alone: the
-            # kind says so, and this loop decides nothing about DVC.
-            # Asked only when the hash gate holds: a rebuild rewrites
-            # the derived files too (gain#1576).
-            derived = (
-                DerivedFilesState.STALE if force or needs_rebuild
-                else impl.derived_files_state(repo))
+            # rewritten on its own -- never at the price of a rebuild,
+            # which rewrites it anyway -- and one whose payload is not
+            # here is left alone: the kind says so, and this loop
+            # decides nothing about DVC (gain#1576).
+            derived = impl.derived_files_state(repo)
             if dry_run:
                 if needs_rebuild or derived is not DerivedFilesState.CURRENT:
                     logger.info(

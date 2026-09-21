@@ -274,17 +274,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         would.  Compares keys and looks for files; opens no table.
         """
         stored = load_chrom_lengths(self.resource)
-        if stored is None:
-            logger.info(
-                "<%s> has no stored chromosome lengths; needs update",
-                self.resource.get_full_id())
-        elif stored.derived_from != self._derived_from(
-                self._resolve_labelled_genome(grr)):
-            logger.info(
-                "stored chromosome lengths of <%s> are outdated; "
-                "needs update", self.resource.get_full_id())
-        else:
+        if stored is not None and self._is_derived_from_now(
+                stored.derived_from, grr):
             return DerivedFilesState.CURRENT
+        logger.info(
+            "stored chromosome lengths of <%s> are %s; needs update",
+            self.resource.get_full_id(),
+            "absent" if stored is None else "outdated")
         for file_name in sorted(self.files):
             if (not self.resource.file_exists(file_name)
                     and self.resource.file_exists(
@@ -310,21 +306,25 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         The one writer of ``CHROM_LENGTHS_FILE``, for both the full
         statistics build and the lengths-only rewrite.
         """
-        ref_genome = self._resolve_labelled_genome(grr)
+        genome_id, ref_genome = self._labelled_genome(grr)
         stored = StoredChromLengths(
             lengths=self._derive_chrom_lengths(ref_genome),
-            derived_from=self._derived_from(ref_genome))
-        save_chrom_lengths(
-            self.resource, stored, self.score.chrom_length_source)
+            derived_from=DerivedFrom(
+                # The label the genome was resolved FROM, so an
+                # unresolvable genome is recorded as none at all -- and
+                # reads as a change the day it resolves.
+                reference_genome=(
+                    genome_id if ref_genome is not None else None),
+                files_md5=self._files_md5()),
+            table_source=self.score.chrom_length_source)
+        save_chrom_lengths(self.resource, stored)
         return stored
 
     def _derive_chrom_lengths(
         self, ref_genome: ReferenceGenome | None,
     ) -> dict[str, ChromLength]:
-        """Run the ladder over the score with ``ref_genome`` as its top
-        rung.  Opens the score if it is closed, and closes it again only
-        in that case -- an already-open score stays open for its owner.
-        """
+        """Run the ladder over the score, open-if-closed, with
+        ``ref_genome`` as its top rung."""
         opened_here = not self.score.is_open()
         if opened_here:
             self.score.open()
@@ -376,24 +376,26 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             ref_genome.resource_id, self.resource.resource_id,
             len(unlisted), len(lengths), ", ".join(sample))
 
-    def _derived_from(
-        self, ref_genome: ReferenceGenome | None,
-    ) -> DerivedFrom:
-        """The freshness key of the stored lengths, for ``ref_genome`` as
-        the genome the ladder ran with.
+    def _is_derived_from_now(
+        self, key: DerivedFrom, grr: GenomicResourceRepo | None,
+    ) -> bool:
+        """Whether ``key`` describes the resource as it is today.
 
-        A label read and a manifest read, never a length: the gate that
-        compares the key must stay cheap and open no table.
+        The files by their manifest md5; the genome by the label.  A key
+        derived from a genome stands while the label still names it,
+        whether or not the genome is still in the repository -- the
+        record is the record.  One derived with none stands only while
+        there is still none to resolve: a genome that turns up later
+        reads as a change, and that is the one case the label has to be
+        resolved to tell.
         """
-        return DerivedFrom(
-            # The label the genome was resolved FROM, so an unresolvable
-            # genome is recorded as none at all -- and reads as a change
-            # the day it resolves.
-            reference_genome=(
-                read_resource_id_label(self.resource, "reference_genome")
-                if ref_genome is not None else None),
-            files_md5=self._files_md5(),
-        )
+        if key.files_md5 != self._files_md5():
+            return False
+        genome_id = read_resource_id_label(
+            self.resource, "reference_genome")
+        if key.reference_genome is not None:
+            return key.reference_genome == genome_id
+        return genome_id is None or self._labelled_genome(grr)[1] is None
 
     def _files_md5(self) -> dict[str, str | None]:
         """The manifest md5 of every table file, keyed by name.
@@ -410,15 +412,23 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def _resolve_labelled_genome(
         self, grr: GenomicResourceRepo | None,
     ) -> ReferenceGenome | None:
-        """The genome the ``reference_genome`` label names, or ``None``.
+        """The genome the ``reference_genome`` label names, or ``None``."""
+        return self._labelled_genome(grr)[1]
 
-        The one reader of that label for both the statistics build and
-        the page's coverage denominator (gain#1414), so a label that
-        fails to name a genome is treated alike wherever it is read:
-        the lengths fall through to the table's own answer, as an
-        unlabelled score's do, and the page degrades to raw counts.
-        Never a raise -- a mis-authored label on one resource must not
-        abort a repository-wide statistics walk or a page build.
+    def _labelled_genome(
+        self, grr: GenomicResourceRepo | None,
+    ) -> tuple[str | None, ReferenceGenome | None]:
+        """The ``reference_genome`` label as an id, and the genome it
+        names -- either ``None`` when there is none.
+
+        The one resolver of that label for the statistics build, the
+        stored lengths' key and the page's coverage denominator
+        (gain#1414), so a label that fails to name a genome is treated
+        alike wherever it is read: the lengths fall through to the
+        table's own answer, as an unlabelled score's do, and the page
+        degrades to raw counts.  Never a raise -- a mis-authored label
+        on one resource must not abort a repository-wide statistics
+        walk or a page build.
 
         Three ways it can fail to name one.  A value that is not a
         resource id at all -- the int, list or dict a free-form
@@ -433,13 +443,14 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         genome_id = read_resource_id_label(
             self.resource, "reference_genome")
         try:
-            return self._get_reference_genome_cached(grr, genome_id)
+            return genome_id, self._get_reference_genome_cached(
+                grr, genome_id)
         except ValueError:
             logger.warning(
                 "meta.labels.reference_genome of %s names %r, which is "
                 "not a genome resource; ignoring it",
                 self.resource.resource_id, genome_id)
-            return None
+            return genome_id, None
 
     def _get_chrom_regions(
         self, region_size: int, grr: GenomicResourceRepo | None = None,

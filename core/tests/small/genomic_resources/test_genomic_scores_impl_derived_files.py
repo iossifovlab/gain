@@ -7,12 +7,10 @@ decided from the stored key, the manifest and the presence of the table
 files, with no table opened.
 """
 
-import hashlib
 import pathlib
-import textwrap
+import shutil
 
 import pytest_mock
-from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.genomic_scores import GenomicScore
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
@@ -29,21 +27,29 @@ from gain.genomic_resources.resource_implementation import (
     DerivedFilesState,
 )
 from gain.genomic_resources.testing import build_filesystem_test_protocol
-from gain.genomic_resources.testing.builders import a_basic_resource
+from gain.genomic_resources.testing.builders import (
+    a_basic_resource,
+    a_reference_genome,
+)
 
+from .conftest import leave_as_a_pointer
+from .test_cli_stats_chrom_lengths import (
+    resource_stats,
+    resync_the_manifest,
+)
 from .test_genomic_scores_impl_chrom_lengths import (
+    CHR1_GENOME_LENGTH,
     a_labelled_tabix_score_grr,
     set_label,
 )
 
 
 def _a_repaired_labelled_score(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, *, genome_id: str = "genome",
 ) -> tuple[GenomicScoreImplementation, GenomicResourceRepo]:
     """The labelled tabix score, repaired, and a fresh view of its repo."""
-    a_labelled_tabix_score_grr().build_repo(tmp_path)
-    cli_manage([
-        "resource-stats", "-r", "score", "-R", str(tmp_path), "-j", "1"])
+    a_labelled_tabix_score_grr(genome_id=genome_id).build_repo(tmp_path)
+    resource_stats(tmp_path, "score")
     return _resynced(tmp_path)
 
 
@@ -57,7 +63,7 @@ def _resynced(
     factory's own repair, which would manifest the resource again
     without them.
     """
-    cli_manage(["resource-manifest", "-r", "score", "-R", str(tmp_path)])
+    resync_the_manifest(tmp_path, "score")
     repo = GenomicResourceProtocolRepo(
         build_filesystem_test_protocol(tmp_path, repair=False))
     return build_score_implementation_from_resource(
@@ -108,28 +114,12 @@ def test_a_replaced_table_file_makes_the_stored_lengths_stale(
     assert impl.derived_files_state(repo) is DerivedFilesState.STALE
 
 
-def _left_as_a_pointer(tmp_path: pathlib.Path, file_name: str) -> None:
-    """Replace one table file with the ``.dvc`` sidecar that describes
-    it: an unpulled DVC checkout of the same resource."""
-    payload = tmp_path / "score" / file_name
-    content = payload.read_bytes()
-    md5 = hashlib.md5(  # ruff: ignore[hashlib-insecure-hash-function]
-        content).hexdigest()
-    payload.with_name(payload.name + ".dvc").write_text(textwrap.dedent(f"""
-        outs:
-        - md5: {md5}
-          size: {len(content)}
-          path: {payload.name}
-    """))
-    payload.unlink()
-
-
 def test_a_current_file_stays_current_when_the_payload_is_a_pointer(
     tmp_path: pathlib.Path,
 ) -> None:
     """The sidecar supplies the manifest md5 the key compares against."""
     _a_repaired_labelled_score(tmp_path)
-    _left_as_a_pointer(tmp_path, "data.txt.gz")
+    leave_as_a_pointer(tmp_path / "score" / "data.txt.gz")
 
     impl, repo = _resynced(tmp_path)
 
@@ -142,12 +132,40 @@ def test_a_stale_file_whose_payload_is_a_pointer_cannot_be_rebuilt_here(
     """The bytes are somewhere -- the sidecar says so -- just not here."""
     _a_repaired_labelled_score(tmp_path)
     (tmp_path / "score" / "statistics" / "chrom_lengths.json").unlink()
-    _left_as_a_pointer(tmp_path, "data.txt.gz")
+    leave_as_a_pointer(tmp_path / "score" / "data.txt.gz")
 
     impl, repo = _resynced(tmp_path)
 
     assert impl.derived_files_state(repo) is \
         DerivedFilesState.PAYLOAD_ABSENT
+
+
+def test_a_genome_gone_since_the_repair_leaves_the_record_standing(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The label still names the genome the lengths came from; that the
+    repository no longer has it changes nothing about the record."""
+    _a_repaired_labelled_score(tmp_path)
+    shutil.rmtree(tmp_path / "genome")
+
+    impl, repo = _resynced(tmp_path)
+
+    assert impl.derived_files_state(repo) is DerivedFilesState.CURRENT
+
+
+def test_a_genome_that_turns_up_later_makes_the_stored_lengths_stale(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Derived with no genome -- the label named one the repository
+    lacked -- the record stands only while there is still none."""
+    _a_repaired_labelled_score(tmp_path, genome_id="late_genome")
+    (a_reference_genome()
+     .with_chromosome("chr1", "A" * CHR1_GENOME_LENGTH)
+     .build_resource(tmp_path / "late_genome"))
+
+    impl, repo = _resynced(tmp_path)
+
+    assert impl.derived_files_state(repo) is DerivedFilesState.STALE
 
 
 def test_a_table_file_missing_without_a_sidecar_is_not_an_unpulled_payload(

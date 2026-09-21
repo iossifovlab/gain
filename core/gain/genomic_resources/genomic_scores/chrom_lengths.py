@@ -188,53 +188,56 @@ class DerivedFrom:
 
 @dataclass(frozen=True)
 class StoredChromLengths:
-    """Every source's answer for every contig, and what they derive from."""
+    """Every source's answer for every contig, and what they derive from.
+
+    ``table_source`` is the source the score's table answers under: its
+    block is the one that names every contig, in the table's order, and
+    the one that carries a contig's reason when the table had no length
+    for it.
+    """
 
     lengths: dict[str, ChromLength]
     derived_from: DerivedFrom
+    table_source: ChromLengthSource
 
 
-def _serialize(
-    stored: StoredChromLengths, table_source: ChromLengthSource,
-) -> str:
+def _serialize(stored: StoredChromLengths) -> str:
     """One block per source, contig -> length.
 
     A contig a source did not answer is absent from that source's block;
     a contig the TABLE could not answer carries the table's reason in
-    the table's own block, ``table_source``, and in no other.  The
-    table's block comes first: it is the one that names every contig,
-    in the table's order, which is the order the file is read back in.
+    the table's own block and in no other.
     """
-    sources: dict[str, dict[str, int | str]] = {table_source.value: {}}
+    table_block: dict[str, int | str] = {}
+    sources = {stored.table_source.value: table_block}
     for chrom, resolved in stored.lengths.items():
         for source, length in resolved.answers.items():
             sources.setdefault(source.value, {})[chrom] = length
         if resolved.extent is not None:
-            sources.setdefault(table_source.value, {})[chrom] = \
-                resolved.extent.name.lower()
+            table_block[chrom] = resolved.extent.name.lower()
     return json.dumps({
         "format": CHROM_LENGTHS_FORMAT,
         "derived_from": {
             "reference_genome": stored.derived_from.reference_genome,
             "files_md5": stored.derived_from.files_md5,
         },
+        "table_source": stored.table_source.value,
         "sources": sources,
     }, indent=2)
 
 
-def _deserialize(content: str) -> StoredChromLengths | None:
-    """The stored lengths, or ``None`` for a file of another format.
-
-    Raises ``ValueError``, ``KeyError`` or ``TypeError`` on a document
-    that is not one: the caller reads those as absent.
-    """
+def _deserialize(content: str) -> StoredChromLengths:
+    """The stored lengths.  Raises on a document that is not one -- of
+    another format, or of the wrong shape -- and the caller reads that
+    as absent."""
     document = json.loads(content)
     if document["format"] != CHROM_LENGTHS_FORMAT:
-        return None
-    # Contigs in order of first appearance across the blocks, which is
-    # the table's order: the writer puts the table's block -- the one
-    # that names every contig -- first.
-    answers: dict[str, dict[ChromLengthSource, int]] = {}
+        raise ValueError(
+            f"format {document['format']!r} is not {CHROM_LENGTHS_FORMAT}")
+    table_source = ChromLengthSource(document["table_source"])
+    # The table's block names every contig, in the table's order.
+    answers: dict[str, dict[ChromLengthSource, int]] = {
+        chrom: {} for chrom in document["sources"][table_source.value]}
     extents: dict[str, ContigExtent] = {}
     for source_name, block in document["sources"].items():
         source = ChromLengthSource(source_name)
@@ -242,12 +245,11 @@ def _deserialize(content: str) -> StoredChromLengths | None:
             if isinstance(value, str):
                 extents[chrom] = ContigExtent[value.upper()]
             elif isinstance(value, int) and not isinstance(value, bool):
-                answers.setdefault(chrom, {})[source] = value
+                answers[chrom][source] = value
             else:
                 raise TypeError(
                     f"{source_name}/{chrom}: {value!r} is neither a "
                     "length nor a reason")
-            answers.setdefault(chrom, {})
     derived_from = document["derived_from"]
     return StoredChromLengths(
         lengths={
@@ -259,40 +261,35 @@ def _deserialize(content: str) -> StoredChromLengths | None:
             reference_genome=derived_from["reference_genome"],
             files_md5=dict(derived_from["files_md5"]),
         ),
+        table_source=table_source,
     )
 
 
 def save_chrom_lengths(
     resource: GenomicResource, stored: StoredChromLengths,
-    table_source: ChromLengthSource,
 ) -> None:
-    """Write ``stored`` as the resource's ``CHROM_LENGTHS_FILE``.
-
-    ``table_source`` is the source the score's table answers under --
-    the block that carries a contig's reason when the table had no
-    length for it.
-    """
+    """Write ``stored`` as the resource's ``CHROM_LENGTHS_FILE``."""
     with resource.open_raw_file(CHROM_LENGTHS_FILE, mode="wt") as outfile:
-        outfile.write(_serialize(stored, table_source))
+        outfile.write(_serialize(stored))
 
 
 def load_chrom_lengths(resource: GenomicResource) -> StoredChromLengths | None:
     """Read the resource's ``CHROM_LENGTHS_FILE``; ``None`` when it has none.
 
     Absence is a normal state, not an error: a resource repaired before
-    the file existed has nothing stored until its next repair, and one
-    written in another format is read the same way.  A file that cannot
-    be read as one -- a repair killed mid-write leaves a truncated one,
-    and the write is not atomic -- reads as absent too, with a WARNING
-    naming it: absent, the ordinary repair rewrites it; raised, the gate
-    would fail the resource over a file the repair is about to replace.
+    the file existed has nothing stored until its next repair.  A file
+    that cannot be read as one -- of another format, or truncated by a
+    repair killed mid-write, the write not being atomic -- reads as
+    absent too, with a WARNING naming it: absent, the ordinary repair
+    rewrites it; raised, the gate would fail the resource over a file
+    the repair is about to replace.
     """
     try:
         content = resource.get_file_content(CHROM_LENGTHS_FILE)
     except FileNotFoundError:
         return None
     try:
-        stored = _deserialize(content)
+        return _deserialize(content)
     except (ValueError, KeyError, TypeError, AttributeError) as err:
         # ``json.JSONDecodeError`` is a ``ValueError``; so is an enum
         # member the name does not match.  The others are a document
@@ -302,8 +299,3 @@ def load_chrom_lengths(resource: GenomicResource) -> StoredChromLengths | None:
             "lengths (%s); treating it as absent",
             resource.resource_id, CHROM_LENGTHS_FILE, err)
         return None
-    if stored is None:
-        logger.info(
-            "resource <%s>: %s is of another format; treating it as absent",
-            resource.resource_id, CHROM_LENGTHS_FILE)
-    return stored

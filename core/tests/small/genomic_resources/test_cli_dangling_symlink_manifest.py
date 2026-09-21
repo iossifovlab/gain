@@ -1,9 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-import hashlib
 import logging
 import os
 import pathlib
-import textwrap
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
@@ -14,30 +12,14 @@ from gain.genomic_resources.testing import (
     setup_directories,
 )
 
+from .conftest import dvc_sidecar, md5_of, size_of
+
 DATA = "chrom\tpos_begin\ts\n1\t1\t0.1\n"
 
 # A link target that cannot exist. This is the shape a shared DVC cache
 # leaves behind when its cache entry is garbage collected: the link is
 # still committed, the bytes it names are gone (gain#503).
 GONE = "/nonexistent/dvc-cache/ab/cdef0123456789"
-
-
-def md5_of(content: str) -> str:
-    return hashlib.md5(  # ruff: ignore[hashlib-insecure-hash-function]
-        content.encode("utf8")).hexdigest()
-
-
-def size_of(content: str) -> int:
-    return len(content.encode("utf8"))
-
-
-def dvc_sidecar(path: str, content: str) -> str:
-    return textwrap.dedent(f"""
-        outs:
-        - md5: {md5_of(content)}
-          size: {size_of(content)}
-          path: {path}
-    """)
 
 
 @pytest.fixture
