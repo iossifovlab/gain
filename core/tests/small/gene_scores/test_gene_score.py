@@ -108,6 +108,8 @@ def scores_repo() -> GenomicResourceRepo:
                 G6,3
             """),
             "statistics": {
+                # The image too, as a built resource would have it.
+                "histogram_linear score.png": "drawn",
                 "histogram_linear score.json": textwrap.dedent("""{
                     "bars":[2,2,2],
                     "bins":[1.0,1.665,2.333,3.0],

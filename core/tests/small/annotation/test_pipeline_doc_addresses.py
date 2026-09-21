@@ -48,9 +48,10 @@ def a_pipeline(filename: str = "annotation.yaml") -> dict[str, str]:
 def a_score_resource() -> PositionScoreBuilder:
     """Three scores: two with a histogram to address, one annulled.
 
-    An address is a fact about a score's DEFINITION, so every id the
-    tests ask about is declared here.  ``score id`` carries the space the
-    quoting test is about; ``nullified`` has no image to address at all.
+    Every id the tests ask about is declared here, and the two with a
+    histogram ship their image, as a built resource would.  ``score id``
+    carries the space the quoting test is about; ``nullified`` has no
+    image to address at all.
     """
     return (
         a_position_score()
@@ -60,6 +61,8 @@ def a_score_resource() -> PositionScoreBuilder:
         .with_histogram({"type": "null", "reason": "annulled by design"})
         .with_score_line(chrom="1", pos_begin=10, s1=0.1, sid=0.2,
                          nullified=0.3)
+        .with_file("statistics/histogram_s1.png", "drawn")
+        .with_file("statistics/histogram_score id.png", "drawn")
     )
 
 

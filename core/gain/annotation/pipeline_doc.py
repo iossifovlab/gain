@@ -55,8 +55,10 @@ class PipelineDocAddresses(Protocol):
     ) -> str | None:
         """Address of the score's histogram image for ``score_id``.
 
-        ``None`` when the score has no histogram to show -- an annulled
-        one is never plotted, so it has no image to address.  A gene-score
+        ``None`` when the score has no image to show -- an annulled
+        histogram is never plotted, and one the statistics build declined
+        to draw is not in the resource's manifest (see
+        ``ScoreResource.get_histogram_image_url``).  A gene-score
         annotator's attributes go through here too, hence the shared base.
         """
         ...
@@ -137,7 +139,7 @@ class RepositoryRelativeAddresses:
         """
         # The probe doubles as the "is there an image at all" guard, and
         # has to answer that *before* the containment rule is consulted:
-        # an annulled histogram has no address either way, managed or
+        # a histogram with no image has no address either way, managed or
         # not, and must not draw a warning about the repository it is in.
         image_url = score.get_histogram_image_url(score_id)
         if image_url is None:

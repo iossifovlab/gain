@@ -10,9 +10,11 @@ from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing import build_filesystem_test_repository
 from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.data_frame_builder import a_data_frame
+from gain.genomic_resources.testing.statistics import (
+    build_statistics,
+    refresh_manifest,
+)
 from gain.task_graph.cache import FileTaskCache
-from gain.task_graph.cli_tools import task_graph_run
-from gain.task_graph.graph import TaskGraph
 from gain.task_graph.sequential_executor import SequentialExecutor
 
 DESCRIBE = "statistics/describe.csv"
@@ -34,30 +36,13 @@ def resource(tmp_path: pathlib.Path) -> GenomicResource:
     )
 
 
-def build_statistics(resource: GenomicResource) -> None:
-    """Run the implementation's real statistics tasks to completion."""
-    impl = DataFrameResourceImplementation(resource)
-    graph = TaskGraph()
-    graph.add_tasks(impl.create_statistics_build_tasks())
-    task_graph_run(graph, SequentialExecutor())
-
-
 def build_statistics_through(
     resource: GenomicResource, cache_dir: pathlib.Path,
 ) -> None:
     """Run the statistics tasks through a persistent task cache."""
-    impl = DataFrameResourceImplementation(resource)
-    graph = TaskGraph()
-    graph.add_tasks(impl.create_statistics_build_tasks())
-    task_graph_run(
-        graph, SequentialExecutor(FileTaskCache(cache_dir=str(cache_dir))))
-
-
-def refresh_manifest(resource: GenomicResource) -> None:
-    """Rewrite the stored manifest, as grr_manage does after a stats run."""
-    proto = resource.proto
-    proto.save_manifest(resource, proto.build_manifest(resource))
-    resource._manifest = None
+    build_statistics(
+        resource,
+        executor=SequentialExecutor(FileTaskCache(cache_dir=str(cache_dir))))
 
 
 def test_statistics_task_writes_a_describe_table(

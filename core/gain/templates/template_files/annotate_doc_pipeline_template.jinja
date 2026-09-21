@@ -213,7 +213,7 @@
               <div class="attribute-description">
                 {{ markdown(attribute_info.documentation)|safe }}
                 {% if annotator.score %}
-                  {# An annulled histogram has no address, and no image. #}
+                  {# A histogram with no image has no address, and no image here. #}
                   {% set histogram_src = hist_url(annotator.score, attribute_info.source) %}
                   {% if histogram_src is not none %}
                     <img src="{{histogram_src}}" alt="HISTOGRAM">

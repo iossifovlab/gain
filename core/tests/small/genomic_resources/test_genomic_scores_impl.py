@@ -53,6 +53,7 @@ from gain.genomic_resources.testing.builders import (
     a_reference_genome,
     a_vcf_info_score,
 )
+from gain.genomic_resources.testing.statistics import build_statistics
 from gain.task_graph.cli_tools import task_graph_run
 from gain.task_graph.executor import (
     TaskGraphExecutor,
@@ -982,18 +983,6 @@ def test_statistics_with_vcf_allele_score_30_000_000(
     task_graph_run(graph, executor)
 
 
-def _build_statistics(
-    res: GenomicResource, region_size: int,
-) -> None:
-    """Run the resource's statistics build tasks to completion."""
-    impl = build_score_implementation_from_resource(res)
-    graph = TaskGraph()
-    graph.add_tasks(
-        impl.create_statistics_build_tasks(region_size=region_size),
-    )
-    task_graph_run(graph, SequentialExecutor())
-
-
 def _built_histogram(res: GenomicResource, score_id: str) -> Histogram:
     """Read back the histogram a statistics build wrote into ``res``."""
     score = build_score_from_resource(res)
@@ -1027,7 +1016,7 @@ def test_noregion_statistics_build_writes_the_score_histogram(
     """
     res = _a_two_chrom_score().build_resource(tmp_path)
 
-    _build_statistics(res, region_size=0)
+    build_statistics(res, region_size=0)
 
     histogram = _built_histogram(res, "value")
     assert isinstance(histogram, NumberHistogram)
@@ -1049,8 +1038,8 @@ def test_noregion_statistics_build_matches_the_regioned_build(
     regioned = builder.build_resource(tmp_path / "regioned")
     noregion = builder.build_resource(tmp_path / "noregion")
 
-    _build_statistics(regioned, region_size=10)
-    _build_statistics(noregion, region_size=0)
+    build_statistics(regioned, region_size=10)
+    build_statistics(noregion, region_size=0)
 
     assert _built_histogram(noregion, "value").serialize() == \
         _built_histogram(regioned, "value").serialize()
@@ -1322,7 +1311,7 @@ def test_a_bool_score_keeps_the_number_histogram_it_configures(
         .build_resource(tmp_path)
     )
 
-    _build_statistics(res, region_size=10)
+    build_statistics(res, region_size=10)
 
     histogram = _built_histogram(res, "FLAG")
     assert isinstance(histogram, NumberHistogram)

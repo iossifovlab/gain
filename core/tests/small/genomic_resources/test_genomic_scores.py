@@ -1482,8 +1482,13 @@ def test_get_histogram_filename_prefers_yaml_from_manifest() -> None:
         "statistics/histogram_score.yaml"
 
 
+# The shape a statistics build leaves behind, which the address tests want.
+A_DRAWN_IMAGE = {"statistics/histogram_score.png": "drawn"}
+
+
 def test_get_histogram_image_filename_and_url() -> None:
-    score = build_score_from_resource(build_simple_position_score_resource())
+    score = build_score_from_resource(
+        build_simple_position_score_resource(A_DRAWN_IMAGE))
 
     assert score.get_histogram_image_filename("score") == \
         "statistics/histogram_score.png"
@@ -1493,7 +1498,7 @@ def test_get_histogram_image_filename_and_url() -> None:
 
 
 def test_get_histogram_image_public_url() -> None:
-    res = build_simple_position_score_resource()
+    res = build_simple_position_score_resource(A_DRAWN_IMAGE)
     proto = cast(FsspecReadWriteProtocol, res.proto)
     proto.public_url = "https://grr.example.com"
     score = build_score_from_resource(res)
