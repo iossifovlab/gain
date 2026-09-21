@@ -351,3 +351,23 @@ def test_each_kind_declares_exactly_the_versioned_files_its_build_writes(
     assert declared["fragment"] == {"statistics/fragments.json": 2}
     assert declared["allele"] == {"statistics/alleles.json": 1}
     assert declared["genes"] == {}
+
+
+def test_the_remedy_names_the_plain_id_of_a_versioned_resource(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``-r`` takes the id without its version, so the line must print that."""
+    a_grr().with_resource("one(2.0)", _a_position_score()).build_repo(tmp_path)
+    cli_manage(["resource-repair", "-r", "one", "-R", str(tmp_path), "-j", "1"])
+    _rewrite_format_version(
+        tmp_path / "one(2.0)" / "statistics" / "coverage.json", 1)
+    _bring_manifest_current(tmp_path, "one")
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "--dry-run", "-R", str(tmp_path), "-j", "1"])
+
+    [line] = [
+        line for line in _schema_lines(caplog) if line.startswith("Statistics")
+    ]
+    assert "grr_manage resource-stats -r one -f" in line

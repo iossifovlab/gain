@@ -370,6 +370,19 @@ because a newer GAIn would compute more statistics for it than the version
 that last built it: such a resource has a perfectly current hash and is
 skipped, and its info page reports the newer statistics as not computed.
 
+Such a resource is reported rather than silently skipped. An unforced
+``repo-repair`` / ``resource-repair`` / ``repo-stats`` / ``resource-stats``
+run, and its ``--dry-run``, log one line per resource whose stored statistics
+predate the current schema — a statistics file the newer GAIn would write
+that is missing, or one whose ``format_version`` is behind the writer's —
+naming the file, the stored and current versions, and the remedy::
+
+    Statistics of <phastCons100way> predate the current schema: statistics/coverage.json 1 -> 2; rebuild them with `grr_manage resource-stats -r phastCons100way -f`
+
+and a repository-wide run ends with one WARNING giving the count. These
+lines are a report only: nothing is rebuilt, and a ``--dry-run``'s exit
+status still counts only the resources whose ``stats_hash`` is out of date.
+
 ``--force`` is the deliberate way out. To put a newer GAIn's statistics
 onto one already-built resource::
 

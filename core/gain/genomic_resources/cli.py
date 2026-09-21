@@ -970,12 +970,14 @@ def _report_stale_schema(impl: GenomicResourceImplementation) -> bool:
     stale = stale_statistics_files(impl.resource, impl.statistics_files())
     if not stale:
         return False
+    # The plain id, not the versioned one: it is what `-r` takes, so the
+    # remedy pastes as printed.
     logger.info(
         "Statistics of <%s> predate the current schema: %s; "
         "rebuild them with `grr_manage resource-stats -r %s -f`",
-        impl.resource.get_full_id(),
+        impl.resource.resource_id,
         ", ".join(file.describe() for file in stale),
-        impl.resource.get_full_id())
+        impl.resource.resource_id)
     return True
 
 
@@ -1058,20 +1060,20 @@ def _run_stats_core(
             impl = build_resource_implementation(res)
             manifest_updated = updates_needed[res.resource_id]
             needs_rebuild = manifest_updated or _stats_need_rebuild(proto, impl)
-            if dry_run:
-                if needs_rebuild:
-                    logger.info(
-                        "Statistics of <%s> needs update", res.resource_id)
-                    needs_update += 1
-                else:
-                    schema_stale += _report_stale_schema(impl)
-            elif force or needs_rebuild:
+            if not (force or needs_rebuild):
+                # The gate holds, dry run or not: the one state in which
+                # a statistics file behind its writer's schema goes
+                # unnoticed, so it is looked for here and nowhere else.
+                schema_stale += _report_stale_schema(impl)
+            elif dry_run:
+                logger.info(
+                    "Statistics of <%s> needs update", res.resource_id)
+                needs_update += 1
+            else:
                 _collect_impl_stats_tasks(
                     graph, proto, impl, repo,
                     region_size=region_size)
                 stats_resources.append(res)
-            else:
-                schema_stale += _report_stale_schema(impl)
         except Exception as err:  # ruff: ignore[blind-except]
             # Collected, not raised: the resources after this one in the
             # repository are still repaired.

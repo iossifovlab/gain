@@ -90,3 +90,7 @@ handed to a caller.
 
 - iossifovlab/gain#706 — "`calc_statistics_hash` cannot express a change in the
   code that computes the statistics"
+- iossifovlab/gain#1545 — asked for a code-version or schema-version input to
+  the hash (options 2/3); declined on this record. What it got instead is a
+  report: the repair flow names a resource whose stored statistics predate the
+  current schema, and leaves the rebuild to `resource-stats -f` (gain#1586).

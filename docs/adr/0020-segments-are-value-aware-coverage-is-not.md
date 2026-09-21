@@ -343,7 +343,11 @@ alt-minus-ref, not an absolute value.
 - **Lazy rollout; `calc_statistics_hash` untouched.** The new statistics do
   not enter the statistics hash, so no existing resource is invalidated.
   Statistics appear as resources are rebuilt; the page renders "not computed"
-  where they are absent.
+  where they are absent. The gap this leaves is made visible rather than
+  closed: an unforced repair or `--dry-run` reports a resource whose stored
+  statistics files are missing or carry a `format_version` behind the
+  writer's, without rebuilding it and without counting it in the dry run's
+  exit status (#1586).
 - **The rollout lever is a forced rebuild** — verified and pinned in #774.
   Forcing is therefore the only deliberate way to put the new statistics on
   an already-built resource: `grr_manage resource-stats -r <resource_id> -f`
