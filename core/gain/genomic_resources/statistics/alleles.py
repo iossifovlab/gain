@@ -64,12 +64,10 @@ from gain.genomic_resources.statistics.exact_lengths import (
     ExactLengths,
     LengthStatisticsRow,
     LengthTally,
-    length_ladder,
     merged_lengths,
     merged_tallies,
-)
-from gain.genomic_resources.statistics.length_histogram import (
-    plot_length_histogram,
+    stored_lengths,
+    write_length_chart,
 )
 from gain.genomic_resources.statistics.percentages import percentage_of
 from gain.genomic_resources.statistics.record_validation import (
@@ -396,29 +394,6 @@ def _merged_grid(
     return merged
 
 
-def _deserialized_indels(
-    entry: dict[str, Any], key: str,
-) -> ExactLengths | None:
-    """A stored indel group, ``None`` when the file carries none.
-
-    The map is the ONLY thing read.  A file predating it -- one written
-    with the log2 ``insertion_length_histogram`` / ``deletion_length_
-    histogram`` this replaced -- carries neither key, so its indel
-    groups read as unknown and the page says "not computed" until the
-    resource is rebuilt.
-
-    That is one reader rather than a compatibility branch, deliberately.
-    A branch that read the old histograms would have to publish them as
-    an :class:`ExactLengths` whose exact map, sum, min and max are all
-    unrecoverable, so every statistic in the table would be a guess at
-    bin resolution presented as a number.
-    """
-    stored = entry.get(key)
-    if stored is None:
-        return None
-    return ExactLengths.from_stored(stored)
-
-
 def _deserialized_matrix(
     entry: dict[str, Any],
 ) -> dict[tuple[str, str], int] | None:
@@ -728,9 +703,9 @@ class AlleleStatistics(RegionFoldedStatistic[RegionAlleles]):
                     for name, count in counts["class_counts"].items()
                 },
                 substitution_matrix=_deserialized_matrix(counts),
-                insertion_lengths=_deserialized_indels(
+                insertion_lengths=stored_lengths(
                     counts, "insertion_lengths"),
-                deletion_lengths=_deserialized_indels(
+                deletion_lengths=stored_lengths(
                     counts, "deletion_lengths"),
                 complex_grid=_deserialized_grid(counts),
             ))
@@ -1237,14 +1212,12 @@ def save_allele_statistics(
     publishes nothing for writes no image -- the info page's section is
     what says whether that is "not computed" or "genuinely none".
 
-    An EMPTY group is skipped just as an unknown one is, in both twins.
-    Every group here applies to every allele score, so plotting the
-    empty ones would put an all-zero deletion histogram on each of the
-    many scores that carry only substitutions -- and a logarithmic count
-    axis cannot draw one at all.  What skipping costs is a previous
-    build's image left behind when a group empties out, and nothing
-    links the leftover: the page reads the stored counts, not the
-    directory.
+    An EMPTY group is skipped just as an unknown one is, in all three
+    twins (``write_length_chart`` states the rule once).  Every group
+    here applies to every allele score, so plotting the empty ones would
+    put an all-zero deletion histogram on each of the many scores that
+    carry only substitutions -- and a logarithmic count axis cannot draw
+    one at all.
     """
     if statistics is None:
         return
@@ -1252,17 +1225,12 @@ def save_allele_statistics(
             ALLELE_STATISTICS_FILE, mode="wt") as outfile:
         outfile.write(statistics.serialize())
     counts = statistics.global_counts()
-    for item, image, lengths in (
-        ("insertion", ALLELE_INSERTION_LENGTHS_IMAGE_FILE,
-         counts.insertion_lengths),
-        ("deletion", ALLELE_DELETION_LENGTHS_IMAGE_FILE,
-         counts.deletion_lengths),
-    ):
-        if lengths is None or not lengths.has_counts_to_plot:
-            continue
-        with resource.open_raw_file(image, mode="wb") as imagefile:
-            plot_length_histogram(
-                imagefile, length_ladder(lengths), item)
+    write_length_chart(
+        resource, ALLELE_INSERTION_LENGTHS_IMAGE_FILE,
+        counts.insertion_lengths, "insertion")
+    write_length_chart(
+        resource, ALLELE_DELETION_LENGTHS_IMAGE_FILE,
+        counts.deletion_lengths, "deletion")
     # The same question the page asks: a grid sparse enough to be
     # tabled publishes no image, so writing one would leave a file
     # nothing references (gain#989).

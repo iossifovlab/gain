@@ -47,15 +47,12 @@ from gain.genomic_resources.statistics.base_statistic import (
     refuse_unmergeable,
 )
 from gain.genomic_resources.statistics.exact_lengths import (
-    NO_LENGTHS,
     ExactLengths,
     LengthArrayTally,
     LengthStatisticsRow,
-    length_ladder,
-    merged_lengths,
-)
-from gain.genomic_resources.statistics.length_histogram import (
-    plot_length_histogram,
+    folded_lengths,
+    stored_lengths,
+    write_length_chart,
 )
 from gain.genomic_resources.statistics.region_fold import merge_regions
 from gain.utils.chromosome_order import natural_chromosome_key
@@ -214,7 +211,7 @@ class FragmentStatistics(RegionFoldedStatistic[RegionFragments]):
         A partial roll-up would silently understate, the same
         all-or-nothing rule the coverage twin applies to its segments.
         """
-        return _global_lengths(
+        return folded_lengths(
             region.fragment_lengths() for region in self._regions.values())
 
     def serialize(self) -> str:
@@ -236,7 +233,7 @@ class FragmentStatistics(RegionFoldedStatistic[RegionFragments]):
         global_entry: dict[str, Any] = {
             "fragment_count": self.fragments_global(),
         }
-        global_lengths = _global_lengths(records.values())
+        global_lengths = folded_lengths(records.values())
         if global_lengths is not None:
             global_entry["fragment_lengths"] = global_lengths.stored()
         return json.dumps({
@@ -258,7 +255,7 @@ class FragmentStatistics(RegionFoldedStatistic[RegionFragments]):
             result.fold_region(RegionFragments.frozen(
                 chrom,
                 int(counts["fragment_count"]),
-                _read_stored_lengths(counts)))
+                stored_lengths(counts, "fragment_lengths")))
         return result
 
 
@@ -389,32 +386,6 @@ def save_and_plot_fragments(
     with resource.open_raw_file(
             FRAGMENT_STATISTICS_FILE, mode="wt") as outfile:
         outfile.write(statistics.serialize())
-    lengths = statistics.fragment_lengths_global()
-    if lengths is None or not lengths.has_counts_to_plot:
-        return
-    with resource.open_raw_file(
-            FRAGMENT_LENGTHS_IMAGE_FILE, mode="wb") as outfile:
-        plot_length_histogram(outfile, length_ladder(lengths), "fragment")
-
-
-def _read_stored_lengths(entry: dict[str, Any]) -> ExactLengths | None:
-    """One chromosome's length record, ``None`` where the file has none.
-
-    The count beside it reads at any format version; the record only
-    where it is stored.  A version 1 file's ladder is not read -- one
-    reader, no compatibility branch (ADR 0020, the gain#1118 rule).
-    """
-    stored = entry.get("fragment_lengths")
-    return None if stored is None else ExactLengths.from_stored(stored)
-
-
-def _global_lengths(
-    records: Iterable[ExactLengths | None],
-) -> ExactLengths | None:
-    """The fold of every chromosome's record, ``None`` if any is unknown."""
-    result: ExactLengths | None = NO_LENGTHS
-    for lengths in records:
-        if lengths is None:
-            return None
-        result = merged_lengths(result, lengths)
-    return result
+    write_length_chart(
+        resource, FRAGMENT_LENGTHS_IMAGE_FILE,
+        statistics.fragment_lengths_global(), "fragment")
