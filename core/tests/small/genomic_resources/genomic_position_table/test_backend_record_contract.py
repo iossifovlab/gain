@@ -1,45 +1,41 @@
-"""Every backend must actually yield what its ``yields_records`` claims.
+"""Every backend must actually yield what its ``payload_kind`` claims.
 
 A position-table backend makes exactly one class-level claim about the shape of
-the things it yields: the ``yields_records`` ClassVar.  A backend whose claim
-disagrees with what it really yields is mis-wired, and the score layer would
-read a raw row out of something that is not one.
+the things it yields: the ``payload_kind`` ClassVar, which says what the
+PAYLOAD slot of its records holds.  Records -- the plain six-slot tuples of
+the record contract -- are the only shape a backend yields; the kind is what
+varies.  A backend whose claim disagrees with what it really yields is
+mis-wired, and the score layer would read a raw row out of something that is
+not one.
 
-Whether a backend yields records is a property of the **backend**, not of a
-row: one shape of thing, for every line, forever.  So it is answerable once,
-here, against all four backends -- with no runtime cost in the fetch path.
-This test is what lets the score layer route on the claim and simply believe
-it.
+What a backend yields is a property of the **backend**, not of a row: one
+shape of thing, for every line, forever.  So it is answerable once, here,
+against all four backends -- with no runtime cost in the fetch path.  This
+test is what lets the score layer route on the claim and simply believe it.
 
 ``GenomicScore.open`` makes the matching decision, also once per table, and it
 turns on what a record's PAYLOAD means -- which is whatever the backend that
 built it says it means:
 
-* a record whose payload is a raw tabular row (in-memory, tabix) is read by
+* a **ROW** payload, a raw tabular row (in-memory, tabix), is read by
   :func:`extract_column_value`, which takes score columns out of it by index;
-* a **VCF** record, whose payload carries the variant, its allele index and
+* a **VARIANT** payload (VCF), which carries the variant, its allele index and
   the two pysam INFO proxies, is read by :func:`extract_vcf_value`, which
   looks INFO fields up by name and selects them by allele;
-* a **bigWig** record, whose payload IS the interval's value, is read by
+* a **VALUE** payload (bigWig), which IS the interval's value, is read by
   :func:`extract_bigwig_value` -- an identity, with no index and no parse.
 
-#238 migrated bigWig -- the last adapter backend -- and #239 then deleted the
-line adapters, the ``LineBase`` protocol and the adapter-era ``ScoreLine``
-outright.  So ``yields_records`` no longer selects between two shapes: records
-are the only shape, and a backend that leaves the flag False selects no score
-line at all -- ``GenomicScore.open`` refuses to open it.  That is why
-test_a_backend_yields_what_its_yields_records_claim_says now *asserts* the
-claim rather than branching on it, and why the fixtures below hand back an
-**unopened** score: the flag is a ClassVar, so the claim can be -- and is --
-checked before open() gets to reject it, which is what keeps a failing backend
-pointed at this file rather than at a routing TypeError.
+The fixtures below hand back an **unopened** score on purpose: the kind is a
+ClassVar, so the claim can be -- and is -- read before ``open()`` gets to
+route on it, which is what keeps a mis-declared backend pointed at this file
+rather than at whatever the wrong extractor does to its payload.
 
-So each backend below declares BOTH what it yields and which score line it must
+So each backend below declares BOTH what it yields and which extractor it must
 be routed to, and both are checked against the live objects.
 
-**This is the file a backend->records migration trips** -- #237 (VCF) and #238
-(bigWig) both did.  Flipping ``yields_records`` on a backend without migrating
-what it yields fails here, naming the backend -- the one moment this catches it.
+**This is the file a new backend trips.**  Declaring a kind on a backend that
+does not yield the matching payload fails here, naming the backend -- the
+one moment this catches it.
 """
 from __future__ import annotations
 
@@ -84,11 +80,10 @@ from gain.genomic_resources.vcf_scores import (
 # A region each backend's fixture data answers with at least one line.
 #
 # The score comes back UNOPENED, and each test opens it itself.  That is what
-# lets a test look at ``table.yields_records`` -- a ClassVar, known at
-# construction -- *before* ``GenomicScore.open`` gets to route on it and refuse.
-# Built the other way round, with the helper opening, every check of the claim
-# below would sit downstream of the open() that already rejects a backend
-# leaving it False, and so could never run.
+# lets a test look at ``table.payload_kind`` -- a ClassVar, known at
+# construction -- *before* ``GenomicScore.open`` gets to route on it.  Built
+# the other way round, with the helper opening, every check of the claim
+# below would sit downstream of the routing it is meant to hold to account.
 Region = tuple[str, int, int]
 Backend = tuple[GenomicScore, Region]
 
@@ -204,12 +199,12 @@ def build_every_backend(
     A repo per backend: two of them build a resource under the same name, so
     each gets a directory of its own.
 
-    Shared with test_table_lifetime.py, whose exhaustiveness sweep wants the
-    same four scores for the opposite reason -- it reads ``type(score.table)``
-    off each to learn which backend the entry really builds, where the checks
-    in this file read the table's class-level claims.  Both are "hand-written
-    list against reality", and neither may open a score first: the claims are
-    ClassVars, readable before ``GenomicScore.open`` gets to route on them.
+    Lives here because ``_BACKENDS`` does; its callers are the sibling
+    modules.  test_table_lifetime.py's exhaustiveness sweep reads
+    ``type(score.table)`` off each to learn which backend the entry really
+    builds -- "hand-written list against reality" -- and
+    test_chromosome_membership.py picks one backend's score by id.
+    Returned UNOPENED; every caller opens what it needs.
     """
     built = {}
     for param in _BACKENDS:
@@ -225,8 +220,8 @@ def build_every_backend(
 # as a dict key.  It is a per-backend fact, not a property of the record
 # contract, and that is exactly why it is declared here: a record is a plain
 # tuple, so ``hash(record)`` walks the tuple -- straight into the PAYLOAD,
-# whose hashability belongs to the backend that built it.  Only ONE of the
-# three record backends gives it:
+# whose hashability belongs to the backend that built it.  Two of the four
+# backends give it:
 #
 #   * in-memory -- payload is a ``tuple[str, ...]``: hashes;
 #   * tabix -- payload is a ``pysam.TupleProxy``, which defines ``__eq__`` and
@@ -236,8 +231,8 @@ def build_every_backend(
 #     pair -- and so the record -- raises ``TypeError``;
 #   * bigWig -- payload is the interval's value, a bare ``float``: hashes.
 #
-# test_every_record_backend_declares_whether_its_records_hash keeps this list
-# in step with what the backends in _BACKENDS actually claim.
+# test_every_backend_declares_whether_its_records_hash keeps this list in
+# step with _BACKENDS.
 _HASHABILITY: list[pytest.param] = [  # type: ignore[valid-type]
     pytest.param(_build_inmemory, True, id="inmemory"),
     pytest.param(_build_tabix, False, id="tabix"),
@@ -246,52 +241,20 @@ _HASHABILITY: list[pytest.param] = [  # type: ignore[valid-type]
 ]
 
 
-def test_every_record_backend_declares_whether_its_records_hash(
-    tmp_path: pathlib.Path,
-) -> None:
-    """A backend that yields records must say whether those records hash.
+def test_every_backend_declares_whether_its_records_hash() -> None:
+    """_HASHABILITY must cover every backend, so a fifth cannot slip in.
 
-    The answer is its payload's, and a caller cannot read it off the record
-    contract -- so a record backend that does not declare it leaves
-    test_a_records_hashability_is_its_payloads with nothing to check.
-
-    Which backends must declare is asked of the **tables themselves**:
-    ``yields_records`` is the claim this whole file exists to hold backends to,
-    and it is the gate ``GenomicScore.open`` puts the column read behind
-    (the read itself is routed on ``payload_kind``).  Asking a
-    built-but-unopened table is deliberate -- the flag is a ClassVar, so it
-    needs no open handle, and a backend that leaves it False is one
-    ``GenomicScore.open`` refuses outright.  Opening first would mean this loop
-    could only ever see backends that already passed that gate.  It is
-    deliberately NOT read off the score line class each backend is paired with
-    below: a migrating backend can arrive with an extractor of its own (VCF
-    did, at :func:`extract_vcf_value`; bigWig has since acquired
-    :func:`extract_bigwig_value`) or reuse an existing one whose hashability
-    differs from every backend already routed there, and a check written
-    against the extractors rather than the tables would miss both.  Ask the
-    table, and there is nothing to add to but _HASHABILITY.
+    The answer is the payload's, and a caller cannot read it off the record
+    contract -- so a backend that is in _BACKENDS but not here leaves
+    test_a_records_hashability_is_its_payloads with nothing to check.  It
+    is deliberately NOT read off the extractor each backend is paired with
+    in _BACKENDS: a new backend can arrive with an extractor of its own or
+    reuse an existing one whose hashability differs from every backend
+    already routed there, and a check written against the extractors would
+    miss both.
     """
-    record_backends = {
-        backend_id
-        for backend_id, score in build_every_backend(tmp_path).items()
-        if score.table.yields_records
-    }
-
-    declared = {str(param.id) for param in _HASHABILITY}
-
-    undeclared = record_backends - declared
-    assert not undeclared, (
-        f"{sorted(undeclared)} now set yields_records, so each yields plain "
-        f"record tuples -- but none of them declares whether those records "
-        f"hash. A record's hash walks the tuple straight into its PAYLOAD, so "
-        f"the answer is the backend's alone to give: add it to _HASHABILITY "
-        f"(and test_a_records_hashability_is_its_payloads will hold you to it)")
-
-    stale = declared - record_backends
-    assert not stale, (
-        f"{sorted(stale)} declare their records' hashability in _HASHABILITY "
-        f"but no longer set yields_records, so they no longer yield records "
-        f"whose hashability is a fact about them. Drop them from _HASHABILITY")
+    assert {str(param.id) for param in _HASHABILITY} == \
+        {str(param.id) for param in _BACKENDS}
 
 
 @pytest.mark.parametrize(("build_backend", "records_hash"), _HASHABILITY)
@@ -308,7 +271,7 @@ def test_a_records_hashability_is_its_payloads(
     whole is a tuple with the payload inside it, so its hash is the payload's
     to give or to withhold.  A caller that wants a set of records, or a dict
     keyed by one, must key it on ``sort_key(record)`` and not on the record --
-    on two of the three record backends the record itself raises.
+    on two of the four backends the record itself raises.
     """
     score, region = build_backend(tmp_path)
     with score.open():
@@ -331,33 +294,19 @@ def test_a_records_hashability_is_its_payloads(
                 _ = {first: 0}
 
 
-@pytest.mark.parametrize(("build_backend", "extractor"), _BACKENDS)
-def test_a_backend_yields_what_its_yields_records_claim_says(
+@pytest.mark.parametrize(("build_backend", "_extractor"), _BACKENDS)
+def test_a_backend_yields_what_its_payload_kind_claim_says(
     tmp_path: pathlib.Path,
     build_backend: Callable[[pathlib.Path], Backend],
-    extractor: object,
+    _extractor: object,
 ) -> None:
     score, region = build_backend(tmp_path)
     table = score.table
     backend = type(table).__name__
-
-    # Records are the only shape there is.  #239 deleted the line adapters and
-    # the ``ScoreLine`` that read them, so a backend leaving ``yields_records``
-    # False no longer selects an alternative implementation -- it selects none,
-    # and ``GenomicScore.open`` refuses to open it (TypeError).
-    #
-    # This runs BEFORE the open() below, which is the whole point: it is the
-    # requirement stated where a new backend meets it, rather than an open()
-    # failure it has to work backwards from.  The score arrives unopened for
-    # exactly this reason -- ``yields_records`` is a ClassVar, so the claim is
-    # answerable with no handle at all, and asserting it here means a backend
-    # that leaves it False fails naming itself and saying what to do, instead of
-    # tripping open()'s routing TypeError first.
-    assert table.yields_records, (
-        f"{backend} leaves yields_records False. Since #239 there is no "
-        f"line-adapter score line to be routed to, so a backend must set "
-        f"yields_records and yield records; GenomicScore.open raises on "
-        f"one that does not")
+    # The claim, a ClassVar read off the UNOPENED table; that it is the kind
+    # the extractor _BACKENDS pairs this backend with reads is
+    # test_open_routes_a_backend_to_the_extractor_its_payload_needs's to hold.
+    kind = table.payload_kind
 
     # The claim, against the first thing the backend actually produces --
     # which is the earliest moment a claim about records can be contradicted.
@@ -369,11 +318,11 @@ def test_a_backend_yields_what_its_yields_records_claim_says(
         # VCFLine bridge was) is an adapter wearing a record's shape, and an
         # isinstance check would wave it through.
         assert type(first) is tuple, (
-            f"{backend} sets yields_records, so GenomicScore.open routes "
-            f"it to a record score line -- but it yields a "
+            f"{backend} declares payload_kind {kind}, so GenomicScore.open "
+            f"routes it to a record extractor -- but it yields a "
             f"{type(first).__name__}, not a plain record tuple")
         assert len(first) == RECORD_SLOTS, (
-            f"{backend} sets yields_records but yields a "
+            f"{backend} declares payload_kind {kind} but yields a "
             f"{len(first)}-slot tuple; a record has {RECORD_SLOTS} slots")
         payload = first[PAYLOAD]
         # A payload must be readable by the extractor this backend is routed
@@ -381,22 +330,24 @@ def test_a_backend_yields_what_its_yields_records_claim_says(
         # tabular row, or the VCF (variant, allele index, info, info_meta)
         # tuple -- must be indexable, and must not be a str/bytes: those are
         # indexable but index to *characters*, so every score would silently
-        # parse to None rather than raise.  A WHOLE-payload extractor
-        # (bigWig's identity) needs neither, and asking for indexability there
-        # would be asking for the repetition the narrowing removed.
-        if extractor is extract_bigwig_value:
+        # parse to None rather than raise.  A VALUE payload is read whole by
+        # an identity extractor, which needs neither, and asking for
+        # indexability there would be asking for the repetition the
+        # narrowing removed.
+        if kind is PayloadKind.VALUE:
             assert isinstance(payload, float), (
-                f"{backend} is routed to the identity extractor, so its "
-                f"record's PAYLOAD must be the value itself; it is a "
+                f"{backend} declares payload_kind {kind}, so its record's "
+                f"PAYLOAD must be the value itself; it is a "
                 f"{type(payload).__name__}")
         else:
             assert hasattr(payload, "__getitem__"), (
-                f"{backend} sets yields_records but its record's PAYLOAD is a "
-                f"{type(payload).__name__}, which is not indexable")
+                f"{backend} declares payload_kind {kind} but its record's "
+                f"PAYLOAD is a {type(payload).__name__}, which is not "
+                f"indexable")
             assert not isinstance(payload, (str, bytes)), (
-                f"{backend} sets yields_records but its record's PAYLOAD is a "
-                f"{type(payload).__name__} -- indexing it yields characters, "
-                f"not cells")
+                f"{backend} declares payload_kind {kind} but its record's "
+                f"PAYLOAD is a {type(payload).__name__} -- indexing it "
+                f"yields characters, not cells")
 
 
 @pytest.mark.parametrize(("build_backend", "extractor"), _BACKENDS)
@@ -419,15 +370,15 @@ def test_open_routes_a_backend_to_the_extractor_its_payload_needs(
         # The choice is made once, at open: it is already installed before a
         # single record is fetched.
         assert score._extract_value is extractor, (
-            f"{type(score.table).__name__} (yields_records="
-            f"{score.table.yields_records}) was routed at open to "
+            f"{type(score.table).__name__} (payload_kind="
+            f"{score.table.payload_kind}) was routed at open to "
             f"{score._extract_value.__name__}, "
             f"not {extractor.__name__}")
 
         record = next(iter(score.fetch_records(*region)))
         assert type(record) is tuple, (
-            f"{type(score.table).__name__} yields_records="
-            f"{score.table.yields_records} was routed to "
+            f"{type(score.table).__name__} payload_kind="
+            f"{score.table.payload_kind} was routed to "
             f"{type(record).__name__}")
         # ...and the routed extractor can actually read a score off it --
         # which is what fails if a backend is routed to an extractor whose raw
@@ -437,9 +388,9 @@ def test_open_routes_a_backend_to_the_extractor_its_payload_needs(
 
 
 # Whether this backend serves ``get_region_value_arrays`` -- the OPTIONAL bulk
-# column-array read (gain#398).  Unlike ``yields_records`` this has a genuine
-# False state: a backend that does not implement the fast path is in no way
-# broken, it simply keeps the record read.
+# column-array read (gain#398).  Unlike ``payload_kind`` this is optional, so
+# it has a genuine False state: a backend that does not implement the fast
+# path is in no way broken, it simply keeps the record read.
 #
 #   * tabix -- reads raw rows straight from pysam and serves columns by
 #     integer payload index: True;

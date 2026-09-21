@@ -84,19 +84,14 @@ def select_value_extractor(
     * a **ROW** payload is a raw row, read by integer column --
       :func:`extract_column_value`.
 
-    The declaration is read first, because every later decision depends
-    on it: a backend that has not made one is refused with the
-    ``AttributeError`` the undefaulted ClassVar raises, before any other
-    check.  The table's ``yields_records`` claim is then simply believed:
-    that every backend's claim matches what it really yields is pinned
-    statically, over all four of them, by test_backend_record_contract.py,
-    so the fetch path pays nothing for it.
-
-    A ROW table that yields no records is a programming error, not a data
-    error: there is no fallback reader, so a backend leaving the flag
-    False has nothing that can read it and we refuse rather than guess.
-    (Nothing in the tree reaches it: it guards a backend added later
-    without its migration.)
+    The declaration is the ONE claim read, and it is read first, because
+    every later decision depends on it: a backend that has not made one is
+    refused with the ``AttributeError`` the undefaulted ClassVar raises,
+    before any other check.  That a backend's records are what its kind
+    says -- a ROW backend really yields six-slot records with a raw row in
+    the payload slot -- is pinned statically, over every backend in the
+    tree, by test_backend_record_contract.py, so the fetch path pays
+    nothing for it.
     """
     kind = table.payload_kind
     if kind is PayloadKind.VARIANT:
@@ -115,17 +110,7 @@ def select_value_extractor(
         ):
             return extract_bigwig_value_na
         return extract_bigwig_value
-    if table.yields_records:
-        return extract_column_value
-    raise TypeError(
-        f"{type(table).__name__} does not yield records, so "
-        f"there is no score line that can read it. A genomic "
-        f"position table backend must set yields_records = True "
-        f"and yield six-slot record tuples: see the record "
-        f"contract in gain.genomic_resources."
-        f"genomic_position_table.record, and "
-        f"test_backend_record_contract.py for what that backend "
-        f"is held to.")
+    return extract_column_value
 
 
 def resolve_score_indices(

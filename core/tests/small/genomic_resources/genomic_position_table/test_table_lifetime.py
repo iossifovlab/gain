@@ -532,6 +532,34 @@ def test_the_base_table_declares_no_payload_kind() -> None:
         _ = GenomicPositionTable.payload_kind
 
 
+def test_the_base_declares_exactly_its_class_vars() -> None:
+    """The base's ClassVars are pinned by equality, owed and optional apart.
+
+    Two are owed -- a backend that has not stated them is refused, so the
+    base gives them no default -- and the other two are defaulted.  A
+    ClassVar that grows back after being retired (gain#1539 retired one
+    that re-stated what ``payload_kind`` says; the ledger in the package
+    ``__init__`` has it), or a new one, fails here by name, so adding a
+    declaration to every backend is a deliberate act.
+    """
+    class_vars = {
+        name
+        for name, annotation in GenomicPositionTable.__annotations__.items()
+        if "ClassVar" in str(annotation)
+    }
+
+    assert class_vars == {
+        "COLUMN_KEY_SPELLINGS",
+        "chrom_length_source",
+        "payload_kind",
+        "supports_value_arrays",
+    }
+    assert {
+        name for name in class_vars
+        if not hasattr(GenomicPositionTable, name)
+    } == {"chrom_length_source", "payload_kind"}
+
+
 # The fields a CLOSED table is still allowed to hold, each with the reason it
 # is exempt.  This list is the release policy stated on
 # ``GenomicPositionTable.close()``, written out as data: everything else a

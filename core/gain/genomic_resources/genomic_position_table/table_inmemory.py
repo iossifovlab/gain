@@ -64,9 +64,6 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
     contract is stated on :meth:`GenomicPositionTable.close`).
     """
 
-    # This backend yields and stores records rather than line adapters.
-    yields_records: ClassVar[bool] = True
-
     # A length from this backend is ``max(pos_end) + 1`` over the rows it
     # holds (see :meth:`find_chromosome_length`): how far the data reaches,
     # not how long the contig is.

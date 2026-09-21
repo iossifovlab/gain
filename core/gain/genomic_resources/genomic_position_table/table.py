@@ -86,10 +86,10 @@ class ChromLengthSource(enum.Enum):
 
     Three of the members are what a backend's :meth:`find_chromosome_length`
     measures, and every backend names its own in ``chrom_length_source`` --
-    a fact about the FORMAT, declared on the class the way ``yields_records``
-    and ``supports_value_arrays`` are, so no caller has to know which
-    backends exist.  The fourth, :attr:`REFERENCE_GENOME`, no table
-    produces: it is the genome rung of the score layer's ladder
+    a fact about the FORMAT, declared on the class the way ``payload_kind``
+    is, so no caller has to know which backends exist.  The fourth,
+    :attr:`REFERENCE_GENOME`, no table produces: it is the genome rung of
+    the score layer's ladder
     (gain#1412), and lives here beside the other three so that the one
     vocabulary answers "where did this length come from" for every rung.
 
@@ -153,30 +153,11 @@ class PayloadKind(enum.Enum):
 class GenomicPositionTable(abc.ABC):
     """Abstraction over genomic scores table."""
 
-    # Whether get_all_records/get_records_in_region yield records -- the plain
-    # six-slot tuples of the record contract (see ``record.py``).  Every
-    # in-tree backend does, and every one of them overrides this to True.  The
-    # False below is the base class's starting value, NOT a supported steady
-    # state for a backend: since #239 removed the line adapters and the
-    # ``ScoreLine`` that read them, there is no second line shape left for a
-    # False to select.
-    #
-    # So the flag's remaining job is to catch a new backend that has not
-    # migrated.  ``GenomicScore.open`` routes on it -- the column read when
-    # it is True, and a ``TypeError`` refusing to open the score when it is
-    # False, rather than route the table to a reader that would misread
-    # whatever it does yield.  (A VARIANT or VALUE ``payload_kind`` is routed
-    # to its own reader ahead of this check; both backends set the flag
-    # too.)  A backend author overrides this to True *and* yields
-    # records -- the claim and the yielded shape are held together by
-    # test_backend_record_contract.py, which fails a backend that leaves it
-    # False as much as one whose records do not match its claim.
-    yields_records: ClassVar[bool] = False
-
     # Whether this backend serves :meth:`get_region_value_arrays` -- the bulk
-    # column-array region read that never builds a record.  Unlike
-    # ``yields_records`` this one has a real False state: it is an optional
-    # fast path, and a backend that does not implement it is in no way broken.
+    # column-array region read that never builds a record.  Unlike the two
+    # declarations every backend owes (``chrom_length_source``,
+    # ``payload_kind``) this one is optional, so it has a real False state:
+    # a backend that does not implement the fast path is in no way broken.
     #
     # It exists because the capability is NOT answerable from the class alone.
     # ``VCFGenomicPositionTable`` subclasses ``TabixGenomicPositionTable`` and
