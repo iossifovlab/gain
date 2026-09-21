@@ -18,7 +18,10 @@ import pathlib
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
-from gain.genomic_resources.testing.gene_models_builder import a_gene_models
+from gain.genomic_resources.repository_factory import (
+    build_genomic_resource_repository,
+    build_resource_implementation,
+)
 from gain.genomic_resources.testing.builders import (
     PositionScoreBuilder,
     a_fragment_score,
@@ -26,6 +29,7 @@ from gain.genomic_resources.testing.builders import (
     a_position_score,
     an_allele_score,
 )
+from gain.genomic_resources.testing.gene_models_builder import a_gene_models
 
 
 def _a_position_score() -> PositionScoreBuilder:
@@ -147,7 +151,7 @@ def test_forced_repair_reports_nothing_and_rebuilds(
 def fragment_without_its_file_beside_a_current_allele_score(
     tmp_path: pathlib.Path,
 ) -> pathlib.Path:
-    """A fragment score with no ``fragments.json`` and an allele score as built."""
+    """A fragment score with no ``fragments.json``, an allele score as built."""
     (
         a_grr()
         .with_resource(
@@ -224,7 +228,7 @@ def test_a_resource_the_hash_gate_rebuilds_is_not_also_schema_stale(
 
 @pytest.fixture
 def two_stale_scores_and_gene_models(tmp_path: pathlib.Path) -> pathlib.Path:
-    """Two position scores at coverage version 1 beside a gene models resource."""
+    """Two position scores at coverage version 1, and a gene models resource."""
     (
         a_grr()
         .with_resource("one", _a_position_score())
@@ -254,8 +258,10 @@ def test_a_repository_run_ends_with_one_summary_naming_the_count(
     per_resource = [
         line for line in _schema_lines(caplog) if line.startswith("Statistics")
     ]
-    assert [line[len("Statistics of <"):].split(">")[0] for line in per_resource] \
-        == ["one", "two"]
+    reported = [
+        line[len("Statistics of <"):].split(">")[0] for line in per_resource
+    ]
+    assert reported == ["one", "two"]
     # A gene models resource declares no statistics files: never reported
     assert not any("genes" in line for line in per_resource)
     # ... and ONE summary, at WARNING, after the loop -- where an operator
@@ -270,3 +276,78 @@ def test_a_repository_run_ends_with_one_summary_naming_the_count(
     assert caplog.records.index(summary) > max(
         caplog.records.index(record) for record in caplog.records
         if record.getMessage() in per_resource)
+
+
+def _versioned_files_written(resource_dir: pathlib.Path) -> dict[str, int]:
+    """Every JSON under ``statistics/`` that stamps a ``format_version``."""
+    written = {}
+    for path in sorted((resource_dir / "statistics").glob("*.json")):
+        document = json.loads(path.read_text())
+        if "format_version" in document:
+            written[f"statistics/{path.name}"] = document["format_version"]
+    return written
+
+
+def test_each_kind_declares_exactly_the_versioned_files_its_build_writes(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The drift guard: the declaration IS what the build wrote, per kind.
+
+    A statistic added without being declared, a declaration naming a file
+    the build does not write for the kind, or a writer whose stamp and
+    declared constant part ways all fail here.
+    """
+    (
+        a_grr()
+        .with_resource("position", _a_position_score())
+        .with_resource(
+            "fragment",
+            a_fragment_score()
+            .with_tabix()
+            .with_score("value", "float")
+            .with_histogram({
+                "type": "number", "number_of_bins": 4,
+                "view_range": {"min": 0.0, "max": 1.0}})
+            .with_data("""
+                chrom  pos_begin  pos_end  value
+                chr1   10         20       0.2
+                chr1   15         25       0.4
+            """))
+        .with_resource(
+            "allele",
+            an_allele_score()
+            .with_score("freq", "float")
+            .with_histogram({
+                "type": "number", "number_of_bins": 4,
+                "view_range": {"min": 0.0, "max": 1.0}})
+            .with_data("""
+                chrom  pos_begin  reference  alternative  freq
+                chr1   10         A          G            0.1
+                chr1   10         A          C            0.2
+            """))
+        .with_resource("genes", a_gene_models())
+        .build_repo(tmp_path)
+    )
+    cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
+    repo = build_genomic_resource_repository({
+        "id": "drift", "type": "directory", "directory": str(tmp_path)})
+
+    declared = {
+        resource_id: {
+            file.path: file.format_version
+            for file in build_resource_implementation(
+                repo.get_resource(resource_id)).statistics_files()
+        }
+        for resource_id in ("position", "fragment", "allele", "genes")
+    }
+
+    assert declared == {
+        resource_id: _versioned_files_written(tmp_path / resource_id)
+        for resource_id in declared
+    }
+    # Guards the comparison above against a build that wrote nothing
+    # versioned at all, which would make it vacuously true
+    assert declared["position"] == {"statistics/coverage.json": 2}
+    assert declared["fragment"] == {"statistics/fragments.json": 2}
+    assert declared["allele"] == {"statistics/alleles.json": 1}
+    assert declared["genes"] == {}
