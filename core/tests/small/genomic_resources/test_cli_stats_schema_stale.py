@@ -86,3 +86,35 @@ def test_dry_run_reports_a_coverage_file_behind_the_schema_and_exits_zero(
     assert "format version 1" in line
     assert "current is 2" in line
     assert "resource-stats -r pos -f" in line
+
+
+def test_an_unforced_repair_reports_the_file_and_leaves_it_alone(
+    position_score_at_v1: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = position_score_at_v1
+    coverage_file = path / "pos" / COVERAGE_STATISTICS_FILE
+    before = coverage_file.read_bytes()
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
+
+    assert "is consistent" in caplog.text
+    assert "statistics of <pos> predate the current schema" in caplog.text
+    # Reported, not rebuilt: the rollout lever stays the forced rebuild.
+    assert coverage_file.read_bytes() == before
+
+
+def test_a_forced_repair_rebuilds_the_file_and_reports_nothing(
+    position_score_at_v1: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = position_score_at_v1
+    coverage_file = path / "pos" / COVERAGE_STATISTICS_FILE
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "--force", "-R", str(path), "-j", "1"])
+
+    assert "is consistent" in caplog.text
+    assert "predate the current schema" not in caplog.text
+    assert json.loads(coverage_file.read_text())["format_version"] == 2
