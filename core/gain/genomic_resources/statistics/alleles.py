@@ -78,9 +78,13 @@ from gain.genomic_resources.statistics.region_fold import merge_regions
 from gain.utils.chromosome_order import natural_chromosome_key
 
 ALLELE_STATISTICS_FILE = "statistics/alleles.json"
-#: The ``format_version`` the writer stamps; what
-#: :func:`allele_stored_statistic_for` declares, so the two cannot drift.
+#: The ``format_version`` ``serialize`` stamps.
 ALLELE_FORMAT_VERSION = 1
+#: The statistic's one declaration -- file, version, and the kind it
+#: is written for -- read by the scan's gate and by the repair check.
+ALLELE_STATISTIC = StoredStatistic(
+    ALLELE_STATISTICS_FILE, ALLELE_FORMAT_VERSION,
+    lambda score: isinstance(score, AlleleScore))
 
 #: The global images the statistics build renders beside the file.  One
 #: each, never per chromosome (ADR 0020): the per-chromosome numbers are
@@ -1054,22 +1058,9 @@ def region_alleles_for(
     would have to be revisited by the next spelling that builds an
     ``AlleleScore``.
     """
-    if not isinstance(score, AlleleScore):
+    if not ALLELE_STATISTIC.writes_for(score):
         return None
     return RegionAlleles(chrom, start, end)
-
-
-def allele_stored_statistic_for(
-    score: GenomicScore,
-) -> StoredStatistic | None:
-    """The alleles file a build writes for ``score``; ``None`` otherwise.
-
-    The same class gate as :func:`region_alleles_for`, stated beside it: a
-    kind gets the file exactly when it gets the accumulator (gain#1586).
-    """
-    if not isinstance(score, AlleleScore):
-        return None
-    return StoredStatistic(ALLELE_STATISTICS_FILE, ALLELE_FORMAT_VERSION)
 
 
 def serves_allele_arrays(score: GenomicScore, score_ids: list[str]) -> bool:

@@ -59,9 +59,14 @@ from gain.genomic_resources.statistics.region_fold import merge_regions
 from gain.utils.chromosome_order import natural_chromosome_key
 
 FRAGMENT_STATISTICS_FILE = "statistics/fragments.json"
-#: The ``format_version`` the writer stamps; what
-#: :func:`fragment_stored_statistic_for` declares, so the two cannot drift.
+#: The ``format_version`` ``serialize`` stamps.
 FRAGMENT_FORMAT_VERSION = 2
+#: The statistic's one declaration -- file, version, and the kind it
+#: is written for -- read by the scan's gate and by the repair check.
+FRAGMENT_STATISTIC = StoredStatistic(
+    FRAGMENT_STATISTICS_FILE, FRAGMENT_FORMAT_VERSION,
+    lambda score: isinstance(score, FragmentScore))
+
 FRAGMENT_LENGTHS_IMAGE_FILE = "statistics/fragment_lengths.png"
 
 #: How a failed fold of these regions is named in the message.
@@ -348,22 +353,9 @@ def region_fragments_for(
     dispatch.  The class is the property this statistic depends on --
     that the rows ARE fragments, each counted once at its own span.
     """
-    if not isinstance(score, FragmentScore):
+    if not FRAGMENT_STATISTIC.writes_for(score):
         return None
     return RegionFragments(chrom, start, end)
-
-
-def fragment_stored_statistic_for(
-    score: GenomicScore,
-) -> StoredStatistic | None:
-    """The fragments file a build writes for ``score``; ``None`` otherwise.
-
-    The same class gate as :func:`region_fragments_for`, stated beside it: a
-    kind gets the file exactly when it gets the accumulator (gain#1586).
-    """
-    if not isinstance(score, FragmentScore):
-        return None
-    return StoredStatistic(FRAGMENT_STATISTICS_FILE, FRAGMENT_FORMAT_VERSION)
 
 
 def accumulate_fragments(

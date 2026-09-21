@@ -35,16 +35,10 @@ from gain.genomic_resources.resource_implementation import (
 from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
 )
-from gain.genomic_resources.statistics.alleles import (
-    allele_stored_statistic_for,
-)
+from gain.genomic_resources.statistics.alleles import ALLELE_STATISTIC
 from gain.genomic_resources.statistics.base_statistic import StoredStatistic
-from gain.genomic_resources.statistics.coverage import (
-    coverage_stored_statistic_for,
-)
-from gain.genomic_resources.statistics.fragments import (
-    fragment_stored_statistic_for,
-)
+from gain.genomic_resources.statistics.coverage import COVERAGE_STATISTIC
+from gain.genomic_resources.statistics.fragments import FRAGMENT_STATISTIC
 from gain.genomic_resources.utils import read_resource_id_label
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
 from gain.utils.log_safety import escape_unsafe_characters
@@ -216,16 +210,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         return self.score.resource_files()
 
     def stored_statistics(self) -> list[StoredStatistic]:
-        # Each statistic states its own gate beside the accumulator
-        # gate the scan reads, so what is declared here is what
-        # ``scan.merge_and_save_histograms`` writes (gain#1586).
+        # The same three declarations the scan gates on, so what is
+        # declared here is what ``scan.merge_and_save_histograms`` writes.
         return [
             stored for stored in (
-                coverage_stored_statistic_for(self.score),
-                fragment_stored_statistic_for(self.score),
-                allele_stored_statistic_for(self.score),
-            )
-            if stored is not None
+                COVERAGE_STATISTIC, FRAGMENT_STATISTIC, ALLELE_STATISTIC)
+            if stored.writes_for(self.score)
         ]
 
     @staticmethod

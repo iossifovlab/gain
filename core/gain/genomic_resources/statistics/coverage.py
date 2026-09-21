@@ -51,9 +51,13 @@ from gain.utils.chromosome_order import natural_chromosome_key
 logger = logging.getLogger(__name__)
 
 COVERAGE_STATISTICS_FILE = "statistics/coverage.json"
-#: The ``format_version`` the writer stamps; what
-#: :func:`coverage_stored_statistic_for` declares, so the two cannot drift.
+#: The ``format_version`` ``serialize`` stamps.
 COVERAGE_FORMAT_VERSION = 2
+#: The statistic's one declaration -- file, version, and the kind it
+#: is written for -- read by the scan's gate and by the repair check.
+COVERAGE_STATISTIC = StoredStatistic(
+    COVERAGE_STATISTICS_FILE, COVERAGE_FORMAT_VERSION,
+    lambda score: isinstance(score, PositionScore))
 
 #: How a failed fold of these regions is named in the message.
 _MERGE_FAILURE = "coverage"
@@ -1007,23 +1011,9 @@ def region_coverage_for(
     :mod:`~gain.genomic_resources.statistics.fragments` and ADR 0020 say
     why that keeps the kind out of both coverage and segments.
     """
-    if not isinstance(score, PositionScore):
+    if not COVERAGE_STATISTIC.writes_for(score):
         return None
     return RegionCoverage(chrom, start, end)
-
-
-def coverage_stored_statistic_for(
-    score: GenomicScore,
-) -> StoredStatistic | None:
-    """The coverage file a build writes for ``score``; ``None`` otherwise.
-
-    The same class gate as :func:`region_coverage_for`, stated beside
-    it: a kind gets a coverage file exactly when it gets a coverage
-    accumulator (gain#1586).
-    """
-    if not isinstance(score, PositionScore):
-        return None
-    return StoredStatistic(COVERAGE_STATISTICS_FILE, COVERAGE_FORMAT_VERSION)
 
 
 def accumulate_coverage(

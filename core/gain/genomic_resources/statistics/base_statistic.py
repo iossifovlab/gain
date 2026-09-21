@@ -1,24 +1,48 @@
 from __future__ import annotations
 
+import json
 from abc import abstractmethod
-from collections.abc import Iterable
-from typing import Any, NamedTuple, Protocol, Self
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, Self
 
 import numpy as np
 
+if TYPE_CHECKING:
+    from gain.genomic_resources.genomic_scores import GenomicScore
+
 
 class StoredStatistic(NamedTuple):
-    """One statistics file a build writes, at the version its writer stamps.
+    """One versioned statistics file, and which scores a build writes it for.
 
-    What the repair flow compares a resource's stored files against
-    (gain#1586): the file is missing, or carries an older
-    ``format_version``, exactly when the resource predates the schema.
-    The version here MUST be the constant the writer's ``serialize``
-    stamps, so the two cannot drift.
+    The statistic's one declaration: the scan asks :attr:`writes_for`
+    whether to accumulate it, its writer stamps :attr:`format_version`,
+    and the repair flow reads both back (gain#1586) -- so a resource
+    whose file is missing or carries an older version is one built
+    before the schema, and the check cannot drift from the write.  None
+    of this enters ``calc_statistics_hash``, an input hash (gain#706,
+    ADR 0020): the flow REPORTS such a resource; it never rebuilds it.
     """
 
     file: str
     format_version: int
+    writes_for: Callable[[GenomicScore], bool]
+
+    def stored_version(self, content: str) -> int | None:
+        """The version a stored file carries; 0 if none, None if unreadable.
+
+        Anything but an integer ``format_version`` -- absent, null, a
+        non-object document -- is 0, older than every schema.  A file
+        that is not JSON at all is ``None``: not this check's finding,
+        and never a reason to fail the resource.
+        """
+        try:
+            data = json.loads(content)
+        except ValueError:
+            return None
+        if not isinstance(data, dict):
+            return 0
+        version = data.get("format_version")
+        return version if isinstance(version, int) else 0
 
 
 class Statistic:

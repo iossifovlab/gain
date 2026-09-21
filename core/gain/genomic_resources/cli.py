@@ -957,84 +957,33 @@ def _stats_need_rebuild(
     return False
 
 
-def _schema_stale_statistics(
-    impl: GenomicResourceImplementation,
-) -> list[str]:
-    """Describe each stored statistic of ``impl`` that predates the schema.
-
-    One entry per declared file that is missing or carries a
-    ``format_version`` older than the one its writer stamps now; empty
-    for a resource whose files are all current.  Asked only of a
-    resource whose statistics hash IS current: the hash is an input
-    hash and says nothing about which statistics the running GAIn
-    builds (gain#706, ADR 0020), so this is the one place a resource
-    built by an older GAIn is told apart from a current one
-    (gain#1586).  It reports; it never rebuilds.
-    """
-    stale: list[str] = []
-    for stored in impl.stored_statistics():
-        try:
-            content = impl.resource.get_file_content(stored.file)
-        except FileNotFoundError:
-            stale.append(
-                f"{stored.file} is missing "
-                f"(current is {stored.format_version})")
-            continue
-        try:
-            data = json.loads(content)
-        except ValueError:
-            # Not this check's finding: a file that does not parse is
-            # reported by whatever reads it, not as "behind the schema".
-            continue
-        version = _stored_format_version(data)
-        if version < stored.format_version:
-            stale.append(
-                f"{stored.file} is at format version {version} "
-                f"(current is {stored.format_version})")
-    return stale
-
-
-def _stored_format_version(data: Any) -> int:
-    """The ``format_version`` a parsed statistics file carries, else 0.
-
-    Anything that is not an integer -- a file written before the field
-    existed, a non-object document, a null -- predates every schema.
-    A report is never the reason a resource fails, so this raises on
-    nothing.
-    """
-    if not isinstance(data, dict):
-        return 0
-    version = data.get("format_version")
-    if isinstance(version, bool) or not isinstance(version, int):
-        return 0
-    return version
-
-
-def _warn_schema_stale(count: int) -> None:
-    """One WARNING per run, last, counting the resources behind the schema.
-
-    Nothing when the count is zero.  Last, where a repository-wide
-    run's operator reads; the per-resource lines name the files.
-    """
-    if not count:
-        return
-    logger.warning(
-        "%d resource(s) carry statistics that predate the current "
-        "schema; rebuild them with "
-        "`grr_manage resource-stats -r <resource_id> -f`",
-        count)
-
-
 def _report_schema_stale_statistics(
     impl: GenomicResourceImplementation,
 ) -> bool:
     """Log a hash-current resource whose statistics predate the schema.
 
-    True when it did.  The line names the files, the versions and the
-    remedy; nothing here feeds the task graph or the dry-run count --
-    the rollout of a new statistic stays deliberate (ADR 0020, gain#925).
+    True when it did.  One line naming each declared file that is
+    missing or carries an older ``format_version`` than its writer
+    stamps now, and the ``-f`` remedy; a file that does not parse is
+    left to whatever reads it.  Nothing here feeds the task graph or
+    the dry-run count: the hash says nothing about which statistics
+    the running GAIn builds (see ``stored_statistics``), and the
+    rollout of a new one stays deliberate (ADR 0020, gain#925).
     """
-    stale = _schema_stale_statistics(impl)
+    stale: list[str] = []
+    for stored in impl.stored_statistics():
+        try:
+            version = stored.stored_version(
+                impl.resource.get_file_content(stored.file))
+        except FileNotFoundError:
+            stale.append(
+                f"{stored.file} is missing "
+                f"(current is {stored.format_version})")
+            continue
+        if version is not None and version < stored.format_version:
+            stale.append(
+                f"{stored.file} is at format version {version} "
+                f"(current is {stored.format_version})")
     if not stale:
         return False
     resource_id = impl.resource.resource_id
@@ -1043,6 +992,22 @@ def _report_schema_stale_statistics(
         "rebuild with `grr_manage resource-stats -r %s -f`",
         resource_id, ", ".join(stale), resource_id)
     return True
+
+
+def _warn_schema_stale(count: int) -> None:
+    """One WARNING per run, last, counting the resources behind the schema.
+
+    Nothing when the count is zero.  Last, where a repository-wide
+    run's operator reads -- so ``_run_stats_core`` calls it once on
+    each of its exits; the per-resource lines name the files.
+    """
+    if not count:
+        return
+    logger.warning(
+        "%d resource(s) carry statistics that predate the current "
+        "schema; rebuild them with "
+        "`grr_manage resource-stats -r <resource_id> -f`",
+        count)
 
 
 def _statistics_not_built(
@@ -1185,11 +1150,12 @@ def _run_stats_core(
             elif derived is DerivedFilesState.STALE:
                 impl.rebuild_derived_files(repo)
                 derived_resources.append(res)
+            # A third state, reported and never acted on: the hash is
+            # current, so nothing rebuilds the statistics -- a derived
+            # file's rewrite does not touch them -- and a file behind
+            # the schema stays behind it (gain#1586).
             if not (needs_rebuild or force) \
                     and _report_schema_stale_statistics(impl):
-                # Hash current and not rebuilding: the one state in which
-                # a file behind the schema is worth a line.  Never counted
-                # towards `needs_update` -- that count is the hash's.
                 schema_stale += 1
         except Exception as err:  # ruff: ignore[blind-except]
             # Collected, not raised: the resources after this one in the

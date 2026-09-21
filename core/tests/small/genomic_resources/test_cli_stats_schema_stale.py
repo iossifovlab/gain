@@ -11,6 +11,7 @@ remedy -- and rebuild nothing.
 import json
 import logging
 import pathlib
+import shutil
 from collections.abc import Callable
 
 import pytest
@@ -27,6 +28,7 @@ from gain.genomic_resources.statistics.fragments import (
 from gain.genomic_resources.testing.builders import (
     AlleleScoreBuilder,
     FragmentScoreBuilder,
+    GRRBuilder,
     PositionScoreBuilder,
     ResourceBuilder,
     a_fragment_score,
@@ -35,6 +37,8 @@ from gain.genomic_resources.testing.builders import (
     a_reference_genome,
     an_allele_score,
 )
+
+from .conftest import captured_warnings
 
 
 def _a_position_score() -> PositionScoreBuilder:
@@ -111,50 +115,76 @@ def test_each_kind_declares_exactly_the_statistics_files_its_build_writes(
     assert declared == written
 
 
-def _downgrade_format_version(statistics_file: pathlib.Path) -> None:
-    """Rewrite a stored statistic as an older GAIn would have left it."""
+def _repaired(path: pathlib.Path, grr: GRRBuilder) -> pathlib.Path:
+    """Realize ``grr`` into ``path`` and build its statistics."""
+    grr.build_repo(path)
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
+    return path
+
+
+def _refresh_manifest(path: pathlib.Path) -> None:
+    """Make a tampered resource consistent again, as an older GAIn left it.
+
+    The manifest lists the statistics files, so after a tamper it is
+    refreshed: the resource is then what an upgrade finds -- manifest
+    consistent, statistics hash current, stored file behind the schema.
+    """
+    cli_manage(["repo-manifest", "-R", str(path)])
+
+
+def _downgrade_format_version(
+    path: pathlib.Path, resource_id: str,
+) -> None:
+    """Rewrite a coverage file as an older GAIn would have left it."""
+    statistics_file = path / resource_id / COVERAGE_STATISTICS_FILE
     data = json.loads(statistics_file.read_text())
     data["format_version"] = 1
     statistics_file.write_text(json.dumps(data, indent=2))
 
 
-@pytest.fixture
-def position_score_at_v1(
+@pytest.fixture(scope="module")
+def _position_score_at_v1(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> pathlib.Path:
-    """A repaired GRR whose position score's coverage file is at v1.
-
-    The manifest is refreshed after the downgrade, so the resource is
-    what an older GAIn leaves behind: manifest consistent, statistics
-    hash current, stored file behind the schema.
-    """
-    path = tmp_path_factory.mktemp("schema_stale_grr")
-    a_grr().with_resource("pos", _a_position_score()).build_repo(path)
-    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
-    _downgrade_format_version(path / "pos" / COVERAGE_STATISTICS_FILE)
-    cli_manage(["repo-manifest", "-R", str(path)])
+    path = _repaired(
+        tmp_path_factory.mktemp("schema_stale_grr"),
+        a_grr().with_resource("pos", _a_position_score()))
+    _downgrade_format_version(path, "pos")
+    _refresh_manifest(path)
     return path
 
 
 @pytest.fixture
+def position_score_at_v1(
+    _position_score_at_v1: pathlib.Path, tmp_path: pathlib.Path,
+) -> pathlib.Path:
+    """A repaired GRR whose position score's coverage file is at v1.
+
+    A fresh copy per test: several of its consumers mutate it.
+    """
+    path = tmp_path / "grr"
+    shutil.copytree(_position_score_at_v1, path)
+    return path
+
+
+@pytest.fixture(scope="module")
 def two_stale_scores_and_a_genome(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> pathlib.Path:
-    """Two position scores at v1 beside a resource of another kind."""
-    path = tmp_path_factory.mktemp("schema_stale_two_grr")
-    (
+    """Two position scores at v1 beside a resource of another kind.
+
+    Shared by its consumers: every one of them is a dry run.
+    """
+    path = _repaired(
+        tmp_path_factory.mktemp("schema_stale_two_grr"),
         a_grr()
         .with_resource("pos_a", _a_position_score())
         .with_resource("pos_b", _a_position_score())
         .with_resource(
-            "genome", a_reference_genome().with_chromosome("1", "A" * 30))
-        .build_repo(path)
-    )
-    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
+            "genome", a_reference_genome().with_chromosome("1", "A" * 30)))
     for resource_id in ("pos_a", "pos_b"):
-        _downgrade_format_version(
-            path / resource_id / COVERAGE_STATISTICS_FILE)
-    cli_manage(["repo-manifest", "-R", str(path)])
+        _downgrade_format_version(path, resource_id)
+    _refresh_manifest(path)
     return path
 
 
@@ -187,9 +217,8 @@ def test_a_run_ends_with_one_warning_naming_how_many_predate_the_schema(
         cli_manage(["repo-repair", "--dry-run", "-R", str(path), "-j", "1"])
 
     summaries = [
-        record.getMessage() for record in caplog.records
-        if record.levelno == logging.WARNING
-        and "predate the current schema" in record.getMessage()
+        message for message in captured_warnings(caplog)
+        if "predate the current schema" in message
     ]
     assert len(summaries) == 1
     assert summaries[0].startswith("2 resource")
@@ -263,21 +292,18 @@ def test_a_forced_repair_rebuilds_the_file_and_reports_nothing(
 
 @pytest.fixture
 def fragment_missing_and_allele_current(
-    tmp_path_factory: pytest.TempPathFactory,
+    tmp_path: pathlib.Path,
 ) -> pathlib.Path:
     """A repaired GRR: a fragment score whose fragments file was never
     written -- the shape of a resource built before the statistic existed
     -- beside an allele score at the current version."""
-    path = tmp_path_factory.mktemp("schema_stale_missing_grr")
-    (
+    path = _repaired(
+        tmp_path,
         a_grr()
         .with_resource("frag", _a_fragment_score())
-        .with_resource("alle", _an_allele_score())
-        .build_repo(path)
-    )
-    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
+        .with_resource("alle", _an_allele_score()))
     (path / "frag" / FRAGMENT_STATISTICS_FILE).unlink()
-    cli_manage(["repo-manifest", "-R", str(path)])
+    _refresh_manifest(path)
     return path
 
 
@@ -313,7 +339,7 @@ def test_a_file_whose_version_is_not_a_number_is_reported_not_failed(
     data = json.loads(coverage_file.read_text())
     data["format_version"] = None
     coverage_file.write_text(json.dumps(data))
-    cli_manage(["repo-manifest", "-R", str(path)])
+    _refresh_manifest(path)
 
     with caplog.at_level(logging.INFO, logger="grr_manage"):
         cli_manage(["repo-repair", "--dry-run", "-R", str(path), "-j", "1"])
@@ -329,7 +355,7 @@ def test_a_resource_whose_hash_is_stale_is_only_reported_as_needing_update(
 ) -> None:
     path = position_score_at_v1
     (path / "pos" / "statistics" / "stats_hash").unlink()
-    cli_manage(["repo-manifest", "-R", str(path)])
+    _refresh_manifest(path)
 
     with caplog.at_level(logging.INFO, logger="grr_manage"), \
             pytest.raises(SystemExit) as excinfo:
