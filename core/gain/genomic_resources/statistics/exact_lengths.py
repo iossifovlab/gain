@@ -245,11 +245,10 @@ class ExactLengths(NamedTuple):
 #: A group that was scanned and holds nothing -- distinct from a group
 #: that was never scanned, which is ``None``.
 #:
-#: Its map is shared, so nothing may mutate it.  Nothing does: it is the
-#: identity a roll-up starts from, and :func:`merged_lengths` copies
-#: both sides through :meth:`LengthTally.restored` rather than folding
-#: into either.  Add a path that mutates a group in place and it must
-#: start from ``LengthTally()``, not from this.
+#: Its map is shared, so nothing may mutate it.  Nothing does: a
+#: roll-up accumulates in a fresh :class:`LengthTally` and only ever
+#: READS a record, this one included.  Add a path that mutates a group
+#: in place and it must start from ``LengthTally()``, not from this.
 NO_LENGTHS = ExactLengths({}, 0, 0, None, None)
 
 
@@ -307,7 +306,7 @@ class LengthTally:
         tally.max = lengths.max
         return tally
 
-    def merge(self, other: LengthTally) -> None:
+    def merge(self, other: LengthTally | ExactLengths) -> None:
         """Fold another group of the same kind into this one.
 
         The ONE statement of how two groups come together, so the
@@ -315,7 +314,8 @@ class LengthTally:
         length, ``total`` and ``sum`` add, and the extremes take the
         extreme.  No re-clamping -- both maps are already keyed on
         clamped lengths, while ``min``/``max`` are exact on both sides
-        and stay exact here.
+        and stay exact here.  The other side may be a stored record as
+        well as a tally: it is only read.
         """
         for length, count in other.lengths.items():
             self.lengths[length] = self.lengths.get(length, 0) + count
@@ -457,7 +457,7 @@ class LengthArrayTally:
 
 def _merged_extremes(
     left: LengthTally | LengthArrayTally,
-    right: LengthTally | LengthArrayTally,
+    right: LengthTally | LengthArrayTally | ExactLengths,
 ) -> tuple[int | None, int | None]:
     """The ``min`` and ``max`` of two groups taken together.
 
@@ -488,7 +488,7 @@ def merged_lengths(
     if left is None or right is None:
         return None
     tally = LengthTally.restored(left)
-    tally.merge(LengthTally.restored(right))
+    tally.merge(right)
     return tally.frozen()
 
 
@@ -507,39 +507,6 @@ def merged_tallies(
     return left
 
 
-def folded_groups(
-    groups: Iterable[LengthArrayTally | ExactLengths | None],
-) -> ExactLengths | None:
-    """:func:`folded_lengths` over whatever each region holds.
-
-    The same all-or-nothing rule, over the two forms a region's lengths
-    take: a scanned region holds its array tally and a region restored
-    from a statistics file holds the stored record.  Tallies add
-    elementwise in the array domain, into ONE counter block allocated
-    only if there is a tally to fold; records add per length in the map
-    domain; and the two halves meet once at the end.  So a scan's fold
-    costs the clamp per region rather than a dict fold per contig --
-    a fragment score can carry thousands of contigs with thousands of
-    distinct lengths each -- while a file's fold costs the keys
-    ``json.loads`` already parsed and builds no array at all
-    (gain#1565).
-    """
-    arrays: LengthArrayTally | None = None
-    records = LengthTally()
-    for group in groups:
-        if group is None:
-            return None
-        if isinstance(group, LengthArrayTally):
-            if arrays is None:
-                arrays = LengthArrayTally()
-            arrays.merge(group)
-        else:
-            records.merge(LengthTally.restored(group))
-    if arrays is not None:
-        records.merge(LengthTally.restored(arrays.frozen()))
-    return records.frozen()
-
-
 def folded_lengths(
     records: Iterable[ExactLengths | None],
 ) -> ExactLengths | None:
@@ -550,13 +517,16 @@ def folded_lengths(
     roll-up can never silently understate.  A file that stored the
     counts without the records (format version 1 of ``coverage.json``
     and ``fragments.json``) passes its count gate and fails this one.
+
+    Accumulated in one tally, so the fold costs each record's own keys
+    and nothing per record beyond them.
     """
-    result: ExactLengths | None = NO_LENGTHS
+    total = LengthTally()
     for lengths in records:
         if lengths is None:
             return None
-        result = merged_lengths(result, lengths)
-    return result
+        total.merge(lengths)
+    return total.frozen()
 
 
 def stored_lengths(

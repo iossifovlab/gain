@@ -142,10 +142,9 @@ class RegionCoverage:
         # except the first -- tallied exactly.  The first and the open
         # run are excluded because either may still stitch across a
         # merge boundary; their lengths are only final at read time.
-        # Built by the first interior run rather than here: the tally
-        # is a clamp-sized counter block, and a region that closes
-        # fewer than two runs -- every region restored from a file,
-        # which closes none -- has nothing to put in it (gain#1565).
+        # Built by the first interior run rather than here: a region
+        # that closes fewer than two runs -- every region restored from
+        # a file, which closes none -- has nothing to put in it.
         self._interior: LengthArrayTally | None = None
         # A deserialized region's segment data, frozen as read; it
         # carries no scan state.

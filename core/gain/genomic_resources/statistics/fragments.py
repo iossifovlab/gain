@@ -50,7 +50,7 @@ from gain.genomic_resources.statistics.exact_lengths import (
     ExactLengths,
     LengthArrayTally,
     LengthStatisticsRow,
-    folded_groups,
+    folded_lengths,
     stored_lengths,
     write_length_chart,
 )
@@ -85,18 +85,16 @@ class RegionFragments:
         self.start = start
         self.end = end
         self._fragments = 0
-        # The region's lengths, in whichever form it holds them.  A
-        # scanned region holds the array tally it accumulates into,
-        # built here.  A region restored through :meth:`frozen` -- the
-        # one caller that clears ``accumulates`` -- holds the stored
-        # record as read: never a tally, which at a clamp-sized counter
-        # block per contig would cost a draft assembly gigabytes just
-        # to render an info page (gain#1565).  ``None`` is a restored
-        # region whose file stored the count without the record (format
-        # version 1): the count stays exact while the lengths read as
-        # unknown.  Held as one value rather than a tally beside a
-        # flag, so the forms cannot disagree and accumulating into a
-        # frozen region is an assertion rather than silent work.
+        # The region's lengths, in whichever form it holds them: the
+        # array tally a scanned region accumulates into, built here; the
+        # stored record a region restored through :meth:`frozen` -- the
+        # one caller that clears ``accumulates`` -- holds as read; or
+        # ``None`` for a restored region whose file stored the count
+        # without the record (format version 1), where the count stays
+        # exact while the lengths read as unknown.  Held as one value
+        # rather than a tally beside a flag, so the forms cannot
+        # disagree and accumulating into a frozen region is an
+        # assertion rather than silent work.
         self._lengths: LengthArrayTally | ExactLengths | None = \
             LengthArrayTally() if accumulates else None
 
@@ -156,16 +154,6 @@ class RegionFragments:
     def fragments(self) -> int:
         """How many rows this region counted."""
         return self._fragments
-
-    @property
-    def held_lengths(self) -> LengthArrayTally | ExactLengths | None:
-        """The region's lengths as it holds them: the scan's tally, the
-        stored record, or ``None`` if unknown.
-
-        For the statistic's global fold, which folds each form in its
-        own domain; a region's own record is :meth:`fragment_lengths`.
-        """
-        return self._lengths
 
     def fragment_lengths(self) -> ExactLengths | None:
         """The region's fragment lengths as a record, ``None`` if unknown."""
@@ -228,25 +216,31 @@ class FragmentStatistics(RegionFoldedStatistic[RegionFragments]):
         }
 
     def fragment_lengths_global(self) -> ExactLengths | None:
-        """The fold of every chromosome's lengths -- :func:`folded_groups`,
+        """The fold of every chromosome's lengths -- :func:`folded_lengths`,
         so the all-or-nothing rule is the coverage twin's."""
-        return folded_groups(
-            region.held_lengths for region in self._regions.values())
+        return folded_lengths(
+            region.fragment_lengths() for region in self._regions.values())
 
     def serialize(self) -> str:
+        # Each region's lengths are read ONCE, and both the
+        # per-chromosome entries and the global roll-up come off that.
         # The global record is written only when EVERY chromosome has
         # one, for the reason ``fragment_lengths_global`` gives.
+        records = {
+            chrom: region.fragment_lengths()
+            for chrom, region in self._regions.items()
+        }
         chromosomes: dict[str, dict[str, Any]] = {}
         for chrom, region in self._regions.items():
             entry: dict[str, Any] = {"fragment_count": region.fragments}
-            lengths = region.fragment_lengths()
+            lengths = records[chrom]
             if lengths is not None:
                 entry["fragment_lengths"] = lengths.stored()
             chromosomes[chrom] = entry
         global_entry: dict[str, Any] = {
             "fragment_count": self.fragments_global(),
         }
-        global_lengths = self.fragment_lengths_global()
+        global_lengths = folded_lengths(records.values())
         if global_lengths is not None:
             global_entry["fragment_lengths"] = global_lengths.stored()
         return json.dumps({

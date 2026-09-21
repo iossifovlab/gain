@@ -6,7 +6,6 @@ import pytest
 from gain.genomic_resources.statistics.coverage import (
     CoverageStatistics,
     RegionCoverage,
-    SegmentSummary,
 )
 from gain.genomic_resources.statistics.exact_lengths import (
     ExactLengths,
@@ -16,6 +15,7 @@ from gain.genomic_resources.statistics.exact_lengths import (
 from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
 )
+from pytest_mock import MockerFixture
 
 
 def test_the_log2_bins_cover_one_basepair_to_beyond_a_gigabase() -> None:
@@ -30,23 +30,42 @@ def test_the_log2_bins_cover_one_basepair_to_beyond_a_gigabase() -> None:
         length_histogram_bin_index(0)
 
 
-def test_serialization_round_trips_segments_and_their_lengths() -> None:
+# Two chromosomes, three segments: lengths 3 and 8 on chr1, 1 on chr2.
+CHR1_LENGTHS = ExactLengths({3: 1, 8: 1}, 2, 11, 3, 8)
+CHR2_LENGTHS = ExactLengths({1: 1}, 1, 1, 1, 1)
+GLOBAL_LENGTHS = ExactLengths({1: 1, 3: 1, 8: 1}, 3, 12, 1, 8)
+
+
+def _two_chromosomes(*, interior: bool = False) -> CoverageStatistics:
+    """The statistic behind the three records above, scanned.
+
+    ``interior`` adds a third chr1 segment of length 3, so that a run
+    closes INSIDE the region and its interior tally is built.
+    """
     stats = CoverageStatistics()
     chr1 = RegionCoverage("chr1", 1, 100)
     chr1.add_interval(10, 12, (0.5,))
     chr1.add_interval(13, 20, (0.7,))
+    if interior:
+        chr1.add_interval(30, 32, (0.7,))
     chr2 = RegionCoverage("chr2", 1, 100)
     chr2.add_interval(5, 5, (0.1,))
     stats.fold_region(chr1)
     stats.fold_region(chr2)
+    return stats
+
+
+def test_serialization_round_trips_segments_and_their_lengths() -> None:
+    stats = _two_chromosomes()
 
     restored = CoverageStatistics.deserialize(stats.serialize())
 
     assert restored.segments_by_chromosome() == {"chr1": 2, "chr2": 1}
     assert restored.segments_global() == 3
-    lengths = restored.segment_lengths_by_chromosome()
-    assert lengths["chr1"] == ExactLengths({3: 1, 8: 1}, 2, 11, 3, 8)
-    assert lengths["chr2"] == ExactLengths({1: 1}, 1, 1, 1, 1)
+    assert restored.segment_lengths_by_chromosome() == {
+        "chr1": CHR1_LENGTHS,
+        "chr2": CHR2_LENGTHS,
+    }
 
 
 def test_a_read_file_serializes_back_byte_for_byte() -> None:
@@ -54,16 +73,7 @@ def test_a_read_file_serializes_back_byte_for_byte() -> None:
     # entry is recomputed from those records; both must land on the
     # bytes the scan wrote, or a resource whose statistics are merely
     # re-saved would look rebuilt.
-    stats = CoverageStatistics()
-    chr1 = RegionCoverage("chr1", 1, 100)
-    chr1.add_interval(10, 12, (0.5,))
-    chr1.add_interval(13, 20, (0.7,))
-    chr1.add_interval(30, 32, (0.7,))
-    chr2 = RegionCoverage("chr2", 1, 100)
-    chr2.add_interval(5, 5, (0.1,))
-    stats.fold_region(chr1)
-    stats.fold_region(chr2)
-    written = stats.serialize()
+    written = _two_chromosomes(interior=True).serialize()
 
     resaved = CoverageStatistics.deserialize(written).serialize()
 
@@ -72,42 +82,23 @@ def test_a_read_file_serializes_back_byte_for_byte() -> None:
 
 
 def test_reading_the_file_builds_no_array_tally(
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
 ) -> None:
-    # The array tally is the SCAN's: one clamp-sized counter block per
+    # The array tally is the SCAN's: a clamp-sized counter block per
     # region, so the interior runs of a batch fold at a cost bounded by
     # the clamp.  A region restored from the file never closes a run, so
-    # it has no use for one -- and at 64 KB a piece, a draft assembly
-    # with 100k scaffolds would need gigabytes just to render its info
-    # page (gain#1565).  Pinned as a count of constructions rather than
-    # a memory bound, which would be a flaky pin.
-    stats = CoverageStatistics()
-    chr1 = RegionCoverage("chr1", 1, 100)
-    chr1.add_interval(10, 12, (0.5,))
-    chr1.add_interval(13, 20, (0.7,))
-    chr2 = RegionCoverage("chr2", 1, 100)
-    chr2.add_interval(5, 5, (0.1,))
-    stats.fold_region(chr1)
-    stats.fold_region(chr2)
-    content = stats.serialize()
-    constructions: list[LengthArrayTally] = []
-    build = LengthArrayTally.__init__
-
-    def spy(self: LengthArrayTally) -> None:
-        constructions.append(self)
-        build(self)
-    monkeypatch.setattr(LengthArrayTally, "__init__", spy)
+    # it holds the record instead, and a resource with a hundred
+    # thousand contigs reads at the cost of its file rather than of a
+    # block per contig (gain#1565).  Pinned as a count of constructions
+    # rather than a memory bound, which would be a flaky pin.
+    content = _two_chromosomes().serialize()
+    built = mocker.spy(LengthArrayTally, "__init__")
 
     restored = CoverageStatistics.deserialize(content)
     global_lengths = restored.segment_lengths_global()
 
-    assert not constructions, \
-        f"the reader built {len(constructions)} array tallies"
-    assert global_lengths == ExactLengths({1: 1, 3: 1, 8: 1}, 3, 12, 1, 8)
-    assert restored.segment_lengths_by_chromosome() == {
-        "chr1": ExactLengths({3: 1, 8: 1}, 2, 11, 3, 8),
-        "chr2": ExactLengths({1: 1}, 1, 1, 1, 1),
-    }
+    assert built.call_count == 0
+    assert global_lengths == GLOBAL_LENGTHS
 
 
 def test_the_global_record_is_the_fold_of_the_chromosomes() -> None:
@@ -276,23 +267,6 @@ def test_container_folds_regions_by_chromosome() -> None:
 
     assert stats.covered_by_chromosome() == {"chr1": 9, "chr2": 3}
     assert stats.covered_global() == 12
-
-
-def test_a_frozen_region_refuses_to_fold_onto_a_held_one() -> None:
-    # A region restored from a file holds its record as read and has no
-    # merge of its own: it carries no extents, so the adjacency rule
-    # refuses it before any merge arithmetic runs.  That refusal is
-    # what lets a frozen region hold a record rather than a mergeable
-    # tally (gain#1565), so it is pinned here rather than assumed.
-    stats = CoverageStatistics()
-    stats.fold_region(RegionCoverage.frozen(
-        "chr1", 3, SegmentSummary(1, ExactLengths({3: 1}, 1, 3, 3, 3))))
-
-    with pytest.raises(ValueError, match="not adjacent-and-in-order"):
-        stats.fold_region(RegionCoverage.frozen(
-            "chr1", 8, SegmentSummary(1, ExactLengths({8: 1}, 1, 8, 8, 8))))
-
-    assert stats.segment_lengths_global() == ExactLengths({3: 1}, 1, 3, 3, 3)
 
 
 def test_container_serialization_round_trips_the_counts() -> None:

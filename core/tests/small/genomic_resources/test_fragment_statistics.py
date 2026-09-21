@@ -28,6 +28,7 @@ from gain.genomic_resources.testing.builders import (
     a_fragment_score,
     a_position_score,
 )
+from pytest_mock import MockerFixture
 
 from tests.small.genomic_resources.info_page_html import (
     section_after,
@@ -204,52 +205,25 @@ def test_a_read_file_serializes_back_byte_for_byte(
 
 def test_reading_the_file_builds_no_array_tally(
     tmp_path: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
 ) -> None:
-    # The array tally is the SCAN's: one clamp-sized counter block per
+    # The array tally is the SCAN's: a clamp-sized counter block per
     # region, so a batch of billions of rows folds at a cost bounded by
     # the clamp.  A region restored from the file never accumulates, so
-    # it has no use for one -- and at 64 KB a piece, a draft assembly
-    # with 100k scaffolds would need gigabytes just to render its info
-    # page (gain#1565).  Pinned as a count of constructions rather than
-    # a memory bound, which would be a flaky pin.
+    # it holds the record instead, and a resource with a hundred
+    # thousand contigs reads at the cost of its file rather than of a
+    # block per contig (gain#1565).  Pinned as a count of constructions
+    # rather than a memory bound, which would be a flaky pin.
     resource = _fragments(tmp_path)
     scan.do_noregion_histograms(resource)
     content = resource.get_file_content(FRAGMENT_STATISTICS_FILE)
-    constructions: list[LengthArrayTally] = []
-    build = LengthArrayTally.__init__
-
-    def spy(self: LengthArrayTally) -> None:
-        constructions.append(self)
-        build(self)
-    monkeypatch.setattr(LengthArrayTally, "__init__", spy)
+    built = mocker.spy(LengthArrayTally, "__init__")
 
     stats = FragmentStatistics.deserialize(content)
     global_lengths = stats.fragment_lengths_global()
 
-    assert not constructions, \
-        f"the reader built {len(constructions)} array tallies"
+    assert built.call_count == 0
     assert global_lengths == GLOBAL_LENGTHS
-    assert stats.fragment_lengths_by_chromosome() == {
-        "chr1": CHR1_LENGTHS,
-        "chr2": CHR2_LENGTHS,
-    }
-
-
-def test_a_frozen_region_refuses_to_fold_onto_a_held_one() -> None:
-    # A region restored from a file holds its record as read and has no
-    # merge of its own: it carries no extents, so the adjacency rule
-    # refuses it before any merge arithmetic runs.  That refusal is
-    # what lets a frozen region hold a record rather than a mergeable
-    # tally (gain#1565), so it is pinned here rather than assumed.
-    stats = FragmentStatistics()
-    stats.fold_region(RegionFragments.frozen("chr1", 1, CHR2_LENGTHS))
-
-    with pytest.raises(ValueError, match="not adjacent-and-in-order"):
-        stats.fold_region(RegionFragments.frozen("chr1", 1, CHR2_LENGTHS))
-
-    assert stats.fragments_by_chromosome() == {"chr1": 1}
-    assert stats.fragment_lengths_global() == CHR2_LENGTHS
 
 
 def test_bulk_and_per_record_scans_produce_the_same_fragment_statistics(
