@@ -580,6 +580,31 @@ def test_join_gene_models(
     assert len(combined.transcript_models) == 3
 
 
+def test_joined_gene_models_are_loaded_and_survive_load(
+    fixture_dirname: Callable,
+    t4c8_gene_models: GeneModels,
+) -> None:
+    """A joined model is loaded, so ``load()`` on it changes nothing.
+
+    ``load()`` re-parses the resource the model wraps -- the first
+    input's -- so on a joined model it would silently replace the
+    merged set with that one source's transcripts. Being loaded is
+    what makes ``load()`` the no-op it is on any loaded model.
+    """
+    filename = fixture_dirname("gene_models/example_gencode.txt")
+    example_gencode = build_gene_models_from_file(filename, "gtf").load()
+    t4c8_gene_models.load()
+    combined = GeneModels.join_gene_models(example_gencode, t4c8_gene_models)
+    assert combined.is_loaded()
+
+    combined.load()
+
+    assert len(combined.transcript_models) == 3
+    assert combined.gene_names() == ["C2CD4C", "t4", "c8"]
+    assert [tm.gene for tm in combined.gene_models_by_location(
+        "chr1", 1, 200)] == ["t4", "c8"]
+
+
 def test_is_loaded(fixture_dirname: Callable) -> None:
     filename = fixture_dirname("gene_models/example_gencode.txt")
     gene_model = build_gene_models_from_file(filename, "gtf")

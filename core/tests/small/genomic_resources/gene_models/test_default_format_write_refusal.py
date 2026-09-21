@@ -180,7 +180,7 @@ def test_the_refusal_creates_no_output_file(
         save_as_default_gene_models(
             gene_models, str(tmp_path / ASKED_FOR), gzipped=gzipped)
 
-    assert list(tmp_path.iterdir()) == []
+    assert not list(tmp_path.iterdir())
 
 
 @pytest.mark.parametrize("gzipped", [True, False])
@@ -256,20 +256,17 @@ def test_never_loaded_models_are_refused_naming_the_resource(
     )
 
 
-def test_populated_models_that_were_never_loaded_are_not_refused(
+def test_joined_models_serialize_through_both_writers(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Holding transcripts is what makes a model serializable, not ``load()``.
+    """A model built by ``join_gene_models`` is loaded, so neither refuses it.
 
-    ``join_gene_models`` builds a populated model that was never marked
-    loaded, as do fixture builders that fill ``transcript_models`` by
-    hand. The refusal is for the forgotten load -- unloaded *and*
-    empty -- so a populated model passes through either serializer,
-    whichever way it was populated.
+    Nobody called ``load()`` on the joined object itself; it is loaded
+    because it was built from loaded inputs, and the serializers ask
+    only that.
     """
     loaded = models_damaged_by(leave_as_parsed)
     joined = GeneModels.join_gene_models(loaded, loaded)
-    assert not joined.is_loaded()
 
     to_default_format(joined, tmp_path)
     gtf = gene_models_to_gtf(joined)

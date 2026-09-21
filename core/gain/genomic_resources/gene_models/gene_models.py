@@ -358,6 +358,7 @@ class GeneModels(
             gm.transcript_models.update(i.transcript_models)
 
         gm._update_indexes()
+        gm._is_loaded = True
 
         return gm
 
