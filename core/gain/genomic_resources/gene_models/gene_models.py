@@ -71,10 +71,9 @@ class GeneModels(
         >>> transcripts = gene_models.gene_models_by_location("chr17", 7676592)
 
     Note:
-        The gene models must be loaded before queries can be performed:
-        by ``load()``, or by being built loaded through
-        ``join_gene_models`` / ``from_transcript_models``. The class is
-        thread-safe for concurrent access.
+        The gene models must be loaded (see ``is_loaded()``) before
+        queries can be performed. The class is thread-safe for concurrent
+        access.
     """
 
     def __init__(self, resource: GenomicResource):
@@ -283,11 +282,22 @@ class GeneModels(
             if self._is_loaded:
                 return self
             self._reset()
-            transcript_models = load_transcript_models(self.resource)
-            self.transcript_models = self._chrom_mapping(transcript_models)
-            self._update_indexes()
-            self._is_loaded = True
+            self._install(
+                self._chrom_mapping(load_transcript_models(self.resource)))
             return self
+
+    def _install(
+        self, transcript_models: dict[str, TranscriptModel],
+    ) -> None:
+        """Make these the model's transcripts, indexed and loaded.
+
+        The one transition to loaded, as ``_reset()`` is the one
+        transition back: transcripts, indexes and the loaded flag move
+        together or not at all.
+        """
+        self.transcript_models = transcript_models
+        self._update_indexes()
+        self._is_loaded = True
 
     def _chrom_mapping(
         self, transcript_models: dict[str, TranscriptModel],
@@ -313,11 +323,10 @@ class GeneModels(
     def is_loaded(self) -> bool:
         """Check whether this object holds usable gene models.
 
-        A model is loaded once ``load()`` has parsed its resource, or
-        when it was built from transcripts that were already loaded --
-        by ``join_gene_models`` or ``from_transcript_models``. Every
-        consumer that needs models to query (the effect annotators, the
-        serializers) asks this and nothing else.
+        True once the model holds indexed transcripts, however it got
+        them: ``load()`` parsed its resource, or it was built loaded by
+        ``join_gene_models`` or ``from_transcript_models``. ``load()``
+        on a loaded model is a no-op.
 
         Returns:
             bool: True if the models are loaded and indexed, False if
@@ -335,8 +344,7 @@ class GeneModels(
         """Merge loaded gene models into a single, loaded GeneModels object.
 
         The result holds every input's transcripts, answers to the first
-        input's resource, and is loaded: ``load()`` on it is a no-op and
-        the effect annotators and serializers accept it.
+        input's resource, and is loaded (see ``is_loaded()``).
 
         Args:
             *gene_models (GeneModels): Two or more loaded GeneModels
@@ -380,30 +388,23 @@ class GeneModels(
         cls, resource: GenomicResource,
         transcript_models: dict[str, TranscriptModel],
     ) -> GeneModels:
-        """Build a loaded gene models object holding exactly these transcripts.
+        """Build a loaded, indexed gene models object over ``resource``.
 
-        The result is indexed and loaded as if ``load()`` had parsed
-        ``transcript_models`` out of ``resource``, so ``load()`` on it
-        is a no-op and every consumer that asks ``is_loaded()`` accepts
-        it. The transcripts are kept in the order given; the serializers
-        write them in that order.
+        The transcripts are taken as given, in the order given (the
+        serializers write them in that order); the resource's chrom
+        mapping is not applied.
 
         Args:
             resource (GenomicResource): The gene models resource the
                 result answers to (``resource_id``, reference genome).
-                Its chrom mapping is not applied: the transcripts are
-                taken as given.
             transcript_models (dict[str, TranscriptModel]): Transcript
-                ID to transcript model, in the order they should be
-                kept.
+                ID to transcript model.
 
         Returns:
             GeneModels: A loaded model over ``resource``.
         """
         gm = cls(resource)
-        gm.transcript_models = dict(transcript_models)
-        gm._update_indexes()
-        gm._is_loaded = True
+        gm._install(dict(transcript_models))
         return gm
 
 

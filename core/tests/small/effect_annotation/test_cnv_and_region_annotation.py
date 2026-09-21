@@ -106,10 +106,10 @@ def test_region_annotation_refuses_a_never_loaded_model(
     t4c8_genome: ReferenceGenome,
     tmp_path: pathlib.Path,
 ) -> None:
-    """The annotator asks ``is_loaded()``, as the serializers do.
+    """The annotator's own guard: a model nobody loaded is refused.
 
-    A model nobody loaded is refused here as it is there, so "usable
-    gene models" means one thing across gain.
+    Pinned beside the joined-model case so that the two together fence
+    what the annotator asks -- ``is_loaded()``, and nothing else.
     """
     never_loaded = build_gene_models_from_resource(
         a_gene_models().build_resource(tmp_path))

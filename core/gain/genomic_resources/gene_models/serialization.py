@@ -342,14 +342,11 @@ def transcript_to_gtf(transcript: TranscriptModel) -> list[GTFRecord]:
 def _refuse_never_loaded_or_warn_empty(gene_models: GeneModels) -> None:
     """Refuse a model nobody loaded; say so when a loaded one is empty.
 
-    Being loaded is what makes a model serializable -- the same thing
-    the effect annotators ask -- and a model is loaded whether
-    ``load()`` parsed it, ``join_gene_models`` merged it or
-    ``from_transcript_models`` was handed its transcripts. A model that
-    is not is the forgotten ``load()``: refused, naming the resource,
-    because serializing it yields output whose only symptom on read is
-    "can't infer gene models file format", with the cause nowhere in
-    it.
+    ``is_loaded()`` is what makes a model serializable, the same thing
+    the effect annotators ask. A model that is not is the forgotten
+    ``load()``: refused, naming the resource, because serializing it
+    yields output whose only symptom on read is "can't infer gene
+    models file format", with the cause nowhere in it.
 
     A loaded model that is empty is a real outcome -- a source with no
     usable records, a chrom mapping that removes every transcript --

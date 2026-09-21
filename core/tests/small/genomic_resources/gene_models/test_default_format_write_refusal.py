@@ -268,28 +268,41 @@ def test_the_refusal_asks_only_whether_the_model_is_loaded(
     asks ``is_loaded()`` and nothing else, so that "usable" means the
     same thing here as it does to the effect annotators.
     """
-    loaded = models_damaged_by(leave_as_parsed)
     gene_models = models_never_loaded()
-    gene_models.transcript_models = dict(loaded.transcript_models)
+    gene_models.transcript_models = \
+        models_damaged_by(leave_as_parsed).transcript_models
 
     with pytest.raises(ValueError, match="never loaded"):
         serialize(gene_models, tmp_path)
 
 
-def test_joined_models_serialize_through_both_writers(
+def joined(loaded: GeneModels) -> GeneModels:
+    return GeneModels.join_gene_models(loaded, loaded)
+
+
+def from_transcripts(loaded: GeneModels) -> GeneModels:
+    return GeneModels.from_transcript_models(
+        loaded.resource, loaded.transcript_models)
+
+
+#: The two ways to a model nobody called ``load()`` on that is loaded
+#: all the same, because it was built out of loaded transcripts.
+BUILT_LOADED = [
+    pytest.param(joined, id="join_gene_models"),
+    pytest.param(from_transcripts, id="from_transcript_models"),
+]
+
+
+@pytest.mark.parametrize("built_from", BUILT_LOADED)
+def test_models_built_loaded_serialize_through_both_writers(
+    built_from: Callable[[GeneModels], GeneModels],
     tmp_path: pathlib.Path,
 ) -> None:
-    """A model built by ``join_gene_models`` is loaded, so neither refuses it.
+    """A model built loaded is loaded, so neither writer refuses it."""
+    gene_models = built_from(models_damaged_by(leave_as_parsed))
 
-    Nobody called ``load()`` on the joined object itself; it is loaded
-    because it was built from loaded inputs, and the serializers ask
-    only that.
-    """
-    loaded = models_damaged_by(leave_as_parsed)
-    joined = GeneModels.join_gene_models(loaded, loaded)
-
-    to_default_format(joined, tmp_path)
-    gtf = gene_models_to_gtf(joined)
+    to_default_format(gene_models, tmp_path)
+    gtf = gene_models_to_gtf(gene_models)
 
     assert (tmp_path / ASKED_FOR).read_text().count("\n") == 2
     assert "\ttranscript\t" in gtf.getvalue()

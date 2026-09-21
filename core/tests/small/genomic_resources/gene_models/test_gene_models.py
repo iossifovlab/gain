@@ -18,7 +18,6 @@ from gain.genomic_resources.gene_models.parsers import (
     infer_gene_model_parser,
 )
 from gain.genomic_resources.gene_models.serialization import (
-    gene_models_to_gtf,
     save_as_default_gene_models,
 )
 from gain.genomic_resources.gene_models.transcript_models import (
@@ -37,6 +36,13 @@ from gain.testing.t4c8_import import t4c8_genes
 @pytest.fixture
 def t4c8_gene_models(tmp_path: pathlib.Path) -> GeneModels:
     return t4c8_genes(tmp_path / "gene_models")
+
+
+@pytest.fixture
+def example_gencode(fixture_dirname: Callable) -> GeneModels:
+    """The one-transcript GENCODE fixture, loaded."""
+    filename = fixture_dirname("gene_models/example_gencode.txt")
+    return build_gene_models_from_file(filename, "gtf").load()
 
 
 pytestmark = pytest.mark.usefixtures("clean_gene_models_cache")
@@ -584,7 +590,7 @@ def test_join_gene_models(
 
 
 def test_joined_gene_models_are_loaded_and_survive_load(
-    fixture_dirname: Callable,
+    example_gencode: GeneModels,
     t4c8_gene_models: GeneModels,
 ) -> None:
     """A joined model is loaded, so ``load()`` on it changes nothing.
@@ -594,9 +600,6 @@ def test_joined_gene_models_are_loaded_and_survive_load(
     merged set with that one source's transcripts. Being loaded is
     what makes ``load()`` the no-op it is on any loaded model.
     """
-    filename = fixture_dirname("gene_models/example_gencode.txt")
-    example_gencode = build_gene_models_from_file(filename, "gtf").load()
-    t4c8_gene_models.load()
     combined = GeneModels.join_gene_models(example_gencode, t4c8_gene_models)
     assert combined.is_loaded()
     assert len(combined.transcript_models) == 3
@@ -611,7 +614,7 @@ def test_joined_gene_models_are_loaded_and_survive_load(
 
 @pytest.mark.parametrize("forgotten_first", [True, False])
 def test_join_gene_models_refuses_a_never_loaded_input(
-    fixture_dirname: Callable,
+    example_gencode: GeneModels,
     tmp_path: pathlib.Path,
     *,
     forgotten_first: bool,
@@ -624,8 +627,6 @@ def test_join_gene_models_refuses_a_never_loaded_input(
     that really holds nothing. Both positions, so the refusal is
     proved for the first input as much as for the rest.
     """
-    filename = fixture_dirname("gene_models/example_gencode.txt")
-    example_gencode = build_gene_models_from_file(filename, "gtf").load()
     grr = a_grr().with_resource(
         "forgotten/genes", a_gene_models()).build_repo(tmp_path)
     forgotten = build_gene_models_from_resource(
@@ -643,9 +644,8 @@ def test_join_gene_models_refuses_a_never_loaded_input(
 
 
 def test_from_transcript_models_is_loaded_and_indexed(
-    fixture_dirname: Callable,
+    example_gencode: GeneModels,
     t4c8_gene_models: GeneModels,
-    tmp_path: pathlib.Path,
 ) -> None:
     """Transcripts handed in directly make a queryable, loaded model.
 
@@ -653,9 +653,6 @@ def test_from_transcript_models_is_loaded_and_indexed(
     emits records in that order, so what a caller assembled is what
     gets written.
     """
-    filename = fixture_dirname("gene_models/example_gencode.txt")
-    example_gencode = build_gene_models_from_file(filename, "gtf").load()
-    t4c8_gene_models.load()
     transcripts = {
         **t4c8_gene_models.transcript_models,
         **example_gencode.transcript_models,
@@ -671,10 +668,6 @@ def test_from_transcript_models_is_loaded_and_indexed(
     assert c8.gene == "c8"
     assert [tm.gene for tm in built.gene_models_by_location(
         "chr1", 1, 200)] == ["t4", "c8"]
-    save_as_default_gene_models(
-        built, str(tmp_path / "built.txt"), gzipped=False)
-    assert (tmp_path / "built.txt").read_text().count("\n") == 4
-    assert gene_models_to_gtf(built).getvalue().count("\ttranscript\t") == 3
 
 
 def test_is_loaded(fixture_dirname: Callable) -> None:
