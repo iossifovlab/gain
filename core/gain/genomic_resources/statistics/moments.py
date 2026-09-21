@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 import numpy as np
 
 from gain import logging
 
 logger = logging.getLogger(__name__)
+
+#: The keys the accumulators are stored under, beside a histogram's
+#: ``min_value`` / ``max_value``.  Owned here with :meth:`Moments.stored`
+#: and :meth:`Moments.from_stored`, so the file format of the moments has
+#: one home.
+MOMENT_KEYS: Final = ("count", "sum", "sum_of_squares")
 
 
 @dataclass(slots=True)
@@ -26,8 +32,7 @@ class Moments:
 
     Plain doubles, no compensated summation: over a whole chromosome of
     a real score the cancellation in ``sum_of_squares / count - mean**2``
-    costs about one digit of the sd, and the per-value and vectorized
-    folds agree to rounding.
+    costs about one digit of the sd.
 
     A stream nobody has folded into is a ``Moments`` at zero; a histogram
     whose stored file predates these keys has NO moments, which its
@@ -38,18 +43,36 @@ class Moments:
     sum: float = 0.0
     sum_of_squares: float = 0.0
 
+    def add(self, value: float, count: int) -> None:
+        """Fold one value, ``count`` times.
+
+        The per-value twin of :meth:`add_batch`: the products are
+        ``value * count`` and ``value * value * count``, in that order, so
+        each term rounds exactly as the batch arm rounds it.
+        """
+        self.count += count
+        self.sum += value * count
+        self.sum_of_squares += value * value * count
+
     def add_batch(self, values: np.ndarray, weights: np.ndarray) -> None:
         """Fold ``(value, weight)`` pairs, vectorized.
 
         ``values`` are float64 and already free of nan.  The per-term
-        products are ``value * weight`` and ``value * value * weight``,
-        in that order, so a per-value fold that spells them the same way
-        rounds each term identically and differs only by the order of the
-        additions.
+        products are the ones :meth:`add` folds -- ``value * weight``,
+        then ``value * value * weight`` -- so the two arms round each
+        term identically and differ only by the order of the additions:
+        pairwise here (numpy's ``sum``), sequentially there.  They agree
+        to rounding, not to the bit.
+
+        One temporary, reused in place: a fresh 800 KB array per product
+        of a 100k batch costs more than the reductions themselves.
         """
+        products = values * weights
+        self.sum += float(products.sum())
+        np.multiply(values, values, out=products)
+        np.multiply(products, weights, out=products)
+        self.sum_of_squares += float(products.sum())
         self.count += int(weights.sum())
-        self.sum += float((values * weights).sum())
-        self.sum_of_squares += float((values * values * weights).sum())
 
     def merge(self, other: Moments) -> None:
         """Add ``other``'s accumulators to this one's."""
@@ -73,9 +96,12 @@ class Moments:
         rounds below zero -- possible only when the values barely vary
         around a large mean -- is clamped to zero, with a warning.
         """
-        if not self.count:
+        mean = self.mean
+        if mean is None:
             return None
-        mean = self.sum / self.count
+        return self._std(mean)
+
+    def _std(self, mean: float) -> float:
         variance = self.sum_of_squares / self.count - mean * mean
         if variance < 0:
             logger.warning(
@@ -86,26 +112,42 @@ class Moments:
             variance = 0.0
         return math.sqrt(variance)
 
-    def to_dict(self) -> dict[str, Any]:
-        """The three accumulators under their stored keys.
+    def summary(self) -> str | None:
+        """``n / mean / sd`` for a summary page; ``None`` when nothing folded.
 
-        As Python numbers whatever was folded: a numpy weight handed to
-        ``add_value`` would otherwise reach ``json.dumps`` as an int64.
+        ``n`` with thousands separators, the other two at the three
+        significant digits a histogram's ``values_domain`` uses.
         """
+        mean = self.mean
+        if mean is None:
+            return None
+        return f"{self.count:,} / {mean:0.3g} / {self._std(mean):0.3g}"
+
+    @staticmethod
+    def stored(moments: Moments | None) -> dict[str, Any]:
+        """The accumulators under :data:`MOMENT_KEYS`, for a histogram file.
+
+        As Python numbers whatever was folded (a numpy weight would
+        otherwise reach ``json.dumps`` as an int64), and every key
+        ``None`` for unknown moments -- which :meth:`from_stored` reads
+        back as exactly that.
+        """
+        if moments is None:
+            return dict.fromkeys(MOMENT_KEYS)
         return {
-            "count": int(self.count),
-            "sum": float(self.sum),
-            "sum_of_squares": float(self.sum_of_squares),
+            "count": int(moments.count),
+            "sum": float(moments.sum),
+            "sum_of_squares": float(moments.sum_of_squares),
         }
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> Moments | None:
-        """Read the accumulators back; ``None`` when the file has none.
+    def from_stored(data: dict[str, Any]) -> Moments | None:
+        """Read the accumulators out of a histogram file's mapping.
 
-        A file written before the accumulators existed has no ``count``
-        key, and nothing rebuilds it on its own (the statistics hash is
-        unchanged): its moments stay unknown until the resource's
-        statistics are next rebuilt.
+        ``None`` when the file has none: one written before the
+        accumulators existed has no ``count`` key, and nothing rebuilds
+        it on its own (the statistics hash is unchanged), so its moments
+        stay unknown until the resource's statistics are next rebuilt.
         """
         if data.get("count") is None:
             return None

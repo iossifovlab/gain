@@ -23,7 +23,7 @@ would instead create a ``genomic_resources`` <-> ``scores`` import cycle.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import quote
 
 from gain.genomic_resources.histogram import (
@@ -135,6 +135,12 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
     resource: GenomicResource
     config: dict[str, Any]
     score_definitions: dict[str, ScoreDefT]
+
+    #: The noun for what a histogram's ``n`` counts -- the weighting the
+    #: statistics scan gives each record of this family: base pairs for
+    #: a position score (``record_weight``), alleles, fragments, genes.
+    #: Every concrete family states its own; the info pages read it.
+    HISTOGRAM_COUNT_UNIT: ClassVar[str]
 
     def __init__(self, resource: GenomicResource) -> None:
         self.resource = resource

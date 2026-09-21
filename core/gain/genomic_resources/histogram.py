@@ -400,50 +400,40 @@ class NumberHistogram(Statistic):
 
         # Unknown on either side is unknown for the whole: a partial sum
         # would read as the sum of everything the bars count.
-        theirs = other._moments  # ruff: ignore[private-member-access]
+        theirs = other.moments
         if self._moments is None or theirs is None:
             self._moments = None
         else:
             self._moments.merge(theirs)
 
     @property
+    def moments(self) -> Moments | None:
+        """The count, sum and sum of squares folded beside the bars.
+
+        ``None`` for a histogram loaded from a file that predates them:
+        unknown, never empty.
+        """
+        return self._moments
+
+    @property
     def count(self) -> int | None:
         """How many weighted values were folded; ``None`` when unknown.
 
-        The same weighting as the bars -- base pairs for a position score,
-        alleles for an allele score, genes for a gene score -- so this is
-        ``bars.sum()`` plus both out-of-range counts.  Unknown for a
-        histogram loaded from a file that predates the accumulators.
+        The same weighting as the bars, in the unit the score names as
+        its ``HISTOGRAM_COUNT_UNIT`` -- so this is ``bars.sum()`` plus
+        both out-of-range counts.
         """
         return None if self._moments is None else self._moments.count
 
     @property
-    def sum(self) -> float | None:
-        """The weighted sum of the folded values; ``None`` when unknown."""
-        return None if self._moments is None else self._moments.sum
-
-    @property
-    def sum_of_squares(self) -> float | None:
-        """The weighted sum of the squared values; ``None`` when unknown."""
-        return None if self._moments is None \
-            else self._moments.sum_of_squares
-
-    @property
     def mean(self) -> float | None:
-        """The weighted mean of the folded values.
-
-        ``None`` when the accumulators are unknown or nothing was folded.
-        """
+        """The weighted mean; ``None`` when unknown or nothing was folded."""
         return None if self._moments is None else self._moments.mean
 
     @property
     def std(self) -> float | None:
-        """The POPULATION standard deviation of the folded values.
-
-        Divides by ``count``, not ``count - 1``: the histogram describes the
-        whole resource, not a sample drawn from it.  ``None`` exactly when
-        :attr:`mean` is.
-        """
+        """The POPULATION standard deviation; ``None`` exactly when
+        :attr:`mean` is.  See :attr:`Moments.std`."""
         return None if self._moments is None else self._moments.std
 
     def moments_summary(self) -> str | None:
@@ -453,11 +443,7 @@ class NumberHistogram(Statistic):
         ``None`` when they are unknown or nothing was folded, so the page
         can leave the cell empty rather than guess.
         """
-        mean = self.mean
-        std = self.std
-        if mean is None or std is None:
-            return None
-        return f"{self.count:,} / {mean:0.3g} / {std:0.3g}"
+        return None if self._moments is None else self._moments.summary()
 
     def values_domain(self) -> str:
         """The observed value range, rendered for the summary page.
@@ -507,18 +493,12 @@ class NumberHistogram(Statistic):
         self.min_value = min(value, self.min_value)
         self.max_value = max(value, self.max_value)
 
-        # Inline rather than a method on ``Moments``: this runs per value
-        # of every record, and the three updates alone cost this arm ~11%
-        # (1.78 -> 1.97 us/value over 100k values); a call would add to
-        # that.  Worn on this arm because it is the fallback -- the scan's
-        # hot path is :meth:`add_batch`, where the same fold is three
-        # numpy reductions per batch.  The products are ordered as that
-        # arm orders them, so the two round each term identically.
-        moments = self._moments
-        if moments is not None:
-            moments.count += count
-            moments.sum += value * count
-            moments.sum_of_squares += value * value * count
+        # Costs this arm ~10% (1.65 -> 1.82 us/value over 100k values),
+        # the same as the three updates inlined -- the call is not what
+        # is paid for.  Worn here because this arm is the fallback; the
+        # scan's hot path is :meth:`add_batch`.
+        if self._moments is not None:
+            self._moments.add(value, count)
 
         index = self.choose_bin_index(value)
         if index < 0:
@@ -543,11 +523,9 @@ class NumberHistogram(Statistic):
         nan-skip.  This is the hot path for the statistics scan, where a
         per-value Python call dominates the cost.
 
-        The one thing NOT bit-for-bit is the three accumulators behind
-        :attr:`count` / :attr:`mean` / :attr:`std`: ``count`` is, being
-        integer arithmetic, but the two sums are the same per-term products
-        added in a different order -- pairwise here, sequentially there --
-        and agree to rounding, not to the bit.
+        The one thing NOT bit-for-bit is the accumulators behind
+        :attr:`count` / :attr:`mean` / :attr:`std`: ``count`` is, and the
+        two sums agree to rounding -- see :meth:`Moments.add_batch`.
 
         The equivalence covers dtype as well as arithmetic: the ``float64``
         coercion below is what ``add_value`` reproduces by normalizing a
@@ -587,8 +565,6 @@ class NumberHistogram(Statistic):
 
         # Over EVERY finite value, out-of-range ones included, at its real
         # value -- as ``add_value`` folds it before it decides the bin.
-        # ``value * count`` and ``value * value * count``, per term, are
-        # what that arm rounds; only the order of the additions differs.
         if self._moments is not None:
             self._moments.add_batch(values, weights)
 
@@ -671,12 +647,7 @@ class NumberHistogram(Statistic):
             "min_value": float(self.min_value),
             "max_value": float(self.max_value),
             # The accumulators, never the mean or sd derived from them.
-            # ``null`` when unknown, which :meth:`from_dict` reads back as
-            # exactly that.
-            **(
-                self._moments.to_dict() if self._moments is not None
-                else dict.fromkeys(("count", "sum", "sum_of_squares"))
-            ),
+            **Moments.stored(self._moments),
         }
 
     def serialize(self) -> str:
@@ -759,7 +730,7 @@ class NumberHistogram(Statistic):
         hist.min_value = data.get("min_value", np.nan)
         hist.max_value = data.get("max_value", np.nan)
         hist.out_of_range_bins = data.get("out_of_range_bins", [0, 0])
-        hist._moments = Moments.from_dict(data)
+        hist._moments = Moments.from_stored(data)
 
         return hist
 
@@ -831,6 +802,10 @@ class NullHistogram(Statistic):
     def values_domain(self) -> str:
         """Report that there is no domain, in the other kinds' place."""
         return "NO DOMAIN"
+
+    def moments_summary(self) -> None:
+        """No moments, in the number histogram's place."""
+        return
 
     # pylint: disable=unused-argument
     def plot(self, _outfile: IO, _score_id: str) -> None:
@@ -1090,6 +1065,10 @@ class CategoricalHistogram(Statistic):
                 values["Other"] = other
 
         return values
+
+    def moments_summary(self) -> None:
+        """No moments: a categorical value has no mean."""
+        return
 
     def values_domain(self) -> str:
         """Render the displayed values, noting truncation when present."""

@@ -102,7 +102,7 @@ class PositionScore(GenomicScore):
         aggregation query, weighing each record by the bases it covers
     """
 
-    RECORD_WEIGHT_UNIT: ClassVar[str] = "base pairs"
+    HISTOGRAM_COUNT_UNIT: ClassVar[str] = "base pairs"
 
     # A region of positions reduces by ``mean``: each position's value counts
     # once per base pair it covers (see :meth:`record_weight`).

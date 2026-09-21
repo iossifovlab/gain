@@ -6,17 +6,25 @@ import pathlib
 from typing import Any
 
 import pytest
-from gain.genomic_resources.cli import cli_manage
+from gain.gene_scores.gene_scores import GeneScore
+from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
+    FragmentScore,
+    PositionScore,
+)
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
+from gain.genomic_resources.score_resource import ScoreResource
+from gain.genomic_resources.statistics.moments import MOMENT_KEYS
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
     a_gene_score,
     a_position_score,
     an_allele_score,
 )
+from gain.genomic_resources.testing.statistics import publish_statistics
 
 from tests.small.genomic_resources.info_page_html import (
     section_after,
@@ -25,13 +33,13 @@ from tests.small.genomic_resources.info_page_html import (
 
 SCORES_HEADING = "<h2>Scores (1)</h2>"
 
-#: Each kind with the values its histogram folds and what it weighs them
+#: Each family with the values its histogram folds and what it weighs them
 #: by: the position score's first row spans two base pairs, so its 1.0
 #: counts twice -- n is 3, the mean 2 and the population sd sqrt(2).
 #: The other kinds count a row once.
-_KINDS: list[tuple[str, Any, str, str, str]] = [
+_KINDS: list[tuple[type[ScoreResource], Any, str, str, str]] = [
     (
-        "position",
+        PositionScore,
         a_position_score().with_score("s", "float").with_data("""
             chrom  pos_begin  pos_end  s
             chr1   1          2        1.0
@@ -41,7 +49,7 @@ _KINDS: list[tuple[str, Any, str, str, str]] = [
         "base pairs",
     ),
     (
-        "allele",
+        AlleleScore,
         an_allele_score().with_score("s", "float").with_data("""
             chrom  pos_begin  reference  alternative  s
             chr1   10         A          G            0.1
@@ -51,7 +59,7 @@ _KINDS: list[tuple[str, Any, str, str, str]] = [
         "alleles",
     ),
     (
-        "fragment",
+        FragmentScore,
         a_fragment_score().with_score("s", "float").with_data("""
             chrom  pos_begin  pos_end  s
             chr1   10         100      0.5
@@ -61,7 +69,7 @@ _KINDS: list[tuple[str, Any, str, str, str]] = [
         "fragments",
     ),
     (
-        "gene",
+        GeneScore,
         a_gene_score().with_score("s", "float").with_data("""
             gene  s
             G1    1.0
@@ -71,11 +79,12 @@ _KINDS: list[tuple[str, Any, str, str, str]] = [
         "genes",
     ),
 ]
+_IDS = [kind.__name__ for kind, *_ in _KINDS]
 
 
 def _built(tmp_path: pathlib.Path, builder: Any) -> GenomicResource:
     resource = builder.build_resource(tmp_path)
-    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    publish_statistics(resource)
     return resource
 
 
@@ -84,25 +93,31 @@ def _page(resource: GenomicResource) -> str:
 
 
 @pytest.mark.parametrize(
-    ("kind", "builder", "domain", "cell", "unit"),
-    _KINDS, ids=[kind for kind, *_ in _KINDS])
+    ("kind", "builder", "domain", "cell", "unit"), _KINDS, ids=_IDS)
 def test_the_scores_table_shows_n_mean_sd_beside_the_range(
     tmp_path: pathlib.Path,
-    kind: str, builder: Any, domain: str, cell: str, unit: str,
+    kind: type[ScoreResource], builder: Any, domain: str, cell: str,
+    unit: str,
 ) -> None:
     page = _page(_built(tmp_path, builder))
 
-    table = table_after(page, SCORES_HEADING)
-    # Whole rows: the cell must sit in the last column, after Range,
-    # and nothing else about the row may move to make room for it.
-    range_index = table.head[0].index(next(
-        head for head in table.head[0] if head.text == "Range"))
-    assert [head.text for head in table.head[0][range_index:]] == [
-        "Range", "n / mean / sd"]
-    (row,) = table.rows
-    assert [c.text for c in row[range_index:]] == [domain, cell], kind
-    # The footnote says what n counts, per kind.
+    header, row = table_after(page, SCORES_HEADING).text
+    # The last two columns, so the cell sits after Range and nothing
+    # else was appended beyond it.
+    assert header[-2:] == ["Range", "n / mean / sd"], kind
+    assert row[-2:] == [domain, cell], kind
+    # The footnote says what n counts, in the family's own noun.
     assert f"n counts {unit}" in section_after(page, SCORES_HEADING)
+
+
+@pytest.mark.parametrize(("kind", "unit"), [
+    (kind, unit) for kind, _, _, _, unit in _KINDS], ids=_IDS)
+def test_each_family_names_the_unit_its_histogram_counts_in(
+    kind: type[ScoreResource], unit: str,
+) -> None:
+    # Read off the family's OWN namespace, so a family inheriting a
+    # sibling's word passes nothing.
+    assert vars(kind)["HISTOGRAM_COUNT_UNIT"] == unit
 
 
 def test_the_cell_is_empty_when_the_histogram_predates_the_accumulators(
@@ -111,17 +126,14 @@ def test_the_cell_is_empty_when_the_histogram_predates_the_accumulators(
     resource = _built(tmp_path, _KINDS[0][1])
     filename = "statistics/histogram_s.json"
     stored = json.loads(resource.get_file_content(filename))
-    for key in ("count", "sum", "sum_of_squares"):
+    for key in MOMENT_KEYS:
         del stored[key]
-    with resource.proto.open_raw_file(resource, filename, mode="wt") as out:
+    with resource.open_raw_file(filename, mode="wt") as out:
         out.write(json.dumps(stored))
 
-    page = _page(resource)
+    _, row = table_after(_page(resource), SCORES_HEADING).text
 
-    (row,) = table_after(page, SCORES_HEADING).rows
-    assert [cell.text for cell in row[-2:]] == ["[1, 4]", ""]
-    # Nothing in the column, so nothing to footnote.
-    assert "n counts" not in section_after(page, SCORES_HEADING)
+    assert row[-2:] == ["[1, 4]", ""]
 
 
 def test_a_categorical_score_renders_an_empty_cell(
@@ -135,8 +147,6 @@ def test_a_categorical_score_renders_an_empty_cell(
             chr1   10         A          C            y
         """).with_tabix())
 
-    page = _page(resource)
+    _, row = table_after(_page(resource), SCORES_HEADING).text
 
-    (row,) = table_after(page, SCORES_HEADING).rows
-    assert row[-1].text == ""
-    assert "n counts" not in section_after(page, SCORES_HEADING)
+    assert row[-1] == ""

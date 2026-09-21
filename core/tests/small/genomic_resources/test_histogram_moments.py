@@ -10,18 +10,31 @@ from gain.genomic_resources.histogram import (
     NumberHistogram,
     NumberHistogramConfig,
 )
+from gain.genomic_resources.statistics.moments import MOMENT_KEYS
 
 
-def _a_config(
-    lo: float = 0, hi: float = 10, nbins: int = 10,
-) -> NumberHistogramConfig:
-    return NumberHistogramConfig.from_dict({
-        "type": "number",
-        "view_range": {"min": lo, "max": hi},
-        "number_of_bins": nbins,
-        "x_log_scale": False,
-        "y_log_scale": False,
-    })
+def _a_config(lo: float = 0, hi: float = 10) -> NumberHistogramConfig:
+    return NumberHistogramConfig((lo, hi), number_of_bins=10)
+
+
+def _folded(*values: float) -> NumberHistogram:
+    hist = NumberHistogram(_a_config())
+    for value in values:
+        hist.add_value(value)
+    return hist
+
+
+def _predating(*values: float) -> NumberHistogram:
+    """``_folded`` as a file written before the accumulators would load."""
+    stored = _folded(*values).to_dict()
+    for key in MOMENT_KEYS:
+        del stored[key]
+    return NumberHistogram.deserialize(json.dumps(stored))
+
+
+def _moments(hist: NumberHistogram) -> tuple[int, float, float]:
+    assert hist.moments is not None
+    return hist.moments.count, hist.moments.sum, hist.moments.sum_of_squares
 
 
 def test_add_value_accumulates_the_weighted_count_sum_and_sum_of_squares(
@@ -31,9 +44,7 @@ def test_add_value_accumulates_the_weighted_count_sum_and_sum_of_squares(
     hist.add_value(2.0, count=3)
     hist.add_value(5.0)
 
-    assert hist.count == 4
-    assert hist.sum == 11.0
-    assert hist.sum_of_squares == 37.0
+    assert _moments(hist) == (4, 11.0, 37.0)
 
 
 def test_out_of_range_values_count_and_enter_the_sums_unclamped() -> None:
@@ -46,8 +57,7 @@ def test_out_of_range_values_count_and_enter_the_sums_unclamped() -> None:
     assert hist.bars.sum() == 3
     assert hist.out_of_range_bins == [2, 1]
     assert hist.count == hist.bars.sum() + sum(hist.out_of_range_bins)
-    assert hist.sum == -8.0 + 9.0 + 20.0
-    assert hist.sum_of_squares == 32.0 + 27.0 + 400.0
+    assert _moments(hist) == (6, -8.0 + 9.0 + 20.0, 32.0 + 27.0 + 400.0)
 
 
 def test_nan_and_none_are_skipped_by_the_accumulators_too() -> None:
@@ -57,52 +67,30 @@ def test_nan_and_none_are_skipped_by_the_accumulators_too() -> None:
     hist.add_value(None, count=5)
     hist.add_value(1.0)
 
-    assert hist.count == 1
-    assert hist.sum == 1.0
-
-
-def _folded(*values: float) -> NumberHistogram:
-    hist = NumberHistogram(_a_config())
-    for value in values:
-        hist.add_value(value)
-    return hist
+    assert _moments(hist) == (1, 1.0, 1.0)
 
 
 def test_merge_adds_the_accumulators() -> None:
     left = _folded(1.0, 2.0)
-    right = _folded(3.0)
 
-    left.merge(right)
+    left.merge(_folded(3.0))
 
-    assert left.count == 3
-    assert left.sum == 6.0
-    assert left.sum_of_squares == 14.0
+    assert _moments(left) == (3, 6.0, 14.0)
 
 
 def test_merge_with_a_histogram_of_unknown_moments_is_unknown() -> None:
     # An old file's histogram has no accumulators, and merging one in
-    # cannot invent them: absent means unknown, never empty.
+    # cannot invent them: absent means unknown, never empty -- on either
+    # side, so an unknown left does not adopt the right's sums either.
     fresh = _folded(1.0, 2.0)
-    old = NumberHistogram.from_dict({
-        key: value for key, value in _folded(3.0).to_dict().items()
-        if key not in ("count", "sum", "sum_of_squares")})
-    assert old.count is None
-
-    fresh.merge(old)
-
-    assert fresh.count is None
-    assert fresh.sum is None
-    assert fresh.sum_of_squares is None
+    fresh.merge(_predating(3.0))
+    assert fresh.moments is None
     # The bars still merged; only the moments are unknown.
     assert fresh.bars.sum() == 3
 
-    # Either side: an unknown left does not adopt the right's sums.
-    old = NumberHistogram.from_dict({
-        key: value for key, value in _folded(3.0).to_dict().items()
-        if key not in ("count", "sum", "sum_of_squares")})
+    old = _predating(3.0)
     old.merge(_folded(1.0, 2.0))
-    assert old.count is None
-    assert old.sum is None
+    assert old.moments is None
 
 
 def test_the_accumulators_are_stored_beside_min_and_max_and_round_trip(
@@ -112,11 +100,8 @@ def test_the_accumulators_are_stored_beside_min_and_max_and_round_trip(
     stored = json.loads(hist.serialize())
     loaded = NumberHistogram.deserialize(hist.serialize())
 
-    assert stored["count"] == 3
-    assert stored["sum"] == 7.0
-    assert stored["sum_of_squares"] == 21.0
-    assert (loaded.count, loaded.sum, loaded.sum_of_squares) == (
-        3, 7.0, 21.0)
+    assert [stored[key] for key in MOMENT_KEYS] == [3, 7.0, 21.0]
+    assert _moments(loaded) == (3, 7.0, 21.0)
 
 
 def test_a_numpy_weight_still_serializes() -> None:
@@ -127,23 +112,15 @@ def test_a_numpy_weight_still_serializes() -> None:
 
     stored = json.loads(hist.serialize())
 
-    assert stored["count"] == 3
-    assert stored["sum"] == 6.0
+    assert [stored[key] for key in MOMENT_KEYS] == [3, 6.0, 12.0]
 
 
 def test_a_file_without_the_accumulators_loads_with_unknown_moments(
 ) -> None:
-    stored = _folded(1.0, 2.0).to_dict()
-    for key in ("count", "sum", "sum_of_squares"):
-        del stored[key]
+    loaded = _predating(1.0, 2.0)
 
-    loaded = NumberHistogram.deserialize(json.dumps(stored))
-
-    assert loaded.count is None
-    assert loaded.sum is None
-    assert loaded.sum_of_squares is None
-    assert loaded.mean is None
-    assert loaded.std is None
+    assert loaded.moments is None
+    assert (loaded.count, loaded.mean, loaded.std) == (None, None, None)
 
 
 def test_mean_and_std_match_numpy_over_the_weighted_values() -> None:
@@ -163,8 +140,7 @@ def test_mean_and_std_are_unknown_before_anything_is_folded() -> None:
     hist = NumberHistogram(_a_config())
 
     assert hist.count == 0
-    assert hist.mean is None
-    assert hist.std is None
+    assert (hist.mean, hist.std) == (None, None)
 
 
 def test_moments_summary_renders_n_mean_sd_for_the_page() -> None:
@@ -178,10 +154,7 @@ def test_moments_summary_renders_n_mean_sd_for_the_page() -> None:
 
 def test_moments_summary_is_none_when_the_moments_are_unknown() -> None:
     assert NumberHistogram(_a_config()).moments_summary() is None
-    old = NumberHistogram.from_dict({
-        key: value for key, value in _folded(3.0).to_dict().items()
-        if key not in ("count", "sum", "sum_of_squares")})
-    assert old.moments_summary() is None
+    assert _predating(3.0).moments_summary() is None
 
 
 def test_a_negative_variance_from_cancellation_is_clamped_and_logged(

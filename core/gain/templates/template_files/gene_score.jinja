@@ -25,9 +25,6 @@
         </tr>
       </thead>
 
-        {#- Whether any score rendered a summary: the footnote explaining
-           the column is for a column with something in it. #}
-        {%- set moments = namespace(shown=false) %}
         {% for score_id, score_def in score.score_definitions.items() %}
             <tr>
                 <td>{{ score_id }}</td>
@@ -74,19 +71,8 @@
                     NO DOMAIN
                 {%- endif -%}
                 </td>
-                {#- Only a number histogram has moments, and one loaded
-                   from a file that predates them has none: the cell is
-                   then empty rather than a guess from bin midpoints
-                   (gain#1589). #}
-                <td>
-                {%- if hist.type == 'number_histogram' %}
-                    {%- set summary = hist.moments_summary() %}
-                    {%- if summary is not none %}
-                    {%- set moments.shown = true %}
-                    {{ summary }}
-                    {%- endif %}
-                {%- endif -%}
-                </td>
+                {#- Empty when the histogram has no moments (gain#1589). #}
+                <td>{{ hist.moments_summary() or "" }}</td>
             </tr>
         {% endfor %}
 
@@ -109,7 +95,5 @@
         {%- endfor %}
     </table>
     </div>
-    {%- if moments.shown %}
-    <p class="text-muted">n counts genes; sd is the population standard deviation.</p>
-    {%- endif %}
+    <p class="text-muted">n counts {{ score.HISTOGRAM_COUNT_UNIT }}; sd is the population standard deviation.</p>
 {% endblock %}

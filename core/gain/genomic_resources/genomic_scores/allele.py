@@ -243,7 +243,7 @@ class AlleleScore(GenomicScore):
           aggregator specification
     """
 
-    RECORD_WEIGHT_UNIT: ClassVar[str] = "alleles"
+    HISTOGRAM_COUNT_UNIT: ClassVar[str] = "alleles"
 
     # The alleles at a position reduce by ``max``, not ``mean``: a variant's
     # score is the worst of the alleles it could be, not their average.

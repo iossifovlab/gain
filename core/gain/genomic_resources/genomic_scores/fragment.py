@@ -171,7 +171,7 @@ class FragmentScore(GenomicScore):
     warning once per resource on the deprecated one.
     """
 
-    RECORD_WEIGHT_UNIT: ClassVar[str] = "fragments"
+    HISTOGRAM_COUNT_UNIT: ClassVar[str] = "fragments"
 
     # As AlleleScore, except that strings join rather than list -- a fragment
     # score's string attributes are rendered into one cell.  Owned by the
