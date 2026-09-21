@@ -34,6 +34,7 @@ from .repository import (
 )
 from .resource_errors import MalformedResourceError
 from .resource_query import label_alternatives
+from .statistics.base_statistic import StoredStatistic
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +310,17 @@ class GenomicResourceImplementation(ABC):
         recomputed.
         """
         raise NotImplementedError
+
+    def stored_statistics(self) -> list[StoredStatistic]:
+        """The versioned statistics files a build writes for this resource.
+
+        Each names a file and the ``format_version`` its writer stamps.
+        The repair flow compares a hash-current resource's stored files
+        against them and reports -- never rebuilds -- one that is
+        missing or older.  Not part of the statistics hash.  Empty by
+        default: a kind that declares nothing is never reported.
+        """
+        return []
 
     @abstractmethod
     def create_statistics_build_tasks(

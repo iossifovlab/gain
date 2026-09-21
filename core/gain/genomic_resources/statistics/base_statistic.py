@@ -1,10 +1,49 @@
 from __future__ import annotations
 
+import json
 from abc import abstractmethod
-from collections.abc import Iterable
-from typing import Any, Protocol, Self
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, Self
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from gain.genomic_resources.genomic_scores import GenomicScore
+
+
+class StoredStatistic(NamedTuple):
+    """One versioned statistics file, and which scores a build writes it for.
+
+    The statistic's one declaration: the scan asks :attr:`writes_for`
+    whether to accumulate it, its writer stamps :attr:`format_version`
+    into the file, and the repair flow reads both back to tell a
+    resource whose file is missing or older than the schema -- and
+    report it, never rebuild it.  Not part of ``calc_statistics_hash``.
+    """
+
+    file: str
+    format_version: int
+    writes_for: Callable[[GenomicScore], bool]
+
+    def stored_version(self, content: bytes) -> int | None:
+        """The version a stored file carries; 0 if none, None if unreadable.
+
+        Anything but an integer ``format_version`` -- absent, null, a
+        boolean, a non-object document -- is 0, older than every schema.
+        A file that is not a JSON document at all, or not text, is
+        ``None``: whatever reads it reports that, not this check.
+        Raises nothing.
+        """
+        try:
+            data = json.loads(content)
+        except ValueError:  # a JSON error, or a UnicodeDecodeError
+            return None
+        if not isinstance(data, dict):
+            return 0
+        version = data.get("format_version")
+        if isinstance(version, bool) or not isinstance(version, int):
+            return 0
+        return version
 
 
 class Statistic:

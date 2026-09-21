@@ -44,6 +44,7 @@ from gain.genomic_resources.genomic_scores import (
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.base_statistic import (
     RegionFoldedStatistic,
+    StoredStatistic,
     refuse_unmergeable,
 )
 from gain.genomic_resources.statistics.exact_lengths import (
@@ -58,6 +59,14 @@ from gain.genomic_resources.statistics.region_fold import merge_regions
 from gain.utils.chromosome_order import natural_chromosome_key
 
 FRAGMENT_STATISTICS_FILE = "statistics/fragments.json"
+#: The ``format_version`` ``serialize`` stamps.
+FRAGMENT_FORMAT_VERSION = 2
+#: The statistic's one declaration -- file, version, and the kind it
+#: is written for -- read by the scan's gate and by the repair check.
+FRAGMENT_STATISTIC = StoredStatistic(
+    FRAGMENT_STATISTICS_FILE, FRAGMENT_FORMAT_VERSION,
+    lambda score: isinstance(score, FragmentScore))
+
 FRAGMENT_LENGTHS_IMAGE_FILE = "statistics/fragment_lengths.png"
 
 #: How a failed fold of these regions is named in the message.
@@ -244,7 +253,7 @@ class FragmentStatistics(RegionFoldedStatistic[RegionFragments]):
         if global_lengths is not None:
             global_entry["fragment_lengths"] = global_lengths.stored()
         return json.dumps({
-            "format_version": 2,
+            "format_version": FRAGMENT_FORMAT_VERSION,
             "chromosomes": chromosomes,
             "global": global_entry,
         }, indent=2)
@@ -344,7 +353,7 @@ def region_fragments_for(
     dispatch.  The class is the property this statistic depends on --
     that the rows ARE fragments, each counted once at its own span.
     """
-    if not isinstance(score, FragmentScore):
+    if not FRAGMENT_STATISTIC.writes_for(score):
         return None
     return RegionFragments(chrom, start, end)
 

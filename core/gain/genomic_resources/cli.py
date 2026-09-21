@@ -957,6 +957,58 @@ def _stats_need_rebuild(
     return False
 
 
+def _report_schema_stale_statistics(
+    impl: GenomicResourceImplementation,
+) -> bool:
+    """Log a hash-current resource whose statistics predate the schema.
+
+    True when it did.  One INFO line naming each declared file that is
+    missing or carries an older ``format_version`` than its writer
+    stamps now, and the ``-f`` remedy.  A file that cannot be read as a
+    JSON document is left to whatever reads it.  Reports only: nothing
+    here feeds the task graph, the dry-run count or the failed set.
+    """
+    stale: list[str] = []
+    for stored in impl.stored_statistics():
+        try:
+            with impl.resource.open_raw_file(
+                    stored.file, mode="rb") as infile:
+                version = stored.stored_version(infile.read())
+        except FileNotFoundError:
+            stale.append(
+                f"{stored.file} is missing "
+                f"(current is {stored.format_version})")
+            continue
+        if version is not None and version < stored.format_version:
+            stale.append(
+                f"{stored.file} is at format version {version} "
+                f"(current is {stored.format_version})")
+    if not stale:
+        return False
+    resource_id = impl.resource.resource_id
+    logger.info(
+        "statistics of <%s> predate the current schema: %s; "
+        "rebuild with `grr_manage resource-stats -r %s -f`",
+        resource_id, ", ".join(stale), resource_id)
+    return True
+
+
+def _warn_schema_stale(count: int) -> None:
+    """One WARNING per run, last, counting the resources behind the schema.
+
+    Nothing when the count is zero.  Last, where a repository-wide
+    run's operator reads -- so ``_run_stats_core`` calls it once on
+    each of its exits; the per-resource lines name the files.
+    """
+    if not count:
+        return
+    logger.warning(
+        "%d resource(s) carry statistics that predate the current "
+        "schema; rebuild them with "
+        "`grr_manage resource-stats -r <resource_id> -f`",
+        count)
+
+
 def _statistics_not_built(
     proto: ReadWriteRepositoryProtocol,
     resources: Sequence[GenomicResource],
@@ -1045,6 +1097,7 @@ def _run_stats_core(
     graph = TaskGraph()
 
     needs_update = 0
+    schema_stale = 0
     # Out of date, but with a payload this checkout does not have: a
     # dry run counts them apart, a real run leaves them for a checkout
     # that has it.
@@ -1096,6 +1149,13 @@ def _run_stats_core(
             elif derived is DerivedFilesState.STALE:
                 impl.rebuild_derived_files(repo)
                 derived_resources.append(res)
+            # A third state, reported and never acted on: the hash is
+            # current, so nothing rebuilds the statistics -- a derived
+            # file's rewrite does not touch them -- and a file behind
+            # the schema stays behind it (gain#1586).
+            if not (needs_rebuild or force) \
+                    and _report_schema_stale_statistics(impl):
+                schema_stale += 1
         except Exception as err:  # ruff: ignore[blind-except]
             # Collected, not raised: the resources after this one in the
             # repository are still repaired.
@@ -1104,6 +1164,7 @@ def _run_stats_core(
             failed.add(res.resource_id)
 
     if dry_run:
+        _warn_schema_stale(schema_stale)
         # A resource that could not even be checked is certainly not up to
         # date, so it counts towards the "how many need an update" status a
         # dry run exits with -- that keeps the status a COUNT rather than
@@ -1150,6 +1211,7 @@ def _run_stats_core(
             dry_run=False, force=True, use_dvc=True)
         failed |= set(stats_manifest_outcome.failed)
 
+    _warn_schema_stale(schema_stale)
     return CommandResult(
         failed=frozenset(failed), repo_failed=repo_failed,
         wrote=outcome.wrote or bool(written))

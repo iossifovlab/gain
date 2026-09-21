@@ -33,6 +33,7 @@ from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.base_statistic import (
     RegionFoldedStatistic,
+    StoredStatistic,
     refuse_unmergeable,
 )
 from gain.genomic_resources.statistics.exact_lengths import (
@@ -50,6 +51,13 @@ from gain.utils.chromosome_order import natural_chromosome_key
 logger = logging.getLogger(__name__)
 
 COVERAGE_STATISTICS_FILE = "statistics/coverage.json"
+#: The ``format_version`` ``serialize`` stamps.
+COVERAGE_FORMAT_VERSION = 2
+#: The statistic's one declaration -- file, version, and the kind it
+#: is written for -- read by the scan's gate and by the repair check.
+COVERAGE_STATISTIC = StoredStatistic(
+    COVERAGE_STATISTICS_FILE, COVERAGE_FORMAT_VERSION,
+    lambda score: isinstance(score, PositionScore))
 
 #: How a failed fold of these regions is named in the message.
 _MERGE_FAILURE = "coverage"
@@ -609,7 +617,7 @@ class CoverageStatistics(RegionFoldedStatistic[RegionCoverage]):
             if global_lengths is not None:
                 global_entry["segment_lengths"] = global_lengths.stored()
         return json.dumps({
-            "format_version": 2,
+            "format_version": COVERAGE_FORMAT_VERSION,
             "chromosomes": chromosomes,
             "global": global_entry,
         }, indent=2)
@@ -1003,7 +1011,7 @@ def region_coverage_for(
     :mod:`~gain.genomic_resources.statistics.fragments` and ADR 0020 say
     why that keeps the kind out of both coverage and segments.
     """
-    if not isinstance(score, PositionScore):
+    if not COVERAGE_STATISTIC.writes_for(score):
         return None
     return RegionCoverage(chrom, start, end)
 

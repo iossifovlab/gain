@@ -54,6 +54,7 @@ from gain.genomic_resources.genomic_scores import (
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.base_statistic import (
     RegionFoldedStatistic,
+    StoredStatistic,
     refuse_unmergeable,
 )
 from gain.genomic_resources.statistics.chart_style import (
@@ -77,6 +78,13 @@ from gain.genomic_resources.statistics.region_fold import merge_regions
 from gain.utils.chromosome_order import natural_chromosome_key
 
 ALLELE_STATISTICS_FILE = "statistics/alleles.json"
+#: The ``format_version`` ``serialize`` stamps.
+ALLELE_FORMAT_VERSION = 1
+#: The statistic's one declaration -- file, version, and the kind it
+#: is written for -- read by the scan's gate and by the repair check.
+ALLELE_STATISTIC = StoredStatistic(
+    ALLELE_STATISTICS_FILE, ALLELE_FORMAT_VERSION,
+    lambda score: isinstance(score, AlleleScore))
 
 #: The global images the statistics build renders beside the file.  One
 #: each, never per chromosome (ADR 0020): the per-chromosome numbers are
@@ -673,7 +681,7 @@ class AlleleStatistics(RegionFoldedStatistic[RegionAlleles]):
         # the global roll-up.
         chromosomes = self.by_chromosome()
         return json.dumps({
-            "format_version": 1,
+            "format_version": ALLELE_FORMAT_VERSION,
             "chromosomes": {
                 chrom: _serialized(counts)
                 for chrom, counts in chromosomes.items()
@@ -1050,7 +1058,7 @@ def region_alleles_for(
     would have to be revisited by the next spelling that builds an
     ``AlleleScore``.
     """
-    if not isinstance(score, AlleleScore):
+    if not ALLELE_STATISTIC.writes_for(score):
         return None
     return RegionAlleles(chrom, start, end)
 

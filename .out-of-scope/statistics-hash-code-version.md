@@ -90,3 +90,7 @@ handed to a caller.
 
 - iossifovlab/gain#706 — "`calc_statistics_hash` cannot express a change in the
   code that computes the statistics"
+- iossifovlab/gain#1545 — "Policy: should the statistics hash know the
+  statistics schema, so an upgrade rebuilds (or at least reports) stale
+  statistics files?" — the hash options were declined on this record; the
+  *report* half (still in scope, above) shipped as gain#1586
