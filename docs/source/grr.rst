@@ -980,10 +980,10 @@ Resource-specific fields (**type**: liftover_chain):
    :widths: 25 25 50
 
    * - Field
-     - Type
+     - Requirement
      - Description
-   * - **filename**
-     - string
+   * - ``filename``
+     - Required string
      - Path to the chain file, relative to the resource directory.
    * - ``chrom_prefix``
      - Optional subsection
@@ -1017,7 +1017,7 @@ A chain whose target side names contigs with a ``chr`` prefix the target genome 
     meta:
       summary: Liftover Chain hg38 to hg19
 
-The configuration is validated when the chain object is built, before its file is opened: a resource-specific key not in this table, or a ``chrom_prefix`` that is not a mapping of these two subsections, refuses the resource with an error naming it.
+The configuration is validated when the chain object is built, before its file is opened: a missing ``filename``, a resource-specific key not in this table, or a ``chrom_prefix`` that is not a mapping of these two subsections, refuses the resource with an error naming it.
 
 
 Annotation pipelines
