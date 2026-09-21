@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import weakref
-from typing import Any, ClassVar
+from typing import Any, ClassVar, NamedTuple
 
 from gain import logging
 from gain.genomic_resources.dvc import DVC_SUFFIX
@@ -55,6 +55,29 @@ logger = logging.getLogger(__name__)
 #: How many contigs the genome does not list are named before ``...``:
 #: a mapping onto hg38's alts leaves hundreds, and the count says so.
 _UNLISTED_CONTIGS_SAMPLE = 5
+
+
+class _DerivedFiles(NamedTuple):
+    """The freshness gate's answer, with what it looked at to give it.
+
+    ``stored`` is the file as loaded -- ``None`` when absent, unreadable,
+    or not looked for because the resource is broken; ``unpulled`` the
+    table files missing beside their ``.dvc`` sidecar, ``None`` when one
+    is missing with no sidecar to vouch for it, which is what broken
+    means here.
+    """
+
+    state: DerivedFilesState
+    stored: StoredChromLengths | None
+    unpulled: list[str] | None
+
+    @property
+    def current(self) -> StoredChromLengths | None:
+        """The stored lengths a reader may answer from: the file when
+        the state is ``CURRENT``, else nothing."""
+        if self.state is DerivedFilesState.CURRENT:
+            return self.stored
+        return None
 
 
 class GenomicScoreImplementation(ScoreImplementationBase):
@@ -263,13 +286,27 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         ``best`` by rank; a contig with no length keeps the table's
         reason (``EMPTY`` / ``UNDETERMINED``) in its record.
 
-        With a genome that resolved, the contigs it does not list are
-        reported too (gain#1575): some of them is one WARNING per call,
-        all of them a ``ValueError``.
+        Answered from the stored ``CHROM_LENGTHS_FILE`` while the gate
+        (:meth:`derived_files_state`) calls it ``CURRENT``: the records
+        the repair wrote, with no table opened -- the genome is looked
+        up only to tell whether a key derived with none still holds --
+        and no overlap check, the repair that wrote them having already
+        warned or failed over it.  In every other state the ladder runs
+        live, as below.  A CURRENT file whose contig list is no longer
+        the table's cannot be told apart without opening the table, and
+        is not looked for here: the key's manifest md5s cover the table
+        files, and a ``chrom_mapping`` change is a config change, which
+        the repair gate is the place to catch (gain#1578).
 
-        Opens the score if it is closed, and closes it again only in
-        that case -- an already-open score stays open for its owner.
+        Live, with a genome that resolved, the contigs it does not list
+        are reported too (gain#1575): some of them is one WARNING per
+        call, all of them a ``ValueError``.
+
+        Live, opens the score if it is closed, and closes it again only
+        in that case -- an already-open score stays open for its owner.
         """
+        if (stored := self._check_derived_files(grr).current) is not None:
+            return stored.lengths
         return self._derive_chrom_lengths(self._resolve_labelled_genome(grr))
 
     def derived_files_state(
@@ -288,32 +325,50 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         says, and the rebuild fails it, as any read would.  Looks for
         files and compares keys; opens no table.
         """
+        check = self._check_derived_files(grr)
+        if check.state is DerivedFilesState.CURRENT or check.unpulled is None:
+            # Current; or broken -- a file nothing vouches for -- which
+            # the rebuild reports by failing, as any read of it would.
+            return check.state
+        logger.info(
+            "stored chromosome lengths of <%s> are %s; needs update",
+            self.resource.get_full_id(),
+            "absent" if check.stored is None else "outdated")
+        if check.state is DerivedFilesState.PAYLOAD_ABSENT:
+            logger.warning(
+                "<%s>: %s is a .dvc pointer whose payload is not here; "
+                "its chromosome lengths will be stored by the next "
+                "repair that has it",
+                self.resource.get_full_id(), ", ".join(check.unpulled))
+        return check.state
+
+    def _check_derived_files(
+        self, grr: GenomicResourceRepo | None,
+    ) -> _DerivedFiles:
+        """The gate's three questions, asked quietly: the gate reports
+        on the answer, the readers act on it, and a page render is not
+        where a stale or unpulled resource gets reported."""
+        unpulled = self._unpulled_table_files()
+        if unpulled is None:
+            return _DerivedFiles(DerivedFilesState.STALE, None, None)
+        stored = load_chrom_lengths(self.resource)
+        if self._is_derived_from_now(stored, grr):
+            return _DerivedFiles(DerivedFilesState.CURRENT, stored, unpulled)
+        return _DerivedFiles(
+            DerivedFilesState.PAYLOAD_ABSENT if unpulled
+            else DerivedFilesState.STALE,
+            stored, unpulled)
+
+    def _unpulled_table_files(self) -> list[str] | None:
+        """The table files missing beside their ``.dvc`` sidecar, or
+        ``None`` when one is missing with no sidecar to vouch for it."""
         missing = [
             file_name for file_name in sorted(self.files)
             if not self.resource.file_exists(file_name)]
         unpulled = [
             file_name for file_name in missing
             if self.resource.file_exists(file_name + DVC_SUFFIX)]
-        if len(unpulled) < len(missing):
-            # A file nothing vouches for: the resource is broken, and
-            # the rebuild is what fails it, as any read of it would.
-            return DerivedFilesState.STALE
-        stored = load_chrom_lengths(self.resource)
-        if stored is not None and self._is_derived_from_now(
-                stored.derived_from, grr):
-            return DerivedFilesState.CURRENT
-        logger.info(
-            "stored chromosome lengths of <%s> are %s; needs update",
-            self.resource.get_full_id(),
-            "absent" if stored is None else "outdated")
-        if unpulled:
-            logger.warning(
-                "<%s>: %s is a .dvc pointer whose payload is not here; "
-                "its chromosome lengths will be stored by the next "
-                "repair that has it",
-                self.resource.get_full_id(), ", ".join(unpulled))
-            return DerivedFilesState.PAYLOAD_ABSENT
-        return DerivedFilesState.STALE
+        return unpulled if len(unpulled) == len(missing) else None
 
     def rebuild_derived_files(
         self, grr: GenomicResourceRepo | None,
@@ -399,12 +454,14 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             len(unlisted), len(lengths), ", ".join(sample))
 
     def _is_derived_from_now(
-        self, key: DerivedFrom, grr: GenomicResourceRepo | None,
+        self, stored: StoredChromLengths | None,
+        grr: GenomicResourceRepo | None,
     ) -> bool:
-        """Whether ``key`` describes the resource as it is today -- with
-        the label resolved through ``grr`` in the one case that needs
-        it, a key derived with no genome under a label now present."""
-        return key.describes(
+        """Whether ``stored``'s key describes the resource as it is today
+        -- with the label resolved through ``grr`` in the one case that
+        needs it, a key derived with no genome under a label now
+        present."""
+        return stored is not None and stored.derived_from.describes(
             self.resource, self.resource.get_manifest(), self.files,
             genome_resolves=lambda: self._labelled_genome(grr)[1] is not None)
 
@@ -459,11 +516,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def _get_chrom_regions(
         self, region_size: int, grr: GenomicResourceRepo | None = None,
     ) -> list[Region]:
-        """The statistics regions, resolved live; writes nothing.
+        """The statistics regions, split by :meth:`get_chrom_lengths`'s
+        answer -- the stored file when CURRENT, the live ladder
+        otherwise; writes nothing.
 
-        The build itself goes through :meth:`_store_chrom_lengths`; this
-        is the seam the region-boundary tests pin, with no file written
-        into the fixture as a side effect.
+        The build itself goes through :meth:`_store_chrom_lengths`, live
+        always; this is the seam the region-boundary tests pin, with no
+        file written into the fixture as a side effect.
         """
         return self._regions_from(self.get_chrom_lengths(grr), region_size)
 

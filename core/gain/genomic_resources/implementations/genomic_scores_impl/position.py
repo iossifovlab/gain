@@ -12,6 +12,9 @@ from __future__ import annotations
 from typing import ClassVar
 
 from gain.genomic_resources.genomic_scores.chrom_lengths import ChromLength
+from gain.genomic_resources.resource_implementation import (
+    DerivedFilesState,
+)
 from gain.genomic_resources.statistics.coverage import (
     COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
     COVERAGE_STATISTICS_FILE,
@@ -84,17 +87,28 @@ class PositionScoreImplementation(GenomicScoreImplementation):
     def _score_chrom_lengths(self) -> dict[str, ChromLength]:
         """The second rung's records: what the score's own file can say.
 
-        Asked only once the genome rung has resolved nothing, so the
-        label is not consulted again -- the ladder runs without a
-        genome, as it does for an unlabelled score.
+        Asked only once the genome rung has resolved nothing.  The
+        stored lengths answer first, as :meth:`get_chrom_lengths` reads
+        them, for ANY backend (gain#1578): a genome answer in a tabix
+        score's record prices the contig, its probe's bound never does,
+        and ``is_exact`` sorts the two in the ladder.  So a labelled
+        score whose genome has left the repository since the repair is
+        still priced, over its OWN genome-listed contigs rather than
+        the genome's whole list: the record is the record, and the
+        roll-up of contigs the score never touched is not in it.
 
-        Not asked of a backend whose lengths are never exact.  Nothing
-        such a backend says can serve as a denominator, and finding that
-        out would open its table: on a tabix score, the index probe per
-        contig, at every render -- and ``repo-repair`` renders every
-        page (gain#1448).  The probe stays a repair-time cost.  A bigWig
-        header is exact, and is the one reason a render opens a table.
+        Otherwise the ladder runs live without a genome, and is not
+        asked LIVE of a backend whose lengths are never exact -- finding
+        that out would run the tabix probe per contig at every render,
+        and ``repo-repair`` renders every page (gain#1448).  A bigWig
+        header is exact, and an unrepaired bigWig whose payload is here
+        is the one reason a render opens a table; unpulled, it has no
+        header to read, and the render is not where that is reported.
         """
-        if not self.score.chrom_length_source.is_exact:
+        check = self._check_derived_files(self._render_repo)
+        if (stored := check.current) is not None:
+            return stored.lengths
+        if check.state is DerivedFilesState.PAYLOAD_ABSENT or \
+                not self.score.chrom_length_source.is_exact:
             return {}
-        return self.get_chrom_lengths(None)
+        return self._derive_chrom_lengths(None)

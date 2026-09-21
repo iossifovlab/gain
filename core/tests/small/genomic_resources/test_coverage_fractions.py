@@ -33,7 +33,7 @@ from .conftest import (
 )
 
 
-def _a_chr1_score(genome_id: Any = None):
+def a_chr1_score(genome_id: Any = None):
     builder = (
         a_position_score()
         .with_score("score", "float")
@@ -53,7 +53,7 @@ def _a_chr1_score(genome_id: Any = None):
 COVERED = 9  # 5..9 and 30..33
 
 
-def _built_impl(
+def built_impl(
     repo: GenomicResourceRepo, resource_id: str,
 ) -> PositionScoreImplementation:
     resource = repo.get_resource(resource_id)
@@ -61,7 +61,7 @@ def _built_impl(
     return PositionScoreImplementation(repo.get_resource(resource_id))
 
 
-def _a_repo_with_genome(
+def a_repo_with_genome(
     where: pathlib.Path,
     genome_id: str,
     score: Any = None,
@@ -84,7 +84,7 @@ def _a_repo_with_genome(
         genome = genome.with_chromosome(chrom, "A" * length)
     return (
         a_grr()
-        .with_resource("scores/one", score or _a_chr1_score(genome_id))
+        .with_resource("scores/one", score or a_chr1_score(genome_id))
         .with_resource(genome_id, genome)
         .build_repo(where)
     )
@@ -106,7 +106,7 @@ def _a_repo_with_a_raw_fai(
     genome does not open at all.
     """
     a_grr().with_resource(
-        "scores/one", _a_chr1_score(genome_id),
+        "scores/one", a_chr1_score(genome_id),
     ).build_repo(where)
     setup_directories(where / pathlib.Path(genome_id), {
         "genomic_resource.yaml": "{type: genome, filename: genome.fa}",
@@ -119,8 +119,8 @@ def _a_repo_with_a_raw_fai(
 def test_genome_labeled_score_shows_percent_covered(
     tmp_path: pathlib.Path,
 ) -> None:
-    repo = _a_repo_with_genome(tmp_path, "genomes/g776a", chr1=100)
-    impl = _built_impl(repo, "scores/one")
+    repo = a_repo_with_genome(tmp_path, "genomes/g776a", chr1=100)
+    impl = built_impl(repo, "scores/one")
 
     page = impl.get_info(repo=repo)
 
@@ -139,11 +139,11 @@ def test_two_repos_sharing_a_genome_id_do_not_cross_serve(
     identical in both, so only the denominator differs and the rendered
     percentage is what tells the two genomes apart.
     """
-    wide = _a_repo_with_genome(tmp_path / "wide", "genomes/shared", chr1=100)
-    narrow = _a_repo_with_genome(tmp_path / "narrow", "genomes/shared", chr1=50)
+    wide = a_repo_with_genome(tmp_path / "wide", "genomes/shared", chr1=100)
+    narrow = a_repo_with_genome(tmp_path / "narrow", "genomes/shared", chr1=50)
 
-    wide_page = _built_impl(wide, "scores/one").get_info(repo=wide)
-    narrow_page = _built_impl(narrow, "scores/one").get_info(repo=narrow)
+    wide_page = built_impl(wide, "scores/one").get_info(repo=wide)
+    narrow_page = built_impl(narrow, "scores/one").get_info(repo=narrow)
 
     assert wide_page.count(">9.00%<") == 2  # 9 of 100
     assert narrow_page.count(">18.00%<") == 2  # 9 of 50
@@ -159,8 +159,8 @@ def test_rendering_does_not_pin_the_repository(
     against many repositories -- a test session is the extreme case --
     must not accumulate them.
     """
-    repo = _a_repo_with_genome(tmp_path, "genomes/shared", chr1=100)
-    _built_impl(repo, "scores/one").get_info(repo=repo)
+    repo = a_repo_with_genome(tmp_path, "genomes/shared", chr1=100)
+    built_impl(repo, "scores/one").get_info(repo=repo)
     repo_ref = weakref.ref(repo)
 
     del repo
@@ -174,10 +174,10 @@ def test_score_without_a_denominator_renders_raw_counts_only(
 ) -> None:
     repo = (
         a_grr()
-        .with_resource("scores/one", _a_chr1_score())
+        .with_resource("scores/one", a_chr1_score())
         .build_repo(tmp_path)
     )
-    impl = _built_impl(repo, "scores/one")
+    impl = built_impl(repo, "scores/one")
 
     page = impl.get_info(repo=repo)
 
@@ -187,9 +187,9 @@ def test_score_without_a_denominator_renders_raw_counts_only(
 
 
 #: The bedGraph the bigWig fixtures below carry, covering the same 9
-#: positions of chr1 as ``_a_chr1_score`` -- so a bigWig page and a tabix
+#: positions of chr1 as ``a_chr1_score`` -- so a bigWig page and a tabix
 #: page differ only in the rung their denominator comes from.
-_BIGWIG_DATA = """
+BIGWIG_DATA = """
     chr1  4   9   0.1
     chr1  29  33  0.2
     """
@@ -198,7 +198,7 @@ _BIGWIG_DATA = """
 def _a_bigwig_repo(
     where: pathlib.Path,
     chrom_lens: dict[str, int],
-    data: str = _BIGWIG_DATA,
+    data: str = BIGWIG_DATA,
 ) -> GenomicResourceRepo:
     """An unlabelled bigWig score with these header contig sizes."""
     return (
@@ -214,7 +214,7 @@ def test_bigwig_score_without_a_label_uses_header_sizes(
     tmp_path: pathlib.Path,
 ) -> None:
     repo = _a_bigwig_repo(tmp_path, {"chr1": 100})
-    impl = _built_impl(repo, "scores/bw")
+    impl = built_impl(repo, "scores/bw")
 
     page = impl.get_info(repo=repo)
 
@@ -243,7 +243,7 @@ def test_contig_unknown_to_the_genome_renders_raw_counts_for_it(
             a_reference_genome().with_chromosome("chr1", "A" * 50))
         .build_repo(tmp_path)
     )
-    impl = _built_impl(repo, "scores/two")
+    impl = built_impl(repo, "scores/two")
 
     page = impl.get_info(repo=repo)
 
@@ -258,8 +258,8 @@ def test_a_mislabeled_genome_never_renders_more_than_100_percent(
 ) -> None:
     # 9 covered positions against a genome claiming chr1 is 6 long: the
     # denominator is proven wrong, so the row and the global stay raw.
-    repo = _a_repo_with_genome(tmp_path, "genomes/gshort776", chr1=6)
-    impl = _built_impl(repo, "scores/one")
+    repo = a_repo_with_genome(tmp_path, "genomes/gshort776", chr1=6)
+    impl = built_impl(repo, "scores/one")
 
     page = impl.get_info(repo=repo)
 
@@ -273,8 +273,8 @@ def test_statistics_page_still_builds_with_the_repo_kwarg(
     # The statistics page is a statistics-file listing; it has never
     # rendered the Coverage section (its base template carries no content
     # block).  Pin that consuming the repo kwarg leaves it working.
-    repo = _a_repo_with_genome(tmp_path, "genomes/g776s", chr1=100)
-    impl = _built_impl(repo, "scores/one")
+    repo = a_repo_with_genome(tmp_path, "genomes/g776s", chr1=100)
+    impl = built_impl(repo, "scores/one")
 
     page = impl.get_statistics_info(repo=repo)
 
@@ -322,7 +322,7 @@ def test_a_closed_bigwig_score_is_closed_again_after_the_render(
     header is the one thing a render opens a table for, and the open
     belongs to the implementation's ladder, not to coverage."""
     repo = _a_bigwig_repo(tmp_path, {"chr1": 100})
-    impl = _built_impl(repo, "scores/bw")
+    impl = built_impl(repo, "scores/bw")
     assert not impl.score.is_open()
 
     impl.get_info(repo=repo)
@@ -335,7 +335,7 @@ def test_an_already_open_bigwig_score_stays_open(
 ) -> None:
     repo = _a_bigwig_repo(
         tmp_path, {"chr1": 100}, data="chr1  4  9  0.1")
-    impl = _built_impl(repo, "scores/bw")
+    impl = built_impl(repo, "scores/bw")
     impl.score.open()
 
     impl.get_info(repo=repo)
@@ -355,10 +355,10 @@ def test_an_unlabelled_tabix_score_is_never_opened_to_render_raw_counts(
     on the probe, so the fence holds for any read the rung might grow."""
     repo = (
         a_grr()
-        .with_resource("scores/one", _a_chr1_score())
+        .with_resource("scores/one", a_chr1_score())
         .build_repo(tmp_path)
     )
-    impl = _built_impl(repo, "scores/one")
+    impl = built_impl(repo, "scores/one")
     opened = mocker.spy(impl.score, "open")
 
     page = impl.get_info(repo=repo)
@@ -392,7 +392,7 @@ def test_chrom_mapped_bigwig_resolves_header_sizes_through_the_mapping(
         "chr1  4  9  0.1",
         {"chr1": 50})
     repo = build_filesystem_test_repository(tmp_path)
-    impl = _built_impl(repo, "scores/bwmap")
+    impl = built_impl(repo, "scores/bwmap")
 
     page = impl.get_info(repo=repo)
 
@@ -409,7 +409,7 @@ def test_a_zero_length_genome_contig_degrades_to_raw_counts(
     repo = _a_repo_with_a_raw_fai(
         tmp_path, "genomes/gzero776",
         ">chr1\n", "chr1\t0\t6\t60\t61\n")
-    impl = _built_impl(repo, "scores/one")
+    impl = built_impl(repo, "scores/one")
 
     page = impl.get_info(repo=repo)
 
@@ -423,10 +423,10 @@ def test_a_dangling_genome_label_degrades_to_raw_counts(
     repo = (
         a_grr()
         .with_resource(
-            "scores/one", _a_chr1_score("genomes/not-there-776"))
+            "scores/one", a_chr1_score("genomes/not-there-776"))
         .build_repo(tmp_path)
     )
-    impl = _built_impl(repo, "scores/one")
+    impl = built_impl(repo, "scores/one")
 
     page = impl.get_info(repo=repo)
 
@@ -439,7 +439,7 @@ def test_a_label_naming_a_non_genome_resource_degrades_to_raw_counts(
 ) -> None:
     repo = (
         a_grr()
-        .with_resource("scores/one", _a_chr1_score("scores/other776"))
+        .with_resource("scores/one", a_chr1_score("scores/other776"))
         .with_resource(
             "scores/other776",
             a_position_score()
@@ -451,7 +451,7 @@ def test_a_label_naming_a_non_genome_resource_degrades_to_raw_counts(
                 """))
         .build_repo(tmp_path)
     )
-    impl = _built_impl(repo, "scores/one")
+    impl = built_impl(repo, "scores/one")
 
     page = impl.get_info(repo=repo)
 
@@ -479,10 +479,10 @@ def test_an_unusable_genome_label_degrades_to_raw_counts(
     """
     repo = (
         a_grr()
-        .with_resource("scores/one", _a_chr1_score(value))
+        .with_resource("scores/one", a_chr1_score(value))
         .build_repo(tmp_path)
     )
-    impl = _built_impl(repo, "scores/one")
+    impl = built_impl(repo, "scores/one")
 
     with caplog.at_level(logging.WARNING):
         page = impl.get_info(repo=repo)
@@ -500,12 +500,12 @@ def test_an_unusable_genome_label_degrades_to_raw_counts(
 
 
 @pytest.mark.parametrize("builder", [
-    pytest.param(_a_chr1_score(), id="no-meta-block-at-all"),
+    pytest.param(a_chr1_score(), id="no-meta-block-at-all"),
     pytest.param(
-        _a_chr1_score().with_labels(domain="score"),
+        a_chr1_score().with_labels(domain="score"),
         id="labels-without-the-key"),
     pytest.param(
-        _a_chr1_score().with_labels(reference_genome=None),
+        a_chr1_score().with_labels(reference_genome=None),
         id="the-key-an-explicit-yaml-null"),
 ])
 def test_a_score_declaring_no_genome_is_silent(
@@ -526,7 +526,7 @@ def test_a_score_declaring_no_genome_is_silent(
         .with_resource("scores/one", builder)
         .build_repo(tmp_path)
     )
-    impl = _built_impl(repo, "scores/one")
+    impl = built_impl(repo, "scores/one")
 
     with caplog.at_level(logging.WARNING):
         page = impl.get_info(repo=repo)
@@ -544,7 +544,7 @@ def _a_repo_with_an_untouched_contig(
     the whole point: chr2 is 300bp of reference the score says nothing
     about, and the global fraction has to count it.
     """
-    return _a_repo_with_genome(
+    return a_repo_with_genome(
         where, "genomes/g1041", chr1=100, chr2=300)
 
 
@@ -552,7 +552,7 @@ def test_global_fraction_counts_contigs_the_score_never_touches(
     tmp_path: pathlib.Path,
 ) -> None:
     repo = _a_repo_with_an_untouched_contig(tmp_path)
-    impl = _built_impl(repo, "scores/one")
+    impl = built_impl(repo, "scores/one")
 
     page = impl.get_info(repo=repo)
 
@@ -564,7 +564,7 @@ def test_untouched_contigs_render_as_one_rollup_row(
     tmp_path: pathlib.Path,
 ) -> None:
     repo = _a_repo_with_an_untouched_contig(tmp_path)
-    impl = _built_impl(repo, "scores/one")
+    impl = built_impl(repo, "scores/one")
 
     page = impl.get_info(repo=repo)
 
@@ -579,7 +579,7 @@ def test_bigwig_header_contigs_without_values_join_the_denominator(
     # STORES a zero for chr2 -- so this pins that the roll-up counts a
     # contig by having no values, not by being absent from the file.
     repo = _a_bigwig_repo(tmp_path, {"chr1": 100, "chr2": 300})
-    impl = _built_impl(repo, "scores/bw")
+    impl = built_impl(repo, "scores/bw")
 
     page = impl.get_info(repo=repo)
 
@@ -623,7 +623,7 @@ def test_a_covered_contig_missing_from_the_genome_suppresses_the_rollup(
             .with_chromosome("chr2", "C" * 300))
         .build_repo(tmp_path)
     )
-    impl = _built_impl(repo, "scores/two")
+    impl = built_impl(repo, "scores/two")
 
     page = impl.get_info(repo=repo)
 
@@ -642,7 +642,7 @@ def test_an_implausible_untouched_contig_leaves_the_denominator(
         tmp_path, "genomes/gz1041",
         ">chr1\n" + "A" * 100 + "\n",
         "chr1\t100\t7\t100\t101\nchr2\t0\t115\t60\t61\n")
-    impl = _built_impl(repo, "scores/one")
+    impl = built_impl(repo, "scores/one")
 
     page = impl.get_info(repo=repo)
 
@@ -653,9 +653,9 @@ def test_an_implausible_untouched_contig_leaves_the_denominator(
 def test_several_untouched_contigs_roll_up_into_one_row(
     tmp_path: pathlib.Path,
 ) -> None:
-    repo = _a_repo_with_genome(
+    repo = a_repo_with_genome(
         tmp_path, "genomes/g1041c", chr1=100, chr2=300, chr3=600)
-    impl = _built_impl(repo, "scores/one")
+    impl = built_impl(repo, "scores/one")
 
     page = impl.get_info(repo=repo)
 
@@ -682,8 +682,8 @@ def test_coverage_too_small_to_show_is_floored_on_the_rendered_page(
     at all.  That half rests on both sections reaching the same
     ``percentage_of``, which ``test_share_percentages.py`` pins.
     """
-    repo = _a_repo_with_genome(tmp_path, "genomes/g1057a", chr1=_A_MILLION)
-    impl = _built_impl(repo, "scores/one")
+    repo = a_repo_with_genome(tmp_path, "genomes/g1057a", chr1=_A_MILLION)
+    impl = built_impl(repo, "scores/one")
 
     page = impl.get_info(repo=repo)
 
@@ -696,7 +696,7 @@ def test_coverage_too_small_to_show_is_floored_on_the_rendered_page(
 def _a_chr1_score_covering(genome_id: str, covered: int):
     """The module's score shape, over a chosen number of positions.
 
-    :func:`_a_chr1_score` holds nine, which no integer contig length
+    :func:`a_chr1_score` holds nine, which no integer contig length
     can put within rounding distance of the whole -- 9 of 10 is 90%,
     and 9 of 9 is exactly all of it -- so the CEILING needs a score
     whose covered count is a parameter.
@@ -723,11 +723,11 @@ def test_coverage_short_of_the_whole_contig_is_not_written_as_all_of_it(
     the Alleles tables below said ``>99.99%`` of the identical shape.
     """
     genome_id = "genomes/g1057b"
-    repo = _a_repo_with_genome(
+    repo = a_repo_with_genome(
         tmp_path, genome_id,
         score=_a_chr1_score_covering(genome_id, 99_999),
         chr1=100_000)
-    impl = _built_impl(repo, "scores/one")
+    impl = built_impl(repo, "scores/one")
 
     page = impl.get_info(repo=repo)
 
@@ -740,11 +740,11 @@ def test_a_fully_covered_contig_is_still_written_as_all_of_it(
 ) -> None:
     """The ceiling is for a share short of the whole, not for the whole."""
     genome_id = "genomes/g1057c"
-    repo = _a_repo_with_genome(
+    repo = a_repo_with_genome(
         tmp_path, genome_id,
         score=_a_chr1_score_covering(genome_id, 100_000),
         chr1=100_000)
-    impl = _built_impl(repo, "scores/one")
+    impl = built_impl(repo, "scores/one")
 
     page = impl.get_info(repo=repo)
 
