@@ -423,8 +423,9 @@ test.describe('Job file upload tests', () => {
     await expect(jobs.selectGenome).toBeVisible();
     await expect(page.locator('label[for="select-genome"]')).toHaveText('Select genome:');
 
-    const options = await jobs.selectGenome.locator('option').allTextContents();
-    expect(options.length).toBe(7);
+    await utils.expectInventoryOptionCount(
+      jobs.selectGenome.locator('option'), 7, 'genome selector (one option per genome resource)'
+    );
   });
 });
 
