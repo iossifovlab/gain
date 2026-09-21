@@ -95,12 +95,14 @@ def test_an_absent_file_is_the_live_ladder_and_stays_absent(
 
 
 def test_the_regions_split_by_the_file_are_the_regions_split_live(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
 ) -> None:
     """A rebuild over a CURRENT file scans the same regions as one
     over none: the stored records are the live ladder's records."""
     impl, repo = a_repaired_labelled_score(tmp_path)
+    opened = mocker.spy(GenomicScore, "open")
     from_the_file = impl._get_chrom_regions(1000, repo)
+    opened.assert_not_called()
     _lengths_file(tmp_path).unlink()
     impl, repo = resynced(tmp_path)
 

@@ -144,7 +144,7 @@ def test_a_genome_gone_since_the_repair_still_prices_the_scores_own_contigs(
         f"Couldn't find reference genome {GENOME}") == 1
 
 
-def test_an_unrepaired_tabix_score_whose_genome_is_gone_renders_raw_counts(
+def test_a_tabix_score_without_a_stored_file_whose_genome_is_gone_is_raw(
     tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
 ) -> None:
     """Nothing stored, nothing exact a tabix table can say live: raw

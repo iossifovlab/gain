@@ -265,9 +265,11 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
         Answered from the stored ``CHROM_LENGTHS_FILE`` while the gate
         (:meth:`derived_files_state`) calls it ``CURRENT``: the records
-        the repair wrote, with no table opened and no genome resolved --
-        the repair that wrote them already warned or failed over the
-        contig overlap.  In every other state the ladder runs live, as
+        the repair wrote, with no table opened -- the genome is looked
+        up only to tell whether a key derived with none still holds --
+        and no overlap check, the repair that wrote them having already
+        warned or failed over it.  In every other state the ladder runs
+        live, as
         below.  A CURRENT file whose contig list is no longer the
         table's cannot be told apart without opening the table, and is
         not looked for here: the key's manifest md5s cover the table
@@ -496,11 +498,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def _get_chrom_regions(
         self, region_size: int, grr: GenomicResourceRepo | None = None,
     ) -> list[Region]:
-        """The statistics regions, resolved live; writes nothing.
+        """The statistics regions, split by :meth:`get_chrom_lengths`'s
+        answer -- the stored file when CURRENT, the live ladder
+        otherwise; writes nothing.
 
-        The build itself goes through :meth:`_store_chrom_lengths`; this
-        is the seam the region-boundary tests pin, with no file written
-        into the fixture as a side effect.
+        The build itself goes through :meth:`_store_chrom_lengths`, live
+        always; this is the seam the region-boundary tests pin, with no
+        file written into the fixture as a side effect.
         """
         return self._regions_from(self.get_chrom_lengths(grr), region_size)
 

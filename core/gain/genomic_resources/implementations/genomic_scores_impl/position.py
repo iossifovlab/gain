@@ -109,7 +109,11 @@ class PositionScoreImplementation(GenomicScoreImplementation):
         if (stored := self._stored_lengths_if_current(
                 self._render_repo)) is not None:
             return stored.lengths
-        if not self.score.chrom_length_source.is_exact or \
-                self._unpulled_table_files():
+        if not self.score.chrom_length_source.is_exact:
             return {}
+        unpulled = self._unpulled_table_files()
+        if unpulled:
+            return {}
+        # ``None`` -- a table file missing with no sidecar -- is a broken
+        # resource, and the live read fails it as any read would.
         return self._derive_chrom_lengths(None)
