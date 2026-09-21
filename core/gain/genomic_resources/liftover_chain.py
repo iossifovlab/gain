@@ -97,8 +97,7 @@ class LiftoverChain(ResourceConfigValidationMixin):
             return chrom
         if "del_prefix" in mapping:
             del_prefix = mapping["del_prefix"]
-            if chrom.startswith(del_prefix):
-                chrom = chrom.lstrip(del_prefix)
+            chrom = chrom.removeprefix(del_prefix)
         if "add_prefix" in mapping:
             add_prefix = mapping["add_prefix"]
             chrom = f"{add_prefix}{chrom}"
