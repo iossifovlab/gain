@@ -6,9 +6,9 @@ except ImportError:
     # (e.g. inside CI Docker images that don't ship .git).
     __version__ = "0.0.0.dev0"
 
-# Both patch stdlib logging for the whole process as an import side effect:
-# the custom levels, and the log-record seam that renders every log line
-# without url userinfo (ADR 0023, gain#1363). Importing gain at all is the
-# moment, so no worker, host or later import order can miss either.
+# Both configure stdlib logging for the whole process as an import side
+# effect: the custom levels, and the log-record seam that renders every log
+# line without url userinfo (ADR 0023, gain#1363). Importing gain at all is
+# the moment, so no worker, host or later import order can miss either.
 import gain.utils.log_levels  # ruff: ignore[unused-import]
 import gain.utils.url_redaction  # ruff: ignore[unused-import]

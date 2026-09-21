@@ -1306,9 +1306,9 @@ def _name_bindings(fn: _Function) -> Iterator[tuple[list[str], ast.expr]]:
 #: alone deliberately: it takes no url in this tree.
 #:
 #: ``trace`` and ``user_info`` are in the set because they are real
-#: methods here: ``utils.log_levels`` installs both on ``logging.Logger``
-#: at import, and thirteen sites in the package call them.  A stdlib-only
-#: list would leave those writing to a log this rule cannot see.
+#: methods here: ``utils.log_levels`` provides both at import, and
+#: thirteen sites in the package call them.  A stdlib-only list would
+#: leave those writing to a log this rule cannot see.
 LOG_LEVELS = frozenset({
     "debug", "info", "warning", "warn", "error", "exception", "critical",
     "trace", "user_info",
