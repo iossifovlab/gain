@@ -16,6 +16,9 @@ from collections.abc import Callable
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.genomic_scores.chrom_lengths import (
+    CHROM_LENGTHS_FILE,
+)
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
@@ -92,8 +95,10 @@ def test_each_kind_declares_exactly_the_statistics_files_its_build_writes(
     # together.  Both directions -- a declared file must be written at
     # the declared version, and every statistics document written must
     # be declared, at a version -- or a new statistic would roll out
-    # unreported.  Only the per-score histogram files are exempt: they
-    # are addressed by score id, not by kind.
+    # unreported.  Two exemptions: the per-score histogram files, which
+    # are addressed by score id, not by kind, and the derived chromosome
+    # lengths, which are not a statistic of the scan at all -- they
+    # carry their own staleness gate (``derived_files_state``, gain#1576).
     repo = a_grr().with_resource(kind, builder()).build_repo(tmp_path)
     cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
     resource = repo.get_resource(kind)
@@ -109,6 +114,7 @@ def test_each_kind_declares_exactly_the_statistics_files_its_build_writes(
             json.loads(statistics_file.read_text()).get("format_version")
         for statistics_file in (tmp_path / kind / "statistics").glob("*.json")
         if not statistics_file.name.startswith("histogram_")
+        and f"statistics/{statistics_file.name}" != CHROM_LENGTHS_FILE
     }
 
     assert declared
