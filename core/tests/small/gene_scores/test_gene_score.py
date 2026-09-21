@@ -108,8 +108,7 @@ def scores_repo() -> GenomicResourceRepo:
                 G6,3
             """),
             "statistics": {
-                # An image is addressed only when the manifest lists it
-                # (gain#1533), so the built shape ships it.
+                # The image too, as a built resource would have it.
                 "histogram_linear score.png": "drawn",
                 "histogram_linear score.json": textwrap.dedent("""{
                     "bars":[2,2,2],

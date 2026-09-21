@@ -11,7 +11,7 @@ from gain.genomic_resources.testing import (
     setup_directories,
 )
 from gain.genomic_resources.testing.builders import a_position_score
-from gain.genomic_resources.testing.statistics import build_statistics
+from gain.genomic_resources.testing.statistics import publish_statistics
 
 
 @pytest.fixture
@@ -30,8 +30,7 @@ def grr_fixture(tmp_path: pathlib.Path) -> GenomicResourceRepo:
                       A score description testtest
                   name: s1
             """,
-            # As a built resource has it: an image is addressed only when
-            # the manifest lists it (gain#1533).
+            # The image too, as a built resource would have it.
             "statistics/histogram_score.png": "drawn",
         },
         "pipeline": {
@@ -124,7 +123,7 @@ def built_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
     )
     repo = build_filesystem_test_repository(root_path)
     score = repo.get_resource("one")
-    build_statistics(score)
+    publish_statistics(score)
     # The premise, not the subject: one drawn, one not.
     assert score.file_exists("statistics/histogram_drawn.png")
     assert not score.file_exists("statistics/histogram_empty.png")

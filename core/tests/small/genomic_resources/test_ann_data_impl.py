@@ -14,9 +14,10 @@ from gain.genomic_resources.implementations.ann_data_resource_impl import (
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing.ann_data_builder import an_ann_data
 from gain.genomic_resources.testing.builders import a_grr
-from gain.task_graph.cli_tools import task_graph_run
-from gain.task_graph.graph import TaskGraph
-from gain.task_graph.sequential_executor import SequentialExecutor
+from gain.genomic_resources.testing.statistics import (
+    build_statistics,
+    refresh_manifest,
+)
 
 DESCRIBE_OBS = "statistics/describe_obs.csv"
 DESCRIBE_VAR = "statistics/describe_var.csv"
@@ -33,21 +34,6 @@ TIMES = "\u00d7"
 @pytest.fixture
 def resource(tmp_path: pathlib.Path) -> GenomicResource:
     return an_ann_data().build_resource(tmp_path)
-
-
-def build_statistics(resource: GenomicResource) -> None:
-    """Run the implementation's real statistics tasks to completion."""
-    impl = AnnDataResourceImplementation(resource)
-    graph = TaskGraph()
-    graph.add_tasks(impl.create_statistics_build_tasks())
-    task_graph_run(graph, SequentialExecutor())
-
-
-def refresh_manifest(resource: GenomicResource) -> None:
-    """Rewrite the stored manifest, as grr_manage does after a stats run."""
-    proto = resource.proto
-    proto.save_manifest(resource, proto.build_manifest(resource))
-    resource._manifest = None
 
 
 def test_statistics_task_writes_the_describe_tables(

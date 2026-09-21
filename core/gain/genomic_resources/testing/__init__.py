@@ -63,7 +63,7 @@ def convert_to_tab_separated(content: str) -> str:
 
 def setup_directories(
         root_dir: pathlib.Path,
-        content: str | dict[str, Any]) -> None:
+        content: str | bytes | dict[str, Any]) -> None:
     """Set up directory and subdirectory structures using the content."""
     root_dir = pathlib.Path(root_dir)
     root_dir.parent.mkdir(parents=True, exist_ok=True)

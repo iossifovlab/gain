@@ -14,21 +14,18 @@ from gain.gene_scores.gene_scores import (
     GeneScoresDb,
     build_gene_score_from_resource,
 )
-from gain.genomic_resources.histogram import (
-    CategoricalHistogram,
-    NullHistogram,
-)
+from gain.genomic_resources.histogram import NullHistogram
 from gain.genomic_resources.testing.builders import a_gene_score
-from gain.genomic_resources.testing.statistics import build_statistics
+from gain.genomic_resources.testing.statistics import (
+    a_gene_score_with_too_many_categories,
+    publish_statistics,
+)
 
 
 @pytest.fixture
 def gene_score(tmp_path: pathlib.Path) -> GeneScore:
-    """One gene score resource: ``pli`` has a histogram, ``nullified`` none.
-
-    ``pli`` ships its image, as a built resource does -- an image is
-    addressed only when the manifest lists it (gain#1533).
-    """
+    """One gene score resource: ``pli`` has a histogram (and, as a built
+    resource would, its image), ``nullified`` none."""
     res = (
         a_gene_score()
         .with_score("pli", "float")
@@ -53,17 +50,9 @@ def built_gene_score(tmp_path: pathlib.Path) -> GeneScore:
     limit -- and its values exceed it, so the build nullifies it while
     accumulating and draws nothing (gain#1533).
     """
-    rows = "\n".join(
-        f"G{i}  {i / 1000}  label{i}"
-        for i in range(CategoricalHistogram.UNIQUE_VALUES_LIMIT + 1))
-    res = (
-        a_gene_score()
-        .with_score("pli", "float")
-        .with_score("label", "str")
-        .with_data("gene  pli  label\n" + rows)
-        .build_resource(tmp_path / "gene_score")
-    )
-    build_statistics(res)
+    res = a_gene_score_with_too_many_categories().build_resource(
+        tmp_path / "gene_score")
+    publish_statistics(res)
     gene_score = build_gene_score_from_resource(res)
     # The premise, not the subject: the build did nullify it, for the
     # unique-values reason, and drew no image for it.

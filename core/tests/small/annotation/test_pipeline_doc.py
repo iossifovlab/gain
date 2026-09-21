@@ -32,18 +32,17 @@ from gain.annotation.pipeline_doc import (
     RepositoryRelativeAddresses,
     render_pipeline_doc,
 )
-from gain.genomic_resources.histogram import CategoricalHistogram
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
 )
 from gain.genomic_resources.score_resource import ScoreResource
-from gain.genomic_resources.testing.builders import (
-    PositionScoreBuilder,
-    a_grr,
-    a_position_score,
+from gain.genomic_resources.testing.builders import a_grr, a_position_score
+from gain.genomic_resources.testing.statistics import (
+    a_score_with_no_values,
+    a_score_with_too_many_categories,
+    publish_statistics,
 )
-from gain.genomic_resources.testing.statistics import build_statistics
 
 PIPELINE = "- position_score: scores/pos1\n"
 
@@ -71,9 +70,8 @@ class RelativeStub:
 def public_repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
     """A GRR with one score, advertising a public mirror of its own.
 
-    The score ships its histogram image, as a built resource does: an
-    image is addressed only when the manifest lists it (gain#1533), and
-    these tests are about WHERE it is addressed, not whether.
+    The score ships its histogram image, as a built resource would: these
+    tests are about WHERE the image is addressed, not whether.
     """
     return (
         a_grr()
@@ -196,42 +194,6 @@ def test_an_annulled_histogram_renders_no_image(
     assert "<img" not in html
 
 
-def a_score_with_no_values() -> PositionScoreBuilder:
-    """A configured number histogram the build nullifies in its min/max pass.
-
-    Every value is NA, so no range is found and nothing is drawn.
-    """
-    return (
-        a_position_score()
-        .with_score("score", "float")
-        .with_histogram({"type": "number", "number_of_bins": 10})
-        .with_na_values("NA")
-        .with_data("""
-            chrom  pos_begin  score
-            1      10         NA
-            1      20         NA
-        """)
-    )
-
-
-def a_score_with_too_many_categories() -> PositionScoreBuilder:
-    """A default categorical histogram the build nullifies accumulating.
-
-    No ``histogram:`` block, so the ``str`` score gets the default
-    categorical config, which enforces the unique-values limit -- and the
-    values exceed it.  A null histogram file IS written for this one;
-    still, nothing is drawn.
-    """
-    rows = "\n".join(
-        f"1  {10 * (i + 1)}  label{i}"
-        for i in range(CategoricalHistogram.UNIQUE_VALUES_LIMIT + 1))
-    return (
-        a_position_score()
-        .with_score("score", "str")
-        .with_data("chrom  pos_begin  score\n" + rows)
-    )
-
-
 @pytest.fixture(
     params=[a_score_with_no_values, a_score_with_too_many_categories])
 def nullified_repo(
@@ -250,7 +212,7 @@ def nullified_repo(
         .build_repo(tmp_path / "grr")
     )
     resource = repo.get_resource("scores/pos1")
-    build_statistics(resource)
+    publish_statistics(resource)
     # The premise, not the subject: the build drew nothing for it.
     assert not resource.file_exists("statistics/histogram_score.png")
     return repo

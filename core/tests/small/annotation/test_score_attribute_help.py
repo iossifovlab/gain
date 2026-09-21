@@ -15,18 +15,15 @@ from gain.annotation.genomic_score_annotator_base import (
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import a_grr, a_position_score
-from gain.genomic_resources.testing.statistics import build_statistics
+from gain.genomic_resources.testing.statistics import publish_statistics
 
 PUBLIC_URL = "http://grr.example.org"
 
 
 @pytest.fixture
 def repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
-    """One position score: ``score`` has a histogram, ``nullified`` none.
-
-    ``score`` ships its image, as a built resource does -- an image is
-    addressed only when the manifest lists it (gain#1533).
-    """
+    """One position score: ``score`` has a histogram (and, as a built
+    resource would, its image), ``nullified`` none."""
     return (
         a_grr()
         .with_resource(
@@ -69,7 +66,7 @@ def built_repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
         .build_repo(tmp_path / "grr")
     )
     resource = repo.get_resource("scores/pos1")
-    build_statistics(resource)
+    publish_statistics(resource)
     # The premise, not the subject: one drawn, one not.
     assert resource.file_exists("statistics/histogram_score.png")
     assert not resource.file_exists("statistics/histogram_empty.png")

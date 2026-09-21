@@ -1,4 +1,4 @@
-"""Extra payload files a score builder ships beside its config and data.
+"""Files a resource builder ships by name, beside what it renders itself.
 
 A resource holds more than the files its builder authors: the statistics
 build leaves ``statistics/`` behind, and what a resource's manifest lists
@@ -6,11 +6,13 @@ is what its readers and pages take to exist.  :class:`ExtraFilesMixin`
 lets a test put such a file into a fixture resource by name -- a stand-in
 histogram image, say -- without running the build that would have
 written it, for a test whose subject is the file's *presence* (an
-address, a manifest entry) rather than its content.
+address, a manifest entry) rather than its content.  For the ``basic``
+resource, which has no authored content of its own, the shipped files
+ARE the payload.
 
-A builder mixes it in and passes the content it renders itself through
-:meth:`ExtraFilesMixin.merge_extra_files`, which adds the shipped files
-beside it -- never over it.  It is a no-op until
+A builder mixes it in and calls :meth:`ExtraFilesMixin.realize_files_into`
+last, after everything it writes itself; a shipped file may then sit
+beside the builder's own files but never over one.  It is a no-op until
 :meth:`ExtraFilesMixin.with_file` is called, so a builder that does not use
 it realizes byte-identical output.  Like :mod:`.resource_meta`, it lives in
 its own module so the builder DSL can keep growing without ``builders.py``
@@ -19,18 +21,19 @@ turning into an unreadable slab.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Iterable, Mapping
-from typing import Any, Self
+import pathlib
+from typing import Self
 
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
+from gain.genomic_resources.testing import setup_directories
 from gain.genomic_resources.testing.score_specs import ResourceValidationError
 
 
 @dataclasses.dataclass(frozen=True)
 class ExtraFilesMixin:
-    """Immutable extra-file state shared by the score builders."""
+    """Immutable shipped-file state shared by the resource builders."""
 
-    extra_files: tuple[tuple[str, str | bytes], ...] = ()
+    files: tuple[tuple[str, str | bytes], ...] = ()
 
     def with_file(self, filename: str, content: str | bytes) -> Self:
         """Ship ``content`` as ``filename`` inside the realized resource.
@@ -39,35 +42,38 @@ class ExtraFilesMixin:
         subdirectory (``statistics/histogram_score.png``), which is
         created.  A name already shipped is replaced in place.
 
-        A file the builder renders itself cannot be shipped: the config is
-        refused here, and the data, index and sidecar files are refused
-        when the resource is realized, since which of those a builder
-        writes is settled only by its other knobs.  Either would let a
-        payload silently contradict the config that describes it.
+        The config is not a payload: it is rendered from the builder's own
+        state, and a file under its name would silently win over all of
+        it, so that name is refused here.  A file the builder writes
+        itself (its data, index or sidecar) is refused when the resource
+        is realized, since which of those a builder writes is settled
+        only by its other knobs.
         """
         if filename == GR_CONF_FILE_NAME:
             raise ResourceValidationError(
-                f"{filename!r} is the rendered config, not a payload")
-        files = dict(self.extra_files)
+                f"{filename!r} is the rendered config, not a payload; "
+                f"declare meta with with_meta, or the whole block with "
+                f"with_raw_meta")
+        # A dict keeps a reassigned key in its slot, which is the
+        # replace-in-place the docstring promises.
+        files = dict(self.files)
         files[filename] = content
-        return dataclasses.replace(self, extra_files=tuple(files.items()))
+        return dataclasses.replace(self, files=tuple(files.items()))
 
-    def merge_extra_files(
-        self, rendered: Mapping[str, Any], *,
-        reserved: Iterable[str] = (),
-    ) -> dict[str, Any]:
-        """``rendered`` plus the shipped files, for ``setup_directories``.
+    def files_content(self) -> dict[str, str | bytes]:
+        """The shipped files as ``setup_directories`` content."""
+        return dict(self.files)
 
-        ``reserved`` names files the builder writes outside ``rendered``
-        (a tabix table and its index, written by pysam after the directory
-        is set up).  A shipped file under any rendered or reserved name is
-        refused.
+    def realize_files_into(self, resource_dir: pathlib.Path) -> None:
+        """Write the shipped files into ``resource_dir``, last.
+
+        Called after the builder has written everything of its own, so a
+        shipped file that would land on one of those is refused rather
+        than replacing it -- a payload the config does not describe.
         """
-        taken = set(rendered) | set(reserved)
-        shadowing = [name for name, _ in self.extra_files if name in taken]
-        if shadowing:
-            raise ResourceValidationError(
-                f"{shadowing!r} would shadow files this builder renders "
-                f"itself; with_file ships payloads beside them, not over "
-                f"them")
-        return {**rendered, **dict(self.extra_files)}
+        for filename, content in self.files:
+            if (resource_dir / filename).exists():
+                raise ResourceValidationError(
+                    f"{filename!r} is a file this builder renders itself; "
+                    f"with_file ships payloads beside it, not over it")
+            setup_directories(resource_dir / filename, content)

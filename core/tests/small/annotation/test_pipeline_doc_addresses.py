@@ -49,8 +49,7 @@ def a_score_resource() -> PositionScoreBuilder:
     """Three scores: two with a histogram to address, one annulled.
 
     Every id the tests ask about is declared here, and the two with a
-    histogram ship their image, as a built resource does -- an image is
-    addressed only when the manifest lists it (gain#1533).  ``score id``
+    histogram ship their image, as a built resource would.  ``score id``
     carries the space the quoting test is about; ``nullified`` has no
     image to address at all.
     """

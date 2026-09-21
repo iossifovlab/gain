@@ -519,18 +519,11 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
         write_header = self._effective_header_mode() == "file"
         sidecars = self._render_chrom_mapping_file()
         if self.tabix:
-            # The table and its index are written by pysam below, after
-            # the directory is set up, so they are reserved by name.
-            setup_directories(resource_dir, self.merge_extra_files({
+            setup_directories(resource_dir, {
                 GR_CONF_FILE_NAME: self._render_config(
                     scores, _TABIX_FILENAME, data),
                 **sidecars,
-            }, reserved=filter(None, (
-                _TABIX_FILENAME,
-                f"{_TABIX_FILENAME}.tbi",
-                f"{_TABIX_FILENAME}.csi",
-                self.index_filename,
-            ))))
+            })
             _realize_tabix_table(
                 resource_dir / _TABIX_FILENAME, data,
                 write_header=write_header, csi=self.csi,
@@ -538,12 +531,13 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
                 keep_conventional_index=self.keep_conventional_index)
         else:
             file_data = data if write_header else _strip_header(data)
-            setup_directories(resource_dir, self.merge_extra_files({
+            setup_directories(resource_dir, {
                 GR_CONF_FILE_NAME: self._render_config(
                     scores, _DATA_FILENAME, data),
                 _DATA_FILENAME: convert_to_tab_separated(file_data),
                 **sidecars,
-            }))
+            })
+        self.realize_files_into(resource_dir)
 
     def _render_chrom_mapping_file(self) -> dict[str, str]:
         """The mapping file :meth:`with_chrom_mapping_file` ships, if any."""
@@ -830,7 +824,7 @@ def _normalize_bedgraph(data: str) -> str:
 
 
 @dataclasses.dataclass(frozen=True)
-class BigWigScoreBuilder(MetaMixin):
+class BigWigScoreBuilder(ExtraFilesMixin, MetaMixin):
     """Immutable builder for a bigWig-backed ``position_score``.
 
     Authored as bedGraph rows (``chrom start end value``), whose intervals
@@ -981,6 +975,7 @@ class BigWigScoreBuilder(MetaMixin):
         setup_bigwig(
             resource_dir / (self.filename or _BIGWIG_FILENAME),
             data, chrom_lens)
+        self.realize_files_into(resource_dir)
 
     def build_resource(self, tmp_path: pathlib.Path) -> GenomicResource:
         """Realize this single resource (repo id ``""``) into ``tmp_path``."""
@@ -1065,7 +1060,7 @@ chr1   11  .  A   T   .    .      score=0.2
 
 
 @dataclasses.dataclass(frozen=True)
-class VcfInfoScoreBuilder(MetaMixin):
+class VcfInfoScoreBuilder(ExtraFilesMixin, MetaMixin):
     """Immutable builder for a VCF-backed ``allele_score`` resource.
 
     The score definitions are derived by the resource from the VCF's
@@ -1222,6 +1217,7 @@ class VcfInfoScoreBuilder(MetaMixin):
             suffix = ".csi" if self.csi else ".tbi"
             (resource_dir / f"{_VCF_FILENAME}{suffix}").rename(
                 resource_dir / self.index_filename)
+        self.realize_files_into(resource_dir)
 
     def build_resource(self, tmp_path: pathlib.Path) -> GenomicResource:
         """Realize this single resource (repo id ``""``) into ``tmp_path``."""
@@ -1353,9 +1349,8 @@ class GeneScoreBuilder(ExtraFilesMixin, MetaMixin):
         Raises a ``ResourceValidationError`` on invalid content;
         ``GRRBuilder`` annotates it with the resource id.
         """
-        setup_directories(
-            resource_dir,
-            self.merge_extra_files(_build_gene_score_content(self)))
+        setup_directories(resource_dir, _build_gene_score_content(self))
+        self.realize_files_into(resource_dir)
 
     def build_resource(
         self, tmp_path: pathlib.Path,
@@ -1472,7 +1467,7 @@ class GRRBuilder:
 
 
 @dataclasses.dataclass(frozen=True)
-class BasicResourceBuilder(MetaMixin):
+class BasicResourceBuilder(ExtraFilesMixin, MetaMixin):
     """Immutable builder for a single ``basic`` resource.
 
     ``basic`` is the catch-all type: no schema, no type-specific file
@@ -1483,7 +1478,8 @@ class BasicResourceBuilder(MetaMixin):
     that is byte-identical to the hand-written ``"type: basic\\n"``
     literal it replaces, so fixtures pinning that literal's size and md5
     can move onto it.  ``with_meta`` and its siblings come from
-    :class:`MetaMixin`; :meth:`with_file` is the only knob of its own.
+    :class:`MetaMixin`, ``with_file`` from :class:`ExtraFilesMixin` --
+    here the shipped files are the whole payload.
 
     Two exits: :meth:`build_resource` writes the resource under a
     ``tmp_path`` like every other builder, and :meth:`build_inmemory`
@@ -1491,30 +1487,8 @@ class BasicResourceBuilder(MetaMixin):
     renders the resource's page.  Both realize the same content dict.
     """
 
-    files: tuple[tuple[str, str], ...] = ((_DATA_FILENAME, "alabala"),)
-
-    def with_file(self, filename: str, content: str) -> Self:
-        """Add a payload file, or replace the one already carrying its name.
-
-        A ``basic`` resource ships arbitrary files, so this is the only
-        content knob it has.  ``with_file("data.txt", ...)`` overwrites
-        the default payload in place rather than adding a second entry
-        under the same name, which the realized directory could not hold
-        anyway.  The config is not a payload: it is rendered from the
-        type and the declared ``meta:``, and a file under its name would
-        silently win over both, so that name is refused here -- the
-        ``GRRBuilder`` duplicate-id precedent.
-        """
-        if filename == GR_CONF_FILE_NAME:
-            raise ResourceValidationError(
-                f"{filename!r} is the rendered config, not a payload; "
-                f"declare meta with with_meta, or the whole block with "
-                f"with_raw_meta")
-        # A dict keeps a reassigned key in its slot, which is the
-        # replace-in-place the docstring promises.
-        files = dict(self.files)
-        files[filename] = content
-        return dataclasses.replace(self, files=tuple(files.items()))
+    files: tuple[tuple[str, str | bytes], ...] = (
+        (_DATA_FILENAME, "alabala"),)
 
     def realize_into(self, resource_dir: pathlib.Path) -> None:
         """Write this basic resource into ``resource_dir``."""
@@ -1545,7 +1519,7 @@ def _build_basic_resource_content(
     """
     return {
         GR_CONF_FILE_NAME: "type: basic\n" + builder.render_meta(),
-        **dict(builder.files),
+        **builder.files_content(),
     }
 
 

@@ -1482,8 +1482,7 @@ def test_get_histogram_filename_prefers_yaml_from_manifest() -> None:
         "statistics/histogram_score.yaml"
 
 
-# An image is addressed only when the manifest lists it (gain#1533), so
-# the address tests build the shape a statistics build leaves behind.
+# The shape a statistics build leaves behind, which the address tests want.
 A_DRAWN_IMAGE = {"statistics/histogram_score.png": "drawn"}
 
 
