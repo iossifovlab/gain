@@ -871,6 +871,85 @@ def test_parse_preamble_no_preamble() -> None:
     assert preamble is None
 
 
+def test_mapping_form_without_a_preamble_key_has_no_preamble() -> None:
+    """The preamble is optional in the mapping form too (gain#1535).
+
+    A config that spells its annotators under ``annotators:`` but declares
+    no ``preamble:`` used to die with a bare ``KeyError``. It parses like
+    the bare-list form: no preamble is ``None``, not an empty preamble.
+    """
+    preamble, annotators = AnnotationConfigParser.parse_str("""
+        annotators:
+          - sample_annotator
+    """)
+
+    assert preamble is None
+    assert [info.type for info in annotators] == ["sample_annotator"]
+
+
+def test_an_empty_preamble_mapping_is_a_present_preamble() -> None:
+    """``preamble: {}`` declares a preamble; it is absent only when unspelt.
+
+    Every preamble field is optional, so the empty mapping is a legal,
+    fully-defaulted preamble -- and readers that print a preamble section
+    when one is declared (the pipeline doc page) must keep seeing it. Only
+    the missing key parses to ``None``; an empty value must not be folded
+    into it by a truthiness shortcut.
+    """
+    preamble, _ = AnnotationConfigParser.parse_str("""
+        preamble: {}
+        annotators:
+          - sample_annotator
+    """)
+
+    assert preamble == AnnotationPreamble("", "", None, None, {})
+
+
+@pytest.mark.parametrize("config", [
+    pytest.param("preamble:\n  summary: s\n", id="preamble-only"),
+    pytest.param("{}", id="empty-mapping"),
+])
+def test_a_mapping_without_an_annotators_key_is_refused(config: str) -> None:
+    """The mapping form has nothing to run without ``annotators:``.
+
+    A missing key used to escape as a bare ``KeyError`` (gain#1535); it is
+    a configuration error that names the section the config lacks.
+    """
+    with pytest.raises(
+        AnnotationConfigurationError,
+        match=r"'annotators' section .* is required",
+    ):
+        AnnotationConfigParser.parse_str(config)
+
+
+@pytest.mark.parametrize("preamble_value, type_name", [
+    pytest.param("", "NoneType", id="null"),
+    pytest.param('"text"', "str", id="string"),
+    pytest.param("[1]", "list", id="list"),
+    pytest.param("42", "int", id="number"),
+])
+def test_a_preamble_that_is_not_a_mapping_is_refused(
+    preamble_value: str, type_name: str,
+) -> None:
+    """``preamble:`` takes a mapping; nothing else, YAML ``null`` included.
+
+    Leaving the key out is how a config declares no preamble. A key that
+    is present with a non-mapping value is a mistake, and it is refused
+    with a configuration error that names the offending type -- the same
+    shape as the refusal of a non-list ``annotators``. It used to escape
+    as an ``AttributeError`` from inside the preamble parser (gain#1535).
+    """
+    with pytest.raises(
+        AnnotationConfigurationError,
+        match=rf"'preamble' section .* must be a mapping, not {type_name}",
+    ):
+        AnnotationConfigParser.parse_str(f"""
+            preamble: {preamble_value}
+            annotators:
+              - sample_annotator
+        """)
+
+
 def test_wildcard_in_complete_syntax(test_grr: GenomicResourceRepo) -> None:
     _, pipeline_config = AnnotationConfigParser.parse_str("""
         - position_score:

@@ -284,8 +284,8 @@ _FIXTURE_ALLELE_SCORE = "scores/allele1"
 # One producer per distinct configuration; several pins share a refusal.
 _no_annotators = _config_error(
     "preamble:\n input_reference_genome: hg38/genomes/GRCh38-hg38")
-_no_preamble = _config_error(
-    "annotators:\n - allele_score: hg38/scores/CADD_v1.7")
+_non_mapping_preamble = _config_error(
+    "preamble: text\nannotators:\n - allele_score: hg38/scores/CADD_v1.7")
 _bare_allele_score = _config_error("- allele_score")
 _missing_score = _config_error(
     "preamble:\n"
@@ -313,8 +313,11 @@ _allele_score_documentation = _annotator_documentation(
 REGISTRY: dict[str, str | Callable[[], str]] = {
     # -- pipeline validation (core refusals through format_config_error) --
     "Invalid configuration": _no_annotators,
-    "Invalid configuration, reason: 'annotators'": _no_annotators,
-    "Invalid configuration, reason: 'preamble'": _no_preamble,
+    "Invalid configuration, reason: The 'annotators' section of a pipeline "
+    "configuration is required when the configuration is a mapping.":
+        _no_annotators,
+    "Invalid configuration, reason: The 'preamble' section of a pipeline "
+    "configuration must be a mapping, not str.": _non_mapping_preamble,
     "Invalid configuration, reason: "
     "The A0 annotator configuration is incorrect:": _bare_allele_score,
     "needs a 'resource_id' parameter naming the resource "

@@ -20,15 +20,21 @@ test.describe('Pipeline validation tests', () => {
     await editor.newPipeline();
     await utils.typeInPipelineEditor(page, 'preamble:\n input_reference_genome: hg38/genomes/GRCh38-hg38');
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
-    await expect(page.getByText('Invalid configuration, reason: \'annotators\'')).toBeVisible();
+    await expect(page.getByText(
+      'Invalid configuration, reason: The \'annotators\' section of a pipeline configuration is required when the configuration is a mapping.'
+    )).toBeVisible();
   });
 
-  test('should type config without peamble and show error message', async({ page }) => {
+  test('should type config whose preamble is not a mapping and show error message', async({ page }) => {
     const editor = new PipelineEditor(page);
     await editor.newPipeline();
-    await utils.typeInPipelineEditor(page, 'annotators:\n - allele_score: hg38/scores/CADD_v1.7');
+    // A mapping-form config needs no preamble at all (gain#1535); one that
+    // spells the key with a non-mapping value is what gets refused.
+    await utils.typeInPipelineEditor(page, 'preamble: text\nannotators:\n - allele_score: hg38/scores/CADD_v1.7');
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
-    await expect(page.getByText('Invalid configuration, reason: \'preamble\'')).toBeVisible();
+    await expect(page.getByText(
+      'Invalid configuration, reason: The \'preamble\' section of a pipeline configuration must be a mapping, not str.'
+    )).toBeVisible();
   });
 
   test('should type semantically invalid config and display error', async({ page }) => {
