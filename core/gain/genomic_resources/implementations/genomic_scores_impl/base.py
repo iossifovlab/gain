@@ -221,7 +221,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         Which kinds get which file is not decided here: each statistics
         module answers for its own, gated on the built score's class as
         its writer is, so the declaration and the write cannot disagree
-        on the kind.
+        on the kind.  The stored chromosome lengths are not among them:
+        :meth:`derived_files_state` keeps that file current on its own.
         """
         return [
             file for file in (

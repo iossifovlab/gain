@@ -304,10 +304,14 @@ class GenomicResourceImplementation(ABC):
     def statistics_files(self) -> list[StatisticsFile]:
         """The versioned statistics files this resource's build writes.
 
-        Each carries the ``format_version`` its writer currently stamps,
-        so the repair flow can report a resource whose stored statistics
-        predate the schema (gain#1586).  A kind with no such files
-        declares none and is never reported.
+        The files under the statistics hash's lazy rollout -- whose only
+        rebuild lever is a forced run.  Each carries the ``format_version``
+        its writer currently stamps, so the repair flow can report a
+        resource whose stored statistics predate the schema (gain#1586).
+        A file a kind derives under a freshness gate of its own
+        (:meth:`derived_files_state`) is not one of them: that gate
+        rewrites it without a rebuild.  A kind with no such files declares
+        none and is never reported.
         """
         return []
 

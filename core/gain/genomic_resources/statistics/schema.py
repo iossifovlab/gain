@@ -64,14 +64,17 @@ def _stored_format_version(
     """The ``format_version`` the file carries; ``None`` if it is absent.
 
     A file present but carrying no version is at version 0.  Raises
-    :class:`_Unreadable` for a file that does not parse as a JSON object
-    with an integer version: such a file is left to the failure paths
-    that already report it, and is not what this check is about.
+    :class:`_Unreadable` for a file that cannot be read, or does not
+    parse as a JSON object with an integer version: such a file is left
+    to the failure paths that already report it, and is not what this
+    check is about -- so it never moves a dry run's exit status either.
     """
     try:
         content = resource.get_file_content(path)
     except FileNotFoundError:
         return None
+    except OSError as err:
+        raise _Unreadable(path) from err
     try:
         document = json.loads(content)
     except ValueError as err:
@@ -79,7 +82,8 @@ def _stored_format_version(
     if not isinstance(document, dict):
         raise _Unreadable(path)
     stored = document.get("format_version", 0)
-    if not isinstance(stored, int):
+    # ``bool`` is an ``int``; ``true`` is not a version.
+    if not isinstance(stored, int) or isinstance(stored, bool):
         raise _Unreadable(path)
     return stored
 
@@ -89,9 +93,9 @@ def stale_statistics_files(
 ) -> list[StaleStatisticsFile]:
     """The declared files the resource is missing or holds at an older version.
 
-    Reads only the version out of each declared file.  A declared file
-    that does not parse is skipped: it is broken rather than stale, and
-    the paths that read it report that.
+    Parses each declared file and takes only its version out of it.  A
+    declared file that cannot be read or parsed is skipped: it is broken
+    rather than stale, and the paths that read it report that.
     """
     stale = []
     for file in declared:

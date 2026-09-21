@@ -143,6 +143,8 @@ def test_forced_repair_reports_nothing_and_rebuilds(
         cli_manage(["repo-repair", "-f", "-R", str(repo), "-j", "1"])
 
     assert _schema_lines(caplog) == []
+    # ... an absence the capture can vouch for: it saw the run's own lines
+    assert "is consistent" in caplog.text
     # Forcing IS the remedy: the writer stamped its current version
     assert json.loads(coverage.read_text())["format_version"] == 2
 
@@ -279,7 +281,11 @@ def test_a_repository_run_ends_with_one_summary_naming_the_count(
 
 
 def _versioned_files_written(resource_dir: pathlib.Path) -> dict[str, int]:
-    """Every JSON under ``statistics/`` that stamps a ``format_version``."""
+    """Every JSON under ``statistics/`` that stamps a ``format_version``.
+
+    ``chrom_lengths.json`` stamps ``format`` and is gated on its own
+    (gain#1576) -- not this report's, and deliberately not in this set.
+    """
     written = {}
     for path in sorted((resource_dir / "statistics").glob("*.json")):
         document = json.loads(path.read_text())
@@ -290,6 +296,7 @@ def _versioned_files_written(resource_dir: pathlib.Path) -> dict[str, int]:
 
 def test_each_kind_declares_exactly_the_versioned_files_its_build_writes(
     tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The drift guard: the declaration IS what the build wrote, per kind.
 
@@ -329,6 +336,12 @@ def test_each_kind_declares_exactly_the_versioned_files_its_build_writes(
         .build_repo(tmp_path)
     )
     cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
+    # An unforced run over the resources as just built: N = 0, no line
+    # and no summary -- an absence the capture can vouch for
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
+    assert "is consistent" in caplog.text
+    assert _schema_lines(caplog) == []
     repo = build_genomic_resource_repository({
         "id": "drift", "type": "directory", "directory": str(tmp_path)})
 
@@ -371,3 +384,30 @@ def test_the_remedy_names_the_plain_id_of_a_versioned_resource(
         line for line in _schema_lines(caplog) if line.startswith("Statistics")
     ]
     assert "grr_manage resource-stats -r one -f" in line
+
+
+def test_a_derived_file_rewritten_on_its_own_does_not_cure_the_report(
+    position_score_at_coverage_v1: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The derived-files gate (gain#1576) is beside this one, not above it.
+
+    A missing ``chrom_lengths.json`` is rewritten by an ordinary run
+    without a rebuild; that rewrite says nothing about the coverage file
+    still at version 1, which is reported all the same.
+    """
+    repo = position_score_at_coverage_v1
+    statistics = repo / "one" / "statistics"
+    (statistics / "chrom_lengths.json").unlink()
+    _bring_manifest_current(repo, "one")
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
+
+    assert (statistics / "chrom_lengths.json").exists()
+    [line] = [
+        line for line in _schema_lines(caplog) if line.startswith("Statistics")
+    ]
+    assert "statistics/coverage.json 1 -> 2" in line
+    assert json.loads(
+        (statistics / "coverage.json").read_text())["format_version"] == 1

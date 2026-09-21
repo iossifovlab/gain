@@ -1061,8 +1061,8 @@ def region_alleles_for(
 def allele_statistics_file_for(score: GenomicScore) -> StatisticsFile | None:
     """The file a build writes for this score, ``None`` for other kinds.
 
-    Gated as :func:`region_alleles_for` is, so the declaration names a
-    file exactly when the build writes one.
+    Gated as :func:`region_alleles_for` is, so the declaration names the
+    file for the kinds whose build writes it.
     """
     if not isinstance(score, AlleleScore):
         return None
