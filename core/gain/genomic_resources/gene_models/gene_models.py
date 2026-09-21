@@ -348,18 +348,47 @@ class GeneModels(
         """
         if len(gene_models) < 2:
             raise ValueError("The function needs at least 2 arguments!")
+        for gm in gene_models:
+            if not gm.is_loaded():
+                raise ValueError(
+                    f"gene models {gm.resource_id} were never loaded; "
+                    f"call load() before joining them")
 
-        gm = GeneModels(gene_models[0].resource)
-        gm._reset()
+        transcript_models: dict[str, TranscriptModel] = {}
+        for gm in gene_models:
+            transcript_models.update(gm.transcript_models)
+        return GeneModels.from_transcript_models(
+            gene_models[0].resource, transcript_models)
 
-        gm.transcript_models = gene_models[0].transcript_models.copy()
+    @classmethod
+    def from_transcript_models(
+        cls, resource: GenomicResource,
+        transcript_models: dict[str, TranscriptModel],
+    ) -> GeneModels:
+        """Build a loaded gene models object holding exactly these transcripts.
 
-        for i in gene_models[1:]:
-            gm.transcript_models.update(i.transcript_models)
+        The result is indexed and loaded as if ``load()`` had parsed
+        ``transcript_models`` out of ``resource``, so ``load()`` on it
+        is a no-op and every consumer that asks ``is_loaded()`` accepts
+        it. The transcripts are kept in the order given; the serializers
+        write them in that order.
 
+        Args:
+            resource (GenomicResource): The gene models resource the
+                result answers to (``resource_id``, reference genome).
+                Its chrom mapping is not applied: the transcripts are
+                taken as given.
+            transcript_models (dict[str, TranscriptModel]): Transcript
+                ID to transcript model, in the order they should be
+                kept.
+
+        Returns:
+            GeneModels: A loaded model over ``resource``.
+        """
+        gm = cls(resource)
+        gm.transcript_models = dict(transcript_models)
         gm._update_indexes()
         gm._is_loaded = True
-
         return gm
 
 

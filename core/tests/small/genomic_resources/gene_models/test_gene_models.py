@@ -28,6 +28,8 @@ from gain.genomic_resources.testing import (
     build_inmemory_test_resource,
     convert_to_tab_separated,
 )
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.gene_models_builder import a_gene_models
 from gain.testing.t4c8_import import t4c8_genes
 
 
@@ -602,6 +604,62 @@ def test_joined_gene_models_are_loaded_and_survive_load(
     assert len(combined.transcript_models) == 3
     assert combined.gene_names() == ["C2CD4C", "t4", "c8"]
     assert [tm.gene for tm in combined.gene_models_by_location(
+        "chr1", 1, 200)] == ["t4", "c8"]
+
+
+def test_join_gene_models_refuses_a_never_loaded_input(
+    fixture_dirname: Callable,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A forgotten ``load()`` is refused, not merged as an empty set.
+
+    Silently copying the empty ``transcript_models`` of an unloaded
+    input would build a loaded model missing everything that input was
+    meant to bring, and the join has no way to tell that from a source
+    that really holds nothing.
+    """
+    filename = fixture_dirname("gene_models/example_gencode.txt")
+    example_gencode = build_gene_models_from_file(filename, "gtf").load()
+    grr = a_grr().with_resource(
+        "forgotten/genes", a_gene_models()).build_repo(tmp_path)
+    forgotten = build_gene_models_from_resource(
+        grr.get_resource("forgotten/genes"))
+
+    with pytest.raises(ValueError, match="never loaded") as error:
+        GeneModels.join_gene_models(example_gencode, forgotten)
+
+    assert "forgotten/genes" in str(error.value)
+    assert len(example_gencode.transcript_models) == 1
+    assert not forgotten.is_loaded()
+
+
+def test_from_transcript_models_is_loaded_and_indexed(
+    fixture_dirname: Callable,
+    t4c8_gene_models: GeneModels,
+) -> None:
+    """Transcripts handed in directly make a queryable, loaded model.
+
+    The dict is kept in the order given: the default-format writer
+    emits records in that order, so what a caller assembled is what
+    gets written.
+    """
+    filename = fixture_dirname("gene_models/example_gencode.txt")
+    example_gencode = build_gene_models_from_file(filename, "gtf").load()
+    t4c8_gene_models.load()
+    transcripts = {
+        **t4c8_gene_models.transcript_models,
+        **example_gencode.transcript_models,
+    }
+
+    built = GeneModels.from_transcript_models(
+        example_gencode.resource, transcripts)
+
+    assert built.is_loaded()
+    assert built.resource_id == example_gencode.resource_id
+    assert list(built.transcript_models) == list(transcripts)
+    [c8] = built.gene_models_by_gene_name("c8") or []
+    assert c8.gene == "c8"
+    assert [tm.gene for tm in built.gene_models_by_location(
         "chr1", 1, 200)] == ["t4", "c8"]
 
 
