@@ -159,14 +159,19 @@ def test_no_pipeline_path_block_when_the_caller_names_no_file(
 
 @pytest.fixture
 def annulled_repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
-    """A GRR whose one score has its histogram annulled by definition."""
+    """A GRR whose one score has its histogram annulled by definition.
+
+    It ships a stale image, as a resource annulled after a build would:
+    the definition rule has to hold on the page even then.
+    """
     return (
         a_grr()
         .with_resource(
             "scores/pos1",
             a_position_score()
             .with_score("score", "float")
-            .with_histogram({"type": "null", "reason": "annulled"}))
+            .with_histogram({"type": "null", "reason": "annulled"})
+            .with_file("statistics/histogram_score.png", "stale drawing"))
         .with_public_url(PUBLIC_URL)
         .build_repo(tmp_path / "grr")
     )
@@ -229,7 +234,7 @@ def a_score_with_too_many_categories() -> PositionScoreBuilder:
 
 @pytest.fixture(
     params=[a_score_with_no_values, a_score_with_too_many_categories])
-def build_nullified_repo(
+def nullified_repo(
     request: pytest.FixtureRequest, tmp_path: pathlib.Path,
 ) -> GenomicResourceRepo:
     """A GRR whose one score's histogram is nullified by its own build.
@@ -263,13 +268,13 @@ def repository_relative(repo: GenomicResourceRepo) -> PipelineDocAddresses:
 
 @pytest.mark.parametrize("policy", [public_mirror, repository_relative])
 def test_a_histogram_nullified_by_its_build_renders_no_image(
-    build_nullified_repo: GenomicResourceRepo,
+    nullified_repo: GenomicResourceRepo,
     tmp_path: pathlib.Path,
     policy: Callable[[GenomicResourceRepo], PipelineDocAddresses],
 ) -> None:
     html = render(
-        build_nullified_repo, tmp_path / "work",
-        addresses=policy(build_nullified_repo))
+        nullified_repo, tmp_path / "work",
+        addresses=policy(nullified_repo))
 
     assert "<img" not in html
     assert "None" not in html

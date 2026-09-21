@@ -96,15 +96,38 @@ def test_a_resource_with_no_stored_manifest_is_addressed_by_its_definition(
     assert not (root / "scores/pos1" / ".grr").exists()
 
 
+def test_an_annulled_histogram_with_no_stored_manifest_is_not_addressed(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The no-manifest fallback is to the definition, and the definition
+    # says annulled: the fallback must not answer past that rule.
+    root = tmp_path / "grr"
+    (
+        a_position_score()
+        .with_score("score", "float")
+        .with_histogram({"type": "null", "reason": "annulled by design"})
+        .realize_into(root / "scores/pos1")
+    )
+    proto = build_filesystem_test_protocol(root, repair=False)
+    resource = proto.get_resource("scores/pos1")
+    assert resource.get_loaded_manifest() is None
+    score = build_score_from_resource(resource)
+
+    assert score.get_histogram_image_url("score") is None
+    assert score.get_histogram_image_public_url("score") is None
+
+
 def test_a_type_with_no_default_histogram_is_annulled_too(
     tmp_path: pathlib.Path,
 ) -> None:
     # No ``histogram:`` block at all: the definition falls back to the
-    # value type's default, and ``bool`` has none.
+    # value type's default, and ``bool`` has none.  A listed image does
+    # not change that, any more than for a stated ``type: null``.
     repo = a_repo_with(
         a_position_score()
         .with_score("flag", "bool")
-        .with_score_line(chrom="1", pos_begin=10, flag=True),
+        .with_score_line(chrom="1", pos_begin=10, flag=True)
+        .with_file("statistics/histogram_flag.png", "stale drawing"),
         tmp_path)
     score = build_score_from_resource(repo.get_resource("scores/pos1"))
 

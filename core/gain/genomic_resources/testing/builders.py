@@ -517,16 +517,20 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
         # that do not write it into the file still resolve their indices
         # from it.
         write_header = self._effective_header_mode() == "file"
-        sidecars = {
-            **self._render_chrom_mapping_file(),
-            **self.render_extra_files(),
-        }
+        sidecars = self._render_chrom_mapping_file()
         if self.tabix:
-            setup_directories(resource_dir, {
+            # The table and its index are written by pysam below, after
+            # the directory is set up, so they are reserved by name.
+            setup_directories(resource_dir, self.merge_extra_files({
                 GR_CONF_FILE_NAME: self._render_config(
                     scores, _TABIX_FILENAME, data),
                 **sidecars,
-            })
+            }, reserved=filter(None, (
+                _TABIX_FILENAME,
+                f"{_TABIX_FILENAME}.tbi",
+                f"{_TABIX_FILENAME}.csi",
+                self.index_filename,
+            ))))
             _realize_tabix_table(
                 resource_dir / _TABIX_FILENAME, data,
                 write_header=write_header, csi=self.csi,
@@ -534,12 +538,12 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
                 keep_conventional_index=self.keep_conventional_index)
         else:
             file_data = data if write_header else _strip_header(data)
-            setup_directories(resource_dir, {
+            setup_directories(resource_dir, self.merge_extra_files({
                 GR_CONF_FILE_NAME: self._render_config(
                     scores, _DATA_FILENAME, data),
                 _DATA_FILENAME: convert_to_tab_separated(file_data),
                 **sidecars,
-            })
+            }))
 
     def _render_chrom_mapping_file(self) -> dict[str, str]:
         """The mapping file :meth:`with_chrom_mapping_file` ships, if any."""
@@ -1349,10 +1353,9 @@ class GeneScoreBuilder(ExtraFilesMixin, MetaMixin):
         Raises a ``ResourceValidationError`` on invalid content;
         ``GRRBuilder`` annotates it with the resource id.
         """
-        setup_directories(resource_dir, {
-            **_build_gene_score_content(self),
-            **self.render_extra_files(),
-        })
+        setup_directories(
+            resource_dir,
+            self.merge_extra_files(_build_gene_score_content(self)))
 
     def build_resource(
         self, tmp_path: pathlib.Path,

@@ -35,5 +35,5 @@ def build_statistics(
     graph.add_tasks(impl.create_statistics_build_tasks(
         region_size=region_size))
     task_graph_run(graph, SequentialExecutor())
+    # save_manifest invalidates the resource's memoised manifest itself.
     proto.save_manifest(resource, proto.build_manifest(resource))
-    resource.invalidate()
