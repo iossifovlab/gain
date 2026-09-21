@@ -589,16 +589,24 @@ def a_categorical_score(
     tmp_path: pathlib.Path,
     unique_values: int,
     histogram: dict[str, Any] | None = None,
+    *,
+    stated: bool = True,
 ) -> None:
-    """Realize a tabix position score with distinct per-position str values."""
+    """Realize a tabix position score with distinct per-position str values.
+
+    ``stated=False`` leaves the histogram block out, so the score gets
+    the default categorical histogram -- the one nullified at scan time
+    past ``UNIQUE_VALUES_LIMIT``, where a stated one is truncated instead.
+    """
     data_rows = "\n".join(
         f"1 {10 + i} {10 + i} v{i:03d}"
         for i in range(unique_values))
-    (
-        a_position_score()
-        .with_score("cell", "str")
-        .with_histogram(
+    builder = a_position_score().with_score("cell", "str")
+    if stated:
+        builder = builder.with_histogram(
             histogram or {"type": "categorical", "value_order": []})
+    (
+        builder
         .with_data("chrom pos_begin pos_end cell\n" + data_rows)
         .with_tabix()
         .build_resource(tmp_path)
@@ -855,6 +863,78 @@ def test_stats_rebuild_below_limit_removes_the_stale_sidecar(
         tmp_path / "statistics" / "truncated" / "histogram_cell.json").exists()
     assert "truncated/histogram_cell.json" not in (
         tmp_path / ".MANIFEST").read_text()
+
+
+def a_float_score(
+    tmp_path: pathlib.Path,
+    histogram: dict[str, Any],
+    values: tuple[str, ...] = ("0.1", "0.5", "0.9"),
+) -> None:
+    """Realize a tabix position score with one float score over ``values``."""
+    data_rows = "\n".join(
+        f"1 {10 + i} {10 + i} {value}"
+        for i, value in enumerate(values))
+    (
+        a_position_score()
+        .with_score("score", "float")
+        .with_histogram(histogram)
+        .with_data("chrom pos_begin pos_end score\n" + data_rows)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+A_NUMBER_HISTOGRAM: dict[str, Any] = {
+    "type": "number", "number_of_bins": 4,
+    "view_range": {"min": 0, "max": 1},
+}
+
+
+def test_stats_rebuild_with_a_null_histogram_config_drops_the_stale_files(
+        tmp_path: pathlib.Path) -> None:
+    a_float_score(tmp_path, A_NUMBER_HISTOGRAM)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    drop_everything_but_statistics(tmp_path)
+    a_float_score(tmp_path, {"type": "null", "reason": "turned off"})
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert not (tmp_path / "statistics" / "histogram_score.json").exists()
+    assert not (tmp_path / "statistics" / "histogram_score.png").exists()
+    assert "histogram_score" not in (tmp_path / ".MANIFEST").read_text()
+
+
+def test_stats_rebuild_over_a_not_finite_range_drops_the_stale_files(
+        tmp_path: pathlib.Path) -> None:
+    a_number_histogram_without_a_range = {"type": "number", "number_of_bins": 4}
+    a_float_score(tmp_path, a_number_histogram_without_a_range)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    drop_everything_but_statistics(tmp_path)
+    a_float_score(
+        tmp_path, a_number_histogram_without_a_range,
+        values=("NA", "NA", "NA"))
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert not (tmp_path / "statistics" / "histogram_score.json").exists()
+    assert not (tmp_path / "statistics" / "histogram_score.png").exists()
+    assert "histogram_score" not in (tmp_path / ".MANIFEST").read_text()
+
+
+def test_stats_rebuild_nullified_at_scan_time_drops_the_stale_image(
+        tmp_path: pathlib.Path) -> None:
+    a_categorical_score(tmp_path, CATEGORIES_WITHIN_LIMIT, stated=False)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    drop_everything_but_statistics(tmp_path)
+    a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT, stated=False)
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    histogram = json.loads(
+        (tmp_path / "statistics" / "histogram_cell.json").read_text())
+    assert histogram["config"]["type"] == "null"
+    assert not (tmp_path / "statistics" / "histogram_cell.png").exists()
+    assert "histogram_cell.png" not in (tmp_path / ".MANIFEST").read_text()
 
 
 def test_info_pages_render_without_the_full_histogram_values(
