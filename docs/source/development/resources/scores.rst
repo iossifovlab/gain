@@ -183,6 +183,39 @@ row, for the scores and backends that support it. Ask
 first — it answers for a specific list of scores, because support depends on
 the value types requested and not only on the backend.
 
+Chromosomes and their lengths
+-----------------------------
+
+:meth:`~gain.genomic_resources.genomic_scores.GenomicScore.get_all_chromosomes`
+lists the contigs the score's table holds, in table order, and
+:meth:`~gain.genomic_resources.genomic_scores.GenomicScore.has_chromosome`
+answers for one. Their lengths come from several *sources*, which a
+:class:`~gain.genomic_resources.genomic_position_table.ChromLengthSource`
+names: the ``reference_genome`` the resource is labelled with, a bigWig's
+header, the tabix index probe (an upper bound, not the length), or how far
+an in-memory table's rows reach. A score answers from the best-ranked
+source by default, from a named one on request, and says which one
+answered:
+
+.. code-block:: python
+
+    with build_score_from_resource_id("hg38/scores/phastCons100way", grr).open() as score:
+        score.chrom_length_sources
+        # [<ChromLengthSource.REFERENCE_GENOME: 'reference_genome'>,
+        #  <ChromLengthSource.TABIX_ESTIMATE: 'tabix_estimate'>]
+        score.get_chrom_length("chr21")                # the genome's, exact
+        score.get_chrom_length_source("chr21")         # ChromLengthSource.REFERENCE_GENOME
+        score.get_chrom_length("chr21", source="tabix_estimate")   # the probe's bound
+        score.get_all_chrom_lengths(source="reference_genome")     # only the contigs the genome lists
+
+The genome's lengths reach the score through the
+``statistics/chrom_lengths.json`` its last repair stored; a resource
+repaired before that file existed answers from its table alone until its
+next ``grr_manage repo-repair``, and asking it for ``reference_genome``
+raises ``ValueError`` saying so. Every refusal — a closed score, a contig
+the score does not carry, a source with no answer for it, a contig no
+source can measure — is a ``ValueError``.
+
 API
 ---
 

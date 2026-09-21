@@ -22,7 +22,13 @@ and decomposing the class itself (gain#1027) has since added two more:
 - :mod:`.chrom_lengths` (gain#1413) -- the chromosome-length resolver a
   caller with a genome hands it to: per contig, every source's length
   with the best by rank, and the ``ContigExtent`` reason when the table
-  has none
+  has none; the stored ``statistics/chrom_lengths.json`` a repair
+  writes (gain#1576), and the load-on-open, source normalisation and
+  refusal wording behind the score's own length reads --
+  :meth:`~.base.GenomicScore.get_chrom_length`,
+  :meth:`~.base.GenomicScore.get_all_chrom_lengths`,
+  :meth:`~.base.GenomicScore.get_chrom_length_source` and
+  :attr:`~.base.GenomicScore.chrom_length_sources` (gain#1577)
 
 **This module is a permanent facade, not a deprecation shim.**  It
 re-exports every name the pre-split module DEFINED, so each
