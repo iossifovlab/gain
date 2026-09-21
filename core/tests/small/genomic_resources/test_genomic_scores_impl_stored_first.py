@@ -13,16 +13,20 @@ from gain.genomic_resources.genomic_position_table import ChromLengthSource
 from gain.genomic_resources.genomic_scores import GenomicScore
 from gain.genomic_resources.genomic_scores.chrom_lengths import (
     ChromLength,
+    ChromLengthAnswer,
 )
 
 from .test_genomic_scores_impl_chrom_lengths import (
     CHR1_GENOME_LENGTH,
     CHR1_PROBE_BOUND,
     CHRM_PROBE_BOUND,
+    OTHER_GENOME_CHR1_LENGTH,
     patch_tabix_probe,
+    set_label,
 )
 from .test_genomic_scores_impl_derived_files import (
     a_repaired_labelled_score,
+    resynced,
 )
 
 
@@ -50,3 +54,55 @@ def test_a_current_file_answers_without_the_table(
     }
     opened.assert_not_called()
     probe.assert_not_called()
+
+
+def _lengths_file(tmp_path: pathlib.Path) -> pathlib.Path:
+    return tmp_path / "score" / "statistics" / "chrom_lengths.json"
+
+
+def test_a_stale_file_is_passed_over_for_the_live_ladder(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The label re-pointed since the repair: the genome it names now
+    answers, and the file is left as the repair wrote it -- a read is
+    not a repair."""
+    a_repaired_labelled_score(tmp_path)
+    set_label(tmp_path, "score", "reference_genome", "other_genome")
+    impl, repo = resynced(tmp_path)
+    written = _lengths_file(tmp_path).read_text()
+
+    lengths = impl.get_chrom_lengths(repo)
+
+    assert lengths["chr1"].best == ChromLengthAnswer(
+        OTHER_GENOME_CHR1_LENGTH, ChromLengthSource.REFERENCE_GENOME)
+    assert _lengths_file(tmp_path).read_text() == written
+
+
+def test_an_absent_file_is_the_live_ladder_and_stays_absent(
+    tmp_path: pathlib.Path,
+) -> None:
+    a_repaired_labelled_score(tmp_path)
+    _lengths_file(tmp_path).unlink()
+    impl, repo = resynced(tmp_path)
+
+    lengths = impl.get_chrom_lengths(repo)
+
+    assert lengths["chr1"].best == ChromLengthAnswer(
+        CHR1_GENOME_LENGTH, ChromLengthSource.REFERENCE_GENOME)
+    assert not _lengths_file(tmp_path).exists()
+
+
+def test_the_regions_split_by_the_file_are_the_regions_split_live(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A rebuild over a CURRENT file scans the same regions as one
+    over none: the stored records are the live ladder's records."""
+    impl, repo = a_repaired_labelled_score(tmp_path)
+    from_the_file = impl._get_chrom_regions(1000, repo)
+    _lengths_file(tmp_path).unlink()
+    impl, repo = resynced(tmp_path)
+
+    live = impl._get_chrom_regions(1000, repo)
+
+    assert from_the_file == live
+    assert len(live) > 1
