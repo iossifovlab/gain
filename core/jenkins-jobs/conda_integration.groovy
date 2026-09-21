@@ -16,7 +16,9 @@
 // `uv sync` of the source tree.
 pipelineJob('gain-conda-integration') {
     description(
-        'Integration test suite for gain-core (core/tests/integration) run ' +
+        'gain-core test suite -- the small tier (core/tests minus ' +
+        'tests/integration) and then tests/integration, one JUnit report ' +
+        'each -- run ' +
         'against the CONDA PACKAGE the upstream build archived, installed ' +
         'from a local file channel over conda-forge + bioconda with strict ' +
         'channel priority and no iossifovlab channel. A red here that is ' +

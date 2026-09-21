@@ -19,7 +19,8 @@
 //                                      Python 3.12/3.13/3.14 for
 //                                      core, demo_annotator,
 //                                      vep_annotator, web_api
-//   - /gain-conda-integration  (xN)  — core/tests/integration against
+//   - /gain-conda-integration  (xN)  — core/tests (small tier, then
+//                                      tests/integration) against
 //                                      the master rebuild's archived
 //                                      gain-core .conda, one run per
 //                                      Python pin (3.12/3.13 today;

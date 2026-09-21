@@ -1,18 +1,21 @@
-// Dedicated Jenkins pipeline that runs the gain-core integration test
-// suite (core/tests/integration) against the CONDA PACKAGE the upstream
-// build archived, installed the way a user would (#1429). Sibling of
-// core/Jenkinsfile.integration, which runs the same tier from a `uv sync`
-// of the source tree: a red here that is green there means packaging or
-// channel resolution, not code.
+// Dedicated Jenkins pipeline that runs gain-core's test suite -- the
+// small tier (core/tests minus tests/integration, #1514) and then
+// core/tests/integration (#1429) -- against the CONDA PACKAGE the
+// upstream build archived, installed the way a user would. Both tiers
+// also run from a `uv sync` of the source tree (the root pipeline and
+// core/Jenkinsfile.integration): a red here that is green there means
+// packaging or channel resolution, not code.
 //
 // The artefact (dist/conda/gain-core-*.conda) is copied from the upstream
 // build, indexed into a local file channel and solved with
 // `--override-channels --strict-channel-priority` over
 // `file:///channel, conda-forge, bioconda` -- no iossifovlab channel, so a
 // published gain-core can never shadow the one under test (gpf#916). The
-// test bed is a copy of core/tests + core/pytest.ini only, and the run
-// asserts `gain` imports from the conda prefix at the artefact's version
-// before pytest starts. See core/conda-integration/.
+// test bed is a copy of core/tests, core/pytest.ini, core/pyproject.toml
+// and the test_fixtures/mini-GRR submodule only -- never core/gain -- and
+// the run asserts `gain` imports from the conda prefix at the artefact's
+// version before pytest starts. One JUnit file per tier; a red in either
+// makes the build red. See core/conda-integration/.
 //
 // Advisory per push: a red posts the Zulip alert and blocks nothing
 // there, and PYTHON_VERSION is left empty so the solve tests what a
@@ -306,6 +309,14 @@ pipeline {
                                           noTags: true,
                                           timeout: 60]],
                         ])
+                        // The info-page tests of the small tier build and
+                        // validate test_fixtures/mini-GRR and fail
+                        // collection without it (gain#991); it reaches the
+                        // image through the docker build context, so it
+                        // must be checked out before `Build image`. Same
+                        // step, same HTTPS-URL reasoning as the root
+                        // pipeline's `Prepare workspace`.
+                        sh 'git submodule update --init test_fixtures/mini-GRR'
                     } catch (Exception err) {
                         // Read the tip through the shell env rather than
                         // Groovy interpolation, so a branch name never lands
@@ -379,10 +390,11 @@ pipeline {
             when { expression { env.SUPERSEDED != 'true' } }
             steps {
                 // Build from the repo root, like every other CI image. The
-                // image carries only micromamba + rattler-index and a copy
-                // of core/tests + core/pytest.ini (the test bed); the
-                // .conda, the GRR tree and the reports dir are mounted at
-                // run time, so this is cheap and the solve is always fresh.
+                // image carries only micromamba + rattler-index and the
+                // test bed (core/tests, core/pytest.ini, core/pyproject.toml,
+                // test_fixtures/mini-GRR); the .conda, the GRR tree and the
+                // reports dir are mounted at run time, so this is cheap and
+                // the solve is always fresh.
                 sh 'docker build -f core/conda-integration/Dockerfile \
                         -t ${IMAGE_TAG} .'
             }
@@ -472,9 +484,12 @@ pipeline {
                     #
                     # The image entrypoint (core/conda-integration/run.sh)
                     # indexes the channel, solves, asserts the installed gain
-                    # is the artefact's, and runs the suite; its exit code is
-                    # pytest's. It writes pytest.xml and the explicit env
-                    # lockfile into /reports.
+                    # is the artefact's, and runs the small tier, then
+                    # tests/integration -- both always, so one tier's red
+                    # cannot hide the other's. Its exit code is non-zero if
+                    # either tier's was. It writes pytest-small.xml,
+                    # pytest-integration.xml and the explicit env lockfile
+                    # into /reports.
                     docker run --rm \
                         --name gain-conda-integration-${BUILD_NUMBER} \
                         --user "$(id -u):$(id -g)" \
