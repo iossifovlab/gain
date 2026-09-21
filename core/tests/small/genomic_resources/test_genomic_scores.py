@@ -1842,3 +1842,53 @@ def test_fragment_score_inherits_histogram_type_constraint() -> None:
 
     assert hist_schema["allowed"] == ["number", "categorical", "null"]
     assert hist_schema["required"] is True
+
+
+#: The score's id, deep enough to look like a real one and distinctive
+#: enough that finding it in a refusal means something (a single-resource
+#: fixture would give it an EMPTY id, which every message matches).
+A_SCORE_GROUP, A_SCORE_NAME = "scores", "score1567"
+A_SCORE_ID = f"{A_SCORE_GROUP}/{A_SCORE_NAME}"
+
+#: The score kinds that share ``build_genomic_score_schema``.
+SCORE_KINDS = ["position_score", "allele_score", "fragment_score"]
+
+
+@pytest.mark.parametrize("score_type", SCORE_KINDS)
+@pytest.mark.parametrize(("table_block", "expected_error"), [
+    # A `table` block with no `filename`: the one key in it the table
+    # builder cannot do without.
+    pytest.param(
+        "table:\n    format: tsv\n",
+        "{'table': [{'filename': ['required field']}]}",
+        id="no-filename-under-table"),
+    # No `table` block at all -- a case of its own, since a config with
+    # no block cannot prove the rule for the key inside it.
+    pytest.param(
+        "",
+        "{'table': ['required field']}",
+        id="no-table-block"),
+])
+def test_a_score_table_outside_its_schema_is_refused(
+    score_type: str, table_block: str, expected_error: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A score without the table keys the runtime reads unconditionally is
+    refused at construction, naming the resource, rather than failing on
+    first use of the table with a bare KeyError naming nothing."""
+    resource = build_inmemory_test_repository({
+        A_SCORE_GROUP: {A_SCORE_NAME: {GR_CONF_FILE_NAME: (
+            f"type: {score_type}\n"
+            f"{table_block}"
+            "scores:\n"
+            "    - id: score\n"
+            "      type: float\n"
+            "      name: score\n"
+        )}},
+    }).get_resource(A_SCORE_ID)
+
+    with pytest.raises(MalformedResourceError, match=A_SCORE_ID):
+        build_score_from_resource(resource)
+
+    # The key is named where the refusal is explained: in the log record.
+    assert expected_error in caplog.text

@@ -660,8 +660,12 @@ def build_genomic_score_schema() -> dict[str, Any]:
     }
     return {
         **get_base_resource_schema(),
-        "table": {"type": "dict", "schema": {
-            "filename": {"type": "string"},
+        # The block, and the one key in it the table builder reads
+        # unconditionally, are required: a score without either is refused
+        # here, naming itself, rather than on first use of the table with
+        # a bare KeyError naming nothing (gain#1567).
+        "table": {"type": "dict", "required": True, "schema": {
+            "filename": {"type": "string", "required": True},
             "index_filename": {"type": "string"},
             "zero_based": {"type": "boolean"},
             "desc": {"type": "string"},
