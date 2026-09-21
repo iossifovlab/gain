@@ -86,6 +86,15 @@ mkdir -p "$REPORTS"
 micromamba env export -p "$ENV_PREFIX" --explicit > "$REPORTS/conda-env.explicit.txt"
 echo "explicit lockfile: $REPORTS/conda-env.explicit.txt" \
      "($(wc -l < "$REPORTS/conda-env.explicit.txt") lines)"
+# bokeh registers the level name TRACE for a number of its own, which
+# gain cannot undo (#1569). The recipe keeps it out by depending on
+# dask-core rather than the dask metapackage; a solve that brings it
+# back is a recipe regression, not a test-tier flake.
+if grep -q '/bokeh-' "$REPORTS/conda-env.explicit.txt"; then
+    echo "ERROR: the solve pulled in bokeh:" >&2
+    grep '/bokeh-' "$REPORTS/conda-env.explicit.txt" >&2
+    exit 1
+fi
 
 # --- 3. shadowing guard, then the suite --------------------------------
 cd "$TESTBED"
@@ -119,20 +128,10 @@ cd "$TESTBED"
 # populate <site-packages>/tests/.test_grr -- a directory apache never
 # sees -- so the job also sets HTTP_GRR_DIR to the bound directory apache
 # serves; see build_http_test_protocol in gain.genomic_resources.testing.
-#
-# Deselected, in this job only: the three TRACE-level tests, which fail
-# whenever bokeh -- pulled in by conda-forge's dask metapackage, absent
-# from the uv env -- has been imported earlier in the same worker and
-# replaced logging.Logger.trace with its own (#1569). That is a real
-# finding about the conda install, tracked there; here it would only be
-# an order-dependent red.
 set +e
 "$ENV_PREFIX/bin/python" -m pytest -n 5 tests \
     --enable-http-testing --enable-s3-testing \
     --ignore=tests/integration --ignore=tests/test_architecture.py \
-    --deselect tests/small/utils/test_log_levels.py::test_trace_emits_record \
-    --deselect tests/small/utils/test_log_levels.py::test_trace_record_points_at_caller \
-    --deselect tests/small/utils/test_log_levels.py::test_trace_honors_caller_supplied_stacklevel \
     --junitxml="$REPORTS/pytest-small.xml"
 small_exit=$?
 echo "pytest exit code (small tier): $small_exit"

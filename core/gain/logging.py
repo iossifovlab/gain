@@ -17,23 +17,21 @@ surface across Python versions instead of a hand-maintained name list. The
 ``config`` and ``handlers`` submodules are re-exported too, so
 ``from gain import logging; logging.config.dictConfig(...)`` keeps working.
 
-The custom TRACE / USER_INFO levels (and the ``Logger.trace`` /
-``Logger.user_info`` methods) are registered as an import side effect of
-``gain.utils.log_levels``, which monkeypatches ``logging.Logger`` globally so
-that *every* logger — including the root logger and any already created — gains
-the methods at runtime.
+The custom TRACE / USER_INFO levels and the ``trace`` / ``user_info`` logger
+methods are registered as an import side effect of ``gain.utils.log_levels``;
+its docstring says how, and what a later foreign ``Logger.trace`` can and
+cannot displace.
 
 The same import installs the url-userinfo log-record seam of
 ``gain.utils.url_redaction`` (ADR 0023, gain#1363). Both bootstraps also run
 from ``gain/__init__``, so importing anything under ``gain`` is enough.
 
-For type checkers, ``getLogger`` is declared to return a ``Logger`` subclass
-advertising ``.trace`` / ``.user_info``. This is a pure typing shim: it is
-declared *before* the star import so the type checker adopts the richer return
-type, while at runtime the star import rebinds ``getLogger`` to the stdlib
-function (identical behaviour — the methods come from the monkeypatch above).
-Call sites therefore need no ``# type: ignore[attr-defined]`` for the custom
-methods.
+For type checkers, ``getLogger`` is declared to return ``GainLogger``. This is
+a pure typing shim: it is declared *before* the star import so the type
+checker adopts the richer return type, while at runtime the star import
+rebinds ``getLogger`` to the stdlib function, which instantiates that same
+class. Call sites therefore need no ``# type: ignore[attr-defined]`` for the
+custom methods.
 """
 from __future__ import annotations
 
@@ -45,27 +43,17 @@ from logging import (  # ruff: ignore[unused-import]
     handlers,
     root,
 )
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import gain.utils.log_levels  # ruff: ignore[unused-import]
 import gain.utils.url_redaction  # ruff: ignore[unused-import]
 from gain.utils.log_levels import (  # ruff: ignore[unused-import]
     TRACE,
     USER_INFO,
+    GainLogger,
 )
 
 if TYPE_CHECKING:
-    class GainLogger(_logging.Logger):
-        """Typing view of a logger carrying GAIn's custom-level methods."""
-
-        def trace(
-            self, msg: object, *args: object, **kwargs: Any,
-        ) -> None: ...
-
-        def user_info(
-            self, msg: object, *args: object, **kwargs: Any,
-        ) -> None: ...
-
     def getLogger(name: str | None = None) -> GainLogger:
         # Body present only so type checkers/linters infer a real return type
         # (a bare ``...`` makes pylint treat call sites as returning ``None``
