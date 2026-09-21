@@ -73,11 +73,6 @@ class TabixGenomicPositionTable(GenomicPositionTable):
     being there.  Do not reorder those two steps.
     """
 
-    # This backend yields records rather than line adapters.  The VCF backend
-    # subclasses this one and yields records too (with a payload of its own),
-    # so it inherits the claim as-is -- see VCFGenomicPositionTable.
-    yields_records: ClassVar[bool] = True
-
     # A length from this backend is the index probe's upper bound (see
     # :meth:`find_chromosome_length`), never the contig's true length.  The
     # VCF backend inherits the probe, and so this claim with it.

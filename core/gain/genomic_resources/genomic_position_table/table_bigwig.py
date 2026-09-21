@@ -173,9 +173,6 @@ class BigWigTable(GenomicPositionTable):
     slot, with no index and no parse.
     """
 
-    # This backend yields records rather than line adapters (#238).
-    yields_records: ClassVar[bool] = True
-
     # The header carries an exact size for every contig it lists (see
     # :meth:`find_chromosome_length`), so lengths from this backend can
     # serve as true denominators.

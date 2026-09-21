@@ -382,7 +382,7 @@ def test_the_package_exports_only_what_still_exists() -> None:
         assert hasattr(gpt, name), name
 
 
-def test_tabix_table_yields_records_with_a_lazy_payload(
+def test_tabix_table_records_carry_a_lazy_payload(
     scores_tabix_res: GenomicResource,
 ) -> None:
     # The tabix backend is on the record contract: it yields six-slot tuples,
@@ -394,8 +394,6 @@ def test_tabix_table_yields_records_with_a_lazy_payload(
     with build_genomic_position_table(
         scores_tabix_res, scores_tabix_res.config["table"],
     ) as tab:
-        assert tab.yields_records
-
         records = list(tab.get_all_records())
         assert [(r[CHROM], r[POS_BEGIN], r[POS_END]) for r in records] == [
             ("1", 10, 12),
@@ -2002,8 +2000,6 @@ class _OnlyFindsLengths(GenomicPositionTable):
     ``isinstance`` ladder over concrete classes (gain#509).
     """
 
-    yields_records = True
-
     def __init__(self, answer: int | gpt.ContigExtent) -> None:
         super().__init__(cast(Any, None), {"header_mode": "none"})
         self._answer = answer
@@ -2130,7 +2126,7 @@ def test_vcf_autodetect_format(
         assert len(tuple(tab.get_all_records())) == 1
 
 
-def test_vcf_yields_records_paired_with_an_allele_index(
+def test_vcf_records_pair_the_variant_with_an_allele_index(
     vcf_res: GenomicResource,
 ) -> None:
     # The VCF backend is on the record contract: it yields the same six-slot
@@ -2147,8 +2143,6 @@ def test_vcf_yields_records_paired_with_an_allele_index(
         vcf_res, vcf_res.config["tabix_table"],
     ) as tab:
         assert isinstance(tab, VCFGenomicPositionTable)
-        assert tab.yields_records is True
-
         record = next(iter(tab.get_all_records()))
 
         # A record is a PLAIN tuple -- not a subclass with attributes bolted on.

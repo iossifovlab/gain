@@ -28,7 +28,7 @@ is a plain ``tuple`` of cells, the tabix backend's is a lazily-decoding
 
 Which extractor a backend is routed to is load-bearing, so the routing is
 pinned here too, from the score's side.  That every backend's
-``yields_records`` claim is *true* is pinned statically over all four backends
+``payload_kind`` claim is *true* is pinned statically over all four backends
 by test_backend_record_contract.py.
 """
 from __future__ import annotations
@@ -231,7 +231,6 @@ chr1   10  .  A   T   .    .      scoreA=0.1
     repo = a_grr().with_resource("vcf", builder).build_repo(tmp_path)
     score = AlleleScore(repo.get_resource("vcf")).open()
     with score:
-        assert score.table.yields_records is True
         # The class is chosen ONCE, at open -- before a single line is fetched.
         assert score._extract_value is extract_vcf_value
 
@@ -301,10 +300,9 @@ def test_the_score_is_routed_before_it_reports_itself_open(tmp_path) -> None:
     repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
     score = _ObservingPositionScore(repo.get_resource("pos"))
     with score.open():
-        assert score.table.yields_records is True
-        # The score never published itself as open while still routed to the
-        # adapter score line: a concurrent reader can only ever see the record
-        # routing this table actually needs.
+        # The score never published itself as open before its routing was
+        # installed: a concurrent reader can only ever see the extractor
+        # this table actually needs.
         assert seen_at_publication == [extract_column_value]
 
 
@@ -326,7 +324,6 @@ def test_bigwig_backend_is_routed_to_the_identity_extractor(tmp_path) -> None:
     repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
     score = PositionScore(repo.get_resource("bw")).open()
     with score:
-        assert score.table.yields_records is True
         record = next(iter(score.fetch_records("chr1", 5, 5)))
         assert type(record) is tuple
         assert score._extract_value is extract_bigwig_value

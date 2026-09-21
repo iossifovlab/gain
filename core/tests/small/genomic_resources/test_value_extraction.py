@@ -5,12 +5,13 @@ how a record's cell becomes a value: which extractor reads the payload, and
 which payload column each score def is addressed to.  Both used to be private
 methods on the class (gain#1114 moved them out; gain#1027 is the epic).
 
-What is pinned HERE is only what no opened score can reach at all: the two
-refusals of a backend that does not exist in the tree -- one that has not
-declared its payload kind, one that yields no records -- and which of them
-wins.  Everything the seam does for a resource somebody can
-actually build is pinned from the score's side, at the higher ``open()``
-seam, and is deliberately not duplicated here:
+What is pinned HERE is only what no resource in the tree can show: the
+refusal of a backend that has not declared its payload kind, and that the
+kind is the ONLY declaration the routing reads -- a stand-in carrying
+nothing else is routed to the column read on the strength of
+``payload_kind`` alone.  Everything the seam does for a resource somebody
+can actually build is pinned from the score's side, at the higher
+``open()`` seam, and is deliberately not duplicated here:
 
 - which extractor each backend is routed to, and the bigWig NA-sentinel
   choice between the two identity reads -- test_record_value_extraction.py
@@ -29,34 +30,28 @@ from gain.genomic_resources.genomic_position_table.table import PayloadKind
 from gain.genomic_resources.genomic_scores.value_extraction import (
     select_value_extractor,
 )
+from gain.genomic_resources.score_def import extract_column_value
 
 
-class _RecordlessTable:
-    """A backend that yields no records -- the case the seam refuses.
+class _RowTable:
+    """A backend whose only claim is the kind declaration.
 
-    No table in the tree sets this: the flag guards a backend added later
-    without the migration that would give it a reader.  A stand-in is the
-    only way to reach the branch, and the refusal names its class.  It
-    declares a ROW payload because that is the one kind whose read needs
-    records: the other two are read by extractors that never index a row.
+    It carries nothing else a routing could read, so that routing it
+    proves the kind is the one declaration consulted.  Every ROW backend in
+    the tree yields records, and that its records are what it claims is
+    pinned statically, over all of them, by test_backend_record_contract.py.
     """
 
     payload_kind = PayloadKind.ROW
-    yields_records = False
 
 
 class _UndeclaredTable:
     """A backend that has not said what its payload holds.
 
     Declared-not-defaulted on the base, so nothing in the tree lacks it;
-    the stand-in reaches the refusal a fifth backend would hit before any
-    other check -- the kind is consulted first, since every later decision
-    depends on it.  It ALSO yields no records, so that it would be refused
-    by the other check too: that is what makes the test below a pin on
-    which refusal wins, not merely on being refused.
+    the stand-in reaches the refusal a fifth backend would hit -- the kind
+    is read first, since every later decision depends on it.
     """
-
-    yields_records = False
 
 
 def test_a_table_that_has_not_declared_its_payload_kind_is_refused() -> None:
@@ -67,19 +62,10 @@ def test_a_table_that_has_not_declared_its_payload_kind_is_refused() -> None:
         )
 
 
-def test_a_table_that_yields_no_records_is_refused() -> None:
-    with pytest.raises(TypeError) as exc_info:
-        select_value_extractor(
-            score_definitions={},
-            table=_RecordlessTable(),  # type: ignore[arg-type]
-        )
+def test_a_row_table_is_routed_on_its_kind_alone() -> None:
+    extractor = select_value_extractor(
+        score_definitions={},
+        table=_RowTable(),  # type: ignore[arg-type]
+    )
 
-    assert str(exc_info.value) == (
-        "_RecordlessTable does not yield records, so "
-        "there is no score line that can read it. A genomic "
-        "position table backend must set yields_records = True "
-        "and yield six-slot record tuples: see the record "
-        "contract in gain.genomic_resources."
-        "genomic_position_table.record, and "
-        "test_backend_record_contract.py for what that backend "
-        "is held to.")
+    assert extractor is extract_column_value

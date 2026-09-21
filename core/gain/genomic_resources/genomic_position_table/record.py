@@ -28,8 +28,9 @@ record's payload slot.  (Both halves are pinned in test_record_parser.py.)
 **A record's hashability is its PAYLOAD's -- do not assume a record can go in
 a set or key a dict.**  A record is a plain tuple, so ``hash(record)`` walks
 the tuple, straight into the payload; whether that succeeds is the backend's
-answer, not the contract's, and today only ONE of the three record backends
-says yes.  The in-memory backend's payload is a ``tuple[str, ...]`` and hashes;
+answer, not the contract's, and today two of the four backends say yes.
+The in-memory backend's payload is a ``tuple[str, ...]`` and hashes, as does
+the bigWig backend's bare ``float``;
 the tabix backend's is a ``pysam.TupleProxy`` and the VCF backend's is a
 ``(pysam.VariantRecord, allele index)`` pair, and *both* of those pysam types
 define ``__eq__`` without ``__hash__``, so hashing such a record raises

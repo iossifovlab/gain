@@ -732,16 +732,15 @@ produces) a reference genome's -- and carries ``is_exact``.  It is exported
 because the score layer's chromosome-length resolver
 (``genomic_scores.chrom_lengths``) answers with it, and lives here rather
 than in the score layer because three of its four members are facts about
-a FORMAT: each backend now declares its own as
-the class attribute ``chrom_length_source``, the way it declares
-``yields_records``.  The obligation: the base class gives it NO default, so
-a backend that has not said is refused with an ``AttributeError`` the first
-time a length's provenance is asked, rather than inheriting a label -- and a
-trust level -- that is not its own.  The trust level is the member's
-``is_exact``; the exactness bool that used to sit beside the declaration
-(#776) had one reader -- the coverage denominator -- and that reader now
-asks the implementation's ladder, whose records carry the member
-(gain#1414).
+a FORMAT: each backend now declares its own as the class attribute
+``chrom_length_source``.  The obligation: the base class gives it NO
+default, so a backend that has not said is refused with an
+``AttributeError`` the first time a length's provenance is asked, rather
+than inheriting a label -- and a trust level -- that is not its own.  The
+trust level is the member's ``is_exact``; the exactness bool that used to
+sit beside the declaration (#776) had one reader -- the coverage
+denominator -- and that reader now asks the implementation's ladder,
+whose records carry the member (gain#1414).
 
 ``refusal`` is the one home of the two "no length" messages:
 ``get_chromosome_length`` raised them inline, and the score's method refuses
@@ -760,6 +759,24 @@ on it (``PayloadKind``'s docstring lists the decisions) where it used to
 ask ``isinstance`` against ``BigWigTable`` and ``VCFGenomicPositionTable``
 at each site.  The obligation is a backend's OWN declaration, not an
 inherited one; the ``payload_kind`` comment on the base says why.
+
+**Removed class attribute: ``yields_records``** (gain#1539).
+
+``GenomicPositionTable.yields_records`` -- a ``ClassVar[bool]`` the base
+defaulted to ``False`` and every backend set to ``True`` -- is gone from
+the base and from every backend.  It said whether a backend yields the
+six-slot record tuples of ``record.py``; since #239 removed the line
+adapters, records are the only shape a backend can yield, so the flag had
+no second value to select and its one remaining job -- catching a backend
+that had not migrated -- is done earlier, and by name, by the undefaulted
+``payload_kind`` above: a backend that has not declared its kind is
+refused the moment a score is built over it.  The score layer's
+``TypeError`` for a table that "does not yield records" went with the
+flag; a ROW kind is routed straight to the column read.  A backend author
+now makes ONE declaration about what it yields, ``payload_kind``, and the
+record contract tests hold what it yields to that.  An external subclass
+that still sets ``yields_records`` is not refused -- the attribute is
+simply never read.
 """
 from .line import LineBuffer
 from .table import ChromLengthSource, ContigExtent, PayloadKind
