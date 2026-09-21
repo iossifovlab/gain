@@ -6,6 +6,7 @@ import pytest
 from gain.genomic_resources.statistics.coverage import (
     CoverageStatistics,
     RegionCoverage,
+    SegmentSummary,
 )
 from gain.genomic_resources.statistics.exact_lengths import (
     ExactLengths,
@@ -253,6 +254,23 @@ def test_container_folds_regions_by_chromosome() -> None:
 
     assert stats.covered_by_chromosome() == {"chr1": 9, "chr2": 3}
     assert stats.covered_global() == 12
+
+
+def test_a_frozen_region_refuses_to_fold_onto_a_held_one() -> None:
+    # A region restored from a file holds its record as read and has no
+    # merge of its own: it carries no extents, so the adjacency rule
+    # refuses it before any merge arithmetic runs.  That refusal is
+    # what lets a frozen region hold a record rather than a mergeable
+    # tally (gain#1565), so it is pinned here rather than assumed.
+    stats = CoverageStatistics()
+    stats.fold_region(RegionCoverage.frozen(
+        "chr1", 3, SegmentSummary(1, ExactLengths({3: 1}, 1, 3, 3, 3))))
+
+    with pytest.raises(ValueError, match="not adjacent-and-in-order"):
+        stats.fold_region(RegionCoverage.frozen(
+            "chr1", 8, SegmentSummary(1, ExactLengths({8: 1}, 1, 8, 8, 8))))
+
+    assert stats.segment_lengths_global() == ExactLengths({3: 1}, 1, 3, 3, 3)
 
 
 def test_container_serialization_round_trips_the_counts() -> None:

@@ -219,6 +219,22 @@ def test_reading_the_file_builds_no_array_tally(
     }
 
 
+def test_a_frozen_region_refuses_to_fold_onto_a_held_one() -> None:
+    # A region restored from a file holds its record as read and has no
+    # merge of its own: it carries no extents, so the adjacency rule
+    # refuses it before any merge arithmetic runs.  That refusal is
+    # what lets a frozen region hold a record rather than a mergeable
+    # tally (gain#1565), so it is pinned here rather than assumed.
+    stats = FragmentStatistics()
+    stats.fold_region(RegionFragments.frozen("chr1", 1, CHR2_LENGTHS))
+
+    with pytest.raises(ValueError, match="not adjacent-and-in-order"):
+        stats.fold_region(RegionFragments.frozen("chr1", 1, CHR2_LENGTHS))
+
+    assert stats.fragments_by_chromosome() == {"chr1": 1}
+    assert stats.fragment_lengths_global() == CHR2_LENGTHS
+
+
 def test_bulk_and_per_record_scans_produce_the_same_fragment_statistics(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
