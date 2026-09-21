@@ -1,0 +1,65 @@
+{#- The pieces every "… lengths" subsection is built from: the
+   six-column statistics table, the half-width thumbnail and the modal
+   it opens.  Stated once here and imported by the allele, position and
+   fragment pages (gain#1118, gain#1543, gain#1544), so the three
+   sections cannot drift in column order, thumbnail class or modal
+   shape -- the figure-width and info-page tests read all three.
+
+   The table is a call block: the macro owns the wrapper and the header
+   row, the caller owns its body rows, because the allele table has two
+   rows and the other two have one.  Whitespace is trimmed so a call
+   site renders byte for byte what the written-out markup did. -#}
+{% macro statistics_table(count_header) -%}
+<div class="scrollable-table-container">
+<table>
+    <thead>
+        <tr>
+            <th></th>
+            <th>{{ count_header }}</th>
+            <th>min</th>
+            <th>max</th>
+            <th>mean</th>
+            <th>median</th>
+        </tr>
+    </thead>
+    <tbody>
+{{- caller() }}
+    </tbody>
+</table>
+</div>
+{%- endmacro %}
+
+{#- One row of the table: the group label and its four statistics. -#}
+{% macro statistics_row(row) -%}
+<tr>
+            <td>{{ row.group }}</td>
+            <td>{{ row.total }}</td>
+            <td>{{ row.min }}</td>
+            <td>{{ row.max }}</td>
+            <td>{{ row.mean }}</td>
+            <td>{{ row.median }}</td>
+        </tr>
+{%- endmacro %}
+
+{#- A chart as a thumbnail the size one indel chart has, opening the
+   full-size image in the page's modal -- so the smaller size costs no
+   detail.  The trigger names the modal ``figure_modal`` renders. -#}
+{% macro figure_thumbnail(src, alt, modal_id) -%}
+<img src="{{ src }}"
+     alt="{{ alt }}" class="figure-thumbnail"
+     data-modal-trigger="{{ modal_id }}">
+{%- endmacro %}
+
+{#- The modal a thumbnail opens.  A trigger whose modal was never
+   rendered opens nothing, so callers gate this on exactly what the
+   thumbnail is gated on. -#}
+{% macro figure_modal(modal_id, title, src, alt) -%}
+<div id="{{ modal_id }}" class="modal">
+    <div class="modal-content">
+        <span title="{{ title }}" class="close">&times;</span>
+        <img src="{{ src }}"
+             alt="{{ alt }}"
+             style="max-width: min(100%, 800px);">
+    </div>
+</div>
+{%- endmacro %}

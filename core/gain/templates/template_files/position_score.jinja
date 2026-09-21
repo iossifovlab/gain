@@ -1,4 +1,5 @@
 {% extends "genomic_score.jinja" %}
+{% import "length_statistics.jinja" as lengths %}
 {# A position score's page IS the genomic-score page, plus one section.
 
    Covered positions are a POSITION SCORE statistic and only that: the
@@ -136,48 +137,22 @@
 {% elif not coverage.segment_lengths.has_counts_to_plot %}
 <p>no segments</p>
 {% else %}
-{%- set row = coverage.segment_row %}
-<div class="scrollable-table-container">
-<table>
-    <thead>
-        <tr>
-            <th></th>
-            <th>segments</th>
-            <th>min</th>
-            <th>max</th>
-            <th>mean</th>
-            <th>median</th>
-        </tr>
-    </thead>
-    <tbody>
-        <tr>
-            <td>{{ row.group }}</td>
-            <td>{{ row.total }}</td>
-            <td>{{ row.min }}</td>
-            <td>{{ row.max }}</td>
-            <td>{{ row.mean }}</td>
-            <td>{{ row.median }}</td>
-        </tr>
-    </tbody>
-</table>
-</div>
+{% call lengths.statistics_table("segments") %}
+        {{ lengths.statistics_row(coverage.segment_row) }}
+{%- endcall %}
 {#- The chart as a thumbnail the size one indel chart has, opening the
    full-size image in the modal this page already uses for the score
    histograms -- so the smaller size costs no detail.  A pair of one:
    the shared thumbnail rule does not grow, so it keeps half the row. -#}
 <div class="figure-pair">
-<img src="{{ impl.get_coverage_segment_lengths_image_filename() }}"
-     alt="global segment-length histogram" class="figure-thumbnail"
-     data-modal-trigger="modal-coverage-segment-lengths">
+{{ lengths.figure_thumbnail(
+       impl.get_coverage_segment_lengths_image_filename(),
+       "global segment-length histogram", "modal-coverage-segment-lengths") }}
 </div>
-<div id="modal-coverage-segment-lengths" class="modal">
-    <div class="modal-content">
-        <span title="segment lengths" class="close">&times;</span>
-        <img src="{{ impl.get_coverage_segment_lengths_image_filename() }}"
-             alt="global segment-length histogram"
-             style="max-width: min(100%, 800px);">
-    </div>
-</div>
+{{ lengths.figure_modal(
+       "modal-coverage-segment-lengths", "segment lengths",
+       impl.get_coverage_segment_lengths_image_filename(),
+       "global segment-length histogram") }}
 {% endif %}
 {%- endif %}
 {% else %}
