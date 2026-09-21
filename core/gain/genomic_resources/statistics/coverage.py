@@ -33,6 +33,7 @@ from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.base_statistic import (
     RegionFoldedStatistic,
+    StoredStatistic,
     refuse_unmergeable,
 )
 from gain.genomic_resources.statistics.exact_lengths import (
@@ -50,6 +51,9 @@ from gain.utils.chromosome_order import natural_chromosome_key
 logger = logging.getLogger(__name__)
 
 COVERAGE_STATISTICS_FILE = "statistics/coverage.json"
+#: The ``format_version`` the writer stamps; 2 since gain#1543 (exact
+#: segment lengths).  Read by :func:`coverage_stored_statistic_for` too.
+COVERAGE_FORMAT_VERSION = 2
 
 #: How a failed fold of these regions is named in the message.
 _MERGE_FAILURE = "coverage"
@@ -609,7 +613,7 @@ class CoverageStatistics(RegionFoldedStatistic[RegionCoverage]):
             if global_lengths is not None:
                 global_entry["segment_lengths"] = global_lengths.stored()
         return json.dumps({
-            "format_version": 2,
+            "format_version": COVERAGE_FORMAT_VERSION,
             "chromosomes": chromosomes,
             "global": global_entry,
         }, indent=2)
@@ -1006,6 +1010,20 @@ def region_coverage_for(
     if not isinstance(score, PositionScore):
         return None
     return RegionCoverage(chrom, start, end)
+
+
+def coverage_stored_statistic_for(
+    score: GenomicScore,
+) -> StoredStatistic | None:
+    """The coverage file a build writes for ``score``, ``None`` for other kinds.
+
+    The same class gate as :func:`region_coverage_for`, stated beside
+    it: a kind gets a coverage file exactly when it gets a coverage
+    accumulator (gain#1586).
+    """
+    if not isinstance(score, PositionScore):
+        return None
+    return StoredStatistic(COVERAGE_STATISTICS_FILE, COVERAGE_FORMAT_VERSION)
 
 
 def accumulate_coverage(

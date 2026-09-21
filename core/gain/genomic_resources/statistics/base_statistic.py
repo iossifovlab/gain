@@ -2,9 +2,23 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Iterable
-from typing import Any, Protocol, Self
+from typing import Any, NamedTuple, Protocol, Self
 
 import numpy as np
+
+
+class StoredStatistic(NamedTuple):
+    """One statistics file a build writes, at the version its writer stamps.
+
+    What the repair flow compares a resource's stored files against
+    (gain#1586): the file is missing, or carries an older
+    ``format_version``, exactly when the resource predates the schema.
+    The version here MUST be the constant the writer's ``serialize``
+    stamps, so the two cannot drift.
+    """
+
+    file: str
+    format_version: int
 
 
 class Statistic:

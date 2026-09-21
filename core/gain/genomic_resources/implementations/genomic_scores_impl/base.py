@@ -35,6 +35,10 @@ from gain.genomic_resources.resource_implementation import (
 from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
 )
+from gain.genomic_resources.statistics.base_statistic import StoredStatistic
+from gain.genomic_resources.statistics.coverage import (
+    coverage_stored_statistic_for,
+)
 from gain.genomic_resources.utils import read_resource_id_label
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
 from gain.utils.log_safety import escape_unsafe_characters
@@ -204,6 +208,17 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         # manifest, and the score's table resolves its index against that
         # same manifest, so the two cannot disagree (gain#595).
         return self.score.resource_files()
+
+    def stored_statistics(self) -> list[StoredStatistic]:
+        # Each statistic states its own gate beside the accumulator
+        # gate the scan reads, so what is declared here is what
+        # ``scan.merge_and_save_histograms`` writes (gain#1586).
+        return [
+            stored for stored in (
+                coverage_stored_statistic_for(self.score),
+            )
+            if stored is not None
+        ]
 
     @staticmethod
     def _get_reference_genome_cached(
