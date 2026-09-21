@@ -54,7 +54,7 @@ def a_repaired_labelled_score(
 
 
 def resynced(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, resource_id: str = "score",
 ) -> tuple[GenomicScoreImplementation, GenomicResourceRepo]:
     """A fresh implementation over the resource as it is on disk now.
 
@@ -63,11 +63,11 @@ def resynced(
     factory's own repair, which would manifest the resource again
     without them.
     """
-    resync_the_manifest(tmp_path, "score")
+    resync_the_manifest(tmp_path, resource_id)
     repo = GenomicResourceProtocolRepo(
         build_filesystem_test_protocol(tmp_path, repair=False))
     return build_score_implementation_from_resource(
-        repo.get_resource("score")), repo
+        repo.get_resource(resource_id)), repo
 
 
 def test_a_repaired_score_is_current(tmp_path: pathlib.Path) -> None:
