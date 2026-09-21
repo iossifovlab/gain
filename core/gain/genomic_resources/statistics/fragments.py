@@ -1,4 +1,4 @@
-"""Fragment-count statistics for fragment scores.
+"""Fragment count and exact fragment-length statistics for fragment scores.
 
 Vocabulary per ``CONTEXT.md``: a **fragment** is a table row AS STORED.
 Overlapping, nested and duplicate rows each count once, at their own
@@ -19,6 +19,13 @@ per-region accumulator, the resource-wide statistic, the fold that
 merges a scan's regions into one, the write, and the render payload the
 info page reads.  The scan wiring that feeds all three is in
 ``implementations/genomic_scores_impl/scan.py``.
+
+Lengths are kept EXACTLY, as the kind-neutral record in
+:mod:`gain.genomic_resources.statistics.exact_lengths` (ADR 0020 as
+amended by gain#1544, the way segments left the stored ladder in
+gain#1543 and the indel groups in gain#1118): the file stores the
+record, the table on the page is read off it, and the chart is drawn
+on the ladder derived from it at render time.
 """
 from __future__ import annotations
 
@@ -39,14 +46,15 @@ from gain.genomic_resources.statistics.base_statistic import (
     RegionFoldedStatistic,
     refuse_unmergeable,
 )
+from gain.genomic_resources.statistics.exact_lengths import (
+    NO_LENGTHS,
+    ExactLengths,
+    LengthArrayTally,
+    LengthStatisticsRow,
+    length_ladder,
+    merged_lengths,
+)
 from gain.genomic_resources.statistics.length_histogram import (
-    LENGTH_BIN_EDGES,
-    LENGTH_HISTOGRAM_BIN_COUNT,
-    accumulate_bins,
-    binwise_sum,
-    has_counts_to_plot,
-    histogram_on_this_ladder,
-    length_histogram_bin_index,
     plot_length_histogram,
 )
 from gain.genomic_resources.statistics.region_fold import merge_regions
@@ -62,10 +70,10 @@ _MERGE_FAILURE = "fragment statistics"
 class RegionFragments:
     """The fragments of one scanned region, counted row by row.
 
-    Consumes row spans and counts each row once, binned by its own
-    length.  Unlike :class:`~.coverage.RegionCoverage` this carries no
-    opt-out flag: a region is built only for a kind whose rows ARE
-    fragments, so every instance publishes a tally.
+    Consumes row spans and counts each row once, at its own length.
+    Unlike :class:`~.coverage.RegionCoverage` this carries no opt-out
+    flag: a region is built only for a kind whose rows ARE fragments, so
+    every instance publishes a count.
     """
 
     def __init__(
@@ -79,31 +87,31 @@ class RegionFragments:
         self.end = end
         self._fragments = 0
         # ``None`` is the unknown state, reached only through
-        # :meth:`frozen` for a stored histogram this code cannot merge
-        # with: it was binned on foreign edges, so the counts stay exact
-        # while the lengths read as unknown.  Held as the absence of the
-        # bins rather than as a flag beside them, so the two cannot
-        # disagree and accumulating into discarded state is a TypeError
-        # rather than silent work.
-        self._bins: list[int] | None = [0] * LENGTH_HISTOGRAM_BIN_COUNT
+        # :meth:`frozen` for a file that stored the count without the
+        # exact record (format version 1): the count stays exact while
+        # the lengths read as unknown.  Held as the absence of the tally
+        # rather than as a flag beside it, so the two cannot disagree
+        # and accumulating into discarded state is an assertion rather
+        # than silent work.
+        self._lengths: LengthArrayTally | None = LengthArrayTally()
 
     @classmethod
     def frozen(
         cls,
         chrom: str,
         fragments: int,
-        bins: list[int] | None,
+        lengths: ExactLengths | None,
     ) -> RegionFragments:
         """A region restored from serialized counts, with no scan state.
 
-        ``bins`` of ``None`` marks the length histogram unknown -- the
-        stored one was binned on edges this code cannot merge with.  The
-        COUNT is unaffected and still reads, so a file like that renders
-        its table and no image.
+        ``lengths`` of ``None`` marks the length record unknown -- the
+        file stored the count alone.  The COUNT is unaffected and still
+        reads, so a file like that renders its table and no image.
         """
         region = cls(chrom, None, None)
         region._fragments = fragments
-        region._bins = None if bins is None else list(bins)
+        region._lengths = (
+            None if lengths is None else LengthArrayTally.restored(lengths))
         return region
 
     def add_fragment(self, length: int) -> None:
@@ -114,41 +122,25 @@ class RegionFragments:
         fragment is counted once at its true length however the contig
         was split.
         """
-        assert self._bins is not None, \
+        assert self._lengths is not None, \
             "a frozen region does not accumulate"
         self._fragments += 1
-        self._bins[length_histogram_bin_index(length)] += 1
+        self._lengths.add(length)
 
     def add_fragment_batch(self, lengths: np.ndarray) -> None:
         """Count a whole batch of fragment lengths at once.
 
-        The vectorized statement of :meth:`add_fragment`, and it lives
-        HERE beside that rule so the binning has one home.  Vectorized
-        because a genome-scale fragment score has hundreds of thousands
-        of rows, and this is the path ADR 0001 deleted the per-row
-        object churn from.
-
-        The bin is found by INTEGER comparison against the ladder's own
-        edges, not by ``log2``: the edges are part of the stored format,
-        and a float log of a large integer can land on the wrong side of
-        a power of two.  ``searchsorted`` clamps into the open-ended
-        last bin for free.
+        The vectorized statement of :meth:`add_fragment`: one fold of
+        the whole array into the tally, because a genome-scale fragment
+        score has hundreds of thousands of rows, and this is the path
+        ADR 0001 deleted the per-row object churn from.  A length below
+        1 is refused by the tally itself.
         """
         if not lengths.size:
             return
-        assert self._bins is not None, \
+        assert self._lengths is not None, \
             "a frozen region does not accumulate"
-        indices = np.searchsorted(LENGTH_BIN_EDGES, lengths, side="right") - 1
-        # A length below 1 sorts before the first edge and lands at -1;
-        # reading that back is free, where a separate ``min()`` would be
-        # another full pass over the batch.
-        if indices.min() < 0:
-            raise ValueError(
-                f"fragment length must be positive: {lengths.min()}")
-        accumulate_bins(
-            self._bins,
-            np.bincount(
-                indices, minlength=LENGTH_HISTOGRAM_BIN_COUNT).tolist())
+        self._lengths.add_batch(lengths)
         self._fragments += int(lengths.size)
 
     @property
@@ -156,11 +148,11 @@ class RegionFragments:
         """How many rows this region counted."""
         return self._fragments
 
-    def length_histogram(self) -> list[int] | None:
-        """The region's fragment-length bins, or ``None`` if unknown."""
-        if self._bins is None:
+    def fragment_lengths(self) -> ExactLengths | None:
+        """The region's fragment lengths as a record, ``None`` if unknown."""
+        if self._lengths is None:
             return None
-        return list(self._bins)
+        return self._lengths.frozen()
 
     def merge(self, other: RegionFragments) -> None:
         """Fold the adjacent region to the right into this one.
@@ -170,15 +162,16 @@ class RegionFragments:
         for this statistic and its two twins alike.
 
         No stitch is needed: a row is owned whole by exactly one region,
-        so the merged count and histogram are plain sums.
+        so the merged count is a plain sum and the merged lengths are the
+        tallies' own merge -- unknown if either side is.
         """
         refuse_unmergeable(_MERGE_FAILURE, self, other)
 
         self._fragments += other._fragments
-        if self._bins is None or other._bins is None:
-            self._bins = None
+        if self._lengths is None or other._lengths is None:
+            self._lengths = None
         else:
-            accumulate_bins(self._bins, other._bins)
+            self._lengths.merge(other._lengths)
         self.end = other.end
 
 
@@ -203,72 +196,69 @@ class FragmentStatistics(RegionFoldedStatistic[RegionFragments]):
         return sum(
             region.fragments for region in self._regions.values())
 
-    def fragment_lengths_by_chromosome(self) -> dict[str, list[int]]:
-        """Per-chromosome fragment-length histograms, as stored.
+    def fragment_lengths_by_chromosome(self) -> dict[str, ExactLengths]:
+        """Per-chromosome fragment-length records, as stored.
 
-        A chromosome whose histogram is unknown is left OUT rather than
-        given an all-zero one, which would read as "measured, and empty".
+        A chromosome whose lengths are unknown is left OUT rather than
+        given an empty record, which would read as "measured, and empty".
         """
         return {
-            chrom: histogram
+            chrom: lengths
             for chrom, region in self._regions.items()
-            if (histogram := region.length_histogram()) is not None
+            if (lengths := region.fragment_lengths()) is not None
         }
 
-    def fragment_lengths_global(self) -> list[int] | None:
-        """The bin-wise sum of every chromosome's histogram.
+    def fragment_lengths_global(self) -> ExactLengths | None:
+        """The fold of every chromosome's record, ``None`` if any is unknown.
 
-        ``None`` when any chromosome's is unknown: a partial roll-up
-        would silently understate, the same all-or-nothing rule the
-        coverage twin applies to its own optional groups.
+        A partial roll-up would silently understate, the same
+        all-or-nothing rule the coverage twin applies to its segments.
         """
-        histograms = []
-        for region in self._regions.values():
-            histogram = region.length_histogram()
-            if histogram is None:
-                return None
-            histograms.append(histogram)
-        if not histograms:
-            return None
-        return binwise_sum(histograms)
+        return _global_lengths(
+            region.fragment_lengths() for region in self._regions.values())
 
     def serialize(self) -> str:
-        # One walk of the regions serves the per-chromosome entries and
-        # the global roll-up.  The global histogram is written only when
-        # EVERY chromosome has one, for the reason
+        # Each region is finalised once, and that one record serves its
+        # chromosome's entry and the global fold.  The global record is
+        # written only when EVERY chromosome has one, for the reason
         # ``fragment_lengths_global`` gives.
+        records = {
+            chrom: region.fragment_lengths()
+            for chrom, region in self._regions.items()
+        }
         chromosomes: dict[str, dict[str, Any]] = {}
         for chrom, region in self._regions.items():
             entry: dict[str, Any] = {"fragment_count": region.fragments}
-            histogram = region.length_histogram()
-            if histogram is not None:
-                entry["fragment_length_histogram"] = histogram
+            lengths = records[chrom]
+            if lengths is not None:
+                entry["fragment_lengths"] = lengths.stored()
             chromosomes[chrom] = entry
         global_entry: dict[str, Any] = {
             "fragment_count": self.fragments_global(),
         }
-        lengths = self.fragment_lengths_global()
-        if lengths is not None:
-            global_entry["fragment_length_histogram"] = lengths
+        global_lengths = _global_lengths(records.values())
+        if global_lengths is not None:
+            global_entry["fragment_lengths"] = global_lengths.stored()
         return json.dumps({
-            "format_version": 1,
+            "format_version": 2,
             "chromosomes": chromosomes,
             "global": global_entry,
         }, indent=2)
 
     @staticmethod
     def deserialize(content: str) -> FragmentStatistics:
-        # Only the per-chromosome counts round-trip; the global entry is
+        # Only the per-chromosome entries round-trip; the global entry is
         # a roll-up recomputed from them.  Named keys are read one by
-        # one and the entry dict is never iterated, so unknown keys are
-        # ignored rather than rejected.
+        # one and the entry dict is never iterated, so unknown keys --
+        # a version 1 file's ``fragment_length_histogram`` among them --
+        # are ignored rather than rejected.
         data = json.loads(content)
         result = FragmentStatistics()
         for chrom, counts in data["chromosomes"].items():
             result.fold_region(RegionFragments.frozen(
                 chrom,
                 int(counts["fragment_count"]),
-                _read_stored_histogram(counts)))
+                _read_stored_lengths(counts)))
         return result
 
 
@@ -289,21 +279,28 @@ class FragmentDisplay(NamedTuple):
     """
 
     rows: list[FragmentRow]
-    fragment_lengths: list[int] | None
-    """The global fragment-length histogram, or ``None`` if unknown.
+    fragment_lengths: ExactLengths | None
+    """The global fragment-length record, or ``None`` if unknown.
 
-    Unknown is a THIRD answer, distinct from a histogram that is known
-    and all zero: the counts and the histogram are read independently,
-    so a stored histogram binned on foreign edges leaves the lengths
-    unknown while the counts stay exact.  The section renders all three
-    apart -- "not computed", the image, "no fragments" -- because
-    collapsing the first into the last would deny fragments the table
-    beside it is counting.
+    Unknown is a THIRD answer, distinct from a record that is known and
+    empty: the counts and the lengths are read independently, so a file
+    that stored the counts alone leaves the lengths unknown while the
+    counts stay exact.  The section renders all three apart -- "not
+    computed", the table and chart, "no fragments" -- because collapsing
+    the first into the last would deny fragments the table beside it is
+    counting.
     """
 
     @property
     def global_fragments(self) -> int:
         return sum(row.fragments for row in self.rows)
+
+    @property
+    def fragment_row(self) -> LengthStatisticsRow | None:
+        """The one row of the "Fragment lengths" table, if known."""
+        if self.fragment_lengths is None:
+            return None
+        return LengthStatisticsRow.of("fragments", self.fragment_lengths)
 
 
 def build_fragment_display(
@@ -393,13 +390,31 @@ def save_and_plot_fragments(
             FRAGMENT_STATISTICS_FILE, mode="wt") as outfile:
         outfile.write(statistics.serialize())
     lengths = statistics.fragment_lengths_global()
-    if not has_counts_to_plot(lengths):
+    if lengths is None or not lengths.has_counts_to_plot:
         return
     with resource.open_raw_file(
             FRAGMENT_LENGTHS_IMAGE_FILE, mode="wb") as outfile:
-        plot_length_histogram(outfile, lengths, "fragment")
+        plot_length_histogram(outfile, length_ladder(lengths), "fragment")
 
 
-def _read_stored_histogram(entry: dict[str, Any]) -> list[int] | None:
-    """One chromosome's length histogram, or ``None`` if unusable."""
-    return histogram_on_this_ladder(entry.get("fragment_length_histogram"))
+def _read_stored_lengths(entry: dict[str, Any]) -> ExactLengths | None:
+    """One chromosome's length record, ``None`` where the file has none.
+
+    The count beside it reads at any format version; the record only
+    where it is stored.  A version 1 file's ladder is not read -- one
+    reader, no compatibility branch (ADR 0020, the gain#1118 rule).
+    """
+    stored = entry.get("fragment_lengths")
+    return None if stored is None else ExactLengths.from_stored(stored)
+
+
+def _global_lengths(
+    records: Iterable[ExactLengths | None],
+) -> ExactLengths | None:
+    """The fold of every chromosome's record, ``None`` if any is unknown."""
+    result: ExactLengths | None = NO_LENGTHS
+    for lengths in records:
+        if lengths is None:
+            return None
+        result = merged_lengths(result, lengths)
+    return result

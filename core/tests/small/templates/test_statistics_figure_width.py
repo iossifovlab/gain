@@ -47,6 +47,9 @@ from gain.genomic_resources.statistics.alleles import (
 from gain.genomic_resources.statistics.coverage import (
     COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
 )
+from gain.genomic_resources.statistics.fragments import (
+    FRAGMENT_LENGTHS_IMAGE_FILE,
+)
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
     a_position_score,
@@ -189,7 +192,7 @@ def _position_score_with_segments(tmp_path: pathlib.Path) -> GenomicResource:
 
 
 def _fragment_score(tmp_path: pathlib.Path) -> GenomicResource:
-    """A fragment score: its page adds the fragment-lengths figure."""
+    """A fragment score: its page adds the fragment-lengths thumbnail."""
     return (
         a_fragment_score()
         .with_score("score", "float")
@@ -247,16 +250,13 @@ def _built_page(resource: GenomicResource) -> str:
 
 
 _FIGURES: list[tuple[str, _Builder, str]] = [
-    # The fragments section lives in a child template, so this is the
-    # one figure the genomic-score page itself never renders.
-    ("fragment lengths",
-     _fragment_score, "statistics/fragment_lengths.png"),
-    # The two indel figures LEFT this list in gain#1118, and the
-    # segment-lengths figure in gain#1543: they render as half-width
-    # thumbnails that open the full-size image in the modal, so they
-    # are no longer page-flow figures at all -- the same exemption the
-    # in-table score thumbnails and the modal image have always had,
-    # for the same reason.  Their own sizing is asserted by
+    # The two indel figures LEFT this list in gain#1118, the
+    # segment-lengths figure in gain#1543 and the fragment-lengths
+    # figure in gain#1544: they render as half-width thumbnails that
+    # open the full-size image in the modal, so they are no longer
+    # page-flow figures at all -- the same exemption the in-table score
+    # thumbnails and the modal image have always had, for the same
+    # reason.  Their own sizing is asserted by
     # test_the_thumbnails_are_sized_by_their_pair below, so leaving
     # here is not leaving unchecked.
     #
@@ -276,6 +276,10 @@ _THUMBNAIL_FIGURES: list[tuple[str, _Builder, str]] = [
      _indel_allele_score, ALLELE_DELETION_LENGTHS_IMAGE_FILE),
     ("segment lengths",
      _position_score_with_segments, COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE),
+    # The fragments section lives in a child template, so this is the
+    # one thumbnail the genomic-score page itself never renders.
+    ("fragment lengths",
+     _fragment_score, FRAGMENT_LENGTHS_IMAGE_FILE),
 ]
 
 

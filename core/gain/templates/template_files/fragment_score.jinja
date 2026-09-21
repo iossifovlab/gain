@@ -33,22 +33,60 @@
 </table>
 </div>
 <h3>Fragment lengths</h3>
-{#- Three answers, not two.  The counts and the histogram are read
-   independently: a stored histogram binned on foreign edges cannot
-   merge with this code's fixed bins, so the LENGTHS are unknown while
-   the counts above stay exact.  Collapsing that into the empty branch
-   would print "no fragments" directly beneath a table saying there are
-   several.  The allele sections draw the same three-way distinction. -#}
+{#- Three answers, not two.  The counts and the lengths are read
+   independently: a file that stored the counts alone (format version
+   1) leaves the LENGTHS unknown while the counts above stay exact.
+   Collapsing that into the empty branch would print "no fragments"
+   directly beneath a table saying there are several.  The coverage
+   and allele sections draw the same three-way distinction. -#}
 {% if fragments.fragment_lengths is none %}
 <p>fragment lengths not computed</p>
-{% elif fragments.fragment_lengths | sum %}
-<img src="{{ impl.get_fragment_lengths_image_filename() }}"
-    alt="global fragment-length histogram"
-    class="statistics-figure"
-    title="Fragment lengths across all chromosomes, fixed log2 bins">
-{% else %}
+{% elif not fragments.fragment_lengths.has_counts_to_plot %}
 <p>no fragments</p>
-{% endif %}
+{% else %}
+{%- set row = fragments.fragment_row %}
+<div class="scrollable-table-container">
+<table>
+    <thead>
+        <tr>
+            <th></th>
+            <th>fragments</th>
+            <th>min</th>
+            <th>max</th>
+            <th>mean</th>
+            <th>median</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>{{ row.group }}</td>
+            <td>{{ row.total }}</td>
+            <td>{{ row.min }}</td>
+            <td>{{ row.max }}</td>
+            <td>{{ row.mean }}</td>
+            <td>{{ row.median }}</td>
+        </tr>
+    </tbody>
+</table>
+</div>
+{#- The chart as a thumbnail the size one indel chart has, opening the
+   full-size image in the modal this page already uses for the score
+   histograms -- so the smaller size costs no detail.  A pair of one:
+   the shared thumbnail rule does not grow, so it keeps half the row. -#}
+<div class="figure-pair">
+<img src="{{ impl.get_fragment_lengths_image_filename() }}"
+     alt="global fragment-length histogram" class="figure-thumbnail"
+     data-modal-trigger="modal-fragment-lengths">
+</div>
+<div id="modal-fragment-lengths" class="modal">
+    <div class="modal-content">
+        <span title="fragment lengths" class="close">&times;</span>
+        <img src="{{ impl.get_fragment_lengths_image_filename() }}"
+             alt="global fragment-length histogram"
+             style="max-width: min(100%, 800px);">
+    </div>
+</div>
+{%- endif %}
 {% else %}
 <p>not computed</p>
 {% endif %}
