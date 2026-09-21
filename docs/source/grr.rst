@@ -370,6 +370,19 @@ because a newer GAIn would compute more statistics for it than the version
 that last built it: such a resource has a perfectly current hash and is
 skipped, and its info page reports the newer statistics as not computed.
 
+Such a resource is not skipped *silently*, though. An unforced run — and a
+``--dry-run`` — names every hash-current resource whose stored statistics
+predate what the running GAIn writes, file by file::
+
+    statistics of <hg38/scores/phastCons100way> predate the current schema: statistics/coverage.json is at format version 1 (current is 2); rebuild with `grr_manage resource-stats -r hg38/scores/phastCons100way -f`
+
+(a file the kind now builds but the resource never had reads ``is
+missing``) and ends with one warning counting them. These lines are a
+report, nothing more: no rebuild is triggered, and the count a
+``--dry-run`` exits with — resources whose *hash* is out of date — is
+unchanged, so a script keyed on that status does not flip on a GAIn
+upgrade.
+
 ``--force`` is the deliberate way out. To put a newer GAIn's statistics
 onto one already-built resource::
 
