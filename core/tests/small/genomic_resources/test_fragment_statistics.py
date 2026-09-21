@@ -185,6 +185,23 @@ def test_fragment_lengths_bin_the_rows_own_span_and_merge_exactly(
     assert GLOBAL_LENGTHS.total == stats.fragments_global() == 5
 
 
+def test_a_read_file_serializes_back_byte_for_byte(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A restored region hands out the record as read, and the global
+    # entry is recomputed from those records; both must land on the
+    # bytes the scan wrote, or a resource whose statistics are merely
+    # re-saved would look rebuilt.
+    resource = _fragments(tmp_path)
+    scan.do_noregion_histograms(resource)
+    written = resource.get_file_content(FRAGMENT_STATISTICS_FILE)
+
+    resaved = FragmentStatistics.deserialize(written).serialize()
+
+    assert resaved == written
+    assert '"fragment_lengths"' in written
+
+
 def test_reading_the_file_builds_no_array_tally(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
