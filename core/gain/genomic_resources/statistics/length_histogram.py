@@ -1,20 +1,18 @@
 """The one fixed length ladder, and the chart drawn on it.
 
-ADR 0020 gives **segments** and **fragments** this binning as their
-STORED form, so that per-chromosome results merge into exact global ones
-and chunked scans merge exactly for the same reason.  Both live in
-:mod:`gain.genomic_resources.statistics.coverage`, which is why the
-ladder lives in neither: it is the shared contract, not a coverage
-detail its sibling happens to import.
+ADR 0020 gives **fragments** this binning as their STORED form, so that
+per-chromosome results merge into exact global ones and chunked scans
+merge exactly for the same reason.  The ladder lives here rather than
+in :mod:`gain.genomic_resources.statistics.fragments` because it is the
+shared contract every length chart is drawn on, not a fragment detail.
 
-**Indels** left the stored ladder in gain#1118 (ADR 0020 as amended).
-They keep an exact ``{length: count}`` map in
-:mod:`gain.genomic_resources.statistics.exact_lengths` and merge on
-that; what they still use from here is the RENDERING -- the map is
-projected onto these bins at draw time so the indel chart keeps the
-shape the stored histograms drew.  So the two callers now use this
-module for different things, and only the coverage pair depends on the
-edges being part of any file.
+**Indels** left the stored ladder in gain#1118 and **segments** in
+gain#1543 (ADR 0020 as amended).  They keep an exact ``{length: count}``
+map in :mod:`gain.genomic_resources.statistics.exact_lengths` and merge
+on that; what they still use from here is the RENDERING -- the map is
+projected onto these bins at draw time so the chart keeps the shape the
+stored histograms drew.  So the callers use this module for different
+things, and only fragments depend on the edges being part of any file.
 
 What the ladder does NOT bin at all is the complex allele grid: its
 cells are exact lengths (ADR 0020 as amended by gain#779), for reasons
@@ -120,9 +118,9 @@ def has_counts_to_plot(
     logarithmic and can render neither, and a chart of nothing under a
     "Segment lengths" heading states nothing either.
 
-    Coverage's two groups -- segments and fragments -- are the callers.
-    The indel groups asked this too until gain#1118 took them off the
-    stored ladder: they carry an exact length map now, so the same
+    Fragments are the one caller left.  The indel groups asked this
+    too until gain#1118 took them off the stored ladder, and segments
+    until gain#1543: they carry an exact length map now, so the same
     question is ``lengths is None or not lengths.total``, read off the
     thing they actually store rather than off bins derived from it.
     """

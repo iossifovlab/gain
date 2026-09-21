@@ -20,17 +20,23 @@ from gain.genomic_resources.statistics.coverage import (
     merge_region_coverage,
     save_and_plot_coverage,
 )
+from gain.genomic_resources.statistics.exact_lengths import (
+    NO_LENGTHS,
+    ExactLengths,
+)
 from gain.genomic_resources.statistics.fragments import (
     FRAGMENT_STATISTICS_FILE,
-)
-from gain.genomic_resources.statistics.length_histogram import (
-    LENGTH_HISTOGRAM_BIN_COUNT,
 )
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
     a_fragment_score,
     a_position_score,
     an_allele_score,
+)
+
+from tests.small.genomic_resources.info_page_html import (
+    section_after,
+    table_after,
 )
 
 _HIST_DICT: dict = {
@@ -71,16 +77,10 @@ def _multivalued_tabix(tmp_path: pathlib.Path) -> GenomicResource:
 
 COVERED = 22
 SEGMENTS = 4
-# Segment lengths 10, 6, 2 and 4 on the log2 bins: [2,4) holds one,
-# [4,8) holds two, [8,16) holds one.
-SEGMENT_LENGTHS = {1: 1, 2: 2, 3: 1}
-
-
-def _expected_histogram() -> list[int]:
-    histogram = [0] * 32
-    for index, count in SEGMENT_LENGTHS.items():
-        histogram[index] = count
-    return histogram
+#: Segment lengths 10, 6, 2 and 4, recorded exactly: their sum is the
+#: covered count because the four segments tile the coverage.
+SEGMENT_LENGTHS = ExactLengths(
+    {2: 1, 4: 1, 6: 1, 10: 1}, SEGMENTS, COVERED, 2, 10)
 
 
 def test_per_record_scan_accumulates_coverage(
@@ -112,9 +112,9 @@ def test_bulk_scan_coverage_matches_per_record(
 
     assert bulk.covered == per_record.covered == COVERED
     assert bulk.segment_count == per_record.segment_count == SEGMENTS
-    assert bulk.segment_length_histogram() \
-        == per_record.segment_length_histogram() \
-        == _expected_histogram()
+    assert bulk.segment_lengths() \
+        == per_record.segment_lengths() \
+        == SEGMENT_LENGTHS
 
 
 @pytest.mark.parametrize("batch_size", [1, 2, 3, 100])
@@ -136,7 +136,7 @@ def test_bulk_coverage_is_batch_size_invariant(
 
     assert coverage.covered == COVERED
     assert coverage.segment_count == SEGMENTS
-    assert coverage.segment_length_histogram() == _expected_histogram()
+    assert coverage.segment_lengths() == SEGMENT_LENGTHS
 
 
 def test_region_task_carries_coverage_beside_the_histograms(
@@ -189,7 +189,39 @@ def test_noregion_build_writes_the_coverage_file(
     assert stats.covered_global() == COVERED
     assert stats.segments_by_chromosome() == {"chr1": SEGMENTS}
     assert stats.segments_global() == SEGMENTS
-    assert stats.segment_lengths_global() == _expected_histogram()
+    assert stats.segment_lengths_global() == SEGMENT_LENGTHS
+
+
+#: The four segments' lengths as the file stores them (gain#1543): the
+#: exact map, sorted, beside the scalars taken on the unclamped lengths.
+STORED_SEGMENT_LENGTHS = {
+    "lengths": {"2": 1, "4": 1, "6": 1, "10": 1},
+    "count": SEGMENTS,
+    "sum": COVERED,
+    "min": 2,
+    "max": 10,
+}
+
+
+def test_the_file_stores_each_chromosomes_segment_lengths_exactly(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Format version 2: the ladder leaves the file, the exact record
+    enters it, and the record's count is the segment count -- the same
+    segments, counted twice by two different routes."""
+    resource = _multivalued_tabix(tmp_path)
+
+    scan.do_noregion_histograms(resource)
+
+    data = json.loads(resource.get_file_content("statistics/coverage.json"))
+    assert data["format_version"] == 2
+    entry = data["chromosomes"]["chr1"]
+    assert entry["segment_lengths"] == STORED_SEGMENT_LENGTHS
+    assert entry["segment_lengths"]["count"] == entry["segment_count"]
+    # One chromosome, so the global fold is that chromosome's record.
+    assert data["global"]["segment_lengths"] == STORED_SEGMENT_LENGTHS
+    assert data["global"]["segment_count"] == SEGMENTS
+    assert "segment_length_histogram" not in json.dumps(data)
 
 
 def test_build_writes_the_segment_length_image(
@@ -287,7 +319,14 @@ def test_coverage_is_chunk_invariant(
     assert stats.covered_by_chromosome() == {"chr1": COVERED}
     merged = stats._regions["chr1"]
     assert merged.segment_count == SEGMENTS
-    assert merged.segment_length_histogram() == _expected_histogram()
+    assert merged.segment_lengths() == SEGMENT_LENGTHS
+    # Down to the bytes: the file a chunked scan writes is the file an
+    # unchunked one writes, so a repository rebuilt at another
+    # ``--region-size`` commits no spurious diff.
+    whole = merge_region_coverage(resource.resource_id, [
+        scan.do_histogram_task(resource, confs, "chr1", 1, 60).coverage])
+    assert whole is not None
+    assert stats.serialize() == whole.serialize()
 
 
 def test_statistics_hash_is_untouched_by_the_coverage_build(
@@ -315,6 +354,117 @@ def test_info_page_renders_the_coverage_section(
     assert "Coverage" in page
     assert "chr1" in page
     assert f">{COVERED}<" in page
+
+
+def _segment_lengths_table(page: str) -> list[list[str]]:
+    """The table under the Segment lengths heading, header row first,
+    each row as its cells' text -- whole rows, so a cell that moved
+    column or a column that vanished is a failure, not a pass on a
+    substring that happens to still occur somewhere on the page."""
+    table = table_after(page, "<h3>Segment lengths</h3>")
+    return [[cell.text for cell in row] for row in table.head + table.rows]
+
+
+def test_info_page_tables_the_segment_lengths_exactly(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The four numbers the exact record exists for (gain#1543), read
+    straight off the fixture's rows: lengths 2, 4, 6 and 10 have a mean
+    of 5.5 and a median halfway between 4 and 6."""
+    resource = _multivalued_tabix(tmp_path)
+    scan.do_noregion_histograms(resource)
+
+    page = PositionScoreImplementation(resource).get_info()
+
+    assert _segment_lengths_table(page) == [
+        ["", "segments", "min", "max", "mean", "median"],
+        ["segments", "4", "2", "10", "5.5", "5"],
+    ]
+
+
+def test_a_median_past_the_clamp_renders_as_a_floor(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Segments of 3, 9000 and 9500 bp: the middle one is longer than
+    the map's clamp, so the median is only known to be at least the
+    clamp and the page says so -- while min, max and the mean, taken on
+    the unclamped lengths, stay exact."""
+    resource = (
+        a_position_score()
+        .with_score("score", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  score
+            chr1   1          3        0.1
+            chr1   10         9009     0.2
+            chr1   9020       18519    0.3
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    scan.do_noregion_histograms(resource)
+
+    page = PositionScoreImplementation(resource).get_info()
+
+    assert _segment_lengths_table(page)[1] \
+        == ["segments", "3", "3", "9500", "6167.67", "≥8192"]
+
+
+def _version_1_file() -> str:
+    """A coverage.json as gain wrote it before gain#1543: the segment
+    count beside the log2 ladder, no exact record."""
+    return json.dumps({
+        "format_version": 1,
+        "chromosomes": {"chr1": {
+            "covered_positions": COVERED,
+            "segment_count": SEGMENTS,
+            "segment_length_histogram": [0, 1, 2, 1] + [0] * 28,
+        }},
+        "global": {
+            "covered_positions": COVERED,
+            "segment_count": SEGMENTS,
+            "segment_length_histogram": [0, 1, 2, 1] + [0] * 28,
+        },
+    })
+
+
+def test_a_version_1_file_keeps_its_segment_counts_on_the_page(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Decision 5 of gain#1541: a position score built before the exact
+    record renders its Coverage table WITH the Segments column and
+    total -- the counts are still true -- and the Segment lengths
+    subsection says "not computed", which is what a rebuild acts on.
+    Not "no segments": the table right above says there are four."""
+    resource = _multivalued_tabix(tmp_path)
+    with resource.open_raw_file(COVERAGE_STATISTICS_FILE, mode="wt") as out:
+        out.write(_version_1_file())
+
+    page = PositionScoreImplementation(resource).get_info()
+
+    # The totals row sits in the thead beside the header row.
+    coverage_table = table_after(page, "<h2>Coverage</h2>")
+    assert [[cell.text for cell in row] for row in coverage_table.head] == [
+        ["Chromosome", "Covered positions", "Segments"],
+        ["all chromosomes", str(COVERED), str(SEGMENTS)],
+    ]
+    segment_lengths = section_after(page, "<h3>Segment lengths</h3>")
+    assert "<p>not computed</p>" in segment_lengths
+    assert "no segments" not in segment_lengths
+    assert COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE not in page
+    # No thumbnail, so no modal either: the two are gated together.
+    assert "modal-coverage-segment-lengths" not in page
+
+
+def test_a_version_1_file_rebuilds_no_image(tmp_path: pathlib.Path) -> None:
+    """Lengths unknown is not lengths empty, but it draws the same
+    nothing: there is no record to derive a ladder from."""
+    resource = _multivalued_tabix(tmp_path)
+
+    save_and_plot_coverage(
+        resource, CoverageStatistics.deserialize(_version_1_file()))
+
+    assert not resource.file_exists(COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE)
 
 
 def test_info_page_without_the_statistics_file_says_not_computed(
@@ -513,7 +663,7 @@ def test_bigwig_scan_coverage(
 
 
 @pytest.mark.filterwarnings("error::UserWarning")
-def test_an_all_zero_segment_histogram_writes_no_image(
+def test_an_empty_segment_record_writes_no_image(
     tmp_path: pathlib.Path,
 ) -> None:
     # A group that is known and empty, not unknown: the region was
@@ -522,16 +672,8 @@ def test_an_all_zero_segment_histogram_writes_no_image(
     # logarithmic, which no all-zero dataset can be drawn on.  The
     # statistics file is still written -- only the image is skipped.
     resource = _multivalued_tabix(tmp_path)
-    statistics = CoverageStatistics.deserialize(json.dumps({
-        "format_version": 1,
-        "chromosomes": {"chr1": {
-            "covered_positions": 0,
-            "segment_count": 0,
-            "segment_length_histogram": [0] * LENGTH_HISTOGRAM_BIN_COUNT,
-        }},
-    }))
 
-    save_and_plot_coverage(resource, statistics)
+    save_and_plot_coverage(resource, _all_zero_segment_statistics())
 
     assert not resource.file_exists(COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE)
     assert resource.file_exists(COVERAGE_STATISTICS_FILE)
@@ -540,11 +682,11 @@ def test_an_all_zero_segment_histogram_writes_no_image(
 def _all_zero_segment_statistics() -> CoverageStatistics:
     """A scanned chromosome that turned up no segments at all."""
     return CoverageStatistics.deserialize(json.dumps({
-        "format_version": 1,
+        "format_version": 2,
         "chromosomes": {"chr1": {
             "covered_positions": 0,
             "segment_count": 0,
-            "segment_length_histogram": [0] * LENGTH_HISTOGRAM_BIN_COUNT,
+            "segment_lengths": NO_LENGTHS.stored(),
         }},
     }))
 

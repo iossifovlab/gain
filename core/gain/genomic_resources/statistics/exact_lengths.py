@@ -14,7 +14,8 @@ map at render time by :func:`length_ladder` rather than stored beside
 it, so the picture and the numbers beneath it cannot drift.
 
 Nothing here knows what KIND of thing has a length.  The indel groups of
-an allele score are the first users.  The record's stored key for the
+an allele score were the first users and a position score's segments
+the second (gain#1543).  The record's stored key for the
 count is ``count`` whatever the kind, and the row formatter takes the
 group label from its caller, so "alleles", "segments" and "fragments"
 all fit.
@@ -394,6 +395,34 @@ class LengthArrayTally:
         tally.min = lengths.min
         tally.max = lengths.max
         return tally
+
+    def add(self, length: int) -> None:
+        """Fold one length in, with no numpy vector call.
+
+        The scalar twin of :meth:`add_batch`, for the lengths a caller
+        meets one at a time -- the per-record scan's runs, and the runs
+        a region can only measure once its neighbours are known.  It
+        runs once per segment, and a position score's segments run to
+        billions: a vector call here, even a one-element ``bincount``,
+        would cost microseconds where a counter increment costs a few
+        hundred nanoseconds.  The extremes are updated longhand for the
+        reason :meth:`LengthTally.add` gives.
+
+        No check that ``length`` is positive, again like the dict
+        tally: a run's length is ``end - begin + 1`` over a row span, at
+        least 1 by construction, and the check belongs where lengths
+        arrive from outside -- :meth:`add_batch`.
+        """
+        self._counts[min(length, LENGTH_MAP_CLAMP)] += 1
+        self.total += 1
+        # On the UNCLAMPED length, which is what keeps these exact.
+        self.sum += length
+        smallest = self.min
+        if smallest is None or length < smallest:
+            self.min = length
+        largest = self.max
+        if largest is None or length > largest:
+            self.max = length
 
     def add_batch(self, lengths: np.ndarray) -> None:
         """Fold a whole batch of lengths in.
