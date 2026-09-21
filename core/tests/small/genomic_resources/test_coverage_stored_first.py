@@ -25,7 +25,7 @@ from gain.genomic_resources.testing.builders import (
     a_reference_genome,
 )
 
-from .conftest import captured_warnings
+from .conftest import captured_warnings, leave_as_a_pointer
 from .test_cli_stats_chrom_lengths import resource_stats
 from .test_genomic_scores_impl_derived_files import resynced
 
@@ -67,6 +67,12 @@ def _repaired(
     """The score repaired -- statistics and stored lengths -- and a
     fresh view of the repository as it is on disk now."""
     resource_stats(where, SCORE)
+    return _repaired_view(where)
+
+
+def _repaired_view(
+    where: pathlib.Path,
+) -> tuple[PositionScoreImplementation, GenomicResourceRepo]:
     _, repo = resynced(where, SCORE)
     return PositionScoreImplementation(repo.get_resource(SCORE)), repo
 
@@ -247,4 +253,40 @@ def test_a_repaired_unlabelled_bigwig_score_is_priced_without_opening(
     page = impl.get_info(repo=repo)
 
     assert page.count(">9.00%<") == 2  # the chr1 row and the global row
+    opened.assert_not_called()
+
+
+def test_a_pointer_only_bigwig_with_a_current_file_is_priced_from_it(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    """An unpulled DVC checkout: the sidecar vouches for the key, the
+    file answers, and there is nothing to open."""
+    _a_bigwig_repo(tmp_path, labelled=False)
+    _repaired(tmp_path)
+    leave_as_a_pointer(tmp_path / SCORE / "data.bw")
+    impl, _ = _repaired_view(tmp_path)
+    opened = mocker.spy(impl.score, "open")
+
+    page = impl.get_info()
+
+    assert page.count(">9.00%<") == 2  # the chr1 row and the global row
+    opened.assert_not_called()
+
+
+def test_a_pointer_only_bigwig_with_no_file_renders_raw_counts(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Nothing stored and no header to read: raw counts, not a failed
+    page -- the render is not what reports an unpulled payload."""
+    _a_bigwig_repo(tmp_path, labelled=False)
+    _repaired(tmp_path)
+    (tmp_path / SCORE / "statistics" / "chrom_lengths.json").unlink()
+    leave_as_a_pointer(tmp_path / SCORE / "data.bw")
+    impl, _ = _repaired_view(tmp_path)
+    opened = mocker.spy(impl.score, "open")
+
+    page = impl.get_info()
+
+    assert f">{COVERED}<" in page
+    assert "Covered %" not in page
     opened.assert_not_called()

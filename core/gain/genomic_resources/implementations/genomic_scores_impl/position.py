@@ -102,11 +102,15 @@ class PositionScoreImplementation(GenomicScoreImplementation):
         a tabix score, the index probe per contig, at every render --
         and ``repo-repair`` renders every page (gain#1448).  The probe
         stays a repair-time cost.  A bigWig header is exact, and an
-        unrepaired bigWig is the one reason a render opens a table.
+        unrepaired bigWig is the one reason a render opens a table --
+        when its payload is here: an unpulled DVC checkout has no header
+        to read, and the render is not where that gets reported.
         """
         if (stored := self._stored_lengths_if_current(
                 self._render_repo)) is not None:
             return stored.lengths
         if not self.score.chrom_length_source.is_exact:
+            return {}
+        if self._unpulled_table_files():
             return {}
         return self.get_chrom_lengths(None)
