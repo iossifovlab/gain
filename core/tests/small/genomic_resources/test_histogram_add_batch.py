@@ -50,9 +50,10 @@ def _assert_same(batched: NumberHistogram, ref: NumberHistogram) -> None:
     # The three accumulators (gain#1589).  ``count`` is integer arithmetic
     # and exact.  The two sums are the same per-term products added in a
     # different order -- sequentially per value against numpy's pairwise
-    # ``sum`` over the batch -- so they agree to rounding, not to the bit;
-    # the tolerance is far below the 1e-12 the issue measured between the
-    # two arms over 1.2e8 real values.
+    # ``sum`` over the batch -- so they agree to rounding, not to the bit.
+    # Over these fixtures (at most a few hundred terms) the two agree to
+    # ~1e-16; the tolerance leaves room without admitting a dropped or
+    # doubled term.
     assert batched.count == ref.count
     assert batched.sum is not None and ref.sum is not None
     assert batched.sum_of_squares is not None

@@ -507,10 +507,13 @@ class NumberHistogram(Statistic):
         self.min_value = min(value, self.min_value)
         self.max_value = max(value, self.max_value)
 
-        # Inline rather than a method on ``_Moments``: this runs per value
-        # of every record, and a call costs more than the three updates.
-        # The products are ordered as :meth:`add_batch` orders them, so
-        # the two arms round each term identically.
+        # Inline rather than a method on ``Moments``: this runs per value
+        # of every record, and the three updates alone cost this arm ~11%
+        # (1.78 -> 1.97 us/value over 100k values); a call would add to
+        # that.  Worn on this arm because it is the fallback -- the scan's
+        # hot path is :meth:`add_batch`, where the same fold is three
+        # numpy reductions per batch.  The products are ordered as that
+        # arm orders them, so the two round each term identically.
         moments = self._moments
         if moments is not None:
             moments.count += count
@@ -544,7 +547,7 @@ class NumberHistogram(Statistic):
         :attr:`count` / :attr:`mean` / :attr:`std`: ``count`` is, being
         integer arithmetic, but the two sums are the same per-term products
         added in a different order -- pairwise here, sequentially there --
-        and agree to rounding (1e-11 over 1.2e8 real values).
+        and agree to rounding, not to the bit.
 
         The equivalence covers dtype as well as arithmetic: the ``float64``
         coercion below is what ``add_value`` reproduces by normalizing a

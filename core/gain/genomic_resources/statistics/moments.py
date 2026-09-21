@@ -13,7 +13,7 @@ from gain import logging
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(slots=True)
 class Moments:
     """Running count, sum and sum of squares of a weighted value stream.
 
@@ -24,10 +24,10 @@ class Moments:
     accumulators are stored; :attr:`mean` and :attr:`std` are derived on
     read.
 
-    Plain doubles suffice: measured over chr21 of CADD and AVI (1.2e8
-    values a score), the cancellation in ``sum_of_squares / count -
-    mean**2`` costs one digit, and a per-value fold agrees with the
-    vectorized one to 1e-11.
+    Plain doubles, no compensated summation: over a whole chromosome of
+    a real score the cancellation in ``sum_of_squares / count - mean**2``
+    costs about one digit of the sd, and the per-value and vectorized
+    folds agree to rounding.
 
     A stream nobody has folded into is a ``Moments`` at zero; a histogram
     whose stored file predates these keys has NO moments, which its
@@ -87,11 +87,15 @@ class Moments:
         return math.sqrt(variance)
 
     def to_dict(self) -> dict[str, Any]:
-        """The three accumulators under their stored keys."""
+        """The three accumulators under their stored keys.
+
+        As Python numbers whatever was folded: a numpy weight handed to
+        ``add_value`` would otherwise reach ``json.dumps`` as an int64.
+        """
         return {
-            "count": self.count,
-            "sum": self.sum,
-            "sum_of_squares": self.sum_of_squares,
+            "count": int(self.count),
+            "sum": float(self.sum),
+            "sum_of_squares": float(self.sum_of_squares),
         }
 
     @staticmethod

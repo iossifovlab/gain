@@ -116,10 +116,12 @@ def test_the_cell_is_empty_when_the_histogram_predates_the_accumulators(
     with resource.proto.open_raw_file(resource, filename, mode="wt") as out:
         out.write(json.dumps(stored))
 
-    table = table_after(_page(resource), SCORES_HEADING)
+    page = _page(resource)
 
-    (row,) = table.rows
+    (row,) = table_after(page, SCORES_HEADING).rows
     assert [cell.text for cell in row[-2:]] == ["[1, 4]", ""]
+    # Nothing in the column, so nothing to footnote.
+    assert "n counts" not in section_after(page, SCORES_HEADING)
 
 
 def test_a_categorical_score_renders_an_empty_cell(
@@ -133,7 +135,8 @@ def test_a_categorical_score_renders_an_empty_cell(
             chr1   10         A          C            y
         """).with_tabix())
 
-    table = table_after(_page(resource), SCORES_HEADING)
+    page = _page(resource)
 
-    (row,) = table.rows
+    (row,) = table_after(page, SCORES_HEADING).rows
     assert row[-1].text == ""
+    assert "n counts" not in section_after(page, SCORES_HEADING)

@@ -48,6 +48,13 @@ def _assert_hists_equal(
             [got.min_value], [want.min_value], equal_nan=True), score_id
         assert np.array_equal(
             [got.max_value], [want.max_value], equal_nan=True), score_id
+        # The accumulators after a real region scan (gain#1589): each
+        # arm's count is its own bars plus its out-of-range counts, and
+        # the two arms' counts agree -- the same weights fed both.
+        for hist in (got, want):
+            assert hist.count == \
+                hist.bars.sum() + sum(hist.out_of_range_bins), score_id
+        assert got.count == want.count, score_id
 
 
 def _multiscore_tabix(tmp_path: pathlib.Path) -> GenomicResource:

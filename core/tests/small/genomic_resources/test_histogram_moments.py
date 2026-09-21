@@ -96,6 +96,14 @@ def test_merge_with_a_histogram_of_unknown_moments_is_unknown() -> None:
     # The bars still merged; only the moments are unknown.
     assert fresh.bars.sum() == 3
 
+    # Either side: an unknown left does not adopt the right's sums.
+    old = NumberHistogram.from_dict({
+        key: value for key, value in _folded(3.0).to_dict().items()
+        if key not in ("count", "sum", "sum_of_squares")})
+    old.merge(_folded(1.0, 2.0))
+    assert old.count is None
+    assert old.sum is None
+
 
 def test_the_accumulators_are_stored_beside_min_and_max_and_round_trip(
 ) -> None:
@@ -109,6 +117,18 @@ def test_the_accumulators_are_stored_beside_min_and_max_and_round_trip(
     assert stored["sum_of_squares"] == 21.0
     assert (loaded.count, loaded.sum, loaded.sum_of_squares) == (
         3, 7.0, 21.0)
+
+
+def test_a_numpy_weight_still_serializes() -> None:
+    # ``add_value`` takes whatever count a backend hands it; the bars
+    # absorb a numpy int, and the stored accumulators must too.
+    hist = NumberHistogram(_a_config())
+    hist.add_value(2.0, np.int64(3))
+
+    stored = json.loads(hist.serialize())
+
+    assert stored["count"] == 3
+    assert stored["sum"] == 6.0
 
 
 def test_a_file_without_the_accumulators_loads_with_unknown_moments(

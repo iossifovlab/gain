@@ -25,6 +25,9 @@
         </tr>
       </thead>
 
+        {#- Whether any score rendered a summary: the footnote explaining
+           the column is for a column with something in it. #}
+        {%- set moments = namespace(shown=false) %}
         {% for score_id, score_def in score.score_definitions.items() %}
             <tr>
                 <td>{{ score_id }}</td>
@@ -77,7 +80,11 @@
                    (gain#1589). #}
                 <td>
                 {%- if hist.type == 'number_histogram' %}
-                    {{ hist.moments_summary() or "" }}
+                    {%- set summary = hist.moments_summary() %}
+                    {%- if summary is not none %}
+                    {%- set moments.shown = true %}
+                    {{ summary }}
+                    {%- endif %}
                 {%- endif -%}
                 </td>
             </tr>
@@ -102,5 +109,7 @@
         {%- endfor %}
     </table>
     </div>
+    {%- if moments.shown %}
     <p class="text-muted">n counts genes; sd is the population standard deviation.</p>
+    {%- endif %}
 {% endblock %}

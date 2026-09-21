@@ -29,6 +29,9 @@
         </tr>
     </thead>
 
+    {#- Whether any score rendered a summary: the footnote explaining
+       the column is for a column with something in it. #}
+    {%- set moments = namespace(shown=false) %}
     {%- for score_id, score in scores.score_definitions.items() -%}
         <tr class="score-definition">
             <td>{{ score_id }}</td>
@@ -82,7 +85,11 @@
                rather than a guess from bin midpoints (gain#1589). #}
             <td>
             {%- if hist.type == 'number_histogram' %}
-                {{ hist.moments_summary() or "" }}
+                {%- set summary = hist.moments_summary() %}
+                {%- if summary is not none %}
+                {%- set moments.shown = true %}
+                {{ summary }}
+                {%- endif %}
             {%- endif -%}
             </td>
         </tr>
@@ -109,7 +116,9 @@
 {#- What n counts is the kind's weighting rule (``record_weight``): a
    position-score record once per base pair it spans, an allele or a
    fragment once.  The score class names the unit beside that rule. #}
+{%- if moments.shown %}
 <p class="text-muted">n counts {{ scores.RECORD_WEIGHT_UNIT }}; sd is the population standard deviation.</p>
+{%- endif %}
 
 {# Empty by default, as the two blocks below are.  Covered positions are
    a POSITION SCORE statistic and only that: the union measures what a
