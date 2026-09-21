@@ -2,7 +2,10 @@
 import textwrap
 
 import pytest
-from gain.annotation.annotation_config import AnnotatorInfo
+from gain.annotation.annotation_config import (
+    AnnotationConfigurationError,
+    AnnotatorInfo,
+)
 from gain.annotation.annotation_factory import (
     load_pipeline_from_yaml,
 )
@@ -19,6 +22,8 @@ from gain.genomic_resources.testing import (
     setup_directories,
     setup_gzip,
 )
+
+from tests.small.annotation.conftest import assert_refuses_empty_resource_id
 
 
 @pytest.fixture
@@ -204,3 +209,79 @@ def test_build_liftover_annotator_unsupported_type(
 
     with pytest.raises(ValueError, match="Unsupported liftover annotator type"):
         build_liftover_annotator(pipeline, info)
+
+
+@pytest.mark.parametrize("annotator_type", [
+    "liftover_annotator",
+    "bcf_liftover_annotator",
+    "basic_liftover_annotator",
+])
+def test_liftover_annotator_refuses_an_empty_chain_id(
+    dummy_liftover_grr_fixture: GenomicResourceRepo,
+    annotator_type: str,
+) -> None:
+    """An explicit ``chain: ""`` is refused by name, not looked up.
+
+    Every liftover type shares one builder, so each is pinned: an empty
+    id is a hand-written or templating accident (gain#1534), and the
+    refusal has to name the annotator and the parameter a curator fixes.
+    """
+    pipeline_config = textwrap.dedent(f"""
+      - {annotator_type}:
+          chain: ""
+      """)
+
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        load_pipeline_from_yaml(pipeline_config, dummy_liftover_grr_fixture)
+
+    assert_refuses_empty_resource_id(excinfo, annotator_type, "chain")
+
+
+@pytest.mark.parametrize("parameter", ["target_genome", "source_genome"])
+def test_liftover_annotator_refuses_an_empty_genome_id(
+    dummy_liftover_grr_fixture: GenomicResourceRepo,
+    parameter: str,
+) -> None:
+    """An explicit empty genome id is refused, not read as absent.
+
+    The chain's labels name both genomes, so a fallback is available for
+    each: the refusal must win over it (gain#1534) -- hiding the accident
+    behind the label is the same mistake as resolving the empty id.
+    """
+    pipeline_config = textwrap.dedent(f"""
+      - liftover_annotator:
+          chain: dummyChain
+          {parameter}: ""
+      """)
+
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        load_pipeline_from_yaml(pipeline_config, dummy_liftover_grr_fixture)
+
+    assert_refuses_empty_resource_id(excinfo, "liftover_annotator", parameter)
+
+
+@pytest.mark.parametrize("parameter", ["target_genome", "source_genome"])
+def test_liftover_annotator_null_genome_parameter_reads_as_absent(
+    dummy_liftover_grr_fixture: GenomicResourceRepo,
+    parameter: str,
+) -> None:
+    """An explicit YAML null is "not configured", so the chain's label wins.
+
+    A null is how every other annotator's resource-id parameter reads
+    as absent (gain#1101); the empty string is the accident, the null
+    is not.
+    """
+    pipeline_config = textwrap.dedent(f"""
+      - liftover_annotator:
+          chain: dummyChain
+          {parameter}:
+      """)
+
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, dummy_liftover_grr_fixture)
+
+    assert pipeline.get_resource_ids() == {
+        "genomeA",
+        "genomeB",
+        "dummyChain",
+    }

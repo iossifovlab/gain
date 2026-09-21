@@ -9,6 +9,7 @@ from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
 )
+from gain.annotation.utils import configured_resource_id
 from gain.genomic_resources.liftover_chain import (
     LiftoverChain,
     build_liftover_chain_from_resource,
@@ -33,7 +34,7 @@ logger = logging.getLogger(__name__)
 def build_liftover_annotator(pipeline: AnnotationPipeline,
                              info: AnnotatorInfo) -> Annotator:
     """Create a liftover annotator."""
-    chain_resource_id = info.parameters.get("chain")
+    chain_resource_id = configured_resource_id(info, "chain")
     if chain_resource_id is None:
         raise ValueError(f"The {info} requires a 'chain' parameter.")
     chain_resource = pipeline.repository.get_resource(chain_resource_id)
@@ -42,7 +43,8 @@ def build_liftover_annotator(pipeline: AnnotationPipeline,
                          f"{chain_resource_id} that is unavailable.")
     chain = build_liftover_chain_from_resource(chain_resource)
 
-    resource_id = info.parameters.get("target_genome", chain.target_genome_id)
+    resource_id = configured_resource_id(info, "target_genome") or \
+        chain.target_genome_id
     if resource_id is None:
         raise ValueError(
             f"The {info} requires a 'target_genome' parameter.")
@@ -53,7 +55,8 @@ def build_liftover_annotator(pipeline: AnnotationPipeline,
                          "unavailable.")
     target_genome = build_reference_genome_from_resource(resource)
 
-    resource_id = info.parameters.get("source_genome", chain.source_genome_id)
+    resource_id = configured_resource_id(info, "source_genome") or \
+        chain.source_genome_id
     if resource_id is None:
         raise ValueError(
             f"The {info} requires a 'source_genome' parameter.")
