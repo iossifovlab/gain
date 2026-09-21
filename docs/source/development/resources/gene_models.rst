@@ -46,7 +46,14 @@ overlap it, and returns a list:
 
 :meth:`~gain.genomic_resources.gene_models.GeneModels.join_gene_models`
 merges several loaded objects into one — the way to query a primary
-annotation and a supplementary one as a single set.
+annotation and a supplementary one as a single set. The result is itself
+loaded, so it goes anywhere a loaded object goes, the effect annotators
+included; an input nobody loaded is refused rather than merged as empty.
+:meth:`~gain.genomic_resources.gene_models.GeneModels.from_transcript_models`
+is the constructor underneath: hand it a resource and a
+``dict[str, TranscriptModel]`` and it returns a loaded, indexed object
+holding exactly those transcripts — the way to build gene models out of
+transcripts assembled in code.
 
 Transcripts and exons
 ---------------------

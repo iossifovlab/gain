@@ -309,10 +309,17 @@ class GeneModels(
         return result
 
     def is_loaded(self) -> bool:
-        """Check if gene models have been loaded.
+        """Check whether this object holds usable gene models.
+
+        A model is loaded once ``load()`` has parsed its resource, or
+        when it was built from transcripts that were already loaded --
+        by ``join_gene_models`` or ``from_transcript_models``. Every
+        consumer that needs models to query (the effect annotators, the
+        serializers) asks this and nothing else.
 
         Returns:
-            bool: True if load() has been called and completed, False otherwise.
+            bool: True if the models are loaded and indexed, False if
+            nobody loaded them yet.
 
         Example:
             >>> if not gene_models.is_loaded():
@@ -323,28 +330,34 @@ class GeneModels(
 
     @staticmethod
     def join_gene_models(*gene_models: GeneModels) -> GeneModels:
-        """Merge multiple gene models into a single GeneModels object.
+        """Merge loaded gene models into a single, loaded GeneModels object.
 
-        This combines transcript models from multiple sources into one
-        unified gene models object.
+        The result holds every input's transcripts, answers to the first
+        input's resource, and is loaded: ``load()`` on it is a no-op and
+        the effect annotators and serializers accept it.
 
         Args:
-            *gene_models (GeneModels): Two or more GeneModels objects to
-            merge.
+            *gene_models (GeneModels): Two or more loaded GeneModels
+            objects to merge.
 
         Returns:
             GeneModels: New GeneModels object containing all transcripts.
 
         Raises:
-            ValueError: If fewer than 2 gene models provided.
+            ValueError: If fewer than 2 gene models are provided, or if
+                any of them was never loaded -- merging its empty
+                transcripts would silently drop everything it was meant
+                to bring.
 
         Example:
-            >>> gm1 = build_gene_models_from_file("genes1.gtf")
-            >>> gm2 = build_gene_models_from_file("genes2.gtf")
+            >>> gm1 = build_gene_models_from_file("genes1.gtf").load()
+            >>> gm2 = build_gene_models_from_file("genes2.gtf").load()
             >>> merged = GeneModels.join_gene_models(gm1, gm2)
 
         Note:
-            Transcript IDs should be unique across all input gene models.
+            Transcript IDs should be unique across all input gene models;
+            a later input's transcript replaces an earlier one's under
+            the same ID.
         """
         if len(gene_models) < 2:
             raise ValueError("The function needs at least 2 arguments!")

@@ -427,9 +427,9 @@ def main() -> None:
         all_transcripts.extend(locus.transcripts)
     all_transcripts.extend(col.transcripts)
     all_transcripts.extend(synth_tms)
-    fixture_gene_models = GeneModels(grr.get_resource(GENE_MODELS_ID))
-    fixture_gene_models.transcript_models = {
-        t.tr_id: t for t in all_transcripts}
+    fixture_gene_models = GeneModels.from_transcript_models(
+        grr.get_resource(GENE_MODELS_ID),
+        {t.tr_id: t for t in all_transcripts})
     write_gene_models_resource(
         GENE_MODELS_DIR, GENE_MODELS_FILENAME, fixture_gene_models)
 
