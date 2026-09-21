@@ -17,8 +17,9 @@
   (the stored-lengths amendment and its reversal),
   [gain#1414](https://github.com/iossifovlab/gain/issues/1414)
   (the score-rung amendment),
-  [gain#1543](https://github.com/iossifovlab/gain/issues/1543)
-  (the segment-lengths amendment)
+  [gain#1543](https://github.com/iossifovlab/gain/issues/1543) and
+  [gain#1544](https://github.com/iossifovlab/gain/issues/1544)
+  (the segment-lengths and fragment-lengths amendments)
 
 ## Context
 
@@ -163,13 +164,13 @@ alt-minus-ref, not an absolute value.
 ### Bins, storage, rollout
 
 - **Fixed log-scale bins, a code-level constant.** Length histograms
-  (~~segments~~, fragments, ~~indels~~) use one fixed binning everywhere, so
+  (~~segments~~, ~~fragments~~, ~~indels~~) use one fixed binning everywhere, so
   per-chromosome results merge into exact global ones at build time — no
   second pass, no approximate merge, and chunked scans merge exactly for the
-  same reason. *(The indel groups left the stored ladder in gain#1118 and
-  the segments in gain#1543; see the amendments below. Fragments still store
-  it, and the ladder is otherwise a rendering choice: what the charts are
-  drawn on.)*
+  same reason. *(No kind stores the ladder any more: the indel groups left it
+  in gain#1118, the segments in gain#1543 and the fragments in gain#1544; see
+  the amendments below. The ladder is a rendering choice — what the charts
+  are drawn on — and the exact records merge on their own.)*
 - **Raw counts stored; fractions at render.** The statistics file holds
   counts only. Coverage *fractions* need chromosome lengths, which belong to
   a reference genome, not to the score — so they are computed at render time
@@ -375,10 +376,10 @@ keep the clamp from becoming a lie: min, max and the mean stay exact however
 far the tail runs, and only a median landing in the overflow bucket degrades,
 which the page renders as a floor rather than as a number.
 
-The ladder remains the **stored** format for fragments (segments left it too;
-see the gain#1543 amendment below), and remains what the indel *chart* is drawn
-on — derived from the map at render time rather than stored beside it, so the
-picture and the statistics beneath it cannot drift. The derived bins are
+The ladder remained the **stored** format for fragments until gain#1544
+(segments left it in gain#1543; see the amendments below), and remains what the
+indel *chart* is drawn on — derived from the map at render time rather than
+stored beside it, so the picture and the statistics beneath it cannot drift. The derived bins are
 identical to the stored ones, because the plot already sums every bin at or
 above its display cap into one overflow bar and the clamp is equal to that
 cap.
@@ -414,7 +415,22 @@ version, `segment_lengths` only where it is stored, and the stored ladder is
 not read at all — one reader, no compatibility branch, for the reason given
 above. So a position score built before this keeps its Segments column and
 total, and its "Segment lengths" subsection reads "not computed" until the
-score is rebuilt with `--force`. Fragments follow in gain#1544.
+score is rebuilt with `--force`.
+
+*Amended by gain#1544: fragments leave the ladder as a stored format, the
+third and last kind to do so.* `fragments.json` is at **format version 2**:
+each chromosome entry stores `fragment_lengths` — the same kind-neutral record,
+a fragment's length being its stored span unclipped to the scan region — beside
+`fragment_count`, and no longer stores `fragment_length_histogram`. The
+reader has the same two gates as coverage's, so a fragment score built before
+this keeps its Fragments table and reads "fragment lengths not computed" until
+rebuilt with `--force`; the fragment page shows the same six-column table above
+its chart, now a half-width thumbnail opening the page's modal. With no kind
+left storing the ladder, the code that merged, validated and read stored
+histograms is gone; what remains of the ladder is the bin count, the display
+cap, the bin index and the plotter — the rendering contract every length chart
+is drawn on. The three pages render their table, thumbnail and modal from one
+shared template, byte for byte what the written-out markup rendered.
 
 The **complex `(len_ref, len_alt)` grid deliberately does not share the
 ladder either.** Its cells are
