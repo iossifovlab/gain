@@ -937,7 +937,7 @@ As before, filename points to the downloaded FASTA file and contig names use the
 Gene models
 ^^^^^^^^^^^
 
-For gene model resources, the ``genomic_resource.yaml`` file has a minimal resource-specific section with only filename and format.
+For gene model resources, the ``genomic_resource.yaml`` file names the gene model file and, optionally, its format.
 
 Resource-specific fields (**type**: gene_models):
 
@@ -946,16 +946,24 @@ Resource-specific fields (**type**: gene_models):
    :widths: 25 25 50
 
    * - Field
-     - Type
+     - Requirement
      - Description
-   * - **filename**
-     - string
+   * - ``filename``
+     - Required string
      - Path to the gene model file, relative to the resource directory.
-   * - **format**
-     - string
-     - Gene model format. Supported values include default, refflat, refseq, ccds, knowngene, gtf, and ucscgenepred.
+   * - ``format``
+     - Optional string
+     - Gene model format. Supported values include default, refflat, refseq, ccds, knowngene, gtf, and ucscgenepred. When omitted, the format is inferred from the file.
+   * - ``gene_mapping``
+     - Optional string
+     - Path to a headed two-column file, relative to the resource directory, mapping each gene name as the gene model file spells it (for the single-name formats ``ccds`` and ``knowngene``, the transcript id) to the gene name to publish it under.
+   * - ``chrom_mapping``
+     - Optional subsection
+     - Contig-name rewrites applied to the loaded transcripts, as exactly one of three mutually exclusive keys: ``filename``, a headerless two-column file (the contig name as the gene model file spells it, then the name to publish it under) -- a transcript on a contig the file does not list is dropped, with a warning; ``del_prefix``, a leading prefix to drop; or ``add_prefix``, a prefix to prepend. The form differs from a score table's ``chrom_mapping``, whose file is headed and whose two prefixes compose.
 
 In the `Getting started with GRR gene models <https://iossifovlab.com/gaindocs/gain_getting_started_grr.html#gene-models-mane-v1-4>`_ example, the gene model file is a GTF, so we set ``format: gtf``.
+
+The configuration is validated when the gene models object is built, before its file is read: a missing ``filename`` or a resource-specific key not in this table refuses the resource with an error naming it.
 
 
 .. code-block:: yaml
@@ -1032,10 +1040,10 @@ Resource-specific fields (**type**: annotation_pipeline):
    :widths: 25 25 50
 
    * - Field
-     - Type
+     - Requirement
      - Description
-   * - **filename**
-     - string
+   * - ``filename``
+     - Required string
      - Path to the pipeline YAML file, relative to the resource directory.
 
 .. code-block:: yaml
@@ -1065,6 +1073,7 @@ Position score resources (**type**: position_score) use a ``genomic_resource.yam
 """""""""""""""
 
 The ``table`` section specifies the data file (**filename**), its **format**, and how GAIn should interpret the columns.
+The section and its ``filename`` are required: a score without a ``table`` section, or with one that names no ``filename``, is refused when the score object is built, with an error naming the resource.
 
 Currently supported formats are ``tabix``, ``vcf_info``, ``tsv``, ``csv``, and ``bw``.
 

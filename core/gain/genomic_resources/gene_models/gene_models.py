@@ -242,11 +242,12 @@ class GeneModels(
         """The schema a ``gene_models`` resource's config is checked against.
 
         The base resource schema plus ``filename``, ``format``,
-        ``gene_mapping`` and ``chrom_mapping``.
+        ``gene_mapping`` and ``chrom_mapping``.  ``filename`` is required:
+        the loader reads it unconditionally.
         """
         return {
             **get_base_resource_schema(),
-            "filename": {"type": "string"},
+            "filename": {"type": "string", "required": True},
             "format": {"type": "string"},
             "gene_mapping": {"type": "string"},
             "chrom_mapping": {"type": "dict", "schema": {

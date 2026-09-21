@@ -362,7 +362,8 @@ def _rejected_configs() -> list[dict[str, Any]]:
     """Return position-score configs the schema refuses, for two reasons."""
     return [
         {"type": "position_score", "table": {"filename": 7}},
-        {"type": "position_score", "not_a_field": "x"},
+        {"type": "position_score", "table": {"filename": "data.txt"},
+         "not_a_field": "x"},
     ]
 
 
