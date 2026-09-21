@@ -20,12 +20,6 @@ from gain.genomic_resources.genomic_scores.chrom_lengths import (
     save_chrom_lengths,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.repository_factory import (
-    build_resource_implementation,
-)
-from gain.genomic_resources.resource_implementation import (
-    DerivedFilesState,
-)
 from gain.genomic_resources.testing.builders import a_basic_resource
 
 GENOME = ChromLengthSource.REFERENCE_GENOME
@@ -90,11 +84,3 @@ def test_a_resource_without_the_file_loads_none(
     tmp_path: pathlib.Path,
 ) -> None:
     assert load_chrom_lengths(_a_resource(tmp_path)) is None
-
-
-def test_a_kind_that_derives_nothing_is_always_current(
-    tmp_path: pathlib.Path,
-) -> None:
-    impl = build_resource_implementation(_a_resource(tmp_path))
-
-    assert impl.derived_files_state(None) is DerivedFilesState.CURRENT

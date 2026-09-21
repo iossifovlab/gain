@@ -18,7 +18,11 @@ import pytest
 import pytest_mock
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.genomic_scores import GenomicScore
-from gain.genomic_resources.testing.builders import a_bigwig_score, a_grr
+from gain.genomic_resources.testing.builders import (
+    a_bigwig_score,
+    a_grr,
+    a_reference_genome,
+)
 
 from .test_genomic_scores_impl_chrom_lengths import (
     CHR1_GENOME_LENGTH,
@@ -107,6 +111,35 @@ def test_a_bigwig_score_stores_its_headers_lengths_in_one_block(
 
     assert _stored(tmp_path / "score" / "statistics")["sources"] == {
         "bigwig": {"chr1": 100, "chr2": 200},
+    }
+
+
+def test_a_labelled_bigwig_score_stores_the_genomes_and_the_headers(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Two exact sources; the genome lists chr1 only, the header both."""
+    (
+        a_grr()
+        .with_resource(
+            "genome",
+            a_reference_genome().with_chromosome("chr1", "A" * 90))
+        .with_resource(
+            "score",
+            a_bigwig_score()
+            .with_data("""
+                chr1  10  20  0.1
+                chr2  10  20  0.2
+            """)
+            .with_chrom_lens({"chr1": 100, "chr2": 200})
+            .with_labels(reference_genome="genome"))
+        .build_repo(tmp_path)
+    )
+
+    resource_stats(tmp_path, "score")
+
+    assert _stored(tmp_path / "score" / "statistics")["sources"] == {
+        "bigwig": {"chr1": 100, "chr2": 200},
+        "reference_genome": {"chr1": 90},
     }
 
 

@@ -17,6 +17,16 @@ the ``ReferenceGenome`` the caller hands in, the table's own rung through
 the table -- a record holds each answer under its source, and ``best``
 picks by the source's rank.  It holds no repository, so resolving the
 score's ``reference_genome`` label into that genome is the caller's job.
+
+A repair stores what the resolver found as ``CHROM_LENGTHS_FILE`` --
+one block per source, contig to length, the table's block carrying the
+reason for a contig it had no length for -- together with a
+``DerivedFrom`` key: the label the genome resolved from and the manifest
+md5 of every table file, which is what a later repair compares to tell a
+current file from a stale one without opening the table (gain#1576).
+``save_chrom_lengths`` / ``load_chrom_lengths`` are the file's two
+seams; loading never raises, a file that cannot be read as one reads as
+absent.
 """
 
 from __future__ import annotations

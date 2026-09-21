@@ -22,10 +22,14 @@ from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,
     GenomicResourceRepo,
 )
+from gain.genomic_resources.repository_factory import (
+    build_resource_implementation,
+)
 from gain.genomic_resources.resource_implementation import (
     DerivedFilesState,
 )
 from gain.genomic_resources.testing import build_filesystem_test_protocol
+from gain.genomic_resources.testing.builders import a_basic_resource
 
 from .test_genomic_scores_impl_chrom_lengths import (
     a_labelled_tabix_score_grr,
@@ -158,3 +162,13 @@ def test_a_table_file_missing_without_a_sidecar_is_not_an_unpulled_payload(
     impl, repo = _resynced(tmp_path)
 
     assert impl.derived_files_state(repo) is DerivedFilesState.STALE
+
+
+def test_a_kind_that_derives_nothing_is_always_current(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The base answer: nothing to compare, nothing to rebuild."""
+    impl = build_resource_implementation(
+        a_basic_resource().build_resource(tmp_path))
+
+    assert impl.derived_files_state(None) is DerivedFilesState.CURRENT

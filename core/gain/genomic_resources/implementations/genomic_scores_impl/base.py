@@ -256,7 +256,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         Opens the score if it is closed, and closes it again only in
         that case -- an already-open score stays open for its owner.
         """
-        return self._resolve_chrom_lengths(grr).lengths
+        return self._derive_chrom_lengths(self._resolve_labelled_genome(grr))
 
     def derived_files_state(
         self, grr: GenomicResourceRepo | None,
@@ -278,7 +278,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             logger.info(
                 "<%s> has no stored chromosome lengths; needs update",
                 self.resource.get_full_id())
-        elif stored.derived_from != self._chrom_lengths_inputs(grr)[1]:
+        elif stored.derived_from != self._derived_from(
+                self._resolve_labelled_genome(grr)):
             logger.info(
                 "stored chromosome lengths of <%s> are outdated; "
                 "needs update", self.resource.get_full_id())
@@ -309,20 +310,21 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         The one writer of ``CHROM_LENGTHS_FILE``, for both the full
         statistics build and the lengths-only rewrite.
         """
-        stored = self._resolve_chrom_lengths(grr)
+        ref_genome = self._resolve_labelled_genome(grr)
+        stored = StoredChromLengths(
+            lengths=self._derive_chrom_lengths(ref_genome),
+            derived_from=self._derived_from(ref_genome))
         save_chrom_lengths(
             self.resource, stored, self.score.chrom_length_source)
         return stored
 
-    def _resolve_chrom_lengths(
-        self, grr: GenomicResourceRepo | None,
-    ) -> StoredChromLengths:
-        """Run the ladder over the score, and say what it ran on.
-
-        Opens the score if it is closed, and closes it again only in
-        that case -- an already-open score stays open for its owner.
+    def _derive_chrom_lengths(
+        self, ref_genome: ReferenceGenome | None,
+    ) -> dict[str, ChromLength]:
+        """Run the ladder over the score with ``ref_genome`` as its top
+        rung.  Opens the score if it is closed, and closes it again only
+        in that case -- an already-open score stays open for its owner.
         """
-        ref_genome, derived_from = self._chrom_lengths_inputs(grr)
         opened_here = not self.score.is_open()
         if opened_here:
             self.score.open()
@@ -333,7 +335,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 self.score.close()
         if ref_genome is not None:
             self._report_contig_overlap(ref_genome, lengths)
-        return StoredChromLengths(lengths=lengths, derived_from=derived_from)
+        return lengths
 
     def _report_contig_overlap(
         self, ref_genome: ReferenceGenome, lengths: dict[str, ChromLength],
@@ -374,16 +376,16 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             ref_genome.resource_id, self.resource.resource_id,
             len(unlisted), len(lengths), ", ".join(sample))
 
-    def _chrom_lengths_inputs(
-        self, grr: GenomicResourceRepo | None,
-    ) -> tuple[ReferenceGenome | None, DerivedFrom]:
-        """The genome the ladder's top rung reads, and the freshness key.
+    def _derived_from(
+        self, ref_genome: ReferenceGenome | None,
+    ) -> DerivedFrom:
+        """The freshness key of the stored lengths, for ``ref_genome`` as
+        the genome the ladder ran with.
 
-        Resolves the genome but never a length, so the gate that compares
-        the key is a label read, a genome lookup and a manifest read.
+        A label read and a manifest read, never a length: the gate that
+        compares the key must stay cheap and open no table.
         """
-        ref_genome = self._resolve_labelled_genome(grr)
-        return ref_genome, DerivedFrom(
+        return DerivedFrom(
             # The label the genome was resolved FROM, so an unresolvable
             # genome is recorded as none at all -- and reads as a change
             # the day it resolves.
@@ -442,7 +444,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def _get_chrom_regions(
         self, region_size: int, grr: GenomicResourceRepo | None = None,
     ) -> list[Region]:
-        """The statistics regions: the ladder's lengths, split."""
+        """The statistics regions, resolved live; writes nothing.
+
+        The build itself goes through :meth:`_store_chrom_lengths`; this
+        is the seam the region-boundary tests pin, with no file written
+        into the fixture as a side effect.
+        """
         return self._regions_from(self.get_chrom_lengths(grr), region_size)
 
     @staticmethod
@@ -502,7 +509,6 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         This hash is used to decide whether the resource statistics should be
         recomputed.
         """
-        manifest = self.resource.get_manifest()
         return json.dumps({
             "config": {
                 "histograms": [
@@ -515,8 +521,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                     # table from; the definition the table holds is a Box
                     # over a copy of it and serialises identically.
                     "config": self.score.get_config()["table"],
-                    "files_md5": {file_name: manifest[file_name].md5
-                                  for file_name in sorted(self.files)},
+                    "files_md5": self._files_md5(),
                 },
             },
             "score_config": [
