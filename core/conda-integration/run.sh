@@ -111,9 +111,14 @@ cd "$TESTBED"
 # test_architecture.py evaluates the SOURCE tree (it expects the gain
 # package next to tests/, which this test bed deliberately lacks), so it
 # is excluded here; the root pipeline keeps running it from the source.
-# --enable-http-testing / --enable-s3-testing are not passed: without them
-# the conftest does not generate the http/s3 scheme parametrizations, so
-# the tier collects fewer items than the root's run, not more skips.
+#
+# --enable-http-testing / --enable-s3-testing make the conftest generate
+# the http/s3 scheme parametrizations the root's run has (#1571); the
+# job brings up the apache + minio fixtures and hands their addresses in
+# as HTTP_HOST / MINIO_HOST. The http fixture of an INSTALLED gain would
+# populate <site-packages>/tests/.test_grr -- a directory apache never
+# sees -- so the job also sets HTTP_GRR_DIR to the bound directory apache
+# serves; see build_http_test_protocol in gain.genomic_resources.testing.
 #
 # Deselected, in this job only: the three TRACE-level tests, which fail
 # whenever bokeh -- pulled in by conda-forge's dask metapackage, absent
@@ -123,6 +128,7 @@ cd "$TESTBED"
 # an order-dependent red.
 set +e
 "$ENV_PREFIX/bin/python" -m pytest -n 5 tests \
+    --enable-http-testing --enable-s3-testing \
     --ignore=tests/integration --ignore=tests/test_architecture.py \
     --deselect tests/small/utils/test_log_levels.py::test_trace_emits_record \
     --deselect tests/small/utils/test_log_levels.py::test_trace_record_points_at_caller \
