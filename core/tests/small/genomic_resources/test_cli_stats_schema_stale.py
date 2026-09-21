@@ -20,8 +20,10 @@ import pytest
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.testing.builders import (
     PositionScoreBuilder,
+    a_fragment_score,
     a_grr,
     a_position_score,
+    an_allele_score,
 )
 
 
@@ -138,3 +140,62 @@ def test_forced_repair_reports_nothing_and_rebuilds(
     assert _schema_lines(caplog) == []
     # Forcing IS the remedy: the writer stamped its current version
     assert json.loads(coverage.read_text())["format_version"] == 2
+
+
+@pytest.fixture
+def fragment_without_its_file_beside_a_current_allele_score(
+    tmp_path: pathlib.Path,
+) -> pathlib.Path:
+    """A fragment score with no ``fragments.json`` and an allele score as built."""
+    (
+        a_grr()
+        .with_resource(
+            "fragments",
+            a_fragment_score()
+            .with_tabix()
+            .with_score("value", "float")
+            .with_histogram({
+                "type": "number", "number_of_bins": 4,
+                "view_range": {"min": 0.0, "max": 1.0}})
+            .with_data("""
+                chrom  pos_begin  pos_end  value
+                chr1   10         20       0.2
+                chr1   15         25       0.4
+            """))
+        .with_resource(
+            "alleles",
+            an_allele_score()
+            .with_score("freq", "float")
+            .with_histogram({
+                "type": "number", "number_of_bins": 4,
+                "view_range": {"min": 0.0, "max": 1.0}})
+            .with_data("""
+                chrom  pos_begin  reference  alternative  freq
+                chr1   10         A          G            0.1
+                chr1   10         A          C            0.2
+            """))
+        .build_repo(tmp_path)
+    )
+    cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
+    fragments = tmp_path / "fragments" / "statistics" / "fragments.json"
+    assert fragments.exists()
+    fragments.unlink()
+    _bring_manifest_current(tmp_path, "fragments")
+    return tmp_path
+
+
+def test_a_missing_declared_file_is_reported_and_a_current_one_is_not(
+    fragment_without_its_file_beside_a_current_allele_score: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    repo = fragment_without_its_file_beside_a_current_allele_score
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "--dry-run", "-R", str(repo), "-j", "1"])
+
+    [line] = [
+        line for line in _schema_lines(caplog) if line.startswith("Statistics")
+    ]
+    assert "<fragments>" in line
+    assert "statistics/fragments.json missing -> 2" in line
+    assert not any("<alleles>" in line for line in _schema_lines(caplog))

@@ -74,9 +74,12 @@ from gain.genomic_resources.statistics.record_validation import (
     validate_record_arrays,
 )
 from gain.genomic_resources.statistics.region_fold import merge_regions
+from gain.genomic_resources.statistics.schema import StatisticsFile
 from gain.utils.chromosome_order import natural_chromosome_key
 
 ALLELE_STATISTICS_FILE = "statistics/alleles.json"
+#: The ``format_version`` :meth:`AlleleStatistics.serialize` stamps.
+ALLELE_FORMAT_VERSION = 1
 
 #: The global images the statistics build renders beside the file.  One
 #: each, never per chromosome (ADR 0020): the per-chromosome numbers are
@@ -673,7 +676,7 @@ class AlleleStatistics(RegionFoldedStatistic[RegionAlleles]):
         # the global roll-up.
         chromosomes = self.by_chromosome()
         return json.dumps({
-            "format_version": 1,
+            "format_version": ALLELE_FORMAT_VERSION,
             "chromosomes": {
                 chrom: _serialized(counts)
                 for chrom, counts in chromosomes.items()
@@ -1053,6 +1056,17 @@ def region_alleles_for(
     if not isinstance(score, AlleleScore):
         return None
     return RegionAlleles(chrom, start, end)
+
+
+def allele_statistics_file_for(score: GenomicScore) -> StatisticsFile | None:
+    """The file a build writes for this score, ``None`` for other kinds.
+
+    Gated as :func:`region_alleles_for` is, so the declaration names a
+    file exactly when the build writes one.
+    """
+    if not isinstance(score, AlleleScore):
+        return None
+    return StatisticsFile(ALLELE_STATISTICS_FILE, ALLELE_FORMAT_VERSION)
 
 
 def serves_allele_arrays(score: GenomicScore, score_ids: list[str]) -> bool:

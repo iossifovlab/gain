@@ -29,8 +29,14 @@ from gain.genomic_resources.resource_implementation import (
 from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
 )
+from gain.genomic_resources.statistics.alleles import (
+    allele_statistics_file_for,
+)
 from gain.genomic_resources.statistics.coverage import (
     coverage_statistics_file_for,
+)
+from gain.genomic_resources.statistics.fragments import (
+    fragment_statistics_file_for,
 )
 from gain.genomic_resources.statistics.schema import StatisticsFile
 from gain.genomic_resources.utils import read_resource_id_label
@@ -208,6 +214,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         return [
             file for file in (
                 coverage_statistics_file_for(self.score),
+                fragment_statistics_file_for(self.score),
+                allele_statistics_file_for(self.score),
             )
             if file is not None
         ]
