@@ -39,6 +39,7 @@ from gain.genomic_resources.fsspec_protocol import (
 )
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
+    drop_stale_histogram_file,
     truncated_histogram_filename,
 )
 from gain.genomic_resources.repository import (
@@ -1241,10 +1242,10 @@ def _fix_one_histogram(
     with proto.open_raw_file(res, hist_filename, mode="rt") as infile:
         hist_data = json.loads(infile.read())
     if hist_data.get("config", {}).get("type") != "categorical":
-        return _drop_stale_sidecar(proto, res, sidecar_filename)
+        return _drop_stale_sidecar(res, sidecar_filename)
     histogram = CategoricalHistogram.from_dict(hist_data)
     if histogram.unique_values <= CategoricalHistogram.UNIQUE_VALUES_LIMIT:
-        return _drop_stale_sidecar(proto, res, sidecar_filename)
+        return _drop_stale_sidecar(res, sidecar_filename)
     with proto.open_raw_file(res, sidecar_filename, mode="wt") as outfile:
         outfile.write(histogram.serialize_truncated())
     logger.info(
@@ -1253,7 +1254,6 @@ def _fix_one_histogram(
 
 
 def _drop_stale_sidecar(
-        proto: ReadWriteRepositoryProtocol,
         res: GenomicResource,
         sidecar_filename: str) -> bool:
     """Delete a sidecar its histogram no longer justifies, if present.
@@ -1263,9 +1263,8 @@ def _drop_stale_sidecar(
     sidecar deleted by a fresh statistics build too.  Returns whether
     anything was deleted.
     """
-    if not proto.file_exists(res, sidecar_filename):
+    if not drop_stale_histogram_file(res, sidecar_filename):
         return False
-    proto.delete_resource_file(res, sidecar_filename)
     logger.info(
         "deleted stale <%s> of resource <%s>",
         sidecar_filename, res.resource_id)

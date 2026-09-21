@@ -17,7 +17,10 @@ import yaml
 from matplotlib import ticker
 
 from gain import logging
-from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository import (
+    GenomicResource,
+    ReadWriteRepositoryProtocol,
+)
 from gain.genomic_resources.resource_errors import HistogramError
 from gain.genomic_resources.statistics.base_statistic import (
     NON_NUMERIC_ERRORS,
@@ -1278,6 +1281,23 @@ def truncated_histogram_filename(histogram_filename: str) -> str:
     """
     directory, sep, basename = histogram_filename.rpartition("/")
     return f"{directory}{sep}truncated/{basename}"
+
+
+def drop_stale_histogram_file(
+    resource: GenomicResource, filename: str,
+) -> bool:
+    """Delete a histogram file an earlier build left in ``resource``.
+
+    Returns whether anything was deleted; a file that is not there is
+    not an error, since a score that never had statistics has nothing to
+    drop.
+    """
+    proto = resource.proto
+    if not proto.file_exists(resource, filename):
+        return False
+    assert isinstance(proto, ReadWriteRepositoryProtocol)
+    proto.delete_resource_file(resource, filename)
+    return True
 
 
 def save_histogram(
