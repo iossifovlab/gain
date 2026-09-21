@@ -1103,6 +1103,7 @@ def _run_stats_core(
     graph = TaskGraph()
 
     needs_update = 0
+    schema_stale = 0
     # Out of date, but with a payload this checkout does not have: a
     # dry run counts them apart, a real run leaves them for a checkout
     # that has it.
@@ -1154,14 +1155,27 @@ def _run_stats_core(
             elif derived is DerivedFilesState.STALE:
                 impl.rebuild_derived_files(repo)
                 derived_resources.append(res)
-            if not (needs_rebuild or force):
-                _report_schema_stale_statistics(impl)
+            if not (needs_rebuild or force) \
+                    and _report_schema_stale_statistics(impl):
+                # Hash current and not rebuilding: the one state in which
+                # a file behind the schema is worth a line.  Never counted
+                # towards `needs_update` -- that count is the hash's.
+                schema_stale += 1
         except Exception as err:  # ruff: ignore[blind-except]
             # Collected, not raised: the resources after this one in the
             # repository are still repaired.
             report_resource_failure(
                 err, "skipping statistics for", res.resource_id)
             failed.add(res.resource_id)
+
+    if schema_stale:
+        # Once, at the end, where a repository-wide run's operator reads;
+        # the per-resource lines above name the files.
+        logger.warning(
+            "%d resource(s) carry statistics that predate the current "
+            "schema; rebuild them with "
+            "`grr_manage resource-stats -r <resource_id> -f`",
+            schema_stale)
 
     if dry_run:
         # A resource that could not even be checked is certainly not up to

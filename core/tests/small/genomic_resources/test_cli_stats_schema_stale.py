@@ -21,9 +21,11 @@ from gain.genomic_resources.statistics.fragments import (
     FRAGMENT_STATISTICS_FILE,
 )
 from gain.genomic_resources.testing.builders import (
+    PositionScoreBuilder,
     a_fragment_score,
     a_grr,
     a_position_score,
+    a_reference_genome,
     an_allele_score,
 )
 
@@ -33,6 +35,19 @@ def _downgrade_format_version(statistics_file: pathlib.Path) -> None:
     data = json.loads(statistics_file.read_text())
     data["format_version"] = 1
     statistics_file.write_text(json.dumps(data, indent=2))
+
+
+def _a_position_score() -> PositionScoreBuilder:
+    return (
+        a_position_score()
+        .with_score("phastCons", "float")
+        .with_histogram({"type": "number", "number_of_bins": 10})
+        .with_tabix()
+        .with_data("""
+            chrom  pos_begin  pos_end  phastCons
+            1      10         15       0.02
+            1      17         19       0.03
+        """))
 
 
 @pytest.fixture
@@ -46,25 +61,78 @@ def position_score_at_v1(
     hash current, stored file behind the schema.
     """
     path = tmp_path_factory.mktemp("schema_stale_grr")
-    (
-        a_grr()
-        .with_resource(
-            "pos",
-            a_position_score()
-            .with_score("phastCons", "float")
-            .with_histogram({"type": "number", "number_of_bins": 10})
-            .with_tabix()
-            .with_data("""
-                chrom  pos_begin  pos_end  phastCons
-                1      10         15       0.02
-                1      17         19       0.03
-            """))
-        .build_repo(path)
-    )
+    a_grr().with_resource("pos", _a_position_score()).build_repo(path)
     cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
     _downgrade_format_version(path / "pos" / COVERAGE_STATISTICS_FILE)
     cli_manage(["repo-manifest", "-R", str(path)])
     return path
+
+
+@pytest.fixture
+def two_stale_scores_and_a_genome(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> pathlib.Path:
+    """Two position scores at v1 beside a resource of another kind."""
+    path = tmp_path_factory.mktemp("schema_stale_two_grr")
+    (
+        a_grr()
+        .with_resource("pos_a", _a_position_score())
+        .with_resource("pos_b", _a_position_score())
+        .with_resource(
+            "genome", a_reference_genome().with_chromosome("1", "A" * 30))
+        .build_repo(path)
+    )
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
+    for resource_id in ("pos_a", "pos_b"):
+        _downgrade_format_version(
+            path / resource_id / COVERAGE_STATISTICS_FILE)
+    cli_manage(["repo-manifest", "-R", str(path)])
+    return path
+
+
+def test_a_resource_of_another_kind_is_never_reported(
+    two_stale_scores_and_a_genome: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = two_stale_scores_and_a_genome
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "--dry-run", "-R", str(path), "-j", "1"])
+
+    named = {
+        resource_id
+        for resource_id in ("pos_a", "pos_b", "genome")
+        for record in caplog.records
+        if "predate the current schema" in record.getMessage()
+        and f"<{resource_id}>" in record.getMessage()
+    }
+    assert named == {"pos_a", "pos_b"}
+
+
+def test_a_run_ends_with_one_warning_naming_how_many_predate_the_schema(
+    two_stale_scores_and_a_genome: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = two_stale_scores_and_a_genome
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "--dry-run", "-R", str(path), "-j", "1"])
+
+    summaries = [
+        record.getMessage() for record in caplog.records
+        if record.levelno == logging.WARNING
+        and "predate the current schema" in record.getMessage()
+    ]
+    assert len(summaries) == 1
+    assert summaries[0].startswith("2 resource")
+    assert "resource-stats" in summaries[0]
+    assert "-f" in summaries[0]
+    # The summary is the WARNING; the per-resource lines are not.
+    assert all(
+        record.levelno < logging.WARNING
+        for record in caplog.records
+        if "statistics of <" in record.getMessage()
+        and "predate" in record.getMessage())
 
 
 def test_dry_run_reports_a_coverage_file_behind_the_schema_and_exits_zero(
@@ -173,9 +241,29 @@ def test_a_missing_file_is_reported_and_a_current_one_is_not(
 
     stale_lines = [
         record.getMessage() for record in caplog.records
-        if "predate the current schema" in record.getMessage()
+        if record.getMessage().startswith("statistics of <")
+        and "predate the current schema" in record.getMessage()
     ]
     assert len(stale_lines) == 1
     assert "<frag>" in stale_lines[0]
     assert f"{FRAGMENT_STATISTICS_FILE} is missing" in stale_lines[0]
     assert "resource-stats -r frag -f" in stale_lines[0]
+
+
+def test_a_resource_whose_hash_is_stale_is_only_reported_as_needing_update(
+    position_score_at_v1: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = position_score_at_v1
+    (path / "pos" / "statistics" / "stats_hash").unlink()
+    cli_manage(["repo-manifest", "-R", str(path)])
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"), \
+            pytest.raises(SystemExit) as excinfo:
+        cli_manage(["repo-repair", "--dry-run", "-R", str(path), "-j", "1"])
+
+    # A resource that is being rebuilt anyway is not ALSO behind the
+    # schema: one finding per resource, and the count is the hash's.
+    assert excinfo.value.code == 1
+    assert "Statistics of <pos> needs update" in caplog.text
+    assert "predate the current schema" not in caplog.text
