@@ -31,8 +31,9 @@ absent.
 
 from __future__ import annotations
 
+import functools
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -41,11 +42,12 @@ from gain.genomic_resources.genomic_position_table import (
     ChromLengthSource,
     ContigExtent,
 )
+from gain.genomic_resources.utils import read_resource_id_label
 from gain.utils.log_safety import escape_unsafe_characters
 
 if TYPE_CHECKING:
     from gain.genomic_resources.reference_genome import ReferenceGenome
-    from gain.genomic_resources.repository import GenomicResource
+    from gain.genomic_resources.repository import GenomicResource, Manifest
 
     from .base import GenomicScore
 
@@ -75,9 +77,15 @@ __all__ = [
     "ContigExtent",
     "DerivedFrom",
     "StoredChromLengths",
+    "as_chrom_length_source",
+    "best_chrom_length",
     "derive_chrom_length",
     "derive_chrom_lengths",
+    "files_md5_of",
     "load_chrom_lengths",
+    "load_current_chrom_lengths",
+    "ranked",
+    "refuse_unanswered_source",
     "save_chrom_lengths",
 ]
 
@@ -186,6 +194,53 @@ class DerivedFrom:
     reference_genome: str | None
     files_md5: dict[str, str | None]
 
+    def describes(
+        self, resource: GenomicResource, manifest: Manifest,
+        files: Collection[str], *,
+        genome_resolves: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Whether ``resource``, as it is now, is what this was derived from.
+
+        The one freshness test of the key: ``manifest``'s md5 of every one
+        of the table's ``files`` (a file it does not list is a change),
+        then the ``reference_genome`` label as the resource carries it
+        today.  A key derived from a genome stands while the label still
+        names it, whether or not the genome is still there -- the record
+        is the record (gain#1573).  One derived with none stands while
+        there is still none: a genome that turns up later reads as a
+        change, and whether a label that is now present names one is
+        ``genome_resolves``'s answer -- the implementation's, which holds
+        a repository.  A caller with none passes nothing, and any label
+        then reads as a change: conservative on purpose (gain#1419), the
+        answer costs the live probe and nothing more.
+
+        The manifest is the caller's to hand in, so that a read path
+        passes the stored one and never builds it.
+        """
+        if not all(file_name in manifest for file_name in files) or \
+                self.files_md5 != files_md5_of(manifest, files):
+            return False
+        genome_id = read_resource_id_label(resource, "reference_genome")
+        if self.reference_genome is not None:
+            return self.reference_genome == genome_id
+        return genome_id is None or (
+            genome_resolves is not None and not genome_resolves())
+
+
+def files_md5_of(
+    manifest: Manifest, files: Collection[str],
+) -> dict[str, str | None]:
+    """The manifest md5 of every one of ``files``, keyed by name.
+
+    One definition of "the same files" for every gate that asks -- the
+    statistics hash, the stored lengths' key and the score's own reader
+    -- so they cannot drift apart on what counts as a data file.  As the
+    manifest records it, which for an entry it has not digested is none;
+    a file the manifest does not list is a ``KeyError``.
+    """
+    return {
+        file_name: manifest[file_name].md5 for file_name in sorted(files)}
+
 
 @dataclass(frozen=True)
 class StoredChromLengths:
@@ -200,6 +255,19 @@ class StoredChromLengths:
     lengths: dict[str, ChromLength]
     derived_from: DerivedFrom
     table_source: ChromLengthSource
+
+    @functools.cached_property
+    def sources(self) -> list[ChromLengthSource]:
+        """Every source with an answer, and the table's, best first."""
+        sources = {self.table_source}
+        for resolved in self.lengths.values():
+            sources.update(resolved.answers)
+        return ranked(sources)
+
+
+def ranked(sources: Collection[ChromLengthSource]) -> list[ChromLengthSource]:
+    """``sources`` best first: the members are declared in ladder order."""
+    return [source for source in ChromLengthSource if source in sources]
 
 
 def _serialize(stored: StoredChromLengths) -> str:
@@ -273,6 +341,104 @@ def _deserialize(content: str) -> StoredChromLengths:
     )
 
 
+def as_chrom_length_source(
+    source: ChromLengthSource | str | None,
+) -> ChromLengthSource | None:
+    """The member ``source`` names -- itself, or by its string value.
+
+    ``None`` stays ``None``: the caller's "the best-ranked one".  Raises
+    ``ValueError`` naming the valid values on a string that is none of
+    them.
+    """
+    if source is None or isinstance(source, ChromLengthSource):
+        return source
+    try:
+        return ChromLengthSource(source)
+    except ValueError:
+        raise ValueError(
+            f"{source!r} is not a chromosome-length source; one of "
+            f"{[s.value for s in ChromLengthSource]}") from None
+
+
+def load_current_chrom_lengths(
+    score: GenomicScore,
+) -> StoredChromLengths | None:
+    """The stored lengths, if the file describes ``score`` as it is now.
+
+    Four ways for it not to, all normal and none a WARNING: no file (a
+    resource repaired before the file existed, or never -- the state of
+    every resource until its next repair, so said at DEBUG, as anything
+    louder would fire on every open of every one of them); no stored
+    manifest to compare the key against; a ``derived_from`` that no
+    longer matches (a label re-pointed and not yet repaired -- trusted,
+    it would answer the old genome's lengths); and a contig list that is
+    not the table's (a ``chrom_mapping`` changed under it) -- the last
+    three INFO, since something is off and a repair is due.  Until it
+    runs the score's reads resolve live.  Asked of an open score.
+    """
+    # The stored manifest, or none: a read path builds one neither here
+    # nor through the table's file set, which is read off the manifest --
+    # and it says whether the file is there before a fetch is spent.
+    manifest = score.resource.get_loaded_manifest()
+    if manifest is None:
+        logger.info(
+            "genomic score %s has no manifest to compare its stored "
+            "chromosome lengths against; resolving them live",
+            score.resource_id)
+        return None
+    stored = (
+        load_chrom_lengths(score.resource)
+        if CHROM_LENGTHS_FILE in manifest else None)
+    if stored is None:
+        logger.debug(
+            "genomic score %s has no stored chromosome lengths; "
+            "resolving them live", score.resource_id)
+        return None
+    if not stored.derived_from.describes(
+            score.resource, manifest, score.resource_files()):
+        logger.info(
+            "stored chromosome lengths of genomic score %s are stale "
+            "(another label, or other table files); resolving them live",
+            score.resource_id)
+        return None
+    if list(stored.lengths) != score.get_all_chromosomes():
+        logger.info(
+            "stored chromosome lengths of genomic score %s list other "
+            "contigs than its table; resolving them live until the next "
+            "repair", score.resource_id)
+        return None
+    return stored
+
+
+def best_chrom_length(
+    chrom: str, resolved: ChromLength, contigs: list[str],
+) -> ChromLengthAnswer:
+    """``resolved.best``, or the table's refusal when there is none --
+    ``contigs`` being the table's, which the refusal names."""
+    best = resolved.best
+    if best is None:
+        assert resolved.extent is not None
+        raise ValueError(resolved.extent.refusal(chrom, contigs))
+    return best
+
+
+def refuse_unanswered_source(
+    chrom: str, source: ChromLengthSource, resolved: ChromLength,
+    *, table_source: ChromLengthSource, contigs: list[str],
+) -> None:
+    """Raise for a ``source`` that has no answer in ``resolved``.
+
+    The table's own source is refused in the table's words, which say
+    whether the contig is empty or merely unmeasured; any other names
+    the sources that do answer the contig.
+    """
+    if source is table_source and resolved.extent is not None:
+        raise ValueError(resolved.extent.refusal(chrom, contigs))
+    raise ValueError(
+        f"{source.value} has no length for {chrom}; the sources that "
+        f"answer it: {[s.value for s in ranked(resolved.answers)]}")
+
+
 def save_chrom_lengths(
     resource: GenomicResource, stored: StoredChromLengths,
 ) -> None:
@@ -296,12 +462,15 @@ def load_chrom_lengths(resource: GenomicResource) -> StoredChromLengths | None:
         return _deserialize(resource.get_file_content(CHROM_LENGTHS_FILE))
     except FileNotFoundError:
         return None
-    except (ValueError, KeyError, TypeError, AttributeError) as err:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as err:
         # ``json.JSONDecodeError`` and ``UnicodeDecodeError`` are
         # ``ValueError``s; so is an enum member the name does not
-        # match.  The others are a document of the wrong shape.  The
-        # cause quotes the file, which is repository content: escaped
-        # so it cannot end the line and start a forged record (gain#642).
+        # match.  The others are a document of the wrong shape -- and
+        # ``OSError`` a fetch that failed, which a remote protocol
+        # reports a transient 5xx as: the optional file must not fail
+        # the open of a score that reads fine without it.  The cause
+        # quotes the file, which is repository content: escaped so it
+        # cannot end the line and start a forged record (gain#642).
         logger.warning(
             "resource <%s>: %s cannot be read as stored chromosome "
             "lengths (%s); treating it as absent",

@@ -97,6 +97,17 @@ from .aggregation import (
     request_score_ids,
     resolve_aggregator_requests,
 )
+from .chrom_lengths import (
+    ChromLength,
+    ChromLengthAnswer,
+    StoredChromLengths,
+    as_chrom_length_source,
+    best_chrom_length,
+    derive_chrom_length,
+    derive_chrom_lengths,
+    load_current_chrom_lengths,
+    refuse_unanswered_source,
+)
 from .records import (
     RecordArrays,
 )
@@ -294,6 +305,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             self.resource, self.config["table"],
         )
         self.score_definitions = self._build_scoredefs()
+        # Loaded by open() when current, dropped by close(); None: live.
+        self._stored_chrom_lengths: StoredChromLengths | None = None
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
@@ -391,6 +404,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """
         self.table.close()
         self.table_loaded = False
+        self._stored_chrom_lengths = None
 
     def is_open(self) -> bool:
         """Whether :meth:`open` has run and :meth:`close` has not since."""
@@ -464,6 +478,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             self.score_definitions,
             table=self.table,
             resource_id=self.resource_id)
+        self._stored_chrom_lengths = load_current_chrom_lengths(self)
 
         return self
 
@@ -921,6 +936,135 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         :func:`~.chrom_lengths.derive_chrom_lengths`.
         """
         return self.table.chrom_length_source
+
+    @property
+    def chrom_length_sources(self) -> list[ChromLengthSource]:
+        """The sources this score can answer a length from, best first.
+
+        The stored file's, or the table's own source alone -- stored or
+        live as :meth:`get_chrom_length` says.  Answered on an open score
+        only: which file is current is decided at :meth:`open`, so a
+        closed score could only guess.  Raises ``ValueError`` otherwise.
+        """
+        self._require_open()
+        stored = self._stored_chrom_lengths
+        return [self.chrom_length_source] if stored is None else stored.sources
+
+    def get_chrom_length(
+        self, chrom: str,
+        source: ChromLengthSource | str | None = None,
+    ) -> int:
+        """The length of ``chrom``: the best-ranked source's, or ``source``'s.
+
+        Mirrors :meth:`ReferenceGenome.get_chrom_length`: an ``int`` or a
+        ``ValueError``.  How far to trust the number is the source's
+        business -- only a genome's and a bigWig header's are exact --
+        and :meth:`get_chrom_length_source` says which one answered.
+
+        From the ``chrom_lengths.json`` the last repair stored, when
+        :meth:`open` found it current: the whole ladder, genome rung
+        included, at the cost of a dict lookup.  Without it the table
+        alone answers, live on every call -- on a tabix score the index
+        probe each time -- and ``REFERENCE_GENOME`` is refused until a
+        repair stores it; the score holds no genome of its own.
+
+        ``source`` is a :class:`ChromLengthSource` or its string value.
+        Raises ``ValueError`` on a score that is not open, a contig the
+        score does not carry, a source that is none of the four, a source
+        with no answer for ``chrom``, and a contig no source answers --
+        in the table's words, which say whether it is empty or unmeasured.
+        """
+        self._require_open_and_known_chrom(chrom)
+        wanted = as_chrom_length_source(source)
+        if wanted is None:
+            return self._best_chrom_length(chrom).length
+        # Refused before the record is resolved: on a live score that is
+        # the probe, and a source the score cannot answer needs none.
+        self._require_answerable_source(wanted)
+        resolved = self._chrom_length_record(chrom)
+        if wanted not in resolved.answers:
+            refuse_unanswered_source(
+                chrom, wanted, resolved,
+                table_source=self.chrom_length_source,
+                contigs=self.get_all_chromosomes())
+        return resolved.answers[wanted]
+
+    def get_all_chrom_lengths(
+        self, source: ChromLengthSource | str | None = None,
+    ) -> dict[str, int]:
+        """Every contig's length, keyed by contig in the table's order.
+
+        Mirrors :meth:`ReferenceGenome.get_all_chrom_lengths`.  The
+        best-ranked answer per contig, or ``source``'s; a contig with no
+        answer from the chosen view is left out, never an error -- a
+        caller that needs to know WHY reads
+        :func:`~.chrom_lengths.derive_chrom_lengths`.  Stored or live as
+        :meth:`get_chrom_length` says, times the contig count.
+
+        Raises ``ValueError`` on a score that is not open, a source that
+        is none of the four, and ``REFERENCE_GENOME`` on a score with no
+        stored lengths -- the one source the table can never supply, so
+        an empty answer would hide the repair that fills it.
+        """
+        self._require_open()
+        wanted = as_chrom_length_source(source)
+        if wanted is not None:
+            self._require_answerable_source(wanted)
+        records = self._chrom_length_records()
+        if wanted is None:
+            return {
+                chrom: resolved.best.length
+                for chrom, resolved in records.items()
+                if resolved.best is not None
+            }
+        return {
+            chrom: resolved.answers[wanted]
+            for chrom, resolved in records.items()
+            if wanted in resolved.answers
+        }
+
+    def get_chrom_length_source(self, chrom: str) -> ChromLengthSource:
+        """Where :meth:`get_chrom_length` reads ``chrom``'s length from.
+
+        The same refusals as the default read, including a contig no
+        source answers: a source of nothing is not an answer.
+        """
+        self._require_open_and_known_chrom(chrom)
+        return self._best_chrom_length(chrom).source
+
+    def _chrom_length_records(self) -> dict[str, ChromLength]:
+        """Every contig's record, stored or live; screened by the caller."""
+        stored = self._stored_chrom_lengths
+        if stored is not None:
+            return stored.lengths
+        return derive_chrom_lengths(self)
+
+    def _chrom_length_record(self, chrom: str) -> ChromLength:
+        """One contig's record, stored or live; screened by the caller --
+        the file is loaded only when its contig list is the table's, so
+        a contig that screen admitted is in it."""
+        stored = self._stored_chrom_lengths
+        if stored is not None:
+            return stored.lengths[chrom]
+        return derive_chrom_length(self, chrom)
+
+    def _best_chrom_length(self, chrom: str) -> ChromLengthAnswer:
+        return best_chrom_length(
+            chrom, self._chrom_length_record(chrom),
+            self.get_all_chromosomes())
+
+    def _require_answerable_source(self, source: ChromLengthSource) -> None:
+        """Refuse the genome's rung on a score with no stored lengths:
+        the one source that reaches the score only through the file a
+        repair stores, so its absence is actionable and said so.  A
+        table source the table does not measure simply answers nothing.
+        """
+        if (source is ChromLengthSource.REFERENCE_GENOME
+                and self._stored_chrom_lengths is None):
+            raise ValueError(
+                f"genomic score <{self.resource_id}> has no stored "
+                "chromosome lengths for its reference genome; repair the "
+                "resource to store them")
 
     def resource_files(self) -> set[str]:
         """The resource's files the score reads: the data file, plus the

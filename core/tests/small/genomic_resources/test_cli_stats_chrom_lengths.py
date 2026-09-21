@@ -20,14 +20,16 @@ from gain.genomic_resources.genomic_scores import GenomicScore
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
     a_grr,
-    a_reference_genome,
 )
 
 from .conftest import md5_of
 from .test_genomic_scores_impl_chrom_lengths import (
+    BIGWIG_GENOME_CHR1_LENGTH,
+    BIGWIG_HEADER_LENGTHS,
     CHR1_GENOME_LENGTH,
     CHR1_PROBE_BOUND,
     CHRM_PROBE_BOUND,
+    a_labelled_bigwig_score_grr,
     a_labelled_tabix_score_grr,
     patch_tabix_probe,
     set_label,
@@ -128,28 +130,13 @@ def test_a_labelled_bigwig_score_stores_the_genomes_and_the_headers(
     tmp_path: pathlib.Path,
 ) -> None:
     """Two exact sources; the genome lists chr1 only, the header both."""
-    (
-        a_grr()
-        .with_resource(
-            "genome",
-            a_reference_genome().with_chromosome("chr1", "A" * 90))
-        .with_resource(
-            "score",
-            a_bigwig_score()
-            .with_data("""
-                chr1  10  20  0.1
-                chr2  10  20  0.2
-            """)
-            .with_chrom_lens({"chr1": 100, "chr2": 200})
-            .with_labels(reference_genome="genome"))
-        .build_repo(tmp_path)
-    )
+    a_labelled_bigwig_score_grr().build_repo(tmp_path)
 
     resource_stats(tmp_path, "score")
 
     assert _stored(tmp_path / "score" / "statistics")["sources"] == {
-        "bigwig": {"chr1": 100, "chr2": 200},
-        "reference_genome": {"chr1": 90},
+        "bigwig": BIGWIG_HEADER_LENGTHS,
+        "reference_genome": {"chr1": BIGWIG_GENOME_CHR1_LENGTH},
     }
 
 
