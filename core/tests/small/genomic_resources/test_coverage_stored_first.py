@@ -7,8 +7,11 @@ length, and a page built with no repository, or after the genome the
 label names has left it, is still priced from what the repair stored.
 """
 
+import logging
 import pathlib
+import shutil
 
+import pytest
 import pytest_mock
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     PositionScoreImplementation,
@@ -20,6 +23,7 @@ from gain.genomic_resources.testing.builders import (
     a_reference_genome,
 )
 
+from .conftest import captured_warnings
 from .test_cli_stats_chrom_lengths import resource_stats
 from .test_genomic_scores_impl_derived_files import resynced
 
@@ -80,4 +84,71 @@ def test_a_repaired_tabix_score_is_priced_with_no_repository(
     assert f">{COVERED}<" in page
     assert page.count(">9.00%<") == 2  # the chr1 row and the global row
     assert "contig with no values" not in page
+    opened.assert_not_called()
+
+
+def test_a_repaired_tabix_score_with_its_genome_at_hand_is_unchanged(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A regression pin: with the repository the genome rung resolves
+    first and prices the page over the WHOLE genome, roll-up included,
+    as it did before the file existed -- and the table stays closed."""
+    _a_labelled_tabix_repo(tmp_path)
+    impl, repo = _repaired(tmp_path)
+    opened = mocker.spy(impl.score, "open")
+
+    page = impl.get_info(repo=repo)
+
+    assert page.count(">9.00%<") == 1  # the chr1 row: 9 of 100
+    assert ">2.25%<" in page  # the global row: 9 of the genome's 400
+    assert "1 contig with no values (300 bp)" in page
+    opened.assert_not_called()
+
+
+def _without_the_genome(where: pathlib.Path) -> GenomicResourceRepo:
+    """The repository with the genome resource removed since the repair."""
+    shutil.rmtree(where / GENOME)
+    _, repo = resynced(where, SCORE)
+    return repo
+
+
+def test_a_genome_gone_since_the_repair_still_prices_the_scores_own_contigs(
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The record is the record: the stored genome answers price chr1,
+    the universe is the score's genome-listed contigs -- so no roll-up
+    of the genome's untouched chr2 -- and the label dangling is said
+    once, as it is today."""
+    _a_labelled_tabix_repo(tmp_path)
+    impl, _ = _repaired(tmp_path)
+    repo = _without_the_genome(tmp_path)
+    opened = mocker.spy(impl.score, "open")
+
+    with caplog.at_level(logging.WARNING):
+        page = impl.get_info(repo=repo)
+
+    assert page.count(">9.00%<") == 2  # the chr1 row and the global row
+    assert "contig with no values" not in page
+    opened.assert_not_called()
+    assert captured_warnings(caplog).count(
+        f"Couldn't find reference genome {GENOME}") == 1
+
+
+def test_an_unrepaired_tabix_score_whose_genome_is_gone_renders_raw_counts(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Nothing stored, nothing exact a tabix table can say live: raw
+    counts, and the table is still never opened for a length."""
+    _a_labelled_tabix_repo(tmp_path)
+    impl, _ = _repaired(tmp_path)
+    (tmp_path / SCORE / "statistics" / "chrom_lengths.json").unlink()
+    repo = _without_the_genome(tmp_path)
+    opened = mocker.spy(impl.score, "open")
+
+    page = impl.get_info(repo=repo)
+
+    assert f">{COVERED}<" in page
+    assert "Covered %" not in page
     opened.assert_not_called()
