@@ -529,11 +529,14 @@ def test_an_unusable_genome_label_still_builds_statistics_tasks(
             region_size=1000, grr=repo)
 
     assert tasks
+    # Reported by every reader of the label (gain#1053): the build's own
+    # resolution, and the score's open, which compares the stored key.
     warnings = label_warnings(caplog)
-    assert len(warnings) == 1
-    assert "scores/one" in warnings[0]
-    assert "reference_genome" in warnings[0]
-    assert reported_as in warnings[0]
+    assert warnings
+    for warning in warnings:
+        assert "scores/one" in warning
+        assert "reference_genome" in warning
+        assert reported_as in warning
 
 
 def test_add_statistics_build_tasks_creates_min_max_tasks() -> None:

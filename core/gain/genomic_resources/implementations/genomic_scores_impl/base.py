@@ -17,6 +17,7 @@ from gain.genomic_resources.genomic_scores.chrom_lengths import (
     DerivedFrom,
     StoredChromLengths,
     derive_chrom_lengths,
+    files_md5_of,
     load_chrom_lengths,
     save_chrom_lengths,
 )
@@ -419,16 +420,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         return genome_id is None or self._labelled_genome(grr)[1] is None
 
     def _files_md5(self) -> dict[str, str | None]:
-        """The manifest md5 of every table file, keyed by name.
-
-        One definition of "the same files" for the two gates that ask --
-        the statistics hash and the stored lengths' key -- so they cannot
-        drift apart on what counts as a data file.
-        """
-        manifest = self.resource.get_manifest()
-        return {
-            file_name: manifest[file_name].md5
-            for file_name in sorted(self.files)}
+        """The manifest md5 of every table file, keyed by name -- what
+        the statistics hash and the stored lengths' key both compare."""
+        return files_md5_of(self.resource.get_manifest(), self.files)
 
     def _resolve_labelled_genome(
         self, grr: GenomicResourceRepo | None,

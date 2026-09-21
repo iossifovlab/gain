@@ -345,7 +345,7 @@ def test_the_deprecated_value_index_opens_and_reports_once(
 
     reported = [
         rec.getMessage() for rec in caplog.records
-        if rec.levelname == "DEBUG" and "deprecated" in rec.getMessage()
+        if rec.levelname == "DEBUG" and "is deprecated" in rec.getMessage()
     ]
     assert len(reported) == 1, reported
     assert score.resource_id in reported[0]
