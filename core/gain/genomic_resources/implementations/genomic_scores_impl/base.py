@@ -5,6 +5,7 @@ import weakref
 from typing import Any, ClassVar
 
 from gain import logging
+from gain.genomic_resources.dvc import DVC_SUFFIX
 from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     build_score_from_resource,
@@ -13,7 +14,11 @@ from gain.genomic_resources.genomic_scores.chrom_lengths import (
     ChromLength,
     ChromLengthSource,
     ContigExtent,
+    DerivedFrom,
+    StoredChromLengths,
     derive_chrom_lengths,
+    load_chrom_lengths,
+    save_chrom_lengths,
 )
 from gain.genomic_resources.reference_genome import (
     ReferenceGenome,
@@ -24,6 +29,7 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
 )
 from gain.genomic_resources.resource_implementation import (
+    DerivedFilesState,
     InfoImplementationMixin,
 )
 from gain.genomic_resources.score_implementation import (
@@ -97,6 +103,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         region_size = kwargs.get("region_size", 3_000_000_000)
         grr = kwargs.get("grr")
 
+        # One resolver pass per build: its answers are stored for the
+        # readers (gain#1576) AND split the regions below.  Written here,
+        # in the controller, rather than as a task: the file is
+        # independent of the histograms and under its own gate.
+        stored = self._store_chrom_lengths(grr)
+
         if region_size <= 0:
             # No regions; compute histograms directly.
             return [
@@ -108,7 +120,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 ),
             ]
 
-        regions = self._get_chrom_regions(region_size, grr)
+        regions = self._regions_from(stored.lengths, region_size)
         all_min_max_scores, all_hist_confs = \
             scan.unpack_score_defs(self.resource)
 
@@ -244,7 +256,73 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         Opens the score if it is closed, and closes it again only in
         that case -- an already-open score stays open for its owner.
         """
-        ref_genome = self._resolve_labelled_genome(grr)
+        return self._resolve_chrom_lengths(grr).lengths
+
+    def derived_files_state(
+        self, grr: GenomicResourceRepo | None,
+    ) -> DerivedFilesState:
+        """Whether the stored chromosome lengths describe the score now.
+
+        ``CURRENT`` when the stored file's key -- the label the genome
+        resolves from and the manifest md5 of every table file -- is
+        the resource's key today.  Otherwise ``STALE`` when every table
+        file is here to rebuild it from, and ``PAYLOAD_ABSENT`` when
+        one is missing beside its ``.dvc`` sidecar: an unpulled DVC
+        checkout, reported once as a WARNING here, where the missing
+        file is known.  A file missing with no sidecar is not that --
+        the resource is broken and the rebuild fails it, as any read
+        would.  Compares keys and looks for files; opens no table.
+        """
+        stored = load_chrom_lengths(self.resource)
+        if stored is None:
+            logger.info(
+                "<%s> has no stored chromosome lengths; needs update",
+                self.resource.get_full_id())
+        elif stored.derived_from != self._chrom_lengths_inputs(grr)[1]:
+            logger.info(
+                "stored chromosome lengths of <%s> are outdated; "
+                "needs update", self.resource.get_full_id())
+        else:
+            return DerivedFilesState.CURRENT
+        for file_name in sorted(self.files):
+            if (not self.resource.file_exists(file_name)
+                    and self.resource.file_exists(
+                        file_name + DVC_SUFFIX)):
+                logger.warning(
+                    "<%s>: %s is a .dvc pointer whose payload is not "
+                    "here; its chromosome lengths will be stored by the "
+                    "next repair that has it",
+                    self.resource.get_full_id(), file_name)
+                return DerivedFilesState.PAYLOAD_ABSENT
+        return DerivedFilesState.STALE
+
+    def rebuild_derived_files(
+        self, grr: GenomicResourceRepo | None,
+    ) -> None:
+        self._store_chrom_lengths(grr)
+
+    def _store_chrom_lengths(
+        self, grr: GenomicResourceRepo | None,
+    ) -> StoredChromLengths:
+        """Run the ladder over the score and write what it found.
+
+        The one writer of ``CHROM_LENGTHS_FILE``, for both the full
+        statistics build and the lengths-only rewrite.
+        """
+        stored = self._resolve_chrom_lengths(grr)
+        save_chrom_lengths(
+            self.resource, stored, self.score.chrom_length_source)
+        return stored
+
+    def _resolve_chrom_lengths(
+        self, grr: GenomicResourceRepo | None,
+    ) -> StoredChromLengths:
+        """Run the ladder over the score, and say what it ran on.
+
+        Opens the score if it is closed, and closes it again only in
+        that case -- an already-open score stays open for its owner.
+        """
+        ref_genome, derived_from = self._chrom_lengths_inputs(grr)
         opened_here = not self.score.is_open()
         if opened_here:
             self.score.open()
@@ -255,7 +333,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 self.score.close()
         if ref_genome is not None:
             self._report_contig_overlap(ref_genome, lengths)
-        return lengths
+        return StoredChromLengths(lengths=lengths, derived_from=derived_from)
 
     def _report_contig_overlap(
         self, ref_genome: ReferenceGenome, lengths: dict[str, ChromLength],
@@ -295,6 +373,37 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             "source",
             ref_genome.resource_id, self.resource.resource_id,
             len(unlisted), len(lengths), ", ".join(sample))
+
+    def _chrom_lengths_inputs(
+        self, grr: GenomicResourceRepo | None,
+    ) -> tuple[ReferenceGenome | None, DerivedFrom]:
+        """The genome the ladder's top rung reads, and the freshness key.
+
+        Resolves the genome but never a length, so the gate that compares
+        the key is a label read, a genome lookup and a manifest read.
+        """
+        ref_genome = self._resolve_labelled_genome(grr)
+        return ref_genome, DerivedFrom(
+            # The label the genome was resolved FROM, so an unresolvable
+            # genome is recorded as none at all -- and reads as a change
+            # the day it resolves.
+            reference_genome=(
+                read_resource_id_label(self.resource, "reference_genome")
+                if ref_genome is not None else None),
+            files_md5=self._files_md5(),
+        )
+
+    def _files_md5(self) -> dict[str, str | None]:
+        """The manifest md5 of every table file, keyed by name.
+
+        One definition of "the same files" for the two gates that ask --
+        the statistics hash and the stored lengths' key -- so they cannot
+        drift apart on what counts as a data file.
+        """
+        manifest = self.resource.get_manifest()
+        return {
+            file_name: manifest[file_name].md5
+            for file_name in sorted(self.files)}
 
     def _resolve_labelled_genome(
         self, grr: GenomicResourceRepo | None,

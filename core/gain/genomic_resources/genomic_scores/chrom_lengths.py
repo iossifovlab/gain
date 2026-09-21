@@ -21,10 +21,12 @@ score's ``reference_genome`` label into that genome is the caller's job.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from gain import logging
 from gain.genomic_resources.genomic_position_table import (
     ChromLengthSource,
     ContigExtent,
@@ -32,8 +34,18 @@ from gain.genomic_resources.genomic_position_table import (
 
 if TYPE_CHECKING:
     from gain.genomic_resources.reference_genome import ReferenceGenome
+    from gain.genomic_resources.repository import GenomicResource
 
     from .base import GenomicScore
+
+logger = logging.getLogger(__name__)
+
+#: Where a repair stores the resolver's answers, relative to the resource.
+CHROM_LENGTHS_FILE = "statistics/chrom_lengths.json"
+
+#: The layout of that file.  A stored file of another format is stale:
+#: read as absent and rewritten by the next repair.
+CHROM_LENGTHS_FORMAT = 1
 
 # Both enums are the table layer's -- the provenance vocabulary because
 # three of its four members are facts each backend declares about its own
@@ -44,12 +56,18 @@ if TYPE_CHECKING:
 # statistics implementation need not import the table package at all
 # (gain#410).
 __all__ = [
+    "CHROM_LENGTHS_FILE",
+    "CHROM_LENGTHS_FORMAT",
     "ChromLength",
     "ChromLengthAnswer",
     "ChromLengthSource",
     "ContigExtent",
+    "DerivedFrom",
+    "StoredChromLengths",
     "derive_chrom_length",
     "derive_chrom_lengths",
+    "load_chrom_lengths",
+    "save_chrom_lengths",
 ]
 
 
@@ -140,3 +158,140 @@ def derive_chrom_lengths(
         chrom: derive_chrom_length(score, chrom, ref_genome)
         for chrom in score.get_all_chromosomes()
     }
+
+
+@dataclass(frozen=True)
+class DerivedFrom:
+    """What a stored answer was computed from -- the file's freshness key.
+
+    ``reference_genome`` is the label the genome was actually resolved
+    from, ``None`` when there was none to resolve: no label, a label that
+    is not a resource id, or a genome the repository could not find.  So
+    a genome that turns up later reads as a change.  ``files_md5`` is the
+    manifest md5 of every data file of the table, keyed by name -- as the
+    manifest records it, which for an entry it has not digested is none.
+    """
+
+    reference_genome: str | None
+    files_md5: dict[str, str | None]
+
+
+@dataclass(frozen=True)
+class StoredChromLengths:
+    """Every source's answer for every contig, and what they derive from."""
+
+    lengths: dict[str, ChromLength]
+    derived_from: DerivedFrom
+
+
+def _serialize(
+    stored: StoredChromLengths, table_source: ChromLengthSource,
+) -> str:
+    """One block per source, contig -> length.
+
+    A contig a source did not answer is absent from that source's block;
+    a contig the TABLE could not answer carries the table's reason in
+    the table's own block, ``table_source``, and in no other.
+    """
+    sources: dict[str, dict[str, int | str]] = {}
+    for chrom, resolved in stored.lengths.items():
+        for source, length in resolved.answers.items():
+            sources.setdefault(source.value, {})[chrom] = length
+        if resolved.extent is not None:
+            sources.setdefault(table_source.value, {})[chrom] = \
+                resolved.extent.name.lower()
+    return json.dumps({
+        "format": CHROM_LENGTHS_FORMAT,
+        "derived_from": {
+            "reference_genome": stored.derived_from.reference_genome,
+            "files_md5": stored.derived_from.files_md5,
+        },
+        "sources": sources,
+    }, indent=2)
+
+
+def _deserialize(content: str) -> StoredChromLengths | None:
+    """The stored lengths, or ``None`` for a file of another format.
+
+    Raises ``ValueError``, ``KeyError`` or ``TypeError`` on a document
+    that is not one: the caller reads those as absent.
+    """
+    document = json.loads(content)
+    if document["format"] != CHROM_LENGTHS_FORMAT:
+        return None
+    # Contigs in order of first appearance across the blocks: the
+    # writer walks the table's order, so the table's block -- the one
+    # that names every contig -- keeps it.
+    answers: dict[str, dict[ChromLengthSource, int]] = {}
+    extents: dict[str, ContigExtent] = {}
+    for source_name, block in document["sources"].items():
+        source = ChromLengthSource(source_name)
+        for chrom, value in block.items():
+            if isinstance(value, str):
+                extents[chrom] = ContigExtent[value.upper()]
+            elif isinstance(value, int) and not isinstance(value, bool):
+                answers.setdefault(chrom, {})[source] = value
+            else:
+                raise TypeError(
+                    f"{source_name}/{chrom}: {value!r} is neither a "
+                    "length nor a reason")
+            answers.setdefault(chrom, {})
+    derived_from = document["derived_from"]
+    return StoredChromLengths(
+        lengths={
+            chrom: ChromLength(
+                answers=chrom_answers, extent=extents.get(chrom))
+            for chrom, chrom_answers in answers.items()
+        },
+        derived_from=DerivedFrom(
+            reference_genome=derived_from["reference_genome"],
+            files_md5=dict(derived_from["files_md5"]),
+        ),
+    )
+
+
+def save_chrom_lengths(
+    resource: GenomicResource, stored: StoredChromLengths,
+    table_source: ChromLengthSource,
+) -> None:
+    """Write ``stored`` as the resource's ``CHROM_LENGTHS_FILE``.
+
+    ``table_source`` is the source the score's table answers under --
+    the block that carries a contig's reason when the table had no
+    length for it.
+    """
+    with resource.open_raw_file(CHROM_LENGTHS_FILE, mode="wt") as outfile:
+        outfile.write(_serialize(stored, table_source))
+
+
+def load_chrom_lengths(resource: GenomicResource) -> StoredChromLengths | None:
+    """Read the resource's ``CHROM_LENGTHS_FILE``; ``None`` when it has none.
+
+    Absence is a normal state, not an error: a resource repaired before
+    the file existed has nothing stored until its next repair, and one
+    written in another format is read the same way.  A file that cannot
+    be read as one -- a repair killed mid-write leaves a truncated one,
+    and the write is not atomic -- reads as absent too, with a WARNING
+    naming it: absent, the ordinary repair rewrites it; raised, the gate
+    would fail the resource over a file the repair is about to replace.
+    """
+    try:
+        content = resource.get_file_content(CHROM_LENGTHS_FILE)
+    except FileNotFoundError:
+        return None
+    try:
+        stored = _deserialize(content)
+    except (ValueError, KeyError, TypeError, AttributeError) as err:
+        # ``json.JSONDecodeError`` is a ``ValueError``; so is an enum
+        # member the name does not match.  The others are a document
+        # of the wrong shape.
+        logger.warning(
+            "resource <%s>: %s cannot be read as stored chromosome "
+            "lengths (%s); treating it as absent",
+            resource.resource_id, CHROM_LENGTHS_FILE, err)
+        return None
+    if stored is None:
+        logger.info(
+            "resource <%s>: %s is of another format; treating it as absent",
+            resource.resource_id, CHROM_LENGTHS_FILE)
+    return stored
