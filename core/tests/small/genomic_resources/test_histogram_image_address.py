@@ -1,12 +1,15 @@
 # pylint: disable=C0116
 """Whether a score's histogram image has an address at all.
 
-A score whose histogram is annulled *by definition* never gets a PNG
-written for it, so an address for one points at a file nobody writes
-(gain#1025).  What "by definition" means, and why the loaded statistics
-are the wrong oracle, is stated once on
-``ScoreResource.get_histogram_config``; these tests pin the two accessors
-that answer from it.
+An address is a promise that the file is there, and two things decide it.
+A histogram annulled *by definition* never gets a PNG drawn, so it has
+no address (gain#1025); what "by definition" means is stated once on
+``ScoreResource.get_histogram_config``.  A histogram the definition
+configures is only a plan to draw, and the statistics build can decline
+it -- a nan range, a value it cannot fold -- so beyond that the address
+follows the resource's manifest: the image is addressed when listed, and
+a resource with no stored manifest falls back to the definition
+(gain#1533).  These tests pin the two accessors that answer so.
 """
 import pathlib
 
@@ -156,6 +159,7 @@ def test_a_histogram_nullified_by_its_build_has_no_image_address(
         tmp_path)
     resource = repo.get_resource("scores/pos1")
     build_statistics(resource)
+    assert not resource.file_exists("statistics/histogram_score.png")
     score = build_score_from_resource(resource)
 
     assert score.get_histogram_image_url("score") is None

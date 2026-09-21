@@ -10,6 +10,8 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     setup_directories,
 )
+from gain.genomic_resources.testing.builders import a_position_score
+from gain.genomic_resources.testing.statistics import build_statistics
 
 
 @pytest.fixture
@@ -28,6 +30,9 @@ def grr_fixture(tmp_path: pathlib.Path) -> GenomicResourceRepo:
                       A score description testtest
                   name: s1
             """,
+            # As a built resource has it: an image is addressed only when
+            # the manifest lists it (gain#1533).
+            "statistics/histogram_score.png": "drawn",
         },
         "pipeline": {
             "genomic_resource.yaml": """
@@ -80,3 +85,62 @@ def test_the_rendered_page_carries_the_relative_addresses(
     # name "s1" by hand and so never exercise that.
     assert 'href="../one/index.html"' in page
     assert 'src="../one/statistics/histogram_score.png"' in page
+
+
+@pytest.fixture
+def built_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
+    """A pipeline over a score whose statistics were REALLY built.
+
+    ``drawn`` has values and gets its histogram drawn; ``empty`` has a
+    configured number histogram and no values, so the build nullifies it
+    and draws nothing (gain#1533).  The build runs before the page is
+    rendered, as repo-repair orders it, so the score's manifest already
+    lists what was drawn.
+    """
+    root_path = tmp_path / "grr"
+    setup_directories(root_path, {
+        "pipeline": {
+            "genomic_resource.yaml": """
+                type: annotation_pipeline
+                filename: annotation.yaml
+            """,
+            "annotation.yaml": """
+                - position_score: one
+            """,
+        },
+    })
+    (
+        a_position_score()
+        .with_score("drawn", "float")
+        .with_score("empty", "float")
+        .with_histogram({"type": "number", "number_of_bins": 10})
+        .with_na_values("NA")
+        .with_data("""
+            chrom  pos_begin  drawn  empty
+            1      10         0.1    NA
+            1      20         0.2    NA
+        """)
+        .realize_into(root_path / "one")
+    )
+    repo = build_filesystem_test_repository(root_path)
+    score = repo.get_resource("one")
+    build_statistics(score)
+    # The premise, not the subject: one drawn, one not.
+    assert score.file_exists("statistics/histogram_drawn.png")
+    assert not score.file_exists("statistics/histogram_empty.png")
+    return repo
+
+
+def test_the_published_page_addresses_only_the_histograms_the_build_drew(
+    built_grr: GenomicResourceRepo,
+) -> None:
+    impl = AnnotationPipelineImplementation(built_grr.get_resource("pipeline"))
+
+    page = impl.get_info(repo=built_grr)
+
+    assert 'src="../one/statistics/histogram_drawn.png"' in page
+    assert "histogram_empty" not in page
+    assert "None" not in page
+    # Both attributes are still documented.
+    assert "source: drawn" in page
+    assert "source: empty" in page

@@ -14,12 +14,21 @@ from gain.gene_scores.gene_scores import (
     GeneScoresDb,
     build_gene_score_from_resource,
 )
+from gain.genomic_resources.histogram import (
+    CategoricalHistogram,
+    NullHistogram,
+)
 from gain.genomic_resources.testing.builders import a_gene_score
+from gain.genomic_resources.testing.statistics import build_statistics
 
 
 @pytest.fixture
 def gene_score(tmp_path: pathlib.Path) -> GeneScore:
-    """One gene score resource: ``pli`` has a histogram, ``nullified`` none."""
+    """One gene score resource: ``pli`` has a histogram, ``nullified`` none.
+
+    ``pli`` ships its image, as a built resource does -- an image is
+    addressed only when the manifest lists it (gain#1533).
+    """
     res = (
         a_gene_score()
         .with_score("pli", "float")
@@ -29,9 +38,41 @@ def gene_score(tmp_path: pathlib.Path) -> GeneScore:
             gene   pli   nullified
             G1     1.0   1.0
         """)
+        .with_file("statistics/histogram_pli.png", "drawn")
         .build_resource(tmp_path / "gene_score")
     )
     return build_gene_score_from_resource(res)
+
+
+@pytest.fixture
+def built_gene_score(tmp_path: pathlib.Path) -> GeneScore:
+    """A gene score after a REAL statistics build.
+
+    ``pli`` gets its histogram drawn.  ``label`` declares no histogram, so
+    it gets the default categorical one, which enforces the unique-values
+    limit -- and its values exceed it, so the build nullifies it while
+    accumulating and draws nothing (gain#1533).
+    """
+    rows = "\n".join(
+        f"G{i}  {i / 1000}  label{i}"
+        for i in range(CategoricalHistogram.UNIQUE_VALUES_LIMIT + 1))
+    res = (
+        a_gene_score()
+        .with_score("pli", "float")
+        .with_score("label", "str")
+        .with_data("gene  pli  label\n" + rows)
+        .build_resource(tmp_path / "gene_score")
+    )
+    build_statistics(res)
+    gene_score = build_gene_score_from_resource(res)
+    # The premise, not the subject: the build did nullify it, for the
+    # unique-values reason, and drew no image for it.
+    label_hist = gene_score.get_score_histogram("label")
+    assert isinstance(label_hist, NullHistogram)
+    assert "Too many unique values" in label_hist.reason
+    assert not res.file_exists("statistics/histogram_label.png")
+    assert res.file_exists("statistics/histogram_pli.png")
+    return gene_score
 
 
 def gene_score_help(gene_score: GeneScore, score_id: str) -> str:
@@ -46,6 +87,21 @@ def test_a_gene_score_help_embeds_the_histogram_by_its_public_address(
     gene_score: GeneScore,
 ) -> None:
     assert "![HISTOGRAM](" in gene_score_help(gene_score, "pli")
+
+
+def test_a_build_nullified_gene_score_histogram_puts_no_image_in_the_help(
+    built_gene_score: GeneScore,
+) -> None:
+    help_text = gene_score_help(built_gene_score, "label")
+
+    assert "![HISTOGRAM]" not in help_text
+    assert "None" not in help_text
+
+
+def test_a_gene_score_histogram_the_build_drew_is_embedded_in_the_help(
+    built_gene_score: GeneScore,
+) -> None:
+    assert "![HISTOGRAM](" in gene_score_help(built_gene_score, "pli")
 
 
 def test_an_annulled_gene_score_histogram_has_no_image_address(

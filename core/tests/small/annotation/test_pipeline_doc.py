@@ -21,17 +21,29 @@ That the renderer is the *only* thing binding the template is an
 architectural fence, and lives with the others in ``tests/test_architecture``.
 """
 import pathlib
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
-from gain.annotation.pipeline_doc import render_pipeline_doc
+from gain.annotation.pipeline_doc import (
+    PUBLIC_MIRROR_ADDRESSES,
+    PipelineDocAddresses,
+    RepositoryRelativeAddresses,
+    render_pipeline_doc,
+)
+from gain.genomic_resources.histogram import CategoricalHistogram
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
 )
 from gain.genomic_resources.score_resource import ScoreResource
-from gain.genomic_resources.testing.builders import a_grr, a_position_score
+from gain.genomic_resources.testing.builders import (
+    PositionScoreBuilder,
+    a_grr,
+    a_position_score,
+)
+from gain.genomic_resources.testing.statistics import build_statistics
 
 PIPELINE = "- position_score: scores/pos1\n"
 
@@ -57,10 +69,18 @@ class RelativeStub:
 
 @pytest.fixture
 def public_repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
-    """A GRR with one score, advertising a public mirror of its own."""
+    """A GRR with one score, advertising a public mirror of its own.
+
+    The score ships its histogram image, as a built resource does: an
+    image is addressed only when the manifest lists it (gain#1533), and
+    these tests are about WHERE it is addressed, not whether.
+    """
     return (
         a_grr()
-        .with_resource("scores/pos1", a_position_score())
+        .with_resource(
+            "scores/pos1",
+            a_position_score()
+            .with_file("statistics/histogram_score.png", "drawn"))
         .with_public_url(PUBLIC_URL)
         .build_repo(tmp_path / "grr")
     )
@@ -169,6 +189,92 @@ def test_an_annulled_histogram_renders_no_image(
     html = render(annulled_repo, tmp_path / "work")
 
     assert "<img" not in html
+
+
+def a_score_with_no_values() -> PositionScoreBuilder:
+    """A configured number histogram the build nullifies in its min/max pass.
+
+    Every value is NA, so no range is found and nothing is drawn.
+    """
+    return (
+        a_position_score()
+        .with_score("score", "float")
+        .with_histogram({"type": "number", "number_of_bins": 10})
+        .with_na_values("NA")
+        .with_data("""
+            chrom  pos_begin  score
+            1      10         NA
+            1      20         NA
+        """)
+    )
+
+
+def a_score_with_too_many_categories() -> PositionScoreBuilder:
+    """A default categorical histogram the build nullifies accumulating.
+
+    No ``histogram:`` block, so the ``str`` score gets the default
+    categorical config, which enforces the unique-values limit -- and the
+    values exceed it.  A null histogram file IS written for this one;
+    still, nothing is drawn.
+    """
+    rows = "\n".join(
+        f"1  {10 * (i + 1)}  label{i}"
+        for i in range(CategoricalHistogram.UNIQUE_VALUES_LIMIT + 1))
+    return (
+        a_position_score()
+        .with_score("score", "str")
+        .with_data("chrom  pos_begin  score\n" + rows)
+    )
+
+
+@pytest.fixture(
+    params=[a_score_with_no_values, a_score_with_too_many_categories])
+def build_nullified_repo(
+    request: pytest.FixtureRequest, tmp_path: pathlib.Path,
+) -> GenomicResourceRepo:
+    """A GRR whose one score's histogram is nullified by its own build.
+
+    Configured, not annulled, in either of the two ways a build nullifies
+    a histogram; no image is drawn and the manifest lists none
+    (gain#1533).
+    """
+    repo = (
+        a_grr()
+        .with_resource("scores/pos1", request.param())
+        .with_public_url(PUBLIC_URL)
+        .build_repo(tmp_path / "grr")
+    )
+    resource = repo.get_resource("scores/pos1")
+    build_statistics(resource)
+    # The premise, not the subject: the build drew nothing for it.
+    assert not resource.file_exists("statistics/histogram_score.png")
+    return repo
+
+
+def public_mirror(_repo: GenomicResourceRepo) -> PipelineDocAddresses:
+    return PUBLIC_MIRROR_ADDRESSES
+
+
+def repository_relative(repo: GenomicResourceRepo) -> PipelineDocAddresses:
+    # Built for the page's own resource; for a page that only names the
+    # score, any resource of the same GRR stands in for it.
+    return RepositoryRelativeAddresses(repo.get_resource("scores/pos1"))
+
+
+@pytest.mark.parametrize("policy", [public_mirror, repository_relative])
+def test_a_histogram_nullified_by_its_build_renders_no_image(
+    build_nullified_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+    policy: Callable[[GenomicResourceRepo], PipelineDocAddresses],
+) -> None:
+    html = render(
+        build_nullified_repo, tmp_path / "work",
+        addresses=policy(build_nullified_repo))
+
+    assert "<img" not in html
+    assert "None" not in html
+    # The attribute itself is still documented.
+    assert "source: score" in html
 
 
 def test_a_policy_with_no_histogram_address_renders_no_image(

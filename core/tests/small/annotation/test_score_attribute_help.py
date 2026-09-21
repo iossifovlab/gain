@@ -15,13 +15,18 @@ from gain.annotation.genomic_score_annotator_base import (
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import a_grr, a_position_score
+from gain.genomic_resources.testing.statistics import build_statistics
 
 PUBLIC_URL = "http://grr.example.org"
 
 
 @pytest.fixture
 def repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
-    """One position score: ``score`` has a histogram, ``nullified`` none."""
+    """One position score: ``score`` has a histogram, ``nullified`` none.
+
+    ``score`` ships its image, as a built resource does -- an image is
+    addressed only when the manifest lists it (gain#1533).
+    """
     return (
         a_grr()
         .with_resource(
@@ -31,10 +36,44 @@ def repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
             .with_score("nullified", "float")
             .with_histogram({"type": "null", "reason": "annulled"})
             .with_score_line(chrom="1", pos_begin=10, score=0.1,
-                             nullified=0.2))
+                             nullified=0.2)
+            .with_file("statistics/histogram_score.png", "drawn"))
         .with_public_url(PUBLIC_URL)
         .build_repo(tmp_path / "grr")
     )
+
+
+@pytest.fixture
+def built_repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
+    """The same shape after a REAL statistics build.
+
+    ``score`` has values and gets its histogram drawn; ``empty`` has a
+    configured number histogram but no values, so the build nullifies it
+    in its min/max pass and draws nothing (gain#1533).
+    """
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores/pos1",
+            a_position_score()
+            .with_score("score", "float")
+            .with_score("empty", "float")
+            .with_histogram({"type": "number", "number_of_bins": 10})
+            .with_na_values("NA")
+            .with_data("""
+                chrom  pos_begin  score  empty
+                1      10         0.1    NA
+                1      20         0.2    NA
+            """))
+        .with_public_url(PUBLIC_URL)
+        .build_repo(tmp_path / "grr")
+    )
+    resource = repo.get_resource("scores/pos1")
+    build_statistics(resource)
+    # The premise, not the subject: one drawn, one not.
+    assert resource.file_exists("statistics/histogram_score.png")
+    assert not resource.file_exists("statistics/histogram_empty.png")
+    return repo
 
 
 def genomic_score_help(
@@ -53,6 +92,27 @@ def test_the_help_embeds_the_histogram_by_its_public_address(
     repo: GenomicResourceRepo, tmp_path: pathlib.Path,
 ) -> None:
     help_text = genomic_score_help(repo, tmp_path, "score")
+
+    assert (
+        f"![HISTOGRAM]({PUBLIC_URL}/scores/pos1/statistics/"
+        f"histogram_score.png)"
+    ) in help_text
+
+
+def test_a_histogram_nullified_by_its_build_puts_no_image_in_the_help(
+    built_repo: GenomicResourceRepo, tmp_path: pathlib.Path,
+) -> None:
+    help_text = genomic_score_help(built_repo, tmp_path, "empty")
+
+    assert "![HISTOGRAM]" not in help_text
+    assert "None" not in help_text
+    assert "scores/pos1" in help_text
+
+
+def test_a_histogram_the_build_drew_is_embedded_in_the_help(
+    built_repo: GenomicResourceRepo, tmp_path: pathlib.Path,
+) -> None:
+    help_text = genomic_score_help(built_repo, tmp_path, "score")
 
     assert (
         f"![HISTOGRAM]({PUBLIC_URL}/scores/pos1/statistics/"

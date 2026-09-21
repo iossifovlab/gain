@@ -251,10 +251,16 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
         # An annulled histogram is never plotted, so it has no address:
         # a page that got one would point at a file nobody writes
         # (gain#1025).  Decided from the definition, not the statistics --
-        # see get_histogram_config.
+        # see get_histogram_config.  A stale image the manifest still
+        # lists does not revive it.
         if isinstance(self.get_histogram_config(score_id),
                       NullHistogramConfig):
             return None
+        # A configured histogram is a plan to draw, and the build can
+        # decline it -- a nan range, a value it cannot fold -- so what has
+        # an address is what the manifest LISTS (gain#1533).  Read through
+        # get_loaded_manifest: get_manifest would build one, an md5 scan
+        # of the whole resource, on a read-write protocol with none stored.
         image_filename = self.get_histogram_image_filename(score_id)
         manifest = self.resource.get_loaded_manifest()
         if manifest is not None and image_filename not in manifest:
@@ -264,7 +270,11 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
     def get_histogram_image_url(self, score_id: str) -> str | None:
         """Return the histogram image URL on the repository's own url.
 
-        ``None`` when the score's histogram is annulled by definition.
+        ``None`` when the score's histogram is annulled by definition, or
+        when the resource's manifest does not list the image -- the
+        statistics build declined to draw it, or has not run.  A resource
+        with no stored manifest is addressed by its definition alone.
+        The manifest is never built here.
         """
         return self._histogram_image_url(
             score_id, self.resource.get_url())
@@ -274,8 +284,8 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
 
         Unlike :meth:`get_histogram_image_url`, this is built from the
         resource's public URL so it is reachable from a browser even when
-        the GRR is a local directory repository.  ``None`` when the score's
-        histogram is annulled by definition, exactly as for the other.
+        the GRR is a local directory repository.  ``None`` under exactly
+        the conditions of the other.
         """
         return self._histogram_image_url(
             score_id, self.resource.get_public_url())

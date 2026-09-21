@@ -71,10 +71,14 @@ def test_the_histogram_image_url_inherits_the_same_join(
 ) -> None:
     # The histogram address is built from the resource's public url, so a
     # trailing separator would otherwise reach it as a "//" that no call
-    # site could repair -- the whole address is assembled internally.
+    # site could repair -- the whole address is assembled internally.  The
+    # score ships its image: only a listed image is addressed (gain#1533).
     repo = (
         a_grr()
-        .with_resource("scores/pos1", a_position_score())
+        .with_resource(
+            "scores/pos1",
+            a_position_score()
+            .with_file("statistics/histogram_score.png", "drawn"))
         .with_public_url("http://grr.example.org/")
         .build_repo(tmp_path)
     )
