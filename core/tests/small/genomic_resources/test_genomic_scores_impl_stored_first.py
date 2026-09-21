@@ -81,6 +81,8 @@ def test_a_stale_file_is_passed_over_for_the_live_ladder(
 def test_an_absent_file_is_the_live_ladder_and_stays_absent(
     tmp_path: pathlib.Path,
 ) -> None:
+    """A resource repaired before the file existed: live, and only a
+    repair writes the file."""
     a_repaired_labelled_score(tmp_path)
     _lengths_file(tmp_path).unlink()
     impl, repo = resynced(tmp_path)

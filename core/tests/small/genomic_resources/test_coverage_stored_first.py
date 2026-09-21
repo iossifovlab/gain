@@ -192,6 +192,8 @@ def _a_bigwig_repo(
 def test_a_repaired_bigwig_score_with_its_genome_at_hand_is_unchanged(
     tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
 ) -> None:
+    """The genome rung still comes first: the whole genome, roll-up
+    included, and no header read."""
     _a_bigwig_repo(tmp_path)
     impl, repo = _repaired(tmp_path)
     opened = mocker.spy(impl.score, "open")
@@ -246,6 +248,7 @@ def test_an_unrepaired_unlabelled_bigwig_score_opens_once_for_its_header(
 def test_a_repaired_unlabelled_bigwig_score_is_priced_without_opening(
     tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
 ) -> None:
+    """The header's sizes, as the repair stored them."""
     _a_bigwig_repo(tmp_path, labelled=False)
     impl, repo = _repaired(tmp_path)
     opened = mocker.spy(impl.score, "open")
