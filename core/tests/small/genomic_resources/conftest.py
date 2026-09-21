@@ -680,6 +680,17 @@ def label_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
     ]
 
 
+def overlap_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Only the warnings the contig-overlap check emitted (gain#1575),
+    selected on the phrase every one of them carries -- the same
+    selection as :func:`label_warnings`, for a resource that warns
+    about its label as well."""
+    return [
+        message for message in captured_warnings(caplog)
+        if "of the score's" in message
+    ]
+
+
 def a_resource_whose_meta_is(
     tmp_path: pathlib.Path, meta: Any,
 ) -> GenomicResource:

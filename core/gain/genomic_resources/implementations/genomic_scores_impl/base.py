@@ -11,6 +11,7 @@ from gain.genomic_resources.genomic_scores import (
 )
 from gain.genomic_resources.genomic_scores.chrom_lengths import (
     ChromLength,
+    ChromLengthSource,
     ContigExtent,
     derive_chrom_lengths,
 )
@@ -30,6 +31,7 @@ from gain.genomic_resources.score_implementation import (
 )
 from gain.genomic_resources.utils import read_resource_id_label
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
+from gain.utils.log_safety import escape_unsafe_characters
 from gain.utils.regions import (
     Region,
     split_into_regions,
@@ -38,6 +40,10 @@ from gain.utils.regions import (
 from . import scan
 
 logger = logging.getLogger(__name__)
+
+#: How many contigs the genome does not list are named before ``...``:
+#: a mapping onto hg38's alts leaves hundreds, and the count says so.
+_UNLISTED_CONTIGS_SAMPLE = 5
 
 
 class GenomicScoreImplementation(ScoreImplementationBase):
@@ -231,6 +237,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         ``best`` by rank; a contig with no length keeps the table's
         reason (``EMPTY`` / ``UNDETERMINED``) in its record.
 
+        With a genome that resolved, the contigs it does not list are
+        reported too (gain#1575): some of them is one WARNING per call,
+        all of them a ``ValueError``.
+
         Opens the score if it is closed, and closes it again only in
         that case -- an already-open score stays open for its owner.
         """
@@ -239,10 +249,52 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         if opened_here:
             self.score.open()
         try:
-            return derive_chrom_lengths(self.score, ref_genome)
+            lengths = derive_chrom_lengths(self.score, ref_genome)
         finally:
             if opened_here:
                 self.score.close()
+        if ref_genome is not None:
+            self._report_contig_overlap(ref_genome, lengths)
+        return lengths
+
+    def _report_contig_overlap(
+        self, ref_genome: ReferenceGenome, lengths: dict[str, ChromLength],
+    ) -> None:
+        """Say which of the score's contigs the genome does not list.
+
+        Read off the records: a contig the genome lists carries its
+        answer, whatever the table said.  Zero overlap is a mis-authored
+        label -- typically a ``chrom_mapping`` that does not produce the
+        genome's names -- and fails the resource; a mapping that leaves
+        some contigs off the genome on purpose is only warned about.
+        """
+        unlisted = [
+            chrom for chrom, record in lengths.items()
+            if ChromLengthSource.REFERENCE_GENOME not in record.answers
+        ]
+        if not unlisted:
+            return
+        # Repository content on a log line: a name is escaped so it
+        # cannot end the line and start a forged record (gain#642).
+        sample = [
+            escape_unsafe_characters(chrom)
+            for chrom in unlisted[:_UNLISTED_CONTIGS_SAMPLE]
+        ]
+        if len(unlisted) > _UNLISTED_CONTIGS_SAMPLE:
+            sample.append("...")
+        if len(unlisted) == len(lengths):
+            raise ValueError(
+                f"reference_genome {ref_genome.resource_id} of "
+                f"{self.resource.resource_id} lists none of the score's "
+                f"contigs ({', '.join(sample)}); a chrom_mapping that "
+                f"does not produce the genome's contig names is the usual "
+                f"cause")
+        logger.warning(
+            "reference_genome %s of %s does not list %d of the score's "
+            "%d contigs (%s); their lengths fall to the table's own "
+            "source",
+            ref_genome.resource_id, self.resource.resource_id,
+            len(unlisted), len(lengths), ", ".join(sample))
 
     def _resolve_labelled_genome(
         self, grr: GenomicResourceRepo | None,
