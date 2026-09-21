@@ -178,7 +178,9 @@ test.describe('Annotation pipeline state persistence across navigation', () => {
     await editor.newPipeline();
     await utils.typeInPipelineEditor(page, 'preamble:\n input_reference_genome: hg38/genomes/GRCh38-hg38');
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
-    await expect(page.getByText('Invalid configuration, reason: \'annotators\'')).toBeVisible();
+    await expect(page.getByText(
+      'Invalid configuration, reason: The \'annotators\' section of a pipeline configuration is required when the configuration is a mapping.'
+    )).toBeVisible();
 
     await goToAnnotationJobs(page);
 
@@ -186,7 +188,9 @@ test.describe('Annotation pipeline state persistence across navigation', () => {
     await expect(new AnnotationJobs(page).createButton).toBeDisabled();
     // The new component instance restores the text, ngModelChange fires, re-validation runs.
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
-    await expect(page.getByText('Invalid configuration, reason: \'annotators\'')).toBeVisible();
+    await expect(page.getByText(
+      'Invalid configuration, reason: The \'annotators\' section of a pipeline configuration is required when the configuration is a mapping.'
+    )).toBeVisible();
   });
 
   test('editor width is preserved across navigation to Annotation Jobs and back', async({ page }) => {

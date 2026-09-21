@@ -7,7 +7,14 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from textwrap import dedent
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    NotRequired,
+    TypedDict,
+    overload,
+)
 
 import yaml
 
@@ -69,7 +76,7 @@ def _hash_params(params: Any) -> int:
     return hash(json.dumps(params, sort_keys=True, default=str))
 
 
-class RawPreamble(TypedDict):
+class RawPreamble(TypedDict, total=False):
     summary: str
     description: str
     input_reference_genome: str
@@ -80,7 +87,7 @@ RawAnnotatorsConfig = list[dict[str, Any]]
 
 
 class RawFullConfig(TypedDict):
-    preamble: RawPreamble
+    preamble: NotRequired[RawPreamble]
     annotators: RawAnnotatorsConfig
 
 
@@ -859,8 +866,8 @@ class AnnotationConfigParser:
     def _parse_preamble(
         raw: RawPreamble,
         grr: GenomicResourceRepo | None = None,
-    ) -> AnnotationPreamble | None:
-        """Parse the preamble section of a pipeline config, if present."""
+    ) -> AnnotationPreamble:
+        """Parse the preamble section of a pipeline config."""
         if not set(raw.keys()) <= {
             "summary", "description", "input_reference_genome", "metadata",
         }:
@@ -902,6 +909,11 @@ class AnnotationConfigParser:
             return None, []
 
         if isinstance(pipeline_raw_config, dict):
+            if "annotators" not in pipeline_raw_config:
+                raise AnnotationConfigurationError(
+                    "The 'annotators' section of a pipeline configuration "
+                    "is required when the configuration is a mapping.",
+                )
             annotators = pipeline_raw_config["annotators"]
             # Insist on a list. Every other iterable shape YAML can put here
             # is iterated into nonsense rather than refused -- a string most
@@ -914,9 +926,21 @@ class AnnotationConfigParser:
                     "The 'annotators' section of a pipeline configuration "
                     f"must be a list, not {type(annotators).__name__}.",
                 )
-            preamble = AnnotationConfigParser._parse_preamble(
-                pipeline_raw_config["preamble"], grr,
-            )
+            # ``preamble: null`` is not a way to omit the preamble; leaving
+            # the key out is (the stance ``_parse_preamble`` takes for the
+            # genome id).
+            preamble = None
+            if "preamble" in pipeline_raw_config:
+                raw_preamble = pipeline_raw_config["preamble"]
+                if not isinstance(raw_preamble, dict):
+                    raise AnnotationConfigurationError(
+                        "The 'preamble' section of a pipeline "
+                        "configuration must be a mapping, not "
+                        f"{type(raw_preamble).__name__}.",
+                    )
+                preamble = AnnotationConfigParser._parse_preamble(
+                    raw_preamble, grr,
+                )
         elif isinstance(pipeline_raw_config, list):
             annotators = pipeline_raw_config
             preamble = None

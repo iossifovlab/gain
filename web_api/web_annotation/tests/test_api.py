@@ -506,6 +506,16 @@ def test_validate_annotation_config(
     assert response.status_code == 200
     assert response.json() == {"errors": ""}
 
+    # The mapping form needs no preamble (gain#1535).
+    annotation_config = "annotators:\n- position_score: scores/pos1"
+
+    response = user_client.post(
+        "/api/pipelines/validate",
+        {"config": annotation_config},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"errors": ""}
+
     annotation_config = "position_score: scores/pos1"
 
     response = user_client.post(
@@ -514,7 +524,11 @@ def test_validate_annotation_config(
     )
     assert response.status_code == 200
     assert response.json() == {
-        "errors": "Invalid configuration, reason: 'annotators'",
+        "errors": (
+            "Invalid configuration, reason: The 'annotators' section of a "
+            "pipeline configuration is required when the configuration is "
+            "a mapping."
+        ),
     }
 
     annotation_config = (
