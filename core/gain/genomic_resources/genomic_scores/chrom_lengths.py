@@ -191,9 +191,11 @@ def _serialize(
 
     A contig a source did not answer is absent from that source's block;
     a contig the TABLE could not answer carries the table's reason in
-    the table's own block, ``table_source``, and in no other.
+    the table's own block, ``table_source``, and in no other.  The
+    table's block comes first: it is the one that names every contig,
+    in the table's order, which is the order the file is read back in.
     """
-    sources: dict[str, dict[str, int | str]] = {}
+    sources: dict[str, dict[str, int | str]] = {table_source.value: {}}
     for chrom, resolved in stored.lengths.items():
         for source, length in resolved.answers.items():
             sources.setdefault(source.value, {})[chrom] = length
@@ -219,9 +221,9 @@ def _deserialize(content: str) -> StoredChromLengths | None:
     document = json.loads(content)
     if document["format"] != CHROM_LENGTHS_FORMAT:
         return None
-    # Contigs in order of first appearance across the blocks: the
-    # writer walks the table's order, so the table's block -- the one
-    # that names every contig -- keeps it.
+    # Contigs in order of first appearance across the blocks, which is
+    # the table's order: the writer puts the table's block -- the one
+    # that names every contig -- first.
     answers: dict[str, dict[ChromLengthSource, int]] = {}
     extents: dict[str, ContigExtent] = {}
     for source_name, block in document["sources"].items():
