@@ -14,12 +14,14 @@ from typing import ClassVar
 from gain.genomic_resources.genomic_scores.chrom_lengths import ChromLength
 from gain.genomic_resources.statistics.coverage import (
     COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
+    COVERAGE_STATISTICS,
     COVERAGE_STATISTICS_FILE,
     CoverageDisplay,
     CoverageStatistics,
     build_coverage_display,
     resolve_chrom_lengths,
 )
+from gain.genomic_resources.statistics.schema import StatisticsFile
 
 from .base import GenomicScoreImplementation
 
@@ -33,6 +35,9 @@ class PositionScoreImplementation(GenomicScoreImplementation):
     """
 
     template_name: ClassVar[str] = "position_score.jinja"
+
+    def statistics_files(self) -> list[StatisticsFile]:
+        return [COVERAGE_STATISTICS]
 
     @staticmethod
     def get_coverage_segment_lengths_image_filename() -> str:

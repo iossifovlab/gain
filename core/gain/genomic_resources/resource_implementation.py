@@ -13,7 +13,11 @@ import apsw
 from cerberus import Validator
 
 from gain import logging
-from gain.genomic_resources.statistics.schema import StatisticsFile
+from gain.genomic_resources.statistics.schema import (
+    StaleStatisticsFile,
+    StatisticsFile,
+    stale_statistics_files,
+)
 from gain.task_graph.graph import TaskDesc
 from gain.templates import get_template
 from gain.templates.breadcrumb import Crumb, page_breadcrumb
@@ -304,16 +308,19 @@ class GenomicResourceImplementation(ABC):
     def statistics_files(self) -> list[StatisticsFile]:
         """The versioned statistics files this resource's build writes.
 
-        The files under the statistics hash's lazy rollout -- whose only
-        rebuild lever is a forced run.  Each carries the ``format_version``
-        its writer currently stamps, so the repair flow can report a
-        resource whose stored statistics predate the schema (gain#1586).
-        A file a kind derives under a freshness gate of its own
-        (:meth:`derived_files_state`) is not one of them: that gate
-        rewrites it without a rebuild.  A kind with no such files declares
-        none and is never reported.
+        Each with the ``format_version`` its writer currently stamps.  A
+        file kept current by :meth:`derived_files_state` is not one of
+        them.  Default: none.
         """
         return []
+
+    def stale_statistics_files(self) -> list[StaleStatisticsFile]:
+        """The declared files this resource lacks or holds at an older version.
+
+        Empty for a kind that declares none.  Never a rebuild trigger:
+        the repair flow only reports what this answers (ADR 0020).
+        """
+        return stale_statistics_files(self.resource, self.statistics_files())
 
     @abstractmethod
     def calc_statistics_hash(self) -> bytes:

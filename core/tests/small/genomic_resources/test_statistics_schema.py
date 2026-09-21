@@ -19,12 +19,10 @@ DECLARED = StatisticsFile("statistics/coverage.json", 2)
 def _a_resource_holding(
     tmp_path: pathlib.Path, content: str | None,
 ) -> GenomicResource:
-    resource = a_position_score().build_resource(tmp_path)
+    builder = a_position_score()
     if content is not None:
-        statistics = tmp_path / "statistics"
-        statistics.mkdir()
-        (statistics / "coverage.json").write_text(content)
-    return resource
+        builder = builder.with_file(DECLARED.path, content)
+    return builder.build_resource(tmp_path)
 
 
 @pytest.mark.parametrize(("content", "expected"), [

@@ -15,11 +15,13 @@ from gain.genomic_resources.statistics.alleles import (
     ALLELE_COMPLEX_GRID_IMAGE_FILE,
     ALLELE_DELETION_LENGTHS_IMAGE_FILE,
     ALLELE_INSERTION_LENGTHS_IMAGE_FILE,
+    ALLELE_STATISTICS,
     ALLELE_STATISTICS_FILE,
     AlleleSectionDisplay,
     AlleleStatistics,
     build_allele_section_display,
 )
+from gain.genomic_resources.statistics.schema import StatisticsFile
 
 from .base import GenomicScoreImplementation
 
@@ -36,6 +38,9 @@ class AlleleScoreImplementation(GenomicScoreImplementation):
     """
 
     template_name: ClassVar[str] = "allele_score.jinja"
+
+    def statistics_files(self) -> list[StatisticsFile]:
+        return [ALLELE_STATISTICS]
 
     @staticmethod
     def get_allele_insertion_lengths_image_filename() -> str:

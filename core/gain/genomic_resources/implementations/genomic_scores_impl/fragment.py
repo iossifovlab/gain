@@ -12,11 +12,13 @@ from typing import ClassVar
 
 from gain.genomic_resources.statistics.fragments import (
     FRAGMENT_LENGTHS_IMAGE_FILE,
+    FRAGMENT_STATISTICS,
     FRAGMENT_STATISTICS_FILE,
     FragmentDisplay,
     FragmentStatistics,
     build_fragment_display,
 )
+from gain.genomic_resources.statistics.schema import StatisticsFile
 
 from .base import GenomicScoreImplementation
 
@@ -34,6 +36,9 @@ class FragmentScoreImplementation(GenomicScoreImplementation):
     """
 
     template_name: ClassVar[str] = "fragment_score.jinja"
+
+    def statistics_files(self) -> list[StatisticsFile]:
+        return [FRAGMENT_STATISTICS]
 
     @staticmethod
     def get_fragment_lengths_image_filename() -> str:

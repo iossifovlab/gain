@@ -76,7 +76,6 @@ from gain.genomic_resources.resource_implementation import (
     merge_index_columns,
     validate_index_columns,
 )
-from gain.genomic_resources.statistics.schema import stale_statistics_files
 from gain.task_graph.cli_tools import TaskGraphCli
 from gain.task_graph.graph import Task, TaskGraph, chain_tasks
 from gain.utils import fs_utils
@@ -961,14 +960,10 @@ def _stats_need_rebuild(
 def _report_stale_schema(impl: GenomicResourceImplementation) -> bool:
     """Log a resource whose stored statistics predate the current schema.
 
-    Asked only of a resource the hash gate is NOT rebuilding: the hash is
-    an input hash and never notices a release that added a statistic or
-    bumped a stored format (ADR 0020), so this is the one place the gap
-    the lazy rollout leaves is said out loud.  Logged only -- nothing is
-    rebuilt and nothing is counted, so a dry run's exit status does not
-    flip on a GAIn upgrade (gain#1586).
+    Logged only -- nothing is rebuilt and nothing is counted, so a dry
+    run's exit status does not flip on a GAIn upgrade (gain#1586).
     """
-    stale = stale_statistics_files(impl.resource, impl.statistics_files())
+    stale = impl.stale_statistics_files()
     if not stale:
         return False
     # The plain id, not the versioned one: it is what `-r` takes, so the
@@ -983,13 +978,7 @@ def _report_stale_schema(impl: GenomicResourceImplementation) -> bool:
 
 
 def _summarize_stale_schema(count: int) -> None:
-    """Say once, last, how many resources the schema report named.
-
-    After everything else the run says, where an operator running over a
-    whole repository reads -- and at WARNING, unlike the per-resource
-    lines, because it is the one thing in this run they must act on by
-    hand.  Silent at zero.
-    """
+    """One WARNING with the count of schema-stale resources; silent at zero."""
     if count:
         logger.warning(
             "%d resource(s) carry statistics that predate the current "

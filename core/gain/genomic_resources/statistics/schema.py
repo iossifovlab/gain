@@ -7,13 +7,8 @@ resource as :class:`StatisticsFile` records carrying those constants, and
 :func:`stale_statistics_files` compares what the resource holds against
 that declaration.
 
-The comparison is a report, never a rebuild trigger.  ``calc_statistics_hash``
-is an input hash (ADR 0020, "Alternatives considered"): a release that adds
-a statistic or bumps a stored format leaves every built resource's hash
-current, so the file stays as it was and the page reads "not computed"
-under a heading the code knows how to fill.  The repair flow reports what
-this module finds so that gap is visible, and leaves the rollout to a
-forced rebuild (gain#1586).
+The comparison is a report, never a rebuild trigger; ADR 0020's rollout
+bullet says why, and names a forced rebuild as the remedy (gain#1586).
 """
 from __future__ import annotations
 

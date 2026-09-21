@@ -60,8 +60,9 @@ from gain.genomic_resources.statistics.schema import StatisticsFile
 from gain.utils.chromosome_order import natural_chromosome_key
 
 FRAGMENT_STATISTICS_FILE = "statistics/fragments.json"
-#: The ``format_version`` :meth:`FragmentStatistics.serialize` stamps.
-FRAGMENT_FORMAT_VERSION = 2
+#: The file and the ``format_version`` :meth:`FragmentStatistics.serialize`
+#: stamps -- the one definition the writer and the schema check read.
+FRAGMENT_STATISTICS = StatisticsFile(FRAGMENT_STATISTICS_FILE, 2)
 FRAGMENT_LENGTHS_IMAGE_FILE = "statistics/fragment_lengths.png"
 
 #: How a failed fold of these regions is named in the message.
@@ -237,7 +238,7 @@ class FragmentStatistics(RegionFoldedStatistic[RegionFragments]):
         if global_lengths is not None:
             global_entry["fragment_lengths"] = global_lengths.stored()
         return json.dumps({
-            "format_version": FRAGMENT_FORMAT_VERSION,
+            "format_version": FRAGMENT_STATISTICS.format_version,
             "chromosomes": chromosomes,
             "global": global_entry,
         }, indent=2)
@@ -340,17 +341,6 @@ def region_fragments_for(
     if not isinstance(score, FragmentScore):
         return None
     return RegionFragments(chrom, start, end)
-
-
-def fragment_statistics_file_for(score: GenomicScore) -> StatisticsFile | None:
-    """The file a build writes for this score, ``None`` for other kinds.
-
-    Gated as :func:`region_fragments_for` is, so the declaration names the
-    file for the kinds whose build writes it.
-    """
-    if not isinstance(score, FragmentScore):
-        return None
-    return StatisticsFile(FRAGMENT_STATISTICS_FILE, FRAGMENT_FORMAT_VERSION)
 
 
 def accumulate_fragments(

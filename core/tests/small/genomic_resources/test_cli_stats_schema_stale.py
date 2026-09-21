@@ -23,6 +23,8 @@ from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
 from gain.genomic_resources.testing.builders import (
+    AlleleScoreBuilder,
+    FragmentScoreBuilder,
     PositionScoreBuilder,
     a_fragment_score,
     a_grr,
@@ -31,15 +33,14 @@ from gain.genomic_resources.testing.builders import (
 )
 from gain.genomic_resources.testing.gene_models_builder import a_gene_models
 
+from .test_cli_stats_chrom_lengths import resync_the_manifest
+
 
 def _a_position_score() -> PositionScoreBuilder:
     return (
         a_position_score()
         .with_tabix()
         .with_score("value", "float")
-        .with_histogram({
-            "type": "number", "number_of_bins": 4,
-            "view_range": {"min": 0.0, "max": 1.0}})
         .with_data("""
             chrom  pos_begin  pos_end  value
             chr1   10         15       0.2
@@ -48,15 +49,42 @@ def _a_position_score() -> PositionScoreBuilder:
     )
 
 
-def _rewrite_format_version(path: pathlib.Path, version: int) -> None:
+def _a_fragment_score() -> FragmentScoreBuilder:
+    return (
+        a_fragment_score()
+        .with_tabix()
+        .with_score("value", "float")
+        .with_data("""
+            chrom  pos_begin  pos_end  value
+            chr1   10         20       0.2
+            chr1   15         25       0.4
+        """)
+    )
+
+
+def _an_allele_score() -> AlleleScoreBuilder:
+    return (
+        an_allele_score()
+        .with_score("freq", "float")
+        .with_data("""
+            chrom  pos_begin  reference  alternative  freq
+            chr1   10         A          G            0.1
+            chr1   10         A          C            0.2
+        """)
+    )
+
+
+def _age_coverage_to_v1(repo: pathlib.Path, resource_dir: str) -> None:
+    """Rewrite the built ``coverage.json`` to version 1, manifest current.
+
+    The state a resource built by an older GAIn is in: hash and manifest
+    both current, the schema the only thing out of date.
+    """
+    path = repo / resource_dir / "statistics" / "coverage.json"
     document = json.loads(path.read_text())
-    document["format_version"] = version
+    document["format_version"] = 1
     path.write_text(json.dumps(document, indent=2))
-
-
-def _bring_manifest_current(repo: pathlib.Path, resource_id: str) -> None:
-    cli_manage([
-        "resource-manifest", "-r", resource_id, "-R", str(repo)])
+    resync_the_manifest(repo, resource_dir.split("(")[0])
 
 
 @pytest.fixture
@@ -64,17 +92,27 @@ def position_score_at_coverage_v1(tmp_path: pathlib.Path) -> pathlib.Path:
     """A repo of one position score whose ``coverage.json`` is at version 1."""
     a_grr().with_resource("one", _a_position_score()).build_repo(tmp_path)
     cli_manage(["resource-repair", "-r", "one", "-R", str(tmp_path), "-j", "1"])
-    _rewrite_format_version(
-        tmp_path / "one" / "statistics" / "coverage.json", 1)
-    _bring_manifest_current(tmp_path, "one")
+    _age_coverage_to_v1(tmp_path, "one")
     return tmp_path
 
 
 def _schema_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Every line of the report, per-resource and summary, in log order."""
     return [
         record.getMessage() for record in caplog.records
         if "predate the current schema" in record.getMessage()
     ]
+
+
+def _resource_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        line for line in _schema_lines(caplog) if line.startswith("Statistics")
+    ]
+
+
+def _the_report_line(caplog: pytest.LogCaptureFixture) -> str:
+    [line] = _resource_lines(caplog)
+    return line
 
 
 def test_dry_run_reports_a_coverage_file_behind_the_writer(
@@ -88,9 +126,7 @@ def test_dry_run_reports_a_coverage_file_behind_the_writer(
     with caplog.at_level(logging.INFO, logger="grr_manage"):
         cli_manage(["repo-repair", "--dry-run", "-R", str(repo), "-j", "1"])
 
-    [line] = [
-        line for line in _schema_lines(caplog) if line.startswith("Statistics")
-    ]
+    line = _the_report_line(caplog)
     assert "<one>" in line
     assert "statistics/coverage.json" in line
     assert "1 -> 2" in line
@@ -121,9 +157,7 @@ def test_unforced_repair_reports_the_same_line_and_rebuilds_nothing(
     with caplog.at_level(logging.INFO, logger="grr_manage"):
         cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
 
-    [line] = [
-        line for line in _schema_lines(caplog) if line.startswith("Statistics")
-    ]
+    line = _the_report_line(caplog)
     assert "statistics/coverage.json 1 -> 2" in line
     # Reported, not acted on: the file is still at version 1, and not one
     # statistics file was rewritten, added or removed
@@ -156,38 +190,15 @@ def fragment_without_its_file_beside_a_current_allele_score(
     """A fragment score with no ``fragments.json``, an allele score as built."""
     (
         a_grr()
-        .with_resource(
-            "fragments",
-            a_fragment_score()
-            .with_tabix()
-            .with_score("value", "float")
-            .with_histogram({
-                "type": "number", "number_of_bins": 4,
-                "view_range": {"min": 0.0, "max": 1.0}})
-            .with_data("""
-                chrom  pos_begin  pos_end  value
-                chr1   10         20       0.2
-                chr1   15         25       0.4
-            """))
-        .with_resource(
-            "alleles",
-            an_allele_score()
-            .with_score("freq", "float")
-            .with_histogram({
-                "type": "number", "number_of_bins": 4,
-                "view_range": {"min": 0.0, "max": 1.0}})
-            .with_data("""
-                chrom  pos_begin  reference  alternative  freq
-                chr1   10         A          G            0.1
-                chr1   10         A          C            0.2
-            """))
+        .with_resource("fragments", _a_fragment_score())
+        .with_resource("alleles", _an_allele_score())
         .build_repo(tmp_path)
     )
     cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
     fragments = tmp_path / "fragments" / "statistics" / "fragments.json"
     assert fragments.exists()
     fragments.unlink()
-    _bring_manifest_current(tmp_path, "fragments")
+    resync_the_manifest(tmp_path, "fragments")
     return tmp_path
 
 
@@ -200,9 +211,7 @@ def test_a_missing_declared_file_is_reported_and_a_current_one_is_not(
     with caplog.at_level(logging.INFO, logger="grr_manage"):
         cli_manage(["repo-repair", "--dry-run", "-R", str(repo), "-j", "1"])
 
-    [line] = [
-        line for line in _schema_lines(caplog) if line.startswith("Statistics")
-    ]
+    line = _the_report_line(caplog)
     assert "<fragments>" in line
     assert "statistics/fragments.json missing -> 2" in line
     assert not any("<alleles>" in line for line in _schema_lines(caplog))
@@ -217,7 +226,7 @@ def test_a_resource_the_hash_gate_rebuilds_is_not_also_schema_stale(
     # ... whose hash is gone as well -- and the manifest brought current
     # again, so the hash is the ONE reason the gate fires
     (repo / "one" / "statistics" / "stats_hash").unlink()
-    _bring_manifest_current(repo, "one")
+    resync_the_manifest(repo, "one")
 
     with caplog.at_level(logging.INFO, logger="grr_manage"), \
             pytest.raises(SystemExit) as excinfo:
@@ -240,9 +249,7 @@ def two_stale_scores_and_gene_models(tmp_path: pathlib.Path) -> pathlib.Path:
     )
     cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
     for resource_id in ("one", "two"):
-        _rewrite_format_version(
-            tmp_path / resource_id / "statistics" / "coverage.json", 1)
-        _bring_manifest_current(tmp_path, resource_id)
+        _age_coverage_to_v1(tmp_path, resource_id)
     return tmp_path
 
 
@@ -257,9 +264,7 @@ def test_a_repository_run_ends_with_one_summary_naming_the_count(
     with caplog.at_level(logging.INFO, logger="grr_manage"):
         cli_manage(["repo-repair", *mode, "-R", str(repo), "-j", "1"])
 
-    per_resource = [
-        line for line in _schema_lines(caplog) if line.startswith("Statistics")
-    ]
+    per_resource = _resource_lines(caplog)
     reported = [
         line[len("Statistics of <"):].split(">")[0] for line in per_resource
     ]
@@ -275,9 +280,7 @@ def test_a_repository_run_ends_with_one_summary_naming_the_count(
     ]
     assert "2 resource(s)" in summary.getMessage()
     assert "resource-stats -f" in summary.getMessage()
-    assert caplog.records.index(summary) > max(
-        caplog.records.index(record) for record in caplog.records
-        if record.getMessage() in per_resource)
+    assert _schema_lines(caplog)[-1] == summary.getMessage()
 
 
 def _versioned_files_written(resource_dir: pathlib.Path) -> dict[str, int]:
@@ -307,31 +310,8 @@ def test_each_kind_declares_exactly_the_versioned_files_its_build_writes(
     (
         a_grr()
         .with_resource("position", _a_position_score())
-        .with_resource(
-            "fragment",
-            a_fragment_score()
-            .with_tabix()
-            .with_score("value", "float")
-            .with_histogram({
-                "type": "number", "number_of_bins": 4,
-                "view_range": {"min": 0.0, "max": 1.0}})
-            .with_data("""
-                chrom  pos_begin  pos_end  value
-                chr1   10         20       0.2
-                chr1   15         25       0.4
-            """))
-        .with_resource(
-            "allele",
-            an_allele_score()
-            .with_score("freq", "float")
-            .with_histogram({
-                "type": "number", "number_of_bins": 4,
-                "view_range": {"min": 0.0, "max": 1.0}})
-            .with_data("""
-                chrom  pos_begin  reference  alternative  freq
-                chr1   10         A          G            0.1
-                chr1   10         A          C            0.2
-            """))
+        .with_resource("fragment", _a_fragment_score())
+        .with_resource("allele", _an_allele_score())
         .with_resource("genes", a_gene_models())
         .build_repo(tmp_path)
     )
@@ -373,16 +353,12 @@ def test_the_remedy_names_the_plain_id_of_a_versioned_resource(
     """``-r`` takes the id without its version, so the line must print that."""
     a_grr().with_resource("one(2.0)", _a_position_score()).build_repo(tmp_path)
     cli_manage(["resource-repair", "-r", "one", "-R", str(tmp_path), "-j", "1"])
-    _rewrite_format_version(
-        tmp_path / "one(2.0)" / "statistics" / "coverage.json", 1)
-    _bring_manifest_current(tmp_path, "one")
+    _age_coverage_to_v1(tmp_path, "one(2.0)")
 
     with caplog.at_level(logging.INFO, logger="grr_manage"):
         cli_manage(["repo-repair", "--dry-run", "-R", str(tmp_path), "-j", "1"])
 
-    [line] = [
-        line for line in _schema_lines(caplog) if line.startswith("Statistics")
-    ]
+    line = _the_report_line(caplog)
     assert "grr_manage resource-stats -r one -f" in line
 
 
@@ -399,15 +375,13 @@ def test_a_derived_file_rewritten_on_its_own_does_not_cure_the_report(
     repo = position_score_at_coverage_v1
     statistics = repo / "one" / "statistics"
     (statistics / "chrom_lengths.json").unlink()
-    _bring_manifest_current(repo, "one")
+    resync_the_manifest(repo, "one")
 
     with caplog.at_level(logging.INFO, logger="grr_manage"):
         cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
 
     assert (statistics / "chrom_lengths.json").exists()
-    [line] = [
-        line for line in _schema_lines(caplog) if line.startswith("Statistics")
-    ]
+    line = _the_report_line(caplog)
     assert "statistics/coverage.json 1 -> 2" in line
     assert json.loads(
         (statistics / "coverage.json").read_text())["format_version"] == 1
