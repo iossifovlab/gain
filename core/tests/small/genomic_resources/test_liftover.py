@@ -18,6 +18,7 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
 )
+from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     build_inmemory_test_resource,
@@ -118,18 +119,9 @@ def test_a_chain_takes_its_genome_ids_from_the_labels() -> None:
     assert chain.target_genome_id == "hg38"
 
 
-@pytest.mark.parametrize("labels", ["some text", ["a", "b"], 2019, None])
-def test_a_chain_whose_labels_are_not_a_mapping_still_builds(
-    labels: Any,
-) -> None:
-    """Constructing a chain must not raise on a malformed ``meta.labels``.
-
-    The chain used to index ``config["meta"]["labels"]`` itself instead of
-    reading the resource's labels, so a scalar there ended a *liftover
-    annotation* -- not merely a search -- in an ``AttributeError`` at
-    construction (gain#654). Both genome ids are simply left unset.
-    """
-    chain = LiftoverChain(_a_liftover_chain_resource(labels))
+def test_a_chain_whose_labels_are_null_declares_no_genomes() -> None:
+    """``labels: null`` is a well-formed way of declaring no labels."""
+    chain = LiftoverChain(_a_liftover_chain_resource(None))
 
     assert chain.source_genome_id is None
     assert chain.target_genome_id is None
@@ -150,12 +142,77 @@ def _a_liftover_chain_under_a_real_id(
     against which ``id in message`` holds for every message ever
     written and so pins nothing.
     """
+    return _a_chain_under_a_real_id_configured(
+        tmp_path, _a_chain_config(labels))
+
+
+def _a_chain_under_a_real_id_configured(
+    tmp_path: pathlib.Path, config: str,
+) -> GenomicResource:
+    """A chain under ``A_CHAIN_ID`` whose config is ``config``, verbatim."""
     setup_directories(tmp_path, {
         A_CHAIN_GROUP: {
-            A_CHAIN_NAME: {"genomic_resource.yaml": _a_chain_config(labels)},
+            A_CHAIN_NAME: {"genomic_resource.yaml": config},
         },
     })
     return build_filesystem_test_repository(tmp_path).get_resource(A_CHAIN_ID)
+
+
+@pytest.mark.parametrize("field", [
+    # A typo of `filename`.
+    pytest.param({"file_name": "liftover.chain.gz"},
+                 id="a-key-the-schema-does-not-know"),
+    # A reference genome spells `chrom_prefix` as a flat string, and the
+    # two resource types sit side by side in a repository -- on a chain
+    # it is a mapping of two coordinate sides.
+    pytest.param({"chrom_prefix": "chr"},
+                 id="the-genome-spelling-of-chrom_prefix"),
+])
+def test_a_chain_config_outside_its_schema_is_refused(
+    tmp_path: pathlib.Path, field: dict[str, Any],
+) -> None:
+    """The chain runs the schema it declares: a config outside it refuses
+    the chain at construction, naming the resource."""
+    resource = _a_chain_under_a_real_id_configured(tmp_path, yaml.safe_dump({
+        "type": "liftover_chain",
+        "filename": "liftover.chain.gz",
+        **field,
+    }))
+
+    with pytest.raises(MalformedResourceError, match=A_CHAIN_ID):
+        LiftoverChain(resource)
+
+
+def test_a_chain_whose_chrom_prefix_is_null_rewrites_nothing(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A bare ``chrom_prefix:`` line -- the key with its subsections
+    commented out -- means no rewrite on either side, as absence does."""
+    resource = _a_chain_under_a_real_id_configured(tmp_path, yaml.safe_dump({
+        "type": "liftover_chain",
+        "filename": "liftover.chain.gz",
+        "chrom_prefix": None,
+    }))
+
+    chain = LiftoverChain(resource)
+
+    assert chain.map_chromosome("chr1", chain.chrom_variant_coordinates) \
+        == "chr1"
+    assert chain.map_chromosome("chr1", chain.chrom_target_coordinates) \
+        == "chr1"
+
+
+@pytest.mark.parametrize("labels", ["some text", ["a", "b"], 2019])
+def test_a_chain_whose_labels_are_not_a_mapping_is_refused(
+    tmp_path: pathlib.Path, labels: Any,
+) -> None:
+    """A non-mapping ``meta.labels`` refuses the chain as the resource's
+    own fault, naming it -- the way every validating type refuses one
+    (ADR 0031), and not the bare ``AttributeError`` of gain#654."""
+    resource = _a_liftover_chain_under_a_real_id(tmp_path, labels)
+
+    with pytest.raises(MalformedResourceError, match=A_CHAIN_ID):
+        LiftoverChain(resource)
 
 
 @pytest.mark.parametrize(

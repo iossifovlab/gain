@@ -92,6 +92,7 @@ of one decision will drift.
 | [0028](0028-a-test-may-not-grow-the-heap-past-its-own-budget.md) | A test may not grow the heap past its own budget | accepted |
 | [0029](0029-wildcard-expandability-is-parser-policy.md) | Wildcard expandability is parser policy, pinned against the annotators | accepted |
 | [0030](0030-the-description-renders-behind-a-shadow-root-on-purpose.md) | The resource page's description renders behind a shadow root, on purpose | accepted |
+| [0031](0031-declaring-a-config-schema-obliges-a-type-to-run-it.md) | Declaring a config schema obliges a type to run it | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;
