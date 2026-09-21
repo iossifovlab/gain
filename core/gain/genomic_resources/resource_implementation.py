@@ -314,11 +314,11 @@ class GenomicResourceImplementation(ABC):
     def stored_statistics(self) -> list[StoredStatistic]:
         """The versioned statistics files a build writes for this resource.
 
-        What the repair flow checks a hash-current resource against, to
-        REPORT -- never to rebuild -- statistics that predate the schema
-        (gain#1586).  Not part of the statistics hash, which stays an
-        input hash (gain#706, ADR 0020).  Empty by default: a kind that
-        declares nothing is never reported.
+        Each names a file and the ``format_version`` its writer stamps.
+        The repair flow compares a hash-current resource's stored files
+        against them and reports -- never rebuilds -- one that is
+        missing or older.  Not part of the statistics hash.  Empty by
+        default: a kind that declares nothing is never reported.
         """
         return []
 

@@ -962,19 +962,18 @@ def _report_schema_stale_statistics(
 ) -> bool:
     """Log a hash-current resource whose statistics predate the schema.
 
-    True when it did.  One line naming each declared file that is
+    True when it did.  One INFO line naming each declared file that is
     missing or carries an older ``format_version`` than its writer
-    stamps now, and the ``-f`` remedy; a file that does not parse is
-    left to whatever reads it.  Nothing here feeds the task graph or
-    the dry-run count: the hash says nothing about which statistics
-    the running GAIn builds (see ``stored_statistics``), and the
-    rollout of a new one stays deliberate (ADR 0020, gain#925).
+    stamps now, and the ``-f`` remedy.  A file that cannot be read as a
+    JSON document is left to whatever reads it.  Reports only: nothing
+    here feeds the task graph, the dry-run count or the failed set.
     """
     stale: list[str] = []
     for stored in impl.stored_statistics():
         try:
-            version = stored.stored_version(
-                impl.resource.get_file_content(stored.file))
+            with impl.resource.open_raw_file(
+                    stored.file, mode="rb") as infile:
+                version = stored.stored_version(infile.read())
         except FileNotFoundError:
             stale.append(
                 f"{stored.file} is missing "

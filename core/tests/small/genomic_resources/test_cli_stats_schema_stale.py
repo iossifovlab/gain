@@ -355,6 +355,43 @@ def test_a_file_whose_version_is_not_a_number_is_reported_not_failed(
     assert "statistics of <pos> predate the current schema" in caplog.text
 
 
+def test_a_boolean_version_reads_as_no_version_at_all(
+    position_score_at_v1: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # JSON `true` is an int to Python; it is not a version.
+    path = position_score_at_v1
+    coverage_file = path / "pos" / COVERAGE_STATISTICS_FILE
+    data = json.loads(coverage_file.read_text())
+    data["format_version"] = True
+    coverage_file.write_text(json.dumps(data))
+    _refresh_manifest(path)
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "--dry-run", "-R", str(path), "-j", "1"])
+
+    assert "is at format version 0 " in caplog.text
+    assert "format version True" not in caplog.text
+
+
+def test_a_file_that_is_not_text_is_neither_reported_nor_failed(
+    position_score_at_v1: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Not this check's finding: whatever reads the file reports it.  A
+    # report must never be the reason a resource FAILS.
+    path = position_score_at_v1
+    (path / "pos" / COVERAGE_STATISTICS_FILE).write_bytes(b"\xff\xfe\x00")
+    _refresh_manifest(path)
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "--dry-run", "-R", str(path), "-j", "1"])
+
+    assert "is consistent" in caplog.text
+    assert "skipping statistics for" not in caplog.text
+    assert "predate the current schema" not in caplog.text
+
+
 def test_a_resource_whose_hash_is_stale_is_only_reported_as_needing_update(
     position_score_at_v1: pathlib.Path,
     caplog: pytest.LogCaptureFixture,

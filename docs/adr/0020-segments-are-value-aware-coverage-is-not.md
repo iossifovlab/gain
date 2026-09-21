@@ -347,8 +347,8 @@ alt-minus-ref, not an absolute value.
   visible rather than silent: an unforced repair and `--dry-run` name each
   hash-current resource whose stored statistics predate the schema — a
   file the kind builds missing, or its `format_version` behind the
-  writer's — with the file, the versions and the `-f` remedy, rebuild
-  nothing, and leave the dry run's exit count the hash's alone.*
+  writer's — with the file, the versions and the `-f` remedy, and rebuild
+  nothing; the dry run's exit count remains based on the hash alone.*
 - **The rollout lever is a forced rebuild** — verified and pinned in #774.
   Forcing is therefore the only deliberate way to put the new statistics on
   an already-built resource: `grr_manage resource-stats -r <resource_id> -f`
