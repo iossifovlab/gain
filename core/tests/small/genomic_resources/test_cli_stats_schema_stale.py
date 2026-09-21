@@ -56,7 +56,7 @@ def _bring_manifest_current(repo: pathlib.Path, resource_id: str) -> None:
 def position_score_at_coverage_v1(tmp_path: pathlib.Path) -> pathlib.Path:
     """A repo of one position score whose ``coverage.json`` is at version 1."""
     a_grr().with_resource("one", _a_position_score()).build_repo(tmp_path)
-    cli_manage(["resource-stats", "-r", "one", "-R", str(tmp_path), "-j", "1"])
+    cli_manage(["resource-repair", "-r", "one", "-R", str(tmp_path), "-j", "1"])
     _rewrite_format_version(
         tmp_path / "one" / "statistics" / "coverage.json", 1)
     _bring_manifest_current(tmp_path, "one")
@@ -89,3 +89,52 @@ def test_dry_run_reports_a_coverage_file_behind_the_writer(
     assert "1 -> 2" in line
     assert "grr_manage resource-stats -r one -f" in line
     assert "Statistics of <one> needs update" not in caplog.text
+
+
+def _mtimes(statistics: pathlib.Path) -> dict[pathlib.Path, int]:
+    """Every file the statistics BUILD writes, by modification time.
+
+    The statistics page is left out: a repair re-renders every page
+    whether or not anything changed, and a render is not a rebuild.
+    """
+    return {
+        path: path.stat().st_mtime_ns for path in statistics.iterdir()
+        if path.suffix != ".html"
+    }
+
+
+def test_unforced_repair_reports_the_same_line_and_rebuilds_nothing(
+    position_score_at_coverage_v1: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    repo = position_score_at_coverage_v1
+    statistics = repo / "one" / "statistics"
+    before = _mtimes(statistics)
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "-R", str(repo), "-j", "1"])
+
+    [line] = [
+        line for line in _schema_lines(caplog) if line.startswith("Statistics")
+    ]
+    assert "statistics/coverage.json 1 -> 2" in line
+    # Reported, not acted on: the file is still at version 1, and not one
+    # statistics file was rewritten, added or removed
+    assert json.loads(
+        (statistics / "coverage.json").read_text())["format_version"] == 1
+    assert _mtimes(statistics) == before
+
+
+def test_forced_repair_reports_nothing_and_rebuilds(
+    position_score_at_coverage_v1: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    repo = position_score_at_coverage_v1
+    coverage = repo / "one" / "statistics" / "coverage.json"
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "-f", "-R", str(repo), "-j", "1"])
+
+    assert _schema_lines(caplog) == []
+    # Forcing IS the remedy: the writer stamped its current version
+    assert json.loads(coverage.read_text())["format_version"] == 2

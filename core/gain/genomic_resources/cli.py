@@ -1069,6 +1069,8 @@ def _run_stats_core(
                     graph, proto, impl, repo,
                     region_size=region_size)
                 stats_resources.append(res)
+            else:
+                _report_stale_schema(impl)
         except Exception as err:  # ruff: ignore[blind-except]
             # Collected, not raised: the resources after this one in the
             # repository are still repaired.
