@@ -82,19 +82,27 @@ tests:
   # from the installed dist's metadata, so a script or plugin added to
   # core/pyproject.toml is covered without touching this recipe. A run dep
   # missing from the list above surfaces as an ImportError.
+  #
+  # The walk never imports the run deps that only a lazy or engine-style
+  # import reaches (openpyxl, docker, dask-jobqueue, s3fs); `pip check`
+  # covers those by the wheel's Requires-Dist metadata. It runs here, in
+  # the same environment as the walk, rather than as a second `python:`
+  # test entry: rattler-build solves and installs a fresh environment per
+  # test entry, so one entry is one install per package (#1600). The
+  # script stops at the first failing command (rattler-build runs it under
+  # `set -e`), so a walk failure is never masked by a passing `pip check`.
+  # `pip` is a test-only requirement -- the `python:` test type used to add
+  # it implicitly.
   - script:
       - python tests/entry_point_walk.py ${{ name }}
+      - python -c "import gain"
+      - pip check
+    requirements:
+      run:
+        - pip
     files:
       recipe:
         - tests/entry_point_walk.py
-
-  # The walk never imports the run deps that only a lazy or engine-style
-  # import reaches (openpyxl, docker, dask-jobqueue, s3fs); `pip check`
-  # covers those by the wheel's Requires-Dist metadata.
-  - python:
-      imports:
-        - gain
-      pip_check: true
 
 about:
   homepage: https://github.com/IossifovLab/gain

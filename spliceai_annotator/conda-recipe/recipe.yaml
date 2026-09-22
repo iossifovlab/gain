@@ -58,17 +58,21 @@ tests:
   # bioconda: the Jenkinsfiles offer the core recipe's output dir as a
   # channel so the gain-core built moments earlier is what resolves here.
   # The walk runs every console script with --help and loads every gain.*
-  # entry point this dist declares (see core/conda-recipe/tests/).
+  # entry point this dist declares (see core/conda-recipe/tests/); the
+  # top-level import and `pip check` share its environment rather than a
+  # second test entry, because rattler-build installs one environment per
+  # entry (#1600, rationale in the core recipe). `pip` is a test-only
+  # requirement.
   - script:
       - python tests/entry_point_walk.py ${{ name }}
+      - python -c "import spliceai_annotator"
+      - pip check
+    requirements:
+      run:
+        - pip
     files:
       source:
         - tests/entry_point_walk.py
-
-  - python:
-      imports:
-        - spliceai_annotator
-      pip_check: true
 
 about:
   homepage: https://github.com/IossifovLab/gain
