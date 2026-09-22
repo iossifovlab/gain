@@ -130,20 +130,18 @@
            marked so a reader need not scan the genome column for the
            gap.  The marker is nested inside the contig cell, after the
            name, so the cell's own text -- and its sort key -- stay the
-           contig. -#}
-        <tr{% if row.unlisted %} class="unlisted-contig"{% endif %}>
+           contig; it is the one hook for a stylesheet or a test. -#}
+        <tr>
             <td data-sort-value="{{ natural_chromosome_key(row.chrom) }}">{{ row.chrom }}{% if row.unlisted %} <span class="unlisted-marker text-muted" title="listed by the score's table, not by its reference genome">not in genome</span>{% endif %}</td>
             {%- for cell in row.cells %}
             {#- A length sorts on its number.  A cell with no answer, and
                one carrying the table's reason instead of a number, has
                nothing to sort on and carries no key at all, so the
                sorter puts it last whichever way the column points. -#}
-            {%- if cell is number %}
-            <td data-sort-value="{{ cell }}">{{ cell }}</td>
-            {%- elif cell != None %}
-            <td>{{ cell }}</td>
+            {%- if cell.length != None %}
+            <td data-sort-value="{{ cell.length }}">{{ cell.length }}</td>
             {%- else %}
-            <td></td>
+            <td>{{ cell.text }}</td>
             {%- endif %}
             {%- endfor %}
         </tr>
@@ -162,9 +160,11 @@
    (gain#1118); a fragment score's rows overlap, so the union counts
    nothing anyone asks for (gain#1127).  Filled by position_score.jinja.
 
-   Every section is a slot here, so a kind added later inherits no
+   Every KIND section is a slot here, so a kind added later inherits no
    section it cannot fill -- the kind -> section relation is which
-   template a class names, and nothing else (gain#1210). #}
+   template a class names, and nothing else (gain#1210).  The Scores
+   and Chromosome lengths sections above are not slots because every
+   kind fills them: the base implementation renders both. #}
 {% block coverage %}{% endblock %}
 
 {# Empty by default, for the reason the fragments block below is:

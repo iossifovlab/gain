@@ -49,8 +49,16 @@ def a_repaired_labelled_score(
 ) -> tuple[GenomicScoreImplementation, GenomicResourceRepo]:
     """The labelled tabix score, repaired, and a fresh view of its repo."""
     a_labelled_tabix_score_grr(genome_id=genome_id).build_repo(tmp_path)
-    resource_stats(tmp_path, "score")
-    return resynced(tmp_path)
+    return repaired(tmp_path, "score")
+
+
+def repaired(
+    tmp_path: pathlib.Path, resource_id: str,
+) -> tuple[GenomicScoreImplementation, GenomicResourceRepo]:
+    """The resource repaired -- statistics and stored lengths -- and a
+    fresh view of the repository as it is on disk now."""
+    resource_stats(tmp_path, resource_id)
+    return resynced(tmp_path, resource_id)
 
 
 def resynced(

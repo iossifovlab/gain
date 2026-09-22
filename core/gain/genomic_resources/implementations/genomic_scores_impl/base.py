@@ -13,7 +13,6 @@ from gain.genomic_resources.genomic_scores import (
 from gain.genomic_resources.genomic_scores.chrom_lengths import (
     ChromLength,
     ChromLengthsDisplay,
-    ChromLengthSource,
     ContigExtent,
     DerivedFrom,
     StoredChromLengths,
@@ -437,15 +436,15 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> None:
         """Say which of the score's contigs the genome does not list.
 
-        Read off the records: a contig the genome lists carries its
-        answer, whatever the table said.  Zero overlap is a mis-authored
+        Read off the records, which is where "unlisted" is defined
+        (``ChromLength.listed_by_genome``).  Zero overlap is a mis-authored
         label -- typically a ``chrom_mapping`` that does not produce the
         genome's names -- and fails the resource; a mapping that leaves
         some contigs off the genome on purpose is only warned about.
         """
         unlisted = [
             chrom for chrom, record in lengths.items()
-            if ChromLengthSource.REFERENCE_GENOME not in record.answers
+            if not record.listed_by_genome
         ]
         if not unlisted:
             return
