@@ -45,10 +45,7 @@ class VerbosityConfiguration:
 
     @staticmethod
     def adjust_verbosity(loglevel: int) -> None:
-        """Set logging level according to the verbosity specified."""
-        logging.getLogger("dae.effect_annotation").setLevel(
-            max(loglevel, logging.INFO))
-
+        """Keep the chatty third-party loggers no louder than the CLI."""
         logging.getLogger("impala").setLevel(logging.WARNING)
         logging.getLogger("distributed").setLevel(logging.WARNING)
         logging.getLogger("bokeh").setLevel(logging.ERROR)
