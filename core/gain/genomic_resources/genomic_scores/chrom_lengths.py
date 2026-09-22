@@ -35,7 +35,7 @@ import functools
 import json
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from gain import logging
 from gain.genomic_resources.genomic_position_table import (
@@ -73,12 +73,15 @@ __all__ = [
     "CHROM_LENGTHS_FORMAT",
     "ChromLength",
     "ChromLengthAnswer",
+    "ChromLengthRow",
     "ChromLengthSource",
+    "ChromLengthsDisplay",
     "ContigExtent",
     "DerivedFrom",
     "StoredChromLengths",
     "as_chrom_length_source",
     "best_chrom_length",
+    "build_chrom_lengths_display",
     "derive_chrom_length",
     "derive_chrom_lengths",
     "files_md5_of",
@@ -268,6 +271,56 @@ class StoredChromLengths:
 def ranked(sources: Collection[ChromLengthSource]) -> list[ChromLengthSource]:
     """``sources`` best first: the members are declared in ladder order."""
     return [source for source in ChromLengthSource if source in sources]
+
+
+class ChromLengthRow(NamedTuple):
+    """One contig of the Chromosome lengths table.
+
+    ``cells`` is aligned with the display's ``sources``: the source's
+    length, the table's reason (``empty`` / ``undetermined``) in the
+    table's own column, or ``None`` where the source had no answer.
+    ``unlisted`` says the genome column is there and this contig is not
+    in it -- the partial-overlap case the repair warned about
+    (gain#1575), which the page marks so a reader need not scan the
+    column for the gap.
+    """
+
+    chrom: str
+    cells: list[int | str | None]
+    unlisted: bool
+
+
+class ChromLengthsDisplay(NamedTuple):
+    """The Chromosome lengths section's render payload (gain#1579).
+
+    Built from a stored record and nothing else: the section shows what
+    the repair stored, one column per source it stored, and never
+    resolves a genome or opens a table to fill a gap.
+    """
+
+    sources: list[ChromLengthSource]
+    rows: list[ChromLengthRow]
+
+
+def build_chrom_lengths_display(
+    stored: StoredChromLengths,
+) -> ChromLengthsDisplay:
+    """Lay ``stored`` out per contig, one column per source, best first."""
+    sources = stored.sources
+    has_genome = ChromLengthSource.REFERENCE_GENOME in sources
+    rows = []
+    for chrom, resolved in stored.lengths.items():
+        cells: list[int | str | None] = [
+            resolved.answers.get(source) for source in sources]
+        if resolved.extent is not None:
+            cells[sources.index(stored.table_source)] = (
+                resolved.extent.name.lower())
+        rows.append(ChromLengthRow(
+            chrom, cells,
+            unlisted=has_genome and (
+                ChromLengthSource.REFERENCE_GENOME not in resolved.answers),
+        ))
+    return ChromLengthsDisplay(sources, rows)
 
 
 def _serialize(stored: StoredChromLengths) -> str:
