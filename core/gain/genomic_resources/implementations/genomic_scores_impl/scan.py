@@ -326,8 +326,7 @@ def scan_region(
         score, score.fetch_records(chrom, start, end))
     if alleles is not None:
         records = records_folded_into(records, alleles)
-    yield from score.region_values_from_records(
-        records, chrom, start, end, score_ids)
+    yield from score.values_from_records(records, chrom, score_ids)
 
 
 def do_min_max(

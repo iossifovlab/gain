@@ -779,6 +779,19 @@ now makes ONE declaration about what it yields, ``payload_kind``, and the
 record contract tests hold what it yields to that.  An external subclass
 that still sets ``yields_records`` is not refused -- the attribute is
 simply never read.
+
+**``GenomicScore.region_values_from_records`` is renamed
+``values_from_records``, and loses its ``pos_begin``/``pos_end``
+parameters** (gain#828), with no alias.  The signature is now
+``values_from_records(records, chrom, scores=None)``: the window the
+records were fetched for was unread on every kind once gain#826/#827 moved
+the clip to the consumers, and a transform over already-fetched records has no
+region to be named after.  What it yields is unchanged -- one
+``(begin, end, values)`` triple per record, at the record's own extent --
+and a caller migrates by renaming the call and dropping the two positions.
+A call to ``region_values_from_records`` is an ``AttributeError``.  The
+gain#729 entry above, which records that this method kept its name then,
+is superseded on that point.
 """
 from .line import LineBuffer
 from .table import ChromLengthSource, ContigExtent, PayloadKind

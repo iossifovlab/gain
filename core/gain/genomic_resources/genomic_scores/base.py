@@ -239,12 +239,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         cover states that ONCE, by overriding:
 
         - _score_segments(): what a region's raw records mean for this kind.
-          ``region_values_from_records`` is the request resolution followed
+          ``values_from_records`` is the request resolution followed
           by it, ``fetch_region_segments_scores`` is THAT applied to
           ``fetch_records``, and the statistics scan is it applied to
           ``validate_records(score, fetch_records(...))`` -- so a kind states
           its reading once and every consumer gets it (ADR 0008).  Override
-          this and not ``region_values_from_records``: the resolving entry is
+          this and not ``values_from_records``: the resolving entry is
           shared by every kind, and a read holding an already-resolved
           request composes this body without going through it (gain#1282).
         - record_weight(): how many times one record's value counts when a
@@ -718,14 +718,14 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         with a whole contig.
 
         Called by each read rather than folded into
-        :meth:`_region_read_defs`, which is the seam the shared
-        :meth:`region_values_from_records` already runs for every kind and
-        which already receives the two positions it ignores.  Folding it in
-        is the deeper placement and is deliberately not taken here: it would
-        refuse ``fetch_*`` requests that are accepted today, on all three
-        kinds at once, which is a behaviour change no reader of this slice
-        asked for.  Until that is decided, a read that takes a mandatory
-        region calls this first.
+        :meth:`_region_read_defs`, the seam the shared
+        :meth:`values_from_records` runs for every kind -- which sees no
+        position at all, being a transform over records already fetched.
+        Folding it in would first have to hand the window back to the
+        record path, and would then refuse ``fetch_*`` requests that are
+        accepted today, on all three kinds at once, which is a behaviour
+        change no reader of this slice asked for.  Until that is decided, a
+        read that takes a mandatory region calls this first.
         """
         if start < 1:
             raise ValueError(
@@ -1075,12 +1075,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """
         return self.table.resource_files()
 
-    def region_values_from_records(
+    def values_from_records(
         self,
         records: Iterator[Record],
         chrom: str,
-        pos_begin: int | None = None,  # ruff: ignore[unused-method-argument]
-        pos_end: int | None = None,  # ruff: ignore[unused-method-argument]
         scores: Sequence[str] | None = None,
     ) -> Generator[
             tuple[int, int, list[ScoreValue]], None, None]:
@@ -1095,12 +1093,15 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         acquire the other's behaviour, and no argument travels down to say
         which of the two is reading (ADR 0008).
 
-        ``chrom``, ``pos_begin`` and ``pos_end`` name the region the records
-        were asked for.  Nothing is fetched here, and nothing is reshaped to
-        the window either -- what a partial overlap means belongs to the
-        caller (ADR 0008); a consumer answering a question about the window
-        clips with :func:`~.records.clip_span`.  The positions are what the
-        guards below are about.
+        Not to be confused with :meth:`get_score_values_from_record`, which
+        reads ONE record to its ``list[ScoreValue]``; this yields a segment
+        per record, at the record's own extent, and takes no window: nothing
+        is fetched here, and nothing is reshaped either.
+        What a partial overlap means belongs to the caller (ADR 0008); a
+        consumer answering a question about the window clips with
+        :func:`~.records.clip_span`.  ``chrom`` names the contig the records
+        were asked for, and with ``scores`` it is what the guards below
+        resolve.
 
         The guards run when this is CALLED rather than on the first
         ``next()`` -- the pattern :meth:`fetch_records` documents -- which is
@@ -1131,7 +1132,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     ) -> list[GenomicScoreDef]:
         """Refuse a region request this score cannot serve, before any record.
 
-        Shared by every kind's :meth:`region_values_from_records`, so a
+        Shared by every kind's :meth:`values_from_records`, so a
         closed score, an unknown contig and an unknown score id are refused
         alike whatever the kind.  The score ids are resolved once for the
         whole region rather than per record, and before the first record
@@ -1181,7 +1182,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             tuple[int, int, list[ScoreValue]], None, None]:
         """Stream this kind's segments for an already-resolved request.
 
-        **The per-kind hook.**  :meth:`region_values_from_records` minus
+        **The per-kind hook.**  :meth:`values_from_records` minus
         the resolution -- the half of a region read that differs by kind,
         split from the half that does not.  A kind states its reading by
         overriding THIS, and inherits one resolution of the request rather
@@ -1189,7 +1190,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         kind that does, reading each record as the point it sits at.
 
         It is also why the two ways into the segment stream cannot drift in
-        what a segment is: :meth:`region_values_from_records` resolves and
+        what a segment is: :meth:`values_from_records` resolves and
         composes this body, and a caller that has resolved already composes
         the same body directly.  A kind that overrode the resolving entry
         instead would be read by one and skipped by the other, which is
@@ -1263,7 +1264,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         Its ownership check is the one refusal here that does NOT land on
         the call.  It rides :meth:`fetch_records`, whose generator body
         defers it and which says so, where the request checks
-        :meth:`region_values_from_records` runs are eager -- so a filter
+        :meth:`values_from_records` runs are eager -- so a filter
         compiled against a different score is refused on the first
         ``next()``, not from the call that a closed score, an unknown
         contig and an unknown score id are refused from.
@@ -1283,10 +1284,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         already-resolved request (gain#1282) -- different entries, one
         reading.
         """
-        return self.region_values_from_records(
+        return self.values_from_records(
             self.fetch_records(
                 chrom, pos_begin, pos_end, score_filter=score_filter),
-            chrom, pos_begin, pos_end, scores)
+            chrom, scores)
 
     @classmethod
     @abstractmethod
@@ -1456,7 +1457,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         Underscored by a criterion rather than by a list of callers, as
         :meth:`_score_segments` is: the hooks that are part of the read API
         are asked for by name (``fetch_region_segments_scores`` IS
-        :meth:`region_values_from_records`; the scan calls
+        :meth:`values_from_records`; the scan calls
         :meth:`record_weight` by name, and reads the kind's validation rule
         by dispatching on its class), while
         this one is never a caller's question -- it is composed, from

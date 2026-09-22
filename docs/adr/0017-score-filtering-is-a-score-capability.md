@@ -63,7 +63,7 @@ whole read family, and neither is settled here.
 > `GenomicScore.fetch_region_segments_scores` (named `fetch_region_segments`
 > when this was written) takes `score_filter` as well. This is
 > the record read's filter reaching one frame further, not a second
-> mechanism: that method *is* `region_values_from_records` composed over
+> mechanism: that method *is* `values_from_records` composed over
 > `fetch_records`, so the parameter travels to `fetch_records` and is
 > applied there by the same `ScoreFilter.select`, under the same ownership
 > check, deferred into the same generator body. A `FragmentScore` private

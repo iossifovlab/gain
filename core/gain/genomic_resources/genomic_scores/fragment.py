@@ -83,7 +83,7 @@ class FragmentAggregate:
 
 #: One fragment as the record plane yields it -- its own unclipped span,
 #: then the values for the scores asked for, positionally, in the list
-#: :meth:`~.base.GenomicScore.region_values_from_records` built.  The
+#: :meth:`~.base.GenomicScore.values_from_records` built.  The
 #: folding read folds these as they are; the public reads answer them
 #: through :func:`_tupled`.
 _RawSegment = tuple[int, int, list[ScoreValue]]
