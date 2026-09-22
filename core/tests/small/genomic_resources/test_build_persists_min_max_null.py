@@ -55,9 +55,11 @@ def a_built_resource(
     return resource
 
 
-#: Split into regions, and the one-task ``--region-size 0`` build that
-#: folds contigs in-process: the same stages, two schedulings.
-@pytest.mark.parametrize("region_size", [1_000_000, 0])
+#: Split into regions -- five of them over the fixture's contig, so the
+#: reason has to survive ``merge_histograms`` unwrapped -- and the
+#: one-task ``--region-size 0`` build that folds contigs in-process: the
+#: same stages, two schedulings.
+@pytest.mark.parametrize("region_size", [5, 0])
 def test_a_score_with_no_values_records_the_missing_range_as_its_reason(
     tmp_path: pathlib.Path, region_size: int,
 ) -> None:

@@ -904,7 +904,7 @@ def test_stats_rebuild_with_a_null_histogram_config_drops_the_stale_files(
     assert "histogram_score" not in (tmp_path / ".MANIFEST").read_text()
 
 
-def test_stats_rebuild_over_a_not_finite_range_drops_the_stale_files(
+def test_stats_rebuild_over_a_not_finite_range_replaces_the_histogram(
         tmp_path: pathlib.Path) -> None:
     a_number_histogram_without_a_range = {"type": "number", "number_of_bins": 4}
     a_float_score(tmp_path, a_number_histogram_without_a_range)
@@ -923,7 +923,9 @@ def test_stats_rebuild_over_a_not_finite_range_drops_the_stale_files(
     assert histogram["config"]["type"] == "null"
     assert histogram["config"]["reason"] == "min/max for score not found"
     assert not (tmp_path / "statistics" / "histogram_score.png").exists()
-    assert "histogram_score.png" not in (tmp_path / ".MANIFEST").read_text()
+    manifest = (tmp_path / ".MANIFEST").read_text()
+    assert "histogram_score.json" in manifest
+    assert "histogram_score.png" not in manifest
 
 
 def test_stats_rebuild_nullified_at_scan_time_drops_the_stale_image(

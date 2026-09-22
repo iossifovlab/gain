@@ -1020,7 +1020,7 @@ def do_histogram_task(
 
     A score the min/max pass nullified rides along as its
     ``NullHistogram`` -- unscanned, but in the result, so the merge
-    records the reason (:func:`_build_nullified_histograms`).
+    carries the reason to the save (:func:`_build_nullified_histograms`).
 
     ONE score serves the whole invocation -- the three gates, the allele
     probe below, the bulk gate, and whichever scan takes the region; see

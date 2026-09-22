@@ -1690,7 +1690,7 @@ Without a ``view_range`` the statistics build ranges the histogram over the scor
 maximum. A score that gives it none -- every value missing, or values the min/max pass refuses -- gets
 no number histogram; the build records a null histogram in its place, carrying that reason
 (``min/max for <score> not found``, or ``min/max for <score> refused: ...``), so the summary page
-and ``grr_manage`` report why rather than a missing file.
+reports why rather than a missing file.
 
 
 **Categorical histograms**
