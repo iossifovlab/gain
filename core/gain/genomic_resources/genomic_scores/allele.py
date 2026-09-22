@@ -408,10 +408,7 @@ class AlleleScore(GenomicScore):
         like every segment read, this holds no window opinion, and what a
         point outside the window means is the caller's question (ADR 0008).
         No region reaches here at all -- what this kind does to a record
-        does not depend on what was asked for, which is why the region is
-        :meth:`GenomicScore.region_values_from_records()
-        <.base.GenomicScore.region_values_from_records>`' argument and not
-        this method's.
+        does not depend on what was asked for.
 
         The point is POS_BEGIN, but POS_END is read too, to refuse a record
         whose end precedes its begin: a different rule from anything the scan
@@ -425,8 +422,8 @@ class AlleleScore(GenomicScore):
         reader composes at all (ADR 0008, ADR 0027).
 
         The REQUEST is not resolved here.  This kind used to override
-        :meth:`GenomicScore.region_values_from_records()
-        <.base.GenomicScore.region_values_from_records>` whole, and so
+        :meth:`GenomicScore.values_from_records()
+        <.base.GenomicScore.values_from_records>` whole, and so
         carried a second copy of the resolution that method performs; since
         gain#1282 the resolution is the base's alone and a kind states only
         its reading.  This method carried the name
@@ -684,7 +681,7 @@ class AlleleScore(GenomicScore):
         if collector is not None:
             records = collector(records)
         score_ids = request_score_ids(requests)
-        # The per-kind hook directly, not `region_values_from_records`: that
+        # The per-kind hook directly, not `values_from_records`: that
         # entry re-checks the contig, and on a tabix table the chromosome
         # list is rebuilt per call -- a cost linear in the contig count,
         # which `_selected_allele_records` has already paid.  gain#1282 made

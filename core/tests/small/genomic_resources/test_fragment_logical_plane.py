@@ -556,8 +556,7 @@ def test_the_folding_read_folds_the_record_plane_stream_itself(
     two of the four fragments, and both the count and the max say so.
     """
     with fragments.open() as score:
-        records = count_calls(
-            monkeypatch, "region_values_from_records", score)
+        records = count_calls(monkeypatch, "values_from_records", score)
         tupled = count_calls(monkeypatch, "fetch_fragment_scores", score)
 
         aggregate = score.get_fragment_scores_overlapping_region_agg(

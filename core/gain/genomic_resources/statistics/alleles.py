@@ -558,7 +558,7 @@ class RegionAlleles:
 
         The nucleotides come off the RAW record: the region-values
         transform an allele score applies collapses a row to the point
-        it sits at and drops them (``region_values_from_records``).
+        it sits at and drops them (``values_from_records``).
         """
         self.add_allele(record[POS_BEGIN], record[REF], record[ALT])
 

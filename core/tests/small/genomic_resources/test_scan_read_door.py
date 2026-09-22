@@ -1,6 +1,6 @@
 """The statistics scan's own way in to a region (gain#588, ADR 0008).
 
-The scan reads a region as ``region_values_from_records`` over
+The scan reads a region as ``values_from_records`` over
 ``validate_records(score, fetch_records(...))``; every plain read --
 ``fetch_records``,
 ``fetch_region_segments_scores``,
@@ -14,6 +14,7 @@ composing the validator still serves every read, and a read that starts
 validating again still passes the scan's tests.
 """
 # pylint: disable=C0116,W0212,W0621
+import inspect
 import pathlib
 from collections.abc import Iterator
 
@@ -22,6 +23,7 @@ from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     FragmentScore,
+    GenomicScore,
     PositionScore,
     build_allele_score_from_resource,
     build_fragment_score_from_resource,
@@ -108,8 +110,23 @@ def test_the_region_read_is_the_transform_over_the_record_stream(
     """)
 
     assert list(score.fetch_region_segments_scores("chr1", 5, 25)) == list(
-        score.region_values_from_records(
-            score.fetch_records("chr1", 5, 25), "chr1", 5, 25))
+        score.values_from_records(
+            score.fetch_records("chr1", 5, 25), "chr1"))
+
+
+def test_the_record_transform_takes_no_window() -> None:
+    # The window left the record path (gain#828): a transform over records
+    # that were already fetched for a region has nothing to do with the
+    # region's bounds, and the signature says so instead of a docstring
+    # asking to be trusted.  What remains is the name, a short step from
+    # ``get_score_values_from_record``; the docstring points at it.
+    signature = inspect.signature(GenomicScore.values_from_records)
+
+    assert list(signature.parameters) == [
+        "self", "records", "chrom", "scores"]
+    assert not hasattr(GenomicScore, "region_values_from_records")
+    assert "get_score_values_from_record" in (
+        GenomicScore.values_from_records.__doc__ or "")
 
 
 def test_the_scan_refuses_a_position_score_whose_records_touch(
@@ -559,7 +576,7 @@ def test_an_allele_score_reads_each_record_as_the_point_it_sits_at(
 ) -> None:
     # Each kind reads its records its own way -- an allele score collapses a
     # record to the point it sits at -- and states that ONCE, in
-    # ``region_values_from_records``.  So the scan and a reader cannot
+    # ``values_from_records``.  So the scan and a reader cannot
     # measure different things.
     resource = (
         a_grr()
@@ -579,8 +596,8 @@ def test_an_allele_score_reads_each_record_as_the_point_it_sits_at(
     score = build_allele_score_from_resource(resource)
     score.open()
 
-    assert list(score.region_values_from_records(
-        score.fetch_records("chr1", 1, 20), "chr1", 1, 20, ["s"])) == \
+    assert list(score.values_from_records(
+        score.fetch_records("chr1", 1, 20), "chr1", ["s"])) == \
         list(score.fetch_region_segments_scores("chr1", 1, 20, ["s"]))
     # Two records share position 10 -- which is what an allele score IS --
     # and the in-memory backend hands them back ordered by their alleles.
