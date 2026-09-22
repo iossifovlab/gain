@@ -109,7 +109,7 @@ def test_unpack_score_defs_classifies_histograms() -> None:
     assert isinstance(hist_confs["float_score"], NumberHistogramConfig)
     assert not hist_confs["float_score"].has_view_range()
     assert isinstance(hist_confs["str_score"], CategoricalHistogramConfig)
-    assert isinstance(hist_confs["null_score"], NullHistogramConfig)
+    assert "null_score" not in hist_confs
     preset_hist = cast(NumberHistogramConfig, hist_confs["preset_score"])
     assert preset_hist.view_range == (0.0, 1.0)
 

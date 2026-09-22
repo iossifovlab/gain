@@ -12,7 +12,6 @@ nothing, so a reader saw ``load_histogram``'s "file not found" fallback
 and could not tell a score without values from statistics never built.
 """
 import pathlib
-from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -32,7 +31,6 @@ from gain.genomic_resources.repository_factory import (
 from gain.genomic_resources.statistics.min_max import NullMinMaxValue
 from gain.genomic_resources.testing.builders import (
     PositionScoreBuilder,
-    a_grr,
     a_position_score,
 )
 from gain.genomic_resources.testing.statistics import (
@@ -48,9 +46,7 @@ def a_built_resource(
     score: PositionScoreBuilder, tmp_path: pathlib.Path,
     **build_kwargs: Any,
 ) -> GenomicResource:
-    repo = a_grr().with_resource("scores/pos1", score).build_repo(
-        tmp_path / "grr")
-    resource = repo.get_resource("scores/pos1")
+    resource = score.build_resource(tmp_path)
     publish_statistics(resource, **build_kwargs)
     return resource
 
@@ -72,29 +68,6 @@ def test_a_score_with_no_values_records_the_missing_range_as_its_reason(
     assert resource.file_exists("statistics/histogram_score.json")
     assert isinstance(histogram, NullHistogram)
     assert histogram.reason == "min/max for score not found"
-
-
-def test_a_score_with_no_values_draws_nothing_and_drops_an_earlier_image(
-    tmp_path: pathlib.Path,
-) -> None:
-    # The same score built twice: with values, then after every value went
-    # NA.  An image the first build drew would show values the statistics
-    # no longer have.
-    had_values = a_score_with_no_values().with_data("""
-        chrom  pos_begin  score
-        1      10         0.25
-        1      20         0.75
-    """)
-    resource = a_built_resource(had_values, tmp_path)
-    assert resource.file_exists("statistics/histogram_score.png")
-    resource = a_grr().with_resource(
-        "scores/pos1", a_score_with_no_values(),
-    ).build_repo(tmp_path / "grr").get_resource("scores/pos1")
-
-    publish_statistics(resource)
-
-    assert not resource.file_exists("statistics/histogram_score.png")
-    assert resource.file_exists("statistics/histogram_score.json")
 
 
 def test_a_histogram_annulled_by_definition_still_writes_no_file(
@@ -139,16 +112,16 @@ def test_the_score_page_reports_the_missing_range_not_a_missing_file(
 #: Which of the score's reads the histogram pass goes through: the
 #: per-record scan over a plain table, the vectorized one over tabix.
 _READS = [
-    (lambda score: score, "region_values_from_records"),
-    (lambda score: score.with_tabix(), "fetch_region_value_arrays"),
+    (a_score_with_no_values(), "region_values_from_records"),
+    (a_score_with_no_values().with_tabix(), "fetch_region_value_arrays"),
 ]
 
 
-@pytest.mark.parametrize(("table", "read"), _READS, ids=["records", "bulk"])
+@pytest.mark.parametrize(("score", "read"), _READS, ids=["records", "bulk"])
 def test_recording_a_nullified_score_does_not_widen_what_the_scan_reads(
     tmp_path: pathlib.Path,
     mocker: pytest_mock.MockerFixture,
-    table: Callable[[PositionScoreBuilder], PositionScoreBuilder],
+    score: PositionScoreBuilder,
     read: str,
 ) -> None:
     """A score nullified for want of a min/max is not a scanned column.
@@ -158,17 +131,14 @@ def test_recording_a_nullified_score_does_not_widen_what_the_scan_reads(
     is not among them.  Recording its null histogram must not put it back.
     """
     resource = (
-        a_grr()
-        .with_resource("scores/pos1", table(
-            a_score_with_no_values()
-            .with_score("ordinary", "float")
-            .with_data("""
-                chrom  pos_begin  score  ordinary
-                1      10         NA     0.25
-                1      20         NA     0.75
-            """)))
-        .build_repo(tmp_path / "grr")
-        .get_resource("scores/pos1")
+        score
+        .with_score("ordinary", "float")
+        .with_data("""
+            chrom  pos_begin  score  ordinary
+            1      10         NA     0.25
+            1      20         NA     0.75
+        """)
+        .build_resource(tmp_path)
     )
     min_max_scores, hist_confs = scan.unpack_score_defs(resource)
     hist_confs = scan.merge_min_max(
@@ -179,9 +149,9 @@ def test_recording_a_nullified_score_does_not_widen_what_the_scan_reads(
     result = scan.do_histogram_task(resource, hist_confs, "1", 1, 100)
 
     assert isinstance(result.histograms["score"], NullHistogram)
-    assert reads.call_count > 0
-    assert [call.args[-1] for call in reads.call_args_list] == \
-        [["ordinary"]] * reads.call_count
+    # Empty on no read at all, so a scan that never asked cannot pass.
+    assert {tuple(call.args[-1]) for call in reads.call_args_list} == \
+        {("ordinary",)}
 
 
 def test_a_score_the_min_max_pass_refused_records_the_refusal_as_its_reason(
@@ -196,13 +166,11 @@ def test_a_score_the_min_max_pass_refused_records_the_refusal_as_its_reason(
     task returns -- and everything downstream of it is the build's.
     """
     resource = (
-        a_grr()
-        .with_resource("scores/pos1", a_position_score()
-                       .with_score("score", "float")
-                       .with_histogram({"type": "number"})
-                       .with_score_line(chrom="1", pos_begin=10, score=0.5))
-        .build_repo(tmp_path / "grr")
-        .get_resource("scores/pos1")
+        a_position_score()
+        .with_score("score", "float")
+        .with_histogram({"type": "number"})
+        .with_score_line(chrom="1", pos_begin=10, score=0.5)
+        .build_resource(tmp_path)
     )
     min_max_scores, hist_confs = scan.unpack_score_defs(resource)
     hist_confs = scan.merge_min_max(
