@@ -10,11 +10,15 @@ that is not ``CURRENT`` is never shown, and the render opens no table.
 
 from __future__ import annotations
 
+import json
 import logging
 import pathlib
 
 import pytest
 import pytest_mock
+from gain.genomic_resources.genomic_scores.chrom_lengths import (
+    CHROM_LENGTHS_FILE,
+)
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
     build_score_implementation_from_resource,
@@ -191,6 +195,31 @@ def test_a_stale_file_is_not_shown(
     assert "<table>" not in section
     opened.assert_not_called()
     assert _lengths_log_lines(caplog) == []
+
+
+def test_a_contig_the_table_could_not_measure_shows_the_reason(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The table's block carries the reason where it had no length; the
+    page shows it in the table's column, with nothing to sort on, and
+    in no other column.  Written into the stored file directly: the
+    probe answers a bound for every contig of this fixture, and the key
+    -- the label and the table files' md5s -- is untouched, so the file
+    is still CURRENT."""
+    a_coverage_repo(tmp_path)
+    _repaired(tmp_path, COVERAGE_RESOURCE_ID)
+    stored = tmp_path / COVERAGE_RESOURCE_ID / CHROM_LENGTHS_FILE
+    document = json.loads(stored.read_text())
+    document["sources"]["tabix_estimate"]["chr10"] = "undetermined"
+    stored.write_text(json.dumps(document))
+    impl, repo = resynced(tmp_path, COVERAGE_RESOURCE_ID)
+
+    table = table_after(impl.get_info(repo=repo), HEADING)
+
+    chr10 = table.rows[2]
+    assert chr10[0].own_text == "chr10"
+    assert [cell.own_text for cell in chr10[1:]] == ["", "undetermined"]
+    assert [cell.sort_value for cell in chr10[1:]] == [None, None]
 
 
 BIGWIG = "scores/bw"
