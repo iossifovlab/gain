@@ -10,10 +10,14 @@ that is not ``CURRENT`` is never shown, and the render opens no table.
 
 from __future__ import annotations
 
+import logging
 import pathlib
 
+import pytest
+import pytest_mock
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
+    build_score_implementation_from_resource,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.info_page_fixtures import (
@@ -121,3 +125,36 @@ def test_sorting_the_chromosome_keys_reproduces_natural_order(
     assert [n for _, n in sorted(zip(keys, names, strict=True))] == names
     assert sorted(names) != names
     assert keys == [natural_chromosome_key(name) for name in names]
+
+
+def _lengths_log_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Every INFO-or-worse record about the stored lengths."""
+    return [
+        record.getMessage() for record in caplog.records
+        if record.levelno >= logging.INFO
+        and "chromosome lengths" in record.getMessage()
+    ]
+
+
+def test_an_unrepaired_score_reads_not_computed_and_opens_no_table(
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No stored file: the heading stays, under it "not computed" and
+    no table -- a repair would fill it -- and the render neither opens
+    the table to fill it live nor reports the missing file, which is
+    ``repo-repair``'s to report."""
+    repo = a_coverage_repo(tmp_path)
+    impl = build_score_implementation_from_resource(
+        repo.get_resource(COVERAGE_RESOURCE_ID))
+    opened = mocker.spy(impl.score, "open")
+
+    with caplog.at_level(logging.INFO):
+        page = impl.get_info(repo=repo)
+
+    section = section_after(page, HEADING)
+    assert "<p>not computed</p>" in section
+    assert "<table>" not in section
+    opened.assert_not_called()
+    assert _lengths_log_lines(caplog) == []
