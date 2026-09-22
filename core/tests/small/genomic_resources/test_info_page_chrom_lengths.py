@@ -28,6 +28,7 @@ from gain.utils.chromosome_order import natural_chromosome_key
 
 from .info_page_html import section_after, sort_keys, table_after
 from .test_cli_stats_chrom_lengths import resource_stats
+from .test_genomic_scores_impl_chrom_lengths import set_label
 from .test_genomic_scores_impl_derived_files import resynced
 
 HEADING = "<h2>Chromosome lengths</h2>"
@@ -148,6 +149,32 @@ def test_an_unrepaired_score_reads_not_computed_and_opens_no_table(
     repo = a_coverage_repo(tmp_path)
     impl = build_score_implementation_from_resource(
         repo.get_resource(COVERAGE_RESOURCE_ID))
+    opened = mocker.spy(impl.score, "open")
+
+    with caplog.at_level(logging.INFO):
+        page = impl.get_info(repo=repo)
+
+    section = section_after(page, HEADING)
+    assert "<p>not computed</p>" in section
+    assert "<table>" not in section
+    opened.assert_not_called()
+    assert _lengths_log_lines(caplog) == []
+
+
+def test_a_stale_file_is_not_shown(
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The label re-pointed since the repair: the file on disk still
+    holds the old genome's lengths, and showing them would say the
+    wrong genome's numbers under the new label.  Not computed, as if
+    there were no file -- and, as then, no table opened and nothing
+    said."""
+    a_coverage_repo(tmp_path)
+    _repaired(tmp_path, COVERAGE_RESOURCE_ID)
+    set_label(tmp_path, COVERAGE_RESOURCE_ID, "reference_genome", "other")
+    impl, repo = resynced(tmp_path, COVERAGE_RESOURCE_ID)
     opened = mocker.spy(impl.score, "open")
 
     with caplog.at_level(logging.INFO):
