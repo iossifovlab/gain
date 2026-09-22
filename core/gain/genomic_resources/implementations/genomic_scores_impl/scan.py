@@ -1057,7 +1057,7 @@ def do_histogram_task(
                 resource, all_hist_confs, chrom, start, end,
                 coverage=coverage, fragments=fragments,
                 alleles=alleles, score=score)
-        histograms.update(build_nullified_histograms(score, all_hist_confs))
+        histograms.update(_build_nullified_histograms(score, all_hist_confs))
         return RegionScanResult(histograms, coverage, fragments, alleles)
     except MalformedResourceError as err:
         report_resource_failure(
@@ -1066,7 +1066,7 @@ def do_histogram_task(
         raise
 
 
-def build_nullified_histograms(
+def _build_nullified_histograms(
     score: GenomicScore,
     all_hist_confs: dict[str, HistogramConfig],
 ) -> dict[str, NullHistogram]:
