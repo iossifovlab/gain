@@ -12,10 +12,15 @@ nothing, so a reader saw ``load_histogram``'s "file not found" fallback
 and could not tell a score without values from statistics never built.
 """
 import pathlib
+from collections.abc import Callable
 from typing import Any
 
 import pytest
-from gain.genomic_resources.genomic_scores import build_score_from_resource
+import pytest_mock
+from gain.genomic_resources.genomic_scores import (
+    PositionScore,
+    build_score_from_resource,
+)
 from gain.genomic_resources.histogram import NullHistogram
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     scan,
@@ -127,6 +132,54 @@ def test_the_score_page_reports_the_missing_range_not_a_missing_file(
     _header, row = table_after(page, "<h2>Scores (1)</h2>").text
     assert "No histogram: min/max for score not found" in row
     assert "Histogram file not found" not in page
+
+
+#: Which of the score's reads the histogram pass goes through: the
+#: per-record scan over a plain table, the vectorized one over tabix.
+_READS = [
+    (lambda score: score, "region_values_from_records"),
+    (lambda score: score.with_tabix(), "fetch_region_value_arrays"),
+]
+
+
+@pytest.mark.parametrize(("table", "read"), _READS, ids=["records", "bulk"])
+def test_recording_a_nullified_score_does_not_widen_what_the_scan_reads(
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
+    table: Callable[[PositionScoreBuilder], PositionScoreBuilder],
+    read: str,
+) -> None:
+    """A score nullified for want of a min/max is not a scanned column.
+
+    ADR 0020: the segments a build stores are cut on the columns the
+    histogram pass reads, and a score whose histogram the build nullified
+    is not among them.  Recording its null histogram must not put it back.
+    """
+    resource = (
+        a_grr()
+        .with_resource("scores/pos1", table(
+            a_score_with_no_values()
+            .with_score("ordinary", "float")
+            .with_data("""
+                chrom  pos_begin  score  ordinary
+                1      10         NA     0.25
+                1      20         NA     0.75
+            """)))
+        .build_repo(tmp_path / "grr")
+        .get_resource("scores/pos1")
+    )
+    min_max_scores, hist_confs = scan.unpack_score_defs(resource)
+    hist_confs = scan.merge_min_max(
+        min_max_scores, hist_confs,
+        scan.do_min_max_task(resource, min_max_scores, "1", 1, 100))
+    reads = mocker.spy(PositionScore, read)
+
+    result = scan.do_histogram_task(resource, hist_confs, "1", 1, 100)
+
+    assert isinstance(result.histograms["score"], NullHistogram)
+    assert reads.call_count > 0
+    assert [call.args[-1] for call in reads.call_args_list] == \
+        [["ordinary"]] * reads.call_count
 
 
 def test_a_score_the_min_max_pass_refused_records_the_refusal_as_its_reason(
