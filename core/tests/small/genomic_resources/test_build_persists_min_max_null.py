@@ -85,6 +85,33 @@ def test_a_score_with_no_values_draws_nothing_and_drops_an_earlier_image(
     assert resource.file_exists("statistics/histogram_score.json")
 
 
+def test_a_histogram_annulled_by_definition_still_writes_no_file(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Only what the BUILD found out is recorded (gain#305 stays).
+
+    Three scores in one resource: annulled by its definition, nullified
+    by the build, and ordinary.  The recording is per score, so the
+    ordinary one keeps its histogram and image beside the other two.
+    """
+    resource = a_built_resource(
+        a_score_with_no_values()
+        .with_score("annulled", "float")
+        .with_histogram({"type": "null", "reason": "opted out"})
+        .with_score("ordinary", "float")
+        .with_data("""
+            chrom  pos_begin  score  annulled  ordinary
+            1      10         NA     0.1       0.25
+            1      20         NA     0.9       0.75
+        """),
+        tmp_path)
+
+    assert not resource.file_exists("statistics/histogram_annulled.json")
+    assert resource.file_exists("statistics/histogram_score.json")
+    assert resource.file_exists("statistics/histogram_ordinary.json")
+    assert resource.file_exists("statistics/histogram_ordinary.png")
+
+
 def test_a_score_the_min_max_pass_refused_records_the_refusal_as_its_reason(
     tmp_path: pathlib.Path,
 ) -> None:
