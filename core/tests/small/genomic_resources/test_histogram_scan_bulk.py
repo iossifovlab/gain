@@ -2,7 +2,6 @@
 import logging
 import pathlib
 
-import numpy as np
 import pytest
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
@@ -23,6 +22,10 @@ from gain.genomic_resources.testing.builders import (
     an_allele_score,
 )
 
+from tests.small.genomic_resources.histogram_parity import (
+    assert_histograms_equal,
+)
+
 
 def _hist_conf() -> NumberHistogramConfig:
     return NumberHistogramConfig.from_dict({
@@ -40,14 +43,7 @@ def _assert_hists_equal(
 ) -> None:
     assert set(bulk) == set(ref)
     for score_id in ref:
-        got, want = bulk[score_id], ref[score_id]
-        assert np.array_equal(got.bars, want.bars), \
-            (score_id, got.bars, want.bars)
-        assert got.out_of_range_bins == want.out_of_range_bins, score_id
-        assert np.array_equal(
-            [got.min_value], [want.min_value], equal_nan=True), score_id
-        assert np.array_equal(
-            [got.max_value], [want.max_value], equal_nan=True), score_id
+        assert_histograms_equal(bulk[score_id], ref[score_id], score_id)
 
 
 def _multiscore_tabix(tmp_path: pathlib.Path) -> GenomicResource:

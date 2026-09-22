@@ -4,7 +4,7 @@ import warnings
 from dataclasses import dataclass
 from io import StringIO
 from threading import Lock
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import numpy as np
 import pandas as pd
@@ -50,6 +50,8 @@ class GeneScoreDef(ScoreDef):
 
 class GeneScore(ScoreResource[GeneScoreDef]):
     """Class used to represent gene scores."""
+
+    HISTOGRAM_COUNT_UNIT: ClassVar[str] = "genes"
 
     def __init__(self, resource: GenomicResource) -> None:
         if resource.get_type() != "gene_score":

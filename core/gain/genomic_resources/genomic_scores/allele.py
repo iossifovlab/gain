@@ -243,6 +243,8 @@ class AlleleScore(GenomicScore):
           aggregator specification
     """
 
+    HISTOGRAM_COUNT_UNIT: ClassVar[str] = "alleles"
+
     # The alleles at a position reduce by ``max``, not ``mean``: a variant's
     # score is the worst of the alleles it could be, not their average.
     DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {

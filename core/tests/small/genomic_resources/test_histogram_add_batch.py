@@ -5,6 +5,10 @@ from gain.genomic_resources.histogram import (
     NumberHistogramConfig,
 )
 
+from tests.small.genomic_resources.histogram_parity import (
+    assert_histograms_equal,
+)
+
 
 def _a_config(lo: float, hi: float, nbins: int) -> NumberHistogramConfig:
     return NumberHistogramConfig.from_dict({
@@ -37,16 +41,6 @@ def _reference(
     return hist
 
 
-def _assert_same(batched: NumberHistogram, ref: NumberHistogram) -> None:
-    assert np.array_equal(batched.bars, ref.bars), \
-        (batched.bars, ref.bars)
-    assert batched.out_of_range_bins == ref.out_of_range_bins
-    assert np.array_equal(
-        [batched.min_value], [ref.min_value], equal_nan=True)
-    assert np.array_equal(
-        [batched.max_value], [ref.max_value], equal_nan=True)
-
-
 def test_add_batch_matches_add_value_loop_linear() -> None:
     config = _lin_config()
     # in-range, right-edge (bin clamp), below-range, above-range, nan-skip.
@@ -57,7 +51,7 @@ def test_add_batch_matches_add_value_loop_linear() -> None:
     batched = NumberHistogram(config)
     batched.add_batch(values, weights)
 
-    _assert_same(batched, ref)
+    assert_histograms_equal(batched, ref)
 
 
 #: How far either side of a bin edge the float32 grid is walked.
@@ -112,7 +106,7 @@ def test_add_batch_matches_add_value_loop_float32_at_bin_edges() -> None:
     batched.add_batch(values, weights)
 
     assert ref.bars.sum() > 0, "the fixture must fold something"
-    _assert_same(batched, ref)
+    assert_histograms_equal(batched, ref)
 
 
 def test_add_batch_matches_add_value_loop_bool() -> None:
@@ -125,7 +119,7 @@ def test_add_batch_matches_add_value_loop_bool() -> None:
     batched = NumberHistogram(config)
     batched.add_batch(values, weights)
 
-    _assert_same(batched, ref)
+    assert_histograms_equal(batched, ref)
 
 
 def test_add_batch_matches_add_value_loop_float32_edge_fuzz() -> None:
@@ -147,7 +141,7 @@ def test_add_batch_matches_add_value_loop_float32_edge_fuzz() -> None:
         batched = NumberHistogram(config)
         batched.add_batch(values, weights)
 
-        _assert_same(batched, ref)
+        assert_histograms_equal(batched, ref)
 
 
 def _log_config() -> NumberHistogramConfig:
@@ -171,7 +165,7 @@ def test_add_batch_matches_add_value_loop_log() -> None:
     batched = NumberHistogram(config)
     batched.add_batch(values, weights)
 
-    _assert_same(batched, ref)
+    assert_histograms_equal(batched, ref)
 
 
 def test_add_batch_matches_add_value_loop_fuzz() -> None:
@@ -196,7 +190,7 @@ def test_add_batch_matches_add_value_loop_fuzz() -> None:
         ref = _reference(config, values, weights)
         batched = NumberHistogram(config)
         batched.add_batch(values, weights)
-        _assert_same(batched, ref)
+        assert_histograms_equal(batched, ref)
 
 
 def test_add_batch_all_nan_and_empty_are_noops() -> None:
@@ -223,7 +217,7 @@ def test_add_batch_weighted_counts_use_int64() -> None:
     batched = NumberHistogram(config)
     batched.add_batch(values, weights)
 
-    _assert_same(batched, ref)
+    assert_histograms_equal(batched, ref)
     assert batched.bars[5] == 5_000_000_000
 
 
@@ -297,4 +291,4 @@ def test_add_batch_matches_add_value_loop_log_fuzz() -> None:
         batched = NumberHistogram(config)
         batched.add_batch(values, weights)
 
-        _assert_same(batched, ref)
+        assert_histograms_equal(batched, ref)

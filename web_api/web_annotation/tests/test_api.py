@@ -785,6 +785,12 @@ def test_histogram_view(admin_client: Client) -> None:
         "out_of_range_bins": [0, 0],
         "min_value": 0.1,
         "max_value": 0.9,
+        # The accumulators behind count/mean/sd (gain#1589) pass through
+        # as the histogram stores them.  This fixture's statistics predate
+        # them, and nothing backfills: unknown is ``null``, never zero.
+        "count": None,
+        "sum": None,
+        "sum_of_squares": None,
     }
 
 
