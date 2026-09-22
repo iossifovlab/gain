@@ -1057,12 +1057,42 @@ def do_histogram_task(
                 resource, all_hist_confs, chrom, start, end,
                 coverage=coverage, fragments=fragments,
                 alleles=alleles, score=score)
+        histograms.update(build_nullified_histograms(score, all_hist_confs))
         return RegionScanResult(histograms, coverage, fragments, alleles)
     except MalformedResourceError as err:
         report_resource_failure(
             err, "could not build the histograms of",
             resource.resource_id)
         raise
+
+
+def build_nullified_histograms(
+    score: GenomicScore,
+    all_hist_confs: dict[str, HistogramConfig],
+) -> dict[str, NullHistogram]:
+    """The null histograms of the scores the BUILD nullified.
+
+    A ``NullHistogramConfig`` in ``all_hist_confs`` is one of two things:
+    the score's own definition resolves to it (a stated ``type: null``,
+    or a value type with no default histogram), or the min/max pass put
+    it there because the score had no values to range over or values it
+    refused (:func:`update_hist_confs`).  The scans skip both -- neither
+    has anything to accumulate -- but only the second is a fact the
+    build found out, and it is recorded the way a histogram nullified
+    accumulating is: a ``NullHistogram`` carrying the reason, serialised
+    with the resource's statistics (gain#1555).  The first stays
+    unrecorded, decided from the config alone (gain#305).
+
+    Told apart against the definition, since by the time the histogram
+    pass runs both kinds sit in ``all_hist_confs`` as the same type.
+    """
+    return {
+        score_id: NullHistogram(hist_conf)
+        for score_id, hist_conf in all_hist_confs.items()
+        if isinstance(hist_conf, NullHistogramConfig)
+        and not isinstance(
+            score.get_histogram_config(score_id), NullHistogramConfig)
+    }
 
 
 def do_min_max_bulk(
