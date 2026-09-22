@@ -20,8 +20,9 @@ from gain.genomic_resources.testing.info_page_fixtures import (
     COVERAGE_RESOURCE_ID,
     a_coverage_repo,
 )
+from gain.utils.chromosome_order import natural_chromosome_key
 
-from .info_page_html import section_after, table_after
+from .info_page_html import section_after, sort_keys, table_after
 from .test_cli_stats_chrom_lengths import resource_stats
 from .test_genomic_scores_impl_derived_files import resynced
 
@@ -80,3 +81,43 @@ def test_a_contig_the_genome_does_not_list_is_marked(
     genome_cells = table.column("reference_genome")
     assert [cell.sort_value for cell in genome_cells] == ["100", "50", None]
     assert section_after(page, HEADING).count('class="unlisted-contig"') == 1
+
+
+def test_every_header_declares_how_its_column_compares(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The table opts into the sorter: the contig column on its
+    natural-order key, every source column on the number -- a length
+    column that compared as text would put 12 before 3."""
+    a_coverage_repo(tmp_path)
+    impl, repo = _repaired(tmp_path, COVERAGE_RESOURCE_ID)
+
+    table = table_after(impl.get_info(repo=repo), HEADING)
+
+    assert [
+        (cell.text, cell.attrs.get("data-sort")) for cell in table.head[0]
+    ] == [
+        ("Chromosome", "text"),
+        ("reference_genome", "number"),
+        ("tabix_estimate", "number"),
+    ]
+    assert sort_keys(table.column("tabix_estimate")) == ["12", "12", "3"]
+
+
+def test_sorting_the_chromosome_keys_reproduces_natural_order(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The browser's plain ``<`` over the keys yields chr1, chr2, chr10
+    -- which sorting the names would not -- and the marker nested in
+    chr10's cell does not leak into its key."""
+    a_coverage_repo(tmp_path)
+    impl, repo = _repaired(tmp_path, COVERAGE_RESOURCE_ID)
+
+    cells = table_after(impl.get_info(repo=repo), HEADING).column("Chromosome")
+
+    names = [cell.own_text for cell in cells]
+    keys = sort_keys(cells)
+    assert names == ["chr1", "chr2", "chr10"]
+    assert [n for _, n in sorted(zip(keys, names, strict=True))] == names
+    assert sorted(names) != names
+    assert keys == [natural_chromosome_key(name) for name in names]
