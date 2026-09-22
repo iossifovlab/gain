@@ -20,6 +20,11 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     build_score_implementation_from_resource,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.testing.builders import (
+    a_bigwig_score,
+    a_grr,
+    a_reference_genome,
+)
 from gain.genomic_resources.testing.info_page_fixtures import (
     COVERAGE_RESOURCE_ID,
     a_coverage_repo,
@@ -28,6 +33,7 @@ from gain.utils.chromosome_order import natural_chromosome_key
 
 from .info_page_html import section_after, sort_keys, table_after
 from .test_cli_stats_chrom_lengths import resource_stats
+from .test_coverage_fractions import BIGWIG_DATA
 from .test_genomic_scores_impl_chrom_lengths import set_label
 from .test_genomic_scores_impl_derived_files import resynced
 
@@ -185,3 +191,66 @@ def test_a_stale_file_is_not_shown(
     assert "<table>" not in section
     opened.assert_not_called()
     assert _lengths_log_lines(caplog) == []
+
+
+BIGWIG = "scores/bw"
+GENOME = "genomes/g1579"
+
+
+def _a_bigwig_repo(
+    where: pathlib.Path, *, labelled: bool,
+) -> GenomicResourceRepo:
+    """A bigWig score whose header lists chr1 (100) and chr2 (50),
+    beside a genome listing the same two -- labelled with it or not."""
+    score = a_bigwig_score().with_data(BIGWIG_DATA).with_chrom_lens(
+        {"chr1": 100, "chr2": 50})
+    if labelled:
+        score = score.with_labels(reference_genome=GENOME)
+    return (
+        a_grr()
+        .with_resource(BIGWIG, score)
+        .with_resource(
+            GENOME,
+            a_reference_genome()
+            .with_chromosome("chr1", "A" * 100)
+            .with_chromosome("chr2", "A" * 50))
+        .build_repo(where)
+    )
+
+
+def test_a_repaired_unlabelled_bigwig_score_has_its_header_column_alone(
+    tmp_path: pathlib.Path,
+) -> None:
+    """One source, the header's exact sizes -- and no genome column, so
+    nothing is unlisted and no row is marked."""
+    _a_bigwig_repo(tmp_path, labelled=False)
+    impl, repo = _repaired(tmp_path, BIGWIG)
+
+    page = impl.get_info(repo=repo)
+
+    table = table_after(page, HEADING)
+    assert table.text == [
+        ["Chromosome", "bigwig"],
+        ["chr1", "100"],
+        ["chr2", "50"],
+    ]
+    assert "unlisted-contig" not in section_after(page, HEADING)
+
+
+def test_a_labelled_bigwig_score_the_genome_lists_in_full_marks_nothing(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Both columns, every contig in both: the marker is for a gap in
+    the genome column, and there is none."""
+    _a_bigwig_repo(tmp_path, labelled=True)
+    impl, repo = _repaired(tmp_path, BIGWIG)
+
+    page = impl.get_info(repo=repo)
+
+    table = table_after(page, HEADING)
+    assert table.text == [
+        ["Chromosome", "reference_genome", "bigwig"],
+        ["chr1", "100", "100"],
+        ["chr2", "50", "50"],
+    ]
+    assert "unlisted-contig" not in section_after(page, HEADING)
