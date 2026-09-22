@@ -21,6 +21,9 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     scan,
 )
 from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository_factory import (
+    build_resource_implementation,
+)
 from gain.genomic_resources.statistics.min_max import NullMinMaxValue
 from gain.genomic_resources.testing.builders import (
     PositionScoreBuilder,
@@ -32,6 +35,8 @@ from gain.genomic_resources.testing.statistics import (
     publish_statistics,
     refresh_manifest,
 )
+
+from tests.small.genomic_resources.info_page_html import table_after
 
 
 def a_built_resource(
@@ -110,6 +115,18 @@ def test_a_histogram_annulled_by_definition_still_writes_no_file(
     assert resource.file_exists("statistics/histogram_score.json")
     assert resource.file_exists("statistics/histogram_ordinary.json")
     assert resource.file_exists("statistics/histogram_ordinary.png")
+
+
+def test_the_score_page_reports_the_missing_range_not_a_missing_file(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = a_built_resource(a_score_with_no_values(), tmp_path)
+
+    page = build_resource_implementation(resource).get_info()
+
+    _header, row = table_after(page, "<h2>Scores (1)</h2>").text
+    assert "No histogram: min/max for score not found" in row
+    assert "Histogram file not found" not in page
 
 
 def test_a_score_the_min_max_pass_refused_records_the_refusal_as_its_reason(
