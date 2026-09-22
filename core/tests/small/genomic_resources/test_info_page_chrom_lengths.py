@@ -264,6 +264,7 @@ def _a_repo_of(
 def test_every_kind_renders_the_section_when_repaired(
     tmp_path: pathlib.Path, a_score: Callable[[], Any],
 ) -> None:
+    """Unlabelled, so one column: the table's own source."""
     _a_repo_of(tmp_path, a_score)
     impl, repo = _repaired(tmp_path, "scores/other")
 
@@ -277,6 +278,8 @@ def test_every_kind_renders_the_section_when_repaired(
 def test_every_kind_reads_not_computed_when_unrepaired(
     tmp_path: pathlib.Path, a_score: Callable[[], Any],
 ) -> None:
+    """The heading with nothing stored under it, as on the position
+    score's page: a repair would fill it, and the heading says so."""
     repo = _a_repo_of(tmp_path, a_score)
     impl = build_score_implementation_from_resource(
         repo.get_resource("scores/other"))
