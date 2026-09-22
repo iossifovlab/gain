@@ -67,8 +67,13 @@ def test_a_repaired_labelled_tabix_score_lists_every_source_per_contig(
     a_coverage_repo(tmp_path)
     impl, repo = _repaired(tmp_path, COVERAGE_RESOURCE_ID)
 
-    table = table_after(impl.get_info(repo=repo), HEADING)
+    page = impl.get_info(repo=repo)
 
+    # Between the Scores table every kind renders and the kind's own
+    # sections: the lengths are about the resource, not its statistic.
+    assert page.index("<h2>Scores") < page.index(HEADING) < page.index(
+        "<h2>Coverage</h2>")
+    table = table_after(page, HEADING)
     # Own text: the contig cell of an unlisted contig nests its marker,
     # which the next test is about.
     rows = table.head + table.rows

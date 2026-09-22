@@ -316,9 +316,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
         What the last repair stored, laid out per contig with one
         column per source -- and ``None`` unless the gate calls the
-        stored file ``CURRENT``, in which case the section reads "not
-        computed": a stale file's numbers are never shown, and the
-        render opens no table and resolves no genome to fill the gap.
+        stored file ``CURRENT``; the section then reads "not computed":
+        a stale file's numbers are never shown, and the render opens no
+        table and resolves no genome to fill the gap.
         Through the quiet gate check, so an unrepaired or unpulled
         resource is not reported from a page render.
         """

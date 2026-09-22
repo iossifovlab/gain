@@ -132,7 +132,7 @@
            name, so the cell's own text -- and its sort key -- stay the
            contig. -#}
         <tr{% if row.unlisted %} class="unlisted-contig"{% endif %}>
-            <td data-sort-value="{{ natural_chromosome_key(row.chrom) }}">{{ row.chrom }}{% if row.unlisted %} <span class="unlisted-marker" title="listed by the score's table, not by its reference genome">not in genome</span>{% endif %}</td>
+            <td data-sort-value="{{ natural_chromosome_key(row.chrom) }}">{{ row.chrom }}{% if row.unlisted %} <span class="unlisted-marker text-muted" title="listed by the score's table, not by its reference genome">not in genome</span>{% endif %}</td>
             {%- for cell in row.cells %}
             {#- A length sorts on its number.  A cell with no answer, and
                one carrying the table's reason instead of a number, has
