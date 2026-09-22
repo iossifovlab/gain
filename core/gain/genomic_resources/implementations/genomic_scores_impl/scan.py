@@ -1018,6 +1018,10 @@ def do_histogram_task(
     so a backend that will not serve them sends the region back to the
     per-record read rather than to a statistic with no class data.
 
+    A score the min/max pass nullified rides along as its
+    ``NullHistogram`` -- unscanned, but in the result, so the merge
+    records the reason (:func:`_build_nullified_histograms`).
+
     ONE score serves the whole invocation -- the three gates, the allele
     probe below, the bulk gate, and whichever scan takes the region; see
     :func:`_score_for`.  An allele score's probe OPENS it and hands it
