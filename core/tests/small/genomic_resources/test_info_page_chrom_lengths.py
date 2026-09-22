@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import logging
 import pathlib
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 import pytest_mock
@@ -26,8 +28,10 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
+    a_fragment_score,
     a_grr,
     a_reference_genome,
+    an_allele_score,
 )
 from gain.genomic_resources.testing.info_page_fixtures import (
     COVERAGE_RESOURCE_ID,
@@ -220,6 +224,67 @@ def test_a_contig_the_table_could_not_measure_shows_the_reason(
     assert chr10[0].own_text == "chr10"
     assert [cell.own_text for cell in chr10[1:]] == ["", "undetermined"]
     assert [cell.sort_value for cell in chr10[1:]] == [None, None]
+
+
+#: The other two kinds: every kind's repair stores the file, so every
+#: kind's page has the section -- it sits in the template they all
+#: extend, not in a kind's slot.
+OTHER_KINDS = pytest.mark.parametrize(
+    "a_score", [an_allele_score, a_fragment_score],
+    ids=["allele", "fragment"])
+
+
+def _a_repo_of(
+    where: pathlib.Path, a_score: Callable[[], Any],
+) -> GenomicResourceRepo:
+    """An unlabelled two-contig score of that kind."""
+    data = {
+        an_allele_score: """
+            chrom  pos_begin  reference  alternative  score
+            chr1   10         A          G            0.1
+            chr2   10         A          C            0.2
+            """,
+        a_fragment_score: """
+            chrom  pos_begin  pos_end  score
+            chr1   1          5        0.1
+            chr2   1          5        0.2
+            """,
+    }[a_score]
+    return (
+        a_grr()
+        .with_resource(
+            "scores/other",
+            a_score().with_score("score", "float").with_data(data)
+            .with_tabix())
+        .build_repo(where)
+    )
+
+
+@OTHER_KINDS
+def test_every_kind_renders_the_section_when_repaired(
+    tmp_path: pathlib.Path, a_score: Callable[[], Any],
+) -> None:
+    _a_repo_of(tmp_path, a_score)
+    impl, repo = _repaired(tmp_path, "scores/other")
+
+    table = table_after(impl.get_info(repo=repo), HEADING)
+
+    assert table.text[0] == ["Chromosome", "tabix_estimate"]
+    assert [row[0].text for row in table.rows] == ["chr1", "chr2"]
+
+
+@OTHER_KINDS
+def test_every_kind_reads_not_computed_when_unrepaired(
+    tmp_path: pathlib.Path, a_score: Callable[[], Any],
+) -> None:
+    repo = _a_repo_of(tmp_path, a_score)
+    impl = build_score_implementation_from_resource(
+        repo.get_resource("scores/other"))
+
+    section = section_after(impl.get_info(repo=repo), HEADING)
+
+    assert "<p>not computed</p>" in section
+    assert "<table>" not in section
 
 
 BIGWIG = "scores/bw"
