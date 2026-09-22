@@ -1,3 +1,12 @@
 table {
     table-layout: fixed;
 }
+
+/* The Chromosome lengths table's marker on a contig the labelled genome
+   does not list (gain#1579): muted and small beside the contig name, so
+   the name stays what the eye reads and the sorter keys on. */
+.unlisted-marker {
+    color: #919191;
+    font-size: 0.85em;
+    white-space: nowrap;
+}
