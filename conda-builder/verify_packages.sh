@@ -39,6 +39,10 @@
 #    them -- the next build has a new version -- so leaving them would grow
 #    the cache by every build's packages (spliceai alone is ~25 MB).
 #    Third-party packages stay; `micromamba clean` by hand if it matters.
+#    Two builds of the SAME version at once on one agent (a rebuild
+#    overlapping the original) share these entries, and the first to
+#    finish removes them under the other's softlinked environment; the
+#    other fails and a re-run passes.
 #
 # Environments are installed with --always-softlink. The cache and the
 # env prefixes sit behind different mounts, where micromamba cannot
@@ -48,9 +52,16 @@
 # the cache is mounted, and `rm -rf` of an env removes the links, not
 # what they point at.
 #
-# Several executors on one agent share the cache concurrently; that is
-# left to micromamba's own locking (no Jenkins lock(), which would
-# serialise the builds). The workspace is mounted at its host path, not
+# Several executors on one agent share the cache concurrently.
+# micromamba's own cache lock is not enough: when another process holds
+# it, micromamba warns "Cannot lock" and carries on, treating the cache
+# as unwritable for that run. So each `micromamba create`, and the
+# cleanup's deletions, run under flock(1) on $PKGS/.verify.lock -- the
+# containers share the host kernel and the bind-mounted file, so the
+# lock holds across builds. Only the installs serialise (tens of seconds
+# each), not the checks or the builds; a Jenkins lock() would serialise
+# whole builds. CONDA_PKGS_DIRS pins the cache to that one directory. The
+# workspace is mounted at its host path, not
 # at a fixed /workspace, so each workspace's local channels have their
 # own URL -- and so their own repodata cache entry -- and two builds never
 # refresh the same entry with different contents.
@@ -61,6 +72,8 @@ set -euo pipefail
 
 ROOT="$PWD"
 PKGS="$MAMBA_ROOT_PREFIX/pkgs"
+LOCK="$PKGS/.verify.lock"
+export CONDA_PKGS_DIRS="$PKGS"
 ENVS=/tmp/verify-envs
 WALK="$ROOT/core/conda-recipe/tests/entry_point_walk.py"
 
@@ -95,6 +108,8 @@ done
 
 cleanup() {
     local proj name module started=$SECONDS
+    exec 9>"$LOCK"
+    flock 9
     for entry in "${PACKAGES[@]}"; do
         read -r proj name module <<< "$entry"
         rm -rf "$PKGS/$name-$VCS_VERSION-"*
@@ -108,6 +123,7 @@ cleanup() {
             rm -f "${state%.state.json}".*
         fi
     done
+    flock -u 9
     rm -rf "$ENVS"
     echo "=== cleanup $((SECONDS - started)) s, verify total $SECONDS s"
 }
@@ -119,7 +135,7 @@ for entry in "${SELECTED[@]}"; do
     env="$ENVS/$proj"
     echo "=== $name==$VCS_VERSION"
     started=$SECONDS
-    micromamba create -y -p "$env" \
+    flock "$LOCK" micromamba create -y -p "$env" \
         --always-softlink \
         --override-channels --strict-channel-priority \
         -c "file://$ROOT/conda/$proj" \
