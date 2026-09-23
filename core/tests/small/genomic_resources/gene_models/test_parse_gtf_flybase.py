@@ -8,6 +8,7 @@ FlyBase emits ``mRNA``, ``ncRNA``, ``tRNA`` and friends, and labels genes with
 
 import logging
 from collections.abc import Callable
+from functools import partial
 
 import pytest
 from gain.genomic_resources.gene_models import parsers
@@ -16,16 +17,12 @@ from gain.genomic_resources.gene_models.gene_models_factory import (
     build_gene_models_from_file,
 )
 
+from tests.small.genomic_resources.gene_models.conftest import (
+    gtf_attributes,
+    gtf_record,
+)
 
-def _attributes(**keys: str) -> str:
-    return " ".join(f'{key} "{value}";' for key, value in keys.items())
-
-
-def _record(feature: str, start: int, end: int, attributes: str) -> str:
-    return "\t".join([
-        "X", "FlyBase", feature, str(start), str(end), ".", "+", ".",
-        attributes,
-    ])
+_record = partial(gtf_record, source="FlyBase")
 
 
 @pytest.fixture
@@ -43,8 +40,8 @@ def one_transcript(
     return _build
 
 
-GENE_ATTRIBUTES = _attributes(gene_id="FBgn0031081", gene_symbol="Nep3")
-TRANSCRIPT_ATTRIBUTES = _attributes(
+GENE_ATTRIBUTES = gtf_attributes(gene_id="FBgn0031081", gene_symbol="Nep3")
+TRANSCRIPT_ATTRIBUTES = gtf_attributes(
     gene_id="FBgn0031081", gene_symbol="Nep3",
     transcript_id="FBtr0070000", transcript_symbol="Nep3-RA",
 )
@@ -109,7 +106,7 @@ def test_a_skipped_biotype_needs_no_transcript_id(
 ) -> None:
     """The skip must not depend on an attribute the record never uses."""
     gene_models = gtf_gene_models(
-        _record("miRNA", 100, 200, _attributes(gene_id="FBgn0031081")),
+        _record("miRNA", 100, 200, gtf_attributes(gene_id="FBgn0031081")),
     )
 
     assert gene_models.transcript_models == {}
@@ -129,7 +126,7 @@ def test_the_skip_set_is_disjoint_from_the_accepted_set() -> None:
 def test_gene_symbol_resolves_the_gene_label(
     one_transcript: Callable[..., GeneModels],
 ) -> None:
-    gene_models = one_transcript(_attributes(
+    gene_models = one_transcript(gtf_attributes(
         gene_id="FBgn0031081", gene_symbol="Nep3",
         transcript_id="FBtr0070000",
     ))
@@ -141,7 +138,7 @@ def test_gene_name_still_wins_over_gene_symbol(
     one_transcript: Callable[..., GeneModels],
 ) -> None:
     """Ensembl and RefSeq files, which carry both, are unaffected."""
-    gene_models = one_transcript(_attributes(
+    gene_models = one_transcript(gtf_attributes(
         gene_id="FBgn0031081", gene_name="Nep3", gene_symbol="Nep3-symbol",
         transcript_id="FBtr0070000",
     ))
@@ -152,7 +149,7 @@ def test_gene_name_still_wins_over_gene_symbol(
 def test_gene_id_remains_the_last_resort(
     one_transcript: Callable[..., GeneModels],
 ) -> None:
-    gene_models = one_transcript(_attributes(
+    gene_models = one_transcript(gtf_attributes(
         gene_id="FBgn0031081", transcript_id="FBtr0070000",
     ))
 
@@ -163,7 +160,7 @@ def test_gene_mapping_applies_to_a_symbol_resolved_label(
     one_transcript: Callable[..., GeneModels],
 ) -> None:
     gene_models = one_transcript(
-        _attributes(
+        gtf_attributes(
             gene_id="FBgn0031081", gene_symbol="Nep3",
             transcript_id="FBtr0070000",
         ),

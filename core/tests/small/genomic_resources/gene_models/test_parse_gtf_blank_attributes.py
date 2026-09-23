@@ -14,18 +14,14 @@ from collections.abc import Callable
 import pytest
 from gain.genomic_resources.gene_models.gene_models import GeneModels
 
-
-def _record(feature: str, start: int, end: int, attributes: str) -> str:
-    return "\t".join([
-        "X", "test", feature, str(start), str(end), ".", "+", ".",
-        attributes,
-    ])
-
+from tests.small.genomic_resources.gene_models.conftest import (
+    gtf_record,
+)
 
 #: A well-formed record to lead every file with. The column-count probe
 #: reads the first row, so a short row there makes the file match no
 #: layout at all -- a separate wrinkle, deliberately not under test here.
-GOOD_TRANSCRIPT = _record(
+GOOD_TRANSCRIPT = gtf_record(
     "transcript", 100, 200, 'gene_id "G1"; transcript_id "T1";')
 
 
@@ -40,7 +36,7 @@ def test_a_transcript_with_a_blank_attributes_column_names_the_record(
             )):
         gtf_gene_models(
             GOOD_TRANSCRIPT,
-            _record("transcript", 300, 400, ""),
+            gtf_record("transcript", 300, 400, ""),
         )
 
 
@@ -49,7 +45,7 @@ def test_a_record_that_omits_the_attributes_column_names_the_record(
 ) -> None:
     """The two spellings of a blank cell are one case.
 
-    ``_record`` leaves an empty ninth column; a short row has no ninth
+    ``gtf_record`` leaves an empty ninth column; a short row has no ninth
     column at all. pandas delivers ``NaN`` for both, so both must be
     reported the same way. Only the row shape varies here -- the feature
     stays a ``transcript``, so a failure can only mean the shape.
@@ -77,7 +73,7 @@ def test_a_child_record_with_a_blank_attributes_column_is_reported_too(
     with pytest.raises(
             ValueError,
             match="exon record at X:300-400 has an empty attributes column"):
-        gtf_gene_models(GOOD_TRANSCRIPT, _record("exon", 300, 400, ""))
+        gtf_gene_models(GOOD_TRANSCRIPT, gtf_record("exon", 300, 400, ""))
 
 
 def test_an_attributes_column_pandas_did_not_read_as_text_is_reported(
@@ -94,7 +90,7 @@ def test_an_attributes_column_pandas_did_not_read_as_text_is_reported(
     with pytest.raises(
             ValueError,
             match=re.escape("malformed GTF attribute '1.5'")):
-        gtf_gene_models(_record("transcript", 100, 200, "1.5"))
+        gtf_gene_models(gtf_record("transcript", 100, 200, "1.5"))
 
 
 def test_an_ignored_feature_keeps_its_blank_attributes_column(
@@ -110,8 +106,8 @@ def test_an_ignored_feature_keeps_its_blank_attributes_column(
     """
     gene_models = gtf_gene_models(
         GOOD_TRANSCRIPT,
-        _record("gene", 300, 400, ""),
-        _record("exon", 100, 150, 'gene_id "G1"; transcript_id "T1";'),
+        gtf_record("gene", 300, 400, ""),
+        gtf_record("exon", 100, 150, 'gene_id "G1"; transcript_id "T1";'),
     )
 
     assert list(gene_models.transcript_models) == ["T1"]
