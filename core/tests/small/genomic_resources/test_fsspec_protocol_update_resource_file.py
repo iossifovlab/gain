@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import os
 import time
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -13,6 +14,8 @@ from gain.genomic_resources.fsspec_protocol import (
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing import build_inmemory_test_protocol
 from pytest_mock import MockerFixture
+
+from .conftest import assert_state_matches_accessors
 
 
 def _grr_dir_entries(
@@ -874,3 +877,100 @@ def test_do_not_update_resource_file_when_state_changed_but_file_not(
     # Then: file not changed
     assert fileid == (
         proto.filesystem.modified(fileurl), )
+
+
+def _leave_the_cache_current(
+        proto: FsspecReadWriteProtocol, resource: GenomicResource) -> None:
+    """Leave ``genes.gtf`` cached with a state that describes it."""
+    state = proto.load_resource_file_state(resource, "genes.gtf")
+    assert state is not None
+    assert proto._state_describes_stored_file(resource, state)
+
+
+def _remove_the_file(
+        proto: FsspecReadWriteProtocol, resource: GenomicResource) -> None:
+    proto.filesystem.delete(
+        proto.get_resource_file_url(resource, "genes.gtf"))
+
+
+def _drift_the_content(
+        proto: FsspecReadWriteProtocol, resource: GenomicResource) -> None:
+    with proto.open_raw_file(resource, "genes.gtf", mode="wt") as outfile:
+        outfile.write("aaaa")
+    proto.save_manifest(resource, proto.build_manifest(resource))
+
+
+def _remove_the_state(
+        proto: FsspecReadWriteProtocol, resource: GenomicResource) -> None:
+    proto.filesystem.delete(
+        proto._get_resource_file_state_path(resource, "genes.gtf"))
+
+
+def _stale_the_state(
+        proto: FsspecReadWriteProtocol, resource: GenomicResource) -> None:
+    state = proto.load_resource_file_state(resource, "genes.gtf")
+    assert state is not None
+    state.timestamp = 0
+    # A change token, where the store has one, would still match the
+    # untouched file; staling it too is what makes the state out of date.
+    state.change_token = "stale-token"  # ruff: ignore[hardcoded-password-string]
+    proto.save_resource_file_state(resource, state)
+
+
+@pytest.mark.grr_rw
+@pytest.mark.parametrize("arrange", [
+    pytest.param(_leave_the_cache_current, id="current-state"),
+    pytest.param(_remove_the_file, id="file-missing"),
+    pytest.param(_drift_the_content, id="md5-changed"),
+    pytest.param(_remove_the_state, id="state-missing"),
+    pytest.param(_stale_the_state, id="state-stale"),
+])
+def test_update_resource_file_returns_the_state_it_leaves_behind(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol,
+        arrange: Callable[
+            [FsspecReadWriteProtocol, GenomicResource], None]) -> None:
+    # Whichever way the file is kept or fetched, the state handed back is
+    # the one a reader finds recorded for it afterwards.
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+    arrange(proto, dst_res)
+
+    # When
+    state = proto.update_resource_file(src_res, dst_res, "genes.gtf")
+
+    # Then
+    assert state is not None
+    assert state.md5 == "d9636a8dca9e5626851471d1c0ea92b1"
+    assert state == proto.load_resource_file_state(dst_res, "genes.gtf")
+    proto.filesystem.invalidate_cache()
+    assert_state_matches_accessors(proto, dst_res, "genes.gtf")
+
+
+@pytest.mark.grr_rw
+def test_update_resource_file_returns_none_for_a_file_it_deletes(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol) -> None:
+    # A cached file the remote manifest no longer lists is deleted, and
+    # has no state left to hand back.
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+    with proto.open_raw_file(dst_res, "stale.txt", mode="wt") as outfile:
+        outfile.write("stale")
+    proto.save_manifest(dst_res, proto.build_manifest(dst_res))
+    assert proto.load_resource_file_state(dst_res, "stale.txt") is not None
+
+    # When
+    state = proto.update_resource_file(src_res, dst_res, "stale.txt")
+
+    # Then
+    assert state is None
+    assert not proto.file_exists(dst_res, "stale.txt")
