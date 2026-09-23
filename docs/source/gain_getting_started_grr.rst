@@ -364,7 +364,7 @@ Next, create a ``genomic_resource.yaml`` file in the ``my_miniposition`` directo
       summary: Conservation score based on the multiple alignment of 7 species
 
 The resource is ready for use by GAIn. To check it and produce an HTML summary with basic statistics, 
-execute ``grr_manage resource-repair`` in this directory (this will take around 30 minutes as GAIn processes the 
+execute ``grr_manage resource-repair`` in this directory (this will take around 7 minutes as GAIn processes the 
 large file to create summary statistics).
 
 
