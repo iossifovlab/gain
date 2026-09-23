@@ -1308,10 +1308,12 @@ def test_a_dependency_reaches_a_dependant_queued_long_after_it_finished(
     which also waits on a slow task and so is queued half a second after
     ``early`` finished and after ``first`` was already submitted.
 
-    A future released too soon does not fail the dependant: the scheduler
-    has dropped the result, so it silently runs ``early`` a second time to
-    recompute it -- repeating a whole region scan and its side effects. So
-    the run count is the assertion that catches it, not the value.
+    A future released too soon breaks this one of two ways, depending on
+    when: released before any dependant was submitted, ``late`` fails with
+    a cancelled future; released once ``first`` was submitted, the
+    scheduler silently runs ``early`` a second time to recompute it --
+    repeating a whole region scan and its side effects. The value catches
+    the first, and only the run count catches the second.
     """
     COUNTED_RUNS.clear()
     graph = TaskGraph()
@@ -1367,3 +1369,40 @@ def test_an_abandoned_run_releases_the_dependencies_it_still_held(
     while pinned() and time.monotonic() < deadline:
         time.sleep(0.05)
     assert pinned() == {}
+
+
+def test_a_submitted_dependency_is_not_held_while_the_run_goes_on(
+    dask_client: Client,
+) -> None:
+    """Once its dependant has run, a dependency's future is let go.
+
+    iossifovlab/gain#1633 hands a dependency to its dependants as a
+    future. Once they have been submitted and have run, nothing in the run
+    needs it any more -- but a reference left behind, say by the submit
+    worker still holding the last batch it handed over while it waits for
+    the next, pins the key and its result on the cluster for as long as
+    the run goes on. Here ``SlowSibling`` keeps the run going, with nothing
+    left to submit, long after ``Consumer`` has finished.
+    """
+    graph = TaskGraph()
+    leaf = graph.create_task("SubmittedLeaf", counted_tag, args=["leaf"])
+    consumer = graph.create_task("Consumer", joined, args=[leaf, "c"])
+    graph.create_task("SlowSibling", slowly_tagged_late, args=["s"])
+
+    def pinned() -> dict[str, int]:
+        return {
+            key: count for key, count in dask_client.refcount.items()
+            if str(key).startswith("SubmittedLeaf-") and count > 0
+        }
+
+    still_pinned: dict[str, int] = {}
+    for task, _result in DaskExecutor(dask_client).execute(graph):
+        if task == consumer:
+            # ``Future.release()`` only schedules the decrement on the
+            # client's loop; the slow sibling leaves ample time for it.
+            deadline = time.monotonic() + 0.3
+            while pinned() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            still_pinned = pinned()
+
+    assert still_pinned == {}

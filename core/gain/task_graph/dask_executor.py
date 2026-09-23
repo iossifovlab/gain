@@ -165,83 +165,96 @@ class DaskExecutor(TaskGraphExecutorBase):
                 logger.debug("submit worker stopping")
                 return
 
-            tasks = list(batch.tasks)
+            # Dropped before the next claim blocks: its tasks hold their
+            # dependencies' futures, which would otherwise stay pinned on
+            # the cluster for as long as nothing else is queued (gain#1633).
+            submit_count += self._submit_batch(state, batch)
+            del batch
 
-            # No lock is held across map(). The batch does not need one: it
-            # sits in the in-flight submit state for the whole width of the
-            # call, so termination counts it the entire time (gain#365).
-            #
-            # map() can raise -- a dead scheduler connection, a
-            # serialization error -- and this worker is a daemon joined only
-            # after the run loop, so an escaping exception would kill it with
-            # the batch stranded in the in-flight submit state:
-            # has_outstanding() would answer "yes" forever and the run loop
-            # would spin at its wait timeout without end (gain#372). The
-            # failure is delivered as the result of every task in the batch
-            # instead, so the run loop yields it as an error -- exactly as it
-            # already does for a task that dies on the worker -- and then
-            # terminates.
-            try:
-                futures = self._dask_client.map(
-                    self._exec_with_dependencies,
-                    [lift_dependencies(task) for task in tasks],
-                    key=dask_keys(state.run_id, batch),
-                    pure=False,
-                    params=self._params,
-                )
-            except BaseException as ex:
-                # Deliberately broad: in this non-main worker thread a
-                # transport fault of any type -- including a non-Exception
-                # BaseException such as a dask CancelledError -- must end the
-                # run as a delivered task error rather than silently kill the
-                # worker and strand the batch. KeyboardInterrupt/GeneratorExit
-                # cannot reach here.
-                # pylint: disable=broad-except
-                logger.exception(
-                    "submit worker failed to hand %s task(s) to the "
-                    "cluster; delivering the failure as their result",
-                    len(tasks))
-                state.submit_failed(batch, ex)
-                continue
-
-            # map() returned, but wiring the batch up -- moving it to running
-            # and registering completion callbacks -- can raise too, and the
-            # same stranding applies: submitted() has already emptied the
-            # in-flight submit state, so a future left in running with no
-            # callback is outstanding forever and the run loop spins without
-            # end (gain#372). Future.add_done_callback, unlike release(), does
-            # not swallow a client tearing down under it. The whole batch is
-            # delivered as a per-task error and its futures cleared from
-            # running, so the run yields the failure and terminates.
-            #
-            # Callbacks are still registered only after submitted() populates
-            # running, so a callback firing immediately can never reach the
-            # run loop before its task mapping exists (gain#355).
-            try:
-                state.submitted(batch, futures)
-                for future in futures:
-                    future.add_done_callback(state.task_finished)
-            except BaseException as ex:
-                # Deliberately broad: in this non-main worker thread a fault of
-                # any type -- including a non-Exception BaseException such as a
-                # dask CancelledError -- must end the run as a delivered task
-                # error rather than silently kill the worker and strand the
-                # batch. KeyboardInterrupt/GeneratorExit cannot reach here.
-                # pylint: disable=broad-except
-                logger.exception(
-                    "submit worker failed to wire up %s task(s) after "
-                    "handing them to the cluster; delivering the failure as "
-                    "their result", len(tasks))
-                state.submit_aborted(batch, futures, ex)
-                continue
-
-            submit_count += len(tasks)
             elapsed = time.time() - start
             logger.debug(
                 "submitted %s tasks in %.2f seconds; %.2f tasks/s",
                 submit_count, elapsed, submit_count / elapsed)
             logger.debug(
                 "total unfinished tasks: %s", state.unfinished_count())
+
+    def _submit_batch(self, state: RunState, batch: SubmitBatch) -> int:
+        """Hand one batch to the cluster; return how many tasks it held.
+
+        Zero when the batch could not be handed over; its tasks are then
+        delivered as errors instead.
+        """
+        tasks = list(batch.tasks)
+
+        # No lock is held across map(). The batch does not need one: it
+        # sits in the in-flight submit state for the whole width of the
+        # call, so termination counts it the entire time (gain#365).
+        #
+        # map() can raise -- a dead scheduler connection, a
+        # serialization error -- and this worker is a daemon joined only
+        # after the run loop, so an escaping exception would kill it with
+        # the batch stranded in the in-flight submit state:
+        # has_outstanding() would answer "yes" forever and the run loop
+        # would spin at its wait timeout without end (gain#372). The
+        # failure is delivered as the result of every task in the batch
+        # instead, so the run loop yields it as an error -- exactly as it
+        # already does for a task that dies on the worker -- and then
+        # terminates.
+        try:
+            futures = self._dask_client.map(
+                self._exec_with_dependencies,
+                [lift_dependencies(task) for task in tasks],
+                key=dask_keys(state.run_id, batch),
+                pure=False,
+                params=self._params,
+            )
+        except BaseException as ex:
+            # Deliberately broad: in this non-main worker thread a
+            # transport fault of any type -- including a non-Exception
+            # BaseException such as a dask CancelledError -- must end the
+            # run as a delivered task error rather than silently kill the
+            # worker and strand the batch. KeyboardInterrupt/GeneratorExit
+            # cannot reach here.
+            # pylint: disable=broad-except
+            logger.exception(
+                "submit worker failed to hand %s task(s) to the "
+                "cluster; delivering the failure as their result",
+                len(tasks))
+            state.submit_failed(batch, ex)
+            return 0
+
+        # map() returned, but wiring the batch up -- moving it to running
+        # and registering completion callbacks -- can raise too, and the
+        # same stranding applies: submitted() has already emptied the
+        # in-flight submit state, so a future left in running with no
+        # callback is outstanding forever and the run loop spins without
+        # end (gain#372). Future.add_done_callback, unlike release(), does
+        # not swallow a client tearing down under it. The whole batch is
+        # delivered as a per-task error and its futures cleared from
+        # running, so the run yields the failure and terminates.
+        #
+        # Callbacks are still registered only after submitted() populates
+        # running, so a callback firing immediately can never reach the
+        # run loop before its task mapping exists (gain#355).
+        try:
+            state.submitted(batch, futures)
+            for future in futures:
+                future.add_done_callback(state.task_finished)
+        except BaseException as ex:
+            # Deliberately broad: in this non-main worker thread a fault of
+            # any type -- including a non-Exception BaseException such as a
+            # dask CancelledError -- must end the run as a delivered task
+            # error rather than silently kill the worker and strand the
+            # batch. KeyboardInterrupt/GeneratorExit cannot reach here.
+            # pylint: disable=broad-except
+            logger.exception(
+                "submit worker failed to wire up %s task(s) after "
+                "handing them to the cluster; delivering the failure as "
+                "their result", len(tasks))
+            state.submit_aborted(batch, futures, ex)
+            return 0
+
+        return len(tasks)
 
     def _results_worker_func(self, state: RunState) -> None:
         """Gather finished futures until the run shuts down."""
@@ -322,9 +335,8 @@ class DaskExecutor(TaskGraphExecutorBase):
 
         logger.info("results worker processed %s results", processed_results)
 
-    @classmethod
+    @staticmethod
     def _exec_with_dependencies(
-        cls,
         payload: tuple[TaskDesc, list[Any]],
         params: dict[str, Any],
     ) -> Any:
@@ -334,7 +346,7 @@ class DaskExecutor(TaskGraphExecutorBase):
         beside the task into the values they hold.
         """
         task, values = payload
-        return cls._exec(inject_dependencies(task, values), params)
+        return DaskExecutor._exec(inject_dependencies(task, values), params)
 
     @staticmethod
     def _release_futures(futures: Sequence[Future]) -> None:
