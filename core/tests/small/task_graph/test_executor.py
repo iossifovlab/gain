@@ -736,12 +736,10 @@ def test_a_large_dependency_result_is_not_shipped_in_the_submitted_graph(
 ) -> None:
     """A dependency's result reaches its dependant without riding the graph.
 
-    Regression for iossifovlab/gain#1633. The dask executor substituted
-    each completed dependency's *gathered* result into its dependants'
-    arguments, so the graph submitted for a fan-in task carried every
-    input result -- 23 MiB for one histogram merge of ``repo-repair``,
-    announced by distributed's ``Sending large graph`` warning. The
-    other executors take no graph and must deliver the value unchanged.
+    iossifovlab/gain#1633: under the dask executor a dependant is
+    submitted with its dependency's future, not the value, so distributed
+    has no large graph to warn about. The other executors take no graph
+    and deliver the value itself.
     """
     graph = TaskGraph()
     producer = graph.create_task("producer", large_result, args=[])
@@ -776,10 +774,10 @@ def test_each_dependency_reaches_its_own_argument_slot(
 ) -> None:
     """Several dependencies, positional and keyword, land where declared.
 
-    Under the dask executor each dependency travels as a future beside the
-    task and is put back into the arguments on the worker
-    (iossifovlab/gain#1633), so a slot mixup would hand a dependant the
-    wrong input without failing anything.
+    Under the dask executor each dependency travels as a future and is
+    resolved into the arguments on the worker (iossifovlab/gain#1633), so
+    a slot mixup would hand a dependant the wrong input without failing
+    anything.
     """
     graph = TaskGraph()
     first = graph.create_task("first", tag, args=["one"])

@@ -114,13 +114,12 @@ class RunState:
         self._gathered: list[tuple[Task, Any]] = []
         self._delivered: set[Task] = set()
         # The future of every task delivered with a result, until the run
-        # loop takes it to hand to the task's dependants in place of the
-        # value -- see :meth:`take_result_future` (gain#1633).
+        # loop takes it -- see :meth:`take_result_future`.
         self._result_futures: dict[Task, Future] = {}
         self._shutdown = False
 
-    def _deliver(self, results: Iterable[tuple[Task, Any]]) -> None:
-        """Deliver results for tasks not delivered already.
+    def _deliver(self, results: Iterable[tuple[Task, Any]]) -> set[Task]:
+        """Deliver results for tasks not delivered already; return those.
 
         The one way a result reaches :attr:`_gathered`, and so the one place
         "exactly one result per task, never more" is enforced. Every other
@@ -133,6 +132,7 @@ class RunState:
 
         Caller holds the lock.
         """
+        delivered = set()
         for task, result in results:
             if task in self._delivered:
                 logger.debug(
@@ -141,6 +141,8 @@ class RunState:
                 continue
             self._delivered.add(task)
             self._gathered.append((task, result))
+            delivered.add(task)
+        return delivered
 
     def _outstanding_count(self) -> int:
         """Count everything not yet yielded. Caller holds the lock."""
@@ -244,10 +246,10 @@ class RunState:
 
         The run loop's teardown calls this once both workers have stopped.
         Whatever is still in ``running``, ``completed`` or the in-flight
-        gather state -- or is a delivered result's future the run loop never
-        took -- then belongs to a run that ended without collecting it -- a
-        consumer abandoned the generator -- and nobody else will ever come
-        for it. The caller releases them, because ``Future.release()``
+        gather state then belongs to a run that ended without collecting it
+        -- a consumer abandoned the generator -- and nobody else will ever
+        come for it. So does any delivered result's future the run loop
+        never took. The caller releases them, because ``Future.release()``
         is a dask call and must not run under this lock.
 
         Releasing matters for more than tidiness: an unreleased future keeps
@@ -376,15 +378,15 @@ class RunState:
         lock.
         """
         with self._condition:
+            delivered = self._deliver(results)
             unkept = []
             for (future, _), (task, result) in zip(
                     batch.entries, results, strict=True):
-                if isinstance(result, BaseException) \
-                        or task in self._delivered:
-                    unkept.append(future)
-                else:
+                if task in delivered \
+                        and not isinstance(result, BaseException):
                     self._result_futures[task] = future
-            self._deliver(results)
+                else:
+                    unkept.append(future)
             del self._gathering[batch.batch_id]
             self._condition.notify_all()
             return unkept
@@ -392,10 +394,8 @@ class RunState:
     def take_result_future(self, task: Task) -> Future | None:
         """Take the future holding a delivered task's result.
 
-        The run loop hands this, not the gathered value, to the task's
-        dependants, so the value travels worker to worker and never rides
-        in a submitted graph (gain#1633). ``None`` for a task delivered as
-        an error, which has no result to pass on.
+        ``None`` for a task delivered as an error, which has no result to
+        pass on.
         """
         with self._condition:
             return self._result_futures.pop(task, None)

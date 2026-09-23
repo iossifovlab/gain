@@ -376,8 +376,8 @@ class _DyingWorkerClient(_WrappedClient):
     is replaced instead.
     """
 
-    def map(self, _func: Any, tasks: Any, **kwargs: Any) -> Any:
-        return self._client.map(die_on_the_worker, tasks, **kwargs)
+    def map(self, _func: Any, *iterables: Any, **kwargs: Any) -> Any:
+        return self._client.map(die_on_the_worker, *iterables, **kwargs)
 
 
 def test_a_task_that_dies_on_the_worker_is_delivered_as_an_error(
@@ -1285,15 +1285,38 @@ def counted_tag(tag: str) -> str:
     return tag
 
 
-def slowly_tagged_late(tag: str) -> str:
-    # Long enough that the dependency the dependant shares with it has
-    # finished, been gathered and fed to another dependant well before.
-    time.sleep(0.5)
+def tagged(tag: str) -> str:
+    return tag
+
+
+def tagged_after(tag: str, delay: float) -> str:
+    time.sleep(delay)
     return tag
 
 
 def joined(*parts: str) -> str:
     return "+".join(parts)
+
+
+def _pinned_keys(client: Client, prefix: str) -> dict[str, int]:
+    """Keys named for ``prefix`` that the client still holds a future to."""
+    return {
+        key: count for key, count in client.refcount.items()
+        if str(key).startswith(f"{prefix}-") and count > 0
+    }
+
+
+def _pinned_keys_after(
+    client: Client, prefix: str, timeout: float,
+) -> dict[str, int]:
+    """:func:`_pinned_keys`, once the client has had ``timeout`` to let go.
+
+    ``Future.release()`` only schedules the decrement on the client's loop.
+    """
+    deadline = time.monotonic() + timeout
+    while _pinned_keys(client, prefix) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return _pinned_keys(client, prefix)
 
 
 def test_a_dependency_reaches_a_dependant_queued_long_after_it_finished(
@@ -1305,8 +1328,8 @@ def test_a_dependency_reaches_a_dependant_queued_long_after_it_finished(
     future holding its result, so that future must outlive every
     submission that consumes it. ``early`` is consumed twice -- by
     ``first``, submitted as soon as ``early`` finishes, and by ``late``,
-    which also waits on a slow task and so is queued half a second after
-    ``early`` finished and after ``first`` was already submitted.
+    which also waits on a slow task and so is queued after ``early``
+    finished and after ``first`` was already submitted.
 
     A future released too soon breaks this one of two ways, depending on
     when: released before any dependant was submitted, ``late`` fails with
@@ -1318,7 +1341,7 @@ def test_a_dependency_reaches_a_dependant_queued_long_after_it_finished(
     COUNTED_RUNS.clear()
     graph = TaskGraph()
     early = graph.create_task("early", counted_tag, args=["early"])
-    slow = graph.create_task("slow", slowly_tagged_late, args=["slow"])
+    slow = graph.create_task("slow", tagged_after, args=["slow", 0.2])
     graph.create_task("first", joined, args=[early, "first"])
     graph.create_task("late", joined, args=[early, slow])
 
@@ -1347,8 +1370,8 @@ def test_an_abandoned_run_releases_the_dependencies_it_still_held(
     keeps the graph (gain#480).
     """
     graph = TaskGraph()
-    held = graph.create_task("HeldDependency", counted_tag, args=["held"])
-    slow = graph.create_task("SlowSibling", slowly_tagged_late, args=["s"])
+    held = graph.create_task("HeldDependency", tagged, args=["held"])
+    slow = graph.create_task("SlowSibling", tagged_after, args=["s", 0.2])
     graph.create_task("NeverSubmitted", joined, args=[held, slow])
 
     tasks_iter = DaskExecutor(dask_client).execute(graph)
@@ -1357,18 +1380,8 @@ def test_an_abandoned_run_releases_the_dependencies_it_still_held(
             break
     tasks_iter.close()
 
-    def pinned() -> dict[str, int]:
-        return {
-            key: count for key, count in dask_client.refcount.items()
-            if str(key).startswith("HeldDependency-") and count > 0
-        }
-
-    # ``Future.release()`` only schedules the decrement on the client's
-    # loop, so give it a moment -- a pinned key stays pinned indefinitely.
-    deadline = time.monotonic() + 5.0
-    while pinned() and time.monotonic() < deadline:
-        time.sleep(0.05)
-    assert pinned() == {}
+    # A pinned key stays pinned indefinitely, so the wait is only slack.
+    assert _pinned_keys_after(dask_client, "HeldDependency", 5.0) == {}
 
 
 def test_a_submitted_dependency_is_not_held_while_the_run_goes_on(
@@ -1385,24 +1398,15 @@ def test_a_submitted_dependency_is_not_held_while_the_run_goes_on(
     left to submit, long after ``Consumer`` has finished.
     """
     graph = TaskGraph()
-    leaf = graph.create_task("SubmittedLeaf", counted_tag, args=["leaf"])
+    leaf = graph.create_task("SubmittedLeaf", tagged, args=["leaf"])
     consumer = graph.create_task("Consumer", joined, args=[leaf, "c"])
-    graph.create_task("SlowSibling", slowly_tagged_late, args=["s"])
-
-    def pinned() -> dict[str, int]:
-        return {
-            key: count for key, count in dask_client.refcount.items()
-            if str(key).startswith("SubmittedLeaf-") and count > 0
-        }
+    graph.create_task("SlowSibling", tagged_after, args=["s", 0.5])
 
     still_pinned: dict[str, int] = {}
     for task, _result in DaskExecutor(dask_client).execute(graph):
         if task == consumer:
-            # ``Future.release()`` only schedules the decrement on the
-            # client's loop; the slow sibling leaves ample time for it.
-            deadline = time.monotonic() + 0.3
-            while pinned() and time.monotonic() < deadline:
-                time.sleep(0.02)
-            still_pinned = pinned()
+            # Well inside the sibling's run, which is what is measured.
+            still_pinned = _pinned_keys_after(
+                dask_client, "SubmittedLeaf", 0.3)
 
     assert still_pinned == {}

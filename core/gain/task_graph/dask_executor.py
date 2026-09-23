@@ -70,59 +70,6 @@ def dask_keys(run_id: str, batch: SubmitBatch) -> list[str]:
     return keys
 
 
-@dataclasses.dataclass(frozen=True)
-class _Dependency:
-    """Marks where a dependency's value goes back into a task's arguments.
-
-    ``index`` is its position in the list of futures submitted beside the
-    task.
-    """
-
-    index: int
-
-
-def lift_dependencies(task: TaskDesc) -> tuple[TaskDesc, list[Future]]:
-    """Take the futures out of a task's arguments.
-
-    A dependency reaches a dask task as the future holding its result, so
-    the value moves from worker to worker instead of riding in the
-    submitted graph (gain#1633). dask only resolves a future it finds
-    inside a ``list``/``tuple``/``dict``/``set`` argument of the submitted
-    call -- not one nested in a :class:`TaskDesc` -- so each is replaced by
-    a :class:`_Dependency` marker and returned in marker order, to be
-    submitted beside the task and put back by :func:`inject_dependencies`.
-    """
-    futures: list[Future] = []
-
-    def lift(value: Any) -> Any:
-        if not isinstance(value, Future):
-            return value
-        futures.append(value)
-        return _Dependency(len(futures) - 1)
-
-    lifted = dataclasses.replace(
-        task,
-        args=[lift(arg) for arg in task.args],
-        kwargs={key: lift(value) for key, value in task.kwargs.items()},
-    )
-    return lifted, futures
-
-
-def inject_dependencies(task: TaskDesc, values: Sequence[Any]) -> TaskDesc:
-    """Put resolved dependency values back where :func:`lift_dependencies`
-    took their futures from."""
-
-    def inject(value: Any) -> Any:
-        return values[value.index] if isinstance(value, _Dependency) \
-            else value
-
-    return dataclasses.replace(
-        task,
-        args=[inject(arg) for arg in task.args],
-        kwargs={key: inject(value) for key, value in task.kwargs.items()},
-    )
-
-
 def held_futures(graph: TaskGraph) -> list[Future]:
     """List the dependency futures the graph's remaining tasks hold."""
     descs = [graph.get_task_desc(task) for task in graph.tasks]
@@ -201,9 +148,17 @@ class DaskExecutor(TaskGraphExecutorBase):
         # already does for a task that dies on the worker -- and then
         # terminates.
         try:
+            # A dependency arrives as the future holding its result (see
+            # ``execute``). dask resolves a future inside a list or dict
+            # handed to map() -- not one nested in a TaskDesc -- so the
+            # arguments travel beside the task, and the value moves from
+            # worker to worker instead of riding in the graph (gain#1633).
             futures = self._dask_client.map(
-                self._exec_with_dependencies,
-                [lift_dependencies(task) for task in tasks],
+                self._exec_with_arguments,
+                [dataclasses.replace(task, args=[], kwargs={})
+                 for task in tasks],
+                [task.args for task in tasks],
+                [task.kwargs for task in tasks],
                 key=dask_keys(state.run_id, batch),
                 pure=False,
                 params=self._params,
@@ -328,25 +283,22 @@ class DaskExecutor(TaskGraphExecutorBase):
                 self._release_futures(batch.futures)
                 continue
 
-            # A result's future is kept for the task's dependants, which
-            # receive it instead of the value (gain#1633); the rest go now.
+            # A result's future is kept for the run loop; the rest go now.
             self._release_futures(state.gathered(batch, gathered))
             processed_results += len(gathered)
 
         logger.info("results worker processed %s results", processed_results)
 
     @staticmethod
-    def _exec_with_dependencies(
-        payload: tuple[TaskDesc, list[Any]],
+    def _exec_with_arguments(
+        task: TaskDesc,
+        args: list[Any],
+        kwargs: dict[str, Any],
         params: dict[str, Any],
     ) -> Any:
-        """Run a task on a worker, its dependency values put back first.
-
-        By the time this runs, dask has resolved the futures submitted
-        beside the task into the values they hold.
-        """
-        task, values = payload
-        return DaskExecutor._exec(inject_dependencies(task, values), params)
+        """Run a task on a worker with its arguments, futures resolved."""
+        return DaskExecutor._exec(
+            dataclasses.replace(task, args=args, kwargs=kwargs), params)
 
     @staticmethod
     def _release_futures(futures: Sequence[Future]) -> None:
@@ -439,8 +391,10 @@ class DaskExecutor(TaskGraphExecutorBase):
                 for task, result in state.take_results():
                     # Dependants receive the future, not the gathered value,
                     # so the value never rides in a submitted graph
-                    # (gain#1633). A failed task has none: its dependants
-                    # are pruned on the exception itself.
+                    # (gain#1633). Nothing releases it explicitly: it goes
+                    # when the last dependant holding it has been submitted
+                    # and dropped. A failed task has no future; its
+                    # dependants are pruned on the exception itself.
                     future = state.take_result_future(task)
                     graph.process_completed_tasks(
                         [(task, result if future is None else future)])

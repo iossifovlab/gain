@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0115,C0116,W0212,W0613
 from unittest.mock import MagicMock
 
+from dask.distributed import Future
 from gain.task_graph.dask_run_state import GatherBatch, RunState, SubmitBatch
 from gain.task_graph.graph import Task, TaskDesc
 
@@ -445,7 +446,7 @@ def test_gather_failed_does_not_duplicate_a_task_the_abort_delivered() -> None:
 
 def a_gathered_batch(
     state: RunState, results: dict[str, object],
-) -> tuple[dict[str, MagicMock], list[object]]:
+) -> tuple[dict[str, MagicMock], list[Future]]:
     """Walk one task per result through to gathered.
 
     Returns each task's future, and what :meth:`RunState.gathered` handed
@@ -458,7 +459,7 @@ def a_gathered_batch(
         state.task_finished(future)
     unkept = state.gathered(a_claimed_gather_batch(state), [
         (Task(task_id), result) for task_id, result in results.items()])
-    return futures, list(unkept)
+    return futures, unkept
 
 
 def test_a_result_future_is_kept_for_the_dependants_of_its_task() -> None:
