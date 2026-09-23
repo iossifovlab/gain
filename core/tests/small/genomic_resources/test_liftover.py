@@ -188,6 +188,22 @@ def test_a_chain_config_outside_its_schema_is_refused(
         LiftoverChain(resource)
 
 
+def test_a_chains_chrom_prefix_is_not_announced_as_retired(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only a genome's flat ``chrom_prefix`` is retired (gain#1090); the
+    chain's nested mapping is live configuration."""
+    resource = _a_chain_under_a_real_id_configured(tmp_path, yaml.safe_dump({
+        "type": "liftover_chain",
+        "filename": "liftover.chain.gz",
+        "chrom_prefix": {"variant_coordinates": {"add_prefix": "chr"}},
+    }))
+
+    LiftoverChain(resource)
+
+    assert captured_warnings(caplog) == []
+
+
 def test_a_chain_whose_chrom_prefix_is_null_rewrites_nothing(
     tmp_path: pathlib.Path,
 ) -> None:

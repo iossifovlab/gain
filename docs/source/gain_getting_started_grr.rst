@@ -128,7 +128,6 @@ this configures the minigenome resource so GAIn can recognize and use it for ann
 
     type: genome
     filename: minigenome.fa
-    chrom_prefix: "chr"
     meta:
       summary: mini genome
 
@@ -187,13 +186,12 @@ Use the following commands in the ``my_genome`` directory to recompress and inde
     bgzip GRCh38.p14.genome.fa
     samtools faidx GRCh38.p14.genome.fa.gz
 
-You now have the BGZF-compressed FASTA file and its ``.fai`` index. Add a ``genomic_resource.yaml`` file in this directory with the content below. Here, filename specifies the compressed FASTA file used for the genome sequence, ``chrom_prefix`` indicates that chromosome names in this assembly use the ``chr`` prefix, for example ``chr1``, and ``PARS`` lists the pseudoautosomal regions on chromosomes X and Y.
+You now have the BGZF-compressed FASTA file and its ``.fai`` index. Add a ``genomic_resource.yaml`` file in this directory with the content below. Here, filename specifies the compressed FASTA file used for the genome sequence, and ``PARS`` lists the pseudoautosomal regions on chromosomes X and Y.
 
 .. code-block:: yaml
 
     type: genome
     filename: GRCh38.p14.genome.fa.gz
-    chrom_prefix: "chr"
 
     PARS:
       "X":

@@ -49,7 +49,6 @@ def annotate_directory_fixture(tmp_path: pathlib.Path) -> pathlib.Path:
                     "genomic_resource.yaml": """
                         type: genome
                         filename: chrAll.fa
-                        chrom_prefix: "chr"
                     """,
                 },
             },

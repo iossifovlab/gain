@@ -54,7 +54,6 @@
       Y:
       - chrY:10000-2781479
       - chrY:56887902-57217415
-    chrom_prefix: ''
     filename: GRCh38_full_analysis_set_plus_decoy_hla.fa
     meta:
       description: "## HG38 Reference Genome \n\nDefault HG38 reference genome used\
@@ -69,9 +68,9 @@
   - md5: 2e3b716901f9da348a3ea6a424d54006
     name: GRCh38_full_analysis_set_plus_decoy_hla.fa.fai
     size: 50
-  - md5: b151ecdcef68d9014ab78823b5147711
+  - md5: dab89ebfdb7697d3c1e2151e3d67ee47
     name: genomic_resource.yaml
-    size: 339
+    size: 321
   - md5: d2b8b5b7c69cecbf91e9bbf25ea778b7
     name: index.html
     size: 3169

@@ -99,7 +99,6 @@
           "chrY:56887902-57217415"
         ]
       },
-      "chrom_prefix": "",
       "filename": "GRCh38_full_analysis_set_plus_decoy_hla.fa",
       "meta": {
         "description": "## HG38 Reference Genome \n\nDefault HG38 reference genome used by GPF\n",
@@ -121,9 +120,9 @@
         "size": 50
       },
       {
-        "md5": "b151ecdcef68d9014ab78823b5147711",
+        "md5": "dab89ebfdb7697d3c1e2151e3d67ee47",
         "name": "genomic_resource.yaml",
-        "size": 339
+        "size": 321
       },
       {
         "md5": "7ee8ab1286a0dd818843b2a28bcf39cd",

@@ -164,14 +164,41 @@ def warn_deprecated_spelling(
 ) -> None:
     """Announce one legacy spelling once per offender, per process.
 
-    The seams that recognise a legacy spelling are not once-per-offender on
-    their own.  ``FragmentScore.__init__`` looked like it was -- until the
-    statistics scan, which rebuilds the score inside every min/max and
-    histogram task: ``grr_manage repo-repair`` over an hg38-scale resource
-    re-opens it once per region, so an unguarded warning there prints
-    thousands of identical lines for a single offender.  That is the noise
-    the deprecation was supposed to avoid, and it hides the other offenders
-    behind it.
+    Announced once per process; see ``_announce_once``.
+    """
+    _announce_once(logger, deprecated_spelling_message(
+        surface, legacy, preferred, found_in=found_in))
+
+
+def warn_retired_config_key(
+    logger: logging.Logger, key: str, *, found_in: str, reason: str,
+) -> None:
+    """Announce a config key that is accepted but ignored, once per offender.
+
+    The counterpart of :func:`warn_deprecated_spelling` for a key with no
+    replacement: there is nothing to write instead, so the notice says why
+    the key does nothing and when it stops being accepted.  ``reason``
+    completes "it is ignored: ...".  Announced once per process; see
+    ``_announce_once``.
+    """
+    _announce_once(logger, (
+        f"{found_in} sets retired config key '{key}'; it is ignored: "
+        f"{reason} -- delete it; '{key}' stops being accepted in GAIn "
+        f"{LEGACY_VOCABULARY_REMOVAL_RELEASE}"
+    ))
+
+
+def _announce_once(logger: logging.Logger, message: str) -> None:
+    """Log ``message`` unless this process already has.
+
+    The seams that recognise a legacy spelling or a retired key are not
+    once-per-offender on their own.  ``FragmentScore.__init__`` looked like
+    it was -- until the statistics scan, which rebuilds the score inside
+    every min/max and histogram task: ``grr_manage repo-repair`` over an
+    hg38-scale resource re-opens it once per region, so an unguarded warning
+    there prints thousands of identical lines for a single offender.  That
+    is the noise the deprecation was supposed to avoid, and it hides the
+    other offenders behind it.
 
     Deduplicating on the rendered message keeps the property that matters
     -- every distinct offender is named -- without asking each call site to
@@ -187,8 +214,6 @@ def warn_deprecated_spelling(
     Tests reset the set through :func:`reset_deprecation_notices`, so an
     assertion never depends on what ran before it.
     """
-    message = deprecated_spelling_message(
-        surface, legacy, preferred, found_in=found_in)
     if message in _ANNOUNCED_DEPRECATIONS:
         return
     if len(_ANNOUNCED_DEPRECATIONS) >= _ANNOUNCEMENT_MEMORY:

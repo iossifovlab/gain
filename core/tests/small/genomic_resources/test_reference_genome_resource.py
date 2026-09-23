@@ -25,6 +25,9 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
 )
+from gain.genomic_resources.resource_types import (
+    LEGACY_VOCABULARY_REMOVAL_RELEASE,
+)
 from gain.genomic_resources.testing import (
     build_filesystem_test_resource,
     build_http_test_protocol,
@@ -37,6 +40,8 @@ from gain.genomic_resources.testing import (
 )
 from gain.genomic_resources.testing.builders import a_reference_genome
 from gain.utils.regions import Region
+
+from .conftest import captured_warnings
 
 
 @pytest.fixture
@@ -686,7 +691,6 @@ DOCUMENTED_GENOME_CONFIG = textwrap.dedent("""
     type: genome
     filename: chr.fa
     index_file: chr.custom.fai
-    chrom_prefix: "chr"
     PARS:
       "X":
         - "chrX:10000-2781479"
@@ -714,7 +718,6 @@ def test_genome_config_with_every_documented_field_validates() -> None:
         _genome_resource_with_config(DOCUMENTED_GENOME_CONFIG))
 
     assert genome.config["index_file"] == "chr.custom.fai"
-    assert genome.config["chrom_prefix"] == "chr"
 
 
 def test_genome_config_with_pars_on_x_only_is_accepted() -> None:
@@ -732,16 +735,86 @@ def test_genome_config_with_pars_on_x_only_is_accepted() -> None:
     assert genome.pars == {"chrX": [Region("chrX", 10000, 2781479)]}
 
 
-def test_genome_config_with_a_bare_chrom_prefix_is_accepted() -> None:
-    """A bare ``chrom_prefix:`` reads as the documented "no prefix"."""
-    genome = build_reference_genome_from_resource(
-        _genome_resource_with_config(textwrap.dedent("""
-            type: genome
-            filename: chr.fa
-            chrom_prefix:
-        """)))
+@pytest.mark.legacy_vocabulary
+@pytest.mark.parametrize("chrom_prefix", [
+    pytest.param('"chr"', id="chr"),
+    pytest.param('""', id="empty"),
+    pytest.param("", id="bare"),
+])
+def test_genome_config_setting_chrom_prefix_is_announced_as_retired(
+    chrom_prefix: str, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The key configures nothing, so setting it is announced (gain#1090)."""
+    repo = _genome_repo_with_configs({
+        "hg38/my_genome":
+            f"type: genome\nfilename: chr.fa\nchrom_prefix: {chrom_prefix}\n",
+    })
 
-    assert genome.config["chrom_prefix"] is None
+    build_reference_genome_from_resource_id("hg38/my_genome", repo)
+
+    assert captured_warnings(caplog) == [(
+        "Resource 'hg38/my_genome' sets retired config key 'chrom_prefix'; "
+        "it is ignored: a genome's prefix is derived from its contig names -- "
+        "delete it; 'chrom_prefix' stops being accepted in GAIn "
+        f"{LEGACY_VOCABULARY_REMOVAL_RELEASE}"
+    )]
+
+
+@pytest.mark.legacy_vocabulary
+def test_chrom_prefix_notice_is_announced_once_per_genome_version(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Rebuilding a genome does not repeat its notice; each version of one
+    id is its own config to clean up, so each is named."""
+    config = 'type: genome\nfilename: chr.fa\nchrom_prefix: "chr"\n'
+    repo = _genome_repo_with_configs({
+        "my_genome(1.0)": config, "my_genome(2.0)": config})
+    versions = sorted(
+        repo.get_all_resources(), key=lambda res: res.get_full_id())
+
+    for resource in [versions[0], versions[0], versions[1]]:
+        build_reference_genome_from_resource(resource)
+
+    assert [
+        notice.split(" sets ")[0] for notice in captured_warnings(caplog)
+    ] == ["Resource 'my_genome(1.0)'", "Resource 'my_genome(2.0)'"]
+
+
+@pytest.mark.legacy_vocabulary
+def test_chrom_prefix_follows_the_contigs_not_the_config() -> None:
+    """A declared ``chrom_prefix`` that contradicts the contigs loses."""
+    repo = build_inmemory_test_repository({
+        "hg38/my_genome": {
+            GR_CONF_FILE_NAME:
+                'type: genome\nfilename: chr.fa\nchrom_prefix: ""\n',
+            "chr.fa": ">chr1\nNNACCCAAAC\n",
+            "chr.fa.fai": "chr1\t10\t6\t10\t11\n",
+        },
+    })
+
+    genome = build_reference_genome_from_resource_id("hg38/my_genome", repo)
+
+    assert genome.chrom_prefix == "chr"
+
+
+def test_genome_config_without_chrom_prefix_is_not_announced(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    repo = _genome_repo_with_configs({
+        "hg38/my_genome": "type: genome\nfilename: chr.fa\n",
+    })
+
+    build_reference_genome_from_resource_id("hg38/my_genome", repo)
+
+    assert captured_warnings(caplog) == []
+
+
+def _genome_repo_with_configs(configs: dict[str, str]) -> GenomicResourceRepo:
+    """An in-memory repository of genome resources, each only a config."""
+    return build_inmemory_test_repository({
+        resource_id: {GR_CONF_FILE_NAME: config}
+        for resource_id, config in configs.items()
+    })
 
 
 @pytest.mark.parametrize("config", [

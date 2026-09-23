@@ -931,12 +931,18 @@ Resource-specific fields in ``genomic_resource.yaml`` for genome resources (``ty
    * - ``index_file``
      - Optional string
      - Path to the FASTA ``.fai`` index, relative to the resource directory. Default: ``<filename>.fai``.
-   * - ``chrom_prefix``
-     - Optional string
-     - Prefix expected in contig names, for example ``chr``. Default: no prefix.
    * - ``PARS``
      - Optional subsection
      - Pseudoautosomal regions for the assembly.
+
+.. note::
+
+    A genome's contig naming needs no configuration: whether its contigs
+    carry a ``chr`` prefix is read from the contig names in the ``.fai``
+    index. A ``chrom_prefix`` key left over from older configurations is
+    ignored. It is still accepted but is **deprecated**: it stops being
+    accepted in GAIn ``2027.1.0``, and until then every genome setting it
+    logs a warning naming that resource. Delete it.
 
 The genome FASTA may be either a plain ``.fa`` file or a **bgzipped** FASTA (``.fa.gz`` or ``.bgz``). GAIn selects how to read the sequence from the file extension — a bgzipped genome is read with random access via ``pysam.FastaFile`` — so no extra configuration is required. A plain ``.fa`` genome needs only its ``.fai`` index; a bgzipped genome must be accompanied by **two** index files in the resource directory: a ``.fai`` FASTA index and a ``.gzi`` bgzip block index. We use samtools to create these index files. If samtools is not already available in your environment, install it with:
 
@@ -958,20 +964,18 @@ A bgzipped genome is configured exactly like a plain one — only the ``filename
 
     type: genome
     filename: GRCh38.p14.genome.fa.gz
-    chrom_prefix: "chr"
 
     meta:
       summary: Nucleotide sequence of the GRCh38.p14 genome assembly (bgzipped)
 
 Let's revisit the example ``genomic_resource.yaml`` from the `Getting started with GRR genome section <https://iossifovlab.com/gaindocs/gain_getting_started_grr.html#genome-grch38-p14>`_.
-As before, filename points to the downloaded FASTA file and contig names use the ``chr`` prefix. We also include
+As before, filename points to the downloaded FASTA file. We also include
 ``PARS``, which defines the pseudoautosomal regions on chromosomes X and Y.
 
 .. code-block:: yaml
 
     type: genome
     filename: GRCh38.p14.genome.fa
-    chrom_prefix: "chr"
 
     PARS:
       "X":
