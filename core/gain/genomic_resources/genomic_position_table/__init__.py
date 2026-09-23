@@ -409,7 +409,7 @@ so the two region reads now agree.
 by ITERATING contigs, in ``scan.do_noregion_histograms``, rather than by
 handing a null contig down.  No member of the region-read family takes
 ``chrom=None``:
-``GenomicScore.fetch_records`` and ``fetch_region_segment_scores`` both
+``GenomicScore.fetch_records`` and ``fetch_region_segments_scores`` both
 require a contig, and a caller that wants every record of a table asks the
 table (``get_all_records()``).
 
@@ -511,12 +511,19 @@ caller has any use for that.
 
 **``GenomicScore.fetch_region_values`` is renamed
 ``fetch_region_segment_scores``; the old name survives as a deprecated alias**
-(gain#729).  The method yields one tuple per underlying RECORD -- a segment,
-with that record's own clipped ``(begin, end)`` -- not one value per position,
-and "values" is exactly what made callers read it as the latter.  Living on
-the shared base, the rename covers ``PositionScore``, ``AlleleScore`` and
-``FragmentScore`` at once; ``region_values_from_records`` keeps its name, the
-statistics scan composing through it unchanged (ADR 0008).
+(gain#729).  The method yielded one tuple per underlying RECORD -- a
+segment -- not one value per position, and "values" is exactly what made
+callers read it as the latter.  Living on the shared base, the rename covered
+``PositionScore``, ``AlleleScore`` and ``FragmentScore`` at once.
+
+Both of this entry's other claims are superseded; see the entries at the end
+of this ledger.  The segment it yielded was CLIPPED to the region then, and
+no segment read clips now: gain#827 moved the clip to the consumers, so
+``fetch_region_segments_scores`` reports each record at its own extent.  And
+``region_values_from_records`` did not keep its name -- gain#828 renamed it
+``values_from_records`` -- while the statistics scan no longer composes a clip
+through it at all: it assigns each record, whole, to the region its begin
+falls in (``owns_record``, gain#816).
 
 Unlike ``fetch_region`` above, the old name is NOT gone yet: no in-tree and no
 known cross-repo caller used it, but the published
@@ -792,6 +799,30 @@ and a caller migrates by renaming the call and dropping the two positions.
 A call to ``region_values_from_records`` is an ``AttributeError``.  The
 gain#729 entry above, which records that this method kept its name then,
 is superseded on that point.
+
+**New exports ``clip_span`` and ``clip_to_region``: the region rule, stated
+once** (gain#826, the epic gain#825).  Both live in
+``genomic_scores.records`` and are in that package's ``__all__``.
+``clip_span(rec_begin, rec_end, pos_begin, pos_end)`` answers the part of a
+record inside a window, or ``None`` for a record with no part inside it --
+the skip, the clip and the refusal of the inverted span that naive clipping
+makes of a record starting past the window, which three consumers used to
+catch with guards of their own.  ``clip_to_region`` is a three-line
+generator over it, for a caller that holds a STREAM of segments and wants
+the old clipped one back.  Together with the gain#827 change above, this is
+what "reads never clip" rests on: a segment read reports the record as
+stored, and a consumer that means a window says so by calling one of these.
+
+**The hot consumers call the scalar inline; do not "tidy" them into the
+generator.**  The per-record loops that already iterate -- the position
+kind's run encoding (``PositionScore._runs_from_segments``) among them --
+call ``clip_span`` in their own loop body rather than composing
+``clip_to_region`` in front of it.  That is deliberate: a composed
+transducer adds a generator level per record, and the gain#823 prototype
+measured exactly that shape of cost at 0.088 us/rec -- about a third of
+what gain#823 won on the same path.  The rule is one function either way;
+only the generator costs.  Rewriting an inline call as a composed stream
+reads as a cleanup and quietly gives that third back.
 """
 from .line import LineBuffer
 from .table import ChromLengthSource, ContigExtent, PayloadKind

@@ -57,8 +57,11 @@ appearing to certify the same thing.
 
 **And the rule cannot see what it needs to see.** Each kind normalizes a record
 before yielding it: a position score clips to the queried region, an allele score
-collapses a record to the point it sits at. That collapse *discards the record's
-end*. So a record whose end precedes its begin — the signature of a tabix table
+collapses a record to the point it sits at. *[The position half is history:
+since [gain#827](https://github.com/iossifovlab/gain/issues/827) no segment read
+clips, and a position score reports each record at its own extent — see the note
+under decision 1. The allele collapse stands.]* That collapse *discards the
+record's end*. So a record whose end precedes its begin — the signature of a tabix table
 whose index and `pos_end` name different columns — is structurally invisible to
 anything validating the normalized shape of an allele score. The two paths also
 see different shapes, which is the mechanical reason the bulk guard could never
@@ -66,10 +69,29 @@ express more than the one rule it does.
 
 ## Decision
 
-**1. Reads never validate.** `fetch_records`, `fetch_region_segment_scores`
+**1. Reads never validate.** `fetch_records`, `fetch_region_segments_scores`
 (named `fetch_region_values` when this was written), the point
 reads and the annotators do no checking at all. There is no `validate_ordering`
 flag and no opt-out; the capability is removed rather than defaulted.
+
+> **Reads never clip, either** ([gain#825](https://github.com/iossifovlab/gain/issues/825),
+> carried out by [gain#826](https://github.com/iossifovlab/gain/issues/826) /
+> [gain#827](https://github.com/iossifovlab/gain/issues/827) /
+> [gain#828](https://github.com/iossifovlab/gain/issues/828)). The clip to the
+> queried window joined validation as a thing consumers *compose* rather than a
+> thing the read applies, by this record's own argument: consumers differ by what
+> they need, so the read does neither. `fetch_region_segments_scores` and
+> `values_from_records` (once `region_values_from_records`) report every record
+> at its own extent, a record straddling the window's edge included. A consumer
+> answering a question about the window states that by calling `clip_span` —
+> the region rule's one statement, in `genomic_scores/records.py` — or
+> `clip_to_region`, the generator over it. The statistics scan does neither: it
+> assigns each record whole to the region its begin falls in (`owns_record`,
+> [gain#816](https://github.com/iossifovlab/gain/issues/816)).
+>
+> This strengthens the decision rather than bending it. The per-record and bulk
+> paths each used to state the region rule for themselves, the same two-statement
+> shape *Context* describes for the ordering rule; the rule is now stated once.
 
 **2. The statistics scan always validates.** Unconditionally — on both the
 min/max and the histogram pass, and on both the per-record and the vectorized
