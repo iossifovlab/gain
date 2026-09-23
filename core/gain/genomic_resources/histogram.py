@@ -34,7 +34,7 @@ from gain.genomic_resources.statistics.chart_style import (
     CHART_LABEL_FONT_SIZE,
 )
 from gain.genomic_resources.statistics.min_max import MinMaxValue
-from gain.genomic_resources.statistics.moments import Moments
+from gain.genomic_resources.statistics.moments import Moments, MomentsSummary
 
 logger = logging.getLogger(__name__)
 
@@ -436,8 +436,9 @@ class NumberHistogram(Statistic):
         :attr:`mean` is.  See :attr:`Moments.std`."""
         return None if self._moments is None else self._moments.std
 
-    def moments_summary(self) -> str | None:
-        """``n / mean / sd``, rendered for the summary page.
+    def moments_summary(self) -> MomentsSummary | None:
+        """``n``, ``mean`` and ``sd`` as ``(label, value)`` pairs, rendered
+        for the summary page.
 
         The counterpart of :meth:`values_domain` for the accumulators:
         ``None`` when they are unknown or nothing was folded, so the page

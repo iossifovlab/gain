@@ -143,13 +143,15 @@ def test_mean_and_std_are_unknown_before_anything_is_folded() -> None:
     assert (hist.mean, hist.std) == (None, None)
 
 
-def test_moments_summary_renders_n_mean_sd_for_the_page() -> None:
+def test_moments_summary_renders_labelled_n_mean_sd_for_the_page() -> None:
     hist = NumberHistogram(_a_config(lo=0, hi=100))
     hist.add_batch(np.array([1.0, 4.0]), np.array([1_000_000, 234_567]))
 
-    # n with thousands separators, mean and sd at the three significant
-    # digits ``values_domain`` uses.
-    assert hist.moments_summary() == "1,234,567 / 1.57 / 1.18"
+    # One (label, value) pair per line of the page's Summary cell: n with
+    # thousands separators, mean and sd at the three significant digits
+    # ``values_domain`` uses.
+    assert hist.moments_summary() == (
+        ("n", "1,234,567"), ("mean", "1.57"), ("sd", "1.18"))
 
 
 def test_moments_summary_is_none_when_the_moments_are_unknown() -> None:

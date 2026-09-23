@@ -10,6 +10,26 @@
         text-overflow: ellipsis;
       }
 
+      /* A score's Summary cell: labels left, numbers right, one line
+         each, so a long n never wraps mid-number. */
+      dl.moments {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        column-gap: 0.75em;
+        margin: 0;
+      }
+
+      dl.moments dt {
+        color: #5b778c;
+      }
+
+      dl.moments dd {
+        margin: 0;
+        text-align: right;
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+
       #page-header {
         display: flex;
         align-items: center;
