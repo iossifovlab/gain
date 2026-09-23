@@ -12,9 +12,10 @@
   (the fragment-segments amendment),
   [gain#1041](https://github.com/iossifovlab/gain/issues/1041)
   (the coverage-denominator amendment),
-  [gain#1419](https://github.com/iossifovlab/gain/issues/1419) and
-  [gain#1448](https://github.com/iossifovlab/gain/issues/1448)
-  (the stored-lengths amendment and its reversal),
+  [gain#1419](https://github.com/iossifovlab/gain/issues/1419),
+  [gain#1448](https://github.com/iossifovlab/gain/issues/1448) and
+  [gain#1573](https://github.com/iossifovlab/gain/issues/1573)
+  (the stored-lengths amendment, its reversal and its restoration),
   [gain#1414](https://github.com/iossifovlab/gain/issues/1414)
   (the score-rung amendment),
   [gain#1543](https://github.com/iossifovlab/gain/issues/1543) and
@@ -228,8 +229,10 @@ alt-minus-ref, not an absolute value.
   *Amended by [gain#1419](https://github.com/iossifovlab/gain/issues/1419):
   chromosome **lengths** are now stored; **fractions** still are not.*
   **Reversed by [gain#1448](https://github.com/iossifovlab/gain/issues/1448)
-  before release — see the note after this amendment. Kept, because it is
-  the reasoning the reversal answers.** The
+  before release, and restored with differences by
+  [gain#1573](https://github.com/iossifovlab/gain/issues/1573) — see the
+  two notes after this amendment. Kept, because it is
+  the reasoning the reversal answers and the restoration builds on.** The
   bullet's premise — "chromosome lengths belong to a reference genome, not to
   the score" — was half the story. The *score* has a length per contig it
   carries, resolved through one ladder (`reference_genome` label → bigWig
@@ -271,36 +274,123 @@ alt-minus-ref, not an absolute value.
 
   *Re-amended by [gain#1448](https://github.com/iossifovlab/gain/issues/1448):
   chromosome **lengths are NOT stored either**; the ladder is a repair-time
-  computation on the implementation.* The gain#1419 amendment above was
+  computation on the implementation.*
+  **Reversed by [gain#1573](https://github.com/iossifovlab/gain/issues/1573)
+  on 2026-09-21 — see the re-amendment after this one. Kept, because its
+  two objections — no reader, and the gain#1444 failure — are what the
+  restoration answers.** The gain#1419 amendment above was
   built for a reader that has no repository — the score's own
   `get_chrom_length` and its siblings — and the file existed only so that
-  such a reader could apply the genome rung. No such reader exists: every
+  such a reader could apply the genome rung. The argument was that no such
+  reader exists: every
   consumer of a *score's* lengths (the statistics region split, the
   coverage denominator of gain#1414, the `grr_bench` binning benchmark)
   already holds a repository, and two of the three run inside the
-  implementation. So the ladder now lives on
+  implementation. So the ladder moved onto
   `GenomicScoreImplementation.get_chrom_lengths(grr)`, which resolves the
   `reference_genome` label through the repository it is handed, opens the
   score if it must and restores it, and returns the per-contig record
-  (length, source, extent) in table order. The score-level methods, the
+  (length, source, extent) in table order — where it still lives. The
+  score-level methods, the
   file, its `derived_from` key, its freshness gate in the repair loop and
-  the base implementation's derived-files hooks are all gone; the ladder,
+  the base implementation's derived-files hooks were removed; the ladder,
   the record, `ChromLengthSource` with `is_exact`, the backends'
-  declarations and the genome rung (gain#1418) stand.
+  declarations and the genome rung (gain#1418) stood.
 
-  Why that is enough: the tabix probe is the only expensive rung, and it
+  Why that was held to be enough: the tabix probe is the only expensive
+  rung, and it
   runs where the payload must be present anyway — inside a full
   statistics rebuild, which dominates it. The region split was the one
   caller until gain#1414 re-pointed the page's coverage denominator here
   (its own amendment, below, says how it avoids the probe). And why the
-  file had to go rather
-  than merely stay optional: its freshness gate opened every score
+  file was removed rather
+  than merely left optional: its freshness gate opened every score
   resource lacking the file, which on a pointer-only DVC checkout — the
   shape every DVC-backed GRR's working copy has — failed each one on the
   absent payload (gain#1444). A resource whose statistics are current is
-  consistent as it stands, and a repair of it now opens no table. The
+  consistent as it stands, and a repair of it then opened no table. The
   "fractions at render" half of this bullet is unchanged: the stored
   statistics stay genome-independent, as they always were.
+
+  *Re-amended by [gain#1573](https://github.com/iossifovlab/gain/issues/1573),
+  2026-09-21: chromosome **lengths are stored again** — every source of
+  them, behind a gate that knows what a `.dvc` pointer is — and the score
+  answers them itself.* The gain#1448 objection was that the file served
+  a reader who does not exist. It does: a Python user holding a score
+  built through the GRR API (`build_score_from_resource_id(...).open()`)
+  has neither an implementation nor a repository in hand, and "how long
+  is chr21 in this score" is a question for the score. So the read path
+  is on `GenomicScore` — `get_chrom_length(chrom, source=None)`,
+  `get_all_chrom_lengths(source=None)`, `get_chrom_length_source(chrom)`
+  and `chrom_length_sources` — and not only on the implementation, which
+  reads the same file first (gain#1578). Four things differ from the
+  gain#1419 file:
+
+  - **Every rung answers, and every answer is stored.** The in-memory
+    record is one per contig with an answer per source (gain#1574), and
+    `statistics/chrom_lengths.json` mirrors it: one block per source —
+    `reference_genome`, and the table's own `bigwig` / `tabix_estimate` /
+    `table_extent` — each mapping contig → length, the table's block
+    carrying the `empty` / `undetermined` reason where it has no length.
+    A labelled tabix score stores the genome's exact length *and* the
+    probe's bound. The reader picks: a named source's answer on request,
+    otherwise the best by rank (`REFERENCE_GENOME` > `BIGWIG` >
+    `TABIX_ESTIMATE` > `TABLE_EXTENT`), decided per contig.
+  - **The gate knows three states, and a pointer is not a failure.** The
+    `derived_from` key is gain#1419's — the label the genome resolved
+    from, the manifest md5 of every table file — but the gate that
+    compares it answers `CURRENT` / `STALE` / `PAYLOAD_ABSENT`, the third
+    when a table file is missing *beside its `.dvc` sidecar*. For a
+    resource whose statistics hash is current, `repo-repair` dispatches
+    on the state alone: `STALE` rewrites this one file and no histogram;
+    `PAYLOAD_ABSENT` warns once, counts nothing as failed, writes
+    nothing, exits 0 (a hash-stale resource takes the full rebuild,
+    which writes the file anyway). That is gain#1444 removed
+    at its cause — the gate that opened every score on a pointer-only
+    checkout now names the pointer instead of opening it — not patched
+    in the CLI. A file missing with no sidecar is a broken resource, and
+    the rebuild fails it as any read would.
+  - **A stored file outlives its genome.** A key derived with a genome
+    stays `CURRENT` after that genome leaves the repository: the file is
+    the record of what the repair measured, and the genome is looked up
+    again only to tell whether a key derived with *none* still holds
+    (a label that resolves today, over a key that says it did not, is
+    stale — conservative, at the price of the live probe; the score,
+    which holds no repository to ask, reads *any* label over such a key
+    as stale). The score loads the file once, at `open()`, saying there
+    at INFO that a stale one is ignored — an absent one is the state of
+    every resource until its next repair, and is only DEBUG. The score
+    and the page answer from the stored genome block — a page rendered
+    with no repository, or after the genome has gone, prices its
+    fractions from the stored answers over the score's own
+    genome-listed contigs — and the dangling label is logged, not acted
+    on. Only a repair rewrites the file.
+  - **`TABIX_ESTIMATE` is stored and is never a denominator.** The
+    probe's bound sits in the file beside the exact answers so that a
+    reader asking for it by name gets it without the probe. Whether a
+    source may price a fraction is still `ChromLengthSource.is_exact`,
+    the one place that says so; coverage's second rung keeps only exact
+    records whether they come from the file or live (the gain#1414
+    amendment, below).
+
+  What the restoration costs, and does not. The tabix probe runs at
+  repair, once, as before; a repaired score of any backend answers its
+  lengths with no table opened, which is what keeps a labelled tabix
+  score's fractions genome-priced when the render has no repository, or
+  its genome has gone (gain#1578) — with the repository at hand the
+  genome rung prices the page first, as before. A score repaired
+  before the file existed answers from its table live until its next
+  repair, and refuses `reference_genome` by name with a `ValueError` —
+  it has no genome in hand. A labelled score whose contigs partly miss
+  its genome warns once per resource at repair; one with zero overlap
+  fails the resource — a `ValueError` naming `chrom_mapping` as the
+  usual cause — before any file is written (gain#1575). The fraction
+  rule of this bullet stands: fractions
+  are computed at render and the stored statistics stay
+  genome-independent — the lengths file sits beside them under its own
+  key, outside `stats_hash`. And shipping the file obliges every
+  DVC-backed GRR to one repair-with-payloads commit, landed with that
+  repository's gain bump (tracked on gain#1573).
 
   *Amended by [gain#1414](https://github.com/iossifovlab/gain/issues/1414):
   the second rung is the ladder's records filtered on `is_exact`, not the
@@ -325,13 +415,19 @@ alt-minus-ref, not an absolute value.
     a tabix or in-memory score. Nothing such a backend says can be a
     denominator, and finding that out would open its table and probe every
     contig — at every render, and `repo-repair` renders every page. The
-    probe stays a repair-time cost, as the re-amendment above promises; an
+    probe stays a repair-time cost, as the gain#1448 re-amendment above
+    promises; an
     unlabelled tabix score's render never opens it (pinned). A bigWig
     header is exact, and is the one reason a render opens a table — so an
     unlabelled bigWig on a pointer-only DVC checkout still fails the page
     render on its absent payload (the gain#1448 note). That is the file
     being the only source of its own denominator; the remedy is the label,
-    which the DVC-backed GRRs' scores carry.
+    which the DVC-backed GRRs' scores carry. *Since gain#1578 this rule
+    governs the live fallback only: the rung reads the stored file first,
+    through the same gate, for any backend — a repaired score answers
+    with no table opened, whatever its backend, and a pointer-only bigWig
+    checkout renders raw counts without a `CURRENT` file instead of
+    failing on the open.*
   - **One reader of the `reference_genome` label, with the page's policy.**
     The build and the page each resolved the label, with different error
     handling: a label naming a resource that is not a genome degraded the

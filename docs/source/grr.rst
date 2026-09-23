@@ -821,20 +821,54 @@ alone, to what the score's own file can say — a bigWig header is exact, a tabi
 index yields only an upper bound found by probing it, and a plain table knows
 how far its rows reach. The ladder runs at repair, when ``grr_manage
 resource-stats`` (or ``repo-stats``) splits the score's contigs into the regions
-its statistics are scanned by; nothing is stored, and a repair whose statistics
-are already current never asks. The label is deliberately not part of the
-statistics hash: adding, removing or re-pointing it rebuilds no histogram, and
-the next full rebuild simply splits on the genome the label names then.
+its statistics are scanned by, and every rung's answer is stored beside the
+other statistics as ``statistics/chrom_lengths.json`` — one block per source
+(``reference_genome``, and the table's own ``bigwig``, ``tabix_estimate`` or
+``table_extent``), each mapping contig to length, the table's block naming the
+reason for a contig it has no length for. A labelled tabix score therefore
+stores both the genome's exact length and the probe's bound. The score's own
+``get_chrom_length`` and its siblings and the implementation read the stored
+file first while it is current, and the info page reads it wherever its genome
+is not at hand; none of them opens a table to do so.
+
+The file is current while it was derived from the resource as it is now: the
+label the genome resolved from and the checksums of the table files. A repair
+checks that key on every run — ``repo-repair`` included — and, when it no
+longer matches, rewrites this one file and nothing else, even for a resource
+whose statistics are current. On a DVC checkout whose table payload has not
+been pulled the repair cannot measure anything, so it warns once, skips the
+resource without counting it as failed and exits 0; the file is written by the
+first repair that has the payload. A resource repaired before the file existed
+answers from its table alone until its next repair. The label is deliberately
+not part of the statistics hash: adding, removing or re-pointing it rebuilds no
+histogram, and the next repair simply rewrites the lengths file for the genome
+the label names then.
+
+The repair also checks the label against the score. A labelled score whose
+contigs are only partly listed by its genome is repaired with one warning
+naming up to five of the contigs the genome lacks — they keep the score's own
+lengths. A labelled score with **no** contig in common with its genome fails
+the resource, with an error saying the genome lists none of its contigs: the
+label names the wrong genome, or the score needs a ``chrom_mapping`` to speak
+the genome's contig names.
+
+Shipping the file changes what a version-controlled GRR commits. The first
+GAIn release that writes ``statistics/chrom_lengths.json`` owes every
+DVC-backed GRR one repair run with the table payloads pulled, committed
+together with the GRR's bump to that release, so that the manifests and the
+new file land in the same commit.
 
 The Coverage section of the page reports covered positions as a percentage of
 the whole assembly — every contig of the labelled genome, including the ones the
 score never touches, which are rolled up into a single "N contigs with no values"
 row. Without a resolvable ``reference_genome`` label there is nothing to divide
-by, and a **tabix-backed score renders raw covered-position counts and no
-percentages at all**. A bigWig-backed score is the one exception: its header
-carries exact contig sizes, so it renders percentages against the header's contig
-list even unlabelled. If a score's Coverage section shows counts where you
-expected percentages, add the label:
+by, and an **unlabelled tabix-backed score renders raw covered-position counts
+and no percentages at all**. A bigWig-backed score is the one exception: its
+header carries exact contig sizes, so it renders percentages against the
+header's contig list even unlabelled. A labelled tabix score renders
+percentages — from its genome when the repository is at hand, from the stored
+lengths otherwise — and never opens its index to do so. If a score's Coverage
+section shows counts where you expected percentages, add the label:
 
 .. code-block:: yaml
 
@@ -845,11 +879,15 @@ expected percentages, add the label:
 The percentage is computed when the page is rendered, never stored, so adding the
 label needs no data rebuild — re-render the page (``grr_manage resource-info -r
 <resource_id>``) and the percentages appear. Do not add ``-f`` for this: it
-forces a full statistics rebuild, histograms included.
+forces a full statistics rebuild, histograms included. That same run refreshes
+the stored lengths file for the new label, and only that.
 
-A label naming a genome that does not resolve degrades the whole section back to
-raw counts rather than rendering a wrong percentage. So does a single contig the
-genome gets wrong: if the score holds positions past the end of the contig the
+A label naming a genome that never resolved degrades the whole section back to
+raw counts rather than rendering a wrong percentage; a genome that resolved at
+repair and has since left the repository does not — the stored lengths are the
+record, and the page prices its percentages from them over the contigs the
+genome listed. A single contig the genome gets wrong degrades less than the
+whole section: if the score holds positions past the end of the contig the
 genome declares, or the genome declares it empty, that contig's row and the
 global percentage both fall back to raw counts, while the remaining contigs keep
 theirs. Either way the page shows counts rather than a number you cannot trust.
