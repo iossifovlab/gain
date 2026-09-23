@@ -340,17 +340,13 @@ def scores_repo() -> GenomicResourceRepo:
                 G3,3
             """),
         },
+        # No ``scores`` and no ``oops.csv``: the refusal must come before
+        # the read, or it surfaces as FileNotFoundError.
         "OopsScores": {
             GR_CONF_FILE_NAME: """
                 type: gene_score
                 filename: oops.csv
                 """,
-            "oops.csv": textwrap.dedent("""
-                gene,linear
-                G1,1
-                G2,2
-                G3,3
-            """),
         },
     })
 
@@ -440,12 +436,18 @@ def test_load_gene_score_without_histogram(
     )
 
 
-def test_load_gene_score_without_gene_scores(
-        scores_repo: GenomicResourceRepo) -> None:
+def test_a_gene_score_without_scores_is_refused(
+        scores_repo: GenomicResourceRepo,
+        caplog: pytest.LogCaptureFixture) -> None:
+    """A gene score with no ``scores`` list is refused by the schema, before
+    the score table is opened: ``OopsScores`` ships no ``oops.csv``, so a
+    refusal that came after the read would surface as FileNotFoundError."""
     res = scores_repo.get_resource("OopsScores")
-    with pytest.raises(ValueError,
-                       match="missing scores config in OopsScores"):
+    with pytest.raises(MalformedResourceError,
+                       match="Invalid configuration: OopsScores"):
         build_gene_score_from_resource(res)
+
+    assert "{'scores': ['required field']}" in caplog.text
 
 
 def test_gene_score(scores_repo: GenomicResourceRepo) -> None:
