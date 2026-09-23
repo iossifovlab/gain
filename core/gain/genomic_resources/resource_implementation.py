@@ -77,6 +77,18 @@ def get_base_resource_schema() -> dict[str, Any]:
     }
 
 
+def get_required_filename_schema() -> dict[str, Any]:
+    """The required ``filename`` config-schema fragment.
+
+    Spliced into a schema -- or a nested block of one -- wherever the loader
+    reads ``filename`` unconditionally.  Not part of
+    ``get_base_resource_schema()``, since not every implementation has a
+    file.  Built fresh on every call: cerberus rewrites nested rule dicts
+    in place, on ``Validator`` construction and on every ``validate()``.
+    """
+    return {"filename": {"type": "string", "required": True}}
+
+
 def _index_column_problem(column: object, taken: set[str]) -> str | None:
     """Say why ``column`` cannot name a column of the FTS index, or None."""
     if not isinstance(column, str):

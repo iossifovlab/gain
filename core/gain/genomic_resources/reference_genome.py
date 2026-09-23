@@ -15,6 +15,7 @@ from gain.genomic_resources.repository_factory import (
 from gain.genomic_resources.resource_implementation import (
     ResourceConfigValidationMixin,
     get_base_resource_schema,
+    get_required_filename_schema,
 )
 from gain.genomic_resources.resource_types import warn_retired_config_key
 from gain.utils.fs_utils import COMPRESSED_EXTENSIONS, endswith_ci
@@ -412,7 +413,7 @@ class ReferenceGenome(
         """
         return {
             **get_base_resource_schema(),
-            "filename": {"type": "string", "required": True},
+            **get_required_filename_schema(),
             # Not nullable: only a MISSING key defaults to
             # `<filename>.fai`, so `index_file: ~` would reach
             # `get_file_content` as None.

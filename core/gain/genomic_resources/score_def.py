@@ -46,6 +46,7 @@ from gain.genomic_resources.histogram import build_histogram_config
 from gain.genomic_resources.resource_errors import score_configuration_error
 from gain.genomic_resources.resource_implementation import (
     get_base_resource_schema,
+    get_required_filename_schema,
 )
 from gain.genomic_resources.score_resource import ScoreDef, ScoreResource
 
@@ -665,7 +666,7 @@ def build_genomic_score_schema() -> dict[str, Any]:
         # here, naming itself, rather than on first use of the table with
         # a bare KeyError naming nothing (gain#1567).
         "table": {"type": "dict", "required": True, "schema": {
-            "filename": {"type": "string", "required": True},
+            **get_required_filename_schema(),
             "index_filename": {"type": "string"},
             "zero_based": {"type": "boolean"},
             "desc": {"type": "string"},

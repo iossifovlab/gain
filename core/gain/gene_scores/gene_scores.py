@@ -25,6 +25,7 @@ from gain.genomic_resources.repository_factory import (
 )
 from gain.genomic_resources.resource_implementation import (
     get_base_resource_schema,
+    get_required_filename_schema,
 )
 from gain.genomic_resources.score_resource import (
     ScoreDef,
@@ -294,7 +295,7 @@ class GeneScore(ScoreResource[GeneScoreDef]):
     def get_schema() -> dict[str, Any]:
         return {
             **get_base_resource_schema(),
-            "filename": {"type": "string", "required": True},
+            **get_required_filename_schema(),
             "separator": {"type": "string"},
             "default_annotation": {
                 "type": ["dict", "list"], "allow_unknown": True,
