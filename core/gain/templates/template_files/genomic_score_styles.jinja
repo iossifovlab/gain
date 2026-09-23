@@ -1,3 +1,13 @@
 table {
     table-layout: fixed;
 }
+
+/* The Chromosome lengths table's marker on a contig the labelled genome
+   does not list (gain#1579): small beside the contig name, so the name
+   stays what the eye reads and the sorter keys on.  Its grey comes from
+   `.text-muted` in the markup, not restated here -- the one muted grey
+   of the page, so a palette change is one line. */
+.unlisted-marker {
+    font-size: 0.85em;
+    white-space: nowrap;
+}

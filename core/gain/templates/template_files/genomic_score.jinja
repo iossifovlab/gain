@@ -102,6 +102,57 @@
 </div>
 <p class="text-muted">n counts {{ scores.HISTOGRAM_COUNT_UNIT }}; sd is the population standard deviation.</p>
 
+{# Not a slot: every kind's repair stores chromosome lengths, so every
+   kind's page has this section (gain#1579).  It shows what the last
+   repair stored and nothing else -- one column per source the file
+   holds, best-ranked first -- so a reader can put a tabix score's
+   probed bound beside its genome's true length.  Rendered from the
+   file only while the gate calls it CURRENT; otherwise the heading
+   reads "not computed", as Coverage does when its statistic is not
+   built: a repair would fill it, and the heading says so. #}
+<h2>Chromosome lengths</h2>
+{% set chrom_lengths = impl.get_chrom_lengths_display() %}
+{% if chrom_lengths != None %}
+<div class="scrollable-table-container">
+<table>
+    <thead>
+        <tr>
+            <th data-sort="text">Chromosome</th>
+            {%- for source in chrom_lengths.sources %}
+            <th data-sort="number">{{ source.value }}</th>
+            {%- endfor %}
+        </tr>
+    </thead>
+    <tbody>
+    {%- for row in chrom_lengths.rows -%}
+        {#- A contig the labelled genome does not list is the partial
+           overlap the repair warned about once (gain#1575); the row is
+           marked so a reader need not scan the genome column for the
+           gap.  The marker is nested inside the contig cell, after the
+           name, so the cell's own text -- and its sort key -- stay the
+           contig; it is the one hook for a stylesheet or a test. -#}
+        <tr>
+            <td data-sort-value="{{ natural_chromosome_key(row.chrom) }}">{{ row.chrom }}{% if row.unlisted %} <span class="unlisted-marker text-muted" title="listed by the score's table, not by its reference genome">not in genome</span>{% endif %}</td>
+            {%- for cell in row.cells %}
+            {#- A length sorts on its number.  A cell with no answer, and
+               one carrying the table's reason instead of a number, has
+               nothing to sort on and carries no key at all, so the
+               sorter puts it last whichever way the column points. -#}
+            {%- if cell.length != None %}
+            <td data-sort-value="{{ cell.length }}">{{ cell.length }}</td>
+            {%- else %}
+            <td>{{ cell.text }}</td>
+            {%- endif %}
+            {%- endfor %}
+        </tr>
+    {%- endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p>not computed</p>
+{% endif %}
+
 {# Empty by default, as the two blocks below are.  Covered positions are
    a POSITION SCORE statistic and only that: the union measures what a
    resource covers exactly when its rows are pairwise disjoint.  An
@@ -109,9 +160,11 @@
    (gain#1118); a fragment score's rows overlap, so the union counts
    nothing anyone asks for (gain#1127).  Filled by position_score.jinja.
 
-   Every section is a slot here, so a kind added later inherits no
+   Every KIND section is a slot here, so a kind added later inherits no
    section it cannot fill -- the kind -> section relation is which
-   template a class names, and nothing else (gain#1210). #}
+   template a class names, and nothing else (gain#1210).  The Scores
+   and Chromosome lengths sections above are not slots because every
+   kind fills them: the base implementation renders both. #}
 {% block coverage %}{% endblock %}
 
 {# Empty by default, for the reason the fragments block below is:
