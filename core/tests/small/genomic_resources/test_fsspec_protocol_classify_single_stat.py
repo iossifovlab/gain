@@ -24,33 +24,18 @@ from gain.genomic_resources.fsspec_protocol import (
     FileCacheVerdict,
     FsspecReadWriteProtocol,
 )
-from gain.genomic_resources.repository import (
-    GenomicResource,
-    ResourceFileState,
-)
+from gain.genomic_resources.repository import ResourceFileState
 
 from .conftest import (
+    CACHED_FILE,
     METADATA_OPERATIONS,
     a_source_resource,
     assert_state_matches_accessors,
     calls_for,
     copy_one_resource,
+    forget_the_recorded_state,
     record_filesystem_calls,
 )
-
-#: The file of ``content_fixture``'s ``one`` resource these budgets are
-#: asserted over. One file rather than all three: the budget is per file
-#: and identical for each, and naming one keeps the arrangement -- the
-#: state that has to be removed or spoiled -- readable.
-CACHED_FILE = "data.txt"
-
-
-def _forget_the_recorded_state(
-    proto: FsspecReadWriteProtocol, resource: GenomicResource,
-) -> None:
-    """Remove :data:`CACHED_FILE`'s ``.state``, leaving the file itself."""
-    proto.filesystem.rm(
-        proto._get_resource_file_state_path(resource, CACHED_FILE))
 
 
 @pytest.mark.grr_full
@@ -70,7 +55,7 @@ def test_a_stateless_cached_file_is_asked_about_twice(
     dest_proto = download_dest
     src_resource = a_source_resource(content_fixture)
     dest_resource, _ = copy_one_resource(src_resource, dest_proto)
-    _forget_the_recorded_state(dest_proto, dest_resource)
+    forget_the_recorded_state(dest_proto, dest_resource)
 
     # When the cache decides what to do about it.
     with record_filesystem_calls(dest_proto, METADATA_OPERATIONS) as calls:
@@ -142,7 +127,7 @@ def test_a_rebuilt_state_says_what_the_accessors_would_have_said(
     dest_proto = download_dest
     src_resource = a_source_resource(content_fixture)
     dest_resource, _ = copy_one_resource(src_resource, dest_proto)
-    _forget_the_recorded_state(dest_proto, dest_resource)
+    forget_the_recorded_state(dest_proto, dest_resource)
 
     dest_proto.classify_resource_file(
         src_resource, dest_resource, CACHED_FILE)

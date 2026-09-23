@@ -3002,24 +3002,33 @@ class FsspecReadWriteProtocol(
         verdict's ``size`` is the manifest byte size for files that will
         download (0 otherwise). See gain#78.
 
+        Only an absent file reads as "not cached". A stat that fails for
+        any other reason -- an unreadable cache directory, say -- reaches
+        the caller rather than being answered with a download that would
+        fail on the same directory.
+        """
+        verdict, _ = self._classify_resource_file(
+            remote_resource, dest_resource, filename)
+        return verdict
+
+    def _classify_resource_file(
+            self, remote_resource: GenomicResource,
+            dest_resource: GenomicResource,
+            filename: str,
+    ) -> tuple[FileCacheVerdict, ResourceFileState | None]:
+        """Classify a resource file, and return the state of a kept one.
+
+        The verdict is :meth:`classify_resource_file`'s. The state is the
+        one the verdict loaded, or rebuilt and saved, for a file it keeps,
+        and ``None`` for a file that will download or that it deleted.
+
         The one question it opens with -- is the file there at all -- is
         asked as a stat rather than as a boolean, because the same dict
         carries the size and the change token a rebuilt state needs. So
         the rebuild reads only what that dict cannot say: the
-        modification time, and the md5 off the bytes themselves. Asking
-        for a bool and then rebuilding from scratch asked the store
-        about one key five times where twice will do (gain#1039). Only
-        the rebuild is cheaper for it: a verdict that finds its recorded
-        state current spends what it always did, one stat either way.
-
-        A stat that fails for a reason other than the file being absent
-        now reaches the caller instead of reading as "not cached". That
-        is the one thing ``exists()`` did that this does not: fsspec's
-        base implementation answers False to *every* exception, so an
-        unreadable cache directory used to be answered with a download
-        that was going to fail on the same directory a moment later. On
-        s3 it is not even a change -- s3fs's own ``exists`` swallows
-        only ``FileNotFoundError``.
+        modification time, and the md5 off the bytes themselves (see
+        gain#1039). A verdict that finds its recorded state current
+        spends one stat.
 
         The stat is taken before the md5 that is recorded beside it, so
         a file rewritten in between is recorded with the older token
@@ -3040,7 +3049,7 @@ class FsspecReadWriteProtocol(
             size = (
                 remote_manifest[filename].size
                 if filename in remote_manifest else 0)
-            return FileCacheVerdict(needs_download=True, size=size)
+            return FileCacheVerdict(needs_download=True, size=size), None
 
         local_state = self.load_resource_file_state(dest_resource, filename)
         if local_state is None or not self._state_describes_stored_file(
@@ -3052,28 +3061,30 @@ class FsspecReadWriteProtocol(
 
         if filename not in remote_manifest:
             self.delete_resource_file(dest_resource, filename)
-            return FileCacheVerdict(needs_download=False, size=0)
+            return FileCacheVerdict(needs_download=False, size=0), None
         manifest_entry = remote_manifest[filename]
         if local_state.md5 != manifest_entry.md5:
             return FileCacheVerdict(
-                needs_download=True, size=manifest_entry.size)
+                needs_download=True, size=manifest_entry.size), None
 
-        return FileCacheVerdict(needs_download=False, size=0)
+        return FileCacheVerdict(needs_download=False, size=0), local_state
 
     def update_resource_file(
             self, remote_resource: GenomicResource,
             dest_resource: GenomicResource,
             filename: str) -> ResourceFileState | None:
-        """Update a resource file into repository if needed."""
-        verdict = self.classify_resource_file(
+        """Update a resource file into repository if needed.
+
+        Returns the state recorded for the file afterwards: the one the
+        download wrote, the one the classification kept, or ``None`` for
+        a file deleted because the remote manifest no longer lists it.
+        """
+        verdict, kept_state = self._classify_resource_file(
             remote_resource, dest_resource, filename)
         if verdict.needs_download:
             return self.copy_resource_file(
                 remote_resource, dest_resource, filename)
-        # No download needed: a file deleted because it left the remote
-        # manifest has no state to return (load returns None); an up-to-date
-        # file returns its current persisted state.
-        return self.load_resource_file_state(dest_resource, filename)
+        return kept_state
 
     def _manifest_for_repository_index(
             self, res: GenomicResource,

@@ -1,4 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,C0415,W0212,W0613
+# ruff: file-ignore[private-member-access]
+# SLF001, ruff's twin of the W0212 above: helpers shared by the test modules
+# reach protocol internals (the ``.state`` path) that the modules may.
 
 import contextlib
 import functools
@@ -318,6 +321,21 @@ ONE_RESOURCE_FILES = ["data.txt", "data.txt.gz", "genomic_resource.yaml"]
 #: tuple and not to the other is how a budget stops noticing the call that
 #: regressed. Pass it to :func:`record_filesystem_calls`.
 METADATA_OPERATIONS = ("info", "exists", "modified", "ls")
+
+#: The file of ``content_fixture``'s ``one`` resource a cache verdict's
+#: budgets are asserted over -- what it asks about the stored file (#1039)
+#: and about its ``.state`` (#1083). One file rather than all three: the
+#: budget is per file and identical for each, and naming one keeps the
+#: arrangement -- the state that has to be removed or spoiled -- readable.
+CACHED_FILE = "data.txt"
+
+
+def forget_the_recorded_state(
+    proto: FsspecReadWriteProtocol, resource: GenomicResource,
+) -> None:
+    """Remove :data:`CACHED_FILE`'s ``.state``, leaving the file itself."""
+    proto.filesystem.rm(
+        proto._get_resource_file_state_path(resource, CACHED_FILE))
 
 
 @pytest.fixture
