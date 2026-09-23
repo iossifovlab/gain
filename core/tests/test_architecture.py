@@ -34,13 +34,45 @@ def gain_arch() -> EvaluableArchitecture:
     )
 
 
-@pytest.fixture(scope="module")
-def gain_tests_arch() -> EvaluableArchitecture:
+def build_gain_tests_arch() -> EvaluableArchitecture:
+    # ``.test_grr`` holds the grr_http fixture's per-test scratch copies,
+    # created and deleted by other xdist workers mid-walk (#1612). It
+    # holds no modules; ``__pycache__`` is pytestarch's own default,
+    # which passing ``exclusions`` would otherwise drop.
     return get_evaluable_architecture(
         TESTS_SRC,
         TESTS_SRC,
+        exclusions=("*__pycache__*", "*.test_grr*"),
         exclude_external_libraries=False,
     )
+
+
+@pytest.fixture(scope="module")
+def gain_tests_arch() -> EvaluableArchitecture:
+    return build_gain_tests_arch()
+
+
+def test_the_tests_walk_never_lists_a_test_grr_scratch_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tests walk never lists ``.test_grr``: every listing of it
+    fails here, deterministically, instead of racing a teardown (#1612).
+    """
+    tracked_scratch = pathlib.Path(
+        TESTS_SRC, "small", "genomic_resources", ".test_grr")
+    assert tracked_scratch.is_dir(), "no .test_grr directory to walk past"
+    real_iterdir = pathlib.Path.iterdir
+
+    def vanishing_iterdir(path: pathlib.Path) -> Iterator[pathlib.Path]:
+        if ".test_grr" in path.parts:
+            raise FileNotFoundError(path)
+        return real_iterdir(path)
+
+    monkeypatch.setattr(pathlib.Path, "iterdir", vanishing_iterdir)
+
+    arch = build_gain_tests_arch()
+
+    assert "tests.test_architecture" in arch.modules
 
 
 def test_gain_core_does_not_import_from_gpf_core(
