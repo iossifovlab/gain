@@ -93,6 +93,13 @@ tests:
   # `set -e`), so a walk failure is never masked by a passing `pip check`.
   # `pip` is a test-only requirement -- the `python:` test type used to add
   # it implicitly.
+  #
+  # These checks are defined in two places. This block runs wherever
+  # rattler-build tests the package (Jenkinsfile.release, `rattler-build
+  # test` on the .conda). The root Jenkinsfile builds with `--test skip`
+  # and runs the same three checks from conda-builder/verify_packages.sh,
+  # whose micromamba package cache persists on the agent (#1601). Change
+  # one, change the other; the same goes for the three annotator recipes.
   - script:
       - python tests/entry_point_walk.py ${{ name }}
       - python -c "import gain"

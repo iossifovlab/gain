@@ -10,7 +10,10 @@ environment surfaces as an ImportError on the entry point that needs it.
 
 One definition, several callers: every gain conda recipe (``gain-core``
 and the three annotators) runs it in rattler-build's test phase against
-the just-built package, each passing its own ``${{ name }}``; and
+the just-built package, each passing its own ``${{ name }}``; the root
+``Jenkinsfile`` builds with that phase skipped and runs it from
+``conda-builder/verify_packages.sh`` instead, in an environment
+installed from a package cache kept on the agent; and
 ``gain-release``'s post-publish smoke runs it against ``gain-core`` as
 installed from anaconda.org with the documented channel line. A dist may
 declare no console scripts (``gain-spliceai-annotator`` is entry points
