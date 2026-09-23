@@ -140,9 +140,9 @@ class ScoreImplementationBase(
                     score_def.large_values_desc,
                 )
         for score_id in score.score_definitions.keys() - histograms.keys():
-            # A score the build dropped -- a null histogram config, or a
-            # range the min/max pass found not finite -- writes nothing,
-            # so an earlier build's files would be served as current.
+            # A score the build dropped -- its definition resolves to a
+            # null histogram config -- writes nothing, so an earlier
+            # build's files would be served as current.
             hist_filename = score.get_histogram_filename(score_id)
             for filename in (
                 hist_filename,

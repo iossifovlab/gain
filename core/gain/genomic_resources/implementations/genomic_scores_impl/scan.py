@@ -258,6 +258,14 @@ def unpack_score_defs(
 ) -> tuple[list[str], dict[str, HistogramConfig]]:
     """Extracts scores with min/max and histogram configs for a score.
 
+    The configs are the histograms this build will attempt: a score whose
+    definition resolves to a null histogram (a stated ``type: null``, or a
+    value type with no default) is left out, so a ``NullHistogramConfig``
+    among them is always one the build itself produced
+    (:func:`update_hist_confs`), and is recorded as such.  The definition's
+    null stays unrecorded, decided from the config alone (gain#305); the
+    save stage drops what an earlier build left for it.
+
     It refuses nothing.  A configured NUMBER histogram over a value type no
     number histogram can fold used to be nullified here (gain#1285), which
     left the resource building with one score silently histogram-less and
@@ -275,12 +283,12 @@ def unpack_score_defs(
         for score_id in score.score_definitions:
             # The same resolution the histogram ADDRESS refuses on first:
             # a histogram annulled by definition is neither plotted nor
-            # addressed.  (One nullified further down, by its statistics,
-            # loses its address the other way -- no image reaches the
-            # manifest, and only a listed image is addressed.)
+            # addressed -- nor attempted.  (One nullified further down,
+            # by its statistics, loses its address the other way -- no
+            # image reaches the manifest, and only a listed image is
+            # addressed.)
             hist_conf = score.get_histogram_config(score_id)
             if isinstance(hist_conf, NullHistogramConfig):
-                all_hist_confs[score_id] = hist_conf
                 continue
 
             if isinstance(hist_conf, CategoricalHistogramConfig):
@@ -1018,6 +1026,10 @@ def do_histogram_task(
     so a backend that will not serve them sends the region back to the
     per-record read rather than to a statistic with no class data.
 
+    A score the min/max pass nullified rides along as its
+    ``NullHistogram`` -- unscanned, but in the result, so the merge
+    carries the reason to the save (:func:`_build_nullified_histograms`).
+
     ONE score serves the whole invocation -- the three gates, the allele
     probe below, the bulk gate, and whichever scan takes the region; see
     :func:`_score_for`.  An allele score's probe OPENS it and hands it
@@ -1057,12 +1069,31 @@ def do_histogram_task(
                 resource, all_hist_confs, chrom, start, end,
                 coverage=coverage, fragments=fragments,
                 alleles=alleles, score=score)
+        histograms.update(_build_nullified_histograms(all_hist_confs))
         return RegionScanResult(histograms, coverage, fragments, alleles)
     except MalformedResourceError as err:
         report_resource_failure(
             err, "could not build the histograms of",
             resource.resource_id)
         raise
+
+
+def _build_nullified_histograms(
+    all_hist_confs: dict[str, HistogramConfig],
+) -> dict[str, NullHistogram]:
+    """The null histograms of the scores the build nullified.
+
+    A ``NullHistogramConfig`` here is the min/max pass's own
+    (:func:`update_hist_confs`; :func:`unpack_score_defs` admits no
+    other), so it is recorded the way a histogram nullified accumulating
+    is: a ``NullHistogram`` carrying the reason, serialised with the
+    resource's statistics.
+    """
+    return {
+        score_id: NullHistogram(hist_conf)
+        for score_id, hist_conf in all_hist_confs.items()
+        if isinstance(hist_conf, NullHistogramConfig)
+    }
 
 
 def do_min_max_bulk(

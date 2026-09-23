@@ -80,8 +80,8 @@ def publish_statistics(resource: GenomicResource, **build_kwargs: Any) -> None:
 def a_score_with_no_values() -> PositionScoreBuilder:
     """A configured number histogram the build nullifies in its min/max pass.
 
-    Every value is NA, so no range is found and nothing is drawn -- and
-    no histogram file is written for it either.
+    Every value is NA, so no range is found and nothing is drawn; a null
+    histogram file carrying that reason is written instead.
     """
     return (
         a_position_score()
@@ -108,8 +108,8 @@ def a_score_with_too_many_categories() -> PositionScoreBuilder:
 
     No ``histogram:`` block, so the ``str`` score gets the default
     categorical config, which enforces the unique-values limit -- and the
-    values exceed it.  A null histogram file IS written for this one;
-    still, nothing is drawn.
+    values exceed it.  A null histogram file is written for this one
+    too; still, nothing is drawn.
     """
     rows = "\n".join(
         f"1  {10 * (i + 1)}  {label}"

@@ -1686,6 +1686,12 @@ The example below shows a number histogram configuration with an explicit bin co
       min: 0.0
       max: 1.0
 
+Without a ``view_range`` the statistics build ranges the histogram over the score's own minimum and
+maximum. A score that gives it none -- every value missing, or values the min/max pass refuses -- gets
+no number histogram; the build records a null histogram in its place, carrying that reason
+(``min/max for <score> not found``, or ``min/max for <score> refused: ...``), so the summary page
+reports why rather than a missing file.
+
 
 **Categorical histograms**
 
