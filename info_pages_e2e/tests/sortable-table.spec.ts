@@ -2,10 +2,6 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { COVERAGE_RESOURCE, FIXTURE_GRR } from '../fixtures';
 import { infoPageUrl, serveGrr } from '../serving';
-import {
-  columnHeader as columnHeaderOf,
-  tableAfterHeading,
-} from '../tables';
 
 /**
  * The info page's client-side sorter, driven in a browser.
@@ -17,14 +13,23 @@ import {
  * JS runtime. That is what this file is for.
  */
 
-/** The Coverage table, addressed through the heading that introduces it. */
+/**
+ * The Coverage table, addressed through the heading that introduces it.
+ *
+ * By heading rather than by position, because the page carries other
+ * tables -- Files, for one -- and a positional selector would keep
+ * matching after a template moved the sections around, just against the
+ * wrong table.
+ */
 function coverageTable(page: Page) {
-  return tableAfterHeading(page, 'Coverage');
+  return page
+    .getByRole('heading', { name: 'Coverage', exact: true })
+    .locator('xpath=following::table[1]');
 }
 
 /** One of that table's column headers, by its visible text. */
 function columnHeader(page: Page, name: string) {
-  return columnHeaderOf(coverageTable(page), name);
+  return coverageTable(page).getByRole('columnheader', { name });
 }
 
 test.beforeEach(async ({ page }) => {

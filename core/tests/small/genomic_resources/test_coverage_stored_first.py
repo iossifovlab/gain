@@ -44,12 +44,11 @@ def _a_labelled_tabix_repo(where: pathlib.Path) -> GenomicResourceRepo:
     return a_repo_with_genome(where, GENOME, chr1=100, chr2=300)
 
 
-def a_bigwig_repo_with_genome(
+def _a_bigwig_repo_with_genome(
     where: pathlib.Path, *, labelled: bool = True,
 ) -> GenomicResourceRepo:
     """The same rows as a bigWig whose header lists chr1 alone, with
-    that genome beside it, labelled or not.  Public: the lengths page
-    reads the same two repositories (gain#1579)."""
+    that genome beside it, labelled or not."""
     score = a_bigwig_score().with_data(BIGWIG_DATA).with_chrom_lens(
         {"chr1": 100})
     if labelled:
@@ -68,7 +67,7 @@ def a_bigwig_repo_with_genome(
 
 #: The two backends the second rung reads the file for alike.
 LABELLED_REPOS = pytest.mark.parametrize(
-    "a_labelled_repo", [_a_labelled_tabix_repo, a_bigwig_repo_with_genome],
+    "a_labelled_repo", [_a_labelled_tabix_repo, _a_bigwig_repo_with_genome],
     ids=["tabix", "bigwig"])
 
 
@@ -175,7 +174,7 @@ def test_an_unrepaired_unlabelled_bigwig_score_opens_once_for_its_header(
 ) -> None:
     """Nothing stored: the header is the one exact thing a live render
     reads, as before (gain#1448) -- and the page is priced by it."""
-    repo = a_bigwig_repo_with_genome(tmp_path, labelled=False)
+    repo = _a_bigwig_repo_with_genome(tmp_path, labelled=False)
     impl = built_impl(repo, SCORE)
     opened = mocker.spy(impl.score, "open")
 
@@ -189,7 +188,7 @@ def test_a_repaired_unlabelled_bigwig_score_is_priced_without_opening(
     tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
 ) -> None:
     """The header's sizes, as the repair stored them."""
-    a_bigwig_repo_with_genome(tmp_path, labelled=False)
+    _a_bigwig_repo_with_genome(tmp_path, labelled=False)
     impl, repo = _repaired(tmp_path)
     opened = mocker.spy(impl.score, "open")
 
@@ -204,7 +203,7 @@ def test_a_pointer_only_bigwig_with_a_current_file_is_priced_from_it(
 ) -> None:
     """An unpulled DVC checkout: the sidecar vouches for the key, the
     file answers, and there is nothing to open."""
-    a_bigwig_repo_with_genome(tmp_path, labelled=False)
+    _a_bigwig_repo_with_genome(tmp_path, labelled=False)
     resource_stats(tmp_path, SCORE)
     leave_as_a_pointer(tmp_path / SCORE / "data.bw")
     impl, _ = resynced(tmp_path, SCORE)
@@ -221,7 +220,7 @@ def test_a_pointer_only_bigwig_with_no_file_renders_raw_counts(
 ) -> None:
     """Nothing stored and no header to read: raw counts, not a failed
     page -- the render is not what reports an unpulled payload."""
-    a_bigwig_repo_with_genome(tmp_path, labelled=False)
+    _a_bigwig_repo_with_genome(tmp_path, labelled=False)
     resource_stats(tmp_path, SCORE)
     (tmp_path / SCORE / "statistics" / "chrom_lengths.json").unlink()
     leave_as_a_pointer(tmp_path / SCORE / "data.bw")

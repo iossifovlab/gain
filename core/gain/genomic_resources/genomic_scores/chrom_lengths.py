@@ -26,9 +26,7 @@ md5 of every table file, which is what a later repair compares to tell a
 current file from a stale one without opening the table (gain#1576).
 ``save_chrom_lengths`` / ``load_chrom_lengths`` are the file's two
 seams; loading never raises, a file that cannot be read as one reads as
-absent.  The info page's Chromosome lengths section renders the stored
-record through ``build_chrom_lengths_display`` (gain#1579), which lives
-here too: the whole of the stored lengths, render payload included.
+absent.
 """
 
 from __future__ import annotations
@@ -37,7 +35,7 @@ import functools
 import json
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 from gain import logging
 from gain.genomic_resources.genomic_position_table import (
@@ -75,15 +73,12 @@ __all__ = [
     "CHROM_LENGTHS_FORMAT",
     "ChromLength",
     "ChromLengthAnswer",
-    "ChromLengthRow",
     "ChromLengthSource",
-    "ChromLengthsDisplay",
     "ContigExtent",
     "DerivedFrom",
     "StoredChromLengths",
     "as_chrom_length_source",
     "best_chrom_length",
-    "build_chrom_lengths_display",
     "derive_chrom_length",
     "derive_chrom_lengths",
     "files_md5_of",
@@ -136,8 +131,7 @@ class ChromLength:
     def listed_by_genome(self) -> bool:
         """Whether the genome rung answered: a contig the genome lists
         carries its answer, whatever the table said.  The one definition
-        of "unlisted" -- the repair's warning (gain#1575) and the page's
-        marker (gain#1579) both read it."""
+        of "unlisted", which the repair's warning (gain#1575) reads."""
         return ChromLengthSource.REFERENCE_GENOME in self.answers
 
 
@@ -283,77 +277,6 @@ def ranked(sources: Collection[ChromLengthSource]) -> list[ChromLengthSource]:
     return [source for source in ChromLengthSource if source in sources]
 
 
-def _spell_reason(extent: ContigExtent) -> str:
-    """The word for a reason -- ``empty`` / ``undetermined`` -- as the
-    file stores it and the page shows it: one spelling, so the two
-    cannot drift apart."""
-    return extent.name.lower()
-
-
-class ChromLengthCell(NamedTuple):
-    """One source's cell of the Chromosome lengths table.
-
-    ``length`` when the source answered; otherwise ``reason``, which
-    only the table's own column carries, or neither for a source that
-    simply had nothing to say about the contig.
-    """
-
-    length: int | None
-    reason: ContigExtent | None
-
-    @property
-    def text(self) -> str:
-        """What the cell reads when it has no length to show."""
-        return "" if self.reason is None else _spell_reason(self.reason)
-
-
-class ChromLengthRow(NamedTuple):
-    """One contig of the Chromosome lengths table.
-
-    ``cells`` is aligned with the display's ``sources``.  ``unlisted``
-    says the genome column is there and this contig is not in it -- the
-    partial-overlap case the repair warned about (gain#1575), which the
-    page marks so a reader need not scan the column for the gap.
-    """
-
-    chrom: str
-    cells: list[ChromLengthCell]
-    unlisted: bool
-
-
-class ChromLengthsDisplay(NamedTuple):
-    """The Chromosome lengths section's render payload (gain#1579).
-
-    Built from a stored record and nothing else: the section shows what
-    the repair stored, one column per source it stored, and never
-    resolves a genome or opens a table to fill a gap.
-    """
-
-    sources: list[ChromLengthSource]
-    rows: list[ChromLengthRow]
-
-
-def build_chrom_lengths_display(
-    stored: StoredChromLengths,
-) -> ChromLengthsDisplay:
-    """Lay ``stored`` out per contig, one column per source, best first."""
-    sources = stored.sources
-    has_genome = ChromLengthSource.REFERENCE_GENOME in sources
-    return ChromLengthsDisplay(sources, [
-        ChromLengthRow(
-            chrom,
-            [
-                ChromLengthCell(
-                    resolved.answers.get(source),
-                    resolved.extent
-                    if source is stored.table_source else None)
-                for source in sources
-            ],
-            unlisted=has_genome and not resolved.listed_by_genome)
-        for chrom, resolved in stored.lengths.items()
-    ])
-
-
 def _serialize(stored: StoredChromLengths) -> str:
     """One block per source, contig -> length.
 
@@ -367,7 +290,7 @@ def _serialize(stored: StoredChromLengths) -> str:
         for source, length in resolved.answers.items():
             sources.setdefault(source.value, {})[chrom] = length
         if resolved.extent is not None:
-            table_block[chrom] = _spell_reason(resolved.extent)
+            table_block[chrom] = resolved.extent.name.lower()
     return json.dumps({
         "format": CHROM_LENGTHS_FORMAT,
         "derived_from": {
