@@ -1,38 +1,29 @@
-"""Render gain's conda environment file from the workspace pyprojects.
+"""Render gain's conda environment files from the workspace pyprojects.
 
-``environment.yml`` at the repo root is generated, not hand-written: its
-entries are the ``[project.dependencies]`` of gain-core and gain-web-api,
-mapped to conda names, with the specifiers copied verbatim.
+The files are generated, not hand-written: each one lists the
+dependencies of the pyproject tables that feed it, mapped to conda names,
+with the version clauses copied as written.
 
-    python scripts/conda_env.py           # rewrite environment.yml
-    python scripts/conda_env.py --check   # exit 1 if it is stale
+    python scripts/conda_env.py           # rewrite every file
+    python scripts/conda_env.py --check   # exit 1 if any file is stale
 
-``core/tests/test_conda_deps.py`` runs the ``--check`` comparison in CI.
+``core/tests/test_conda_deps.py`` runs the same comparison in CI.
 """
 from __future__ import annotations
 
 import argparse
 import pathlib
-import re
 import sys
 import tomllib
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-
-ENVIRONMENT_FILE = "environment.yml"
-
-#: The pyprojects whose runtime dependencies feed ``environment.yml``,
-#: in the order their sections are rendered.
-ENVIRONMENT_FEEDS = (
-    "core/pyproject.toml",
-    "web_api/pyproject.toml",
-)
 
 CHANNELS = (
     "conda-forge",
@@ -52,15 +43,46 @@ CONDA_NAMES: Mapping[str, str] = MappingProxyType({
 })
 
 #: Canonical PyPI name -> why it is installed by pip rather than conda.
-#: Rendered under the ``pip:`` sub-list, with ``pip`` itself added as a
+#: Shared by every output: an output renders the entries its own feeds
+#: declare under a ``pip:`` sub-list, with ``pip`` itself added as a
 #: conda dependency.
 PIP_ONLY: Mapping[str, str] = MappingProxyType({
     "adrf": "not packaged on any conda channel",
 })
 
-_NAME = re.compile(r"\s*[A-Za-z0-9][A-Za-z0-9._-]*")
-#: One version clause conda's match spec accepts as written.
-_CLAUSE = re.compile(r"(==|!=|<=|>=|<|>|~=)[A-Za-z0-9.*+!_-]+")
+
+@dataclass(frozen=True)
+class Feed:
+    """A list of requirement strings inside a workspace pyproject."""
+
+    pyproject: str
+    table: tuple[str, ...] = ("project", "dependencies")
+
+
+@dataclass(frozen=True)
+class Output:
+    """A generated environment file and the feeds rendered into it."""
+
+    filename: str
+    env_name: str
+    feeds: tuple[Feed, ...]
+
+
+OUTPUTS = (
+    Output(
+        "environment.yml", "gain",
+        (Feed("core/pyproject.toml"), Feed("web_api/pyproject.toml")),
+    ),
+)
+
+
+@dataclass(frozen=True)
+class Section:
+    """The requirements one feed contributes, as (canonical name, clauses)."""
+
+    title: str
+    requires_python: tuple[str, ...]
+    requirements: tuple[tuple[str, tuple[str, ...]], ...]
 
 
 @dataclass
@@ -68,17 +90,11 @@ class _Entry:
     name: str
     clauses: list[str] = field(default_factory=list)
 
-    def add(self, clauses: Sequence[str]) -> None:
+    def add(self, clauses: Iterable[str]) -> None:
         self.clauses.extend(c for c in clauses if c not in self.clauses)
 
     def render(self) -> str:
         return self.name + ",".join(self.clauses)
-
-
-@dataclass
-class _Section:
-    title: str
-    entries: list[_Entry] = field(default_factory=list)
 
 
 def conda_name(pypi_name: str) -> str:
@@ -87,106 +103,109 @@ def conda_name(pypi_name: str) -> str:
     return CONDA_NAMES.get(canonical, canonical)
 
 
-def _clauses(text: str, source: str) -> list[str]:
-    """Split a version specifier into its clauses, as written.
-
-    A clause conda cannot read as written (``===``, a parenthesised
-    list) raises rather than being rewritten.
-    """
-    specifier = "".join(text.split())
-    clauses = specifier.split(",") if specifier else []
-    for clause in clauses:
-        if not _CLAUSE.fullmatch(clause):
-            raise ValueError(
-                f"{source}: version clause {clause!r} has a form "
-                f"scripts/conda_env.py does not model")
+def _clauses(specifier: SpecifierSet, source: str) -> tuple[str, ...]:
+    """Return a specifier's clauses in the order they were written."""
+    clauses = tuple(str(clause) for clause in specifier)
+    if any(clause.operator == "===" for clause in specifier):
+        raise ValueError(
+            f"{source}: arbitrary equality (===) is a form "
+            f"scripts/conda_env.py does not model")
     return clauses
 
 
-def _requirement(
-    line: str, pyproject: pathlib.Path,
-) -> tuple[str, list[str]]:
-    """Split a requirement line into its canonical name and clauses.
-
-    A requirement carrying an extra, a marker or a url raises: the
-    generator has no conda rendering for any of them.
-    """
+def _requirement(line: str, source: str) -> tuple[str, tuple[str, ...]]:
     requirement = Requirement(line)
     if requirement.extras or requirement.marker or requirement.url:
         raise ValueError(
-            f"{pyproject}: {line!r} carries an extra, a marker or a url, "
+            f"{source}: {line!r} carries an extra, a marker or a url, "
             f"which scripts/conda_env.py does not model")
-    match = _NAME.match(line)
-    assert match is not None
     return (
         canonicalize_name(requirement.name),
-        _clauses(line[match.end():], f"{pyproject}: {line!r}"),
+        _clauses(requirement.specifier, f"{source}: {line!r}"),
     )
 
 
-def _workspace_members(root: pathlib.Path) -> set[str]:
+def load_section(root: pathlib.Path, feed: Feed) -> Section:
+    """Read one feed's requirements, and its project's requires-python."""
+    with (root / feed.pyproject).open("rb") as infile:
+        config = tomllib.load(infile)
+    lines = config
+    for key in feed.table:
+        lines = lines[key]
+    project = config["project"]
+    source = f"{feed.pyproject} [{'.'.join(feed.table)}]"
+    return Section(
+        title=f"{project['name']} ({source})",
+        requires_python=_clauses(
+            SpecifierSet(project["requires-python"]), feed.pyproject),
+        requirements=tuple(_requirement(line, source) for line in lines),
+    )
+
+
+def workspace_members(root: pathlib.Path) -> frozenset[str]:
+    """Return the canonical names of the uv workspace's members."""
     with (root / "pyproject.toml").open("rb") as infile:
         config = tomllib.load(infile)
     sources = config.get("tool", {}).get("uv", {}).get("sources", {})
-    return {
+    return frozenset(
         canonicalize_name(name)
         for name, source in sources.items()
-        if isinstance(source, dict) and source.get("workspace")
-    }
+        if isinstance(source, dict) and source.get("workspace"))
 
 
-def render_environment(
-    root: pathlib.Path = REPO_ROOT,
-    pip_only: Mapping[str, str] = PIP_ONLY,
-) -> str:
-    """Render ``environment.yml`` from the feeds under ``root``."""
-    members = _workspace_members(root)
-    python = _Entry("python")
-    entries: dict[str, _Entry] = {}
-    pip_entries: dict[str, _Entry] = {}
-    sections: list[_Section] = []
-
-    for feed in ENVIRONMENT_FEEDS:
-        pyproject = root / feed
-        with pyproject.open("rb") as infile:
-            project = tomllib.load(infile)["project"]
-        python.add(_clauses(project["requires-python"], str(pyproject)))
-        section = _Section(f"{project['name']} ({feed})")
-        sections.append(section)
-        for line in project.get("dependencies", []):
-            name, clauses = _requirement(line, pyproject)
-            if name in members:
-                continue
-            if name in pip_only:
-                target, conda = pip_entries, name
-            else:
-                target, conda = entries, conda_name(name)
-            if conda not in target:
-                target[conda] = _Entry(conda)
-                if target is entries:
-                    section.entries.append(target[conda])
-            target[conda].add(clauses)
-
-    undeclared = sorted(set(pip_only) - set(pip_entries))
+def check_pip_only(
+    sections: Iterable[Section], pip_only: Mapping[str, str],
+) -> None:
+    """Raise if a pip-only entry is declared by none of the sections."""
+    declared = {name for s in sections for name, _ in s.requirements}
+    undeclared = sorted(set(pip_only) - declared)
     if undeclared:
         raise ValueError(
             f"pip-only entries no feed declares: {', '.join(undeclared)}")
 
+
+def render(
+    output: Output,
+    sections: Sequence[Section],
+    members: Iterable[str],
+    pip_only: Mapping[str, str],
+) -> str:
+    """Render one environment file from its feeds' sections."""
+    python = _Entry("python")
+    entries: dict[str, _Entry] = {}
+    pip_entries: dict[str, _Entry] = {}
+    by_section: dict[str, list[_Entry]] = {}
+
+    for section in sections:
+        python.add(section.requires_python)
+        section_entries = by_section.setdefault(section.title, [])
+        for name, clauses in section.requirements:
+            if name in members:
+                continue
+            if name in pip_only:
+                pip_entries.setdefault(name, _Entry(name)).add(clauses)
+                continue
+            conda = conda_name(name)
+            if conda not in entries:
+                entries[conda] = _Entry(conda)
+                section_entries.append(entries[conda])
+            entries[conda].add(clauses)
+
     lines = [
-        "# Generated by scripts/conda_env.py from the runtime dependencies",
-        "# of the workspace pyprojects -- do not edit by hand. Regenerate:",
+        "# Generated by scripts/conda_env.py from the workspace",
+        "# pyprojects -- do not edit by hand. Regenerate:",
         "#     python scripts/conda_env.py",
-        "name: gain",
+        f"name: {output.env_name}",
         "channels:",
         *(f"  - {channel}" for channel in CHANNELS),
         "dependencies:",
         f"  - {python.render()}",
     ]
-    for section in sections:
-        lines.append(f"  # {section.title}")
+    for title, section_entries in by_section.items():
+        lines.append(f"  # {title}")
         lines.extend(
             f"  - {entry.render()}"
-            for entry in sorted(section.entries, key=lambda e: e.name))
+            for entry in sorted(section_entries, key=lambda e: e.name))
     if pip_entries:
         lines.extend((
             "  # pip-only: PIP_ONLY in scripts/conda_env.py",
@@ -201,28 +220,53 @@ def render_environment(
     return "\n".join(lines) + "\n"
 
 
+def render_all(
+    root: pathlib.Path = REPO_ROOT,
+    outputs: Sequence[Output] = OUTPUTS,
+    pip_only: Mapping[str, str] = PIP_ONLY,
+) -> dict[str, str]:
+    """Render every output under ``root``, keyed by file name."""
+    members = workspace_members(root)
+    sections = {
+        output.filename: [load_section(root, feed) for feed in output.feeds]
+        for output in outputs
+    }
+    check_pip_only(
+        (s for per_output in sections.values() for s in per_output),
+        pip_only)
+    return {
+        output.filename: render(
+            output, sections[output.filename], members, pip_only)
+        for output in outputs
+    }
+
+
 def main(
     argv: Sequence[str] | None = None,
     root: pathlib.Path = REPO_ROOT,
 ) -> int:
-    """Rewrite ``environment.yml``, or with ``--check`` report drift."""
+    """Rewrite the environment files, or with ``--check`` report drift."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--check", action="store_true",
-        help="exit non-zero if the committed file differs from a render")
+        help="exit non-zero if a committed file differs from a render")
     args = parser.parse_args(argv)
 
-    target = root / ENVIRONMENT_FILE
-    rendered = render_environment(root)
-    if args.check:
-        if not target.exists() or target.read_text() != rendered:
-            print(
-                f"{target} is stale; regenerate it with "
-                f"`python scripts/conda_env.py`", file=sys.stderr)
-            return 1
+    rendered = render_all(root)
+    if not args.check:
+        for filename, text in rendered.items():
+            (root / filename).write_text(text)
         return 0
-    target.write_text(rendered)
-    return 0
+    stale = [
+        filename for filename, text in rendered.items()
+        if not (root / filename).exists()
+        or (root / filename).read_text() != text
+    ]
+    for filename in stale:
+        print(
+            f"{root / filename} is stale; regenerate it with "
+            f"`python scripts/conda_env.py`", file=sys.stderr)
+    return 1 if stale else 0
 
 
 if __name__ == "__main__":

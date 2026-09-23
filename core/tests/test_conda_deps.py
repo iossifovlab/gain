@@ -1,9 +1,9 @@
 # pylint: disable=W0621,C0116
-"""The committed conda environment file matches the workspace pyprojects.
+"""The committed conda environment files match the workspace pyprojects.
 
-``environment.yml`` is rendered by ``scripts/conda_env.py``; the guard
-below fails whenever the committed file is stale, and the remaining tests
-pin the rendering rules on a throwaway workspace.
+The files are rendered by ``scripts/conda_env.py``; the guard below fails
+whenever a committed file is stale, and the remaining tests pin the
+rendering rules on a throwaway workspace.
 """
 import importlib.util
 import pathlib
@@ -18,7 +18,7 @@ SCRIPT = REPO_ROOT / "scripts" / "conda_env.py"
 
 REGENERATE = (
     "run `python scripts/conda_env.py` from the repo root and commit "
-    "environment.yml")
+    "the result")
 
 
 @pytest.fixture(scope="module")
@@ -34,15 +34,18 @@ def conda_env() -> ModuleType:
     return module
 
 
-def test_committed_environment_file_is_current(
+def test_committed_environment_files_are_current(
     conda_env: ModuleType,
 ) -> None:
-    committed = REPO_ROOT / conda_env.ENVIRONMENT_FILE
-    if not committed.exists():
-        pytest.fail(f"{committed} is missing; {REGENERATE}")
+    rendered = conda_env.render_all()
+    assert set(rendered) == {"environment.yml"}
 
-    assert committed.read_text() == conda_env.render_environment(), (
-        f"{committed} is stale; {REGENERATE}")
+    for filename, text in rendered.items():
+        committed = REPO_ROOT / filename
+        if not committed.exists():
+            pytest.fail(f"{committed} is missing; {REGENERATE}")
+        assert committed.read_text() == text, (
+            f"{committed} is stale; {REGENERATE}")
 
 
 def _workspace(
@@ -51,10 +54,6 @@ def _workspace(
     web_api: list[str],
     requires_python: str = ">=3.12",
 ) -> pathlib.Path:
-    def write(path: str, text: str) -> None:
-        (root / path).parent.mkdir(parents=True, exist_ok=True)
-        (root / path).write_text(textwrap.dedent(text))
-
     def pyproject(name: str, deps: list[str]) -> str:
         listed = "".join(f"    {dep!r},\n" for dep in deps)
         return (
@@ -62,20 +61,36 @@ def _workspace(
             f'requires-python = "{requires_python}"\n'
             f"dependencies = [\n{listed}]\n")
 
-    write("pyproject.toml", """\
+    (root / "core").mkdir(parents=True, exist_ok=True)
+    (root / "web_api").mkdir(exist_ok=True)
+    (root / "pyproject.toml").write_text(textwrap.dedent("""\
         [project]
         name = "monorepo"
         [tool.uv.sources]
         gain-core = { workspace = true }
         gain-web-api = { workspace = true }
-        """)
-    write("core/pyproject.toml", pyproject("gain-core", core))
-    write("web_api/pyproject.toml", pyproject("gain-web-api", web_api))
+        """))
+    (root / "core/pyproject.toml").write_text(pyproject("gain-core", core))
+    (root / "web_api/pyproject.toml").write_text(
+        pyproject("gain-web-api", web_api))
     return root
+
+
+def _render(
+    conda_env: ModuleType,
+    root: pathlib.Path,
+    pip_only: dict[str, str] | None = None,
+) -> str:
+    rendered = conda_env.render_all(root, pip_only=pip_only or {})
+    return str(rendered["environment.yml"])
 
 
 def _dependencies(rendered: str) -> list[str]:
     return rendered.split("dependencies:\n", 1)[1].splitlines()
+
+
+CORE = "  # gain-core (core/pyproject.toml [project.dependencies])"
+WEB_API = "  # gain-web-api (web_api/pyproject.toml [project.dependencies])"
 
 
 def test_render_maps_sorts_and_sections(
@@ -88,16 +103,14 @@ def test_render_maps_sorts_and_sections(
         requires_python=">=3.13",
     )
 
-    rendered = conda_env.render_environment(root, pip_only={})
-
-    assert _dependencies(rendered) == [
+    assert _dependencies(_render(conda_env, root)) == [
         "  - python>=3.13",
-        "  # gain-core (core/pyproject.toml)",
+        CORE,
         "  - anndata",
         "  - dask-core>=2026.1",
         "  - matplotlib-base",
         "  - pybigwig>=0.3",
-        "  # gain-web-api (web_api/pyproject.toml)",
+        WEB_API,
         "  - django>=5.2,<5.3",
         "  - docker-py>=7.1",
     ]
@@ -112,7 +125,7 @@ def test_two_sources_merge_into_one_line(
         web_api=["PyYAML", "numpy<3", "scipy>=1"],
     )
 
-    deps = _dependencies(conda_env.render_environment(root, pip_only={}))
+    deps = _dependencies(_render(conda_env, root))
 
     assert [d for d in deps if "pyyaml" in d] == ["  - pyyaml>=6"]
     assert [d for d in deps if "numpy" in d] == ["  - numpy>=2,<3"]
@@ -122,7 +135,6 @@ def test_two_sources_merge_into_one_line(
 @pytest.mark.parametrize("requirement", [
     'foo>=1; sys_platform == "win32"',
     "foo[bar]>=1",
-    "foo (>=1,<2)",
     "foo===1.0",
 ])
 def test_unmodelled_requirement_raises(
@@ -131,7 +143,7 @@ def test_unmodelled_requirement_raises(
     root = _workspace(tmp_path, core=[requirement], web_api=[])
 
     with pytest.raises(ValueError, match="does not model"):
-        conda_env.render_environment(root, pip_only={})
+        _render(conda_env, root)
 
 
 def test_pip_only_dependency_renders_under_pip(
@@ -139,10 +151,10 @@ def test_pip_only_dependency_renders_under_pip(
 ) -> None:
     root = _workspace(tmp_path, core=["numpy"], web_api=["adrf>=0.1.13"])
 
-    rendered = conda_env.render_environment(
-        root, pip_only={"adrf": "not on conda"})
+    rendered = _render(conda_env, root, {"adrf": "not on conda"})
 
     assert rendered.endswith(
+        f"{WEB_API}\n"
         "  # pip-only: PIP_ONLY in scripts/conda_env.py\n"
         "  - pip\n"
         "  - pip:\n"
@@ -155,7 +167,7 @@ def test_no_pip_block_without_pip_only_dependencies(
 ) -> None:
     root = _workspace(tmp_path, core=["numpy"], web_api=["adrf>=0.1.13"])
 
-    deps = _dependencies(conda_env.render_environment(root, pip_only={}))
+    deps = _dependencies(_render(conda_env, root))
 
     assert "  - pip" not in deps
     assert "  - pip:" not in deps
@@ -168,7 +180,23 @@ def test_undeclared_pip_only_entry_raises(
     root = _workspace(tmp_path, core=["numpy"], web_api=[])
 
     with pytest.raises(ValueError, match="adrf"):
-        conda_env.render_environment(root, pip_only={"adrf": "not on conda"})
+        _render(conda_env, root, {"adrf": "not on conda"})
+
+
+def test_pip_only_entry_declared_by_another_output_is_accepted(
+    conda_env: ModuleType, tmp_path: pathlib.Path,
+) -> None:
+    root = _workspace(tmp_path, core=["numpy"], web_api=["adrf"])
+    runtime = conda_env.Output(
+        "runtime.yml", "rt", (conda_env.Feed("core/pyproject.toml"),))
+    web = conda_env.Output(
+        "web.yml", "web", (conda_env.Feed("web_api/pyproject.toml"),))
+
+    rendered = conda_env.render_all(
+        root, outputs=(runtime, web), pip_only={"adrf": "not on conda"})
+
+    assert "pip" not in rendered["runtime.yml"]
+    assert "    - adrf\n" in rendered["web.yml"]
 
 
 def test_check_reports_drift_without_rewriting(
