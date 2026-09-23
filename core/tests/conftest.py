@@ -192,6 +192,30 @@ def deprecation_notices_are_owned(
         + "\n  ".join(recorder.notices))
 
 
+@pytest.fixture(autouse=True)
+def restore_logger_levels() -> Generator[None, None, None]:
+    """Restore the level of the root and every named logger afterwards.
+
+    Every in-process CLI run goes through ``VerbosityConfiguration.set``,
+    which applies ``-v`` to the root and caps third-party loggers; none
+    of that may leak into the tests that follow on the same worker.
+    """
+    def loggers() -> list[logging.Logger]:
+        return [
+            lg for lg in (
+                logging.getLogger(),
+                *logging.Logger.manager.loggerDict.values())
+            if isinstance(lg, logging.Logger)
+        ]
+
+    levels = {lg: lg.level for lg in loggers()}
+    yield
+    for lg in loggers():
+        level = levels.get(lg, logging.NOTSET)
+        if lg.level != level:
+            lg.setLevel(level)
+
+
 @pytest.fixture
 def clean_genomic_context_providers(
     mocker: pytest_mock.MockerFixture,
