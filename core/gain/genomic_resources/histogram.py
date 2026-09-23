@@ -1269,7 +1269,7 @@ def build_default_histogram_conf(
         return CategoricalHistogramConfig.default_config()
 
     return NullHistogramConfig(
-        "No histogram configured and no default config available for type"
+        "No histogram configured and no default config available for type "
         f"{value_type}",
     )
 

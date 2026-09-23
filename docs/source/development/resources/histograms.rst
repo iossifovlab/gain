@@ -107,16 +107,22 @@ default comes from when the YAML says nothing:
    ``histogram:`` key and returns the matching ``*HistogramConfig``. When
    the key is absent it returns ``None`` — it does *not* substitute a
    default.
-#. The default is chosen later, at statistics-build time, by
-   ``build_default_histogram_conf`` from the score's value type. That is
-   why an unconfigured score still gets a histogram, and why which kind it
-   gets depends on the declared ``value_type`` rather than on the data.
+#. The default is chosen later, by ``build_default_histogram_conf`` from
+   the score's value type — at statistics-build time, and again when the
+   histogram is read (``ScoreResource.get_histogram_config``). That is why
+   an unconfigured score still gets a histogram, and why which kind it gets
+   depends on the declared ``value_type`` rather than on the data.
 #. The statistics build uses the config to construct the histogram, fills it
    with :meth:`~gain.genomic_resources.histogram.NumberHistogram.add_value`
    or the vectorised
    :meth:`~gain.genomic_resources.histogram.NumberHistogram.add_batch`, and
    stores the serialised result in the resource.
-#. :func:`~gain.genomic_resources.histogram.load_histogram` reads it back.
+#. ``ScoreResource.get_score_histogram`` reads it back through
+   :func:`~gain.genomic_resources.histogram.load_histogram`. A histogram
+   the definition annuls (a ``null`` config, stated or defaulted) has no
+   stored file; ``get_score_histogram`` answers it from the definition,
+   with the configured reason, where a direct ``load_histogram`` call
+   would report the file as missing.
 
 Merging is what makes step 3 parallelisable: each task histograms a slice of
 the genome and
