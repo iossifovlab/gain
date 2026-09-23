@@ -10,32 +10,26 @@ is that its parent exists.
 """
 
 from collections.abc import Callable
+from functools import partial
 
 import pytest
 from gain.genomic_resources.gene_models import parsers
 from gain.genomic_resources.gene_models.gene_models import GeneModels
 
 from tests.small.genomic_resources.gene_models.conftest import (
+    gtf_attributes,
+    gtf_record,
     transcript_digest,
 )
 
-
-def _attributes(**keys: str) -> str:
-    return " ".join(f'{key} "{value}";' for key, value in keys.items())
-
-
-def _record(feature: str, start: int, end: int, attributes: str) -> str:
-    return "\t".join([
-        "chr1", "HAVANA", feature, str(start), str(end), ".", "+", ".",
-        attributes,
-    ])
+_record = partial(gtf_record, chrom="chr1", source="HAVANA")
 
 
 #: ``SELENON``/``ENST00000361547``, the GENCODE v46 selenoprotein these
 #: records are modelled on. The coordinates below are compacted: the real
 #: transcript spans 25800193-25818221 and carries its two recoded sites
 #: 10 kb apart, which would need a third exon to say nothing more.
-TRANSCRIPT_ATTRIBUTES = _attributes(
+TRANSCRIPT_ATTRIBUTES = gtf_attributes(
     gene_id="ENSG00000162430", gene_name="SELENON",
     transcript_id="ENST00000361547",
 )

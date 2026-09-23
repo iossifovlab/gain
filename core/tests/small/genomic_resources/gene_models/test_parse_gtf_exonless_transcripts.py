@@ -17,6 +17,7 @@ first point at which "this transcript has no exons" is known.
 import logging
 import pathlib
 from collections.abc import Callable
+from functools import partial
 
 import pytest
 from gain.genomic_resources.gene_models import parsers
@@ -24,14 +25,10 @@ from gain.genomic_resources.gene_models.gene_models import GeneModels
 
 from tests.small.genomic_resources.gene_models.conftest import (
     build_from_content,
+    gtf_record,
 )
 
-
-def _record(feature: str, start: int, end: int, attributes: str) -> str:
-    return "\t".join([
-        "chr17", "test", feature, str(start), str(end), ".", "+", ".",
-        attributes,
-    ])
+_record = partial(gtf_record, chrom="chr17")
 
 
 TR1 = 'gene_id "G1"; transcript_id "TR1";'

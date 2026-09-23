@@ -24,6 +24,7 @@ so GENCODE has no codon to annotate.
 """
 
 from collections.abc import Callable
+from functools import partial
 
 import pytest
 from gain.genomic_resources.gene_models import parsers
@@ -33,22 +34,10 @@ from gain.genomic_resources.gene_models.serialization import (
 )
 
 from tests.small.genomic_resources.gene_models.conftest import (
+    gtf_attributes,
+    gtf_record,
     transcript_digest,
 )
-
-
-def _attributes(**keys: str) -> str:
-    return " ".join(f'{key} "{value}";' for key, value in keys.items())
-
-
-def _record(
-    chrom: str, strand: str, feature: str,
-    start: int, end: int, attributes: str,
-) -> str:
-    return "\t".join([
-        chrom, "HAVANA", feature, str(start), str(end), ".", strand, ".",
-        attributes,
-    ])
 
 
 def _records(
@@ -60,9 +49,9 @@ def _records(
     reads neither field from a child record, so a stray one would be
     accepted in silence instead of failing a test.
     """
-    def _build(feature: str, start: int, end: int) -> str:
-        return _record(chrom, strand, feature, start, end, attributes)
-    return _build
+    return partial(
+        gtf_record, attributes=attributes,
+        chrom=chrom, source="HAVANA", strand=strand)
 
 
 #: ``UNC13D``/``ENST00000590762``, the GENCODE v49 transcript the issue
@@ -73,7 +62,7 @@ def _records(
 #: unaltered -- the first, the last, and one in between. Dropping the
 #: other seven shortens the sequence but not the span, which is what the
 #: outermost pairs decide.
-UNC13D = _attributes(
+UNC13D = gtf_attributes(
     gene_id="ENSG00000092929", gene_name="UNC13D",
     transcript_id="ENST00000590762",
 )
@@ -114,7 +103,7 @@ def test_a_transcript_with_only_a_start_codon_spans_its_cds_records(
 #: It carries no ``*_NF`` tag at all -- it is ``basic`` and
 #: ``GENCODE_Primary`` -- which is why the defect reaches the ``basic``
 #: flavours that deployments pin, not only ``comprehensive``.
-IFNA6 = _attributes(
+IFNA6 = gtf_attributes(
     gene_id="ENSG00000120235", gene_name="IFNA6",
     transcript_id="ENST00000259555",
 )
@@ -149,7 +138,7 @@ def test_a_transcript_with_only_a_stop_codon_spans_its_cds_and_the_codon(
 #: polyadenylation, so there is none to annotate. It is nonetheless
 #: ``Ensembl_canonical`` and ``appris_principal_1``, and it is not alone:
 #: ``MT-ND1`` and ``MT-ND2`` are the same shape.
-MT_ND3 = _attributes(
+MT_ND3 = gtf_attributes(
     gene_id="ENSG00000198840", gene_name="MT-ND3",
     transcript_id="ENST00000361227",
 )
@@ -183,7 +172,7 @@ def test_a_transcript_with_no_codon_records_is_coding(
 #: ``start_codon`` with no ``stop_codon``. The fixtures above reproduce
 #: GENCODE records verbatim; this one states the rule in numbers small
 #: enough to check without the file.
-FAKE1 = _attributes(
+FAKE1 = gtf_attributes(
     gene_id="FAKE1", gene_name="FAKE1", transcript_id="FAKE1-tx",
     tag="cds_end_NF",
 )
@@ -224,7 +213,7 @@ def test_the_coding_interval_is_widened_by_cds_records_not_codons_alone(
 #: codon reaches 34419218 -- so this fixture would notice the ``CDS``
 #: records being folded in wrongly, rather than passing because the two
 #: sources happen to agree.
-SMIM34 = _attributes(
+SMIM34 = gtf_attributes(
     gene_id="ENSG00000243627", gene_name="SMIM34",
     transcript_id="ENST00000450895",
 )
@@ -331,8 +320,9 @@ def test_a_cds_with_a_malformed_attribute_column_is_rejected(
     with pytest.raises(ValueError, match="malformed GTF attribute"):
         gtf_gene_models(
             *UNC13D_BODY,
-            _record("chr17", "-", "CDS", *UNC13D_LAST_CDS,
-                    'transcript_id "ENST00000590762"; tag;'),
+            gtf_record("CDS", *UNC13D_LAST_CDS,
+                       'transcript_id "ENST00000590762"; tag;',
+                       chrom="chr17", source="HAVANA", strand="-"),
         )
 
 

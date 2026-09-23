@@ -8,12 +8,9 @@ import pytest
 from gain.genomic_resources.gene_models import parsers
 from gain.genomic_resources.gene_models.gene_models import GeneModels
 
-
-def _record(feature: str, start: int, end: int, attributes: str) -> str:
-    return "\t".join([
-        "X", "test", feature, str(start), str(end), ".", "+", ".",
-        attributes,
-    ])
+from tests.small.genomic_resources.gene_models.conftest import (
+    gtf_record,
+)
 
 
 @pytest.mark.parametrize("feature", sorted(parsers.GTF_IGNORED_FEATURES))
@@ -22,7 +19,7 @@ def test_an_ignored_record_needs_no_transcript_id(
     feature: str,
 ) -> None:
     gene_models = gtf_gene_models(
-        _record(feature, 100, 200, 'gene_id "G1";'),
+        gtf_record(feature, 100, 200, 'gene_id "G1";'),
     )
 
     assert gene_models.transcript_models == {}

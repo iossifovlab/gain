@@ -19,12 +19,9 @@ import pytest
 from gain.genomic_resources.gene_models import parsers
 from gain.genomic_resources.gene_models.gene_models import GeneModels
 
-
-def _record(feature: str, start: int, end: int, attributes: str) -> str:
-    return "\t".join([
-        "X", "test", feature, str(start), str(end), ".", "+", ".",
-        attributes,
-    ])
+from tests.small.genomic_resources.gene_models.conftest import (
+    gtf_record,
+)
 
 
 def test_a_transcript_without_transcript_id_names_the_record(
@@ -37,7 +34,7 @@ def test_a_transcript_without_transcript_id_names_the_record(
                 "transcript_id attribute"
             )):
         gtf_gene_models(
-            _record("transcript", 100, 200, 'gene_id "G1";'),
+            gtf_record("transcript", 100, 200, 'gene_id "G1";'),
         )
 
 
@@ -61,9 +58,9 @@ def test_a_child_without_transcript_id_names_the_record(
                 "transcript_id attribute"
             )):
         gtf_gene_models(
-            _record("transcript", 100, 200, 'gene_id "G1"; '
-                                            'transcript_id "T1";'),
-            _record(feature, 100, 120, 'gene_id "G1";'),
+            gtf_record("transcript", 100, 200, 'gene_id "G1"; '
+                                               'transcript_id "T1";'),
+            gtf_record(feature, 100, 120, 'gene_id "G1";'),
         )
 
 
@@ -78,7 +75,7 @@ def test_a_transcript_without_any_gene_label_names_the_record(
                 "expected gene_name, gene_symbol or gene_id"
             )):
         gtf_gene_models(
-            _record("transcript", 100, 200, 'transcript_id "T1";'),
+            gtf_record("transcript", 100, 200, 'transcript_id "T1";'),
         )
 
 
@@ -91,9 +88,9 @@ def test_an_empty_gene_label_falls_through_to_the_next_spelling(
     labelling a gene with -- an empty higher-precedence spelling.
     """
     gene_models = gtf_gene_models(
-        _record("transcript", 100, 200,
-                'gene_name ""; gene_id "G1"; transcript_id "T1";'),
-        _record("exon", 100, 200, 'transcript_id "T1";'),
+        gtf_record("transcript", 100, 200,
+                   'gene_name ""; gene_id "G1"; transcript_id "T1";'),
+        gtf_record("exon", 100, 200, 'transcript_id "T1";'),
     )
 
     assert gene_models.transcript_models["T1"].gene == "G1"
@@ -109,8 +106,8 @@ def test_an_empty_transcript_id_is_still_a_transcript_id(
     behaviour change, and not one this guard should make by accident.
     """
     gene_models = gtf_gene_models(
-        _record("transcript", 100, 200, 'gene_id "G1"; transcript_id "";'),
-        _record("exon", 100, 200, 'transcript_id "";'),
+        gtf_record("transcript", 100, 200, 'gene_id "G1"; transcript_id "";'),
+        gtf_record("exon", 100, 200, 'transcript_id "";'),
     )
 
     assert list(gene_models.transcript_models) == [""]
@@ -121,10 +118,10 @@ def test_gene_labels_that_are_all_present_but_empty_are_not_missing(
 ) -> None:
     """The same distinction on the other guard: empty is not absent."""
     gene_models = gtf_gene_models(
-        _record("transcript", 100, 200,
-                'gene_name ""; gene_symbol ""; gene_id ""; '
-                'transcript_id "T1";'),
-        _record("exon", 100, 200, 'transcript_id "T1";'),
+        gtf_record("transcript", 100, 200,
+                   'gene_name ""; gene_symbol ""; gene_id ""; '
+                   'transcript_id "T1";'),
+        gtf_record("exon", 100, 200, 'transcript_id "T1";'),
     )
 
     assert gene_models.transcript_models["T1"].gene == ""
@@ -142,6 +139,6 @@ def test_only_the_last_gene_label_spelling_has_to_be_there(
     """
     with pytest.raises(ValueError, match="has no usable gene label"):
         gtf_gene_models(
-            _record("transcript", 100, 200,
-                    'gene_name ""; gene_symbol ""; transcript_id "T1";'),
+            gtf_record("transcript", 100, 200,
+                       'gene_name ""; gene_symbol ""; transcript_id "T1";'),
         )

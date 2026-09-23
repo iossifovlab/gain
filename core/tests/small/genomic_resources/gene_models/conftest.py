@@ -1,10 +1,11 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """Fixtures shared by the gene-models test modules.
 
-Record-formatting stays per-module — chromosome names, coordinates and
-attribute syntax differ per GTF flavour — while building a resource out
-of the records, locating an on-disk fixture, and saying what counts as
-an unchanged parse live here.
+Formatting a GTF record, building a resource out of the records,
+locating an on-disk fixture, and saying what counts as an unchanged
+parse live here. The columns that differ per GTF flavour -- chromosome,
+source, strand -- are keyword arguments of `gtf_record`, so a module
+states only the ones it varies.
 """
 import os
 import pathlib
@@ -18,6 +19,27 @@ from gain.genomic_resources.gene_models.gene_models_factory import (
     build_gene_models_from_resource,
 )
 from gain.genomic_resources.testing import build_inmemory_test_resource
+
+
+def gtf_attributes(**keys: str) -> str:
+    """Render a GTF attributes column, one ``key "value";`` per pair."""
+    return " ".join(f'{key} "{value}";' for key, value in keys.items())
+
+
+def gtf_record(
+    feature: str, start: int, end: int, attributes: str, *,
+    chrom: str = "X", source: str = "test", strand: str = "+",
+) -> str:
+    """Format one well-formed nine-column GTF record, without a newline.
+
+    Score and frame are always ``.``. A test whose subject is a
+    malformed row -- a missing column, say -- spells that row out
+    instead.
+    """
+    return "\t".join([
+        chrom, source, feature, str(start), str(end), ".", strand, ".",
+        attributes,
+    ])
 
 
 def build_from_content(

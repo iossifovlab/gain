@@ -22,6 +22,10 @@ from gain.genomic_resources.gene_models.serialization import (
     _save_as_default_gene_models,
 )
 
+from tests.small.genomic_resources.gene_models.conftest import (
+    gtf_record,
+)
+
 NOTE_WITH_SEMICOLON = (
     "The sequence was modified: inserted 5 bases in 4 codons; "
     "deleted 1 base in 1 codon"
@@ -30,16 +34,10 @@ NOTE_WITH_SEMICOLON = (
 
 def _one_transcript_records(attributes: str) -> list[str]:
     """GTF records for one two-exon transcript with the given attributes."""
-    def record(feature: str, start: int, end: int) -> str:
-        return "\t".join([
-            "chr1", "test", feature, str(start), str(end),
-            ".", "+", ".", attributes,
-        ])
-
     return [
-        record("transcript", 10, 100),
-        record("exon", 10, 40),
-        record("exon", 60, 100),
+        gtf_record("transcript", 10, 100, attributes, chrom="chr1"),
+        gtf_record("exon", 10, 40, attributes, chrom="chr1"),
+        gtf_record("exon", 60, 100, attributes, chrom="chr1"),
     ]
 
 
