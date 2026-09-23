@@ -60,7 +60,7 @@ PACKAGES=(
 )
 
 cleanup() {
-    local proj name module
+    local proj name module started=$SECONDS
     for entry in "${PACKAGES[@]}"; do
         read -r proj name module <<< "$entry"
         rm -rf "$PKGS/$name-$VCS_VERSION-"*
@@ -75,6 +75,7 @@ cleanup() {
         fi
     done
     rm -rf "$ENVS"
+    echo "=== cleanup $((SECONDS - started)) s, verify total $SECONDS s"
 }
 trap cleanup EXIT
 
