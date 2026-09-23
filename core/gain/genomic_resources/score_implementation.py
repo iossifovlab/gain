@@ -19,6 +19,7 @@ edge, whereas a top-level ``gain/scores/`` package would create a cycle.
 """
 from __future__ import annotations
 
+import fnmatch
 from abc import abstractmethod
 from typing import Any
 
@@ -33,6 +34,7 @@ from gain.genomic_resources.histogram import (
 from gain.genomic_resources.repository import (
     GR_INDEX_SCORE_FIELDS,
     GenomicResource,
+    ReadWriteRepositoryProtocol,
 )
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
@@ -95,7 +97,8 @@ class ScoreImplementationBase(
         current histogram no longer justifies -- the truncated sidecar of
         a histogram now within the limit, the image of a ``NullHistogram``,
         all three of a score absent from ``histograms`` -- is deleted
-        rather than left to be served as current.
+        rather than left to be served as current.  So is every histogram
+        file of a score id ``score_definitions`` no longer holds.
         """
         proto = resource.proto
         for score_id, histogram in histograms.items():
@@ -150,3 +153,44 @@ class ScoreImplementationBase(
                 score.get_histogram_image_filename(score_id),
             ):
                 drop_stale_histogram_file(resource, filename)
+        _drop_orphaned_histogram_files(resource, score)
+
+
+#: Every name a score-histogram file takes, with ``{}`` for the score id:
+#: both serialisations (legacy ``.yaml``, current ``.json``), their
+#: truncated sidecars, and the image.  No other statistic writes under
+#: ``statistics/histogram_``.
+_HISTOGRAM_FILE_TEMPLATES = (
+    "statistics/histogram_{}.json",
+    "statistics/histogram_{}.yaml",
+    "statistics/histogram_{}.png",
+    "statistics/truncated/histogram_{}.json",
+    "statistics/truncated/histogram_{}.yaml",
+)
+_HISTOGRAM_FILE_PATTERNS = tuple(
+    template.format("*") for template in _HISTOGRAM_FILE_TEMPLATES)
+
+
+def _drop_orphaned_histogram_files(
+    resource: GenomicResource,
+    score: ScoreResource,
+) -> None:
+    """Delete the histogram files of score ids ``score`` no longer defines.
+
+    A score removed from or renamed in ``scores:`` is never visited by the
+    per-score reconciliation (gain#1309).  Ownership is matched against
+    the names each defined id produces, never parsed out of a filename,
+    and the listing is of the files present, not the stored manifest.
+    """
+    proto = resource.proto
+    assert isinstance(proto, ReadWriteRepositoryProtocol)
+    owned = {
+        template.format(score_id)
+        for template in _HISTOGRAM_FILE_TEMPLATES
+        for score_id in score.score_definitions}
+    for entry in proto.collect_resource_entries(resource):
+        if entry.name in owned or not any(
+                fnmatch.fnmatchcase(entry.name, pattern)
+                for pattern in _HISTOGRAM_FILE_PATTERNS):
+            continue
+        drop_stale_histogram_file(resource, entry.name)

@@ -345,6 +345,29 @@ def test_build_histograms_null_config_drops_an_earlier_builds_files(
     assert not (statistics / "histogram_s.png").exists()
 
 
+def test_build_histograms_drops_the_files_of_a_renamed_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = a_grr().with_resource(
+        "Score",
+        a_gene_score().with_score("old")
+        .with_data("gene old\nG1 1\nG2 2\nG3 3\n"),
+    ).build_repo(tmp_path)
+    GeneScoreImplementation._build_histograms(repo.get_resource("Score"))
+    repo = a_grr().with_resource(
+        "Score",
+        a_gene_score().with_score("new")
+        .with_data("gene new\nG1 1\nG2 2\nG3 3\n"),
+    ).build_repo(tmp_path)
+
+    GeneScoreImplementation._build_histograms(repo.get_resource("Score"))
+
+    assert sorted(
+        path.name
+        for path in (tmp_path / "Score" / "statistics").glob("histogram_*")
+    ) == ["histogram_new.json", "histogram_new.png"]
+
+
 def test_create_statistics_build_tasks_multiple_scores() -> None:
     repo = build_inmemory_test_repository({
         "MultiScore": {

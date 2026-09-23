@@ -17,6 +17,7 @@ import yaml
 from matplotlib import ticker
 
 from gain import logging
+from gain.genomic_resources.dvc import DVC_SUFFIX
 from gain.genomic_resources.repository import (
     GenomicResource,
     ReadWriteRepositoryProtocol,
@@ -1369,10 +1370,18 @@ def drop_stale_histogram_file(
 
     Returns whether anything was deleted; a file that is not there is
     not an error, since a score that never had statistics has nothing to
-    drop.
+    drop.  A DVC-tracked file is left in place with a warning: deleting
+    it alone leaves a pointer the manifest build re-adds an entry from,
+    for a file that is gone.
     """
     proto = resource.proto
     if not proto.file_exists(resource, filename):
+        return False
+    if proto.file_exists(resource, f"{filename}{DVC_SUFFIX}"):
+        logger.warning(
+            "stale <%s> of resource <%s> is DVC-tracked; left in place, "
+            "run 'dvc remove %s%s' to drop it",
+            filename, resource.resource_id, filename, DVC_SUFFIX)
         return False
     assert isinstance(proto, ReadWriteRepositoryProtocol)
     proto.delete_resource_file(resource, filename)
