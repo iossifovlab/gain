@@ -123,6 +123,17 @@ def inject_dependencies(task: TaskDesc, values: Sequence[Any]) -> TaskDesc:
     )
 
 
+def held_futures(graph: TaskGraph) -> list[Future]:
+    """List the dependency futures the graph's remaining tasks hold."""
+    descs = [graph.get_task_desc(task) for task in graph.tasks]
+    return [
+        value
+        for desc in descs
+        for value in (*desc.args, *desc.kwargs.values())
+        if isinstance(value, Future)
+    ]
+
+
 class DaskExecutor(TaskGraphExecutorBase):
     """Dask-based task graph executor."""
 
@@ -445,6 +456,10 @@ class DaskExecutor(TaskGraphExecutorBase):
             # (gain#531). Releasing asynchronously, as this does, could never
             # have carried that guarantee anyway.
             self._release_futures(state.abandon_outstanding())
+            # A dependant never submitted still holds its dependencies'
+            # futures in the graph, which the caller may keep alive long
+            # after the run (gain#1633).
+            self._release_futures(held_futures(graph))
 
     def close(self) -> None:
         """Close the Dask executor."""

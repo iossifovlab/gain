@@ -441,3 +441,51 @@ def test_gather_failed_does_not_duplicate_a_task_the_abort_delivered() -> None:
         "delivered (gain#381)"
     )
     assert not state.has_outstanding()
+
+
+def a_gathered_batch(
+    state: RunState, results: dict[str, object],
+) -> tuple[dict[str, MagicMock], list[object]]:
+    """Walk one task per result through to gathered.
+
+    Returns each task's future, and what :meth:`RunState.gathered` handed
+    back for release.
+    """
+    batch = a_claimed_submit_batch_of(state, list(results))
+    futures = {task_id: MagicMock(name=task_id) for task_id in results}
+    state.submitted(batch, list(futures.values()))
+    for future in futures.values():
+        state.task_finished(future)
+    unkept = state.gathered(a_claimed_gather_batch(state), [
+        (Task(task_id), result) for task_id, result in results.items()])
+    return futures, list(unkept)
+
+
+def test_a_result_future_is_kept_for_the_dependants_of_its_task() -> None:
+    """A delivered result's future outlives the gather (gain#1633).
+
+    The run loop hands it to the task's dependants in place of the value;
+    a failed task has no result to pass on, so its future goes back to the
+    caller for release.
+    """
+    state = RunState()
+
+    futures, unkept = a_gathered_batch(
+        state, {"ok": 42, "failed": ValueError("boom")})
+
+    assert unkept == [futures["failed"]]
+    assert state.take_result_future(Task("ok")) is futures["ok"]
+    assert state.take_result_future(Task("failed")) is None
+
+
+def test_abandoning_a_run_hands_back_result_futures_never_taken() -> None:
+    """A kept result future is released with the rest of an abandoned run.
+
+    Otherwise a run abandoned between the gather and the run loop taking
+    its results would leave those keys pinned on the client (gain#480).
+    """
+    state = RunState()
+    futures, _ = a_gathered_batch(state, {"ok": 42})
+
+    assert state.abandon_outstanding() == [futures["ok"]]
+    assert state.take_result_future(Task("ok")) is None

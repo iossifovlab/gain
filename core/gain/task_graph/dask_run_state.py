@@ -244,9 +244,10 @@ class RunState:
 
         The run loop's teardown calls this once both workers have stopped.
         Whatever is still in ``running``, ``completed`` or the in-flight
-        gather state then belongs to a run that ended without collecting it
-        -- a consumer abandoned the generator -- and nobody else will ever
-        come for it. The caller releases them, because ``Future.release()``
+        gather state -- or is a delivered result's future the run loop never
+        took -- then belongs to a run that ended without collecting it -- a
+        consumer abandoned the generator -- and nobody else will ever come
+        for it. The caller releases them, because ``Future.release()``
         is a dask call and must not run under this lock.
 
         Releasing matters for more than tidiness: an unreleased future keeps

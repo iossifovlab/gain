@@ -1273,3 +1273,97 @@ def test_a_histogram_error_ends_the_run_instead_of_hanging(
         "accounting tests isinstance(result, Exception), so a non-Exception "
         "failure is reported as a successful run"
     )
+
+
+#: Every execution of :func:`counted_tag`, by tag. The session cluster is
+#: threaded, so the workers append to this very list.
+COUNTED_RUNS: list[str] = []
+
+
+def counted_tag(tag: str) -> str:
+    COUNTED_RUNS.append(tag)
+    return tag
+
+
+def slowly_tagged_late(tag: str) -> str:
+    # Long enough that the dependency the dependant shares with it has
+    # finished, been gathered and fed to another dependant well before.
+    time.sleep(0.5)
+    return tag
+
+
+def joined(*parts: str) -> str:
+    return "+".join(parts)
+
+
+def test_a_dependency_reaches_a_dependant_queued_long_after_it_finished(
+    dask_client: Client,
+) -> None:
+    """A dependency stays available until its last dependant is submitted.
+
+    iossifovlab/gain#1633: dependants receive a dependency as the dask
+    future holding its result, so that future must outlive every
+    submission that consumes it. ``early`` is consumed twice -- by
+    ``first``, submitted as soon as ``early`` finishes, and by ``late``,
+    which also waits on a slow task and so is queued half a second after
+    ``early`` finished and after ``first`` was already submitted.
+
+    A future released too soon does not fail the dependant: the scheduler
+    has dropped the result, so it silently runs ``early`` a second time to
+    recompute it -- repeating a whole region scan and its side effects. So
+    the run count is the assertion that catches it, not the value.
+    """
+    COUNTED_RUNS.clear()
+    graph = TaskGraph()
+    early = graph.create_task("early", counted_tag, args=["early"])
+    slow = graph.create_task("slow", slowly_tagged_late, args=["slow"])
+    graph.create_task("first", joined, args=[early, "first"])
+    graph.create_task("late", joined, args=[early, slow])
+
+    results = _run_in_thread_with_timeout(
+        DaskExecutor(dask_client), graph, timeout=20.0)
+
+    assert {task.task_id: result for task, result in results} == {
+        "early": "early",
+        "slow": "slow",
+        "first": "early+first",
+        "late": "early+slow",
+    }
+    assert COUNTED_RUNS == ["early"]
+
+
+def test_an_abandoned_run_releases_the_dependencies_it_still_held(
+    dask_client: Client,
+) -> None:
+    """Teardown releases dependency futures no dependant was submitted with.
+
+    iossifovlab/gain#1633 hands a completed dependency to its dependants
+    as its future, which then sits in the graph until they are submitted.
+    Abandon the run first and those dependants never will be -- so unless
+    teardown releases it, the future pins its key, and the result the key
+    holds, on a client that outlives the run, however long the caller
+    keeps the graph (gain#480).
+    """
+    graph = TaskGraph()
+    held = graph.create_task("HeldDependency", counted_tag, args=["held"])
+    slow = graph.create_task("SlowSibling", slowly_tagged_late, args=["s"])
+    graph.create_task("NeverSubmitted", joined, args=[held, slow])
+
+    tasks_iter = DaskExecutor(dask_client).execute(graph)
+    for task, _result in tasks_iter:
+        if task == held:
+            break
+    tasks_iter.close()
+
+    def pinned() -> dict[str, int]:
+        return {
+            key: count for key, count in dask_client.refcount.items()
+            if str(key).startswith("HeldDependency-") and count > 0
+        }
+
+    # ``Future.release()`` only schedules the decrement on the client's
+    # loop, so give it a moment -- a pinned key stays pinned indefinitely.
+    deadline = time.monotonic() + 5.0
+    while pinned() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert pinned() == {}

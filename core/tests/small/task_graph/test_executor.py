@@ -761,3 +761,36 @@ def test_a_large_dependency_result_is_not_shipped_in_the_submitted_graph(
         str(warning.message) for warning in caught
         if "Sending large graph" in str(warning.message)
     ] == []
+
+
+def tag(value: str) -> str:
+    return value
+
+
+def labelled(first: str, literal: str, second: str, *, keyed: str) -> str:
+    return f"{first}|{literal}|{second}|keyed={keyed}"
+
+
+def test_each_dependency_reaches_its_own_argument_slot(
+    executor: TaskGraphExecutor,
+) -> None:
+    """Several dependencies, positional and keyword, land where declared.
+
+    Under the dask executor each dependency travels as a future beside the
+    task and is put back into the arguments on the worker
+    (iossifovlab/gain#1633), so a slot mixup would hand a dependant the
+    wrong input without failing anything.
+    """
+    graph = TaskGraph()
+    first = graph.create_task("first", tag, args=["one"])
+    second = graph.create_task("second", tag, args=["two"])
+    keyed = graph.create_task("keyed", tag, args=["three"])
+    graph.create_task(
+        "fan-in", labelled,
+        args=[first, "literal", second], kwargs={"keyed": keyed})
+
+    results = {
+        task.task_id: result for task, result in executor.execute(graph)
+    }
+
+    assert results["fan-in"] == "one|literal|two|keyed=three"
