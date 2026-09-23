@@ -14,12 +14,18 @@
 // ship in the CI image. This is where the ONNX migration is actually held to
 // the corpus, so the job's wall clock is roughly doubled by design.
 //
+// The job also owns the gain-spliceai-annotator conda package (#1601): the
+// last stage builds it from the upstream root build's archived wheel and
+// verifies it from the agent-local package cache. The root pipeline builds
+// only gain-core and gain-demo-annotator.
+//
 // Expected Jenkins job setup:
 //   - Script path: spliceai_annotator/Jenkinsfile.integration
 //   - Job DSL: spliceai_annotator/jenkins-jobs/integration.groovy
 //     (pipelineJob 'gain-spliceai-integration'), seeded by gain-seed.
 //   - Triggered downstream from iossifovlab/gain/master when
-//     spliceai_annotator/** changes (see the 'Trigger spliceai integration'
+//     spliceai_annotator/**, conda-builder/** or core/conda-recipe/**
+//     changes (see the 'Trigger spliceai integration'
 //     stage in the root Jenkinsfile), re-run nightly from Jenkinsfile.nightly,
 //     and safe to run manually.
 //   - Runs on any `builder` agent. Every kowalski build agent carries the
@@ -97,10 +103,25 @@ pipeline {
             description: 'Specific commit SHA to test (takes precedence over ' +
                 'BRANCH_NAME). Empty = use BRANCH_NAME HEAD.',
         )
+        string(
+            name: 'UPSTREAM_PROJECT',
+            defaultValue: '',
+            description: 'Root gain build job whose archived spliceai wheel ' +
+                'and gain-core .conda the Conda package stage uses, e.g. ' +
+                'iossifovlab/gain/master. Empty = iossifovlab/gain/' +
+                '<BRANCH_NAME>.',
+        )
+        string(
+            name: 'UPSTREAM_BUILD',
+            defaultValue: '',
+            description: 'Build number of UPSTREAM_PROJECT. Empty = its last ' +
+                'successful build.',
+        )
     }
 
     environment {
         IMAGE_TAG = "gain-spliceai-integration-ci:${env.BUILD_NUMBER}"
+        CONDA_BUILDER_TAG = "gain-conda-builder-ci:spliceai-integration-${env.BUILD_NUMBER}"
 
         // GRR_ROOT is the node-local grr-sync root; the real tier
         // bind-mounts ${GRR_ROOT}/grr:/grr:ro. It is provisioned per
@@ -231,60 +252,130 @@ pipeline {
                 // proven, since the fast tier's golden assertions are far
                 // coarser than the 16 tiered attributes pinned here. Both
                 // tiers run even if the first fails -- a one-sided failure is
-                // the diagnostic.
+                // the diagnostic. A red tier fails the build but not the
+                // pipeline, so the Conda package stage still reports on the
+                // package independently.
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    sh '''
+                        set +e
+
+                        docker run --rm \
+                            -e SPLICEAI_INTEGRATION_REQUIRE_GRR=1 \
+                            -v "$GRR_ROOT/grr:/grr:ro" \
+                            -v "$PWD/reports/integration:/reports" \
+                            ${IMAGE_TAG} \
+                            sh -c '
+                                set +e
+                                pytest -n 5 -m integration tests/ \
+                                    --junitprefix=tensorflow \
+                                    --junitxml=/reports/pytest.xml
+                                pytest_exit=$?
+                                chmod -R a+rw /reports
+                                exit $pytest_exit
+                            '
+                        tensorflow_exit=$?
+
+                        # ONNX tier: ONE intra-op thread per session, and one
+                        # xdist worker per core (capped at 12). With the backend's
+                        # default 4-thread pool, 5 workers x 5 sessions x 4
+                        # threads oversubscribe a 12-vCPU agent ~8x, and under
+                        # that contention ONNX Runtime's answers drift by up to
+                        # 3e-4 in a probability -- enough to fail the 1e-5
+                        # batch-vs-sequential and baseline pins on some runs and
+                        # not others (#1206; first seen the day the job left the
+                        # 32-vCPU piglet pin). Single-threaded sessions are
+                        # bitwise reproducible under any load; the extra workers
+                        # buy the wall clock back (~20 min on 12 vCPUs).
+                        docker run --rm \
+                            -e SPLICEAI_INTEGRATION_REQUIRE_GRR=1 \
+                            -e SPLICEAI_BACKEND=onnx \
+                            -e SPLICEAI_ONNX_INTRA_OP_THREADS=1 \
+                            -v "$GRR_ROOT/grr:/grr:ro" \
+                            -v "$PWD/reports/integration:/reports" \
+                            ${IMAGE_TAG} \
+                            sh -c '
+                                set +e
+                                workers=$(nproc)
+                                [ "$workers" -gt 12 ] && workers=12
+                                pytest -n "$workers" -m integration tests/ \
+                                    --junitprefix=onnx \
+                                    --junitxml=/reports/pytest-onnx.xml
+                                pytest_exit=$?
+                                chmod -R a+rw /reports
+                                exit $pytest_exit
+                            '
+                        onnx_exit=$?
+
+                        echo "integration tiers: tensorflow=$tensorflow_exit onnx=$onnx_exit"
+                        [ "$tensorflow_exit" -eq 0 ] && [ "$onnx_exit" -eq 0 ]
+                    '''
+                }
+            }
+        }
+
+        stage('Conda package') {
+            // Builds the gain-spliceai-annotator conda package with
+            // `--test skip` and runs the recipe's install checks from the
+            // agent-local package cache, where tensorflow stays between
+            // builds (#1601). The root pipeline builds only gain-core and
+            // gain-demo-annotator; this job owns the spliceai package.
+            //
+            // Inputs are the upstream root build's archived spliceai wheel
+            // and gain-core .conda, so the package is exactly what that
+            // build would have produced. Deliberately the LAST stage: the
+            // root pipeline triggers this job from its final stages and
+            // only archives in `post`, so the integration tiers above are
+            // the margin for the parent to finish (the gain-conda-
+            // integration precedent). Manual and nightly runs, with no
+            // UPSTREAM_BUILD, take the last successful build of
+            // iossifovlab/gain/<BRANCH_NAME>.
+            steps {
+                script {
+                    String project = params.UPSTREAM_PROJECT?.trim() ?:
+                        'iossifovlab/gain/' +
+                        params.BRANCH_NAME.replace('/', '%2F')
+                    def selector = params.UPSTREAM_BUILD?.trim()
+                        ? specific(params.UPSTREAM_BUILD)
+                        : lastSuccessful()
+                    echo "Copying the spliceai wheel and gain-core .conda " +
+                         "from ${project} " +
+                         "(build ${params.UPSTREAM_BUILD ?: 'lastSuccessful'})"
+                    sh 'rm -rf dist conda'
+                    copyArtifacts(
+                        filter: 'dist/spliceai_annotator/*.whl, ' +
+                            'dist/conda/gain-core-*.conda',
+                        fingerprintArtifacts: true,
+                        projectName: project,
+                        selector: selector,
+                    )
+                }
+                // Run as the Jenkins user so rattler-build's 0600 output is
+                // host-readable; the package cache is ${HOME}/conda_pkgs_cache
+                // on the agent, shared with the root pipeline's Conda
+                // packages stage (see conda-builder/verify_packages.sh for the
+                // mounts).
                 sh '''
-                    set +e
-
+                    docker build -f conda-builder/Dockerfile \
+                        -t ${CONDA_BUILDER_TAG} conda-builder
+                    mkdir -p "${HOME}/conda_pkgs_cache"
                     docker run --rm \
-                        -e SPLICEAI_INTEGRATION_REQUIRE_GRR=1 \
-                        -v "$GRR_ROOT/grr:/grr:ro" \
-                        -v "$PWD/reports/integration:/reports" \
-                        ${IMAGE_TAG} \
-                        sh -c '
-                            set +e
-                            pytest -n 5 -m integration tests/ \
-                                --junitprefix=tensorflow \
-                                --junitxml=/reports/pytest.xml
-                            pytest_exit=$?
-                            chmod -R a+rw /reports
-                            exit $pytest_exit
-                        '
-                    tensorflow_exit=$?
-
-                    # ONNX tier: ONE intra-op thread per session, and one
-                    # xdist worker per core (capped at 12). With the backend's
-                    # default 4-thread pool, 5 workers x 5 sessions x 4
-                    # threads oversubscribe a 12-vCPU agent ~8x, and under
-                    # that contention ONNX Runtime's answers drift by up to
-                    # 3e-4 in a probability -- enough to fail the 1e-5
-                    # batch-vs-sequential and baseline pins on some runs and
-                    # not others (#1206; first seen the day the job left the
-                    # 32-vCPU piglet pin). Single-threaded sessions are
-                    # bitwise reproducible under any load; the extra workers
-                    # buy the wall clock back (~20 min on 12 vCPUs).
-                    docker run --rm \
-                        -e SPLICEAI_INTEGRATION_REQUIRE_GRR=1 \
-                        -e SPLICEAI_BACKEND=onnx \
-                        -e SPLICEAI_ONNX_INTRA_OP_THREADS=1 \
-                        -v "$GRR_ROOT/grr:/grr:ro" \
-                        -v "$PWD/reports/integration:/reports" \
-                        ${IMAGE_TAG} \
-                        sh -c '
-                            set +e
-                            workers=$(nproc)
-                            [ "$workers" -gt 12 ] && workers=12
-                            pytest -n "$workers" -m integration tests/ \
-                                --junitprefix=onnx \
-                                --junitxml=/reports/pytest-onnx.xml
-                            pytest_exit=$?
-                            chmod -R a+rw /reports
-                            exit $pytest_exit
-                        '
-                    onnx_exit=$?
-
-                    echo "integration tiers: tensorflow=$tensorflow_exit onnx=$onnx_exit"
-                    [ "$tensorflow_exit" -eq 0 ] && [ "$onnx_exit" -eq 0 ]
+                        --user "$(id -u):$(id -g)" \
+                        -e HOME=/tmp \
+                        -e MAMBA_ROOT_PREFIX=/tmp/mamba \
+                        -v "${HOME}/conda_pkgs_cache":/tmp/mamba/pkgs \
+                        -v "$PWD":"$PWD" \
+                        -w "$PWD" \
+                        ${CONDA_BUILDER_TAG} \
+                        bash conda-builder/annotator_package.sh spliceai_annotator
                 '''
+            }
+            post {
+                success {
+                    archiveArtifacts(
+                        artifacts: 'conda/spliceai_annotator/noarch/*.conda',
+                        fingerprint: true,
+                    )
+                }
             }
         }
     }
@@ -326,7 +417,7 @@ pipeline {
             }
         }
         cleanup {
-            sh 'docker rmi ${IMAGE_TAG} 2>/dev/null || true'
+            sh 'docker rmi ${IMAGE_TAG} ${CONDA_BUILDER_TAG} 2>/dev/null || true'
         }
     }
 }

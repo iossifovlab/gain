@@ -1,8 +1,14 @@
 #!/bin/bash
-# Install check for the four gain conda packages, run by the root
-# Jenkinsfile's 'Conda packages' stage right after it builds them with
-# `rattler-build build --test skip` (#1601). Runs inside the
-# gain-conda-builder-ci image with the workspace as the cwd.
+# Install check for the gain conda packages (#1601), run right after
+# they are built with `rattler-build build --test skip`, inside the
+# gain-conda-builder-ci image with the workspace as the cwd:
+#
+#   verify_packages.sh <project dir>...
+#
+# The root Jenkinsfile's 'Conda packages' stage verifies core and
+# demo_annotator; gain-spliceai-integration and gain-vep-integration each
+# verify their own annotator through conda-builder/annotator_package.sh,
+# with the upstream build's gain-core .conda as conda/core.
 #
 # The checks are the ones each recipe's `tests:` block defines -- the
 # entry-point walk, the top-level import, `pip check` -- and the two must
@@ -15,16 +21,16 @@
 # from the agent (${HOME}/conda_pkgs_cache) so it outlives the build.
 #
 # 1. One environment per package, sequentially, solved with
-#    --override-channels --strict-channel-priority over this build's own
+#    --override-channels --strict-channel-priority over the local
 #    output dirs, then conda-forge, then bioconda. The iossifovlab channel
 #    is deliberately absent so a PUBLISHED package can never shadow the
 #    one under test (gpf#916).
 # 2. In each: the walk, the import and `pip check`, stopping at the first
 #    failure, from a scratch cwd -- run from the workspace, `import
 #    demo_annotator` would find the source directory, not the package.
-# 3. Every gain package in the environment must be the .conda this build
-#    produced: the sha256 recorded in conda-meta is compared with the file
-#    in conda/<proj>/noarch/. The version is only commit + date, so a
+# 3. Every gain package in the environment must be the .conda under test:
+#    the sha256 recorded in conda-meta is compared with the file in
+#    conda/<proj>/noarch/. The version is only commit + date, so a
 #    same-day rebuild of a commit reuses the filename; micromamba refetches
 #    a cached package whose sha256 disagrees with the channel's record,
 #    and this check is what proves the channel record was ours.
@@ -33,6 +39,14 @@
 #    them -- the next build has a new version -- so leaving them would grow
 #    the cache by every build's packages (spliceai alone is ~25 MB).
 #    Third-party packages stay; `micromamba clean` by hand if it matters.
+#
+# Environments are installed with --always-softlink. The cache and the
+# env prefixes sit behind different mounts, where micromamba cannot
+# hardlink and would otherwise copy every package out of the cache --
+# the whole gain-core dependency tree once per environment, tensorflow
+# on top for spliceai. The environments live only for the checks, while
+# the cache is mounted, and `rm -rf` of an env removes the links, not
+# what they point at.
 #
 # Several executors on one agent share the cache concurrently; that is
 # left to micromamba's own locking (no Jenkins lock(), which would
@@ -50,14 +64,34 @@ PKGS="$MAMBA_ROOT_PREFIX/pkgs"
 ENVS=/tmp/verify-envs
 WALK="$ROOT/core/conda-recipe/tests/entry_point_walk.py"
 
-# <project dir> <package name> <top-level module>, core first: the
-# annotators' environments take gain-core from its output dir.
+# <project dir> <package name> <top-level module>, for every gain recipe.
+# The arguments pick which to verify; cleanup sweeps them all, since an
+# annotator's environment also pulls in gain-core.
 PACKAGES=(
     "core gain-core gain"
     "demo_annotator gain-demo-annotator demo_annotator"
     "vep_annotator gain-vep-annotator vep_annotator"
     "spliceai_annotator gain-spliceai-annotator spliceai_annotator"
 )
+
+if [ "$#" -eq 0 ]; then
+    echo "usage: $0 <project dir>..." >&2
+    exit 2
+fi
+SELECTED=()
+for proj in "$@"; do
+    found=""
+    for entry in "${PACKAGES[@]}"; do
+        if [ "${entry%% *}" = "$proj" ]; then
+            found="$entry"
+        fi
+    done
+    if [ -z "$found" ]; then
+        echo "ERROR: $proj is not a gain recipe project" >&2
+        exit 2
+    fi
+    SELECTED+=("$found")
+done
 
 cleanup() {
     local proj name module started=$SECONDS
@@ -80,12 +114,13 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$ENVS"
-for entry in "${PACKAGES[@]}"; do
+for entry in "${SELECTED[@]}"; do
     read -r proj name module <<< "$entry"
     env="$ENVS/$proj"
     echo "=== $name==$VCS_VERSION"
     started=$SECONDS
     micromamba create -y -p "$env" \
+        --always-softlink \
         --override-channels --strict-channel-priority \
         -c "file://$ROOT/conda/$proj" \
         -c "file://$ROOT/conda/core" \
@@ -113,14 +148,14 @@ for entry in "${PACKAGES[@]}"; do
             fi
         done
         if [ -z "$built" ]; then
-            echo "ERROR: $artefact is installed but was not built here" >&2
+            echo "ERROR: $artefact is installed but is not in conda/*/noarch/" >&2
             exit 1
         fi
         built_sha=$(sha256sum "$built" | cut -d' ' -f1)
         if [ "$installed_sha" != "$built_sha" ]; then
-            echo "ERROR: installed $artefact is not the one built here:" >&2
+            echo "ERROR: installed $artefact is not the one under test:" >&2
             echo "  installed sha256 $installed_sha" >&2
-            echo "  built     sha256 $built_sha ($built)" >&2
+            echo "  expected  sha256 $built_sha ($built)" >&2
             exit 1
         fi
         echo "installed = built: $artefact ($built_sha)"
@@ -128,4 +163,4 @@ for entry in "${PACKAGES[@]}"; do
     echo "=== $name: solve + install $((installed - started)) s," \
          "checks $((SECONDS - installed)) s"
 done
-echo "all ${#PACKAGES[@]} packages verified"
+echo "all ${#SELECTED[@]} packages verified: $*"

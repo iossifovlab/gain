@@ -65,9 +65,9 @@ tests:
   # entry (#1600, rationale in the core recipe). `pip` is a test-only
   # requirement.
   #
-  # The root Jenkinsfile builds with `--test skip` and runs these same
-  # checks from conda-builder/verify_packages.sh instead (#1601, see the
-  # core recipe); change one, change the other.
+  # CI builds this package in gain-spliceai-integration, with `--test
+  # skip`, and runs these same checks from conda-builder/verify_packages.sh
+  # instead (#1601, see the core recipe); change one, change the other.
   - script:
       - python tests/entry_point_walk.py ${{ name }}
       - python -c "import spliceai_annotator"

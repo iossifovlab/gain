@@ -26,10 +26,13 @@ USER mambauser
 # anaconda-client provides `anaconda upload`, used by the
 # tag-driven release pipeline to publish .conda packages to the
 # iossifovlab org on Anaconda.org. uv builds the wheels/sdists
-# in the same pipeline. Same image, no PATH change
-# (/opt/conda/bin is already on PATH below).
+# in the same pipeline. rattler-index turns a gain-core .conda
+# copied from an upstream build into a local channel for the
+# annotator integration jobs (conda-builder/annotator_package.sh).
+# Same image, no PATH change (/opt/conda/bin is already on PATH
+# below).
 RUN micromamba install -n base -y -c conda-forge \
-        rattler-build anaconda-client uv \
+        rattler-build rattler-index anaconda-client uv \
     && micromamba clean --all --yes
 
 # Make the rattler-build binary callable directly without `micromamba run`.

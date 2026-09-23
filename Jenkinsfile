@@ -1221,7 +1221,13 @@ pipeline {
                             # With no test phase nothing solves the
                             # annotators' gain-core run dep at build time,
                             # so the core output dir is not a channel here.
-                            for proj in core demo_annotator vep_annotator spliceai_annotator; do
+                            #
+                            # The spliceai and vep packages are built and
+                            # verified by gain-spliceai-integration and
+                            # gain-vep-integration instead, from this
+                            # build's archived wheel and gain-core .conda
+                            # (conda-builder/annotator_package.sh).
+                            for proj in core demo_annotator; do
                                 mkdir -p conda/$proj
                                 docker run --rm \
                                     --name gain-$proj-conda-${CI_TAG} \
@@ -1271,7 +1277,8 @@ pipeline {
                                 -w "$PWD" \
                                 -e VCS_VERSION="$VCS_VERSION" \
                                 gain-conda-builder-ci:${CI_TAG} \
-                                bash conda-builder/verify_packages.sh
+                                bash conda-builder/verify_packages.sh \
+                                    core demo_annotator
                         '''
                     }
                 }
@@ -1637,10 +1644,20 @@ pipeline {
                     // web_e2e / core / VEP integration shape: the parent moves
                     // on while it runs separately and a regression doesn't
                     // FAILURE the parent.
+                    //
+                    // The job also builds and verifies the spliceai conda
+                    // package from this build's archived wheel and gain-core
+                    // .conda (UPSTREAM_PROJECT / UPSTREAM_BUILD), so the
+                    // shared conda scripts and the entry-point walk trigger
+                    // it too (#1601).
                     when {
                         allOf {
                             branch 'master'
-                            changeset 'spliceai_annotator/**'
+                            anyOf {
+                                changeset 'spliceai_annotator/**'
+                                changeset 'conda-builder/**'
+                                changeset 'core/conda-recipe/**'
+                            }
                             not { environment name: 'DOCS_ONLY', value: 'true' }
                         }
                     }
@@ -1665,6 +1682,14 @@ pipeline {
                                         name: 'COMMIT_SHA',
                                         value: env.GIT_COMMIT ?: '',
                                     ),
+                                    string(
+                                        name: 'UPSTREAM_PROJECT',
+                                        value: env.JOB_NAME,
+                                    ),
+                                    string(
+                                        name: 'UPSTREAM_BUILD',
+                                        value: env.BUILD_NUMBER,
+                                    ),
                                 ],
                                 wait: false,
                                 propagate: false,
@@ -1680,19 +1705,48 @@ pipeline {
                     // vep_annotator/ actually changed - the integration job
                     // pulls ensembl-vep and primes a multi-GB cache, so we
                     // don't want every master commit to trigger it.
+                    //
+                    // The job also builds and verifies the vep conda
+                    // package from this build's archived wheel and gain-core
+                    // .conda (UPSTREAM_PROJECT / UPSTREAM_BUILD), so the
+                    // shared conda scripts and the entry-point walk trigger
+                    // it too (#1601).
                     when {
                         allOf {
                             branch 'master'
-                            changeset 'vep_annotator/**'
+                            anyOf {
+                                changeset 'vep_annotator/**'
+                                changeset 'conda-builder/**'
+                                changeset 'core/conda-recipe/**'
+                            }
                             not { environment name: 'DOCS_ONLY', value: 'true' }
                         }
                     }
                     steps {
-                        build(
-                            job: '/gain-vep-integration',
-                            wait: false,
-                            propagate: false,
-                        )
+                        // Non-gating, like the spliceai trigger: a job that
+                        // does not take the parameters yet (gain-seed has
+                        // not re-seeded it) must not turn the parent red.
+                        catchError(
+                            buildResult: 'SUCCESS',
+                            stageResult: 'SUCCESS',
+                            message: 'gain-vep-integration trigger failed',
+                        ) {
+                            build(
+                                job: '/gain-vep-integration',
+                                parameters: [
+                                    string(
+                                        name: 'UPSTREAM_PROJECT',
+                                        value: env.JOB_NAME,
+                                    ),
+                                    string(
+                                        name: 'UPSTREAM_BUILD',
+                                        value: env.BUILD_NUMBER,
+                                    ),
+                                ],
+                                wait: false,
+                                propagate: false,
+                            )
+                        }
                     }
                 }
             }

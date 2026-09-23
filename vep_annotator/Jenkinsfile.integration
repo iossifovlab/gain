@@ -5,6 +5,12 @@
 // `VEPCacheAnnotator.run` spawns `ensemblorg/ensembl-vep:<version>`
 // containers via the host docker daemon.
 //
+// The job also owns the gain-vep-annotator conda package (#1601): the last
+// stage builds it from the upstream root build's archived wheel and
+// verifies it from the agent-local package cache. The root pipeline builds
+// only gain-core and gain-demo-annotator; it triggers this job on master
+// when vep_annotator/**, conda-builder/** or core/conda-recipe/** changes.
+//
 // Expected Jenkins job setup:
 //   - Script path: vep_annotator/Jenkinsfile.integration
 //   - Point at any branch that carries the vep_annotator sub-project.
@@ -63,6 +69,22 @@ pipeline {
         disableConcurrentBuilds()
     }
 
+    parameters {
+        string(
+            name: 'UPSTREAM_PROJECT',
+            defaultValue: '',
+            description: 'Root gain build job whose archived vep wheel and ' +
+                'gain-core .conda the Conda package stage uses. Empty = ' +
+                'iossifovlab/gain/master.',
+        )
+        string(
+            name: 'UPSTREAM_BUILD',
+            defaultValue: '',
+            description: 'Build number of UPSTREAM_PROJECT. Empty = its last ' +
+                'successful build.',
+        )
+    }
+
     // tb-7e7: cron lives in vep_annotator/jenkins-jobs/integration.groovy
     // (the Job DSL), not here. A `triggers { cron(...) }` block in this
     // Jenkinsfile only registers AFTER the pipeline runs once, and
@@ -94,6 +116,7 @@ pipeline {
         // Matches the naming its sibling integration jobs already use
         // (gain-core-integration-ci, gain-spliceai-integration-ci).
         IMAGE_TAG = "gain-vep-integration-ci:${env.BUILD_NUMBER}"
+        CONDA_BUILDER_TAG = "gain-conda-builder-ci:vep-integration-${env.BUILD_NUMBER}"
     }
 
     stages {
@@ -157,6 +180,70 @@ pipeline {
                 '''
             }
         }
+
+        stage('Conda package') {
+            // Builds the gain-vep-annotator conda package with `--test skip`
+            // and runs the recipe's install checks from the agent-local
+            // package cache (#1601). The root pipeline builds only
+            // gain-core and gain-demo-annotator; this job owns the vep
+            // package.
+            //
+            // Inputs are the upstream root build's archived vep wheel and
+            // gain-core .conda. Deliberately the LAST stage: the root
+            // pipeline triggers this job from its final stages and only
+            // archives in `post`, so the stages above are the margin for
+            // the parent to finish (the gain-conda-integration precedent).
+            // Nightly and manual runs, with no UPSTREAM_BUILD, take the last
+            // successful iossifovlab/gain/master build. The recipe comes
+            // from this job's master checkout, the wheel from that build.
+            steps {
+                script {
+                    String project = params.UPSTREAM_PROJECT?.trim() ?:
+                        'iossifovlab/gain/master'
+                    def selector = params.UPSTREAM_BUILD?.trim()
+                        ? specific(params.UPSTREAM_BUILD)
+                        : lastSuccessful()
+                    echo "Copying the vep wheel and gain-core .conda " +
+                         "from ${project} " +
+                         "(build ${params.UPSTREAM_BUILD ?: 'lastSuccessful'})"
+                    sh 'rm -rf dist conda'
+                    copyArtifacts(
+                        filter: 'dist/vep_annotator/*.whl, ' +
+                            'dist/conda/gain-core-*.conda',
+                        fingerprintArtifacts: true,
+                        projectName: project,
+                        selector: selector,
+                    )
+                }
+                // Run as the Jenkins user so rattler-build's 0600 output is
+                // host-readable; the package cache is ${HOME}/conda_pkgs_cache
+                // on the agent, shared with the root pipeline's Conda
+                // packages stage (see conda-builder/verify_packages.sh for the
+                // mounts).
+                sh '''
+                    docker build -f conda-builder/Dockerfile \
+                        -t ${CONDA_BUILDER_TAG} conda-builder
+                    mkdir -p "${HOME}/conda_pkgs_cache"
+                    docker run --rm \
+                        --user "$(id -u):$(id -g)" \
+                        -e HOME=/tmp \
+                        -e MAMBA_ROOT_PREFIX=/tmp/mamba \
+                        -v "${HOME}/conda_pkgs_cache":/tmp/mamba/pkgs \
+                        -v "$PWD":"$PWD" \
+                        -w "$PWD" \
+                        ${CONDA_BUILDER_TAG} \
+                        bash conda-builder/annotator_package.sh vep_annotator
+                '''
+            }
+            post {
+                success {
+                    archiveArtifacts(
+                        artifacts: 'conda/vep_annotator/noarch/*.conda',
+                        fingerprint: true,
+                    )
+                }
+            }
+        }
     }
 
     post {
@@ -196,7 +283,7 @@ pipeline {
             }
         }
         cleanup {
-            sh 'docker rmi ${IMAGE_TAG} 2>/dev/null || true'
+            sh 'docker rmi ${IMAGE_TAG} ${CONDA_BUILDER_TAG} 2>/dev/null || true'
         }
     }
 }

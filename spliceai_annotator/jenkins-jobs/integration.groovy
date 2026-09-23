@@ -46,6 +46,19 @@ pipelineJob('gain-spliceai-integration') {
             'Specific commit SHA to test (takes precedence over BRANCH_NAME). ' +
             'Empty = use BRANCH_NAME HEAD.',
         )
+        stringParam(
+            'UPSTREAM_PROJECT',
+            '',
+            'Root gain build job whose archived spliceai wheel and gain-core ' +
+            '.conda the Conda package stage uses, e.g. iossifovlab/gain/master. ' +
+            'Empty = iossifovlab/gain/<BRANCH_NAME>.',
+        )
+        stringParam(
+            'UPSTREAM_BUILD',
+            '',
+            'Build number of UPSTREAM_PROJECT. Empty = its last successful ' +
+            'build.',
+        )
     }
 
     definition {
