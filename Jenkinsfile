@@ -1223,6 +1223,7 @@ pipeline {
                             # so the core output dir is not a channel here.
                             for proj in core demo_annotator vep_annotator spliceai_annotator; do
                                 mkdir -p conda/$proj
+                                echo "PROBE before-build-$proj $(date +%s)"
                                 docker run --rm \
                                     --name gain-$proj-conda-${CI_TAG} \
                                     --label ci-tag=${CI_TAG} \
@@ -1244,6 +1245,7 @@ pipeline {
                                 # with it. dist/conda/ stays clean and holds
                                 # only the published packages.
                                 cp conda/$proj/noarch/*.conda dist/conda/
+                                echo "PROBE after-build-$proj $(date +%s)"
                             done
 
                             # Install check: one env per package, solved from
@@ -1259,6 +1261,7 @@ pipeline {
                             # The workspace is mounted at its own path so
                             # the local channels' URLs, and their repodata
                             # cache entries, differ between workspaces.
+                            echo "PROBE before-verify $(date +%s)"
                             mkdir -p "${HOME}/conda_pkgs_cache"
                             docker run --rm \
                                 --name gain-conda-verify-${CI_TAG} \
@@ -1272,6 +1275,7 @@ pipeline {
                                 -e VCS_VERSION="$VCS_VERSION" \
                                 gain-conda-builder-ci:${CI_TAG} \
                                 bash conda-builder/verify_packages.sh
+                            echo "PROBE after-verify $(date +%s)"
                         '''
                     }
                 }
