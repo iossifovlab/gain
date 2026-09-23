@@ -9,7 +9,6 @@ channels:
   - bioconda
   - iossifovlab
 dependencies:
-  - dask-kubernetes=2025.7
   - coverage
   # >=9 for faulthandler_exit_on_timeout, which core/pytest.ini relies on
   # to turn a hung test into a failure instead of a silent stall (#494).
@@ -18,27 +17,16 @@ dependencies:
   - pytest-xdist
   - pytest-mock
   - pytest-django
-  - pytest-doctestplus=1.2
+  - pytest-doctestplus
   # Test-only: decodes the vendored woff2 fonts so the icon-font test
   # can read which glyphs the subset carries (#1400).
   - brotli
   - fonttools
-  - ruff=0.16.5
+  - ruff
   - pylint
-  - nodejs>=24
-  - mypy=1.15.0
-  - flake8=7.1.1
-  - pyarrow-stubs
-  - pandas-stubs=2.1
-  - django-stubs=5.2.2
-  - types-pyyaml=6.0
-  - types-setuptools=67
-  - types-toml=0.10
-  - types-python-dateutil=2.8
-  - types-docker
-  - types-psutil
-  - django-stubs=5.2.2
-  - mypy=1.15.0
+  - mypy
+  - flake8
+  - mypy
   - pylint
   - pylint-django
   - pytest>=9
@@ -47,17 +35,13 @@ dependencies:
   - pytest-django
   - pytest-mock
   - pytest-xdist
-  - invoke=2.2
-  - gitpython=3.1
-  - sphinx
-  - sphinx_rtd_theme
-  - sphinx-copybutton
-  - sphinxcontrib-httpdomain
-  - monkeytype
-  - parquet-tools
   - ipython
   - curl
   - pip:
+    - sphinx
+    - sphinx_rtd_theme
+    - sphinx-copybutton
+    - sphinxcontrib-httpdomain
     - sphinx-autorun
     - sphinxcontrib-video
     - sphinx-last-updated-by-git
@@ -70,4 +54,6 @@ dependencies:
     - types-requests
     - types-psutil
     - pytestarch
+    - myst-parser
+    - sphinxcontrib-mermaid
   
