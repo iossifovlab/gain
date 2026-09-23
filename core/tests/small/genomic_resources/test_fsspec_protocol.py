@@ -3,12 +3,14 @@
 import gzip
 import inspect
 import io
+import os
 import pathlib
 import shutil
 from typing import Any, cast
 
 import pysam
 import pytest
+import yaml
 from gain.genomic_resources.dvc import UnsupportedDvcDirectoryOutputError
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
@@ -18,6 +20,7 @@ from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
     GR_MANIFEST_FILE_NAME,
+    GenomicResource,
     ReadWriteRepositoryProtocol,
     ResourceFileState,
     collect_dvc_entries,
@@ -244,6 +247,63 @@ def test_save_load_resource_file_state(
     assert loaded.filename == "genes.gtf"
     assert loaded.timestamp == pytest.approx(timestamp, abs=0.1)
     assert loaded.md5 == "d9636a8dca9e5626851471d1c0ea92b1"
+
+
+def _write_raw_state(
+        proto: FsspecReadWriteProtocol, res: GenomicResource,
+        filename: str, text: str) -> None:
+    """Put ``text`` where ``filename``'s state lives, verbatim."""
+    state_path = proto._get_resource_file_state_path(res, filename)
+    proto.filesystem.makedirs(os.path.dirname(state_path), exist_ok=True)
+    with proto.filesystem.open(state_path, "wt") as outfile:
+        outfile.write(text)
+
+
+@pytest.mark.grr_rw
+def test_load_resource_file_state_of_a_file_without_one_is_none(
+        fsspec_proto: FsspecReadWriteProtocol) -> None:
+    """A file with no recorded state loads as ``None``, not an error.
+
+    The load reads the state key without asking first whether it is
+    there, so what each scheme raises for a missing key is what decides
+    this -- hence one run per read-write scheme.
+    """
+    proto = fsspec_proto
+    res = proto.get_resource("sub/two")
+    state_path = proto._get_resource_file_state_path(res, "genes.gtf")
+    if proto.filesystem.exists(state_path):
+        proto.filesystem.rm(state_path)
+    assert not proto.filesystem.exists(state_path)
+
+    assert proto.load_resource_file_state(res, "genes.gtf") is None
+
+
+@pytest.mark.grr_rw
+@pytest.mark.parametrize("content", ["", "{}\n"])
+def test_load_resource_file_state_without_content_is_none(
+        fsspec_proto: FsspecReadWriteProtocol, content: str) -> None:
+    """A state file that is there but says nothing loads as ``None``."""
+    proto = fsspec_proto
+    res = proto.get_resource("sub/two")
+    _write_raw_state(proto, res, "genes.gtf", content)
+
+    assert proto.load_resource_file_state(res, "genes.gtf") is None
+
+
+@pytest.mark.grr_rw
+def test_load_resource_file_state_that_is_malformed_raises(
+        fsspec_proto: FsspecReadWriteProtocol) -> None:
+    """Only a missing state reads as ``None``; a broken one is an error.
+
+    A state that fails to parse is not "no state": answering ``None``
+    would have the cache verdict quietly rebuild over it.
+    """
+    proto = fsspec_proto
+    res = proto.get_resource("sub/two")
+    _write_raw_state(proto, res, "genes.gtf", "filename: [unclosed\n")
+
+    with pytest.raises(yaml.YAMLError):
+        proto.load_resource_file_state(res, "genes.gtf")
 
 
 @pytest.mark.grr_rw
