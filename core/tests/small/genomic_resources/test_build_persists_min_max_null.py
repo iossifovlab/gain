@@ -112,7 +112,7 @@ def test_the_score_page_reports_the_missing_range_not_a_missing_file(
 #: Which of the score's reads the histogram pass goes through: the
 #: per-record scan over a plain table, the vectorized one over tabix.
 _READS = [
-    (a_score_with_no_values(), "region_values_from_records"),
+    (a_score_with_no_values(), "values_from_records"),
     (a_score_with_no_values().with_tabix(), "fetch_region_value_arrays"),
 ]
 
