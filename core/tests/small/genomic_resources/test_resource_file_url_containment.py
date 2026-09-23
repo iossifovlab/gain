@@ -925,23 +925,18 @@ def test_a_poisoned_dvc_sidecar_cannot_forge_a_log_line(
         assert len(record.getMessage().splitlines()) == 1
 
 
-def test_caching_a_poisoned_manifest_entry_cannot_forge_a_log_line(
-    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
-) -> None:
-    """The main ``grr_cache_repo`` path, where the refusal is CAUGHT.
+def _forging_manifest_proto(root: pathlib.Path) -> FsspecReadWriteProtocol:
+    """Build a GRR whose resource ``one`` lists a forging manifest entry.
 
-    The classify loop collects the ``ValueError`` the guard now raises and
-    logs it as one concise line per failure -- but it names the file again
-    itself, next to the already-escaped message. The raw half is what
-    forges the line.
+    ``data.txt`` and the config are real and listed first; the forging
+    entry comes last. The resource type is UNKNOWN, which is what makes
+    a caching run consider every manifest entry rather than an
+    implementation's fixed file list -- the shape in which a poisoned
+    entry name reaches classify.
     """
-    # An UNKNOWN resource type is what makes the caching run consider every
-    # manifest entry rather than an implementation's fixed file list -- so
-    # it is the shape in which a poisoned entry name reaches classify.
     config = "type: mystery\n"
     payload = "alabala"
-    remote_root = tmp_path / "area" / "remote"
-    setup_directories(remote_root, {
+    setup_directories(root, {
         "one": {
             GR_CONF_FILE_NAME: config,
             "data.txt": payload,
@@ -958,8 +953,21 @@ def test_caching_a_poisoned_manifest_entry_cannot_forge_a_log_line(
             ),
         },
     })
+    return build_filesystem_test_protocol(root, repair=False)
+
+
+def test_caching_a_poisoned_manifest_entry_cannot_forge_a_log_line(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The main ``grr_cache_repo`` path, where the refusal is CAUGHT.
+
+    The classify loop collects the ``ValueError`` the guard now raises and
+    logs it as one concise line per failure -- but it names the file again
+    itself, next to the already-escaped message. The raw half is what
+    forges the line.
+    """
     remote_repo = GenomicResourceProtocolRepo(
-        build_filesystem_test_protocol(remote_root, repair=False))
+        _forging_manifest_proto(tmp_path / "area" / "remote"))
     cached_repo = GenomicResourceCachedRepo(
         remote_repo, str(tmp_path / "cache"))
 
@@ -976,6 +984,34 @@ def test_caching_a_poisoned_manifest_entry_cannot_forge_a_log_line(
     # one line overall. A forged name adds lines the bullet count cannot
     # account for.
     assert len(str(excinfo.value).splitlines()) == 2
+
+
+def test_copying_a_poisoned_manifest_entry_cannot_forge_a_debug_line(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The copy path names each file at DEBUG as it starts on it.
+
+    That line is an in-passing site: it is kept safe by the refusal, so
+    the refusal has to come before it. The capture is at DEBUG because
+    that is the line's only level; a WARNING capture would pass
+    vacuously.
+    """
+    src_proto = _forging_manifest_proto(tmp_path / "src")
+    dest_proto = build_filesystem_test_protocol(
+        tmp_path / "dest", repair=False)
+
+    with caplog.at_level(logging.DEBUG), \
+            pytest.raises(ValueError, match="line-separator character"):
+        dest_proto.copy_resource(src_proto.get_resource("one"))
+
+    # The copy got as far as the poisoned entry, past the safe one before it.
+    assert (
+        f"copying resource file (one: data.txt) from {src_proto.proto_id}"
+        in caplog.messages)
+    for record in caplog.records:
+        message = record.getMessage()
+        assert _FORGING_ID not in message
+        assert len(message.splitlines()) == 1
 
 
 def test_a_poisoned_search_index_cannot_forge_a_log_line(
