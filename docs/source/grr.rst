@@ -1483,7 +1483,7 @@ Resource-specific fields (**type**: gene_score):
      - Optional subsection
      - Works the same way as for position scores.
 
-The configuration is validated when the gene score object is built, before its file is read: a missing ``filename`` or a resource-specific key not in this table refuses the resource with an error naming it. A missing ``scores`` list is refused too, once the table has been read.
+The configuration is validated when the gene score object is built, before its file is read: a missing ``filename`` or ``scores``, or a resource-specific key not in this table, refuses the resource with an error naming it.
 
 In the example ``genomic_resource.yaml`` file below, data file ``gene_scores.tsv`` contains a required column named ``gene``,
 plus two score columns named ``constraint`` and ``intolerance``. The ``scores`` section defines which columns are exposed as scores.

@@ -81,9 +81,6 @@ class GeneScore(ScoreResource[GeneScoreDef]):
         if gene_column != "gene":
             self.df = self.df.rename(columns={gene_column: "gene"})
 
-        if self.config.get("scores") is None:
-            raise ValueError(f"missing scores config in {resource.get_id()}")
-
         self.score_definitions: dict[str, GeneScoreDef] = {}
 
         for score_conf in self.config["scores"]:
@@ -301,7 +298,7 @@ class GeneScore(ScoreResource[GeneScoreDef]):
                 "type": ["dict", "list"], "allow_unknown": True,
             },
             "gene_column": {"type": "string"},
-            "scores": {"type": "list", "schema": {
+            "scores": {"type": "list", "required": True, "schema": {
                 "type": "dict",
                 "schema": {
                     "id": {"type": "string"},
