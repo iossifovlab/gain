@@ -10,7 +10,11 @@ from dask.distributed import Client, Future
 from gain import logging
 from gain.task_graph.base_executor import TaskGraphExecutorBase
 from gain.task_graph.cache import NoTaskCache, TaskCache
-from gain.task_graph.dask_run_state import RunState, SubmitBatch
+from gain.task_graph.dask_run_state import (
+    GatherBatch,
+    RunState,
+    SubmitBatch,
+)
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
 from gain.task_graph.logging import (
     ensure_log_dir,
@@ -220,74 +224,86 @@ class DaskExecutor(TaskGraphExecutorBase):
             if batch is None:
                 break
 
-            logger.debug(
-                "results worker processing %s completed tasks",
-                len(batch.entries))
-
-            # No lock is held across gather() either -- the mirror image of
-            # the submit worker. The batch is in the in-flight gather state
-            # for the whole round trip, so a run whose gather outlasts the
-            # loop's wait cannot be called finished under it (gain#367).
-            # A *list*, deliberately: ``errors="skip"`` only drops failed
-            # futures when the container it is handed is a list. Given a
-            # tuple, ``distributed`` packs the failures back in as ``None``
-            # and returns the same length -- the check below would always
-            # match and a crashed task would be delivered as a successful
-            # ``None`` result, with nothing raised anywhere.
-            #
-            # gather() -- and future.result() in the fallback below -- can
-            # raise a transport error that errors="skip" does not suppress
-            # (it only skips task errors). This worker is a daemon joined
-            # only after the run loop, so an escaping exception would kill it
-            # with the batch stranded in the in-flight gather state and its
-            # futures never released: the run loop would spin without end
-            # (gain#372). The failure is delivered as the result of every
-            # task in the batch instead -- and the batch's futures released
-            # -- so the run loop yields it as an error and then terminates.
-            try:
-                results = self._dask_client.gather(
-                    list(batch.futures), errors="skip")
-
-                if len(results) == len(batch.tasks):
-                    gathered = list(zip(batch.tasks, results, strict=True))
-                else:
-                    logger.error(
-                        "failed to gather results for all %s tasks; "
-                        "looking for exceptions in futures...",
-                        len(batch.tasks))
-                    gathered = []
-                    for future, task in zip(
-                            batch.futures, batch.tasks, strict=True):
-                        try:
-                            result = future.result()
-                        except Exception as ex:  # ruff: ignore[blind-except]
-                            # pylint: disable=broad-except
-                            result = ex
-                        gathered.append((task, result))
-            except BaseException as ex:
-                # Deliberately broad, as in the submit worker: this non-main
-                # thread's death would strand the batch, so a transport fault
-                # of any type -- including a non-Exception BaseException such
-                # as a dask CancelledError -- must end the run as a delivered
-                # task error. KeyboardInterrupt/GeneratorExit cannot reach here.
-                # pylint: disable=broad-except
-                logger.exception(
-                    "results worker failed to gather %s task(s); delivering "
-                    "the failure as their result", len(batch.tasks))
-                state.gather_failed(batch, ex)
-                # Release on the failure path too -- the batch has left the
-                # gather state, so nothing else will (gain#372). Guarded: this
-                # runs on the very dead-client condition that caused the
-                # failure, and a raising release() here would kill this worker
-                # and re-strand any later batch.
-                self._release_futures(batch.futures)
-                continue
-
-            # A result's future is kept for the run loop; the rest go now.
-            self._release_futures(state.gathered(batch, gathered))
-            processed_results += len(gathered)
+            # Dropped before the next claim blocks: it holds the futures of
+            # the results it delivered, which would otherwise stay pinned on
+            # the cluster until something else finishes (gain#1633).
+            processed_results += self._gather_batch(state, batch)
+            del batch
 
         logger.info("results worker processed %s results", processed_results)
+
+    def _gather_batch(self, state: RunState, batch: GatherBatch) -> int:
+        """Collect one batch of finished futures; return how many results.
+
+        Zero when the gather failed; the batch's tasks are then delivered
+        as errors instead.
+        """
+        logger.debug(
+            "results worker processing %s completed tasks",
+            len(batch.entries))
+
+        # No lock is held across gather() either -- the mirror image of
+        # the submit worker. The batch is in the in-flight gather state
+        # for the whole round trip, so a run whose gather outlasts the
+        # loop's wait cannot be called finished under it (gain#367).
+        # A *list*, deliberately: ``errors="skip"`` only drops failed
+        # futures when the container it is handed is a list. Given a
+        # tuple, ``distributed`` packs the failures back in as ``None``
+        # and returns the same length -- the check below would always
+        # match and a crashed task would be delivered as a successful
+        # ``None`` result, with nothing raised anywhere.
+        #
+        # gather() -- and future.result() in the fallback below -- can
+        # raise a transport error that errors="skip" does not suppress
+        # (it only skips task errors). This worker is a daemon joined
+        # only after the run loop, so an escaping exception would kill it
+        # with the batch stranded in the in-flight gather state and its
+        # futures never released: the run loop would spin without end
+        # (gain#372). The failure is delivered as the result of every
+        # task in the batch instead -- and the batch's futures released
+        # -- so the run loop yields it as an error and then terminates.
+        try:
+            results = self._dask_client.gather(
+                list(batch.futures), errors="skip")
+
+            if len(results) == len(batch.tasks):
+                gathered = list(zip(batch.tasks, results, strict=True))
+            else:
+                logger.error(
+                    "failed to gather results for all %s tasks; "
+                    "looking for exceptions in futures...",
+                    len(batch.tasks))
+                gathered = []
+                for future, task in zip(
+                        batch.futures, batch.tasks, strict=True):
+                    try:
+                        result = future.result()
+                    except Exception as ex:  # ruff: ignore[blind-except]
+                        # pylint: disable=broad-except
+                        result = ex
+                    gathered.append((task, result))
+        except BaseException as ex:
+            # Deliberately broad, as in the submit worker: this non-main
+            # thread's death would strand the batch, so a transport fault
+            # of any type -- including a non-Exception BaseException such
+            # as a dask CancelledError -- must end the run as a delivered
+            # task error. KeyboardInterrupt/GeneratorExit cannot reach here.
+            # pylint: disable=broad-except
+            logger.exception(
+                "results worker failed to gather %s task(s); delivering "
+                "the failure as their result", len(batch.tasks))
+            state.gather_failed(batch, ex)
+            # Release on the failure path too -- the batch has left the
+            # gather state, so nothing else will (gain#372). Guarded: this
+            # runs on the very dead-client condition that caused the
+            # failure, and a raising release() here would kill this worker
+            # and re-strand any later batch.
+            self._release_futures(batch.futures)
+            return 0
+
+        # A result's future is kept for the run loop; the rest go now.
+        self._release_futures(state.gathered(batch, gathered))
+        return len(gathered)
 
     @staticmethod
     def _exec_with_arguments(
@@ -398,6 +414,9 @@ class DaskExecutor(TaskGraphExecutorBase):
                     future = state.take_result_future(task)
                     graph.process_completed_tasks(
                         [(task, result if future is None else future)])
+                    # Not held across the yield: with no dependant left to
+                    # take it, this is the last reference to the future.
+                    del future
                     finished_tasks += 1
                     logger.info(
                         "finished %s/%s", finished_tasks, initial_task_count)

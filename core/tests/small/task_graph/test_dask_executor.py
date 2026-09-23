@@ -1410,3 +1410,29 @@ def test_a_submitted_dependency_is_not_held_while_the_run_goes_on(
                 dask_client, "SubmittedLeaf", 0.3)
 
     assert still_pinned == {}
+
+
+def test_a_finished_task_without_dependants_is_not_held_by_the_run(
+    dask_client: Client,
+) -> None:
+    """A result no task consumes is let go once it has been yielded.
+
+    iossifovlab/gain#1633 keeps a finished task's future for its
+    dependants instead of releasing it at the gather. With none to hand it
+    to, nothing in the run needs it -- but a reference left behind, by the
+    run loop across its ``yield`` or by the results worker still holding
+    the last batch it gathered while it waits for the next, pins the key
+    and its result on the cluster while the run goes on. ``SlowSibling``
+    keeps it going.
+    """
+    graph = TaskGraph()
+    terminal = graph.create_task("TerminalTask", tagged, args=["t"])
+    graph.create_task("SlowSibling", tagged_after, args=["s", 0.5])
+
+    still_pinned: dict[str, int] = {}
+    for task, _result in DaskExecutor(dask_client).execute(graph):
+        if task == terminal:
+            still_pinned = _pinned_keys_after(
+                dask_client, "TerminalTask", 0.3)
+
+    assert still_pinned == {}
