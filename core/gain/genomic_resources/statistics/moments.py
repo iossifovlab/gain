@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 #: one home.
 MOMENT_KEYS: Final = ("count", "sum", "sum_of_squares")
 
+#: The rendered moments, one ``(label, value)`` pair per line of a
+#: summary page's cell: ``n``, ``mean``, ``sd`` in that order.
+MomentsSummary = tuple[tuple[str, str], ...]
+
 
 @dataclass(slots=True)
 class Moments:
@@ -112,16 +116,23 @@ class Moments:
             variance = 0.0
         return math.sqrt(variance)
 
-    def summary(self) -> str | None:
-        """``n / mean / sd`` for a summary page; ``None`` when nothing folded.
+    def summary(self) -> MomentsSummary | None:
+        """``n``, ``mean`` and ``sd`` for a summary page, as ``(label,
+        value)`` pairs; ``None`` when nothing folded.
 
         ``n`` with thousands separators, the other two at the three
-        significant digits a histogram's ``values_domain`` uses.
+        significant digits a histogram's ``values_domain`` uses.  The
+        page lays the pairs out one per line, so every info page formats
+        them here and nowhere else.
         """
         mean = self.mean
         if mean is None:
             return None
-        return f"{self.count:,} / {mean:0.3g} / {self._std(mean):0.3g}"
+        return (
+            ("n", f"{self.count:,}"),
+            ("mean", f"{mean:0.3g}"),
+            ("sd", f"{self._std(mean):0.3g}"),
+        )
 
     @staticmethod
     def stored(moments: Moments | None) -> dict[str, Any]:

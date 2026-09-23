@@ -15,7 +15,8 @@
         <col>
         <col style="width: 220px">
         <col style="width: 12%">
-        <col style="width: 12%">
+        {#- Fixed width: see moments_summary.jinja. #}
+        <col style="width: 200px">
     </colgroup>
     <thead>
         <tr>
@@ -25,7 +26,7 @@
             <th>Description</th>
             <th>Histogram</th>
             <th>Range</th>
-            <th>n / mean / sd</th>
+            <th>Summary</th>
         </tr>
     </thead>
 
@@ -77,8 +78,7 @@
                 NO DOMAIN
             {%- endif -%}
             </td>
-            {#- Empty when the histogram has no moments (gain#1589). #}
-            <td>{{ hist.moments_summary() or "" }}</td>
+            {% include "moments_summary.jinja" %}
         </tr>
     {%- endfor %}
     {#- An annulled histogram has no image on disk, so it gets no modal --

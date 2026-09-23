@@ -1,0 +1,19 @@
+{#- A score histogram's Summary cell: n, mean and sd, one labelled line
+    each, as `moments_summary()` formats them.  Empty when the histogram
+    has no moments -- categorical, null, or stored before the
+    accumulators (gain#1589).  Expects `hist` in the including scope.
+
+    The lines do not wrap, and the score tables are `table-layout: fixed`,
+    so the column cannot grow to fit them: the including table sizes its
+    Summary `<col>` in pixels, not a percentage -- 200px holds a
+    14-character n beside its label. #}
+<td>
+{%- set lines = hist.moments_summary() %}
+{%- if lines %}
+<dl class="moments">
+{%- for label, value in lines %}
+<dt>{{ label }}</dt><dd>{{ value }}</dd>
+{%- endfor %}
+</dl>
+{%- endif -%}
+</td>

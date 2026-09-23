@@ -83,12 +83,19 @@ class Cell(NamedTuple):
     ``<th>`` would be announced as a column header for the data beneath it
     and would be eligible for the ``aria-sort`` the sorter sets, so which
     of the two a cell is cannot be assumed from where it sits.
+
+    ``terms`` are the ``(dt, dd)`` pairs of a description list inside the
+    cell, in order -- a score's Summary cell renders ``n``, ``mean`` and
+    ``sd`` that way, one line each (gain#1617).  ``text`` runs them
+    together (``n3mean2sd1.41``), which cannot tell three labelled lines
+    from the same characters laid out any other way.
     """
 
     attrs: dict[str, str]
     text: str
     own_text: str
     tag: str
+    terms: tuple[tuple[str, str], ...] = ()
 
     @property
     def sort_value(self) -> str | None:
@@ -162,6 +169,11 @@ class _TableReader(HTMLParser):
         self._depth = 0
         self._attrs: dict[str, str] = {}
         self._tag = ""
+        #: The open cell's finished ``(dt, dd)`` pairs, the ``dt`` waiting
+        #: for its ``dd``, and the text of the ``dt``/``dd`` being read.
+        self._terms: list[tuple[str, str]] = []
+        self._term = ""
+        self._term_text: list[str] | None = None
 
     def handle_starttag(
         self, tag: str, attrs: list[tuple[str, str | None]],
@@ -176,8 +188,11 @@ class _TableReader(HTMLParser):
             self._depth = 0
             self._attrs = {k: v if v is not None else "" for k, v in attrs}
             self._tag = tag
+            self._terms = []
         elif self._text is not None and tag not in _VOID_ELEMENTS:
             self._depth += 1
+            if tag in ("dt", "dd"):
+                self._term_text = []
 
     def handle_startendtag(
         self, tag: str, attrs: list[tuple[str, str | None]],
@@ -201,16 +216,26 @@ class _TableReader(HTMLParser):
                     "".join(self._text).strip(),
                     "".join(self._own_text or []).strip(),
                     self._tag,
+                    tuple(self._terms),
                 ))
             self._text = None
             self._own_text = None
         elif self._text is not None and self._depth:
             self._depth -= 1
+            if tag in ("dt", "dd") and self._term_text is not None:
+                text = "".join(self._term_text).strip()
+                if tag == "dt":
+                    self._term = text
+                else:
+                    self._terms.append((self._term, text))
+                self._term_text = None
 
     def handle_data(self, data: str) -> None:
         if self._text is None:
             return
         self._text.append(data)
+        if self._term_text is not None:
+            self._term_text.append(data)
         if not self._depth and self._own_text is not None:
             self._own_text.append(data)
 
