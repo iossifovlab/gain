@@ -1,5 +1,7 @@
 """Provides common configuration for loggers verbosity."""
 import argparse
+from collections.abc import Mapping
+from typing import Any
 
 from gain import logging
 
@@ -17,17 +19,18 @@ class VerbosityConfiguration:
         )
 
     @staticmethod
-    def set(args: argparse.Namespace | dict[str, str]) -> None:
+    def set(args: argparse.Namespace | Mapping[str, Any]) -> None:
         """Read verbosity settings from parsed arguments and sets logger."""
         if isinstance(args, argparse.Namespace):
             args = vars(args)
         verbosity = int(args.get("verbose", 0))
         loglevel = VerbosityConfiguration.verbosity(verbosity)
-        logging.basicConfig(
-            filename=args["logfile"],
-            encoding="utf-8",
-            level=loglevel,
-        )
+        # basicConfig only adds a handler, and ignores ``level`` once the
+        # root has one; ``force=True`` would close handlers other code
+        # owns. Set the level directly, and only ever more verbose.
+        logging.basicConfig(filename=args["logfile"], encoding="utf-8")
+        root = logging.getLogger()
+        root.setLevel(min(root.level, loglevel))
         VerbosityConfiguration.adjust_verbosity(loglevel)
 
     @staticmethod
