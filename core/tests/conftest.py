@@ -123,12 +123,13 @@ def clean_genomic_context(
 def clean_deprecation_notices() -> None:
     """Forget which deprecation warnings this worker already announced.
 
-    ``warn_deprecated_spelling`` announces each distinct message once per
-    process, so that a repository-wide statistics sweep names an offending
-    resource once rather than once per region task.  That set outlives a
-    test, so without this every "the legacy spelling warns" assertion would
-    depend on whether an earlier test in the same worker consumed it -- and
-    would pass or fail differently under ``-p no:randomly`` or ``-n``.
+    ``warn_deprecated_spelling`` and ``warn_retired_config_key`` announce
+    each distinct message once per process, so that a repository-wide
+    statistics sweep names an offending resource once rather than once per
+    region task.  That set outlives a test, so without this every "the
+    legacy spelling warns" assertion would depend on whether an earlier test
+    in the same worker consumed it -- and would pass or fail differently
+    under ``-p no:randomly`` or ``-n``.
     """
     reset_deprecation_notices()
 
@@ -140,9 +141,10 @@ class _DeprecationNoticeRecorder(logging.Handler):
     """Collect the legacy-vocabulary deprecation notices of one test.
 
     Recognises a notice by the removal release it names, which every one of
-    them carries by construction -- ``warn_deprecated_spelling`` renders it
-    into the message, and a notice that did not say when the spelling stops
-    being accepted would be a defect in its own right.
+    them carries by construction -- ``warn_deprecated_spelling`` and
+    ``warn_retired_config_key`` render it into the message, and a notice
+    that did not say when the spelling stops being accepted would be a
+    defect in its own right.
     """
 
     def __init__(self) -> None:

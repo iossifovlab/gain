@@ -16,6 +16,7 @@ from gain.genomic_resources.resource_implementation import (
     ResourceConfigValidationMixin,
     get_base_resource_schema,
 )
+from gain.genomic_resources.resource_types import warn_retired_config_key
 from gain.utils.fs_utils import COMPRESSED_EXTENSIONS, endswith_ci
 from gain.utils.regions import Region
 
@@ -179,6 +180,11 @@ class ReferenceGenome(
         self.config: dict[str, Any] = self.validate_and_normalize_schema(
             resource.get_config(), resource,
         )
+        if "chrom_prefix" in self.config:
+            warn_retired_config_key(
+                logger, "chrom_prefix",
+                found_in=f"Resource '{resource.get_full_id()}'",
+                reason="a genome's prefix is derived from its contig names")
 
         filename = self.config["filename"]
         # Each backend is handed the index it needs at construction: the
@@ -227,7 +233,12 @@ class ReferenceGenome(
 
     @property
     def chrom_prefix(self) -> str:
-        """Return a prefix of all chromosomes of the reference genome."""
+        """Return ``"chr"`` if the genome's first contig name starts with it.
+
+        Derived from the ``.fai`` index; otherwise ``""``.  Not
+        configurable: a ``chrom_prefix`` key in the genome's config is
+        ignored.
+        """
         self._load_genome_index()
         chrom = self._chromosomes[0]
         if chrom.startswith("chr"):
@@ -396,7 +407,8 @@ class ReferenceGenome(
         """The schema a ``genome`` resource's config is checked against.
 
         The base resource schema plus ``filename``, ``index_file``,
-        ``chrom_prefix`` and ``PARS``.
+        ``PARS`` and the retired ``chrom_prefix``, still accepted -- and
+        announced -- until ``LEGACY_VOCABULARY_REMOVAL_RELEASE``.
         """
         return {
             **get_base_resource_schema(),
