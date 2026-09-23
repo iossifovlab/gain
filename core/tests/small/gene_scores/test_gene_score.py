@@ -33,6 +33,7 @@ from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GenomicResourceRepo,
 )
+from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     build_inmemory_test_repository,
@@ -1571,6 +1572,31 @@ def test_gene_score_misspelled_histogram_type_fails_validation() -> None:
     })
     with pytest.raises(ValueError, match="Invalid configuration: BadHistType"):
         build_gene_score_from_resource(repo.get_resource("BadHistType"))
+
+
+def test_a_gene_score_without_a_filename_is_refused_at_construction(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A gene score with no ``filename`` is refused by the schema, naming the
+    resource, rather than failing on the read that follows with an assert
+    (or, under ``python -O``, a bare KeyError) naming nothing."""
+    repo = build_inmemory_test_repository({
+        "NoFilename": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_score
+                scores:
+                  - id: pli
+                    type: float
+            """),
+        },
+    })
+
+    with pytest.raises(
+            MalformedResourceError, match="Invalid configuration: NoFilename"):
+        build_gene_score_from_resource(repo.get_resource("NoFilename"))
+
+    # The key is named where the refusal is explained: in the log record.
+    assert "{'filename': ['required field']}" in caplog.text
 
 
 def test_gene_score_accepts_null_histogram_config(

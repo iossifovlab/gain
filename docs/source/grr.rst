@@ -1452,13 +1452,37 @@ Gene scores
 Gene scores are gene-level annotations, such as constraint metrics, expression summaries, or intolerance scores.
 ``genomic_resource.yaml`` files for gene score resources are similar to position score resources,
 except that the resource type is set to ``gene_score`` and there is no ``table`` section. The underlying data file
-is a table with a gene identifier column and one or more score columns. By default the gene identifier column
-must be named ``gene``; if the file uses a different column name, set ``gene_column`` to that name.
+is a table with a gene identifier column and one or more score columns.
 
+Resource-specific fields (**type**: gene_score):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 25 50
+
+   * - Field
+     - Requirement
+     - Description
+   * - ``filename``
+     - Required string
+     - Path to the score table, relative to the resource directory. A ``.gz`` suffix marks the file as gzip-compressed.
+   * - ``separator``
+     - Optional string
+     - Column separator of the score table. When omitted, a tab for a ``.tsv`` file and a comma otherwise, judged on the name with any ``.gz`` suffix removed.
+   * - ``gene_column``
+     - Optional string
+     - Name of the gene identifier column in the score table. Defaults to ``gene``.
+   * - ``scores``
+     - Required list
+     - One entry per score exposed from the table, taking a subset of a position score's ``scores`` keys: ``id``, ``column_name``, ``type``, ``desc``, ``small_values_desc``, ``large_values_desc`` and ``histogram``. A gene score column is addressed by name only, so ``index``, ``column_index`` and ``na_values`` are not accepted. Each entry's ``column_name`` names the table column it is read from and defaults to its ``id``; the older spelling ``name`` still works but is deprecated.
+   * - ``default_annotation``
+     - Optional subsection
+     - Works the same way as for position scores.
+
+The configuration is validated when the gene score object is built, before its file is read: a missing ``filename`` or a resource-specific key not in this table refuses the resource with an error naming it. A missing ``scores`` list is refused too, once the table has been read.
 
 In the example ``genomic_resource.yaml`` file below, data file ``gene_scores.tsv`` contains a required column named ``gene``,
-plus two score columns named ``constraint`` and ``intolerance``. The ``scores`` section defines which columns are exposed as scores,
-and ``default_annotation`` works the same way as for position scores.
+plus two score columns named ``constraint`` and ``intolerance``. The ``scores`` section defines which columns are exposed as scores.
 
 The HTML summary page displays a default histogram for each score. Optionally, the user may provide a
 histogram configuration to override the default and control how the score distribution is displayed, as shown for the ``constraint_score`` in this example.
