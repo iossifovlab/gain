@@ -2725,6 +2725,9 @@ class FsspecReadWriteProtocol(
         double-counts.
         """
         assert dest_resource.resource_id == remote_resource.resource_id
+        # The join refuses an unsafe id or file name, and the line below
+        # logs both unescaped -- so the join goes first (gain#1018).
+        dest_filepath = self.get_resource_file_url(dest_resource, filename)
         logger.debug(
             "copying resource file (%s: %s) from %s",
             remote_resource.resource_id, filename,
@@ -2736,7 +2739,6 @@ class FsspecReadWriteProtocol(
 
         manifest_entry = remote_manifest[filename]
 
-        dest_filepath = self.get_resource_file_url(dest_resource, filename)
         dest_parent = os.path.dirname(dest_filepath)
         # Unconditional -- see ``_publish_file`` and gain#1042.
         #
