@@ -2680,7 +2680,7 @@ class FsspecReadWriteProtocol(
         # on a remote store for the same answer.
         try:
             with self.filesystem.open(
-                    path, "rt", encodings="utf8") as infile:
+                    path, "rt", encoding="utf8") as infile:
                 text = infile.read()
         except FileNotFoundError:
             return None
