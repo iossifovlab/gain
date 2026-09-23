@@ -30,6 +30,7 @@ from gain.genomic_resources.histogram import (
     NUMBER_HISTOGRAM_VALUE_TYPES,
     Histogram,
     HistogramConfig,
+    NullHistogram,
     NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
@@ -197,7 +198,15 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
         one), it is returned instead of the full histogram, so the caller
         never reads the full values file.  Without a sidecar the full
         histogram is returned either way.
+
+        A histogram annulled by the score's definition (see
+        :meth:`get_histogram_config`) is answered from the definition
+        alone, with its configured reason: no statistics file is written
+        for it (gain#305), and a stale one is not consulted (gain#1604).
         """
+        hist_conf = self.get_histogram_config(score_id)
+        if isinstance(hist_conf, NullHistogramConfig):
+            return NullHistogram(hist_conf)
         hist_filename = self.get_histogram_filename(score_id)
         sidecar_filename = truncated_histogram_filename(hist_filename)
         if sidecar_filename in self.resource.get_manifest():

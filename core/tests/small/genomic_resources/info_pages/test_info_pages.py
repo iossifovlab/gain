@@ -715,21 +715,23 @@ _NULL_HISTOGRAM_SCORE_PAGES = [
 def test_an_annulled_score_reports_a_reason_instead_of_an_image(
     built_grr: BuiltGRR, resource_id: str,
 ) -> None:
-    """A score with an annulled histogram says so, and points at no image.
+    """A score with an annulled histogram says why, and points at no image.
 
-    The reason rendered is the *loaded* histogram's, not the one configured
-    in YAML: a null histogram config writes no statistics JSON at all
-    (gain#305), so the page reports the fallback reason that
-    ``load_histogram`` supplies.  Asserting only the prefix keeps this test
-    about the branch taken rather than about which reason reached it.
+    The reason rendered is the one configured in YAML.  A null histogram
+    config writes no statistics JSON at all (gain#305), so the reason is
+    read from the definition; before gain#1604 the page reported
+    ``load_histogram``'s ``Histogram file not found.`` fallback instead.
     """
     page = _parse(built_grr.path / resource_id / "index.html", built_grr.path)
 
     assert not [src for src in page.images if "histogram_annulled" in src], (
         f"{page.name} still points at an image for the annulled score")
-    assert "No histogram:" in page.text, (
-        f"{page.name} drops the annulled score's histogram cell silently "
-        f"instead of reporting why there is none")
+    assert "No histogram: not meaningful for this score" in page.text, (
+        f"{page.name} does not report the annulled score's configured "
+        f"reason")
+    assert "Histogram file not found" not in page.text, (
+        f"{page.name} reports a missing statistics file for a histogram "
+        f"its definition annuls")
 
 
 @pytest.mark.parametrize("resource_id", _NULL_HISTOGRAM_SCORE_PAGES)
