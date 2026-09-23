@@ -59,19 +59,20 @@ PIP_ONLY: Mapping[str, str] = MappingProxyType({
 })
 
 _NAME = re.compile(r"\s*[A-Za-z0-9][A-Za-z0-9._-]*")
+#: One version clause conda's match spec accepts as written.
+_CLAUSE = re.compile(r"(==|!=|<=|>=|<|>|~=)[A-Za-z0-9.*+!_-]+")
 
 
 @dataclass
 class _Entry:
     name: str
-    specifiers: list[str] = field(default_factory=list)
+    clauses: list[str] = field(default_factory=list)
 
-    def add(self, specifier: str) -> None:
-        if specifier and specifier not in self.specifiers:
-            self.specifiers.append(specifier)
+    def add(self, clauses: Sequence[str]) -> None:
+        self.clauses.extend(c for c in clauses if c not in self.clauses)
 
     def render(self) -> str:
-        return self.name + ",".join(self.specifiers)
+        return self.name + ",".join(self.clauses)
 
 
 @dataclass
@@ -86,11 +87,28 @@ def conda_name(pypi_name: str) -> str:
     return CONDA_NAMES.get(canonical, canonical)
 
 
-def _specifier_text(line: str, pyproject: pathlib.Path) -> tuple[str, str]:
-    """Split a requirement line into its canonical name and specifiers.
+def _clauses(text: str, source: str) -> list[str]:
+    """Split a version specifier into its clauses, as written.
 
-    The specifiers are returned as written, whitespace removed. A
-    requirement carrying an extra, a marker or a url raises: the
+    A clause conda cannot read as written (``===``, a parenthesised
+    list) raises rather than being rewritten.
+    """
+    specifier = "".join(text.split())
+    clauses = specifier.split(",") if specifier else []
+    for clause in clauses:
+        if not _CLAUSE.fullmatch(clause):
+            raise ValueError(
+                f"{source}: version clause {clause!r} has a form "
+                f"scripts/conda_env.py does not model")
+    return clauses
+
+
+def _requirement(
+    line: str, pyproject: pathlib.Path,
+) -> tuple[str, list[str]]:
+    """Split a requirement line into its canonical name and clauses.
+
+    A requirement carrying an extra, a marker or a url raises: the
     generator has no conda rendering for any of them.
     """
     requirement = Requirement(line)
@@ -100,8 +118,10 @@ def _specifier_text(line: str, pyproject: pathlib.Path) -> tuple[str, str]:
             f"which scripts/conda_env.py does not model")
     match = _NAME.match(line)
     assert match is not None
-    specifier = "".join(line[match.end():].split())
-    return canonicalize_name(requirement.name), specifier
+    return (
+        canonicalize_name(requirement.name),
+        _clauses(line[match.end():], f"{pyproject}: {line!r}"),
+    )
 
 
 def _workspace_members(root: pathlib.Path) -> set[str]:
@@ -130,11 +150,11 @@ def render_environment(
         pyproject = root / feed
         with pyproject.open("rb") as infile:
             project = tomllib.load(infile)["project"]
-        python.add("".join(project["requires-python"].split()))
+        python.add(_clauses(project["requires-python"], str(pyproject)))
         section = _Section(f"{project['name']} ({feed})")
         sections.append(section)
         for line in project.get("dependencies", []):
-            name, specifier = _specifier_text(line, pyproject)
+            name, clauses = _requirement(line, pyproject)
             if name in members:
                 continue
             if name in pip_only:
@@ -145,7 +165,7 @@ def render_environment(
                 target[conda] = _Entry(conda)
                 if target is entries:
                     section.entries.append(target[conda])
-            target[conda].add(specifier)
+            target[conda].add(clauses)
 
     undeclared = sorted(set(pip_only) - set(pip_entries))
     if undeclared:
@@ -168,7 +188,11 @@ def render_environment(
             f"  - {entry.render()}"
             for entry in sorted(section.entries, key=lambda e: e.name))
     if pip_entries:
-        lines.extend(("  - pip", "  - pip:"))
+        lines.extend((
+            "  # pip-only: PIP_ONLY in scripts/conda_env.py",
+            "  - pip",
+            "  - pip:",
+        ))
         for name in sorted(pip_entries):
             lines.extend((
                 f"    # {name}: {pip_only[name]}",

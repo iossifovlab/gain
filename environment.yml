@@ -48,6 +48,7 @@ dependencies:
   - psycopg>=3.1.18
   - python-magic
   - requests
+  # pip-only: PIP_ONLY in scripts/conda_env.py
   - pip
   - pip:
     # adrf: not packaged on any conda channel

@@ -104,8 +104,9 @@ pip install -e spliceai_annotator
 
 `environment.yml` is generated from the gain-core and
 gain-web-api pyprojects: after changing any pyproject
-dependency, run `python scripts/conda_env.py` and commit the
-result (`tests/test_conda_deps.py` fails CI until you do).
+dependency, run `python scripts/conda_env.py` from the repo
+root and commit the result (`core/tests/test_conda_deps.py`
+fails CI until you do).
 
 Notes:
 
