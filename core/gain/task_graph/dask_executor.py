@@ -74,14 +74,18 @@ def dask_keys(run_id: str, batch: SubmitBatch) -> list[str]:
     return keys
 
 
-def held_futures(graph: TaskGraph) -> list[Future]:
-    """List the dependency futures the graph's remaining tasks hold."""
+def held_futures(graph: TaskGraph, run_id: str) -> list[Future]:
+    """List the dependency futures run ``run_id`` left in the graph.
+
+    Only futures of keys the run named (see :func:`dask_keys`): a future
+    the caller passed as an ordinary argument is the caller's to release.
+    """
     descs = [graph.get_task_desc(task) for task in graph.tasks]
     return [
         value
         for desc in descs
         for value in (*desc.args, *desc.kwargs.values())
-        if isinstance(value, Future)
+        if isinstance(value, Future) and f"-{run_id}-" in str(value.key)
     ]
 
 
@@ -444,7 +448,7 @@ class DaskExecutor(TaskGraphExecutorBase):
             # A dependant never submitted still holds its dependencies'
             # futures in the graph, which the caller may keep alive long
             # after the run (gain#1633).
-            self._release_futures(held_futures(graph))
+            self._release_futures(held_futures(graph, state.run_id))
 
     def close(self) -> None:
         """Close the Dask executor."""

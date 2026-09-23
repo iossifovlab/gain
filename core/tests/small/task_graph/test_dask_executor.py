@@ -1436,3 +1436,31 @@ def test_a_finished_task_without_dependants_is_not_held_by_the_run(
                 dask_client, "TerminalTask", 0.3)
 
     assert still_pinned == {}
+
+
+def test_an_abandoned_run_leaves_a_caller_supplied_future_alone(
+    dask_client: Client,
+) -> None:
+    """Teardown releases only the dependency futures the run created.
+
+    A caller may pass a future of its own as an ordinary task argument.
+    Abandoning the run before that task is submitted must not release it
+    -- it belongs to the caller, who may still want its result.
+    """
+    mine = dask_client.submit(tagged, "mine", key="CallerOwned-1633")
+    assert mine.result() == "mine"
+    graph = TaskGraph()
+    held = graph.create_task("HeldDependency", tagged, args=["held"])
+    slow = graph.create_task("SlowSibling", tagged_after, args=["s", 0.2])
+    graph.create_task("NeverSubmitted", joined, args=[held, slow, mine])
+
+    tasks_iter = DaskExecutor(dask_client).execute(graph)
+    for task, _result in tasks_iter:
+        if task == held:
+            break
+    tasks_iter.close()
+
+    # A release would land within this window; nothing should.
+    assert _pinned_keys_after(dask_client, "CallerOwned", 0.3) == {
+        "CallerOwned-1633": 1}
+    assert mine.result() == "mine"
