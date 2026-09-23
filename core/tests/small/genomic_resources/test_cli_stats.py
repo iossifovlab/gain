@@ -40,6 +40,8 @@ from gain.genomic_resources.testing.builders import (
 )
 from gain.task_graph.graph import TaskDesc, TaskGraph
 
+from .conftest import dvc_sidecar
+
 
 class SomeTestImplementation(GenomicResourceImplementation):
     """Simple implementation used for testing."""
@@ -942,6 +944,175 @@ def test_stats_rebuild_nullified_at_scan_time_drops_the_stale_image(
     assert histogram["config"]["type"] == "null"
     assert not (tmp_path / "statistics" / "histogram_cell.png").exists()
     assert "histogram_cell.png" not in (tmp_path / ".MANIFEST").read_text()
+
+
+def test_stats_rebuild_after_a_score_rename_drops_the_old_ids_files(
+        tmp_path: pathlib.Path) -> None:
+    float_scores(tmp_path, "old")
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    drop_everything_but_statistics(tmp_path)
+    float_scores(tmp_path, "new")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert histogram_files(tmp_path) == [
+        "histogram_new.json", "histogram_new.png"]
+    assert "histogram_old" not in (tmp_path / ".MANIFEST").read_text()
+
+
+def float_scores(tmp_path: pathlib.Path, *score_ids: str) -> None:
+    """Realize a tabix position score with one float column per id."""
+    builder = a_position_score()
+    for score_id in score_ids:
+        builder = (
+            builder.with_score(score_id, "float")
+            .with_histogram(A_NUMBER_HISTOGRAM, score_id=score_id))
+    data_rows = "\n".join(
+        f"1 {10 + i} {10 + i} " + " ".join(value for _ in score_ids)
+        for i, value in enumerate(("0.1", "0.5", "0.9")))
+    (
+        builder
+        .with_data(
+            "chrom pos_begin pos_end " + " ".join(score_ids) + "\n"
+            + data_rows)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+def histogram_files(tmp_path: pathlib.Path) -> list[str]:
+    """Name every score-histogram file under ``statistics/``."""
+    statistics = tmp_path / "statistics"
+    return sorted(
+        str(path.relative_to(statistics))
+        for path in (
+            *statistics.glob("histogram_*"),
+            *statistics.glob("truncated/histogram_*"),
+        ))
+
+
+def test_stats_rebuild_after_a_score_removal_drops_its_sidecar_too(
+        tmp_path: pathlib.Path) -> None:
+    data_rows = "\n".join(
+        f"1 {10 + i} {10 + i} 0.5 v{i:03d}"
+        for i in range(CATEGORIES_PAST_LIMIT))
+    (
+        a_position_score()
+        .with_score("kept", "float")
+        .with_histogram(A_NUMBER_HISTOGRAM, score_id="kept")
+        .with_score("cell", "str")
+        .with_histogram(
+            {"type": "categorical", "value_order": []}, score_id="cell")
+        .with_data("chrom pos_begin pos_end kept cell\n" + data_rows)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    assert "truncated/histogram_cell.json" in histogram_files(tmp_path)
+    drop_everything_but_statistics(tmp_path)
+    float_scores(tmp_path, "kept")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert histogram_files(tmp_path) == [
+        "histogram_kept.json", "histogram_kept.png"]
+    assert "histogram_cell" not in (tmp_path / ".MANIFEST").read_text()
+
+
+def test_stats_rebuild_drops_a_removed_score_whose_id_extends_a_kept_one(
+        tmp_path: pathlib.Path) -> None:
+    float_scores(tmp_path, "a", "a_b")
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    drop_everything_but_statistics(tmp_path)
+    float_scores(tmp_path, "a")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert histogram_files(tmp_path) == ["histogram_a.json", "histogram_a.png"]
+
+
+def test_stats_rebuild_after_renaming_foo_to_foo_truncated(
+        tmp_path: pathlib.Path) -> None:
+    float_scores(tmp_path, "foo")
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    drop_everything_but_statistics(tmp_path)
+    float_scores(tmp_path, "foo_truncated")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert histogram_files(tmp_path) == [
+        "histogram_foo_truncated.json", "histogram_foo_truncated.png"]
+
+
+def test_stats_rebuild_drops_an_orphaned_legacy_yaml_histogram(
+        tmp_path: pathlib.Path) -> None:
+    float_scores(tmp_path, "kept")
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    statistics = tmp_path / "statistics"
+    (statistics / "histogram_gone.yaml").write_text("legacy: gone\n")
+    drop_everything_but_statistics(tmp_path)
+    float_scores(tmp_path, "kept")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1", "-f"])
+
+    assert not (statistics / "histogram_gone.yaml").exists()
+    assert "histogram_gone" not in (tmp_path / ".MANIFEST").read_text()
+
+
+def test_stats_rebuild_leaves_a_dvc_tracked_orphan_whole(
+        tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Deleting the file under a ``.dvc`` pointer leaves a manifest entry
+    the sidecar re-adds for a file that is gone; ``dvc remove`` is the
+    curator's call, so the orphan is reported rather than half-deleted."""
+    float_scores(tmp_path, "old")
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    statistics = tmp_path / "statistics"
+    data = (statistics / "histogram_old.json").read_bytes()
+    (statistics / "histogram_old.json.dvc").write_text(
+        dvc_sidecar("histogram_old.json", data))
+    drop_everything_but_statistics(tmp_path)
+    float_scores(tmp_path, "new")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert (statistics / "histogram_old.json").read_bytes() == data
+    assert (statistics / "histogram_old.json.dvc").exists()
+    assert "statistics/histogram_old.json" in caplog.text
+
+
+def test_stats_rebuild_keeps_a_defined_scores_legacy_yaml_histogram(
+        tmp_path: pathlib.Path) -> None:
+    float_scores(tmp_path, "kept")
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    statistics = tmp_path / "statistics"
+    (statistics / "histogram_kept.yaml").write_text("legacy: kept\n")
+    drop_everything_but_statistics(tmp_path)
+    float_scores(tmp_path, "kept")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1", "-f"])
+
+    assert (statistics / "histogram_kept.yaml").exists()
+
+
+@pytest.mark.parametrize("foreign", [
+    "genes_per_gene_set_histogram.json",
+    "histograms.json",
+    "histogram_gone.json.bak",
+    "truncated/notes.json",
+])
+def test_stats_rebuild_leaves_other_statistics_files_alone(
+        tmp_path: pathlib.Path, foreign: str) -> None:
+    float_scores(tmp_path, "kept")
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    planted = tmp_path / "statistics" / foreign
+    planted.parent.mkdir(exist_ok=True)
+    planted.write_text("{}\n")
+    drop_everything_but_statistics(tmp_path)
+    float_scores(tmp_path, "kept")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1", "-f"])
+
+    assert planted.read_text() == "{}\n"
 
 
 def test_info_pages_render_without_the_full_histogram_values(
