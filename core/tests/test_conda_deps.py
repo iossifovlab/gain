@@ -132,9 +132,27 @@ def test_two_sources_merge_into_one_line(
     assert [d for d in deps if "scipy" in d] == ["  - scipy>=1,<2"]
 
 
+def test_clauses_keep_their_written_order(
+    conda_env: ModuleType, tmp_path: pathlib.Path,
+) -> None:
+    root = _workspace(
+        tmp_path,
+        core=["numpy<3,>=2,!=2.5", "scipy (!=1.5, <2, >=1)"],
+        web_api=[],
+        requires_python="<3.15,>=3.12",
+    )
+
+    deps = _dependencies(_render(conda_env, root))
+
+    assert deps[0] == "  - python<3.15,>=3.12"
+    assert "  - numpy<3,>=2,!=2.5" in deps
+    assert "  - scipy!=1.5,<2,>=1" in deps
+
+
 @pytest.mark.parametrize("requirement", [
     'foo>=1; sys_platform == "win32"',
     "foo[bar]>=1",
+    "foo @ https://example.com/foo-1.0.tar.gz",
     "foo===1.0",
 ])
 def test_unmodelled_requirement_raises(

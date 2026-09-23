@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from packaging.requirements import Requirement
-from packaging.specifiers import SpecifierSet
+from packaging.specifiers import Specifier
 from packaging.utils import canonicalize_name
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -103,13 +103,24 @@ def conda_name(pypi_name: str) -> str:
     return CONDA_NAMES.get(canonical, canonical)
 
 
-def _clauses(specifier: SpecifierSet, source: str) -> tuple[str, ...]:
-    """Return a specifier's clauses in the order they were written."""
-    clauses = tuple(str(clause) for clause in specifier)
-    if any(clause.operator == "===" for clause in specifier):
-        raise ValueError(
-            f"{source}: arbitrary equality (===) is a form "
-            f"scripts/conda_env.py does not model")
+def _clauses(text: str, source: str) -> tuple[str, ...]:
+    """Split a version specifier into its clauses, in written order.
+
+    The clauses are sliced from the text rather than read back from a
+    ``SpecifierSet``: before packaging 26 its iteration order follows
+    the string hash, so it would vary from run to run. Each clause is
+    still validated by packaging, and arbitrary equality (``===``),
+    which conda has no form for, raises.
+    """
+    text = "".join(text.split())
+    if text.startswith("(") and text.endswith(")"):
+        text = text[1:-1]
+    clauses = tuple(text.split(",")) if text else ()
+    for clause in clauses:
+        if Specifier(clause).operator == "===":
+            raise ValueError(
+                f"{source}: arbitrary equality (===) is a form "
+                f"scripts/conda_env.py does not model")
     return clauses
 
 
@@ -119,9 +130,12 @@ def _requirement(line: str, source: str) -> tuple[str, tuple[str, ...]]:
         raise ValueError(
             f"{source}: {line!r} carries an extra, a marker or a url, "
             f"which scripts/conda_env.py does not model")
+    # Requirement.name keeps the name as written, so what follows it is
+    # the specifier text.
+    specifier = line.lstrip()[len(requirement.name):]
     return (
         canonicalize_name(requirement.name),
-        _clauses(requirement.specifier, f"{source}: {line!r}"),
+        _clauses(specifier, f"{source}: {line!r}"),
     )
 
 
@@ -137,7 +151,7 @@ def load_section(root: pathlib.Path, feed: Feed) -> Section:
     return Section(
         title=f"{project['name']} ({source})",
         requires_python=_clauses(
-            SpecifierSet(project["requires-python"]), feed.pyproject),
+            project["requires-python"], feed.pyproject),
         requirements=tuple(_requirement(line, source) for line in lines),
     )
 
