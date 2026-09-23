@@ -61,7 +61,6 @@ class GeneScore(ScoreResource[GeneScoreDef]):
             raise ValueError(f"invalid resource type {resource.resource_id}")
 
         super().__init__(resource)
-        assert "filename" in self.config
         self.filename = self.config["filename"]
 
         compression = False
@@ -295,7 +294,7 @@ class GeneScore(ScoreResource[GeneScoreDef]):
     def get_schema() -> dict[str, Any]:
         return {
             **get_base_resource_schema(),
-            "filename": {"type": "string"},
+            "filename": {"type": "string", "required": True},
             "separator": {"type": "string"},
             "default_annotation": {
                 "type": ["dict", "list"], "allow_unknown": True,
