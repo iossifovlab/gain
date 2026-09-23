@@ -1,10 +1,12 @@
 # pylint: disable=W0621,C0114,C0115,C0116,W0212,W0613
 import operator
 import time
+import warnings
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
+import dask
 import pytest
 from gain.task_graph import base_executor
 from gain.task_graph.cache import FileTaskCache
@@ -714,3 +716,48 @@ def test_reconciliation_expands_each_task_a_bounded_number_of_times(
     assert completed == set()
     assert walks.call_count <= 1
     assert successors.call_count <= 3 * count
+
+
+#: A dependency result far above the large-graph threshold below, and a
+#: threshold far above the ~1 KiB graph that any one task costs on its own.
+LARGE_RESULT_ENTRIES = 300_000
+
+
+def large_result() -> dict[int, int]:
+    return {i: i for i in range(LARGE_RESULT_ENTRIES)}
+
+
+def entry_count(result: dict[int, int]) -> int:
+    return len(result)
+
+
+def test_a_large_dependency_result_is_not_shipped_in_the_submitted_graph(
+    executor: TaskGraphExecutor,
+) -> None:
+    """A dependency's result reaches its dependant without riding the graph.
+
+    Regression for iossifovlab/gain#1633. The dask executor substituted
+    each completed dependency's *gathered* result into its dependants'
+    arguments, so the graph submitted for a fan-in task carried every
+    input result -- 23 MiB for one histogram merge of ``repo-repair``,
+    announced by distributed's ``Sending large graph`` warning. The
+    other executors take no graph and must deliver the value unchanged.
+    """
+    graph = TaskGraph()
+    producer = graph.create_task("producer", large_result, args=[])
+    graph.create_task(
+        "consumer", entry_count, args=[producer], deps=[producer])
+
+    with dask.config.set({
+        "distributed.admin.large-graph-warning-threshold": "1MiB",
+    }), warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        results = {
+            task.task_id: result for task, result in executor.execute(graph)
+        }
+
+    assert results["consumer"] == LARGE_RESULT_ENTRIES
+    assert [
+        str(warning.message) for warning in caught
+        if "Sending large graph" in str(warning.message)
+    ] == []
