@@ -112,12 +112,9 @@ PER_CHROMOSOME_TABLES = [
 
 #: The tables that opt into sorting.  Written out rather than sliced
 #: off the list above, so that reordering that list cannot silently
-#: re-point these assertions at a table that does not sort.  The
-#: Chromosome lengths table (gain#1579) is not per-chromosome-statistic
-#: -- it has no total row -- so it is here and not in the list above.
+#: re-point these assertions at a table that does not sort.
 SORTABLE_TABLES = [
     ("scores/coverage", "<h2>Coverage</h2>"),
-    ("scores/coverage", "<h2>Chromosome lengths</h2>"),
     ("scores/alleles", "<h2>Alleles</h2>"),
 ]
 
@@ -151,10 +148,6 @@ SORT_KINDS = {
     "deletion %": "number",
     "complex %": "number",
     "other %": "number",
-    # The Chromosome lengths table's columns are the stored sources
-    # (gain#1579); the coverage fixture's tabix score stores these two.
-    "reference_genome": "number",
-    "tabix_estimate": "number",
 }
 
 
@@ -166,16 +159,11 @@ def built_page(repo: GenomicResourceRepo, resource_id: str) -> str:
     Fragments section.  ``repo=`` is what lets the Coverage denominator
     resolve the labelled genome, which is the rung that gives one row a
     fraction and another none.
-
-    The stored chromosome lengths are written too, so the Chromosome
-    lengths table renders (gain#1579): the histogram scan alone leaves
-    that section reading "not computed".
     """
     resource = repo.get_resource(resource_id)
     scan.do_noregion_histograms(resource)
     impl = build_score_implementation_from_resource(
         repo.get_resource(resource_id))
-    impl.rebuild_derived_files(repo)
     return impl.get_info(repo=repo)
 
 
@@ -324,9 +312,7 @@ def test_sorting_the_chromosome_keys_reproduces_natural_order(
     """
     cells = table_after(pages[resource_id], heading).column("Chromosome")
 
-    # Own text: the lengths table nests a marker inside the cell of a
-    # contig the genome does not list (gain#1579); the name is the key.
-    names = [cell.own_text for cell in cells]
+    names = [cell.text for cell in cells]
     keys = sort_keys(cells)
     assert names == CONTIGS
     by_key = [name for _, name in sorted(zip(keys, names, strict=True))]

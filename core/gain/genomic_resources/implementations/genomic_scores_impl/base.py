@@ -12,11 +12,9 @@ from gain.genomic_resources.genomic_scores import (
 )
 from gain.genomic_resources.genomic_scores.chrom_lengths import (
     ChromLength,
-    ChromLengthsDisplay,
     ContigExtent,
     DerivedFrom,
     StoredChromLengths,
-    build_chrom_lengths_display,
     derive_chrom_lengths,
     files_md5_of,
     load_chrom_lengths,
@@ -309,22 +307,6 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         if (stored := self._check_derived_files(grr).current) is not None:
             return stored.lengths
         return self._derive_chrom_lengths(self._resolve_labelled_genome(grr))
-
-    def get_chrom_lengths_display(self) -> ChromLengthsDisplay | None:
-        """The Chromosome lengths section's payload (gain#1579).
-
-        What the last repair stored, laid out per contig with one
-        column per source -- and ``None`` unless the gate calls the
-        stored file ``CURRENT``; the section then reads "not computed":
-        a stale file's numbers are never shown, and the render opens no
-        table and resolves no genome to fill the gap.
-        Through the quiet gate check, so an unrepaired or unpulled
-        resource is not reported from a page render.
-        """
-        stored = self._check_derived_files(self._render_repo).current
-        if stored is None:
-            return None
-        return build_chrom_lengths_display(stored)
 
     def derived_files_state(
         self, grr: GenomicResourceRepo | None,
