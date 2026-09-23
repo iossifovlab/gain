@@ -2675,23 +2675,29 @@ class FsspecReadWriteProtocol(
         If the specified resource file has no internal state returns None.
         """
         path = self._get_resource_file_state_path(resource, filename)
-        if not self.filesystem.exists(path):
+        # The read itself reports a missing state, by raising: a probe
+        # ahead of it would cost every cache verdict a second round trip
+        # on a remote store for the same answer.
+        try:
+            with self.filesystem.open(
+                    path, "rt", encodings="utf8") as infile:
+                text = infile.read()
+        except FileNotFoundError:
             return None
-        with self.filesystem.open(path, "rt", encodings="utf8") as infile:
-            content = yaml.safe_load(infile.read())
-            if content is None or not content:
-                return None
-            return ResourceFileState(
-                content["filename"],
-                content["size"],
-                content["timestamp"],
-                content["md5"],
-                # Written by every state since gain#881, and by none
-                # before it: a state file already on disk carries no
-                # token and must keep loading, falling back to the
-                # modification time until it is next rebuilt.
-                content.get("change_token"),
-            )
+        content = yaml.safe_load(text)
+        if not content:
+            return None
+        return ResourceFileState(
+            content["filename"],
+            content["size"],
+            content["timestamp"],
+            content["md5"],
+            # Written by every state since gain#881, and by none
+            # before it: a state file already on disk carries no
+            # token and must keep loading, falling back to the
+            # modification time until it is next rebuilt.
+            content.get("change_token"),
+        )
 
     def delete_resource_file(
             self, resource: GenomicResource, filename: str) -> None:

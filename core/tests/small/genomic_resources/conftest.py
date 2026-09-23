@@ -322,6 +322,14 @@ ONE_RESOURCE_FILES = ["data.txt", "data.txt.gz", "genomic_resource.yaml"]
 #: regressed. Pass it to :func:`record_filesystem_calls`.
 METADATA_OPERATIONS = ("info", "exists", "modified", "ls")
 
+#: What a budget on a ``.state`` key counts: the metadata operations plus
+#: the ``open`` that moves its bytes. The read is the call that matters
+#: there -- by raising, it also reports a state that is not there -- and
+#: :data:`METADATA_OPERATIONS` leaves it out because the stored file's
+#: budgets must not count the bytes its md5 is read from. Shared for the
+#: reason that tuple is.
+STATE_OPERATIONS = (*METADATA_OPERATIONS, "open")
+
 #: The file of ``content_fixture``'s ``one`` resource a cache verdict's
 #: budgets are asserted over -- what it asks about the stored file (#1039)
 #: and about its ``.state`` (#1083). One file rather than all three: the

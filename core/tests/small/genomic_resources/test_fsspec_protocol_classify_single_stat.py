@@ -9,9 +9,10 @@ question about a key the verdict had just been told was there. On a
 remote store every probe is a HEAD, and a full GRR sync pays the surplus
 once per stale-or-stateless cached file.
 
-The budgets below count what is asked about the *stored file's* key.
-What the ``.grr/<name>.state`` key costs is a separate account and not
-pinned here.
+Most budgets below count what is asked about the *stored file's* key.
+The ``.grr/<name>.state`` key is a separate account, kept by the two
+budgets that count ``open`` as well: reading the state is the one call
+it should cost, since the read also reports a state that is not there.
 
 The sibling module ``test_fsspec_protocol_download_single_stat`` makes
 the same claim about the download path, over the same fixture and the
@@ -24,11 +25,15 @@ from gain.genomic_resources.fsspec_protocol import (
     FileCacheVerdict,
     FsspecReadWriteProtocol,
 )
-from gain.genomic_resources.repository import ResourceFileState
+from gain.genomic_resources.repository import (
+    GenomicResource,
+    ResourceFileState,
+)
 
 from .conftest import (
     CACHED_FILE,
     METADATA_OPERATIONS,
+    STATE_OPERATIONS,
     a_source_resource,
     assert_state_matches_accessors,
     calls_for,
@@ -36,6 +41,78 @@ from .conftest import (
     forget_the_recorded_state,
     record_filesystem_calls,
 )
+
+
+def _state_path(
+    proto: FsspecReadWriteProtocol, resource: GenomicResource,
+) -> str:
+    """Where :data:`CACHED_FILE`'s ``.state`` lives, as the recorder logs it."""
+    return proto._get_resource_file_state_path(resource, CACHED_FILE)
+
+
+@pytest.mark.grr_rw
+def test_an_up_to_date_state_is_read_without_a_probe(
+    content_fixture: dict[str, Any],
+    download_dest: FsspecReadWriteProtocol,
+) -> None:
+    """A current state costs its key one call: the read.
+
+    The steady-state case -- almost every file of a repeat sync. The
+    ``open`` answers both questions the load has, whether there is a
+    state and what it says, so an ``exists`` ahead of it is a round trip
+    for an answer the read already gives. A verdict that stopped reading
+    the state would rebuild it instead -- which also costs its key one
+    ``open``, the write -- so what tells the two apart is the stored
+    file: a rebuild reads its bytes for the md5, and a read state does
+    not.
+    """
+    # Given a cached file whose recorded state still describes it.
+    dest_proto = download_dest
+    src_resource = a_source_resource(content_fixture)
+    dest_resource, _ = copy_one_resource(src_resource, dest_proto)
+
+    # When the cache decides what to do about it.
+    with record_filesystem_calls(dest_proto, STATE_OPERATIONS) as calls:
+        verdict = dest_proto.classify_resource_file(
+            src_resource, dest_resource, CACHED_FILE)
+
+    # Then it kept the file, and asked the state key only for its bytes.
+    assert verdict == FileCacheVerdict(needs_download=False, size=0)
+    assert calls_for(calls, _state_path(dest_proto, dest_resource)) == [
+        "open"]
+    # And trusted what it read: the stored file's bytes, which a rebuilt
+    # state would take its md5 from, were never opened.
+    url = dest_proto.get_resource_file_url(dest_resource, CACHED_FILE)
+    assert "open" not in calls_for(calls, url)
+
+
+@pytest.mark.grr_rw
+def test_a_missing_state_is_learned_from_the_read(
+    content_fixture: dict[str, Any],
+    download_dest: FsspecReadWriteProtocol,
+) -> None:
+    """Finding no state costs its key the read that fails, and no more.
+
+    Two ``open`` calls, in order: the load's read, whose failure is how
+    the verdict learns there is no state, then the write of the state it
+    rebuilt. An ``exists`` ahead of the first would ask the same question
+    twice.
+    """
+    # Given a cached resource whose file has lost its recorded state.
+    dest_proto = download_dest
+    src_resource = a_source_resource(content_fixture)
+    dest_resource, _ = copy_one_resource(src_resource, dest_proto)
+    forget_the_recorded_state(dest_proto, dest_resource)
+
+    # When the cache decides what to do about it.
+    with record_filesystem_calls(dest_proto, STATE_OPERATIONS) as calls:
+        verdict = dest_proto.classify_resource_file(
+            src_resource, dest_resource, CACHED_FILE)
+
+    # Then it kept the file, read the state key once and wrote it once.
+    assert verdict == FileCacheVerdict(needs_download=False, size=0)
+    assert calls_for(calls, _state_path(dest_proto, dest_resource)) == [
+        "open", "open"]
 
 
 @pytest.mark.grr_full

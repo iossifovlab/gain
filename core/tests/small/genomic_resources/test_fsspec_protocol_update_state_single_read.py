@@ -21,17 +21,13 @@ from gain.genomic_resources.repository import GenomicResource
 
 from .conftest import (
     CACHED_FILE,
-    METADATA_OPERATIONS,
+    STATE_OPERATIONS,
     a_source_resource,
     calls_for,
     copy_one_resource,
     forget_the_recorded_state,
     record_filesystem_calls,
 )
-
-#: What reading or writing the ``.state`` key costs: the metadata a
-#: probe asks for, plus the ``open`` that moves its bytes.
-STATE_OPERATIONS = (*METADATA_OPERATIONS, "open")
 
 
 def _keep_the_recorded_state(
@@ -41,19 +37,21 @@ def _keep_the_recorded_state(
 
 
 @pytest.mark.grr_full
-@pytest.mark.parametrize("arrange", [
-    # The verdict loads the state once and hands it back.
-    pytest.param(_keep_the_recorded_state, id="current-state"),
-    # The verdict probes, finds nothing, and its one open writes the
-    # rebuild -- which is handed back, not read back.
-    pytest.param(forget_the_recorded_state, id="rebuilt-state"),
+@pytest.mark.parametrize(("arrange", "expected"), [
+    # The verdict reads the state once and hands it back.
+    pytest.param(_keep_the_recorded_state, ["open"], id="current-state"),
+    # The verdict's read fails, and its one write stores the rebuild --
+    # which is handed back, not read back.
+    pytest.param(
+        forget_the_recorded_state, ["open", "open"], id="rebuilt-state"),
 ])
 def test_a_kept_file_has_its_state_asked_about_once(
     content_fixture: dict[str, Any],
     download_dest: FsspecReadWriteProtocol,
     arrange: Callable[[FsspecReadWriteProtocol, GenomicResource], None],
+    expected: list[str],
 ) -> None:
-    """The ``.state`` key costs one probe and one open, by the verdict."""
+    """The ``.state`` key is read once, by the verdict, and not again."""
     # Given a cached resource, its state arranged.
     dest_proto = download_dest
     src_resource = a_source_resource(content_fixture)
@@ -69,4 +67,4 @@ def test_a_kept_file_has_its_state_asked_about_once(
 
     # Then it kept the file, and asked about its state once.
     assert state is not None
-    assert calls_for(calls, state_path) == ["exists", "open"]
+    assert calls_for(calls, state_path) == expected
