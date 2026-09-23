@@ -55,14 +55,19 @@ requirements:
 tests:
   # rattler-build's test phase installs the just-built package into a fresh
   # env solved from the run deps above. gain-core is not on conda-forge or
-  # bioconda: the Jenkinsfiles offer the core recipe's output dir as a
-  # channel so the gain-core built moments earlier is what resolves here.
+  # bioconda: Jenkinsfile.release offers the core recipe's output dir as
+  # a channel so the gain-core built moments earlier is what resolves
+  # here.
   # The walk runs every console script with --help and loads every gain.*
   # entry point this dist declares (see core/conda-recipe/tests/); the
   # top-level import and `pip check` share its environment rather than a
   # second test entry, because rattler-build installs one environment per
   # entry (#1600, rationale in the core recipe). `pip` is a test-only
   # requirement.
+  #
+  # CI builds this package in gain-spliceai-integration, with `--test
+  # skip`, and runs these same checks from conda-builder/verify_packages.sh
+  # instead (#1601, see the core recipe); change one, change the other.
   - script:
       - python tests/entry_point_walk.py ${{ name }}
       - python -c "import spliceai_annotator"

@@ -27,6 +27,21 @@ pipelineJob('gain-vep-integration') {
         numToKeep(20)
     }
 
+    parameters {
+        stringParam(
+            'UPSTREAM_PROJECT',
+            '',
+            'Root gain build job whose archived vep wheel and gain-core .conda ' +
+            'the Conda package stage uses. Empty = iossifovlab/gain/master.',
+        )
+        stringParam(
+            'UPSTREAM_BUILD',
+            '',
+            'Build number of UPSTREAM_PROJECT. Empty = its last successful ' +
+            'build.',
+        )
+    }
+
     triggers {
         // Nightly hash-spread in the 00:00–05:59 UTC window so
         // regressions against a live VEP + GRR surface even when

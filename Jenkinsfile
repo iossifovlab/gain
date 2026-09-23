@@ -1211,14 +1211,23 @@ pipeline {
                             # redirected to /tmp because /home/mambauser is not
                             # writable by an arbitrary UID.
                             DOCKER_USER="$(id -u):$(id -g)"
-                            # Every recipe's test phase installs the built
-                            # package into a fresh env. The annotators
-                            # depend on gain-core, which is on neither
-                            # public channel, so the core recipe's output
-                            # dir (built first in this loop) is offered as
-                            # a channel ahead of them; for core itself it
-                            # is just its own output dir again (#1433).
-                            for proj in core demo_annotator vep_annotator spliceai_annotator; do
+                            # --test skip: the recipes' tests: blocks run in
+                            # Jenkinsfile.release, not here. rattler-build's
+                            # test phase installs into an env whose package
+                            # cache dies with the build, so every build would
+                            # download every dependency again (tensorflow
+                            # for spliceai); the same checks run below from
+                            # a cache that persists on the agent (#1601).
+                            # With no test phase nothing solves the
+                            # annotators' gain-core run dep at build time,
+                            # so the core output dir is not a channel here.
+                            #
+                            # The spliceai and vep packages are built and
+                            # verified by gain-spliceai-integration and
+                            # gain-vep-integration instead, from this
+                            # build's archived wheel and gain-core .conda
+                            # (conda-builder/annotator_package.sh).
+                            for proj in core demo_annotator; do
                                 mkdir -p conda/$proj
                                 docker run --rm \
                                     --name gain-$proj-conda-${CI_TAG} \
@@ -1230,9 +1239,9 @@ pipeline {
                                     -e VCS_VERSION="$VCS_VERSION" \
                                     gain-conda-builder-ci:${CI_TAG} \
                                     rattler-build build \
+                                        --test skip \
                                         --recipe $proj/conda-recipe/recipe.yaml \
                                         --output-dir conda/$proj \
-                                        -c file:///workspace/conda/core \
                                         -c conda-forge -c bioconda
                                 # Promote the final .conda artefact(s) out of
                                 # rattler-build's working tree. conda/$proj/bld/
@@ -1242,6 +1251,34 @@ pipeline {
                                 # only the published packages.
                                 cp conda/$proj/noarch/*.conda dist/conda/
                             done
+
+                            # Install check: one env per package, solved from
+                            # this build's output dirs + conda-forge +
+                            # bioconda, then the recipes' own checks. See
+                            # conda-builder/verify_packages.sh. micromamba's
+                            # package cache is ${HOME}/conda_pkgs_cache on
+                            # the agent, shared by every executor and build
+                            # there (micromamba locks it itself; no lock()
+                            # here, which would serialise builds). The image
+                            # root prefix /opt/conda is not writable by the
+                            # Jenkins UID, hence MAMBA_ROOT_PREFIX under /tmp.
+                            # The workspace is mounted at its own path so
+                            # the local channels' URLs, and their repodata
+                            # cache entries, differ between workspaces.
+                            mkdir -p "${HOME}/conda_pkgs_cache"
+                            docker run --rm \
+                                --name gain-conda-verify-${CI_TAG} \
+                                --label ci-tag=${CI_TAG} \
+                                --user "$DOCKER_USER" \
+                                -e HOME=/tmp \
+                                -e MAMBA_ROOT_PREFIX=/tmp/mamba \
+                                -v "${HOME}/conda_pkgs_cache":/tmp/mamba/pkgs \
+                                -v "$PWD":"$PWD" \
+                                -w "$PWD" \
+                                -e VCS_VERSION="$VCS_VERSION" \
+                                gain-conda-builder-ci:${CI_TAG} \
+                                bash conda-builder/verify_packages.sh \
+                                    core demo_annotator
                         '''
                     }
                 }
@@ -1607,10 +1644,20 @@ pipeline {
                     // web_e2e / core / VEP integration shape: the parent moves
                     // on while it runs separately and a regression doesn't
                     // FAILURE the parent.
+                    //
+                    // The job also builds and verifies the spliceai conda
+                    // package from this build's archived wheel and gain-core
+                    // .conda (UPSTREAM_PROJECT / UPSTREAM_BUILD), so the
+                    // shared conda scripts and the entry-point walk trigger
+                    // it too (#1601).
                     when {
                         allOf {
                             branch 'master'
-                            changeset 'spliceai_annotator/**'
+                            anyOf {
+                                changeset 'spliceai_annotator/**'
+                                changeset 'conda-builder/**'
+                                changeset 'core/conda-recipe/**'
+                            }
                             not { environment name: 'DOCS_ONLY', value: 'true' }
                         }
                     }
@@ -1635,6 +1682,14 @@ pipeline {
                                         name: 'COMMIT_SHA',
                                         value: env.GIT_COMMIT ?: '',
                                     ),
+                                    string(
+                                        name: 'UPSTREAM_PROJECT',
+                                        value: env.JOB_NAME,
+                                    ),
+                                    string(
+                                        name: 'UPSTREAM_BUILD',
+                                        value: env.BUILD_NUMBER,
+                                    ),
                                 ],
                                 wait: false,
                                 propagate: false,
@@ -1650,19 +1705,48 @@ pipeline {
                     // vep_annotator/ actually changed - the integration job
                     // pulls ensembl-vep and primes a multi-GB cache, so we
                     // don't want every master commit to trigger it.
+                    //
+                    // The job also builds and verifies the vep conda
+                    // package from this build's archived wheel and gain-core
+                    // .conda (UPSTREAM_PROJECT / UPSTREAM_BUILD), so the
+                    // shared conda scripts and the entry-point walk trigger
+                    // it too (#1601).
                     when {
                         allOf {
                             branch 'master'
-                            changeset 'vep_annotator/**'
+                            anyOf {
+                                changeset 'vep_annotator/**'
+                                changeset 'conda-builder/**'
+                                changeset 'core/conda-recipe/**'
+                            }
                             not { environment name: 'DOCS_ONLY', value: 'true' }
                         }
                     }
                     steps {
-                        build(
-                            job: '/gain-vep-integration',
-                            wait: false,
-                            propagate: false,
-                        )
+                        // Non-gating, like the spliceai trigger: a job that
+                        // does not take the parameters yet (gain-seed has
+                        // not re-seeded it) must not turn the parent red.
+                        catchError(
+                            buildResult: 'SUCCESS',
+                            stageResult: 'SUCCESS',
+                            message: 'gain-vep-integration trigger failed',
+                        ) {
+                            build(
+                                job: '/gain-vep-integration',
+                                parameters: [
+                                    string(
+                                        name: 'UPSTREAM_PROJECT',
+                                        value: env.JOB_NAME,
+                                    ),
+                                    string(
+                                        name: 'UPSTREAM_BUILD',
+                                        value: env.BUILD_NUMBER,
+                                    ),
+                                ],
+                                wait: false,
+                                propagate: false,
+                            )
+                        }
                     }
                 }
             }
