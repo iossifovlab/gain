@@ -74,7 +74,8 @@ Other:
 
 - **`docs/`** — design notes (one file per phase, dated).
 - **`scripts/`** — helper scripts (lint output
-  conversion, `wait-for-it.sh`).
+  conversion, `wait-for-it.sh`, the `environment.yml`
+  generator `conda_env.py`).
 - **`typings/`** — type stubs.
 
 Primary stack: Python 3.12, dask, pandas, pyarrow,
@@ -100,6 +101,11 @@ pip install -e demo_annotator
 pip install -e vep_annotator
 pip install -e spliceai_annotator
 ```
+
+`environment.yml` is generated from the gain-core and
+gain-web-api pyprojects: after changing any pyproject
+dependency, run `python scripts/conda_env.py` and commit the
+result (`tests/test_conda_deps.py` fails CI until you do).
 
 Notes:
 

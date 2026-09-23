@@ -73,6 +73,13 @@ COPY scripts/ ./scripts/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --package gain-core --group dev --frozen
 
+# tests/test_conda_deps.py renders environment.yml from the gain-core and
+# gain-web-api pyprojects with scripts/conda_env.py and compares it with
+# the committed file (#1639). Copied after the sync: neither file is an
+# input to it.
+COPY environment.yml ./
+COPY web_api/pyproject.toml ./web_api/
+
 # Extra gain-core dependency groups, as uv flags -- e.g.
 # `--build-arg UV_SYNC_FLAGS="--group scanpy-drift"`. Empty by default, so
 # the main CI image is unchanged: scanpy pulls in numba, llvmlite,
