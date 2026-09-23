@@ -17,6 +17,7 @@ from gain.genomic_resources.repository import (
 from gain.genomic_resources.resource_implementation import (
     ResourceConfigValidationMixin,
     get_base_resource_schema,
+    get_required_filename_schema,
 )
 from gain.genomic_resources.utils import (
     build_chrom_mapping,
@@ -247,7 +248,7 @@ class GeneModels(
         """
         return {
             **get_base_resource_schema(),
-            "filename": {"type": "string", "required": True},
+            **get_required_filename_schema(),
             "format": {"type": "string"},
             "gene_mapping": {"type": "string"},
             "chrom_mapping": {"type": "dict", "schema": {

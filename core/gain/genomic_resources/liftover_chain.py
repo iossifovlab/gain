@@ -16,6 +16,7 @@ from gain.genomic_resources.repository_factory import (
 from gain.genomic_resources.resource_implementation import (
     ResourceConfigValidationMixin,
     get_base_resource_schema,
+    get_required_filename_schema,
 )
 from gain.genomic_resources.utils import read_resource_id_label
 
@@ -130,7 +131,7 @@ class LiftoverChain(ResourceConfigValidationMixin):
     def get_schema() -> dict[str, Any]:
         return {
             **get_base_resource_schema(),
-            "filename": {"type": "string", "required": True},
+            **get_required_filename_schema(),
             # Nullable for the bare `chrom_prefix:` line a curator leaves
             # when commenting its subsections out; it reads as absent.
             "chrom_prefix": {"type": "dict", "nullable": True, "schema": {
