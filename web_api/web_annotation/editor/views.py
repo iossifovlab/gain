@@ -1,4 +1,6 @@
 """Views for annotator editor API."""
+import json
+import sys
 from itertools import islice
 from pathlib import Path
 from typing import Any, ClassVar
@@ -497,9 +499,26 @@ class AnnotatorAttributes(AsyncEditorView):
             )
 
         page = data.pop("page", 0)
-
-        assert isinstance(page, int), "Page must be an integer"
-        assert page >= 0, "Page must be non-negative"
+        if not isinstance(page, int) or isinstance(page, bool):
+            return Response(
+                {"error": f"page must be an integer: {json.dumps(page)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if page < 0:
+            return Response(
+                {"error": f"page must be non-negative: {page}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # `islice` refuses indices past `sys.maxsize` with a ValueError,
+        # which neither this view nor DRF would turn into a 4xx.
+        if (page + 1) * self.ATTRIBUTE_PAGE_SIZE > sys.maxsize:
+            return Response(
+                {"error": (
+                    f"page {page} addresses positions past the maximal "
+                    f"supported index {sys.maxsize}"
+                )},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         search_term = data.pop("search", None)
 
