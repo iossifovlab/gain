@@ -301,7 +301,7 @@ class GeneScore(ScoreResource[GeneScoreDef]):
             "scores": {"type": "list", "required": True, "schema": {
                 "type": "dict",
                 "schema": {
-                    "id": {"type": "string"},
+                    "id": {"type": "string", "required": True},
                     "name": {"type": "string"},
                     "column_name": {"type": "string"},
                     "type": {"type": "string"},

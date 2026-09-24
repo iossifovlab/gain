@@ -1266,6 +1266,7 @@ The HTML summary page displays a default histogram for each score.
 Optionally, the user may provide a histogram configuration to override the default
 and control how the score distribution is displayed. Histogram configuration options are covered `here <https://iossifovlab.com/gaindocs/grr.html#histogram-configuration>`_. The example below shows a custom histogram within a complete scores entry.
 If the resource includes multiple scores, add additional entries under scores with different id values.
+Every entry needs an ``id``: an entry without one refuses the resource with an error naming the resource.
 
 .. code-block:: yaml
 
@@ -1483,7 +1484,7 @@ Resource-specific fields (**type**: gene_score):
      - Optional subsection
      - Works the same way as for position scores.
 
-The configuration is validated when the gene score object is built, before its file is read: a missing ``filename`` or ``scores``, or a resource-specific key not in this table, refuses the resource with an error naming it.
+The configuration is validated when the gene score object is built, before its file is read: a missing ``filename`` or ``scores``, a ``scores`` entry without an ``id``, or a resource-specific key not in this table, refuses the resource with an error naming it.
 
 In the example ``genomic_resource.yaml`` file below, data file ``gene_scores.tsv`` contains a required column named ``gene``,
 plus two score columns named ``constraint`` and ``intolerance``. The ``scores`` section defines which columns are exposed as scores.

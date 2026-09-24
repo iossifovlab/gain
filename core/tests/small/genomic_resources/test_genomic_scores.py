@@ -1854,36 +1854,56 @@ A_SCORE_ID = f"{A_SCORE_GROUP}/{A_SCORE_NAME}"
 SCORE_KINDS = ["position_score", "allele_score", "fragment_score"]
 
 
+#: A config block that satisfies the schema, for the rows that break the
+#: other one.
+A_VALID_TABLE_BLOCK = "table:\n    filename: data.tsv\n"
+A_VALID_SCORES_BLOCK = (
+    "scores:\n"
+    "    - id: score\n"
+    "      type: float\n"
+    "      name: score\n"
+)
+
+
 @pytest.mark.parametrize("score_type", SCORE_KINDS)
-@pytest.mark.parametrize(("table_block", "expected_error"), [
+@pytest.mark.parametrize(("table_block", "scores_block", "expected_error"), [
     # A `table` block with no `filename`: the one key in it the table
     # builder cannot do without.
     pytest.param(
         "table:\n    format: tsv\n",
+        A_VALID_SCORES_BLOCK,
         "{'table': [{'filename': ['required field']}]}",
         id="no-filename-under-table"),
     # No `table` block at all -- a case of its own, since a config with
     # no block cannot prove the rule for the key inside it.
     pytest.param(
         "",
+        A_VALID_SCORES_BLOCK,
         "{'table': ['required field']}",
         id="no-table-block"),
+    # A `scores` entry with no `id`, which the score definitions are keyed
+    # by.
+    pytest.param(
+        A_VALID_TABLE_BLOCK,
+        "scores:\n"
+        "    - type: float\n"
+        "      column_name: score\n",
+        "{'scores': [{0: [{'id': ['required field']}]}]}",
+        id="no-score-id"),
 ])
-def test_a_score_table_outside_its_schema_is_refused(
-    score_type: str, table_block: str, expected_error: str,
+def test_a_score_config_outside_its_schema_is_refused(
+    score_type: str, table_block: str, scores_block: str,
+    expected_error: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A score without the table keys the runtime reads unconditionally is
-    refused at construction, naming the resource, rather than failing on
-    first use of the table with a bare KeyError naming nothing."""
+    """A score without the keys the runtime reads unconditionally is refused
+    at construction, naming the resource, rather than failing on first use
+    with a bare KeyError naming nothing."""
     resource = build_inmemory_test_repository({
         A_SCORE_GROUP: {A_SCORE_NAME: {GR_CONF_FILE_NAME: (
             f"type: {score_type}\n"
             f"{table_block}"
-            "scores:\n"
-            "    - id: score\n"
-            "      type: float\n"
-            "      name: score\n"
+            f"{scores_block}"
         )}},
     }).get_resource(A_SCORE_ID)
 
