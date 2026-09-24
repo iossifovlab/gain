@@ -17,7 +17,6 @@ from gain.genomic_resources.gene_models.gene_models_factory import (
 )
 from gain.genomic_resources.gene_models.parsers import (
     SUPPORTED_GENE_MODELS_FILE_FORMATS,
-    infer_gene_model_parser,
     parse_default_gene_models_format,
 )
 
@@ -124,20 +123,27 @@ def test_default_format_rejects_missing_columns_quietly() -> None:
     assert parse_default_gene_models_format(data, None, 50) is None
 
 
-def test_inference_failure_reports_every_reason_at_warning(
+def test_load_failure_logs_every_format_tried(
+    uninferrable_file: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A failed inference is diagnosable from the default log level."""
-    caplog.set_level(logging.WARNING)
+    """A failed load is diagnosable from the log, not only from the raise.
 
-    assert infer_gene_model_parser(StringIO(UNINFERRABLE_CONTENT)) is None
+    A caller that catches the error and carries on leaves the log as the
+    only account of why the file was refused.
+    """
+    caplog.set_level(logging.ERROR)
+    gene_models = build_gene_models_from_file(str(uninferrable_file))
 
-    warnings = [
+    with pytest.raises(ValueError):
+        gene_models.load()
+
+    errors = [
         record for record in caplog.records
-        if record.levelno == logging.WARNING
+        if record.levelno == logging.ERROR
     ]
-    assert len(warnings) == 1
-    reported = warnings[0].getMessage()
+    assert len(errors) == 1
+    reported = errors[0].getMessage()
     unreported = sorted(
         fmt for fmt in SUPPORTED_GENE_MODELS_FILE_FORMATS
         if fmt not in reported
@@ -171,17 +177,6 @@ def test_no_rejection_reason_is_blank(
     assert not uninformative, f"uninformative reasons: {uninformative}"
 
 
-def test_successful_inference_stays_quiet(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Diagnosing failures must not make the ordinary path noisy."""
-    caplog.set_level(logging.WARNING)
-
-    assert infer_gene_model_parser(StringIO(REFFLAT_CONTENT)) == "refflat"
-
-    assert caplog.records == []
-
-
 def test_ambiguous_format_names_the_candidates(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -204,21 +199,24 @@ def test_ambiguous_format_names_the_candidates(
     assert "ambiguous: ccds, refseq" in str(excinfo.value)
 
 
-def test_report_states_that_only_a_prefix_was_sampled(
-    caplog: pytest.LogCaptureFixture,
+def test_load_failure_states_that_only_a_prefix_was_sampled(
+    uninferrable_file: pathlib.Path,
 ) -> None:
     """Inferring a format is not evidence that the whole file parses.
 
     Inference reads a prefix, so a malformed record past it is invisible --
     which is how a corrupted file infers cleanly and then loads wrong.
     """
-    caplog.set_level(logging.WARNING)
+    gene_models = build_gene_models_from_file(str(uninferrable_file))
 
-    infer_gene_model_parser(StringIO(UNINFERRABLE_CONTENT))
+    with pytest.raises(ValueError) as excinfo:
+        gene_models.load()
 
-    reported = caplog.records[0].getMessage()
-    assert str(parsers.INFERENCE_SAMPLE_ROWS) in reported
-    assert "only the first" in reported
+    message = str(excinfo.value)
+    assert (
+        f"inference reads only the first {parsers.INFERENCE_SAMPLE_ROWS} "
+        "records"
+    ) in message
 
 
 def test_underlying_parse_error_reaches_the_reader(
