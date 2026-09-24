@@ -165,8 +165,8 @@ def test_view_get_pipeline_reloads_on_cache_miss(
 
     Reproduces Findings 1/2: even with pinning, an entry can vanish between
     the view's has/put check-then-act and the pin taken inside the cache's
-    ``get_pipeline`` (capacity eviction in the residual window, or the timeout
-    reaper / a force reload), surfacing a ``ValueError`` cache-miss. The view
+    ``get_pipeline`` (capacity eviction in the residual window, or a force
+    reload), surfacing a ``ValueError`` cache-miss. The view
     must re-``put_pipeline`` (reload from the same source) and retry, not
     propagate a spurious 4xx for a pipeline that is genuinely available.
     """
@@ -176,7 +176,7 @@ def test_view_get_pipeline_reloads_on_cache_miss(
 
     fake_cache = MagicMock()
     fake_cache.has_pipeline.return_value = True
-    # First resolution misses (evicted/reaped in the residual window);
+    # First resolution misses (evicted in the residual window);
     # after a reload it resolves.
     fake_cache.get_pipeline.side_effect = [
         PipelineNotCached("Pipeline p not found"),

@@ -424,8 +424,8 @@ class AnnotationMixin:
         Pinning in ``LRUPipelineCache`` prevents *capacity-driven* eviction of
         an in-flight pipeline (#140), but residual removal windows remain: the
         check-then-act gap between ``has_pipeline``/``put_pipeline`` here and
-        the pin taken inside ``lru_cache.get_pipeline``, the timeout reaper, or
-        a force/config reload of the same id. Any of those surfaces a
+        the pin taken inside ``lru_cache.get_pipeline``, or a force/config
+        reload of the same id. Any of those surfaces a
         ``ValueError`` cache-miss from the cache.
 
         Recover by re-loading from the same source the view would normally use
@@ -450,7 +450,7 @@ class AnnotationMixin:
                 return self.lru_cache.get_pipeline(pipeline_id)
             except PipelineNotCached as error:
                 # The entry vanished between put and the cache's pin (residual
-                # eviction window), or was reaped / force-reloaded while we
+                # eviction window), or was force-reloaded while we
                 # awaited. Reload from source and retry rather than emit a
                 # spurious 4xx for a pipeline that is actually available.
                 last_error = error

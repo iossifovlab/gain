@@ -65,11 +65,11 @@ class PipelineNotCached(Exception):
 
 
 class BuildCancelled(Exception):
-    """The shared build future was cancelled (reaper / force-reload).
+    """The shared build future was cancelled (e.g. by a force-reload).
 
     The build future is *shared* across every concurrent reader, so a single
-    request awaiting it must NOT cancel it on its own. When the reaper or a
-    force/config-reload cancels the shared future, an awaiter sees this
+    request awaiting it must NOT cancel it on its own. When a force/config
+    reload cancels the shared future, an awaiter sees this
     sentinel (rather than a bare ``asyncio.CancelledError``, which is
     indistinguishable from the awaiting task itself being cancelled) and
     retries against a freshly re-loaded entry. See iossifovlab/gain#163.
@@ -112,7 +112,7 @@ async def await_build(future: "Future[_T]") -> _T:
     when the shared build finishes.
 
     Cancelling the awaiting task cancels only the per-request ``waiter``, never
-    the shared ``future`` (so a reaped/force-reloaded build that *is* cancelled
+    the shared ``future`` (so a force-reloaded build that *is* cancelled
     surfaces as ``BuildCancelled``, not a spurious propagation). This is why a
     bare ``asyncio.wrap_future`` is wrong here -- it would cancel the shared
     build on caller-cancel and could not distinguish the two cancel sources.
@@ -305,7 +305,6 @@ class ThreadSafePipeline(AnnotationPipeline):
 @dataclass
 class LoadingDetails:
     """Utility for identifying which pipeline is being loaded."""
-    time_started: float
     config_hash: int
     pipeline_id: str
     future: Future[ThreadSafePipeline]
@@ -315,7 +314,14 @@ class LoadingDetails:
 
 
 class LRUPipelineCache:
-    """LRU cache that wraps and provides thread-safe annotation pipelines."""
+    """LRU cache that wraps and provides thread-safe annotation pipelines.
+
+    A pipeline build that has started is never timed out: its loader thread
+    runs until the build finishes. Its cache entry is removed only by
+    capacity eviction of an unpinned entry or by a force/config reload.
+    ``load_timeout`` is passed to the loader pool as its ``job_timeout``;
+    see ``ThreadedTaskExecutor`` for what that does and does not cancel.
+    """
 
     def __init__(
         self,
@@ -334,7 +340,6 @@ class LRUPipelineCache:
             job_timeout=load_timeout,
             thread_name_prefix="pipeline-loader",
         )
-        self._load_timeout = load_timeout
 
         self.capacity = capacity
         self._cache: dict[str, LoadingDetails] = {}
@@ -522,7 +527,6 @@ class LRUPipelineCache:
                 )
 
                 loading_details = LoadingDetails(
-                    time_started=started,
                     pipeline_id=pipeline_id,
                     config_hash=pipeline_config_hash,
                     future=pipeline_future,
@@ -560,44 +564,6 @@ class LRUPipelineCache:
         elapsed = time.time() - started
         logger.debug(
             "put pipeline %s in %.2f seconds", pipeline_id, elapsed)
-
-    def clean_old_tasks(self) -> None:
-        """Clean old tasks that have timed out.
-
-        Skips entries that are currently pinned in-use by an in-flight
-        ``get_pipeline`` caller (#140): reaping such an entry would cancel the
-        future the caller is awaiting and surface a spurious cache-miss. A
-        pinned entry that is genuinely stuck past the timeout is left in place
-        with a warning rather than force-deleted; it is reaped on a later pass
-        once its caller unpins.
-        """
-        detached: list[tuple[
-            str, Future[ThreadSafePipeline] | None,
-            LoadingDetails | None, Callable | None,
-        ]] = []
-        now = time.time()
-        with self._cache_lock:
-            for pipeline_id, details in list(self._cache.items()):
-                if now - details.time_started > self._load_timeout:
-                    if self._in_use.get(pipeline_id, 0) > 0:
-                        logger.warning(
-                            "long-running pipeline %s (started at %s) is past "
-                            "the load timeout but pinned in-use; deferring "
-                            "reap so an in-flight caller is not broken",
-                            pipeline_id, details.time_started,
-                        )
-                        continue
-                    logger.warning(
-                        "Cancelling long-running task started at %s",
-                        details.time_started,
-                    )
-                    old_future, old_details, old_delete_cb = (
-                        self._detach_pipeline_locked(pipeline_id)
-                    )
-                    detached.append(
-                        (pipeline_id, old_future, old_details, old_delete_cb))
-        for pid, old_future, old_details, old_delete_cb in detached:
-            self._close_detached(pid, old_future, old_details, old_delete_cb)
 
     def get_pipeline_future(
         self, pipeline_id: str,
@@ -681,8 +647,8 @@ class LRUPipelineCache:
         atomic with the cache-membership check, so the pin reliably prevents
         *capacity-driven* eviction of an in-flight pipeline. It does not by
         itself close every removal window (the view's check-then-act between
-        put_pipeline and get_pipeline, the timeout reaper, or a force/config
-        reload can still race); those residual windows are recovered by the
+        put_pipeline and get_pipeline, or a force/config reload can still
+        race); those residual windows are recovered by the
         reload-on-miss retry in AnnotationBaseView.get_pipeline.
         """
         with self._cache_lock:
@@ -710,7 +676,7 @@ class LRUPipelineCache:
         # Pin the entry before resolving its future so a concurrent
         # capacity-pressure put_pipeline cannot evict it out from under us
         # (#140). The pin only prevents capacity-driven eviction; if the entry
-        # is removed by another path (reaper, force/config reload, or it was
+        # is removed by another path (force/config reload, or it was
         # never cached because of the view's check-then-act window) the
         # awaiting result()/get_pipeline_future raises -- and the caller
         # (AnnotationBaseView.get_pipeline) recovers via reload-on-miss.
@@ -738,7 +704,7 @@ class LRUPipelineCache:
         parked on ``future.result()``, then unpins in ``finally``. The same
         retry-on-cancel contract as the sync ``get_pipeline`` is expressed here
         through ``BuildCancelled`` (the decoupled-waiter analogue of the sync
-        path's ``CancelledError``): a reaper/force-reload cancel of the shared
+        path's ``CancelledError``): a force-reload cancel of the shared
         build loops to re-resolve the (possibly replaced) entry rather than
         surfacing a spurious failure. A genuine ``PipelineNotCached`` is left to
         propagate so the view's reload-on-miss retry can recover it.
