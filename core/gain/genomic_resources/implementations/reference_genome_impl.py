@@ -14,7 +14,9 @@ from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
     reference_genome_files,
 )
+from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.resource_implementation import (
+    DEFAULT_STATISTICS_REGION_SIZE,
     GenomicResourceImplementation,
     InfoImplementationMixin,
     ResourceStatistics,
@@ -374,13 +376,14 @@ class ReferenceGenomeImplementation(
         }, sort_keys=True, indent=2).encode()
 
     def create_statistics_build_tasks(
-        self, **kwargs: Any,
+        self, *,
+        region_size: int = DEFAULT_STATISTICS_REGION_SIZE,
+        grr: GenomicResourceRepo | None = None,  # ruff: ignore[unused-method-argument]
     ) -> list[TaskDesc]:
         tasks = []
         chrom_save_tasks = []
-        region_size = kwargs.get("region_size", 3_000_000_000)
         if region_size <= 0:
-            region_size = 3_000_000_000
+            region_size = DEFAULT_STATISTICS_REGION_SIZE
 
         with self.reference_genome.open():
             for chrom in self.reference_genome.chromosomes:

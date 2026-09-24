@@ -392,18 +392,26 @@ def test_add_statistics_build_tasks_returns_empty_list(
     assert not tasks
 
 
-def test_add_statistics_build_tasks_with_kwargs(
+def test_add_statistics_build_tasks_ignores_the_build_keywords(
     grr_fixture: GenomicResourceRepo,
 ) -> None:
-    """Test add_statistics_build_tasks ignores kwargs."""
     impl = AnnotationPipelineImplementation(
         grr_fixture.get_resource("pipeline"),
     )
     tasks = impl.create_statistics_build_tasks(
-        some_arg="value",
-        another_arg=123,
-    )
+        region_size=10, grr=grr_fixture)
     assert not tasks
+
+
+def test_add_statistics_build_tasks_refuses_an_unknown_keyword(
+    grr_fixture: GenomicResourceRepo,
+) -> None:
+    impl = AnnotationPipelineImplementation(
+        grr_fixture.get_resource("pipeline"),
+    )
+    with pytest.raises(TypeError, match="some_arg"):
+        impl.create_statistics_build_tasks(
+            some_arg="value")  # type: ignore[call-arg]
 
 
 # Integration tests

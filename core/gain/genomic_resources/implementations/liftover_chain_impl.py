@@ -10,7 +10,9 @@ from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.liftover_chain import (
     build_liftover_chain_from_resource,
 )
+from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.resource_implementation import (
+    DEFAULT_STATISTICS_REGION_SIZE,
     GenomicResourceImplementation,
     InfoImplementationMixin,
 )
@@ -84,6 +86,8 @@ class LiftoverChainImplementation(
         return b"placeholder"
 
     def create_statistics_build_tasks(
-        self, **kwargs: Any,  # ruff: ignore[unused-method-argument]
+        self, *,
+        region_size: int = DEFAULT_STATISTICS_REGION_SIZE,  # ruff: ignore[unused-method-argument]
+        grr: GenomicResourceRepo | None = None,  # ruff: ignore[unused-method-argument]
     ) -> list[TaskDesc]:
         return []
