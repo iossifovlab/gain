@@ -563,13 +563,14 @@ calling `self.append_meta_into(resource_dir)` after a
 `setup_*` helper wrote the config for it (the
 reference-genome path).
 
-**Four factories are NOT in `builders.py`** — import
+**Five factories are NOT in `builders.py`** — import
 each from its own sibling module:
 `a_data_frame` from
 `gain.genomic_resources.testing.data_frame_builder`,
 `an_ann_data` from `…testing.ann_data_builder`,
-`a_gene_models` from `…testing.gene_models_builder`, and
-`a_grr_group` from `…testing.group_builder`.
+`a_gene_models` from `…testing.gene_models_builder`,
+`a_liftover_chain` from `…testing.liftover_chain_builder`,
+and `a_grr_group` from `…testing.group_builder`.
 `builders.py` is ~1800 lines against pylint's
 `max-module-lines=1500`, which it carries a
 `too-many-lines` suppression for — so each new builder
@@ -656,12 +657,25 @@ deliberately exposes no expected DataFrame: it parses the
 authored block with pandas to realize xlsx, so handing
 that frame back as an oracle would be circular on the
 separator and dtype axes a `data_frame` test varies.
-The next builder added should follow the same sibling-
-module pattern rather than grow `builders.py`.
+
+`a_liftover_chain` writes a gzipped UCSC chain file through
+`setup_gzip`. A bare builder carries one `+` strand chain
+shifting `chr1` by 10 (`chr1:5` lifts to `chr1:15`).
+`with_chain(block)` authors one whitespace-separated chain
+block — header line plus alignment lines — and each call
+adds one, replacing the default. `with_chrom_prefix(
+variant_coordinates=…, target_coordinates=…)` emits the
+schema's `chrom_prefix:` block, each side an
+`add_prefix`/`del_prefix` mapping; that and `filename` are
+the only type-specific config keys. The chain also reads
+the `source_genome` / `target_genome` labels, which
+`with_labels` declares. The next builder added should
+follow the same sibling-module pattern rather than grow
+`builders.py`.
 
 **That list is the whole of the coverage — the gaps are
 large and structural, not an oversight to work around.**
-There is no builder for `liftover_chain`,
+There is no builder for
 `annotation_pipeline` or `gene_set_collection`, and no
 `with_*` for
 `default_annotation` or explicit
