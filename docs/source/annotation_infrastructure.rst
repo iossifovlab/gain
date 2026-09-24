@@ -881,13 +881,17 @@ The configuration fields are:
 
        Default: ``200``.
    * - ``mask``
-     - Intended to mask scores representing annotated acceptor or donor gain and unannotated
-       acceptor or donor loss.
+     - Mask scores representing annotated acceptor or donor gain and unannotated acceptor or
+       donor loss, as SpliceAI's ``-M 1`` does.
 
-       **Currently has no effect.** The value is read and validated (it must be ``0``/``false`` or
-       ``1``/``true``, and anything else logs a warning and falls back to ``0``), but it is never
-       applied to the scores. Do not rely on it to suppress any score. See
-       `issue 322 <https://github.com/iossifovlab/gain/issues/322>`_.
+       When enabled, each delta position is compared with the variant's nearest exon boundary
+       (the closest exon start or end among the gene's transcripts). An acceptor or donor gain
+       at that boundary, and an acceptor or donor loss anywhere else, is reported as ``0``. The
+       masked values carry through to ``DS_MAX`` and ``delta_score``; the delta positions and the
+       probability vectors are not changed.
+
+       Must be ``0``/``false`` or ``1``/``true``. Any other integer is not an error: the
+       annotator logs a warning and falls back to ``0``.
 
        Default: ``false``.
 

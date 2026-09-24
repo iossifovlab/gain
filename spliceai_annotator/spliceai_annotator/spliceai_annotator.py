@@ -28,6 +28,9 @@ from gain.annotation.utils import (
     find_annotator_gene_models,
     find_annotator_reference_genome,
 )
+from gain.genomic_resources.gene_models import (
+    TranscriptModel,
+)
 
 from spliceai_annotator.utils import one_hot_encode
 
@@ -62,6 +65,10 @@ class _AnnotationRequest:
     strand: str
     gene: str
     transcripts: list[str]
+    # Offset from the variant to the nearest exon boundary of the gene's
+    # transcripts, on the same axis as the reported delta positions.
+    # Only computed when masking is on.
+    exon_boundary_offset: int | None
     context: Any
     batch_index: int = -1
 
@@ -72,6 +79,24 @@ def reset_annotation_request(req: _AnnotationRequest) -> None:
     del req.x_alt
     req.x_ref = None  # type: ignore
     req.x_alt = None  # type: ignore
+
+
+def _nearest_exon_boundary_offset(
+    transcripts: Sequence[TranscriptModel], pos: int,
+) -> int:
+    """Offset from ``pos`` to the nearest exon start or end.
+
+    Mirrors Illumina SpliceAI's ``get_pos_data``: the boundaries are
+    pooled and sorted, so a tie between ``-k`` and ``+k`` resolves to
+    ``-k`` exactly as its ``min(np.union1d(...), key=abs)`` does.
+    """
+    boundaries = sorted({
+        boundary
+        for transcript in transcripts
+        for exon in transcript.exons
+        for boundary in (exon.start, exon.stop)
+    })
+    return min((b - pos for b in boundaries), key=abs)
 
 
 @dataclass
@@ -439,6 +464,9 @@ models to predict splice site variant effects.
                     strand=strand,
                     gene=gene,
                     transcripts=[t.tr_id for t in transcripts],
+                    exon_boundary_offset=_nearest_exon_boundary_offset(
+                        transcripts, annotatable.pos,
+                    ) if self._mask else None,
                     context=context,
                     batch_index=batch_index,
                 ))
@@ -484,6 +512,15 @@ models to predict splice site variant effects.
             na = (y[0, idx_na, 1] - y[1, idx_na, 1])
             pd = (y[1, idx_pd, 2] - y[0, idx_pd, 2])
             nd = (y[0, idx_nd, 2] - y[1, idx_nd, 2])
+
+            if request.exon_boundary_offset is not None:
+                # Illumina's -M 1: a gain on the annotated boundary and a
+                # loss off it are expected, so they score zero.
+                boundary = request.exon_boundary_offset + self._distance
+                pa = pa * (idx_pa != boundary)
+                na = na * (idx_na == boundary)
+                pd = pd * (idx_pd != boundary)
+                nd = nd * (idx_nd == boundary)
 
             results["gene"].append(request.gene)
             results["transcript_ids"].append(
