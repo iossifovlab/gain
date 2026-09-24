@@ -27,9 +27,9 @@ statistics tables, in
 from __future__ import annotations
 
 import re
-from html.parser import HTMLParser
 
 from tests.small.templates.page_css import font_faces_in
+from tests.small.templates.page_dom import parse_page
 from tests.small.templates.page_origins import (
     external_origins,
     pointed_at_google,
@@ -57,26 +57,6 @@ def glyphs_the_sorter_draws(page: str) -> frozenset[str]:
     return frozenset(_STATE_GLYPH.findall(page))
 
 
-class _PageReader(HTMLParser):
-    """Collects the names of every attribute any element of the page carries."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.attribute_names: set[str] = set()
-
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]],
-    ) -> None:
-        for name, _ in attrs:
-            self.attribute_names.add(name)
-
-
-def read_page(page: str) -> _PageReader:
-    reader = _PageReader()
-    reader.feed(page)
-    return reader
-
-
 def test_the_sorter_ships_inert_on_a_page_with_no_sortable_table(
     gene_score_page: str,
 ) -> None:
@@ -88,10 +68,11 @@ def test_the_sorter_ships_inert_on_a_page_with_no_sortable_table(
     """
     assert "th[data-sort]" in gene_score_page
 
-    reader = read_page(gene_score_page)
+    attribute_names = {
+        name for name, _ in parse_page(gene_score_page).attributes}
 
-    assert "data-sort" not in reader.attribute_names
-    assert "data-sort-value" not in reader.attribute_names
+    assert "data-sort" not in attribute_names
+    assert "data-sort-value" not in attribute_names
 
 
 def test_a_resource_page_loads_no_jquery(gene_score_page: str) -> None:

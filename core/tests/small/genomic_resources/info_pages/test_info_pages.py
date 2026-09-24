@@ -60,6 +60,7 @@ from tests.small.genomic_resources.info_pages.supplement import (
     ALL_SUPPLEMENT_RESOURCE_IDS,
     NULL_HISTOGRAM_RESOURCE_IDS,
 )
+from tests.small.templates.page_dom import VOID_ELEMENTS
 
 _IMPLEMENTATIONS_GROUP = "gain.genomic_resources.implementations"
 
@@ -67,13 +68,6 @@ _IMPLEMENTATIONS_GROUP = "gain.genomic_resources.implementations"
 #: computed.  Asserted in both directions, so a change to this wording
 #: fails loudly here rather than quietly disarming the check.
 _NOT_COMPUTED = "not computed"
-
-#: HTML elements that never take an end tag, so the balance check must not
-#: expect one.
-_VOID_ELEMENTS = frozenset({
-    "area", "base", "br", "col", "embed", "hr", "img", "input",
-    "link", "meta", "param", "source", "track", "wbr",
-})
 
 #: URL schemes that point outside the generated repository.  A link with
 #: one of these is not ours to resolve.
@@ -142,7 +136,7 @@ class _PageParser(HTMLParser):
     ) -> None:
         self.events.append(
             _Event("start", tag, {k: v or "" for k, v in attrs}))
-        if tag not in _VOID_ELEMENTS:
+        if tag not in VOID_ELEMENTS:
             self._open.append((tag, self.getpos()[0]))
 
     def handle_startendtag(
@@ -155,7 +149,7 @@ class _PageParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         self.events.append(_Event("end", tag))
-        if tag in _VOID_ELEMENTS:
+        if tag in VOID_ELEMENTS:
             return
         line = self.getpos()[0]
         if not self._open:

@@ -32,16 +32,10 @@ import re
 from html.parser import HTMLParser
 from typing import NamedTuple
 
+from tests.small.templates.page_dom import VOID_ELEMENTS
+
 #: The level of the heading a section is asked for, e.g. 2 for ``<h2>``.
 _HEADING_LEVEL = re.compile(r"<h([1-6])")
-
-#: Elements that never fire an end tag.  Counting one as a level deeper
-#: would leave the reader permanently inside it, so the rest of the cell
-#: would be attributed to a nested element and vanish from ``own_text``.
-_VOID_ELEMENTS = frozenset({
-    "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
-    "meta", "param", "source", "track", "wbr",
-})
 
 #: Any heading at all.  What bounds the search for a section's OWN table:
 #: a table rendered under a subheading belongs to that subsection, and
@@ -192,7 +186,9 @@ class _TableReader(HTMLParser):
             self._attrs = {k: v if v is not None else "" for k, v in attrs}
             self._tag = tag
             self._terms = []
-        elif self._text is not None and tag not in _VOID_ELEMENTS:
+        elif self._text is not None and tag not in VOID_ELEMENTS:
+            # A void element fires no end tag: counting it as a level would
+            # leave the rest of the cell nested and out of ``own_text``.
             self._depth += 1
             if tag in ("dt", "dd"):
                 self._term_text = []

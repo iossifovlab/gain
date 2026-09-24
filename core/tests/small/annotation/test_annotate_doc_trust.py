@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import pathlib
 from collections.abc import Callable
-from html.parser import HTMLParser
 
 import pytest
 import yaml
@@ -67,76 +66,13 @@ from gain.genomic_resources.testing.builders import (
 from gain.templates import get_jinja_env
 from gain.testing.foobar_import import foobar_genes, foobar_genome
 
+from tests.small.templates.page_dom import parse_page
+
 #: Unique to these tests, so an assertion cannot be satisfied by markup the
 #: page ships itself -- the false-signal lesson of gain#558.  The pages really
 #: do carry their own ``<script>`` and ``<em>``, so every assertion below is
 #: scoped to this marker rather than to a tag name.
 MARKER = "gaintrust731"
-
-#: Elements HTML gives no end tag, so they never enclose anything.
-VOID_ELEMENTS = frozenset({
-    "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
-    "meta", "param", "source", "track", "wbr",
-})
-
-
-class _PageDom(HTMLParser):
-    """Read a page as markup rather than as text.
-
-    ``html.parser`` is not an HTML5-spec tokenizer, and where it differs it
-    under-reports live markup (``<script/>`` opens an element for a browser
-    but not here).  That is the safe direction for these tests: anything it
-    reports as an element really is one.
-
-    ``element_text`` pairs each run of character data with the innermost
-    element open at the time.  Assertions need that pairing: a bare
-    "is there a ``script`` tag" says only that *some* element of that name is
-    on the page, and these pages ship their own.
-
-    Deliberately no ``text`` accumulator.  ``convert_charrefs`` (on by
-    default) decodes ``&lt;script&gt;`` back into ``<script>``, so a plain
-    text collection reports *escaped* markup indistinguishably from live
-    markup -- the exact difference this file exists to detect.  The stack
-    also has no implied-end-tag handling, so ``<p>one<p>two`` nests rather
-    than siblings; that is immaterial for these payloads but is a property of
-    the stack, not of the tokenizer.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.attributes: list[tuple[str, str | None]] = []
-        self.element_text: list[tuple[str, str]] = []
-        self._open: list[str] = []
-
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]],
-    ) -> None:
-        self.attributes.extend(attrs)
-        if tag not in VOID_ELEMENTS:
-            self._open.append(tag)
-
-    def handle_endtag(self, tag: str) -> None:
-        # Unwind to the innermost matching open tag.  The guard matters: a
-        # stray end tag in a future payload would otherwise pop an empty
-        # stack and raise.
-        if tag in self._open:
-            while self._open.pop() != tag:
-                pass
-
-    def handle_data(self, data: str) -> None:
-        if self._open:
-            self.element_text.append((self._open[-1], data))
-
-    def text_in(self, tag: str) -> str:
-        """All the character data ``tag`` encloses, concatenated."""
-        return "".join(
-            data for open_tag, data in self.element_text if open_tag == tag)
-
-
-def parse_page(page: str) -> _PageDom:
-    dom = _PageDom()
-    dom.feed(page)
-    return dom
 
 
 def _realize_score_grr(root_path: pathlib.Path, score_desc: str) -> None:
