@@ -978,9 +978,6 @@ class LoadPipeline(AnnotationBaseView):
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
 
-        self.put_pipeline(
-            pipeline_id,
-            request.user,
-        )
+        self._put_pipeline_or_404(pipeline_id, request.user)
 
         return Response(status=views.status.HTTP_204_NO_CONTENT)
