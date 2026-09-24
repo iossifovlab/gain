@@ -8,6 +8,10 @@ with the version clauses copied as written.
     python scripts/conda_env.py --check   # exit 1 if any file is stale
 
 ``core/tests/test_conda_deps.py`` runs the same comparison in CI.
+
+The rattler-build recipes stay hand-written, and ``check_recipe_run``
+holds each recipe's ``requirements.run`` to its pyproject's
+dependencies under the same name mapping; the test runs that too.
 """
 from __future__ import annotations
 
@@ -15,6 +19,7 @@ import argparse
 import pathlib
 import sys
 import tomllib
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -272,6 +277,71 @@ def render_all(
             output, sections[output.filename], members, pip_only)
         for output in outputs
     }
+
+
+def read_recipe_run(path: pathlib.Path) -> list[str]:
+    """Return a recipe's ``requirements.run`` entries, whitespace removed.
+
+    PyYAML is imported here rather than at the top so that rendering the
+    environment files keeps needing only the stdlib and packaging.
+    """
+    import yaml  # pylint: disable=import-outside-toplevel
+
+    with path.open() as infile:
+        recipe = yaml.safe_load(infile)
+    run = (recipe.get("requirements") or {}).get("run")
+    if run is None:
+        raise ValueError(f"{path}: no requirements.run list")
+    if not isinstance(run, list):
+        raise TypeError(f"{path}: requirements.run is not a list")
+    entries = []
+    for entry in run:
+        # A selector (`- if: ... then: ...`) or a bare number is a form
+        # the comparison does not model.
+        if not isinstance(entry, str):
+            raise TypeError(
+                f"{path}: run entry {entry!r} is not a plain string, "
+                f"which scripts/conda_env.py does not model")
+        entries.append("".join(entry.split()))
+    return entries
+
+
+def expected_recipe_run(root: pathlib.Path, package: str) -> list[str]:
+    """Return the run list ``<package>``'s pyproject implies.
+
+    That is ``python`` with the ``requires-python`` clauses, then every
+    ``[project.dependencies]`` entry under its conda name. Workspace
+    members stay in: a plugin's recipe runs on ``gain-core``. Optional
+    extras never reach a recipe.
+    """
+    section = load_section(root, Feed(f"{package}/pyproject.toml"))
+    return [
+        "python" + ",".join(section.requires_python),
+        *(conda_name(name) + ",".join(clauses)
+          for name, clauses in section.requirements),
+    ]
+
+
+def check_recipe_run(root: pathlib.Path, package: str) -> None:
+    """Raise if ``<package>``'s recipe run list differs from its pyproject.
+
+    Rows are compared as a multiset: their order is free, a repeated row
+    is a difference.
+    """
+    recipe = f"{package}/conda-recipe/recipe.yaml"
+    actual = Counter(read_recipe_run(root / recipe))
+    expected = Counter(expected_recipe_run(root, package))
+    if actual == expected:
+        return
+
+    def listed(entries: Counter[str]) -> str:
+        return ", ".join(sorted(entries.elements())) or "none"
+
+    raise ValueError(
+        f"{recipe}: requirements.run differs from {package}/pyproject.toml "
+        f"[project.dependencies]; only in the recipe: "
+        f"{listed(actual - expected)}; only in the pyproject: "
+        f"{listed(expected - actual)}")
 
 
 def main(
