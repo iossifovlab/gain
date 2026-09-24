@@ -187,8 +187,12 @@ class SingleAnnotation(AsyncAnnotationBaseView):
                 {"reason": "Annotatable not provided!"},
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
-        annotatable_data = request.data["annotatable"]
-        assert isinstance(annotatable_data, dict)
+        annotatable = self._parse_annotatable(request.data["annotatable"])
+        if annotatable is None:
+            return Response(
+                {"reason": "Invalid annotatable provided!"},
+                status=views.status.HTTP_400_BAD_REQUEST,
+            )
 
         if "pipeline_id" not in request.data:
             return Response(
@@ -224,8 +228,6 @@ class SingleAnnotation(AsyncAnnotationBaseView):
                 status=views.status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
-        annotatable = build_annotatable_from_dict(annotatable_data)
-
         # Long pole #2: run annotate on the dedicated bounded pool, awaited via
         # the same decoupled waiter used for builds (it awaits any Future).
         annotation: dict[str, Any] = await await_build(
@@ -242,6 +244,26 @@ class SingleAnnotation(AsyncAnnotationBaseView):
             attributes_count, is_unlimited=is_unlimited,
         )
         return Response(response_data)
+
+    @staticmethod
+    def _parse_annotatable(annotatable_data: Any) -> Annotatable | None:
+        """Build the requested annotatable, or ``None`` if it is malformed.
+
+        The value comes straight from an anonymous request body, so it may
+        be any JSON value. The builder has no validation of its own: a
+        wrongly-typed field fails wherever the converter its keys select
+        first touches it -- ``int()`` raises ``ValueError``/``TypeError``,
+        a string method on a number ``AttributeError``, the ``VCFAllele``
+        constructor ``AssertionError``. Each is the caller's 400, not an
+        unhandled 500 (iossifovlab/gain#1660). Needs no pipeline, so a bad
+        allele is refused before one is built and before quota is read.
+        """
+        if not isinstance(annotatable_data, dict):
+            return None
+        try:
+            return build_annotatable_from_dict(annotatable_data)
+        except (ValueError, TypeError, AttributeError, AssertionError):
+            return None
 
     @staticmethod
     def _run_annotate(
