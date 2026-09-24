@@ -28,6 +28,7 @@ from gain.genomic_resources.resource_implementation import (
 )
 from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
+    save_and_plot_histograms,
 )
 from gain.task_graph.graph import TaskDesc, TaskGraph
 
@@ -103,8 +104,7 @@ class GeneScoreImplementation(ScoreImplementationBase):
 
             histograms[score_id] = histogram
 
-        GeneScoreImplementation._save_and_plot_histograms(
-            resource, gene_score, histograms)
+        save_and_plot_histograms(resource, gene_score, histograms)
         return histograms
 
     @staticmethod

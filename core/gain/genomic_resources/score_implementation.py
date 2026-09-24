@@ -4,8 +4,10 @@
 catalogue plane in :mod:`gain.genomic_resources.score_resource`): where that
 base owns what a score *is*, this base owns what a score *implementation* does
 that means the same for both families -- contributing ``score_ids`` /
-``score_descriptions`` into the FTS index, and serialising-and-plotting a
-computed histogram into the resource.
+``score_descriptions`` into the FTS index.  Serialising-and-plotting a
+computed histogram into the resource is the module-level
+:func:`save_and_plot_histograms`, which both families' statistics builds
+call.
 
 It deliberately keeps ``create_statistics_build_tasks`` abstract: a gene score
 emits a single task that scans a DataFrame, whereas a genomic score emits a
@@ -53,7 +55,7 @@ class ScoreImplementationBase(
 
     A concrete subclass must set ``self.score`` (a :class:`ScoreResource`) in
     its own ``__init__``; from it this base reads the score definitions for the
-    search index and the histogram save-and-plot loop.
+    search index.
     """
 
     score: ScoreResource
@@ -87,76 +89,76 @@ class ScoreImplementationBase(
             (*row, score_ids, score_descriptions),
         )
 
-    @staticmethod
-    def _save_and_plot_histograms(
-        resource: GenomicResource,
-        score: ScoreResource,
-        histograms: dict[str, Histogram],
-    ) -> None:
-        """Serialise each histogram into the resource and render its PNG.
 
-        Every score in ``score.score_definitions`` leaves with exactly the
-        files this build produced. A file an earlier build wrote that the
-        current histogram no longer justifies -- the truncated sidecar of
-        a histogram now within the limit, the image of a ``NullHistogram``,
-        all three of a score absent from ``histograms`` -- is deleted
-        rather than left to be served as current.  So is every histogram
-        file of a score id ``score_definitions`` no longer holds.
-        """
-        proto = resource.proto
-        for score_id, histogram in histograms.items():
-            hist_filename = score.get_histogram_filename(score_id)
+def save_and_plot_histograms(
+    resource: GenomicResource,
+    score: ScoreResource,
+    histograms: dict[str, Histogram],
+) -> None:
+    """Serialise each histogram into the resource and render its PNG.
+
+    Every score in ``score.score_definitions`` leaves with exactly the
+    files this build produced. A file an earlier build wrote that the
+    current histogram no longer justifies -- the truncated sidecar of
+    a histogram now within the limit, the image of a ``NullHistogram``,
+    all three of a score absent from ``histograms`` -- is deleted
+    rather than left to be served as current.  So is every histogram
+    file of a score id ``score_definitions`` no longer holds.
+    """
+    proto = resource.proto
+    for score_id, histogram in histograms.items():
+        hist_filename = score.get_histogram_filename(score_id)
+        with proto.open_raw_file(
+            resource,
+            hist_filename,
+            mode="wt",
+        ) as outfile:
+            outfile.write(histogram.serialize())
+        sidecar_filename = truncated_histogram_filename(hist_filename)
+        if (
+            isinstance(histogram, CategoricalHistogram)
+            and histogram.unique_values
+                > CategoricalHistogram.UNIQUE_VALUES_LIMIT
+        ):
             with proto.open_raw_file(
                 resource,
-                hist_filename,
+                sidecar_filename,
                 mode="wt",
             ) as outfile:
-                outfile.write(histogram.serialize())
-            sidecar_filename = truncated_histogram_filename(hist_filename)
-            if (
-                isinstance(histogram, CategoricalHistogram)
-                and histogram.unique_values
-                    > CategoricalHistogram.UNIQUE_VALUES_LIMIT
-            ):
-                with proto.open_raw_file(
-                    resource,
-                    sidecar_filename,
-                    mode="wt",
-                ) as outfile:
-                    outfile.write(histogram.serialize_truncated())
-            else:
-                # A sidecar from an earlier build whose histogram has since
-                # shrunk below the limit (or stopped being categorical)
-                # would otherwise be served as current by truncated= loads.
-                drop_stale_histogram_file(resource, sidecar_filename)
-            image_filename = score.get_histogram_image_filename(score_id)
-            if isinstance(histogram, NullHistogram):
-                # Nullified while building: the null histogram is recorded
-                # with its reason, but an image drawn by an earlier build
-                # would show values the statistics no longer have.
-                drop_stale_histogram_file(resource, image_filename)
-            else:
-                score_def = score.score_definitions[score_id]
-                plot_histogram(
-                    resource,
-                    image_filename,
-                    histogram,
-                    score_id,
-                    score_def.small_values_desc,
-                    score_def.large_values_desc,
-                )
-        for score_id in score.score_definitions.keys() - histograms.keys():
-            # A score the build dropped -- its definition resolves to a
-            # null histogram config -- writes nothing, so an earlier
-            # build's files would be served as current.
-            hist_filename = score.get_histogram_filename(score_id)
-            for filename in (
-                hist_filename,
-                truncated_histogram_filename(hist_filename),
-                score.get_histogram_image_filename(score_id),
-            ):
-                drop_stale_histogram_file(resource, filename)
-        _drop_orphaned_histogram_files(resource, score)
+                outfile.write(histogram.serialize_truncated())
+        else:
+            # A sidecar from an earlier build whose histogram has since
+            # shrunk below the limit (or stopped being categorical)
+            # would otherwise be served as current by truncated= loads.
+            drop_stale_histogram_file(resource, sidecar_filename)
+        image_filename = score.get_histogram_image_filename(score_id)
+        if isinstance(histogram, NullHistogram):
+            # Nullified while building: the null histogram is recorded
+            # with its reason, but an image drawn by an earlier build
+            # would show values the statistics no longer have.
+            drop_stale_histogram_file(resource, image_filename)
+        else:
+            score_def = score.score_definitions[score_id]
+            plot_histogram(
+                resource,
+                image_filename,
+                histogram,
+                score_id,
+                score_def.small_values_desc,
+                score_def.large_values_desc,
+            )
+    for score_id in score.score_definitions.keys() - histograms.keys():
+        # A score the build dropped -- its definition resolves to a
+        # null histogram config -- writes nothing, so an earlier
+        # build's files would be served as current.
+        hist_filename = score.get_histogram_filename(score_id)
+        for filename in (
+            hist_filename,
+            truncated_histogram_filename(hist_filename),
+            score.get_histogram_image_filename(score_id),
+        ):
+            drop_stale_histogram_file(resource, filename)
+    _drop_orphaned_histogram_files(resource, score)
 
 
 #: Every name a score-histogram file takes, with ``{}`` for the score id:
