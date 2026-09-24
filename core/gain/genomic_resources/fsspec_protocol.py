@@ -2248,8 +2248,24 @@ class FsspecReadWriteProtocol(
         return self._stat_filepath(filepath).change_token
 
     def _get_filepath_timestamp(self, filepath: str) -> float:
+        """The modification time of a path, read the same way every time.
+
+        On s3 it is always a HEAD, never the listing cache. MinIO reports
+        ``LastModified`` to the whole second on a HEAD and to the
+        millisecond in a listing, and ``modified()`` answers out of
+        whichever last filled the cache -- so without this the time a
+        state records depends on whether something listed the directory
+        first (gain#1664). The HEAD is the coarser of the two, which is
+        harmless where it is consulted at all: every s3 object has an
+        ETag, and the change token decides before the timestamp does.
+        See ADR 0022.
+        """
         try:
-            modification = self.filesystem.modified(filepath)
+            if self.scheme == "s3":
+                modification = self.filesystem.modified(
+                    filepath, refresh=True)
+            else:
+                modification = self.filesystem.modified(filepath)
             modification = modification.replace(tzinfo=datetime.UTC)
             return cast(float, round(modification.timestamp(), 2))
         except NotImplementedError:

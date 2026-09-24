@@ -150,12 +150,10 @@ def test_a_freshly_published_s3_repository_does_not_look_stale(
     meant to read.
 
     Read back the way a test reads it -- enumerate, then look -- with no
-    cache handling of its own, because that is what decides the answer
-    here.  ``modified()`` is served from whatever call last filled the
-    s3fs listing cache, and MinIO reports ``LastModified`` to the
-    millisecond on ``list_objects_v2`` where ``head_object`` reports
-    whole seconds.  A test that dropped the cache first would read a HEAD,
-    match whatever the population recorded, and never notice.
+    cache handling of its own.  This does not guard the listing-versus-HEAD
+    timestamp split: the population leaves the listing cache empty, so
+    nothing here lists before the read.  ``test_fsspec_protocol_timestamp``
+    is that guard (gain#1664).
     """
     # Given a freshly published s3 repository...
     proto = s3_test_protocol()
@@ -348,10 +346,10 @@ def test_classify_does_not_re_hash_a_listed_repository(
     ``modified()`` is answered from whichever call last filled the s3fs
     listing cache, and MinIO reports ``LastModified`` to the millisecond
     on ``list_objects_v2`` where ``head_object`` reports whole seconds.
-    So merely enumerating the bucket changes the answer for every object,
-    and a state recorded against the HEAD value then reads as drifted --
-    which costs a full re-read of the file to re-hash it, and a rewrite of
-    a state that was already correct (gain#881).
+    So merely enumerating the bucket used to change the answer for every
+    object, and a state recorded against the HEAD value then read as
+    drifted -- which cost a full re-read of the file to re-hash it, and a
+    rewrite of a state that was already correct (gain#881, gain#1664).
 
     Nothing about the repository has changed between the publish and the
     sweep, so the sweep must read no content and write nothing at all.

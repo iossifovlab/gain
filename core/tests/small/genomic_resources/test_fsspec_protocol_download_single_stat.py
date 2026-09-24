@@ -79,12 +79,10 @@ def test_a_downloaded_state_says_what_the_accessors_would_have_said(
         a_source_resource(content_fixture), dest_proto)
 
     # Read every field back from the store rather than from a listing
-    # left over from the copy. On s3 the modification time is reported to
-    # the whole second by ``head_object`` and to the millisecond by
-    # ``list_objects_v2`` -- the split ``test_fsspec_protocol_change_token``
-    # opens on -- so which of the two answered decides the value, and
-    # comparing across the two compares s3fs's caching rather than these
-    # fields. That caching is out of scope here.
+    # left over from the copy. The modification time no longer depends on
+    # it -- on s3 it is always a ``head_object`` (gain#1664) -- but the
+    # size and token are read cache-first, and s3fs's caching is out of
+    # scope here.
     dest_proto.filesystem.invalidate_cache()
 
     for name in names:

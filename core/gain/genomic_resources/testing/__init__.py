@@ -774,18 +774,11 @@ def _bulk_populate_genomic_resources(
     bytes, they are already on local disk, and the copy has verified each
     against the manifest it came from.  So no object is read back.
 
-    The tail matters as much as the transfer.  A file-by-file copy leaves
-    the destination with its resource memo WARM (``build_content_file``
-    enumerates) and the s3fs listing cache EMPTY, and that combination is
-    what keeps a freshly published repository from looking stale: the
-    caller's first enumeration is answered from the memo without listing
-    s3, so ``modified()`` falls through to a ``head_object``, which is
-    what the states recorded.  Leave the memo cold instead and the first
-    enumeration lists, ``list_objects_v2`` fills the cache with
-    ``LastModified`` values MinIO reports to the millisecond where the
-    HEAD reports whole seconds, and ``classify_resource_file`` then finds
-    every file drifted and rewrites its state.  So this ends the way the
-    file-by-file copy ends: memo dropped, rebuilt, listing cache cleared.
+    It ends the way a file-by-file copy ends -- resource memo WARM
+    (``build_content_file`` enumerates), s3fs listing cache EMPTY -- so
+    both population routes hand the caller the same state.  That tail
+    once also kept the recorded timestamps from reading as drifted; since
+    gain#1664 they agree whichever call came first.
     """
     filesystem = dest_proto.filesystem
     dest_url = dest_proto.url.rstrip("/")

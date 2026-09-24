@@ -117,3 +117,46 @@ everywhere, and the change token is the only thing on offer that closes it.
 - `ResourceFileState` is an `order=True` dataclass and the new field is
   nullable, so ordering two states that differ only in whether a token is
   present would raise `TypeError`. No caller sorts them today.
+
+## Amendment — gain#1664: on s3 the timestamp is always read with a HEAD
+
+The token closed the drift only where it decides. The timestamp a state
+records was still whichever of the two MinIO values s3fs happened to hold:
+a manifest build that rebuilt a state after its scan had listed the
+directory recorded the listing's `…894.3`, and the same unchanged file read
+a moment later with a HEAD reported `…894.0`. Size, md5 and token agreed.
+Nothing misbehaved on s3, because the token answered first, but a recorded
+field that its own accessor contradicts is a trap for every later reader of
+it — the test that found this had to stop comparing timestamps to pass.
+
+**Decision.** On an `s3` protocol, `get_resource_file_timestamp` always
+bypasses the s3fs listing cache (`modified(path, refresh=True)`), so every
+timestamp, recorded or compared, comes from a HEAD. Other schemes are
+unchanged.
+
+**Why this does not contradict the decision above.** "Reading consistently
+from `head_object` fails" was written about the timestamp as the *only*
+signal. Since this ADR it is not: every s3 object carries an ETag, and where
+a state has recorded one the timestamp is never consulted. It is now read
+only for
+
+- a state written before change tokens existed — it falls back to the
+  timestamp once, reads as changed if it recorded a listing value, and is
+  rebuilt with a token, after which the timestamp no longer matters; and
+- an s3-compatible store that reports no ETag. There, a same-size rewrite
+  inside one second is now invisible even when a listing would have caught
+  it. That is the blind spot recorded under *What this does not fix*,
+  accepted here in exchange for a timestamp that means one thing. No such
+  store hosts a GRR today.
+
+**Cost.** A timestamp read that used to be answered from a warm listing is
+now a HEAD. The manifest scan reads the timestamp in two places: when it
+rebuilds a state, which it does by hashing the whole file, so the extra
+request sits beside a full read of the object; and when it judges a
+recorded state that carries no token — the two cases listed above, one of
+which rebuilds itself away. A cache verdict that rebuilds a state likewise
+re-hashes the file. The one reader that is not a state is `grr_manage`'s
+histogram migration, which compares a sidecar's timestamp with its full
+histogram's: that is now two HEADs per full histogram, at whole-second
+resolution, where a warm listing could answer before — though it could
+also compare a listing value with a HEAD value, which was worse.
