@@ -182,7 +182,8 @@ class ChromosomeStatistic(Statistic):
         self._add_nucleotide(current)
         self._add_nucleotide_tuple(prev, current)
 
-    def merge(self, other: Statistic) -> None:
+    def merge(self, other: ChromosomeStatistic) -> None:
+        """Add ``other``'s nucleotide and pair counts into this one."""
         assert isinstance(other, ChromosomeStatistic)
 
         local_keys = set(self.nucleotide_counts.keys())
@@ -307,9 +308,6 @@ class GenomeStatistic(Statistic):
             total_nucleotide_counts, total_nucs)
         self.bi_nucleotide_distribution = _distribution(
             total_pair_counts, total_pairs)
-
-    def merge(self, other: Statistic) -> None:  # ruff: ignore[unused-method-argument]
-        return
 
     def serialize(self) -> str:
         return yaml.dump({

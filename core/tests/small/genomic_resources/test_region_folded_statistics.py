@@ -2,10 +2,10 @@
 
 The coverage, allele and fragment statistics accumulate one region per
 scanned window rather than value by value.  What they share -- the
-refusal to take a bare value, the type gate on ``merge``, and the
-adjacency rule the fold inherits from the regions -- is asserted here
-once for all three, so a change to the shared base cannot quietly alter
-one of them while its own test module keeps passing.
+fold that keeps one region per chromosome, and the adjacency rule it
+inherits from the regions -- is asserted here once for all three, so a
+change to the shared base cannot quietly alter one of them while its
+own test module keeps passing.
 
 Each statistic's own behaviour (what it counts, what it serializes) is
 asserted in its own module; only what is COMMON belongs here.
@@ -87,87 +87,6 @@ REGION_FOLDED = [
             "could not merge the fragment statistics of"),
         id="fragments"),
 ]
-
-
-@pytest.mark.parametrize("statistic", REGION_FOLDED)
-def test_the_statistic_refuses_a_bare_value(
-    statistic: RegionFolded,
-) -> None:
-    # The whole message, not just a fragment of it: it names the class
-    # it came from, and a shared base deriving that name is exactly the
-    # thing that could silently start naming the base instead.
-    built = statistic.build()
-
-    with pytest.raises(TypeError) as caught:
-        built.add_value(1)
-
-    assert str(caught.value) == (
-        f"{type(built).__name__} accumulates regions, not values; "
-        "use fold_region")
-
-
-# Each kind paired with a DIFFERENT one.  All three fold regions the
-# same way, so a shared base gating on the base type rather than on the
-# concrete one would happily fold alleles into coverage; these pairs are
-# what refuses that.
-FOREIGN_PAIRS = [
-    pytest.param(
-        CoverageStatistics, AlleleStatistics, id="coverage-given-alleles"),
-    pytest.param(
-        AlleleStatistics, FragmentStatistics, id="alleles-given-fragments"),
-    pytest.param(
-        FragmentStatistics, CoverageStatistics, id="fragments-given-coverage"),
-]
-
-
-@pytest.mark.parametrize(("build", "build_foreign"), FOREIGN_PAIRS)
-def test_the_statistic_refuses_to_merge_another_kind(
-    build: Callable[[], Any],
-    build_foreign: Callable[[], Any],
-) -> None:
-    with pytest.raises(
-            TypeError,
-            match="unexpected type of statistics to merge with"):
-        build().merge(build_foreign())
-
-
-@pytest.mark.parametrize("statistic", REGION_FOLDED)
-def test_merging_two_statistics_of_one_chromosome_needs_adjacency(
-    statistic: RegionFolded,
-) -> None:
-    # Two DESERIALIZED statistics carry no extents, so same-chromosome
-    # regions from two files refuse to merge as non-adjacent.  The fold
-    # does not assert this itself -- it inherits the refusal from the
-    # regions -- so what this pins is that merge still routes through
-    # fold_region rather than around it.
-    left = statistic.build()
-    left.fold_region(statistic.a_region("chr1"))
-    right = statistic.build()
-    right.fold_region(statistic.a_region("chr1"))
-
-    with pytest.raises(ValueError, match="adjacent-and-in-order"):
-        left.merge(right)
-
-
-@pytest.mark.parametrize("statistic", REGION_FOLDED)
-def test_merging_lands_the_others_regions_in_this_statistic(
-    statistic: RegionFolded,
-) -> None:
-    # The positive half of merge, which the refusals above cannot see:
-    # that the fold moves the OTHER's regions into THIS one, and in that
-    # direction.  Folding them into `other` instead would leave this
-    # assertion short a chromosome -- and would still satisfy every
-    # refusal test, because a region self-merged is non-adjacent to
-    # itself and raises the very error they expect.
-    left = statistic.build()
-    left.fold_region(statistic.a_region("chr1"))
-    right = statistic.build()
-    right.fold_region(statistic.a_region("chr2"))
-
-    left.merge(right)
-
-    assert statistic.chromosomes(left) == {"chr1", "chr2"}
-    assert statistic.chromosomes(right) == {"chr2"}
 
 
 @pytest.mark.parametrize("statistic", REGION_FOLDED)

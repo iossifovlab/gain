@@ -376,7 +376,7 @@ class NumberHistogram(Statistic):
         """
         return self.view_range[1]
 
-    def merge(self, other: Statistic) -> None:
+    def merge(self, other: NumberHistogram) -> None:
         """Merge two histograms."""
         assert isinstance(other, NumberHistogram)
         assert self.bins is not None
@@ -775,17 +775,23 @@ class NullHistogram(Statistic):
 
         A null histogram counts nothing by design, so that a statistics
         build can feed every score the same way without first asking
-        whether this one has a histogram.
+        whether this one has a histogram.  The region scan relies on it:
+        a score whose histogram refuses a value is nullified in place,
+        and the region's remaining records are still handed to it.
         """
         # pylint: disable=unused-argument
         return
 
-    def merge(self, other: Any) -> None:  # ruff: ignore[unused-method-argument]
+    def merge(
+        self, other: Histogram,  # ruff: ignore[unused-method-argument]
+    ) -> None:
         """Do nothing: there are no counts to fold together.
 
-        Merging is a no-op rather than an error so that a parallel build
-        can reduce its partial results uniformly, null histograms included.
+        Present so that ``merge`` can be called on any
+        :data:`Histogram`.  The region merge sets a null histogram
+        aside before merging, so this does not run there.
         """
+        # pylint: disable=unused-argument
         return
 
     def to_dict(self) -> dict[str, Any]:
@@ -955,7 +961,7 @@ class CategoricalHistogram(Statistic):
                 f"for categorical histogram.",
             )
 
-    def merge(self, other: Statistic) -> None:
+    def merge(self, other: CategoricalHistogram) -> None:
         """Merge with other histogram."""
         assert isinstance(other, CategoricalHistogram)
         assert self.config == other.config
@@ -964,8 +970,7 @@ class CategoricalHistogram(Statistic):
                 "Can not merge a truncated categorical histogram sidecar; "
                 "merge needs the full histogram values.",
             )
-        # pylint: disable=protected-access
-        self._counter += other._counter  # ruff: ignore[private-member-access]
+        self._counter += other._counter
         if not self.enforce_type and \
                 len(self._counter) > CategoricalHistogram.UNIQUE_VALUES_LIMIT:
             raise HistogramError(
