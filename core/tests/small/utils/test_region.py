@@ -146,6 +146,11 @@ def test_split_into_regions_zero_region_length() -> None:
     assert split_into_regions("1", 50, 0) == [Region("1")]
 
 
+def test_split_into_regions_refuses_a_negative_region_length() -> None:
+    with pytest.raises(ValueError, match="-1"):
+        split_into_regions("1", 50, -1)
+
+
 @pytest.fixture
 def sample_tabix(tmp_path: pathlib.Path) -> pysam.TabixFile:
     filepath = tmp_path / "data.txt.gz"

@@ -608,6 +608,18 @@ def test_reference_genome_split_into_regions(
         ]
 
 
+def test_reference_genome_split_into_regions_refuses_a_negative_size(
+    genome_fixture: pathlib.Path,
+) -> None:
+    res = build_filesystem_test_resource(genome_fixture)
+    reference_genome = build_reference_genome_from_resource(res)
+
+    with reference_genome.open(), \
+            pytest.raises(ValueError, match="-1"):
+        # Refused at the call, before anything iterates the regions.
+        reference_genome.split_into_regions(-1)
+
+
 @pytest.fixture
 def custom_index_bgz_genome(tmp_path: pathlib.Path) -> GenomicResource:
     """A bgzipped genome whose only .fai is the configured ``custom.fai``."""

@@ -45,6 +45,7 @@ from gain.task_graph.graph import Task, TaskDesc, TaskGraph
 from gain.utils.log_safety import escape_unsafe_characters
 from gain.utils.regions import (
     Region,
+    check_region_size,
     split_into_regions,
 )
 
@@ -130,13 +131,16 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         region_size: int = DEFAULT_STATISTICS_REGION_SIZE,
         grr: GenomicResourceRepo | None = None,
     ) -> list[TaskDesc]:
+        # Refused before the chrom lengths below are written.
+        check_region_size(region_size)
+
         # One resolver pass per build: its answers are stored for the
         # readers (gain#1576) AND split the regions below.  Written here,
         # in the controller, rather than as a task: the file is
         # independent of the histograms and under its own gate.
         stored = self._store_chrom_lengths(grr)
 
-        if region_size <= 0:
+        if region_size == 0:
             # No regions; compute histograms directly.
             return [
                 TaskGraph.make_task(

@@ -382,8 +382,6 @@ class ReferenceGenomeImplementation(
     ) -> list[TaskDesc]:
         tasks = []
         chrom_save_tasks = []
-        if region_size <= 0:
-            region_size = DEFAULT_STATISTICS_REGION_SIZE
 
         with self.reference_genome.open():
             for chrom in self.reference_genome.chromosomes:
