@@ -844,20 +844,15 @@ class BaseVerificationCode(models.Model):
 
     @classmethod
     def create(cls, user: User) -> BaseVerificationCode:
-        """Create an email verification code."""
-        try:
-            # pylint: disable=no-member
-            verif_code = cls.objects.get(user=user)  # type: ignore
-        except models.ObjectDoesNotExist:
-            # pylint: disable=no-member
-            verif_code = cls.objects.create(  # type: ignore
-                user=user, path=uuid.uuid4())
-            return cast(BaseVerificationCode, verif_code)
+        """Issue a fresh code for a user, deleting any code they had.
 
-        if verif_code.validate is not True:
-            verif_code.delete()
-            return cls.create(user)
-
+        The new code has its own path and creation time, so a previously
+        mailed code stops working and the validity window starts over.
+        """
+        # pylint: disable=no-member
+        cls.objects.filter(user=user).delete()  # type: ignore
+        verif_code = cls.objects.create(  # type: ignore
+            user=user, path=uuid.uuid4())
         return cast(BaseVerificationCode, verif_code)
 
 
