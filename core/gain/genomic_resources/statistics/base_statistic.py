@@ -63,11 +63,6 @@ class Statistic:
         self.statistic_id = statistic_id
         self.description = description
 
-    @abstractmethod
-    def add_value(self, value: Any) -> None:
-        """Add a value to the statistic."""
-        raise NotImplementedError
-
     def finish(self) -> None:
         """
         Perform final calculations for the statistic.
@@ -80,11 +75,6 @@ class Statistic:
         deserialization.
         """
         return
-
-    @abstractmethod
-    def merge(self, other: Statistic) -> None:
-        """Merge the values from another statistic in place."""
-        raise NotImplementedError
 
     @abstractmethod
     def serialize(self) -> str:
@@ -163,40 +153,6 @@ class RegionFoldedStatistic[R: MergeableRegion](Statistic):
             self._regions[region.chrom] = region
         else:
             held.merge(region)
-
-    def add_value(self, value: Any) -> None:  # ruff: ignore[unused-method-argument]
-        # The suppression is load-bearing: ARG002 exempts a stub body
-        # (`raise NotImplementedError`) but not one raising a message.
-        # Named off `type(self)` so each subclass refuses in its own.
-        raise TypeError(
-            f"{type(self).__name__} accumulates regions, not values; "
-            "use fold_region")
-
-    def merge(self, other: Statistic) -> None:
-        """Fold another statistics object's regions into this one.
-
-        For statistics holding LIVE regions (the scan's own): two
-        deserialized statistics carry no extents, so same-chromosome
-        regions from two files refuse to merge as non-adjacent.
-
-        Gated on the CONCRETE type rather than on this base: all three
-        kinds fold regions identically, so a base-type gate would
-        happily fold allele counts into a coverage statistic.
-        ``type(self)`` makes that gate asymmetric where the three
-        named-class checks it replaced were symmetric, which nothing
-        observes: none of the three is subclassed.
-        """
-        if not isinstance(other, type(self)):
-            raise TypeError("unexpected type of statistics to merge with")
-        self._fold_all(other)
-
-    def _fold_all(self, other: RegionFoldedStatistic[R]) -> None:
-        # Split out so the loop reads `_regions` off a value annotated
-        # as this class, not as `Statistic` -- same-class access, which
-        # needs no suppression.  `merge` cannot say so in its own
-        # signature: that is fixed by the abstract method it implements.
-        for region in other._regions.values():
-            self.fold_region(region)
 
 
 def regions_in_genomic_order[R: ScannedRegion](

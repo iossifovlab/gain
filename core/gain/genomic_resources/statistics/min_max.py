@@ -67,7 +67,8 @@ class MinMaxValue(Statistic):
         self.min = min(value, self.min)
         self.max = max(value, self.max)
 
-    def merge(self, other: Statistic) -> None:
+    def merge(self, other: MinMaxValue) -> None:
+        """Widen this score's range in place to cover ``other``'s."""
         if not isinstance(other, MinMaxValue):
             raise TypeError("unexpected type of statistics to merge with")
         if self.score_id != other.score_id:
@@ -148,7 +149,7 @@ class NullMinMaxValue(MinMaxValue):
         return
 
     def merge(
-        self, other: Statistic,  # ruff: ignore[unused-method-argument]
+        self, other: MinMaxValue,  # ruff: ignore[unused-method-argument]
     ) -> None:
         # pylint: disable=unused-argument
         # Stays refused: a region that folded values cannot un-refuse a score

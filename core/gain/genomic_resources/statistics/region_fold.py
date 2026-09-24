@@ -22,8 +22,8 @@ from gain.genomic_resources.statistics.base_statistic import (
 # mypy 1.15 rejects it (`Name "R" is not defined`).  `Any` states that
 # looseness instead of hiding it behind a bare `RegionFoldedStatistic`.
 # Handing coverage regions to an `AlleleStatistics` therefore type
-# checks; `RegionFoldedStatistic.merge`'s concrete-type gate is what
-# refuses it at runtime.
+# checks; each kind's `merge_region_*` wrapper is what pairs its own
+# regions with its own statistic.
 def merge_regions[S: RegionFoldedStatistic[Any]](
     resource_id: str,
     regions: Iterable[MergeableRegion | None],
