@@ -1259,12 +1259,11 @@ def build_histogram_config(
 
 
 def build_default_histogram_conf(
-    value_type: str, **kwargs: Any,
+    value_type: str,
 ) -> NumberHistogramConfig | CategoricalHistogramConfig | NullHistogramConfig:
     """Build default histogram config for given value type."""
     if value_type in ["int", "float"]:
-        min_max = kwargs.get("min_max")
-        return NumberHistogramConfig.default_config(min_max)
+        return NumberHistogramConfig.default_config(None)
 
     if value_type == "str":
         return CategoricalHistogramConfig.default_config()

@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import fnmatch
 from abc import abstractmethod
-from typing import Any
 
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
@@ -34,9 +33,11 @@ from gain.genomic_resources.histogram import (
 from gain.genomic_resources.repository import (
     GR_INDEX_SCORE_FIELDS,
     GenomicResource,
+    GenomicResourceRepo,
     ReadWriteRepositoryProtocol,
 )
 from gain.genomic_resources.resource_implementation import (
+    DEFAULT_STATISTICS_REGION_SIZE,
     GenomicResourceImplementation,
     InfoImplementationMixin,
 )
@@ -59,7 +60,9 @@ class ScoreImplementationBase(
 
     @abstractmethod
     def create_statistics_build_tasks(
-        self, **kwargs: Any,
+        self, *,
+        region_size: int = DEFAULT_STATISTICS_REGION_SIZE,
+        grr: GenomicResourceRepo | None = None,
     ) -> list[TaskDesc]:
         """Create tasks for calculating resource statistics for task graph.
 

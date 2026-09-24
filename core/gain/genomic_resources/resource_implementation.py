@@ -38,6 +38,10 @@ from .statistics.base_statistic import StoredStatistic
 
 logger = logging.getLogger(__name__)
 
+# The region a statistics build splits a resource into when its caller
+# names none: larger than any contig, so one region per contig.
+DEFAULT_STATISTICS_REGION_SIZE = 3_000_000_000
+
 
 # Names FTS5 will not accept as a column of the index table: it reserves
 # `rank` and `rowid`, and every FTS5 table has a hidden column named after
@@ -336,7 +340,9 @@ class GenomicResourceImplementation(ABC):
 
     @abstractmethod
     def create_statistics_build_tasks(
-        self, **kwargs: Any,
+        self, *,
+        region_size: int = DEFAULT_STATISTICS_REGION_SIZE,
+        grr: GenomicResourceRepo | None = None,
     ) -> list[TaskDesc]:
         """Create tasks for calculating resource statistics for task graph."""
         raise NotImplementedError

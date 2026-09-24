@@ -69,6 +69,7 @@ from gain.genomic_resources.repository_factory import (
 )
 from gain.genomic_resources.resource_errors import HistogramError
 from gain.genomic_resources.resource_implementation import (
+    DEFAULT_STATISTICS_REGION_SIZE,
     DerivedFilesState,
     GenomicResourceImplementation,
     IndexColumn,
@@ -212,7 +213,7 @@ def _add_dvc_parameters_group(parser: argparse.ArgumentParser) -> None:
 def _add_hist_parameters_group(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group(title="Statistics")
     group.add_argument(
-        "--region-size", type=int, default=3_000_000_000,
+        "--region-size", type=int, default=DEFAULT_STATISTICS_REGION_SIZE,
         help="Region size to use for splitting statistics calculation into "
         "tasks")
 

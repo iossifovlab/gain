@@ -34,7 +34,11 @@ re-rendered when its inputs changed.
 returns the task-graph tasks that compute this resource's statistics, and
 :meth:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.calc_statistics_hash`
 digests the inputs those tasks read — it is what lets ``grr_manage`` skip a
-resource whose statistics are already current.
+resource whose statistics are already current. ``grr_manage`` calls every
+kind's ``create_statistics_build_tasks`` with the same two keyword-only
+arguments, ``region_size`` and ``grr``, so an implementation declares both
+even when it ignores them — and declares nothing else, so a misspelled
+keyword is a ``TypeError`` rather than a silently applied default.
 
 The concrete
 :attr:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.files`
@@ -72,9 +76,12 @@ A third-party package declares its own type the same way, in its own
 .. code-block:: python
 
     from gain.genomic_resources import GenomicResource
+    from gain.genomic_resources.repository import GenomicResourceRepo
     from gain.genomic_resources.resource_implementation import (
+        DEFAULT_STATISTICS_REGION_SIZE,
         GenomicResourceImplementation,
     )
+    from gain.task_graph.graph import TaskDesc
 
 
     class MyResourceImplementation(GenomicResourceImplementation):
@@ -99,7 +106,11 @@ A third-party package declares its own type the same way, in its own
         def calc_statistics_hash(self) -> bytes:
             ...
 
-        def create_statistics_build_tasks(self, **kwargs):
+        def create_statistics_build_tasks(
+            self, *,
+            region_size: int = DEFAULT_STATISTICS_REGION_SIZE,
+            grr: GenomicResourceRepo | None = None,
+        ) -> list[TaskDesc]:
             ...
 
 Once the package is installed, ``grr_manage`` and the repository browser

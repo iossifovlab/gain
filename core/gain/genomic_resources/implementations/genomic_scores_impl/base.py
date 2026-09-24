@@ -29,6 +29,7 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
 )
 from gain.genomic_resources.resource_implementation import (
+    DEFAULT_STATISTICS_REGION_SIZE,
     DerivedFilesState,
     InfoImplementationMixin,
 )
@@ -125,11 +126,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             self._render_repo = None
 
     def create_statistics_build_tasks(
-        self, **kwargs: Any,
+        self, *,
+        region_size: int = DEFAULT_STATISTICS_REGION_SIZE,
+        grr: GenomicResourceRepo | None = None,
     ) -> list[TaskDesc]:
-        region_size = kwargs.get("region_size", 3_000_000_000)
-        grr = kwargs.get("grr")
-
         # One resolver pass per build: its answers are stored for the
         # readers (gain#1576) AND split the regions below.  Written here,
         # in the controller, rather than as a task: the file is

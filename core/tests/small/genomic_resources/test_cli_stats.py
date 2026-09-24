@@ -19,12 +19,14 @@ from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_SQLITE_META_FILE_NAME,
     GenomicResource,
+    GenomicResourceRepo,
 )
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
 from gain.genomic_resources.resource_errors import HistogramError
 from gain.genomic_resources.resource_implementation import (
+    DEFAULT_STATISTICS_REGION_SIZE,
     GenomicResourceImplementation,
     ResourceStatistics,
 )
@@ -58,7 +60,9 @@ class SomeTestImplementation(GenomicResourceImplementation):
         return b"somehash"
 
     def create_statistics_build_tasks(
-        self, **kwargs: Any,
+        self, *,
+        region_size: int = DEFAULT_STATISTICS_REGION_SIZE,
+        grr: GenomicResourceRepo | None = None,
     ) -> list[TaskDesc]:
         """Add tasks for calculating resource statistics to a task graph."""
         task = TaskGraph.make_task(

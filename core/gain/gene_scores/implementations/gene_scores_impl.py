@@ -20,8 +20,10 @@ from gain.genomic_resources.histogram import (
     NumberHistogram,
     NumberHistogramConfig,
 )
+from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.resource_errors import HistogramError
 from gain.genomic_resources.resource_implementation import (
+    DEFAULT_STATISTICS_REGION_SIZE,
     InfoImplementationMixin,
 )
 from gain.genomic_resources.score_implementation import (
@@ -56,8 +58,9 @@ class GeneScoreImplementation(ScoreImplementationBase):
         return InfoImplementationMixin.get_statistics_info(self)
 
     def create_statistics_build_tasks(
-        self,
-        **kwargs: Any,  # ruff: ignore[unused-method-argument]
+        self, *,
+        region_size: int = DEFAULT_STATISTICS_REGION_SIZE,  # ruff: ignore[unused-method-argument]
+        grr: GenomicResourceRepo | None = None,  # ruff: ignore[unused-method-argument]
     ) -> list[TaskDesc]:
         create_task = TaskGraph.make_task(
             f"{self.resource.resource_id}_build_histograms",
