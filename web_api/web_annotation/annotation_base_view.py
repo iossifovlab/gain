@@ -44,6 +44,7 @@ from web_annotation.pipeline_cache import (
     PipelineNotCached,
     ThreadSafePipeline,
 )
+from web_annotation.utils import invalid_content_type_response
 
 logger = logging.getLogger(__name__)
 
@@ -602,10 +603,7 @@ class AnnotationMixin:
                     status=views.status.HTTP_403_FORBIDDEN,
                 )
         if not request.content_type.startswith("multipart/form-data"):
-            return Response(
-                {"reason": "Invalid content type!"},
-                status=views.status.HTTP_400_BAD_REQUEST,
-            )
+            return invalid_content_type_response()
 
         assert request.data is not None
         assert isinstance(request.data, QueryDict)

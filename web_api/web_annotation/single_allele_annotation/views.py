@@ -42,6 +42,7 @@ from web_annotation.serializers import AlleleSerializer
 from web_annotation.single_allele_annotation.throttling import (
     AnnotateUserRateThrottle,
 )
+from web_annotation.utils import non_object_body_response
 
 
 def resource_index_url(resource: GenomicResource) -> str:
@@ -179,7 +180,8 @@ class SingleAnnotation(AsyncAnnotationBaseView):
         The GRR build wait and ``annotate`` run off the shared thread; ORM /
         auth / GRR-metadata access stays on it via ``sync_to_async`` (#163).
         """
-        assert isinstance(request.data, dict)
+        if not isinstance(request.data, dict):
+            return non_object_body_response(key="reason")
         if "annotatable" not in request.data:
             return Response(
                 {"reason": "Annotatable not provided!"},

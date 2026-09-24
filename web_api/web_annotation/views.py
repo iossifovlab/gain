@@ -50,6 +50,7 @@ from web_annotation.utils import (
     check_request_verification_path,
     convert_size,
     deauthenticate,
+    non_object_body_response,
     reset_password,
     verify_user,
 )
@@ -161,7 +162,8 @@ class Login(FirstRefusalThrottledAPIView):
 
     def post(self, request: Request) -> Response:
         """Log in a user."""
-        assert isinstance(request.data, dict)
+        if not isinstance(request.data, dict):
+            return non_object_body_response()
         if "email" not in request.data:
             return Response(
                 {"error": "An email is required to log in"},
@@ -204,7 +206,8 @@ class Registration(views.APIView):
 
     def post(self, request: Request) -> Response:
         """Register a new user."""
-        assert isinstance(request.data, dict)
+        if not isinstance(request.data, dict):
+            return non_object_body_response()
         if "email" not in request.data:
             return Response(
                 {"error": "An email is required to register"},

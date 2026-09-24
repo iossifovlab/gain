@@ -12,7 +12,9 @@ from django.db.models import ObjectDoesNotExist
 from django.http import HttpRequest
 from django.utils.translation import gettext_lazy
 from django.views.decorators.debug import sensitive_variables
+from rest_framework import status
 from rest_framework.request import Request
+from rest_framework.response import Response
 from rest_framework.settings import api_settings
 from rest_framework.throttling import BaseThrottle
 
@@ -381,3 +383,29 @@ def validate_vcf(
         capture_output=True,
     )
     return proc.stdout.strip() == "valid"
+
+
+def non_object_body_response(key: str = "error") -> Response:
+    """Refuse a request body that did not parse to a JSON object.
+
+    A syntactically valid JSON array or scalar parses fine, so a view that
+    reads ``request.data`` as a mapping must check its type rather than
+    ``assert`` it -- the assert was an unhandled 500 (iossifovlab/gain#1650).
+    ``key`` is the error key the calling view uses for its other 400s.
+    """
+    return Response(
+        {key: "Request body must be a JSON object"},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+def invalid_content_type_response() -> Response:
+    """Refuse a request body that is not the form data a view reads.
+
+    A JSON body parses to a ``dict``, not the ``QueryDict`` a multipart view
+    reads; asserting the type was an unhandled 500 (iossifovlab/gain#1650).
+    """
+    return Response(
+        {"reason": "Invalid content type!"},
+        status=status.HTTP_400_BAD_REQUEST,
+    )

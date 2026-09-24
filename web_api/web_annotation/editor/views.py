@@ -34,6 +34,7 @@ from web_annotation.annotation_base_view import (
 )
 from web_annotation.authentication import WebAnnotationAuthentication
 from web_annotation.pipeline_cache import ThreadSafePipeline
+from web_annotation.utils import non_object_body_response
 
 
 class _InvalidSearchTermError(Exception):
@@ -411,7 +412,8 @@ class AnnotatorConfig(EditorView):
     """View for annotator configuration templates."""
     def post(self, request: Request) -> Response:
         """POST method to get annotator config template."""
-        assert isinstance(request.data, dict)
+        if not isinstance(request.data, dict):
+            return non_object_body_response()
         data = {**request.data}
         if "annotator_type" not in data:
             return Response(
@@ -473,7 +475,8 @@ class AnnotatorAttributes(AsyncEditorView):
 
     async def post(self, request: Request) -> Response:
         """POST method to get annotator attributes."""
-        assert isinstance(request.data, dict)
+        if not isinstance(request.data, dict):
+            return non_object_body_response()
         data = dict(request.data)
         if "annotator_type" not in data:
             return Response(
@@ -666,7 +669,8 @@ class AnnotatorYAML(AsyncEditorView):
 
     async def post(self, request: Request) -> Response:
         """POST method to get annotator config in YAML format."""
-        assert isinstance(request.data, dict)
+        if not isinstance(request.data, dict):
+            return non_object_body_response()
         data = dict(request.data)
         if "annotator_type" not in data:
             return Response(
@@ -922,7 +926,8 @@ class AnnotatorAggregators(AsyncEditorView):
 
     async def post(self, request: Request) -> Response:
         """POST method to get valid aggregators per attribute source."""
-        assert isinstance(request.data, dict)
+        if not isinstance(request.data, dict):
+            return non_object_body_response()
         data = dict(request.data)
 
         if "annotator_type" not in data:
