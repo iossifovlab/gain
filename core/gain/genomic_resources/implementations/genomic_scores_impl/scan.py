@@ -36,7 +36,7 @@ from gain.genomic_resources.resource_errors import (
 )
 from gain.genomic_resources.score_def import ScoreValue
 from gain.genomic_resources.score_implementation import (
-    ScoreImplementationBase,
+    save_and_plot_histograms,
 )
 from gain.genomic_resources.statistics.alleles import (
     RegionAlleles,
@@ -1218,16 +1218,7 @@ def merge_histograms(
 def _save_histograms(
     resource: GenomicResource, merged_histograms: dict[str, Histogram],
 ) -> dict[str, Histogram]:
-    # The one reach past a private in this module, and the one
-    # thread still tying ``scan`` to the implementation class
-    # hierarchy -- its two siblings just above are plain module
-    # functions imported from the statistic's own module.
-    # ``_save_and_plot_histograms`` is a staticmethod touching no
-    # ``cls`` and is never overridden, so promoting it to a
-    # module-level function in ``score_implementation`` retires
-    # this suppression; that also edits ``gene_scores_impl``, its
-    # other caller, so it is gain#1036 rather than gain#1007.
-    ScoreImplementationBase._save_and_plot_histograms(  # ruff: ignore[private-member-access]
+    save_and_plot_histograms(
         resource, build_score_from_resource(resource),
         merged_histograms)
     return merged_histograms
