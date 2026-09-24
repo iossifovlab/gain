@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import asyncio
 import json
+import sys
 import textwrap
 import time
 from typing import TYPE_CHECKING
@@ -218,6 +219,70 @@ async def test_async_annotator_attributes_missing_pipeline_id_400() -> None:
     })
     assert response.status_code == 400, response.content
     assert "pipeline_id" in response.content.decode()
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("page", [
+    pytest.param("abc", id="string"),
+    pytest.param("1", id="numeric-string"),
+    pytest.param(1.5, id="float"),
+    pytest.param(None, id="null"),
+    # A Python `int` subclass once parsed, but not a page number.
+    pytest.param(True, id="bool"),
+    pytest.param(-1, id="negative"),
+    pytest.param(99999999999999999999, id="past-int64"),
+    # A valid index itself; it is the page's END that islice cannot address.
+    pytest.param(2**62, id="page-end-past-maxsize"),
+])
+async def test_async_annotator_attributes_malformed_page_400(
+    page: object,
+) -> None:
+    """A malformed ``page`` gets a 400 whose error names it and its value."""
+    client = AsyncClient()
+    response = await _post_json(client, ATTRIBUTES_POST_URL, {
+        "annotator_type": "position_score",
+        "resource_id": "scores/pos1",
+        "pipeline_id": "pipeline/test_pipeline",
+        "page": page,
+    })
+    assert response.status_code == 400, response.content
+    message = response.json()["error"]
+    assert "page" in message
+    assert json.dumps(page) in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_async_annotator_attributes_last_addressable_page_200() -> None:
+    """The last page whose slice ends within ``sys.maxsize`` is served."""
+    page = sys.maxsize // AnnotatorAttributes.ATTRIBUTE_PAGE_SIZE - 1
+    client = AsyncClient()
+    response = await _post_json(client, ATTRIBUTES_POST_URL, {
+        "annotator_type": "position_score",
+        "resource_id": "scores/pos1",
+        "pipeline_id": "pipeline/test_pipeline",
+        "page": page,
+    })
+    assert response.status_code == 200, response.content
+    assert response.json()["page"] == page
+    assert response.json()["attributes"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_async_annotator_attributes_bad_page_refused_before_pipeline(
+) -> None:
+    """A bad ``page`` gets its 400 before the pipeline lookup's 404."""
+    client = AsyncClient()
+    response = await _post_json(client, ATTRIBUTES_POST_URL, {
+        "annotator_type": "position_score",
+        "resource_id": "scores/pos1",
+        "pipeline_id": "no/such/pipeline/exists",
+        "page": -1,
+    })
+    assert response.status_code == 400, response.content
+    assert "page" in response.json()["error"]
 
 
 @pytest.mark.asyncio
