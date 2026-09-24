@@ -94,10 +94,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # tests/test_conda_deps.py renders environment.yml and dev-environment.yml
 # from the workspace pyprojects with scripts/conda_env.py and compares them
-# with the committed files (#1639, #1640). Copied after both syncs: none of
-# these files is an input to them.
+# with the committed files (#1639, #1640), and holds each rattler-build
+# recipe's run list to its pyproject (#1641; the core recipe arrives with
+# core/). Copied after both syncs: none of these files is an input to them.
 COPY environment.yml dev-environment.yml ./
 COPY web_api/pyproject.toml ./web_api/
+COPY demo_annotator/conda-recipe/recipe.yaml ./demo_annotator/conda-recipe/
+COPY vep_annotator/conda-recipe/recipe.yaml ./vep_annotator/conda-recipe/
+COPY spliceai_annotator/conda-recipe/recipe.yaml ./spliceai_annotator/conda-recipe/
 
 ENV PATH="/workspace/.venv/bin:$PATH"
 WORKDIR /workspace/core
