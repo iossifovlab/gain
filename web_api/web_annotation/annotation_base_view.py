@@ -45,7 +45,10 @@ from web_annotation.pipeline_cache import (
     PipelineNotCached,
     ThreadSafePipeline,
 )
-from web_annotation.utils import invalid_content_type_response
+from web_annotation.utils import (
+    invalid_content_type_response,
+    missing_upload_response,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -640,6 +643,9 @@ class AnnotationMixin:
                 status=views.status.HTTP_404_NOT_FOUND,
             )
 
+        if "data" not in request.FILES:
+            return missing_upload_response("data")
+
         return None
 
     def _basic_file_extension(self, file: UploadedFile, separator: str) -> str:
@@ -711,11 +717,6 @@ class AnnotationMixin:
 
         uploaded_file = request.FILES["data"]
         assert isinstance(uploaded_file, UploadedFile)
-        if uploaded_file is None:
-            return Response(
-                {"reason": "No file uploaded!"},
-                status=views.status.HTTP_400_BAD_REQUEST,
-            )
         if not self.check_valid_upload_size(uploaded_file, request.user):
             return Response(
                 status=views.status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)

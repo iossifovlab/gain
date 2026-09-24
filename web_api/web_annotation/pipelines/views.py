@@ -43,6 +43,7 @@ from web_annotation.pipeline_cache import (
 from web_annotation.pipelines.throttling import PipelineValidationRateThrottle
 from web_annotation.utils import (
     invalid_content_type_response,
+    missing_upload_response,
     non_object_body_response,
 )
 from web_annotation.validation_cache import ValidationResultCache
@@ -113,7 +114,9 @@ class UserPipeline(AnnotationBaseView):
             )
         return None
 
-    def post(self, request: Request) -> Response:
+    def post(  # pylint: disable=too-many-branches
+        self, request: Request,
+    ) -> Response:
         """Create or update user annotation pipeline"""
         if not isinstance(request.data, QueryDict):
             return invalid_content_type_response()
@@ -155,6 +158,9 @@ class UserPipeline(AnnotationBaseView):
                 {"reason": "Only authenticated users can create pipelines!"},
                 status=views.status.HTTP_401_UNAUTHORIZED,
             )
+
+        if "config" not in request.FILES:
+            return missing_upload_response("config")
 
         config_filename = f"{pipeline_name}.yaml"
 

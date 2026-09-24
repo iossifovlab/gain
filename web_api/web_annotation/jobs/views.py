@@ -47,6 +47,7 @@ from web_annotation.tasks import (
 from web_annotation.utils import (
     bytes_to_readable,
     invalid_content_type_response,
+    missing_upload_response,
     validate_vcf,
 )
 
@@ -531,13 +532,10 @@ class PreviewFileUpload(AnnotationBaseView):
             return invalid_content_type_response()
         assert isinstance(request.FILES, MultiValueDict)
 
+        if "data" not in request.FILES:
+            return missing_upload_response("data")
         file = request.FILES["data"]
         assert isinstance(file, UploadedFile)
-        if file is None:
-            return Response(
-                {"reason": "No preview file provided!"},
-                status=views.status.HTTP_400_BAD_REQUEST,
-            )
         if not self.check_valid_upload_size(file, request.user):
             return Response(
                 status=views.status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
