@@ -269,11 +269,10 @@ def build_region_aggregator(
     """Build a FRESH aggregator, naming the resource if it cannot.
 
     Fresh per call, not reused: an aggregator is a mutable accumulator
-    and explicitly not thread-safe (see
-    :class:`~gain.genomic_resources.aggregators.Aggregator`).  Reuse is
-    an annotator optimisation resting on being single-threaded; a score
-    may be read from several threads (the web api's thread pool), so
-    this cannot assume the same.
+    and explicitly not thread-safe, and every caller in gain builds one
+    per fold (see
+    :class:`~gain.genomic_resources.aggregators.Aggregator`).  A score
+    holds none between reads.
 
     ``Aggregator.build`` raises a bare ``KeyError('mediann')`` for an
     unknown name, saying nothing about which score asked for it.  The

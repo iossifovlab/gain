@@ -594,7 +594,7 @@ def test_a_query_list_given_as_an_iterator_is_remembered_whole(
     The memo keys on ``tuple(queries)``, which consumes an iterator; a
     resolver that then walked ``queries`` again would resolve nothing and
     remember that under the real key -- for every later caller of the
-    same list, on a score shared across threads.  The signature says
+    same list on that score.  The signature says
     ``Sequence``, but the read is public and the wrong answer is silent.
     """
     with fragments.open() as score:

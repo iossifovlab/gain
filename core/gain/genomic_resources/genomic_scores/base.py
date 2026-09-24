@@ -223,6 +223,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         table_loaded (bool): Flag indicating if the table is currently open
 
+    Threading:
+        Not safe for concurrent use.  Each factory call returns a fresh
+        instance its caller owns; a holder that shares one across threads
+        serialises every read, open() and close() itself (see close()).
+
     Key Methods:
         open(): Initialize the score resource for data access
         close(): Release resources and close the data table
@@ -401,13 +406,29 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """Close the underlying table and mark the score not open.
 
         :meth:`open` may be called again afterwards.
+
+        **Not safe to call while another thread reads the score.**  A
+        score has one owner: every factory in ``genomic_scores.builders``
+        returns a fresh instance, so closing it affects nobody else, and
+        no method of this class synchronises anything.  A holder that
+        shares one instance across threads must serialise reads,
+        :meth:`open` and :meth:`close` itself -- as gain-web-api's
+        ``ThreadSafePipeline`` does, behind one lock per pipeline.  An
+        unserialised reader that passed :meth:`is_open` can still find the
+        table released under it.  The in-memory scan and the bigWig fetch
+        refuse rather than return partial results when that happens,
+        which makes the failure loud; it does not prevent it.
         """
         self.table.close()
         self.table_loaded = False
         self._stored_chrom_lengths = None
 
     def is_open(self) -> bool:
-        """Whether :meth:`open` has run and :meth:`close` has not since."""
+        """Whether :meth:`open` has run and :meth:`close` has not since.
+
+        A snapshot for the score's owner, not a guard against another
+        thread's :meth:`close` -- see there.
+        """
         return self.table_loaded
 
     def open(self) -> Self:
@@ -424,23 +445,21 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
           False, so ``close()`` would not have been reached.  Raising first
           means there is nothing to leak.  The bigWig config validation sits
           here for exactly that reason.
-        * ``table_loaded = True`` is what makes this score look open to
-          everyone else: from that write on, another caller's open() takes the
-          is_open() early return above and reads ``_extract_value`` straight
-          away.  Routed last, that caller could catch the score
-          published-but-unrouted, and since the routing has no default at
-          all, that caller reads an AttributeError.  Scores are
-          shared across threads (the process-wide in-memory fragment-score
-          cache; gain-web-api's thread pool), so the window is reachable;
-          this ordering keeps the ROUTING out of it.  Pinned by
+        * ``table_loaded = True`` is what makes this score report itself
+          open: from that write on, a second open() takes the is_open()
+          early return above and its caller reads ``_extract_value``
+          straight away.
+          Routing first means a score that says it is open always has its
+          extractor -- the routing has no default at all, so the other
+          order would leave an AttributeError for anything that trusted
+          is_open() in between.  Pinned by
           test_the_score_is_routed_before_it_reports_itself_open.
 
-        It does not make open() as a whole safe to race, and does not claim to:
-        ``resolve_score_indices`` still runs after the score has published
-        itself open, so a caller that catches that window reads a score def
-        with no ``score_index`` yet.  That window is older than this ordering
-        and untouched by it -- open() is not synchronised, and making it so is
-        a separate change.
+        None of this makes open() safe to race: ``resolve_score_indices``
+        still runs after the score has published itself open.  A score is
+        not synchronised and does not claim to be -- a holder sharing one
+        across threads serialises open(), reads and close() itself (see
+        :meth:`close`).
         """
         if self.is_open():
             logger.info(
