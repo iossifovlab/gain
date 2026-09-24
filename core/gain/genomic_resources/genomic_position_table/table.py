@@ -705,6 +705,19 @@ class GenomicPositionTable(abc.ABC):
         have to reach into a backend's internals and know which ones have a
         buffer, which is the ``isinstance(Tabix)`` that the capability
         declarations on this class exist to replace.
+
+        **This zero is self-reported, and nothing checks it** (gain#1136).
+        Unlike ``payload_kind``, which a backend must declare, or
+        ``supports_value_arrays``, whose default refuses, this default says
+        "nothing to see" -- so a backend that retains records between queries
+        and forgets to override it passes the contract's boundedness half
+        while leaking.  No independent measure exists: one would have to come
+        from outside the table.  A backend that retains records must
+        therefore override this *and* add a test holding the override against
+        the buffer it reports on, as
+        ``test_the_tabix_backend_reports_what_it_actually_buffers`` (in
+        test_overlapping_intervals.py) does for tabix -- a ``return 0``
+        override otherwise passes every test that consumes the method.
         """
         return 0
 
