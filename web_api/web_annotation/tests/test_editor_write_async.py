@@ -199,6 +199,51 @@ async def test_async_annotator_attributes_search_matches_description() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
+async def test_async_annotator_attributes_no_match_has_no_pages() -> None:
+    """Zero matches report zero pages, as ``SearchResources`` does (#1649)."""
+    client = AsyncClient()
+    response = await _post_json(client, ATTRIBUTES_POST_URL, {
+        "annotator_type": "effect_annotator",
+        "genome": "t4c8/t4c8_genome",
+        "gene_models": "t4c8/t4c8_genes",
+        "pipeline_id": "pipeline/test_pipeline",
+        "search": "no attribute matches this",
+    })
+    assert response.status_code == 200, response.content
+    data = response.json()
+    assert data["total_attributes"] == 0
+    assert data["attributes"] == []
+    assert data["total_pages"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_async_annotator_attributes_exact_multiple_has_no_empty_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A count that fills its last page exactly adds no empty page (#1649).
+
+    "worst_effect" matches exactly three attributes, so a page size of three
+    makes one full page.
+    """
+    monkeypatch.setattr(AnnotatorAttributes, "ATTRIBUTE_PAGE_SIZE", 3)
+    client = AsyncClient()
+    response = await _post_json(client, ATTRIBUTES_POST_URL, {
+        "annotator_type": "effect_annotator",
+        "genome": "t4c8/t4c8_genome",
+        "gene_models": "t4c8/t4c8_genes",
+        "pipeline_id": "pipeline/test_pipeline",
+        "search": "worst_effect",
+    })
+    assert response.status_code == 200, response.content
+    data = response.json()
+    assert data["total_attributes"] == 3
+    assert len(data["attributes"]) == 3
+    assert data["total_pages"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
 async def test_async_annotator_attributes_missing_type_400() -> None:
     client = AsyncClient()
     response = await _post_json(client, ATTRIBUTES_POST_URL, {
