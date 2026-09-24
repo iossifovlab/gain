@@ -410,7 +410,7 @@ def test_add_statistics_build_tasks_refuses_an_unknown_keyword(
         grr_fixture.get_resource("pipeline"),
     )
     with pytest.raises(TypeError, match="some_arg"):
-        impl.create_statistics_build_tasks(
+        impl.create_statistics_build_tasks(  # pylint: disable=unexpected-keyword-arg
             some_arg="value")  # type: ignore[call-arg]
 
 

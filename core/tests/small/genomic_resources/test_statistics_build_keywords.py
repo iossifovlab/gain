@@ -9,7 +9,7 @@ re-chunked the whole statistics graph without a word -- the #865 shape
 """
 import inspect
 import pathlib
-from importlib.metadata import entry_points
+from importlib.metadata import EntryPoint, entry_points
 from typing import Any
 
 import pytest
@@ -49,16 +49,33 @@ def test_a_misspelled_keyword_is_a_type_error(
     impl = build_resource_implementation(repo.get_resource("res"))
 
     with pytest.raises(TypeError, match="region_sise"):
-        impl.create_statistics_build_tasks(
+        impl.create_statistics_build_tasks(  # pylint: disable=unexpected-keyword-arg
             region_sise=10)  # type: ignore[call-arg]
+
+
+def _gain_entry_points() -> list[EntryPoint]:
+    # gain's own kinds only: a plugin installed alongside (gpf's
+    # enrichment kind) is that package's contract to keep.
+    return [
+        entry_point
+        for entry_point in entry_points(
+            group="gain.genomic_resources.implementations")
+        if entry_point.dist is not None
+        and entry_point.dist.name == "gain-core"
+    ]
 
 
 def _registered_implementations() -> list[Any]:
     return [
         pytest.param(entry_point.load(), id=entry_point.name)
-        for entry_point in entry_points(
-            group="gain.genomic_resources.implementations")
+        for entry_point in _gain_entry_points()
     ]
+
+
+def test_the_sweep_sees_gain_s_registered_kinds() -> None:
+    names = {entry_point.name for entry_point in _gain_entry_points()}
+
+    assert {"genome", "position_score", "gene_models", "basic"} <= names
 
 
 @pytest.mark.parametrize("impl_class", _registered_implementations())
