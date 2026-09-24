@@ -1,29 +1,30 @@
 """How a share of a whole is written, for every table that writes one.
 
-One rule in one place (gain#1057).  The info page carries two tables
-that each render a count as a percentage of a total -- Coverage, whose
-denominator is a chromosome's length, and Alleles, whose denominator is
-the allele total -- and before this module they formatted it two ways:
-the Alleles section through :func:`percentages_over`'s floor and
-ceiling, the Coverage section through a bare ``"%.2f%%"`` inline in the
-template.  So one page could read ``100.00%`` in Coverage and
-``>99.99%`` in Alleles of the identical shape.
+One rule in one place, so every info-page table that renders a count
+as a percentage of a total says the same thing the same way: the
+genomic-score page's Coverage table (denominator: a chromosome's
+length) and Alleles tables (denominator: an allele total), and the
+reference-genome page's nucleotide and di-nucleotide tables
+(denominator: the bases, or the pairs, counted).
 
-The rule is deliberately SCALAR -- one (count, total) pair to one
-string.  What varies between the callers is the contract around a
-MISSING denominator, and that is theirs to keep.  Coverage resolves a
-denominator per row and degrades only that row; so, since gain#1118,
-do the Alleles table's per-class share columns, whose denominator is
-each chromosome's own allele count.  The whole-map answer -- no total,
-no column at all -- is still :func:`percentages_over`'s, and still what
-the substitution matrix and the complex table ask.
+:func:`percentage_of` is the rule itself, and it is deliberately
+SCALAR -- one (count, total) pair to one string.  What varies between
+the callers is the contract around a MISSING denominator, and that is
+theirs to keep.  Coverage resolves a denominator per row and degrades
+only that row, as do the Alleles table's per-class share columns,
+whose denominator is each chromosome's own allele count.
+:func:`percentages_over` is the whole-map answer -- no total, no
+percentages at all -- which the substitution matrix, the complex table
+and the reference-genome tables ask.
 
-The REFERENCE GENOME page's nucleotide distributions are a third table
-of this shape and do not come through here yet: they are stored already
-multiplied out, so the counts this rule needs to decide exactness on
-are gone before a template sees them.  gain#1086 holds that.
+Every caller hands over the INTEGERS.  The boundaries are decided on
+them, so a share stored already multiplied out cannot be written by
+this rule; the reference-genome page derives its shares from the
+stored counts for that reason.
 """
 from __future__ import annotations
+
+from collections.abc import Mapping
 
 
 def percentage_of(count: int, total: int) -> str:
@@ -64,3 +65,24 @@ def percentage_of(count: int, total: int) -> str:
     if count < total and rendered == "100.00%":
         return ">99.99%"
     return rendered
+
+
+def percentages_over[K](
+    counts: Mapping[K, int], total: int,
+) -> dict[K, str] | None:
+    """Each count as a percentage of ``total``, ``None`` without one.
+
+    Every cell is written by :func:`percentage_of`.  What this adds is
+    the MAP contract around a missing denominator: a zero total has no
+    percentage, and the answer is ``None`` for the WHOLE map rather
+    than per cell, because the denominator is a property of the table.
+    The caller decides what a table without one shows -- the Alleles
+    section drops the column, the reference-genome page leaves the
+    cells empty.
+    """
+    if total <= 0:
+        return None
+    return {
+        key: percentage_of(count, total)
+        for key, count in counts.items()
+    }

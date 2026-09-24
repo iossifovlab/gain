@@ -37,7 +37,7 @@
                 <th>Global</th>
                 <td>{{ '{:,}'.format(data["global_statistic"]["length"]) }}</td>
                 {% for nucleotide in ["A", "T", "C", "G", "N"] %}
-                    <td>{{ "%0.2f%%" % data["global_statistic"]["nuc_distribution"][nucleotide] }}</td>
+                    <td>{{ data["global_statistic"]["nucleotide_shares"].get(nucleotide, "") }}</td>
                 {% endfor %}
             </tr>
         </thead>
@@ -45,12 +45,9 @@
             <tr>
                 <td>{{ chrom }}</td>
                 <td>{{ '{:,}'.format(length) }}</td>
+                {% set shares = data["chrom_shares"].get(chrom, {}) %}
                 {% for nucleotide in ["A", "T", "C", "G", "N"] %}
-                    {% if data["chrom_statistics"].get(chrom) %}
-                        <td>{{ "%0.2f%%" % data["chrom_statistics"].get(chrom).nucleotide_distribution.get(nucleotide) }}</td>
-                    {% else %}
-                        <td></td>
-                    {% endif %}
+                    <td>{{ shares.get(nucleotide, "") }}</td>
                 {% endfor %}
             </tr>
         {%- endfor -%}
@@ -69,7 +66,7 @@
             <tr>
                 <th>{{ first_nucleotide }}</th>
                 {% for second_nucleotide in ["A", "T", "C", "G", "N"] %}
-                    <td>{{ "%0.2f%%" %  data["global_statistic"]["bi_nuc_distribution"].get(first_nucleotide + second_nucleotide) }}</td>
+                    <td>{{ data["global_statistic"]["pair_shares"].get(first_nucleotide + second_nucleotide, "") }}</td>
                 {% endfor %}
             </tr>
         {% endfor %}

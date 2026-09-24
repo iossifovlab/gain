@@ -1,12 +1,12 @@
 # pylint: disable=C0114,C0116,W0212,W0621
 """The one rule for writing a share of a whole (gain#1057).
 
-Pinned here at the scalar seam rather than through either of its two
-callers, because what the rule answers is a question about two
-integers: the Alleles tables reach it through ``percentages_over``'s
-map contract and the Coverage table through ``CoverageRow``, and
-neither of those seams can state the boundaries without a resource
-around it.
+Pinned here at the scalar seam rather than through any of its callers,
+because what the rule answers is a question about two integers: the
+Alleles tables and the reference-genome page reach it through
+``percentages_over``'s map contract and the Coverage table through
+``CoverageRow``, and none of those seams can state the boundaries
+without a resource around it.
 """
 from __future__ import annotations
 

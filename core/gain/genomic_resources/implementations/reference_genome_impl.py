@@ -20,6 +20,7 @@ from gain.genomic_resources.resource_implementation import (
     ResourceStatistics,
 )
 from gain.genomic_resources.statistics.base_statistic import Statistic
+from gain.genomic_resources.statistics.percentages import percentages_over
 from gain.task_graph.graph import TaskDesc, TaskGraph
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,18 @@ class GenomeStatisticsMixin:
         return f"{chrom}_statistic.yaml"
 
 
+def _distribution(counts: dict[str, int], total: int) -> dict[str, float]:
+    """Each count as a percentage of ``total``; all zero without one."""
+    if total == 0:
+        return dict.fromkeys(counts, 0.0)
+    return {key: count / total * 100 for key, count in counts.items()}
+
+
+def _shares(counts: dict[str, int]) -> dict[str, str]:
+    """Each count written as a share of their sum; empty when it is zero."""
+    return percentages_over(counts, sum(counts.values())) or {}
+
+
 class ReferenceGenomeStatistics(
     ResourceStatistics,
     GenomeStatisticsMixin,
@@ -63,7 +76,11 @@ class ReferenceGenomeStatistics(
     def build_statistics(
         genomic_resource: GenomicResource,
     ) -> ReferenceGenomeStatistics | None:
-        """Load reference genome statistics."""
+        """Load reference genome statistics.
+
+        The global statistic is summed from the per-chromosome ones, as
+        the build does; its stored file supplies only the chromosomes.
+        """
         chrom_statistics = {}
         try:
             global_stat_filepath = os.path.join(
@@ -72,7 +89,8 @@ class ReferenceGenomeStatistics(
             )
             with genomic_resource.open_raw_file(
                     global_stat_filepath, mode="r") as infile:
-                global_statistic = GenomeStatistic.deserialize(infile.read())
+                global_statistic = GenomeStatistic(
+                    yaml.safe_load(infile.read())["chromosomes"])
             for chrom in global_statistic.chromosomes:
                 chrom_stat_filepath = os.path.join(
                     ReferenceGenomeStatistics.get_statistics_folder(),
@@ -83,6 +101,8 @@ class ReferenceGenomeStatistics(
                     chrom_statistics[chrom] = ChromosomeStatistic.deserialize(
                         infile.read(),
                     )
+                global_statistic.add_value(chrom_statistics[chrom])
+            global_statistic.finish()
         except FileNotFoundError:
             logger.exception(
                 "Couldn't load statistics of %s", genomic_resource.resource_id,
@@ -184,17 +204,11 @@ class ChromosomeStatistic(Statistic):
         self.length += other.length
 
     def finish(self) -> None:
-        for nucleotide, count in self.nucleotide_counts.items():
-            self.nucleotide_distribution[nucleotide] = \
-                count / self.length * 100
-
-        total_pairs = sum(self.nucleotide_pair_counts.values())
-        for pair, count in self.nucleotide_pair_counts.items():
-            if total_pairs == 0:
-                self.bi_nucleotide_distribution[pair] = 0.0
-            else:
-                self.bi_nucleotide_distribution[pair] = \
-                    count * 100.0 / total_pairs
+        self.nucleotide_distribution = _distribution(
+            self.nucleotide_counts, self.length)
+        self.bi_nucleotide_distribution = _distribution(
+            self.nucleotide_pair_counts,
+            sum(self.nucleotide_pair_counts.values()))
 
     def serialize(self) -> str:
         return yaml.dump(
@@ -220,7 +234,7 @@ class ChromosomeStatistic(Statistic):
 
 
 class GenomeStatistic(Statistic):
-    """Class for the global reference genome statistic."""
+    """The genome-wide statistic: every chromosome's counts summed."""
 
     def __init__(
             self, chromosomes: list[str], length: int = 0,
@@ -232,6 +246,8 @@ class GenomeStatistic(Statistic):
         super().__init__("global", "")
         self.chromosomes = chromosomes
         self.length = 0
+        self.nucleotide_counts: dict[str, int] = {}
+        self.nucleotide_pair_counts: dict[str, int] = {}
 
         if chromosome_statistics is not None:
             self.chromosome_statistics = chromosome_statistics
@@ -282,12 +298,13 @@ class GenomeStatistic(Statistic):
                 total_pair_counts[pair] += count
 
         self.length = total_nucs
+        self.nucleotide_counts = total_nucleotide_counts
+        self.nucleotide_pair_counts = total_pair_counts
 
-        for nuc, count in total_nucleotide_counts.items():
-            self.nucleotide_distribution[nuc] = count / total_nucs * 100
-
-        for pair, count in total_pair_counts.items():
-            self.bi_nucleotide_distribution[pair] = count / total_pairs * 100
+        self.nucleotide_distribution = _distribution(
+            total_nucleotide_counts, total_nucs)
+        self.bi_nucleotide_distribution = _distribution(
+            total_pair_counts, total_pairs)
 
     def merge(self, other: Statistic) -> None:  # ruff: ignore[unused-method-argument]
         return
@@ -337,22 +354,25 @@ class ReferenceGenomeImplementation(
         info["chromosomes"] = list(
             self.reference_genome.get_all_chrom_lengths().items())
         info["global_statistic"] = {}
-        info["chrom_statistics"] = {}
+        info["chrom_shares"] = {}
         statistics = self.get_statistics()
         if statistics is None:
             info["global_statistic"]["length"] = None
-            info["global_statistic"]["nuc_distribution"] = None
-            info["global_statistic"]["bi_nuc_distribution"] = None
+            info["global_statistic"]["nucleotide_shares"] = {}
+            info["global_statistic"]["pair_shares"] = {}
             info["global_statistic"]["chromosome_statistics"] = None
         else:
             global_statistic = statistics.global_statistic
 
             info["global_statistic"]["length"] = global_statistic.length
-            info["global_statistic"]["nuc_distribution"] = \
-                global_statistic.nucleotide_distribution
-            info["global_statistic"]["bi_nuc_distribution"] = \
-                global_statistic.bi_nucleotide_distribution
-            info["chrom_statistics"] = statistics.chrom_statistics
+            info["global_statistic"]["nucleotide_shares"] = _shares(
+                global_statistic.nucleotide_counts)
+            info["global_statistic"]["pair_shares"] = _shares(
+                global_statistic.nucleotide_pair_counts)
+            info["chrom_shares"] = {
+                chrom: _shares(statistic.nucleotide_counts)
+                for chrom, statistic in statistics.chrom_statistics.items()
+            }
 
         return info
 
