@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import pathlib
 import textwrap
-from html.parser import HTMLParser
 
 import pytest
 from gain.gene_scores.implementations.gene_scores_impl import (
@@ -37,29 +36,25 @@ from gain.genomic_resources.testing import (
 )
 from gain.genomic_resources.testing.builders import GeneScoreBuilder
 
+from tests.small.templates.page_dom import parse_page
+
 PAYLOAD = "onload=gainxss604()"
-
-
-class _AttributeNameCollector(HTMLParser):
-    """Collect every attribute name the page's tags carry."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.attribute_names: list[str] = []
-
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]],
-    ) -> None:
-        self.attribute_names.extend(name for name, _ in attrs)
 
 
 def event_handler_attributes(page: str) -> list[str]:
     """Return the ``on*`` handler attributes present in the page."""
-    collector = _AttributeNameCollector()
-    collector.feed(page)
     return sorted({
-        name for name in collector.attribute_names if name.startswith("on")
+        name for name, _ in parse_page(page).attributes
+        if name.startswith("on")
     })
+
+
+def test_an_injected_handler_is_reported() -> None:
+    """The positive control for every ``== []`` below: an empty answer
+    means no handler, not a reader that missed one."""
+    page = f'<img alt=x {PAYLOAD}><p onclick="x()">'
+
+    assert event_handler_attributes(page) == ["onclick", "onload"]
 
 
 def test_gene_score_id_cannot_add_an_event_handler(

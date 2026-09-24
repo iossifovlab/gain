@@ -20,10 +20,10 @@ another such link has not grown a third party it loads code from.
 from __future__ import annotations
 
 import re
-from html.parser import HTMLParser
 from urllib.parse import urlparse
 
 from tests.small.templates.page_css import CSS_URL, stylesheets_in
+from tests.small.templates.page_dom import parse_page
 
 #: ``import x from "<specifier>"`` -- an ES module specifier, which can
 #: reach an origin without being an ``src``.  Any specifier, so the same
@@ -40,31 +40,23 @@ _CSS_IMPORT = re.compile(r"@import\s+['\"]([^'\"]+)['\"]")
 _FETCHING_HREF_TAGS = frozenset({"link"})
 
 
-class _AttributeUrls(HTMLParser):
-    """Collects every url the page fetches by attribute."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.urls: list[str] = []
-
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]],
-    ) -> None:
-        attributes = dict(attrs)
-        href = attributes.get("href")
-        if href and tag in _FETCHING_HREF_TAGS:
-            self.urls.append(href)
-        src = attributes.get("src")
+def _attribute_urls(page: str) -> list[str]:
+    """Every url the page fetches by attribute."""
+    urls: list[str] = []
+    for element in parse_page(page).elements:
+        href = element.attributes.get("href")
+        if href and element.tag in _FETCHING_HREF_TAGS:
+            urls.append(href)
+        src = element.attributes.get("src")
         if src:
-            self.urls.append(src)
+            urls.append(src)
+    return urls
 
 
 def urls_the_page_loads(page: str) -> list[str]:
     """Every url the page fetches, as written -- relative ones included."""
-    by_attribute = _AttributeUrls()
-    by_attribute.feed(page)
     return [
-        *by_attribute.urls,
+        *_attribute_urls(page),
         *MODULE_IMPORT.findall(page),
         *(
             url for sheet in stylesheets_in(page)

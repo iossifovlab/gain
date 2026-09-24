@@ -26,10 +26,8 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 )
 from gain.genomic_resources.testing.builders import a_position_score
 
-from tests.small.annotation.test_annotate_doc_trust import (
-    RENDERERS,
-    parse_page,
-)
+from tests.small.annotation.test_annotate_doc_trust import RENDERERS
+from tests.small.templates.page_dom import parse_page
 
 _RENDERER_IDS = [name for name, _ in RENDERERS]
 _RENDERER_FUNCS = [render for _, render in RENDERERS]

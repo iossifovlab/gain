@@ -30,7 +30,6 @@ from __future__ import annotations
 import pathlib
 import re
 from collections.abc import Callable
-from html.parser import HTMLParser
 
 import pytest
 from gain.genomic_resources.implementations.genomic_scores_impl import (
@@ -57,30 +56,19 @@ from gain.genomic_resources.testing.builders import (
 )
 
 from tests.small.templates.page_css import declarations_in, rules_in
+from tests.small.templates.page_dom import parse_page
 
 FIGURE_CLASS = "statistics-figure"
 
 _Builder = Callable[[pathlib.Path], GenomicResource]
 
 
-class _ImageCollector(HTMLParser):
-    """Every ``<img>`` on the page, as its attribute dict."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.images: list[dict[str, str]] = []
-
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]],
-    ) -> None:
-        if tag == "img":
-            self.images.append({name: value or "" for name, value in attrs})
-
-
 def _images(page: str) -> list[dict[str, str]]:
-    collector = _ImageCollector()
-    collector.feed(page)
-    return collector.images
+    """Every ``<img>`` on the page, as its attribute dict."""
+    return [
+        element.attributes for element in parse_page(page).elements
+        if element.tag == "img"
+    ]
 
 
 def _image_named(page: str, filename: str) -> dict[str, str]:
