@@ -14,6 +14,7 @@ from gain.genomic_resources.repository_factory import (
 )
 
 from web_annotation.models import Job, User
+from web_annotation.pipeline_cache import LRUPipelineCache
 from web_annotation.pipelines.views import PipelineValidation
 
 
@@ -68,6 +69,20 @@ def test_grr(mocker: pytest_mock.MockFixture) -> GenomicResourceRepo:
             "public_url": "http://test",
         },
     )
+
+
+@pytest.fixture
+def patched_lru_cache(
+    mocker: pytest_mock.MockerFixture,
+    test_grr: GenomicResourceRepo,
+) -> LRUPipelineCache:
+    """Swap the shared view cache for an isolated one over the test GRR."""
+    cache = LRUPipelineCache(test_grr, 16)
+    mocker.patch(
+        "web_annotation.annotation_base_view.AnnotationBaseView.lru_cache",
+        new=cache,
+    )
+    return cache
 
 
 @pytest.fixture(autouse=True)

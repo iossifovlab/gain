@@ -8,7 +8,6 @@ from channels.auth import UserLazyObject
 from django.conf import settings
 from django.test import Client
 from gain.annotation.annotation_config import AnnotationConfigurationError
-from gain.genomic_resources.repository import GenomicResourceRepo
 
 from web_annotation.consumers import AnnotationStateConsumer
 from web_annotation.models import (
@@ -19,20 +18,6 @@ from web_annotation.models import (
 )
 from web_annotation.pipeline_cache import LRUPipelineCache
 from web_annotation.testing import CustomWebsocketCommunicator
-
-
-@pytest.fixture
-def patched_lru_cache(
-    mocker: pytest_mock.MockerFixture,
-    test_grr: GenomicResourceRepo,
-) -> LRUPipelineCache:
-    """Swap the shared view cache for an isolated one over the test GRR."""
-    cache = LRUPipelineCache(test_grr, 16)
-    mocker.patch(
-        "web_annotation.annotation_base_view.AnnotationBaseView.lru_cache",
-        new=cache,
-    )
-    return cache
 
 
 def _write_saved_pipeline(

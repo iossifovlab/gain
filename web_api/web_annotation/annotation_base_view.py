@@ -439,12 +439,13 @@ class AnnotationMixin:
         across the await. After the bound is exhausted the original
         ``ValueError`` is re-raised so a genuinely-missing pipeline still 4xx's.
         """
-        # Known sync/async divergence: the async ``_aput_pipeline_or_404``
-        # wraps this ``put_pipeline`` to map a missing-pipeline source-
+        # Known sync/async divergence: the async path resolves through
+        # ``_put_pipeline_or_404``, mapping a missing-pipeline source-
         # resolution failure (``ValueError``/``NotImplementedError``) to 404 --
-        # the target behavior. The sync path leaves it bare, so the same
-        # ``ValueError`` escapes as a 500. This is left unchanged in #163 to
-        # avoid altering existing sync callers; 404 is the eventual goal.
+        # the target behavior. This sync path calls ``put_pipeline`` bare, so
+        # the same ``ValueError`` escapes as a 500. This is left unchanged in
+        # #163 to avoid altering existing sync callers; 404 is the eventual
+        # goal (``LoadPipeline`` already uses the helper, #1666).
         last_error: PipelineNotCached | None = None
         for attempt in range(self.GET_PIPELINE_MAX_ATTEMPTS):
             if not self.lru_cache.has_pipeline(pipeline_id):
@@ -510,10 +511,10 @@ class AnnotationMixin:
                 raise self._build_error_to_drf(build_error) from build_error
         raise self._missing_pipeline_to_drf(pipeline_id) from last_error
 
-    async def _aput_pipeline_or_404(
+    def _put_pipeline_or_404(
         self, pipeline_id: str, user: BaseUser,
     ) -> None:
-        """Resolve + schedule a build via ``put_pipeline``, off the loop.
+        """Resolve + schedule a build via ``put_pipeline``, or raise 404.
 
         Source resolution (GRR / user-pipeline lookup) happens here, before
         the build. A pipeline id that resolves to nothing raises a lookup error
@@ -527,15 +528,23 @@ class AnnotationMixin:
         absent from the catch tuple -- catching it would only mask unrelated
         errors as 404. Note the missing-config-file case (``FileNotFoundError``,
         an ``OSError`` from ``_get_user_pipeline_yaml``) is intentionally *not*
-        caught, so a present-row/missing-file stays a 500. ``put_pipeline`` runs
-        via ``sync_to_async`` so its ``async_to_sync`` channel callbacks stay
-        legal on a worker thread.
+        caught, so a present-row/missing-file stays a 500.
         """
         try:
-            await sync_to_async(self.put_pipeline)(pipeline_id, user)
+            self.put_pipeline(pipeline_id, user)
         except (ValueError, NotImplementedError) as lookup_error:
             raise self._missing_pipeline_to_drf(
                 pipeline_id) from lookup_error
+
+    async def _aput_pipeline_or_404(
+        self, pipeline_id: str, user: BaseUser,
+    ) -> None:
+        """Async ``_put_pipeline_or_404``, run off the loop.
+
+        ``put_pipeline`` runs via ``sync_to_async`` so its ``async_to_sync``
+        channel callbacks stay legal on a worker thread.
+        """
+        await sync_to_async(self._put_pipeline_or_404)(pipeline_id, user)
 
     def get_genome(self, data: QueryDict) -> str:
         """Get genome from a request."""
