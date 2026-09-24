@@ -44,7 +44,11 @@ from web_annotation.tasks import (
     run_vcf_job,
     specify_job,
 )
-from web_annotation.utils import bytes_to_readable, validate_vcf
+from web_annotation.utils import (
+    bytes_to_readable,
+    invalid_content_type_response,
+    validate_vcf,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -523,8 +527,9 @@ class PreviewFileUpload(AnnotationBaseView):
 
     def post(self, request: Request) -> Response:
         """Determine the separator of a file split into columns."""
+        if not isinstance(request.data, QueryDict):
+            return invalid_content_type_response()
         assert isinstance(request.FILES, MultiValueDict)
-        assert isinstance(request.data, QueryDict)
 
         file = request.FILES["data"]
         assert isinstance(file, UploadedFile)

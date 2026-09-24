@@ -41,6 +41,10 @@ from web_annotation.pipeline_cache import (
     await_build,
 )
 from web_annotation.pipelines.throttling import PipelineValidationRateThrottle
+from web_annotation.utils import (
+    invalid_content_type_response,
+    non_object_body_response,
+)
 from web_annotation.validation_cache import ValidationResultCache
 
 logger = logging.getLogger(__name__)
@@ -111,7 +115,8 @@ class UserPipeline(AnnotationBaseView):
 
     def post(self, request: Request) -> Response:
         """Create or update user annotation pipeline"""
-        assert isinstance(request.data, QueryDict)
+        if not isinstance(request.data, QueryDict):
+            return invalid_content_type_response()
         assert isinstance(request.FILES, MultiValueDict)
 
         pipeline_id = request.data.get("id")
@@ -963,7 +968,8 @@ class LoadPipeline(AnnotationBaseView):
 
     def post(self, request: Request) -> Response:
         """Validate annotation config."""
-        assert isinstance(request.data, dict)
+        if not isinstance(request.data, dict):
+            return non_object_body_response(key="reason")
 
         pipeline_id = request.data.get("id")
         if not pipeline_id:
