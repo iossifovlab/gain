@@ -113,10 +113,13 @@ class RunState:
         self._gathering: dict[int, GatherBatch] = {}
         self._gathered: list[tuple[Task, Any]] = []
         self._delivered: set[Task] = set()
+        # The future of every task delivered with a result, until the run
+        # loop takes it -- see :meth:`take_result_future`.
+        self._result_futures: dict[Task, Future] = {}
         self._shutdown = False
 
-    def _deliver(self, results: Iterable[tuple[Task, Any]]) -> None:
-        """Deliver results for tasks not delivered already.
+    def _deliver(self, results: Iterable[tuple[Task, Any]]) -> set[Task]:
+        """Deliver results for tasks not delivered already; return those.
 
         The one way a result reaches :attr:`_gathered`, and so the one place
         "exactly one result per task, never more" is enforced. Every other
@@ -129,6 +132,7 @@ class RunState:
 
         Caller holds the lock.
         """
+        delivered = set()
         for task, result in results:
             if task in self._delivered:
                 logger.debug(
@@ -137,6 +141,8 @@ class RunState:
                 continue
             self._delivered.add(task)
             self._gathered.append((task, result))
+            delivered.add(task)
+        return delivered
 
     def _outstanding_count(self) -> int:
         """Count everything not yet yielded. Caller holds the lock."""
@@ -242,7 +248,8 @@ class RunState:
         Whatever is still in ``running``, ``completed`` or the in-flight
         gather state then belongs to a run that ended without collecting it
         -- a consumer abandoned the generator -- and nobody else will ever
-        come for it. The caller releases them, because ``Future.release()``
+        come for it. So does any delivered result's future the run loop
+        never took. The caller releases them, because ``Future.release()``
         is a dask call and must not run under this lock.
 
         Releasing matters for more than tidiness: an unreleased future keeps
@@ -267,9 +274,11 @@ class RunState:
             futures.extend(future for future, _ in self._completed)
             for batch in self._gathering.values():
                 futures.extend(batch.futures)
+            futures.extend(self._result_futures.values())
             self._running.clear()
             self._completed.clear()
             self._gathering.clear()
+            self._result_futures.clear()
             self._condition.notify_all()
             return futures
 
@@ -355,17 +364,41 @@ class RunState:
 
     def gathered(
         self, batch: GatherBatch, results: Sequence[tuple[Task, Any]],
-    ) -> None:
+    ) -> list[Future]:
         """Move a gathered batch from in-flight gather to results.
 
-        A task an aborted submit batch already delivered as an error is not
-        delivered again here -- see :meth:`_deliver` -- but the batch leaves
-        the in-flight gather state either way.
+        ``results`` is in the batch's order. A task an aborted submit batch
+        already delivered as an error is not delivered again here -- see
+        :meth:`_deliver` -- but the batch leaves the in-flight gather state
+        either way.
+
+        The future of each task delivered here with a result is kept for
+        :meth:`take_result_future`. The rest -- failed tasks and dropped
+        duplicates -- are returned for the caller to release, outside the
+        lock.
         """
         with self._condition:
-            self._deliver(results)
+            delivered = self._deliver(results)
+            unkept = []
+            for (future, _), (task, result) in zip(
+                    batch.entries, results, strict=True):
+                if task in delivered \
+                        and not isinstance(result, BaseException):
+                    self._result_futures[task] = future
+                else:
+                    unkept.append(future)
             del self._gathering[batch.batch_id]
             self._condition.notify_all()
+            return unkept
+
+    def take_result_future(self, task: Task) -> Future | None:
+        """Take the future holding a delivered task's result.
+
+        ``None`` for a task delivered as an error, which has no result to
+        pass on.
+        """
+        with self._condition:
+            return self._result_futures.pop(task, None)
 
     def submit_failed(
         self, batch: SubmitBatch, error: BaseException,

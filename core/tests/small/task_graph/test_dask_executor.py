@@ -376,8 +376,8 @@ class _DyingWorkerClient(_WrappedClient):
     is replaced instead.
     """
 
-    def map(self, _func: Any, tasks: Any, **kwargs: Any) -> Any:
-        return self._client.map(die_on_the_worker, tasks, **kwargs)
+    def map(self, _func: Any, *iterables: Any, **kwargs: Any) -> Any:
+        return self._client.map(die_on_the_worker, *iterables, **kwargs)
 
 
 def test_a_task_that_dies_on_the_worker_is_delivered_as_an_error(
@@ -1273,3 +1273,194 @@ def test_a_histogram_error_ends_the_run_instead_of_hanging(
         "accounting tests isinstance(result, Exception), so a non-Exception "
         "failure is reported as a successful run"
     )
+
+
+#: Every execution of :func:`counted_tag`, by tag. The session cluster is
+#: threaded, so the workers append to this very list.
+COUNTED_RUNS: list[str] = []
+
+
+def counted_tag(tag: str) -> str:
+    COUNTED_RUNS.append(tag)
+    return tag
+
+
+def tagged(tag: str) -> str:
+    return tag
+
+
+def tagged_after(tag: str, delay: float) -> str:
+    time.sleep(delay)
+    return tag
+
+
+def joined(*parts: str) -> str:
+    return "+".join(parts)
+
+
+def _pinned_keys(client: Client, prefix: str) -> dict[str, int]:
+    """Keys named for ``prefix`` that the client still holds a future to."""
+    return {
+        key: count for key, count in client.refcount.items()
+        if str(key).startswith(f"{prefix}-") and count > 0
+    }
+
+
+def _pinned_keys_after(
+    client: Client, prefix: str, timeout: float,
+) -> dict[str, int]:
+    """:func:`_pinned_keys`, once the client has had ``timeout`` to let go.
+
+    ``Future.release()`` only schedules the decrement on the client's loop.
+    """
+    deadline = time.monotonic() + timeout
+    while _pinned_keys(client, prefix) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return _pinned_keys(client, prefix)
+
+
+def test_a_dependency_reaches_a_dependant_queued_long_after_it_finished(
+    dask_client: Client,
+) -> None:
+    """A dependency stays available until its last dependant is submitted.
+
+    iossifovlab/gain#1633: dependants receive a dependency as the dask
+    future holding its result, so that future must outlive every
+    submission that consumes it. ``early`` is consumed twice -- by
+    ``first``, submitted as soon as ``early`` finishes, and by ``late``,
+    which also waits on a slow task and so is queued after ``early``
+    finished and after ``first`` was already submitted.
+
+    A future released too soon breaks this one of two ways, depending on
+    when: released before any dependant was submitted, ``late`` fails with
+    a cancelled future; released once ``first`` was submitted, the
+    scheduler silently runs ``early`` a second time to recompute it --
+    repeating a whole region scan and its side effects. The value catches
+    the first, and only the run count catches the second.
+    """
+    COUNTED_RUNS.clear()
+    graph = TaskGraph()
+    early = graph.create_task("early", counted_tag, args=["early"])
+    slow = graph.create_task("slow", tagged_after, args=["slow", 0.2])
+    graph.create_task("first", joined, args=[early, "first"])
+    graph.create_task("late", joined, args=[early, slow])
+
+    results = _run_in_thread_with_timeout(
+        DaskExecutor(dask_client), graph, timeout=20.0)
+
+    assert {task.task_id: result for task, result in results} == {
+        "early": "early",
+        "slow": "slow",
+        "first": "early+first",
+        "late": "early+slow",
+    }
+    assert COUNTED_RUNS == ["early"]
+
+
+def test_an_abandoned_run_releases_the_dependencies_it_still_held(
+    dask_client: Client,
+) -> None:
+    """Teardown releases dependency futures no dependant was submitted with.
+
+    iossifovlab/gain#1633 hands a completed dependency to its dependants
+    as its future, which then sits in the graph until they are submitted.
+    Abandon the run first and those dependants never will be -- so unless
+    teardown releases it, the future pins its key, and the result the key
+    holds, on a client that outlives the run, however long the caller
+    keeps the graph (gain#480).
+    """
+    graph = TaskGraph()
+    held = graph.create_task("HeldDependency", tagged, args=["held"])
+    slow = graph.create_task("SlowSibling", tagged_after, args=["s", 0.2])
+    graph.create_task("NeverSubmitted", joined, args=[held, slow])
+
+    tasks_iter = DaskExecutor(dask_client).execute(graph)
+    for task, _result in tasks_iter:
+        if task == held:
+            break
+    tasks_iter.close()
+
+    # A pinned key stays pinned indefinitely, so the wait is only slack.
+    assert _pinned_keys_after(dask_client, "HeldDependency", 5.0) == {}
+
+
+def test_a_submitted_dependency_is_not_held_while_the_run_goes_on(
+    dask_client: Client,
+) -> None:
+    """Once its dependant has run, a dependency's future is let go.
+
+    iossifovlab/gain#1633 hands a dependency to its dependants as a
+    future. Once they have been submitted and have run, nothing in the run
+    needs it any more -- but a reference left behind, say by the submit
+    worker still holding the last batch it handed over while it waits for
+    the next, pins the key and its result on the cluster for as long as
+    the run goes on. Here ``SlowSibling`` keeps the run going, with nothing
+    left to submit, long after ``Consumer`` has finished.
+    """
+    graph = TaskGraph()
+    leaf = graph.create_task("SubmittedLeaf", tagged, args=["leaf"])
+    consumer = graph.create_task("Consumer", joined, args=[leaf, "c"])
+    graph.create_task("SlowSibling", tagged_after, args=["s", 0.5])
+
+    still_pinned: dict[str, int] = {}
+    for task, _result in DaskExecutor(dask_client).execute(graph):
+        if task == consumer:
+            # Well inside the sibling's run, which is what is measured.
+            still_pinned = _pinned_keys_after(
+                dask_client, "SubmittedLeaf", 0.3)
+
+    assert still_pinned == {}
+
+
+def test_a_finished_task_without_dependants_is_not_held_by_the_run(
+    dask_client: Client,
+) -> None:
+    """A result no task consumes is let go once it has been yielded.
+
+    iossifovlab/gain#1633 keeps a finished task's future for its
+    dependants instead of releasing it at the gather. With none to hand it
+    to, nothing in the run needs it -- but a reference left behind, by the
+    run loop across its ``yield`` or by the results worker still holding
+    the last batch it gathered while it waits for the next, pins the key
+    and its result on the cluster while the run goes on. ``SlowSibling``
+    keeps it going.
+    """
+    graph = TaskGraph()
+    terminal = graph.create_task("TerminalTask", tagged, args=["t"])
+    graph.create_task("SlowSibling", tagged_after, args=["s", 0.5])
+
+    still_pinned: dict[str, int] = {}
+    for task, _result in DaskExecutor(dask_client).execute(graph):
+        if task == terminal:
+            still_pinned = _pinned_keys_after(
+                dask_client, "TerminalTask", 0.3)
+
+    assert still_pinned == {}
+
+
+def test_an_abandoned_run_leaves_a_caller_supplied_future_alone(
+    dask_client: Client,
+) -> None:
+    """Teardown releases only the dependency futures the run created.
+
+    A caller may pass a future of its own as an ordinary task argument.
+    Abandoning the run before that task is submitted must not release it
+    -- it belongs to the caller, who may still want its result.
+    """
+    mine = dask_client.submit(tagged, "mine", key="CallerOwned-1633")
+    assert mine.result() == "mine"
+    graph = TaskGraph()
+    held = graph.create_task("HeldDependency", tagged, args=["held"])
+    slow = graph.create_task("SlowSibling", tagged_after, args=["s", 0.2])
+    graph.create_task("NeverSubmitted", joined, args=[held, slow, mine])
+
+    tasks_iter = DaskExecutor(dask_client).execute(graph)
+    for task, _result in tasks_iter:
+        if task == held:
+            break
+    tasks_iter.close()
+
+    # A release would land within this window; nothing should.
+    assert _pinned_keys_after(dask_client, "CallerOwned", 0.3) == {
+        "CallerOwned-1633": 1}
+    assert mine.result() == "mine"

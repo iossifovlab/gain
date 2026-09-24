@@ -1,10 +1,12 @@
 # pylint: disable=W0621,C0114,C0115,C0116,W0212,W0613
 import operator
 import time
+import warnings
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
+import dask
 import pytest
 from gain.task_graph import base_executor
 from gain.task_graph.cache import FileTaskCache
@@ -714,3 +716,79 @@ def test_reconciliation_expands_each_task_a_bounded_number_of_times(
     assert completed == set()
     assert walks.call_count <= 1
     assert successors.call_count <= 3 * count
+
+
+#: A dependency result far above the large-graph threshold below, and a
+#: threshold far above the ~1 KiB graph that any one task costs on its own.
+LARGE_RESULT_ENTRIES = 300_000
+
+
+def large_result() -> dict[int, int]:
+    return {i: i for i in range(LARGE_RESULT_ENTRIES)}
+
+
+def entry_count(result: dict[int, int]) -> int:
+    return len(result)
+
+
+def test_a_large_dependency_result_is_not_shipped_in_the_submitted_graph(
+    executor: TaskGraphExecutor,
+) -> None:
+    """A dependency's result reaches its dependant without riding the graph.
+
+    iossifovlab/gain#1633: under the dask executor a dependant is
+    submitted with its dependency's future, not the value, so distributed
+    has no large graph to warn about. The other executors take no graph
+    and deliver the value itself.
+    """
+    graph = TaskGraph()
+    producer = graph.create_task("producer", large_result, args=[])
+    graph.create_task(
+        "consumer", entry_count, args=[producer], deps=[producer])
+
+    with dask.config.set({
+        "distributed.admin.large-graph-warning-threshold": "1MiB",
+    }), warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        results = {
+            task.task_id: result for task, result in executor.execute(graph)
+        }
+
+    assert results["consumer"] == LARGE_RESULT_ENTRIES
+    assert [
+        str(warning.message) for warning in caught
+        if "Sending large graph" in str(warning.message)
+    ] == []
+
+
+def tag(value: str) -> str:
+    return value
+
+
+def labelled(first: str, literal: str, second: str, *, keyed: str) -> str:
+    return f"{first}|{literal}|{second}|keyed={keyed}"
+
+
+def test_each_dependency_reaches_its_own_argument_slot(
+    executor: TaskGraphExecutor,
+) -> None:
+    """Several dependencies, positional and keyword, land where declared.
+
+    Under the dask executor each dependency travels as a future and is
+    resolved into the arguments on the worker (iossifovlab/gain#1633), so
+    a slot mixup would hand a dependant the wrong input without failing
+    anything.
+    """
+    graph = TaskGraph()
+    first = graph.create_task("first", tag, args=["one"])
+    second = graph.create_task("second", tag, args=["two"])
+    keyed = graph.create_task("keyed", tag, args=["three"])
+    graph.create_task(
+        "fan-in", labelled,
+        args=[first, "literal", second], kwargs={"keyed": keyed})
+
+    results = {
+        task.task_id: result for task, result in executor.execute(graph)
+    }
+
+    assert results["fan-in"] == "one|literal|two|keyed=three"
