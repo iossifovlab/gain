@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Generator, Iterable, Iterator, Mapping
+from collections.abc import Generator, Iterable, Iterator
 from typing import IO, Any, NamedTuple
 
 import numpy as np
@@ -70,7 +70,9 @@ from gain.genomic_resources.statistics.exact_lengths import (
     stored_lengths,
     write_length_chart,
 )
-from gain.genomic_resources.statistics.percentages import percentage_of
+from gain.genomic_resources.statistics.percentages import (
+    percentages_over,
+)
 from gain.genomic_resources.statistics.record_validation import (
     validate_record_arrays,
 )
@@ -149,35 +151,6 @@ COMPLEX_GRID_TABLE_MAX_CELLS = 32
 
 #: How a failed fold of these regions is named in the message.
 _MERGE_FAILURE = "allele statistics"
-
-
-def percentages_over[K](
-    counts: Mapping[K, int], total: int,
-) -> dict[K, str] | None:
-    """Each count as a percentage of ``total``, ``None`` without one.
-
-    The one place the ALLELES section writes a share of a count, so the
-    classes column, the substitution matrix's cells and gain#989's
-    complex table all say the same thing the same way.  How each cell
-    is written -- the floor at ``<0.01%``, the ceiling at ``>99.99%``,
-    and the two exact answers neither may swallow -- is
-    :func:`~gain.genomic_resources.statistics.percentages.percentage_of`,
-    shared with the Coverage table on the same page (gain#1057).
-
-    What this adds is the MAP contract around a missing denominator: a
-    zero total has no percentage, and the answer is ``None`` for the
-    WHOLE map rather than per cell, because the denominator is a
-    property of the table.  The page then drops the column instead of
-    printing a row of nothing.  Coverage resolves a denominator per row
-    and so degrades one row at a time -- the same rule per cell, a
-    different answer to not having one.
-    """
-    if total <= 0:
-        return None
-    return {
-        key: percentage_of(count, total)
-        for key, count in counts.items()
-    }
 
 
 def _length_label(length: int) -> str:

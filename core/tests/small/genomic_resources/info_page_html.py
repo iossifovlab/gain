@@ -48,6 +48,9 @@ _VOID_ELEMENTS = frozenset({
 #: answering with it would be the silent widening this module exists to end.
 _ANY_HEADING = r"<h[1-6][ >]"
 
+#: A table's opening tag, with or without attributes.
+_TABLE_START = re.compile(r"<table\b[^>]*>")
+
 
 def _next_heading_of(heading: str) -> str:
     """The pattern bounding ``heading``'s section: the next peer or above.
@@ -284,8 +287,9 @@ def table_after(page: str, heading: str) -> Table:
     assertion about the section would pass against the wrong markup.
     """
     section = _bounded(page, heading, _ANY_HEADING)
-    assert "<table>" in section, f"the {heading} section rendered no table"
-    fragment = section.split("<table>", 1)[1].split("</table>", 1)[0]
+    opening = _TABLE_START.search(section)
+    assert opening is not None, f"the {heading} section rendered no table"
+    fragment = section[opening.end():].split("</table>", 1)[0]
     reader = _TableReader()
     reader.feed(f"<table>{fragment}</table>")
     reader.close()
