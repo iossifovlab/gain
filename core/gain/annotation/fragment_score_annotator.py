@@ -127,12 +127,6 @@ class FragmentScoreAnnotator(AnnotatorBase):
                 logger, "annotator name", info.type,
                 preferred_annotator_name, found_in=found_in)
 
-        # Deliberately constructed directly rather than through
-        # `build_fragment_score_from_resource`: that factory returns a
-        # process-wide shared instance, and `self.close()` below closes the
-        # score -- which would tear it down for every other holder.
-        # `FragmentScore.__init__` validates the resource type, so nothing is
-        # lost by bypassing the factory here.
         self.fragment_score = FragmentScore(resource)
         info.resources.append(resource)
 

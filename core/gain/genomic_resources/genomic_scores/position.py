@@ -419,7 +419,8 @@ class PositionScore(GenomicScore):
         score is refused there rather than on the first region that reaches
         it.  Building the accumulators is the READ's business --
         :meth:`_resolve_aggregation_queries` adds them, per call, which is
-        what keeps a read thread-safe and an annotator stateless.
+        what keeps each read's accumulators its own and an annotator
+        stateless.
 
         It lives on this kind rather than on
         :class:`~.base.GenomicScore` because of its middle step:
