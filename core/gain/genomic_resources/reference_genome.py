@@ -19,7 +19,7 @@ from gain.genomic_resources.resource_implementation import (
 )
 from gain.genomic_resources.resource_types import warn_retired_config_key
 from gain.utils.fs_utils import COMPRESSED_EXTENSIONS, endswith_ci
-from gain.utils.regions import Region
+from gain.utils.regions import Region, check_region_size
 
 logger = logging.getLogger(__name__)
 
@@ -337,8 +337,16 @@ class ReferenceGenome(
         Split the reference genome into regions and yield them.
 
         Can specify a specific chromosome to limit the regions to be
-        in that chromosome only.
+        in that chromosome only.  A ``region_size`` of 0 yields one region
+        per chromosome; a negative one is refused.
         """
+        # Checked here, not in the generator, so the call itself fails.
+        check_region_size(region_size)
+        return self._split_into_regions(region_size, chromosome)
+
+    def _split_into_regions(
+        self, region_size: int, chromosome: str | None,
+    ) -> Generator[Region, None, None]:
         if chromosome is None:
             chromosome_lengths = list(self.get_all_chrom_lengths().items())
         else:

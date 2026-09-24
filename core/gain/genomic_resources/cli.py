@@ -210,12 +210,25 @@ def _add_dvc_parameters_group(parser: argparse.ArgumentParser) -> None:
         "manifest entry is never dropped")
 
 
+def _non_negative_int(value: str) -> int:
+    try:
+        size = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"not an integer: {value}") from None
+    if size < 0:
+        raise argparse.ArgumentTypeError(
+            f"must not be negative: {value}")
+    return size
+
+
 def _add_hist_parameters_group(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group(title="Statistics")
     group.add_argument(
-        "--region-size", type=int, default=DEFAULT_STATISTICS_REGION_SIZE,
+        "--region-size", type=_non_negative_int,
+        default=DEFAULT_STATISTICS_REGION_SIZE,
         help="Region size to use for splitting statistics calculation into "
-        "tasks")
+        "tasks; 0 does not split")
 
 
 def _configure_list_subparser(subparsers: argparse._SubParsersAction) -> None:

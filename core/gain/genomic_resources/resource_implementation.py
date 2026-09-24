@@ -344,7 +344,15 @@ class GenomicResourceImplementation(ABC):
         region_size: int = DEFAULT_STATISTICS_REGION_SIZE,
         grr: GenomicResourceRepo | None = None,
     ) -> list[TaskDesc]:
-        """Create tasks for calculating resource statistics for task graph."""
+        """Create tasks for calculating resource statistics for task graph.
+
+        A kind that splits its build by genomic region reads
+        ``region_size``: a positive value is the longest region one task
+        covers, ``0`` means do not split (a single pass for a genomic
+        score, one region per chromosome for a reference genome), and a
+        negative value is refused with ``ValueError``.  Kinds that do not
+        split ignore it.
+        """
         raise NotImplementedError
 
     @abstractmethod

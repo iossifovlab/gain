@@ -88,12 +88,22 @@ def calc_bin_index(bin_len: int, pos: int) -> int:
     return (pos - 1) // bin_len
 
 
+def check_region_size(region_size: int) -> None:
+    """Refuse a negative ``region_size``; 0 (do not split) is valid."""
+    if region_size < 0:
+        raise ValueError(
+            f"region_size must not be negative: {region_size}")
+
+
 def split_into_regions(
     chrom: str, chrom_length: int,
     region_size: int, start: int = 1,
 ) -> list[Region]:
-    """Return a list of regions for a chrom with a given length."""
+    """Return a list of regions for a chrom with a given length.
 
+    A ``region_size`` of 0 is the whole chrom; a negative one is refused.
+    """
+    check_region_size(region_size)
     if region_size == 0:
         return [Region(chrom)]
 
