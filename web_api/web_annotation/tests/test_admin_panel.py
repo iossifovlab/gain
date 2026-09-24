@@ -5,6 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from admin_panel.views import (
+    _CURRENT_QUOTA_FIELDS,
+    _EXTRA_QUOTA_FIELDS,
     AdminPanelView,
     DeleteAnonymousJobsView,
     ResetDailyQuotaView,
@@ -24,6 +26,7 @@ from web_annotation.models import (
     AnonymousUserQuota,
     DailyQuotaRefreshLog,
     MonthlyQuotaRefreshLog,
+    Quota,
     SessionQuota,
     User,
     UserQuota,
@@ -1017,3 +1020,19 @@ def test_quota_setter_writes_only_the_field_it_sets(
         case.view.as_view()(http_request)
 
     _assert_writes_only(queries, case.expected_field)
+
+
+def test_the_extra_quota_types_name_the_model_resources() -> None:
+    # A tripwire, not a property: the accepted types are spelled out on
+    # purpose, as the HTTP contract (#749), so this only stops them drifting
+    # from the model -- a resource renamed there would otherwise leave the
+    # panel accepting a name nothing deducts from.
+    assert {
+        resource: extra
+        for resource, (_, _, extra) in Quota.RESOURCE_FIELDS.items()
+    } == _EXTRA_QUOTA_FIELDS
+
+
+def test_the_current_quota_types_name_the_model_counters() -> None:
+    # The same tripwire for the period counters the panel accepts.
+    assert set(Quota.COUNTER_FIELDS) == _CURRENT_QUOTA_FIELDS

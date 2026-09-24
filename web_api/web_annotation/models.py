@@ -1353,23 +1353,12 @@ class QuotaSnapshot:
             max_monthly_attributes=a.max_monthly_attributes,
         )
 
-    def get_daily_job_max(self) -> int:
-        return self.max_daily_jobs
+    def limit_for(self, counter: str) -> int:
+        """Return the limit the named period counter is measured against.
 
-    def get_monthly_job_max(self) -> int:
-        return self.max_monthly_jobs
-
-    def get_daily_variant_max(self) -> int:
-        return self.max_daily_variants
-
-    def get_monthly_variant_max(self) -> int:
-        return self.max_monthly_variants
-
-    def get_daily_attribute_max(self) -> int:
-        return self.max_daily_attributes
-
-    def get_monthly_attribute_max(self) -> int:
-        return self.max_monthly_attributes
+        Each period counter's limit is carried as ``max_<counter>``.
+        """
+        return cast(int, getattr(self, f"max_{counter}"))
 
     def check_job_quota(self) -> bool:
         """Check if there is quota available for a job."""

@@ -910,12 +910,12 @@ def test_user_get_quota_initializes_values() -> None:
 
     quota = user.get_quota()
 
-    assert quota.daily_jobs == quota.get_daily_job_max()
-    assert quota.monthly_jobs == quota.get_monthly_job_max()
-    assert quota.daily_variants == quota.get_daily_variant_max()
-    assert quota.monthly_variants == quota.get_monthly_variant_max()
-    assert quota.daily_attributes == quota.get_daily_attribute_max()
-    assert quota.monthly_attributes == quota.get_monthly_attribute_max()
+    assert quota.daily_jobs == quota.limit_for("daily_jobs")
+    assert quota.monthly_jobs == quota.limit_for("monthly_jobs")
+    assert quota.daily_variants == quota.limit_for("daily_variants")
+    assert quota.monthly_variants == quota.limit_for("monthly_variants")
+    assert quota.daily_attributes == quota.limit_for("daily_attributes")
+    assert quota.monthly_attributes == quota.limit_for("monthly_attributes")
 
 
 def test_user_get_quota_returns_existing(user_quota: UserQuota) -> None:
@@ -957,12 +957,12 @@ def test_anonymous_user_get_quota_initializes_values() -> None:
 
     quota = anon.get_quota()
 
-    assert quota.daily_jobs == quota.get_daily_job_max()
-    assert quota.monthly_jobs == quota.get_monthly_job_max()
-    assert quota.daily_variants == quota.get_daily_variant_max()
-    assert quota.monthly_variants == quota.get_monthly_variant_max()
-    assert quota.daily_attributes == quota.get_daily_attribute_max()
-    assert quota.monthly_attributes == quota.get_monthly_attribute_max()
+    assert quota.daily_jobs == quota.limit_for("daily_jobs")
+    assert quota.monthly_jobs == quota.limit_for("monthly_jobs")
+    assert quota.daily_variants == quota.limit_for("daily_variants")
+    assert quota.monthly_variants == quota.limit_for("monthly_variants")
+    assert quota.daily_attributes == quota.limit_for("daily_attributes")
+    assert quota.monthly_attributes == quota.limit_for("monthly_attributes")
 
 
 def test_anonymous_user_get_quota_returns_existing(
