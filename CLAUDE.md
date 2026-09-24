@@ -28,6 +28,11 @@ pip install -e vep_annotator      # optional
 pip install -e spliceai_annotator # optional
 ```
 
+`environment.yml` is generated from the gain-core and
+gain-web-api pyprojects by `scripts/conda_env.py` — never
+edit it by hand; `core/tests/test_conda_deps.py` fails when
+it is stale.
+
 ### uv workspace
 
 The repo root is a virtual `gain-monorepo` project
@@ -193,6 +198,10 @@ ruff/mypy miss:
 *reassigned* (e.g. inside a `try`/`except`), which pylint then
 treats as a snake_case variable — assign such constants
 exactly once.
+
+**After changing any pyproject dependency**, run
+`python scripts/conda_env.py` from the repo root and commit
+the regenerated `environment.yml` with it.
 
 ### Git hooks
 

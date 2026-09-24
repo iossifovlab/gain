@@ -120,6 +120,9 @@ cd "$TESTBED"
 # test_architecture.py evaluates the SOURCE tree (it expects the gain
 # package next to tests/, which this test bed deliberately lacks), so it
 # is excluded here; the root pipeline keeps running it from the source.
+# test_conda_deps.py is excluded for the same reason: it compares the
+# repo-root environment.yml with the workspace pyprojects, and this test
+# bed has no repo checkout to read them from.
 #
 # --enable-http-testing / --enable-s3-testing make the conftest generate
 # the http/s3 scheme parametrizations the root's run has (#1571); the
@@ -132,6 +135,7 @@ set +e
 "$ENV_PREFIX/bin/python" -m pytest -n 5 tests \
     --enable-http-testing --enable-s3-testing \
     --ignore=tests/integration --ignore=tests/test_architecture.py \
+    --ignore=tests/test_conda_deps.py \
     --junitxml="$REPORTS/pytest-small.xml"
 small_exit=$?
 echo "pytest exit code (small tier): $small_exit"

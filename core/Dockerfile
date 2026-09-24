@@ -92,6 +92,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
             ${UV_SYNC_FLAGS}; \
     fi
 
+# tests/test_conda_deps.py renders environment.yml from the gain-core and
+# gain-web-api pyprojects with scripts/conda_env.py and compares it with
+# the committed file (#1639). Copied after both syncs: neither file is an
+# input to them.
+COPY environment.yml ./
+COPY web_api/pyproject.toml ./web_api/
+
 ENV PATH="/workspace/.venv/bin:$PATH"
 WORKDIR /workspace/core
 

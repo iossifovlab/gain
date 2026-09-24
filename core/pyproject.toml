@@ -144,6 +144,9 @@ dev = [
     "coverage",
     "fonttools",
     "mypy==1.15.0",
+    # scripts/conda_env.py parses requirement strings with it; the test
+    # that guards environment.yml (tests/test_conda_deps.py) imports it.
+    "packaging",
     "pandas-stubs",
     "pyarrow-stubs",
     "pylint",
