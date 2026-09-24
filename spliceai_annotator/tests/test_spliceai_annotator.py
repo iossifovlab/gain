@@ -335,6 +335,102 @@ def test_spliceai_batch_annotate_renamed_attribute(
         "C|TUBB8|0.15|0.27|0.00|0.05|89|-23|-267|193"
 
 
+# 10:95119 A>T sits 3 bp from TUBB8's exon boundary at 95122; its donor
+# gain lands on that boundary.  10:94555 C>T is itself on a boundary.
+_GAIN_ON_BOUNDARY = VCFAllele("10", 95119, "A", "T")
+_LOSS_ON_BOUNDARY = VCFAllele("10", 94555, "C", "T")
+_GAIN_ON_BOUNDARY_UNMASKED = "T|TUBB8|0.08|0.00|0.09|0.04|50|-454|3|163"
+_GAIN_ON_BOUNDARY_MASKED = "T|TUBB8|0.08|0.00|0.00|0.00|50|-454|3|163"
+_LOSS_ON_BOUNDARY_MASKED = "T|TUBB8|0.01|0.00|0.15|0.62|-2|110|-190|0"
+
+
+def _masking_pipeline(
+    grr: GenomicResourceRepo, mask: str,
+) -> AnnotationPipeline:
+    return load_pipeline_from_yaml(textwrap.dedent(f"""
+        - spliceai_annotator:
+            genome: hg19/genome_10
+            gene_models: hg19/gene_models_small
+            distance: 500
+            mask: {mask}
+            attributes:
+            - DS_MAX
+            - delta_score
+    """), grr)
+
+
+@pytest.fixture(scope="module")
+def spliceai_masking_pipeline(
+    spliceai_grr: GenomicResourceRepo,
+) -> AnnotationPipeline:
+    return _masking_pipeline(spliceai_grr, "1")
+
+
+def test_spliceai_mask_zeroes_a_gain_on_the_annotated_splice_site(
+    spliceai_masking_pipeline: AnnotationPipeline,
+) -> None:
+    # TUBB8 is on the minus strand, so this also covers masking against
+    # delta positions flipped back to genomic order.
+    # Unmasked, the donor gain (0.09) sits exactly on the boundary
+    # (DP_DG 3), so masking zeroes it; the donor loss (0.04) sits off it
+    # (DP_DL 163), so masking zeroes it too.
+    with spliceai_masking_pipeline.open() as p:
+        result = p.annotate(_GAIN_ON_BOUNDARY)
+    assert result["delta_score"] == _GAIN_ON_BOUNDARY_MASKED
+    assert result["DS_MAX"] == pytest.approx(0.08, abs=0.005)
+
+
+def test_spliceai_mask_keeps_a_loss_on_the_annotated_splice_site(
+    spliceai_masking_pipeline: AnnotationPipeline,
+) -> None:
+    # Unmasked: "T|TUBB8|0.01|0.18|0.15|0.62|-2|110|-190|0" -- the donor
+    # loss (0.62) is on the boundary and survives; the acceptor loss
+    # (0.18) is off it and is zeroed; gains off the boundary are untouched.
+    with spliceai_masking_pipeline.open() as p:
+        result = p.annotate(_LOSS_ON_BOUNDARY)
+    assert result["delta_score"] == _LOSS_ON_BOUNDARY_MASKED
+    assert result["DS_MAX"] == pytest.approx(0.62, abs=0.005)
+
+
+def test_spliceai_mask_applies_to_batch_annotation(
+    spliceai_masking_pipeline: AnnotationPipeline,
+) -> None:
+    with spliceai_masking_pipeline.open() as p:
+        results = p.batch_annotate([_GAIN_ON_BOUNDARY, _LOSS_ON_BOUNDARY])
+    assert [r["delta_score"] for r in results] == [
+        _GAIN_ON_BOUNDARY_MASKED,
+        _LOSS_ON_BOUNDARY_MASKED,
+    ]
+
+
+@pytest.mark.parametrize(
+    "mask,expected",
+    [
+        ("true", _GAIN_ON_BOUNDARY_MASKED),
+        ("2", _GAIN_ON_BOUNDARY_UNMASKED),
+    ],
+)
+def test_spliceai_mask_config_values(
+    spliceai_grr: GenomicResourceRepo,
+    mask: str,
+    expected: str,
+) -> None:
+    # YAML booleans are accepted; an out-of-range value falls back to 0.
+    pipeline = _masking_pipeline(spliceai_grr, mask)
+    with pipeline.open() as p:
+        result = p.annotate(_GAIN_ON_BOUNDARY)
+    assert result["delta_score"] == expected
+
+
+def test_spliceai_mask_out_of_range_warns(
+    spliceai_grr: GenomicResourceRepo,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING"):
+        _masking_pipeline(spliceai_grr, "2")
+    assert "mask 2 is out of range" in caplog.text
+
+
 def test_spliceai_annotator_genomeless_preamble_uses_the_context(
     mocker: pytest_mock.MockerFixture,
     spliceai_grr: GenomicResourceRepo,
