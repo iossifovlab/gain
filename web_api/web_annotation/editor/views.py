@@ -560,7 +560,8 @@ class AnnotatorAttributes(AsyncEditorView):
             {
                 "page": page,
                 "total_pages": (
-                    total_attribute_count // self.ATTRIBUTE_PAGE_SIZE) + 1,
+                    total_attribute_count + self.ATTRIBUTE_PAGE_SIZE - 1
+                ) // self.ATTRIBUTE_PAGE_SIZE,
                 "total_attributes": total_attribute_count,
                 "attributes": attributes_result,
             },
