@@ -76,9 +76,10 @@ def test_a_state_built_from_the_scan_says_what_the_accessors_say(
     read exactly as its own accessor would -- including the ``None`` a
     store without tokens reports.
 
-    The timestamp is not compared: the scan does not supply it, and on
-    s3 the one a manifest build records can differ from a later
-    ``modified()`` by a fraction of a second (gain#1664).
+    The timestamp is compared too, though the scan does not supply it:
+    on s3 the one a manifest build records used to come out of the
+    scan's listing, a fraction of a second away from a later
+    ``modified()`` (gain#1664).
     """
     # Given stored files with no recorded state and no sidecar.
     proto = download_dest
@@ -92,8 +93,7 @@ def test_a_state_built_from_the_scan_says_what_the_accessors_say(
 
     # Then every state it recorded reads as the accessors do.
     for name in names:
-        assert_state_matches_accessors(
-            proto, resource, name, compare_timestamp=False)
+        assert_state_matches_accessors(proto, resource, name)
 
 
 @pytest.mark.grr_rw

@@ -502,7 +502,6 @@ def copy_one_resource(
 
 def assert_state_matches_accessors(
     proto: FsspecReadWriteProtocol, resource: GenomicResource, name: str,
-    *, compare_timestamp: bool = True,
 ) -> None:
     """Assert the recorded state is what the accessors report for ``name``.
 
@@ -512,19 +511,13 @@ def assert_state_matches_accessors(
     still read identically, to its rounding and to the ``None`` a store
     without tokens reports. Spelled once, because a copy that misses a
     newly added field stops comparing it without failing.
-
-    ``compare_timestamp=False`` takes the recorded timestamp as given,
-    for a path whose timestamp is known to disagree with a later
-    ``modified()`` for reasons of its own (gain#1664).
     """
     recorded = proto.load_resource_file_state(resource, name)
     assert recorded is not None, name
     assert recorded == ResourceFileState(
         filename=name,
         size=proto.get_resource_file_size(resource, name),
-        timestamp=(
-            proto.get_resource_file_timestamp(resource, name)
-            if compare_timestamp else recorded.timestamp),
+        timestamp=proto.get_resource_file_timestamp(resource, name),
         md5=proto.compute_md5_sum(resource, name),
         change_token=proto.get_resource_file_change_token(resource, name),
     ), name

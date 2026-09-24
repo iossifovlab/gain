@@ -4,9 +4,8 @@
 A ``.state`` is trusted to describe the bytes in the store, and what it
 is checked against decides two different failures. Too strict, and an
 unchanged file is re-read and re-hashed for nothing -- which is what a
-modification time does on s3, where the value depends on whether the
-answer came from ``head_object`` (whole seconds) or ``list_objects_v2``
-(milliseconds). Too loose, and a real change goes unnoticed and a stale
+modification time did on s3 until it was always read with a HEAD
+(gain#1664). Too loose, and a real change goes unnoticed and a stale
 md5 sum is published into a ``.MANIFEST``, which is a committed artefact.
 
 The store's own change token is what avoids both, and these tests hold
@@ -155,14 +154,10 @@ def test_the_manifest_scan_rehashes_a_same_size_rewrite(
     ``.MANIFEST``, a committed artefact every client trusts.
 
     The modification time is forced to whole seconds here, which is what
-    a store that reports it that way would give. Against MinIO the scan
-    is saved by an accident rather than by the rule: it lists, and the
-    listing reports milliseconds where the recorded state came from a
-    ``head_object`` that reports whole seconds, so the two disagree and
-    the file is re-hashed for the wrong reason. Take that disagreement
-    away -- as a store with a second-granular clock does, and real S3 is
-    believed to be one -- and the timestamp can no longer tell these two
-    versions apart at all. The change token still can.
+    a store that reports it that way would give -- and what s3 now gives,
+    its timestamp being always a whole-second HEAD (gain#1664). The
+    timestamp cannot tell these two versions apart at all. The change
+    token still can.
     """
     proto = fsspec_proto
     resource = proto.get_resource("one")
