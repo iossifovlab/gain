@@ -13,9 +13,11 @@ from gain.genomic_resources.histogram import (
     NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
+    build_default_histogram_conf,
     build_histogram_config,
     load_histogram,
 )
+from gain.genomic_resources.statistics.min_max import MinMaxValue
 from gain.genomic_resources.testing.builders import a_position_score
 
 
@@ -430,3 +432,17 @@ def test_load_histogram_missing_file_warns_without_traceback(
     assert len(records) == 1
     assert records[0].levelno == logging.WARNING
     assert records[0].exc_info is None
+
+
+def test_default_histogram_conf_for_a_number_has_no_view_range() -> None:
+    conf = build_default_histogram_conf("float")
+
+    assert conf == NumberHistogramConfig.default_config(None)
+
+
+def test_default_histogram_conf_refuses_an_unknown_keyword() -> None:
+    # An undeclared keyword is refused, not swallowed into a default.
+    with pytest.raises(TypeError, match="min_max"):
+        build_default_histogram_conf(
+            "float",
+            min_max=MinMaxValue("score", 0, 1))  # type: ignore[call-arg]
