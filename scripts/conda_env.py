@@ -34,6 +34,9 @@ CHANNELS = (
 #: Canonical PyPI name -> conda package name, for the packages whose
 #: conda name differs. Every other package keeps its canonical PyPI name.
 CONDA_NAMES: Mapping[str, str] = MappingProxyType({
+    # conda-forge `brotli` is the C library and command-line tools only;
+    # the Python binding PyPI calls `brotli` is `brotli-python` (#1400).
+    "brotli": "brotli-python",
     # Plain `dask` on conda-forge is a metapackage that also pulls in
     # bokeh, pyarrow, lz4 and cytoolz; bokeh registers its own TRACE
     # level name on import (#1569). dask-core is PyPI's `dask`.
@@ -48,6 +51,10 @@ CONDA_NAMES: Mapping[str, str] = MappingProxyType({
 #: conda dependency.
 PIP_ONLY: Mapping[str, str] = MappingProxyType({
     "adrf": "not packaged on any conda channel",
+    "pylint-junit": "not packaged on any conda channel",
+    "pytestarch": "not packaged on any conda channel",
+    "sphinx-autorun": "not packaged on any conda channel",
+    "types-channels": "not packaged on any conda channel",
 })
 
 
@@ -68,10 +75,22 @@ class Output:
     feeds: tuple[Feed, ...]
 
 
+_DEV = ("dependency-groups", "dev")
+
 OUTPUTS = (
     Output(
         "environment.yml", "gain",
         (Feed("core/pyproject.toml"), Feed("web_api/pyproject.toml")),
+    ),
+    # Installed on top of environment.yml into the same env, so it
+    # carries only the tools: no runtime feeds.
+    Output(
+        "dev-environment.yml", "gain",
+        (
+            Feed("core/pyproject.toml", _DEV),
+            Feed("web_api/pyproject.toml", _DEV),
+            Feed("pyproject.toml", ("dependency-groups", "docs")),
+        ),
     ),
 )
 

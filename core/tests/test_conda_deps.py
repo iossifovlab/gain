@@ -9,6 +9,7 @@ import importlib.util
 import pathlib
 import sys
 import textwrap
+from collections.abc import Iterable
 from types import ModuleType
 
 import pytest
@@ -38,7 +39,7 @@ def test_committed_environment_files_are_current(
     conda_env: ModuleType,
 ) -> None:
     rendered = conda_env.render_all()
-    assert set(rendered) == {"environment.yml"}
+    assert set(rendered) == {"environment.yml", "dev-environment.yml"}
 
     for filename, text in rendered.items():
         committed = REPO_ROOT / filename
@@ -48,31 +49,48 @@ def test_committed_environment_files_are_current(
             f"{committed} is stale; {REGENERATE}")
 
 
+def test_pip_only_entries_carry_a_reason(conda_env: ModuleType) -> None:
+    assert conda_env.PIP_ONLY
+    assert [
+        name for name, reason in conda_env.PIP_ONLY.items()
+        if not reason.strip()
+    ] == []
+
+
 def _workspace(
     root: pathlib.Path,
     core: list[str],
     web_api: list[str],
     requires_python: str = ">=3.12",
+    *,
+    core_dev: Iterable[str] = (),
+    web_api_dev: Iterable[str] = (),
+    docs: Iterable[str] = (),
 ) -> pathlib.Path:
-    def pyproject(name: str, deps: list[str]) -> str:
-        listed = "".join(f"    {dep!r},\n" for dep in deps)
+    def listed(deps: Iterable[str]) -> str:
+        return "[\n" + "".join(f"    {dep!r},\n" for dep in deps) + "]\n"
+
+    def pyproject(
+        name: str, deps: list[str], group: str, group_deps: Iterable[str],
+    ) -> str:
         return (
             f'[project]\nname = "{name}"\n'
             f'requires-python = "{requires_python}"\n'
-            f"dependencies = [\n{listed}]\n")
+            f"dependencies = {listed(deps)}"
+            f"[dependency-groups]\n{group} = {listed(group_deps)}")
 
     (root / "core").mkdir(parents=True, exist_ok=True)
     (root / "web_api").mkdir(exist_ok=True)
-    (root / "pyproject.toml").write_text(textwrap.dedent("""\
-        [project]
-        name = "monorepo"
-        [tool.uv.sources]
-        gain-core = { workspace = true }
-        gain-web-api = { workspace = true }
-        """))
-    (root / "core/pyproject.toml").write_text(pyproject("gain-core", core))
+    (root / "pyproject.toml").write_text(
+        pyproject("monorepo", [], "docs", docs) + textwrap.dedent("""\
+            [tool.uv.sources]
+            gain-core = { workspace = true }
+            gain-web-api = { workspace = true }
+            """))
+    (root / "core/pyproject.toml").write_text(
+        pyproject("gain-core", core, "dev", core_dev))
     (root / "web_api/pyproject.toml").write_text(
-        pyproject("gain-web-api", web_api))
+        pyproject("gain-web-api", web_api, "dev", web_api_dev))
     return root
 
 
@@ -83,6 +101,15 @@ def _render(
 ) -> str:
     rendered = conda_env.render_all(root, pip_only=pip_only or {})
     return str(rendered["environment.yml"])
+
+
+def _render_dev(
+    conda_env: ModuleType,
+    root: pathlib.Path,
+    pip_only: dict[str, str] | None = None,
+) -> str:
+    rendered = conda_env.render_all(root, pip_only=pip_only or {})
+    return str(rendered["dev-environment.yml"])
 
 
 def _dependencies(rendered: str) -> list[str]:
@@ -98,7 +125,10 @@ def test_render_maps_sorts_and_sections(
 ) -> None:
     root = _workspace(
         tmp_path,
-        core=["pyBigWig>=0.3", "dask>=2026.1", "anndata", "matplotlib"],
+        core=[
+            "pyBigWig>=0.3", "dask>=2026.1", "anndata", "matplotlib",
+            "Brotli",
+        ],
         web_api=["gain-core", "django>=5.2,<5.3", "docker>=7.1"],
         requires_python=">=3.13",
     )
@@ -107,6 +137,7 @@ def test_render_maps_sorts_and_sections(
         "  - python>=3.13",
         CORE,
         "  - anndata",
+        "  - brotli-python",
         "  - dask-core>=2026.1",
         "  - matplotlib-base",
         "  - pybigwig>=0.3",
@@ -217,15 +248,66 @@ def test_pip_only_entry_declared_by_another_output_is_accepted(
     assert "    - adrf\n" in rendered["web.yml"]
 
 
-def test_check_reports_drift_without_rewriting(
+def test_dev_environment_renders_the_dev_and_docs_groups(
     conda_env: ModuleType, tmp_path: pathlib.Path,
 ) -> None:
-    root = _workspace(tmp_path, core=["numpy", "adrf"], web_api=[])
+    root = _workspace(
+        tmp_path,
+        core=["numpy>=2"],
+        web_api=["django>=5.2"],
+        core_dev=["pytest>=9", "ruff==0.16.5", "brotli"],
+        web_api_dev=["pytest", "gain-core", "pylint-django"],
+        docs=["sphinx", "myst-parser"],
+    )
+
+    assert _dependencies(_render_dev(conda_env, root)) == [
+        "  - python>=3.12",
+        "  # gain-core (core/pyproject.toml [dependency-groups.dev])",
+        "  - brotli-python",
+        "  - pytest>=9",
+        "  - ruff==0.16.5",
+        "  # gain-web-api (web_api/pyproject.toml [dependency-groups.dev])",
+        "  - pylint-django",
+        "  # monorepo (pyproject.toml [dependency-groups.docs])",
+        "  - myst-parser",
+        "  - sphinx",
+    ]
+
+
+def test_dev_pip_only_entry_stays_out_of_the_runtime_file(
+    conda_env: ModuleType, tmp_path: pathlib.Path,
+) -> None:
+    root = _workspace(
+        tmp_path, core=["numpy"], web_api=[], core_dev=["pytestarch"])
+
+    rendered = conda_env.render_all(
+        root, pip_only={"pytestarch": "not on conda"})
+
+    assert "pip" not in rendered["environment.yml"]
+    assert rendered["dev-environment.yml"].endswith(
+        "  - pip:\n"
+        "    # pytestarch: not on conda\n"
+        "    - pytestarch\n")
+
+
+@pytest.mark.parametrize(("core", "docs", "stale"), [
+    (["numpy>=2"], [], "environment.yml"),
+    (["numpy"], ["sphinx"], "dev-environment.yml"),
+])
+def test_check_reports_drift_without_rewriting(
+    conda_env: ModuleType, tmp_path: pathlib.Path,
+    core: list[str], docs: list[str], stale: str,
+) -> None:
+    # Every real PIP_ONLY entry must be declared somewhere, or render_all
+    # refuses the workspace.
+    pip_only = list(conda_env.PIP_ONLY)
+    root = _workspace(
+        tmp_path, core=["numpy"], web_api=[], core_dev=pip_only)
     assert conda_env.main([], root=root) == 0
     assert conda_env.main(["--check"], root=root) == 0
 
-    _workspace(tmp_path, core=["numpy>=2", "adrf"], web_api=[])
-    before = (root / "environment.yml").read_text()
+    _workspace(tmp_path, core=core, web_api=[], core_dev=pip_only, docs=docs)
+    before = (root / stale).read_text()
 
     assert conda_env.main(["--check"], root=root) == 1
-    assert (root / "environment.yml").read_text() == before
+    assert (root / stale).read_text() == before
