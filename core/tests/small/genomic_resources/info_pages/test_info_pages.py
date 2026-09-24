@@ -19,7 +19,7 @@ Two habits here are deliberate and worth keeping if this file is extended.
 page and what was wrong with it, because the failure a page suite reports
 is read by someone who was not thinking about pages.
 
-*Assertions are bidirectional where they can be.*  The Coverage and Alleles
+*Assertions are bidirectional where they can be.*  The kind-section
 checks assert both that a computed statistic renders and that a missing one
 says so.  A one-directional version would pass just as happily against a
 section extractor that had quietly started returning nothing -- which is
@@ -38,7 +38,17 @@ from urllib.parse import unquote, urlparse
 import pytest
 import yaml
 from gain.genomic_resources import get_resource_implementation_builder
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME
+from gain.genomic_resources.repository import (
+    GR_CONF_FILE_NAME,
+    GenomicResourceRepo,
+)
+from gain.genomic_resources.repository_factory import (
+    build_genomic_resource_repository,
+    build_resource_implementation,
+)
+from gain.genomic_resources.statistics.alleles import ALLELE_STATISTIC
+from gain.genomic_resources.statistics.coverage import COVERAGE_STATISTIC
+from gain.genomic_resources.statistics.fragments import FRAGMENT_STATISTIC
 
 from tests.small.genomic_resources.info_pages import conftest as info_pages
 from tests.small.genomic_resources.info_pages.conftest import (
@@ -85,6 +95,15 @@ _COVERAGE_KNOWN_COLUMNS = frozenset({
 
 #: The label on the Coverage table's totals row.
 _COVERAGE_TOTALS_LABEL = "all chromosomes"
+
+#: The page heading each stored statistic is reported under.  Which kinds
+#: write which statistic is not stated here: ``stored_statistics()`` says.
+_SECTION_OF_STATISTIC = {
+    COVERAGE_STATISTIC.file: "Coverage",
+    ALLELE_STATISTIC.file: "Alleles",
+    FRAGMENT_STATISTIC.file: "Fragments",
+}
+_KIND_SECTIONS = frozenset(_SECTION_OF_STATISTIC.values())
 
 
 # --------------------------------------------------------------------------
@@ -363,6 +382,29 @@ def _links_of(page: Page) -> list[str]:
 def _repository_page_objects(built: BuiltGRR) -> list[Page]:
     """:func:`_repository_pages`, parsed."""
     return [_parse(path, built.path) for path in _repository_pages(built)]
+
+
+@functools.cache
+def _repository(root: pathlib.Path) -> GenomicResourceRepo:
+    """The built repository, opened once per session for reading."""
+    return build_genomic_resource_repository({
+        "id": "info_pages", "type": "dir", "directory": str(root),
+    })
+
+
+@functools.cache
+def _stored_statistic_files(
+    root: pathlib.Path, resource_id: str,
+) -> frozenset[str]:
+    """The statistics files a build writes for one resource.
+
+    Asked of the resource's implementation, built the way ``repo-info``
+    builds it, so the answer is the one the scan and the repair flow act
+    on rather than one this suite derives from the resource type.
+    """
+    resource = _repository(root).get_resource(resource_id)
+    impl = build_resource_implementation(resource)
+    return frozenset(stored.file for stored in impl.stored_statistics())
 
 
 def _pages_of(built: BuiltGRR, resource_id: str) -> list[Page]:
@@ -758,7 +800,8 @@ def test_an_ordinary_score_beside_an_annulled_one_keeps_its_image(
 
 @pytest.mark.parametrize(
     ("heading", "statistic"),
-    [("Coverage", "coverage.json"), ("Alleles", "alleles.json")],
+    [(heading, statistic)
+     for statistic, heading in sorted(_SECTION_OF_STATISTIC.items())],
 )
 def test_a_section_reports_its_statistic_exactly_when_it_was_computed(
     built_grr: BuiltGRR, heading: str, statistic: str,
@@ -773,10 +816,11 @@ def test_a_section_reports_its_statistic_exactly_when_it_was_computed(
     the page, and the check would be as green and as meaningless as the
     ``find()`` assertions this suite replaces.
 
-    Scoped to the section, never to the whole page.  Every score resource
-    renders *both* headings, and a position score legitimately says "not
-    computed" under Alleles, so a whole-page substring match reports a
-    failure for every one of them.
+    Scoped to the section, never to the whole page: another section of the
+    same page may say "not computed" about a statistic of its own.  Only
+    pages that render the section are checked here; whether a page should
+    render it at all is
+    :func:`test_a_page_renders_exactly_the_sections_its_kind_can_fill`.
     """
     computed_but_absent = []
     uncomputed_but_claimed = []
@@ -791,8 +835,7 @@ def test_a_section_reports_its_statistic_exactly_when_it_was_computed(
         if section is None:
             continue
         saw_section += 1
-        was_computed = (
-            built_grr.path / resource_id / "statistics" / statistic).exists()
+        was_computed = (built_grr.path / resource_id / statistic).exists()
         says_not_computed = _NOT_COMPUTED in section
         if was_computed and says_not_computed:
             computed_but_absent.append(resource_id)
@@ -803,14 +846,66 @@ def test_a_section_reports_its_statistic_exactly_when_it_was_computed(
         f"no page in the fixture repository renders a {heading!r} section, "
         f"so this check is vacuous")
     assert not computed_but_absent, (
-        f"statistics/{statistic} exists for {computed_but_absent}, but their "
+        f"{statistic} exists for {computed_but_absent}, but their "
         f"{heading!r} section still says {_NOT_COMPUTED!r} -- the statistic "
         f"was computed and never reached the page")
     assert not uncomputed_but_claimed, (
-        f"{uncomputed_but_claimed} have no statistics/{statistic}, but their "
+        f"{uncomputed_but_claimed} have no {statistic}, but their "
         f"{heading!r} section does not say {_NOT_COMPUTED!r}; if the wording "
         f"changed, the other half of this assertion has silently stopped "
         f"checking anything")
+
+
+@pytest.mark.parametrize("resource_id", _RESOURCE_IDS)
+def test_a_page_renders_exactly_the_sections_its_kind_can_fill(
+    built_grr: BuiltGRR, resource_id: str,
+) -> None:
+    """A section is on a page iff the resource's kind writes its statistic.
+
+    Whether or not the statistic has been computed: a section whose kind
+    can never produce it reads "not computed" forever, which tells the
+    reader a rebuild would fill it in.  The expected set comes from the
+    resource's own ``stored_statistics()``, so a kind or a statistic added
+    later is checked here without this test naming it.
+    """
+    page = _parse(built_grr.path / resource_id / "index.html", built_grr.path)
+    declared = _stored_statistic_files(built_grr.path, resource_id)
+
+    unknown = declared - _SECTION_OF_STATISTIC.keys()
+    assert not unknown, (
+        f"{resource_id} declares stored statistics {sorted(unknown)} that "
+        f"_SECTION_OF_STATISTIC does not map to a page section; add the "
+        f"heading its template renders")
+    # Lists, not sets: a section rendered twice is as wrong as one
+    # rendered for a kind that cannot fill it.
+    expected = sorted(_SECTION_OF_STATISTIC[file] for file in declared)
+    rendered = sorted(
+        heading for heading in page.headings() if heading in _KIND_SECTIONS)
+    assert rendered == expected, (
+        f"{page.name} renders the sections {rendered}, but its kind "
+        f"writes the statistics of {expected}")
+
+
+def test_every_kind_section_is_expected_on_some_page(
+    built_grr: BuiltGRR,
+) -> None:
+    """The positive control for the sections check above.
+
+    Were ``stored_statistics()`` to answer nothing for every resource, and
+    the page to render no kind section, that check would pass on every
+    page while checking nothing.
+    """
+    expected = {
+        _SECTION_OF_STATISTIC[file]
+        for resource_id in _RESOURCE_IDS
+        for file in _stored_statistic_files(built_grr.path, resource_id)
+        if file in _SECTION_OF_STATISTIC
+    }
+
+    assert expected == _KIND_SECTIONS, (
+        f"no fixture resource's kind writes the statistic of "
+        f"{sorted(_KIND_SECTIONS - expected)}, so the sections check never "
+        f"sees that section expected")
 
 
 # --------------------------------------------------------------------------

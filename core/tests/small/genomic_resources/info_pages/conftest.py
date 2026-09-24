@@ -90,6 +90,24 @@ def check_source_available() -> None:
         raise AssertionError(_NOT_A_GRR)
 
 
+#: Config keys GAIn has retired but mini-GRR still sets.  The suite builds
+#: every resource's implementation, and a retired key announces itself on
+#: each build -- which fails any test that does not own the notice.  They
+#: are no-ops (``chrom_prefix`` is derived from a genome's contig names),
+#: so the copy drops them; the entry goes when mini-GRR does.
+_RETIRED_CONFIG_KEYS = ("chrom_prefix",)
+
+
+def _drop_retired_config_keys(repo_dir: pathlib.Path) -> None:
+    """Remove :data:`_RETIRED_CONFIG_KEYS` from every copied config."""
+    prefixes = tuple(f"{key}:" for key in _RETIRED_CONFIG_KEYS)
+    for config in repo_dir.rglob(GR_CONF_FILE_NAME):
+        lines = config.read_text().splitlines(keepends=True)
+        kept = [line for line in lines if not line.startswith(prefixes)]
+        if kept != lines:
+            config.write_text("".join(kept))
+
+
 def _build_into(repo_dir: pathlib.Path) -> None:
     """Copy the fixture GRR to ``repo_dir`` and generate its pages.
 
@@ -104,6 +122,7 @@ def _build_into(repo_dir: pathlib.Path) -> None:
         MINI_GRR_SOURCE, repo_dir,
         ignore=shutil.ignore_patterns(".git"),
     )
+    _drop_retired_config_keys(repo_dir)
     add_supplement_resources(repo_dir)
     cli_manage(["repo-stats", "-f", "-R", str(repo_dir), "-j", "1"])
     cli_manage(["repo-info", "-R", str(repo_dir), "-j", "1"])
