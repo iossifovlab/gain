@@ -157,7 +157,13 @@ class SequentialTaskExecutor(TaskExecutor):
 
 
 class ThreadedTaskExecutor(TaskExecutor):
-    """Thread pool based job executor."""
+    """Thread pool based job executor.
+
+    ``job_timeout`` is enforced only when ``execute`` is called: every
+    tracked task older than ``job_timeout`` is cancelled and dropped from
+    tracking. Cancelling stops a task still queued for a worker; a task
+    that is already running is left to finish.
+    """
     def __init__(
         self,
         max_workers: int = 4,

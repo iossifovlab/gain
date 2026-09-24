@@ -30,7 +30,7 @@ async def test_await_build_propagates_real_future_exception() -> None:
 async def test_await_build_cancelled_future_raises_build_cancelled() -> None:
     """A cancelled shared build is reported as BuildCancelled, not Cancelled.
 
-    The build future is shared across readers; a reaper/force-reload cancel of
+    The build future is shared across readers; a force-reload cancel of
     it must be distinguishable from a per-request task cancellation so the
     caller can retry rather than abort.
     """
