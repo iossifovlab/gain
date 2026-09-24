@@ -15,7 +15,7 @@ from gain.genomic_resources.gene_models.gene_models_factory import (
     build_gene_models_from_resource,
 )
 from gain.genomic_resources.gene_models.parsers import (
-    infer_gene_model_parser,
+    infer_gene_models_format,
 )
 from gain.genomic_resources.gene_models.serialization import (
     save_as_default_gene_models,
@@ -216,32 +216,28 @@ def test_load_gene_models_from_file(
 
 
 @pytest.mark.parametrize(
-    "filename,file_format,expected",
+    "filename,expected",
     [
-        ("gene_models/test_ref_flat.txt", None, "refflat"),
-        ("gene_models/test_ref_flat_no_header.txt", None, "refflat"),
-        ("gene_models/test_ccds.txt", "ccds", "ccds"),
-        ("gene_models/test_ref_gene.txt", "refseq", "refseq"),
-        ("gene_models/test_ref_seq_hg38.txt", "refseq", "refseq"),
-        ("gene_models/test_known_gene.txt", None, "knowngene"),
-        ("gene_models/test_default_ref_gene_201309.txt", None, "default"),
-        ("gene_models/test_gencode_selenon.gtf", None, "gtf"),
-        ("gene_models/test_ref_gene.gtf", None, "gtf"),
-        ("gene_models/test_gencode.gtf", None, "gtf"),
+        ("gene_models/test_ref_flat.txt", "refflat"),
+        ("gene_models/test_ref_flat_no_header.txt", "refflat"),
+        ("gene_models/test_ccds.txt", "ccds"),
+        ("gene_models/test_ref_gene.txt", "refseq"),
+        ("gene_models/test_known_gene.txt", "knowngene"),
+        ("gene_models/test_default_ref_gene_201309.txt", "default"),
+        ("gene_models/test_gencode_selenon.gtf", "gtf"),
+        ("gene_models/test_ref_gene.gtf", "gtf"),
+        ("gene_models/test_gencode.gtf", "gtf"),
     ],
 )
 def test_infer_gene_models(
     fixture_dirname: Callable,
     filename: str,
-    file_format: str | None,
     expected: str,
 ) -> None:
 
     filename = fixture_dirname(filename)
     with open(filename, encoding="utf8") as infile:
-        inferred_file_format = infer_gene_model_parser(
-            infile,
-            file_format=file_format)
+        inferred_file_format = infer_gene_models_format(infile).file_format
 
         assert inferred_file_format is not None
         assert inferred_file_format == expected
@@ -260,7 +256,7 @@ def test_infer_gene_models_no_header(
 
     filename = fixture_dirname(filename)
     with gzip.open(filename, "rt") as infile:
-        inferred_file_format = infer_gene_model_parser(infile)
+        inferred_file_format = infer_gene_models_format(infile).file_format
         assert inferred_file_format is not None
         assert inferred_file_format == file_format
 

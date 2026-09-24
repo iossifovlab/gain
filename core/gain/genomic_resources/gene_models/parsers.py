@@ -1283,25 +1283,6 @@ def infer_gene_models_format(infile: IO) -> FormatInference:
     )
 
 
-def infer_gene_model_parser(
-    infile: IO,
-    file_format: str | None = None,
-) -> str | None:
-    """Infer gene models file format."""
-    if file_format is not None:
-        parser = get_parser(file_format)
-        if parser is not None:
-            return file_format
-
-    inference = infer_gene_models_format(infile)
-    if inference.file_format is not None:
-        return inference.file_format
-
-    logger.warning("can't infer gene models file format; %s",
-                   inference.report())
-    return None
-
-
 def load_transcript_models(
     resource: GenomicResource,
 ) -> dict[str, TranscriptModel]:

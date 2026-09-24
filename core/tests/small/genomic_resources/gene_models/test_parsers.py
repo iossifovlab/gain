@@ -10,7 +10,7 @@ from gain.genomic_resources.gene_models.parsers import (
     SUPPORTED_GENE_MODELS_FILE_FORMATS,
     _parse_gtf_attributes,
     get_parser,
-    infer_gene_model_parser,
+    infer_gene_models_format,
     load_gene_mapping,
     parse_ccds_gene_models_format,
     parse_default_gene_models_format,
@@ -203,27 +203,13 @@ def test_get_parser_unsupported() -> None:
     assert parser is None
 
 
-def test_infer_with_explicit_format() -> None:
-    """Test infer when explicit format is provided."""
-    data = StringIO("")
-    result = infer_gene_model_parser(data, file_format="gtf")
-    assert result == "gtf"
-
-
-def test_infer_with_invalid_explicit_format() -> None:
-    """Test infer with invalid explicit format."""
-    data = StringIO("")
-    result = infer_gene_model_parser(data, file_format="invalid")
-    assert result is None
-
-
 def test_infer_refflat_format() -> None:
     """Test inferring refflat format."""
     data = StringIO(convert_to_tab_separated("""
         #geneName name chrom strand txStart txEnd cdsStart cdsEnd exonCount exonStarts exonEnds
         TP53 NM_000546 17 - 7571719 7590868 7572826 7590856 11 7571719,7572926,7573927,7576525,7576853,7577018,7577155,7577498,7578176,7578371,7579311 7573008,7573009,7574033,7576657,7576926,7577095,7577243,7577608,7578289,7578554,7590868
     """))  # ruff: ignore[line-too-long]
-    result = infer_gene_model_parser(data)
+    result = infer_gene_models_format(data).file_format
     assert result == "refflat"
 
 
@@ -234,14 +220,14 @@ def test_infer_gtf_format() -> None:
         'gene_id "ENSG001"; transcript_id "ENST001"; gene_name "TEST";\n'
         "chr1\ttest\texon\t100\t150\t.\t+\t.\t"
         'gene_id "ENSG001"; transcript_id "ENST001"; gene_name "TEST";\n')
-    result = infer_gene_model_parser(data)
+    result = infer_gene_models_format(data).file_format
     assert result == "gtf"
 
 
 def test_infer_no_matching_format() -> None:
     """Test infer returns None when no format matches."""
     data = StringIO("invalid data format\n")
-    result = infer_gene_model_parser(data)
+    result = infer_gene_models_format(data).file_format
     assert result is None
 
 
