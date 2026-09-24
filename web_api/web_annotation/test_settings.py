@@ -6,6 +6,7 @@ import tempfile
 import yaml
 
 from .settings import *  # ruff: ignore[undefined-local-with-import-star]
+from .settings_default import resolve_prewarm_grr_pipelines
 
 # Dir for all data storage
 DATA_STORAGE_DIR = tempfile.mkdtemp()
@@ -63,3 +64,6 @@ EMAIL_REDIRECT_ENDPOINT = os.environ.get(
 JOB_CLEANUP_INTERVAL_DAYS = 7
 
 DEFAULT_PIPELINE = None
+
+# Tests build the pipelines they use; none are built at start-up.
+PREWARM_GRR_PIPELINES = resolve_prewarm_grr_pipelines(default=False)

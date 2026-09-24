@@ -534,6 +534,34 @@ def resolve_annotation_max_workers(default: int) -> int:
 ANNOTATION_MAX_WORKERS = resolve_annotation_max_workers(4)
 PIPELINES_CACHE_SIZE = 256
 
+
+def resolve_prewarm_grr_pipelines(*, default: bool) -> bool:
+    """Read ``GPFWA_PREWARM_GRR_PIPELINES``; blank or unset gives ``default``.
+
+    Accepts 1/true/yes/on and 0/false/no/off, case-insensitively. Anything
+    else raises ``ImproperlyConfigured`` at startup.
+    """
+    raw = os.environ.get("GPFWA_PREWARM_GRR_PIPELINES", "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise ImproperlyConfigured(
+        "GPFWA_PREWARM_GRR_PIPELINES must be one of 1/true/yes/on or "
+        f"0/false/no/off, got {raw!r}",
+    )
+
+
+# Build every GRR pipeline in the background when the ASGI application is
+# loaded, so no request waits on a cold GRR pipeline build (gain#657). Startup
+# and the healthcheck do not wait for the builds. The hook is in asgi.py, not
+# AppConfig.ready(): daphne imports the ASGI application (before its event
+# loop starts) and management commands never do, so `migrate` does not build
+# pipelines. GPFWA_PREWARM_GRR_PIPELINES overrides it.
+PREWARM_GRR_PIPELINES = resolve_prewarm_grr_pipelines(default=True)
+
 # How many validation verdicts /api/pipelines/validate remembers (gain#833).
 # An entry is a 64-character digest and an `errors` string, the latter capped
 # at ValidationResultCache.MAX_VERDICT_LENGTH (4 KiB) -- so this bounds the

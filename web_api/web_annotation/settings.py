@@ -7,6 +7,10 @@ from pathlib import Path
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
+# Every autoreload would otherwise rebuild the whole GRR's pipelines;
+# GPFWA_PREWARM_GRR_PIPELINES=1 switches the prewarm on.
+PREWARM_GRR_PIPELINES = resolve_prewarm_grr_pipelines(default=False)
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 

@@ -51,10 +51,13 @@ export GRR_DEFINITION_FILE="${GRR_FIXTURE}"
 export DJANGO_SETTINGS_MODULE="web_annotation.settings_e2e"
 export GPFWA_SECRET_KEY="${GPFWA_SECRET_KEY:-django-insecure-loadtest-164}"
 export GPFWA_BUILD_DELAY_SECONDS="${GPFWA_BUILD_DELAY_SECONDS:-0}"
+# No startup prewarm (gain#657): the harness measures the COLD first build.
+export GPFWA_PREWARM_GRR_PIPELINES="${GPFWA_PREWARM_GRR_PIPELINES:-0}"
 
 echo "[run_daphne_server] data dir:    ${DATA_DIR}"
 echo "[run_daphne_server] GRR def:     ${GRR_FIXTURE}"
 echo "[run_daphne_server] build delay: ${GPFWA_BUILD_DELAY_SECONDS}s"
+echo "[run_daphne_server] prewarm:     ${GPFWA_PREWARM_GRR_PIPELINES}"
 echo "[run_daphne_server] port:        ${PORT}"
 
 python -m django migrate --noinput >/dev/null

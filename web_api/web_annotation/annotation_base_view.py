@@ -1,5 +1,6 @@
 """Module containing base view for annotation work."""
 import gzip
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import Any, ClassVar, cast
@@ -308,19 +309,41 @@ class AnnotationMixin:
         user: BaseUser,
     ) -> None:
         """Load an annotation pipeline by ID and notify the user channel."""
-        force = False
         if pipeline_id in self.grr_pipelines:
-            pipeline_config = self.grr_pipelines[pipeline_id]["content"]
-            notify_function = self._notify_global_pipeline
-        else:
-            pipeline = user.get_temporary_pipeline(pipeline_id)
-            if pipeline is None:
-                pipeline = user.get_pipeline(pipeline_id)
-            else:
-                force = True
-            pipeline_config = self._get_user_pipeline_yaml(pipeline)
-            notify_function = partial(self._notify_user_pipeline, user)
+            self.put_grr_pipeline(pipeline_id)
+            return
+        pipeline = user.get_temporary_pipeline(pipeline_id)
+        force = pipeline is not None
+        if pipeline is None:
+            pipeline = user.get_pipeline(pipeline_id)
+        self._put_pipeline_config(
+            pipeline_id,
+            self._get_user_pipeline_yaml(pipeline),
+            partial(self._notify_user_pipeline, user),
+            force=force,
+        )
 
+    def put_grr_pipeline(self, pipeline_id: str) -> None:
+        """Load a GRR pipeline by ID and notify the global channel.
+
+        Submits the build to the shared ``lru_cache`` and returns without
+        waiting for it; a pipeline already cached with the same config is
+        not rebuilt.
+        """
+        self._put_pipeline_config(
+            pipeline_id,
+            self.grr_pipelines[pipeline_id]["content"],
+            self._notify_global_pipeline,
+        )
+
+    def _put_pipeline_config(
+        self,
+        pipeline_id: str,
+        pipeline_config: str,
+        notify_function: Callable[..., None],
+        *,
+        force: bool = False,
+    ) -> None:
         def begin_load_callback() -> None:
             notify_function(pipeline_id, "loading")
 
@@ -760,3 +783,23 @@ class AsyncAnnotationBaseView(AnnotationMixin, adrf.views.APIView):
     async handlers. Shares the same cache/executors as ``AnnotationBaseView``
     via ``AnnotationMixin`` -- see the single-shared-cache invariant.
     """
+
+
+def prewarm_grr_pipelines() -> None:
+    """Submit a build of every GRR pipeline to the shared pipeline cache.
+
+    Returns without waiting for the builds. A later request for one of these
+    pipelines waits on the build already in flight rather than starting its
+    own. Call it outside a running event loop: submitting a build notifies
+    the global channel group through ``async_to_sync``.
+
+    Never raises: an error while submitting a pipeline is logged and the
+    next pipeline is tried; a build that fails is logged by the cache's
+    failure callback and left in its failed state.
+    """
+    mixin = AnnotationMixin()
+    for pipeline_id in mixin.grr_pipelines:
+        try:
+            mixin.put_grr_pipeline(pipeline_id)
+        except Exception:
+            logger.exception("prewarm failed for GRR pipeline %s", pipeline_id)

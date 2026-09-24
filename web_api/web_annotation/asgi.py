@@ -18,6 +18,7 @@ from channels.auth import (
 from channels.middleware import BaseMiddleware
 from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.security.websocket import AllowedHostsOriginValidator
+from django.conf import settings
 from django.core.asgi import get_asgi_application
 
 os.environ.setdefault(
@@ -26,11 +27,14 @@ os.environ.setdefault(
 django_asgi_app = get_asgi_application()
 
 # pylint: disable=wrong-import-position
-# These two imports must stay below `get_asgi_application()`: importing the
+# These imports must stay below `get_asgi_application()`: importing the
 # models (and the URL conf that pulls them in) before the app registry is
 # populated raises AppRegistryNotReady.  Ruff 0.16's suppression migration
 # reformatted these to multi-line and dropped the trailing E402 directive
 # along the way, so the suppression is spelled out on the statement here.
+from web_annotation.annotation_base_view import (  # ruff: ignore[module-import-not-at-top-of-file]
+    prewarm_grr_pipelines,
+)
 from web_annotation.models import (  # ruff: ignore[module-import-not-at-top-of-file]
     WebAnnotationAnonymousUser,
 )
@@ -86,3 +90,7 @@ application = ProtocolTypeRouter({
             URLRouter(cast(Any, websocket_urlpatterns))),
     ),
 })
+
+# Only a server loads this module; see PREWARM_GRR_PIPELINES.
+if settings.PREWARM_GRR_PIPELINES:
+    prewarm_grr_pipelines()
