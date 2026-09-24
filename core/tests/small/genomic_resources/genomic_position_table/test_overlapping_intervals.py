@@ -552,6 +552,11 @@ def test_closing_a_stale_generator_does_not_prune_a_later_query(
     later query and it is served from a buffer that no longer holds its
     records -- silently, which is what makes this worth a test rather than a
     comment.
+
+    This pins the tabix mechanism.  The obligation it answers holds for
+    every backend, and is stated as such by
+    ``test_a_late_release_does_not_evict_a_later_querys_records`` in
+    test_backend_record_contract.py.
     """
     rows = [(100, 100), (190, 600)]
     rows += [(pos, pos) for pos in range(200, 248)]

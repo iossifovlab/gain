@@ -680,3 +680,138 @@ def test_abandoning_a_region_read_leaves_the_table_bounded_and_correct(
 def _positions_of(records: Iterable[Record]) -> list[tuple[int, int]]:
     """Project records onto their spans -- comparable across backends."""
     return [(record[POS_BEGIN], record[POS_END]) for record in records]
+
+
+# The ordering half of the abandonment contract needs data of its own.  A
+# held read's release can land after a BACKWARD query has refilled a buffer,
+# and what makes a stale release lose records silently rather than loudly is
+# a WIDE record spanning the backward query: it keeps a buffer's coverage
+# claim past the records it evicted.  Point records only -- the scan data
+# above -- would let a broken release pass here unnoticed.  (Measured: with
+# ``_WIDE`` dropped, an unconditional tabix prune passes all four params.)
+_WIDE = (190, 600)
+_HELD_ROWS = sorted(
+    [(100, 100), _WIDE, (500, 500)]
+    + [(pos, pos) for pos in range(200, 248)])
+
+
+def _build_tabular_held(
+    tmp_path: pathlib.Path, *, tabix: bool,
+) -> GenomicScore:
+    lines = ["chrom  pos_begin  pos_end  s_float"]
+    lines.extend(
+        f"1  {beg}  {end}  {beg / 10}" for beg, end in _HELD_ROWS)
+    builder = (
+        a_position_score()
+        .with_score("s_float", "float")
+        .with_data("\n".join(lines))
+    )
+    if tabix:
+        builder = builder.with_tabix()
+    repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
+    return PositionScore(repo.get_resource("pos"))
+
+
+def _build_inmemory_held(tmp_path: pathlib.Path) -> GenomicScore:
+    return _build_tabular_held(tmp_path, tabix=False)
+
+
+def _build_tabix_held(tmp_path: pathlib.Path) -> GenomicScore:
+    return _build_tabular_held(tmp_path, tabix=True)
+
+
+def _build_vcf_held(tmp_path: pathlib.Path) -> GenomicScore:
+    # A VCF record ends where its REF allele does, so a long REF is how a VCF
+    # spells a wide record.
+    lines = [
+        "##fileformat=VCFv4.1",
+        '##INFO=<ID=scoreA,Number=1,Type=Float,Description="score A">',
+        "#CHROM POS ID REF ALT QUAL FILTER INFO",
+    ]
+    lines.extend(
+        f"1   {beg}  .  {'A' * (end - beg + 1)}   T   .    .      "
+        f"scoreA={beg / 10}"
+        for beg, end in _HELD_ROWS
+    )
+    builder = a_vcf_info_score().with_data("\n".join(lines))
+    repo = a_grr().with_resource("vcf", builder).build_repo(tmp_path)
+    return AlleleScore(repo.get_resource("vcf"))
+
+
+def _build_bigwig_held(tmp_path: pathlib.Path) -> GenomicScore:
+    # bigWig intervals may not overlap, so the wide record cannot be spelled
+    # here at all.  That costs nothing: bigWig retains no records between
+    # queries, so it has no release whose timing could matter -- the param is
+    # here so a future bigWig buffer is held to the same ordering.
+    lines = [
+        f"1  {beg - 1}  {end}  {beg / 10}"
+        for beg, end in _HELD_ROWS if (beg, end) != _WIDE]
+    builder = (
+        a_bigwig_score()
+        .with_score("bw", "float")
+        .with_data("\n".join(lines))
+        .with_chrom_lens({"1": _WIDE[1] + 100})
+    )
+    repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
+    return PositionScore(repo.get_resource("bw"))
+
+
+_HELD_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
+    pytest.param(_build_inmemory_held, id="inmemory"),
+    pytest.param(_build_tabix_held, id="tabix"),
+    pytest.param(_build_vcf_held, id="vcf"),
+    pytest.param(_build_bigwig_held, id="bigwig"),
+]
+
+
+def test_every_backend_is_covered_by_the_ordering_contract() -> None:
+    """_HELD_BACKENDS must cover every backend, so a fifth cannot slip in."""
+    assert {str(param.id) for param in _HELD_BACKENDS} == \
+        {str(param.id) for param in _BACKENDS}
+
+
+@pytest.mark.parametrize("build_backend", _HELD_BACKENDS)
+def test_a_late_release_does_not_evict_a_later_querys_records(
+    tmp_path: pathlib.Path,
+    build_backend: Callable[[pathlib.Path], GenomicScore],
+) -> None:
+    """A release deferred past another query must not cost that query records.
+
+    The ordering half of the abandonment contract.  A backend releases what
+    it retains from a ``finally``, and a caller decides when that runs: a
+    read held open while the table serves a BACKWARD query is released onto
+    state that query built, not the state it was reading from.  The answers
+    after the release must be the answers of a table that was never held.
+
+    Load-bearing for tabix and VCF, whose ``LineBuffer`` a backward query
+    refills and a stale prune would cut into.  (Measured: with
+    ``TabixGenomicPositionTable._prune_if_current`` pruning unconditionally,
+    both params fail and the other two pass.)  The tabix mechanism itself is
+    pinned by ``test_closing_a_stale_generator_does_not_prune_a_later_query``
+    in test_overlapping_intervals.py; this states the obligation for every
+    backend, including one not written yet.
+    """
+    score = build_backend(tmp_path)
+    with score.open() as opened:
+        table = opened.table
+
+        # Prime, then hold a forward read open without draining it.
+        list(table.get_records_in_region("1", 100, 100))
+        held = table.get_records_in_region("1", 500, 500)
+        assert next(held, None) is not None, \
+            f"{type(table).__name__} yields nothing at 500: nothing is held"
+
+        backward = _positions_of(table.get_records_in_region("1", 200, 245))
+        held.close()
+        after = _positions_of(table.get_records_in_region("1", 205, 205))
+
+    # The oracle: the same two queries on a table no one held a read on.
+    fresh = build_backend(tmp_path / "fresh")
+    with fresh.open() as opened_fresh:
+        expected = [
+            _positions_of(
+                opened_fresh.table.get_records_in_region("1", beg, end))
+            for beg, end in ((200, 245), (205, 205))
+        ]
+
+    assert [backward, after] == expected
