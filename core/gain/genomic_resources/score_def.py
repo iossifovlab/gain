@@ -639,7 +639,7 @@ def build_genomic_score_schema() -> dict[str, Any]:
         "type": "list", "schema": {
             "type": "dict",
             "schema": {
-                "id": {"type": "string"},
+                "id": {"type": "string", "required": True},
                 "index": {"type": "integer"},
                 "name": {"type": "string", "excludes": "index"},
                 "column_index": {

@@ -1576,29 +1576,48 @@ def test_gene_score_misspelled_histogram_type_fails_validation() -> None:
         build_gene_score_from_resource(repo.get_resource("BadHistType"))
 
 
-def test_a_gene_score_without_a_filename_is_refused_at_construction(
+@pytest.mark.parametrize(("config", "expected_error"), [
+    # Without it the read that follows fails with an assert (or, under
+    # ``python -O``, a bare KeyError) naming nothing.
+    pytest.param(
+        """
+        type: gene_score
+        scores:
+          - id: pli
+            type: float
+        """,
+        "{'filename': ['required field']}",
+        id="no-filename"),
+    # Without it the score definitions fail with a bare KeyError naming
+    # nothing. No ``s.csv`` is shipped, so a refusal that came after the
+    # read would surface as FileNotFoundError.
+    pytest.param(
+        """
+        type: gene_score
+        filename: s.csv
+        scores:
+          - column_name: pli
+            type: float
+        """,
+        "{'scores': [{0: [{'id': ['required field']}]}]}",
+        id="no-score-id"),
+])
+def test_a_gene_score_config_outside_its_schema_is_refused_at_construction(
+    config: str, expected_error: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A gene score with no ``filename`` is refused by the schema, naming the
-    resource, rather than failing on the read that follows with an assert
-    (or, under ``python -O``, a bare KeyError) naming nothing."""
+    """A gene score missing a key the runtime reads unconditionally is
+    refused by the schema, naming the resource."""
     repo = build_inmemory_test_repository({
-        "NoFilename": {
-            GR_CONF_FILE_NAME: textwrap.dedent("""
-                type: gene_score
-                scores:
-                  - id: pli
-                    type: float
-            """),
-        },
+        "BadConfig": {GR_CONF_FILE_NAME: textwrap.dedent(config)},
     })
 
     with pytest.raises(
-            MalformedResourceError, match="Invalid configuration: NoFilename"):
-        build_gene_score_from_resource(repo.get_resource("NoFilename"))
+            MalformedResourceError, match="Invalid configuration: BadConfig"):
+        build_gene_score_from_resource(repo.get_resource("BadConfig"))
 
     # The key is named where the refusal is explained: in the log record.
-    assert "{'filename': ['required field']}" in caplog.text
+    assert expected_error in caplog.text
 
 
 def test_gene_score_accepts_null_histogram_config(
