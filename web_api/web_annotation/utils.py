@@ -409,3 +409,15 @@ def invalid_content_type_response() -> Response:
         {"reason": "Invalid content type!"},
         status=status.HTTP_400_BAD_REQUEST,
     )
+
+
+def missing_upload_response(field: str) -> Response:
+    """Refuse a multipart body that left out the file field a view reads.
+
+    Indexing ``request.FILES[field]`` raises ``MultiValueDictKeyError`` when
+    the field is absent -- an unhandled 500 (iossifovlab/gain#1661).
+    """
+    return Response(
+        {"reason": f"No '{field}' file uploaded!"},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
