@@ -66,7 +66,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import AbstractContextManager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from operator import itemgetter
 from typing import IO, Any, cast
 from urllib.parse import unquote
@@ -897,10 +897,25 @@ class ResourceScan:
     outcome can report it: a resource is scanned more than once per
     command, so the scan itself is the wrong place to say anything the
     user should see exactly once.
+
+    ``change_tokens`` is the store's change token for each name the scan
+    stat'ed, read by the same stat as its size, so a state built for that
+    file needs neither read again. It is carried here rather than in the
+    manifest because ``ManifestEntry`` is the serialized ``.MANIFEST`` row.
     """
 
     manifest: Manifest
     unreadable: Mapping[str, str]
+    change_tokens: Mapping[str, str | None] = field(default_factory=dict)
+
+    def change_token(self, name: str) -> str | Unread | None:
+        """The token the scan read for ``name``, or :attr:`Unread.UNREAD`.
+
+        UNREAD for a name the scan recorded no token for, never ``None``:
+        ``None`` is what a store without tokens reports, and passing it on
+        would record "this store has none" for a file nobody asked about.
+        """
+        return self.change_tokens.get(name, Unread.UNREAD)
 
 
 class UnreadableResourceFilesError(ValueError):
@@ -2124,6 +2139,7 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
     def _update_manifest_entry_and_state(
             self, resource: GenomicResource, entry: ManifestEntry,
             prebuild_entries: dict[str, ManifestEntry], *,
+            change_token: str | Unread | None,
             verify_content: bool = False,
             save_state: bool = True) -> DvcContentDrift | None:
         """Fill in md5 and size of a *materialised* file's manifest entry.
@@ -2170,13 +2186,27 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         derives still fill in the entry and are still compared against the
         sidecars, they are just not recorded. What the run reports is
         unchanged; what it leaves behind is nothing (#257).
+
+        A state this builds takes its size from ``entry`` and its token
+        from ``change_token`` -- what the scan read in one stat, as
+        :meth:`ResourceScan.change_token` reports it.
+
+        Both fields are as of the scan, before the bytes are read. On a
+        store with change tokens, a write landing after the scan leaves
+        the recorded token behind the store's, so the next run re-hashes
+        the file rather than trusting the md5 sum recorded here. The
+        manifest row keeps the scan's size until something rewrites it:
+        a re-hash that reproduces the recorded md5 sum does not mark the
+        entry for update.
         """
         dvc_entry = prebuild_entries.get(entry.name)
         if dvc_entry is not None and dvc_entry.md5 is None:
             dvc_entry = None
 
         if verify_content:
-            state = self.build_resource_file_state(resource, entry.name)
+            state = self.build_resource_file_state(
+                resource, entry.name,
+                size=entry.size, change_token=change_token)
             if dvc_entry is not None:
                 if dvc_entry.md5 != state.md5:
                     return DvcContentDrift(
@@ -2214,7 +2244,9 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             entry.size = dvc_entry.size
             return None
 
-        state = self.build_resource_file_state(resource, entry.name)
+        state = self.build_resource_file_state(
+            resource, entry.name,
+            size=entry.size, change_token=change_token)
         if save_state:
             self.save_resource_file_state(resource, state)
 
@@ -2310,6 +2342,7 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         for entry in scan.manifest:
             drift = self._update_manifest_entry_and_state(
                 resource, entry, prebuild_entries,
+                change_token=scan.change_token(entry.name),
                 verify_content=verify_content)
             if drift is not None:
                 drifts.append(drift)
@@ -2347,6 +2380,7 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         for entry in scan.manifest:
             drift = self._update_manifest_entry_and_state(
                 resource, entry, prebuild_entries,
+                change_token=scan.change_token(entry.name),
                 verify_content=verify_content, save_state=save_state)
             if drift is not None:
                 # Collected, not raised: one command reports every drifted

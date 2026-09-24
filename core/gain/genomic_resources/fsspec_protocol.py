@@ -2287,6 +2287,7 @@ class FsspecReadWriteProtocol(
 
         result = Manifest()
         unreadable: dict[str, str] = {}
+        change_tokens: dict[str, str | None] = {}
         ancestor_specs = self._collect_ancestor_specs(resource_path)
         for name, path in self._scan_resource_for_files(
                 resource_path, [], ancestor_specs):
@@ -2301,7 +2302,7 @@ class FsspecReadWriteProtocol(
                 continue
 
             try:
-                size = self._get_filepath_size(path)
+                stat = self._stat_filepath(path)
             except OSError as error:
                 # The listing yielded this name and the stat could not
                 # describe it. Reported rather than raised: a `.dvc` sidecar
@@ -2334,8 +2335,9 @@ class FsspecReadWriteProtocol(
                     name, resource.resource_id, reason)
                 unreadable[name] = reason
                 continue
-            result.add(ManifestEntry(name, size, None))
-        return ResourceScan(result, unreadable)
+            result.add(ManifestEntry(name, stat.size, None))
+            change_tokens[name] = stat.change_token
+        return ResourceScan(result, unreadable, change_tokens)
 
     def _unreadable_detail(self, path: str, error: OSError) -> str:
         """Return why ``path`` could not be read, for a human to read.

@@ -2,6 +2,7 @@
 import logging
 import os
 import pathlib
+from typing import NoReturn
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
@@ -150,10 +151,10 @@ def test_a_remote_protocol_never_swallows_an_unreadable_file(
     })
     assert proto.scheme != "file"
 
-    def explode(_path: str) -> int:
+    def explode(_path: str) -> NoReturn:
         raise FileNotFoundError(2, "No such file or directory")
 
-    monkeypatch.setattr(proto, "_get_filepath_size", explode)
+    monkeypatch.setattr(proto, "_stat_filepath", explode)
 
     # When the resource is scanned, the failure is not swallowed
     with pytest.raises(FileNotFoundError):
