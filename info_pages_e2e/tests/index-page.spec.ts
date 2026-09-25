@@ -284,7 +284,7 @@ test('the harness refuses every request it does not serve itself', async ({
     return `${host}/${name.replace(/\.[0-9a-f]{8}\.woff2$/, '.woff2')}`;
   };
   expect(vendored.map(hostAndStem).sort()).toEqual([
-    'grr.test/index.mjs',
+    'grr.test/index.js',
     'grr.test/material-symbols-outlined-v371.woff2',
     'grr.test/roboto-v51-latin.woff2',
     'grr.test/sqlite3.wasm',

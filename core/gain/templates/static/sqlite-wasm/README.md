@@ -13,7 +13,7 @@ run are the bytes this gain version was tested with (gain#1335).
 | File           | What it is                                              |
 | -------------- | ------------------------------------------------------- |
 | `version.txt`  | The npm package version, one line. The single source of truth: the published directory name and the page's import are both derived from it |
-| `index.mjs`    | `dist/index.mjs` of the npm package, unmodified — the ES module |
+| `index.mjs`    | `dist/index.mjs` of the npm package, unmodified — the ES module. Published as **`index.js`**: a browser refuses a module whose response is not typed as JavaScript, and `.mjs` is missing from some hosts' MIME tables (the Apache on iossifovweb serves it as `text/plain`, gain#1709) where `.js` never is. The vendored name stays npm's so a refresh is a plain copy; `static_assets.py` owns the rename |
 | `sqlite3.wasm` | `dist/sqlite3.wasm` of the npm package, unmodified — the engine |
 | `LICENSE`      | The Apache License 2.0 text. The npm tarball declares the licence in its `package.json` but ships no copy of the text; redistributing the code asks for one (§4(a)), so it is kept here |
 

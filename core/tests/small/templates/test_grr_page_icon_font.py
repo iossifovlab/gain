@@ -47,7 +47,7 @@ from typing import Any
 
 import pytest
 from gain.templates import get_template
-from gain.templates.static_assets import SQLITE_WASM_PATH
+from gain.templates.static_assets import SQLITE_WASM_MODULE_PATH
 
 from tests.small.templates.page_css import font_faces_in, rules_in
 from tests.small.templates.page_origins import (
@@ -263,7 +263,7 @@ def test_the_browse_page_imports_sqlite_wasm_from_inside_the_repository(
     ``gain.templates.static_assets``.
     """
     assert MODULE_IMPORT.findall(browse_page) == [
-        f"./{SQLITE_WASM_PATH}/index.mjs",
+        f"./{SQLITE_WASM_MODULE_PATH}",
     ]
 
 
