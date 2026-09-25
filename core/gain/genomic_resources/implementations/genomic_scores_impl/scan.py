@@ -579,7 +579,9 @@ def do_histogram(
     return result
 
 
-#: The row count one bulk read pulls per batch.
+#: The most rows one bulk read pulls per batch.  The score's read caps it
+#: further by its cell budget (``genomic_scores.batch_budget``), so a wide
+#: score gets fewer rows per batch than a narrow one.
 _SCAN_BATCH_SIZE = 100_000
 
 

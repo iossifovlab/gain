@@ -97,6 +97,7 @@ from .aggregation import (
     request_score_ids,
     resolve_aggregator_requests,
 )
+from .batch_budget import value_arrays_batch_rows
 from .chrom_lengths import (
     ChromLength,
     ChromLengthAnswer,
@@ -811,9 +812,14 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         ``[pos_begin, pos_end]`` is the caller's, because what a partial
         overlap means depends on what the caller is computing.
 
-        ``batch_size`` is a HINT.  A backend whose read granularity is fixed by
-        its own windowing -- ``BigWigTable``, whose batches are sized by its
-        adaptive fetch window -- ignores it.
+        ``batch_size`` is a HINT, and a ceiling rather than a promise: a batch
+        also fetches at most ``VALUE_ARRAYS_CELL_BUDGET`` raw cells, so a
+        read of many scores gets fewer rows per batch.  The budget counts
+        the distinct columns FETCHED; score ids sharing one payload column
+        still get a parsed array each, so it does not bound those (see
+        ``batch_budget.value_arrays_batch_rows()``).  A backend whose read
+        granularity is fixed by its own windowing -- ``BigWigTable``, whose
+        batches are sized by its adaptive fetch window -- ignores it.
 
         Each score id gets an array of its own -- the parse builds one per
         id, so two ids sharing a payload column do not alias.
@@ -890,7 +896,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         }
         wanted = set(columns.values()) | set(extra_columns)
         for begin, end, cells in self.table.get_region_value_arrays(
-                chrom, pos_begin, pos_end, wanted, batch_size):
+                chrom, pos_begin, pos_end, wanted,
+                value_arrays_batch_rows(batch_size, len(wanted))):
             yield begin, end, {
                 score_id: defs[score_id].parse_array(cells[column])
                 for score_id, column in columns.items()
