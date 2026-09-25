@@ -653,9 +653,17 @@ def build_http_test_protocol(
 
 
 def s3_test_server_endpoint() -> str:
-    host = os.environ.get("MINIO_HOST", "localhost:29000")
-    # Accept hostname-only MINIO_HOST (default to MinIO's standard 9000)
-    # as well as host:port.
+    """Return the url of the S3 test fixture server.
+
+    ``S3_HOST`` names it, as ``host`` or ``host:port``. ``MINIO_HOST`` is
+    read only while ``S3_HOST`` is unset: gpf imports these helpers and
+    still passes ``MINIO_HOST`` (gpf#1029). It is transitional, and goes
+    once gpf passes ``S3_HOST``.
+    """
+    host = os.environ.get("S3_HOST") or os.environ.get(
+        "MINIO_HOST", "localhost:29000")
+    # Accept a hostname-only value (default to the S3 port 9000) as
+    # well as host:port.
     if urlparse(f"//{host}").port is None:
         host = f"{host}:9000"
     return f"http://{host}"

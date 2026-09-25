@@ -67,7 +67,7 @@ CI / release plumbing:
 - **`jenkins-jobs/`** — Jenkins job DSLs
   (`release.groovy`, `Jenkinsfile.seed`).
 - **`docker-compose.yaml`** — local fixture services
-  (MinIO + Apache httpd) for tests that need S3 or
+  (RustFS + Apache httpd) for tests that need S3 or
   HTTP-fetched genomic resources.
 
 Other:
@@ -179,9 +179,9 @@ Test markers and configuration are defined in
 `docker-compose.yaml` running locally
 (`docker compose up -d`) and are gated behind
 `--enable-s3-testing` / `--enable-http-testing`. The
-MinIO images come from `registry.seqpipe.org`, which
-needs `docker login registry.seqpipe.org` once (LAN /
-VPN only).
+images are public, so no registry login is needed; the
+S3 server is found through `S3_HOST` (default
+`localhost:29000`).
 
 ### Linting and type checking
 

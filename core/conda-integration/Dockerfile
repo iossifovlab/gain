@@ -20,8 +20,8 @@
 #       gain-conda-integration-ci
 #
 # The small tier runs with the http/s3 schemes enabled, so the job also
-# joins the container to the apache + minio compose network, passes
-# HTTP_HOST / MINIO_HOST, and binds the directory apache serves at
+# joins the container to the apache + s3 compose network, passes
+# HTTP_HOST / S3_HOST, and binds the directory apache serves at
 # /testbed/core/tests/.test_grr with HTTP_GRR_DIR naming it (#1571).
 # Without those the http/s3 cases fail on connection, not skip.
 #

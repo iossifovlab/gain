@@ -636,7 +636,7 @@ def test_id_less_leaf_root_of_every_filesystem_type_is_usable(
 
     ``s3`` is the one leaf type this section cannot cover: its branch builds
     a read-write fsspec protocol, which calls ``create_bucket`` at
-    construction time, so it needs the MinIO fixture behind
+    construction time, so it needs the S3 fixture behind
     ``--enable-s3-testing`` (``docker compose up -d``) rather than anything a
     small test has. ``url`` covers the remote-identity shape instead -- see
     ``test_id_less_url_root_gets_the_same_id_as_the_same_url_as_http``.

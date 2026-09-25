@@ -344,8 +344,9 @@ def test_classify_does_not_re_hash_a_listed_repository(
     """A listing must not make an unchanged repository look drifted.
 
     ``modified()`` is answered from whichever call last filled the s3fs
-    listing cache, and MinIO reports ``LastModified`` to the millisecond
-    on ``list_objects_v2`` where ``head_object`` reports whole seconds.
+    listing cache, and the S3 fixture (RustFS, like MinIO) reports
+    ``LastModified`` to the millisecond on ``list_objects_v2`` where
+    ``head_object`` reports whole seconds.
     So merely enumerating the bucket used to change the answer for every
     object, and a state recorded against the HEAD value then read as
     drifted -- which cost a full re-read of the file to re-hash it, and a

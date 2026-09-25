@@ -339,14 +339,24 @@ that is what the release notes get composed from.
 Some tests require external services. Start them with:
 
 ```bash
-docker login registry.seqpipe.org   # once; the MinIO images live there (LAN / VPN only)
 docker compose up -d
 ```
 
+Every image is public, so no registry login is needed.
+
 Services defined in `docker-compose.yaml`:
-- **MinIO** (ports 9000/9001) — S3-compatible object
-  storage for S3 storage tests; credentials
-  `minioadmin/minioadmin`, bucket `test-bucket`
+- **s3** — RustFS, the S3-compatible object store for
+  the S3 storage tests (host port 29000, console at
+  `http://localhost:29001/rustfs/console/`); credentials
+  `minioadmin/minioadmin`, bucket `test-bucket`, which
+  the one-shot `s3-setup` service creates. The test
+  helpers find it through `S3_HOST` (`host` or
+  `host:port`, default `localhost:29000`). They still read
+  `MINIO_HOST` when `S3_HOST` is unset, for gpf, until
+  gpf#1029 lands. Its LastModified precision differs
+  between a listing and a HEAD, the same way MinIO's
+  does, and the s3 timestamp tests depend on that
+  (gain#1708)
 - **Apache httpd** (port 28080) — HTTP fixture server
   for `grr_http` tests; serves
   `core/tests/.test_grr/`. The http fixture finds that
