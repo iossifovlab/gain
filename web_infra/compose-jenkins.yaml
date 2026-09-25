@@ -369,6 +369,15 @@ services:
     build:
       context: ../web_e2e
       dockerfile: Dockerfile.playwright
+    # Agent uid, not the image's root: /reports is a bind into the
+    # checkout, and a root-owned JUnit report / trace tree there is one
+    # the `jenkins` user cannot delete (gain#1712). Jenkinsfile.e2e
+    # creates web_e2e/reports as the agent before compose runs, for the
+    # same reason as the backend's binds. The image stays usable as
+    # any uid: /app and the browsers under /ms-playwright are
+    # world-readable, and Playwright's compile cache, downloads and the
+    # npm cache land under /tmp.
+    user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
     volumes:
       - ../web_e2e/reports:/reports
     depends_on:
@@ -380,4 +389,13 @@ services:
         condition: service_healthy
     environment:
       CI: "1"
+      # No passwd entry for the agent uid, so HOME would be `/`.
+      HOME: /tmp
+      # Playwright clears its outputDir (/reports) at startup by
+      # removing the directory itself, and tolerates only the EBUSY a
+      # mount point answers. As a non-root uid the rmdir fails EACCES
+      # first -- `/` is root-owned -- and the run aborts with 0 tests.
+      # Skip that task: Jenkinsfile.e2e's `Wipe workspace` empties
+      # web_e2e/reports every build, so the suite still starts clean.
+      PW_TEST_NO_REMOVE_OUTPUT_DIRS: "1"
     command: ["npx", "playwright", "test"]

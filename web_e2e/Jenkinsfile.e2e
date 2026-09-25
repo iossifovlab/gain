@@ -236,28 +236,49 @@ pipeline {
 
         stage('Wipe workspace') {
             steps {
-                // Playwright writes its traces / videos to
-                // web_e2e/reports as root — its image carries no USER
-                // directive and the compose service sets no `user:` —
-                // so the host Jenkins user can't `rm` them on the next
-                // build. (The backend, which writes Django file-logs
-                // to web_infra/gpfwa-logs, runs as the agent uid and
-                // no longer contributes root-owned artefacts; the
-                // suite container still does.) Run the cleanup inside
-                // an alpine container as root to sidestep that, for as
-                // long as any container here writes as root. Wiping
-                // gpfwa-logs each build keeps the captured artefact
-                // attributable to this build only. Both it and
-                // gpfwa-data are per-build scratch anyway: the stack
-                // is torn down with `down -v` and the DB starts empty
-                // every build.
+                // Every container that writes into the checkout runs
+                // as the agent uid (the backend services and the
+                // Playwright suite via `user:` in compose-jenkins.yaml;
+                // the one root container, the manual-run wheel build,
+                // chowns back what it wrote), and `post.always` fails
+                // the build that leaves anything foreign-owned behind
+                // (gain#1712). A root-owned DIRECTORY without o+w is
+                // what makes a workspace undeletable: the agent cannot
+                // empty it, so the git plugin's clone-path wipe, a
+                // spare `@N` slot handed to another build, and
+                // Jenkins' branch-workspace reaper all die on it with
+                // `Operation not permitted`.
+                //
+                // Reclaim first, every build. A short root container
+                // hands everything the agent does not own back to it,
+                // PRINTS each path, and prints how many of them were
+                // directories that would have blocked a workspace
+                // wipe (not agent-owned, not world-writable). On the
+                // first build in a workspace that ran the old stack
+                // the list is inherited residue — on pooh, the 86
+                // directories of `web_infra/grr_cache` left by the
+                // pre-#280 bind-mounted GRR cache. On every later
+                // build the count must be 0; a non-zero one is the
+                // regression signal. Not transitional — it costs
+                // seconds. `chown -h` reowns a symlink itself rather
+                // than following it out of the workspace. .git is
+                // pruned, and mounted read-only when it exists (on a
+                // cold workspace it does not, and a bind of a missing
+                // source would make dockerd create it as root).
+                //
+                // With everything reowned, the per-build scratch can
+                // go as the agent. Wiping gpfwa-logs each build keeps
+                // the captured artefact attributable to this build
+                // only. Both it and gpfwa-data are per-build scratch
+                // anyway: the stack is torn down with `down -v` and
+                // the DB starts empty every build.
                 //
                 // This has to stay AHEAD of `Checkout`. On a cold
                 // workspace the git plugin wipes the workspace itself,
                 // as the agent user, and one root-owned leftover makes
                 // that throw — the build then dies with `Failed to
                 // delete workspace` before any stage of ours runs. A
-                // root-capable wipe here is what keeps that from
+                // root-capable reclaim here is what keeps that from
                 // happening (and what stops this job wedging the way
                 // gain-core-integration did in gain#921).
                 //
@@ -269,10 +290,29 @@ pipeline {
                 // (gain#917). This stage was called `Prepare
                 // workspace` when it did both.
                 sh '''
-                    docker run --rm -v "$PWD:/wd" -w /wd alpine \
-                        rm -rf dist reports web_e2e/reports \
-                               web_infra/gpfwa-logs \
-                               web_infra/gpfwa-data
+                    set -eu
+                    AGENT="$(id -u):$(id -g)"
+                    set -- -v "$PWD:/wd"
+                    if [ -e .git ]; then
+                        set -- "$@" -v "$PWD/.git:/wd/.git:ro"
+                    fi
+                    docker run --rm "$@" -w /wd \
+                        -e AGENT="$AGENT" \
+                        alpine sh -c '
+                            set -eu
+                            undeletable=$(find /wd -path /wd/.git -prune \
+                                -o ! -user "${AGENT%:*}" -type d ! -perm -o+w -print \
+                                | wc -l)
+                            find /wd -path /wd/.git -prune \
+                                -o ! -user "${AGENT%:*}" -print \
+                                -exec chown -h "$AGENT" {} + \
+                                > /tmp/reclaimed
+                            cat /tmp/reclaimed
+                            echo "Wipe workspace: reclaimed $(wc -l < /tmp/reclaimed) workspace entries for uid ${AGENT%:*}, of which $undeletable directories would have blocked a workspace wipe"
+                        '
+                    rm -rf dist reports web_e2e/reports \
+                           web_infra/gpfwa-logs \
+                           web_infra/gpfwa-data
                 '''
             }
         }
@@ -560,8 +600,9 @@ EOF
                 // its clone path deletes the whole workspace, so a
                 // directory created before it does not survive to be
                 // used (gain#917). Everything downstream assumes these
-                // exist — compose binds gpfwa-logs / gpfwa-data, and
-                // the `Run e2e` capture block plus the post-stage
+                // exist — compose binds gpfwa-logs / gpfwa-data to the
+                // backend and web_e2e/reports to the Playwright suite,
+                // and the `Run e2e` capture block plus the post-stage
                 // archive write into reports/web_e2e.
                 //
                 // Creating them as the agent user is load-bearing, not
@@ -577,6 +618,7 @@ EOF
                     set -eu
 
                     for d in reports/web_e2e \
+                             web_e2e/reports \
                              web_infra/gpfwa-logs \
                              web_infra/gpfwa-data; do
                         mkdir -p "$d" 2>/dev/null || true
@@ -719,10 +761,14 @@ EOF
                             // build → hatch-vcs needs git to
                             // derive the PEP 440 version; without
                             // it, wheels get the `0.0.0.dev0`
-                            // fallback). chown the outputs back to
-                            // the host UID at the end so the rest
-                            // of the pipeline can read them
-                            // without root permissions.
+                            // fallback). Before exiting, chown back
+                            // EVERYTHING in the checkout the host
+                            // UID does not own, not just `dist`:
+                            // the build also writes hatch-vcs's
+                            // core/gain/_version.py (and uv may
+                            // leave build dirs), and `post.always`
+                            // fails the build on any of them
+                            // (gain#1712). .git is left alone.
                             sh '''
                                 mkdir -p dist/core dist/web_api
                                 docker run --rm \
@@ -740,7 +786,9 @@ EOF
                                                 --out-dir dist/core
                                         uv build --package gain-web-api \
                                                 --out-dir dist/web_api
-                                        chown -R "$HOST_UID:$HOST_GID" dist
+                                        find /wd -path /wd/.git -prune \
+                                            -o ! -user "$HOST_UID" \
+                                            -exec chown -h "$HOST_UID:$HOST_GID" {} +
                                     '
                             '''
                         }
@@ -989,6 +1037,37 @@ EOF
                     allowEmptyArchive: true,
                     fingerprint: false,
                 )
+
+                // Ownership assertion (gain#1712): nothing under the
+                // workspace but .git may be owned by another uid once
+                // the last container that touches it has exited. It
+                // lives here, not in a stage, because a stage after a
+                // red `Run e2e` would be skipped, and the build that
+                // left a root-owned entry behind is the one that has
+                // to go red for it — not a `Checkout SCM` weeks later
+                // in whichever build next lands in the slot. It runs
+                // after `junit` / `archiveArtifacts`, so the test
+                // verdict and artefacts are reported either way, and
+                // before `failure`, so the Zulip alert fires. The
+                // `Wipe workspace` reclaim cleans up after it on the
+                // next build.
+                int foreign = sh(
+                    returnStatus: true,
+                    script: '''
+                        set -eu
+                        foreign="$(find "$PWD" -path "$PWD/.git" -prune \
+                            -o ! -user "$(id -u)" -print)"
+                        if [ -n "$foreign" ]; then
+                            echo "Workspace entries left owned by another uid (gain#1712):" >&2
+                            echo "$foreign" >&2
+                            exit 1
+                        fi
+                        echo "Workspace ownership: every entry is owned by uid $(id -u)"
+                    ''',
+                )
+                if (foreign != 0) {
+                    currentBuild.result = 'FAILURE'
+                }
             }
         }
         // `junit` above must run before these so the test-result
