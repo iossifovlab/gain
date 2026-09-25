@@ -23,6 +23,12 @@
         text-overflow: ellipsis;
       }
 
+      /* For every cell of the table at once, not per cell: the rows are
+         published bare (gain#1711). */
+      #resource-table td {
+        white-space: nowrap;
+      }
+
       #search-container {
         margin-top: 10px;
         display: flex;
@@ -476,25 +482,16 @@
             </tr>
           </thead>
           <tbody>
-            {%- for key, value in data.items() recursive%}
-            <tr id="{{value['res_full_id']}}">
-              <td
-                class="nowrap type-cell"
-                title="{{value['type']}}"
-              >{{value['type']}}</td>
-              <td class="id-cell" title="{{key}}">
-                <div class="id-wrapper">
-                  <a class="nowrap" href='{{key}}/index.html'>{{key}}</a>
-                  <span class="material-symbols-outlined copy-icon" data-copy-id="{{key}}">content_copy</span>
-                </div>
-              </td>
-              <td class="nowrap version-cell">{{value['res_version']}}</td>
-              <td class="nowrap size-cell">{{value['res_size']}}</td>
-              <td
-                class="nowrap"
-                title="{{value['res_summary']|e}}"
-              >{{value['res_summary']}}</td>
-              </tr>
+            {#- One line per resource, each value written once: the page
+                is served uncompressed and a large GRR lists thousands of
+                rows, so every byte here is paid for once per resource
+                (gain#1711).  Everything derived from these values -- the
+                tooltips and the copy icon -- is added by
+                the script that follows the table; without it the
+                table still reads in full, in the published order
+                (gain#1351). -#}
+            {%- for key, value in data.items() -%}
+            <tr><td>{{value['type']}}</td><td><a href="{{key}}/index.html">{{key}}</a></td><td>{{value['res_version']}}</td><td>{{value['res_size']}}</td><td>{{value['res_summary']}}</td></tr>
             {%- endfor %}
           </tbody>
         </table>
@@ -507,6 +504,38 @@
         <p class="searching" style="display: none;">Searching</p>
      </div>
      <div class="pagination"></div>
+     <script>
+       /* Dress each row as published -- five bare cells, each value
+          written once (gain#1711) -- with the id cell's copy icon and
+          the tooltips derived from those values.  A classic script, so
+          it runs as the parser reaches it: before the search module
+          reads the rows, and whether or not that module ever evaluates.
+
+          `titleRow` is the one writer of what a row derives from its
+          values; the search module calls it again whenever it rewrites
+          a row with another resource. */
+       window.titleRow = function(cells, type, id, summary) {
+         cells[0].title = type;
+         cells[1].title = id;
+         cells[1].querySelector('.copy-icon').dataset.copyId = id;
+         cells[4].title = summary;
+       };
+       document.querySelectorAll('#resource-table > tbody > tr').forEach(function(row) {
+         var cells = row.cells;
+         var link = cells[1].querySelector('a');
+         cells[1].className = 'id-cell';
+         var wrapper = document.createElement('div');
+         wrapper.className = 'id-wrapper';
+         var icon = document.createElement('span');
+         icon.className = 'material-symbols-outlined copy-icon';
+         icon.textContent = 'content_copy';
+         wrapper.append(link, icon);
+         cells[1].append(wrapper);
+         window.titleRow(
+           cells, cells[0].textContent, link.textContent,
+           cells[4].textContent);
+       });
+     </script>
      <script>
        (function() {
          var table = document.getElementById('resource-table');

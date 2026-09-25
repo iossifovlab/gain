@@ -390,6 +390,106 @@ test.describe('copying a resource id', () => {
   });
 });
 
+/* ---- Rows are published bare and dressed by the page (#1711) ---- */
+
+/**
+ * For every visible row, what its type, id and summary cells show beside
+ * the tooltip each carries. The id cell shows its link's text; the
+ * wrapper around it also holds the copy icon's glyph.
+ */
+function tooltipsOfVisibleRows(
+  page: Page,
+): Promise<{ shown: string; title: string }[][]> {
+  return page.locator('#resource-table tbody tr:visible').evaluateAll(
+    (rows) => rows.map((row) => {
+      const cells = (row as HTMLTableRowElement).cells;
+      return [
+        { shown: cells[0].textContent ?? '', title: cells[0].title },
+        {
+          shown: cells[1].querySelector('a')?.textContent ?? '',
+          title: cells[1].title,
+        },
+        { shown: cells[4].textContent ?? '', title: cells[4].title },
+      ];
+    }),
+  );
+}
+
+/** Every row's cells carry the text they show as their tooltip. */
+function expectTooltipsMatch(
+  rows: { shown: string; title: string }[][],
+  count: number,
+): void {
+  expect(rows).toHaveLength(count);
+  for (const cells of rows) {
+    for (const { shown, title } of cells) {
+      expect(shown).not.toBe('');
+      expect(title).toBe(shown);
+    }
+  }
+}
+
+test('each row carries its type, id and summary as tooltips', async ({
+  page,
+}) => {
+  /* With the search module kept from evaluating: once its index loads
+   * it rewrites every row, tooltips included, so a page that dressed
+   * nothing would pass this after a normal load. The dressing has to
+   * stand without it -- it is what the reader has if the index never
+   * arrives. */
+  await openBrowseIndexWithoutSearch(page);
+
+  expectTooltipsMatch(
+    await tooltipsOfVisibleRows(page), BROWSE_RESOURCE_COUNT,
+  );
+});
+
+test('the tooltips follow the resource a search rewrites a row to', async ({
+  page,
+}) => {
+  await openBrowseIndex(page);
+  /* The one row left showing is the table's first, which on arrival
+   * held the genome -- a different type, id and summary from the score
+   * the search puts there, so a tooltip left over from arrival differs
+   * from what the row now shows in all three cells. */
+  await search(page, BROWSE_ID_ONLY_TERM);
+  await expect(visibleResourceIds(page)).toHaveText([
+    BROWSE_ID_ONLY_RESOURCE_ID,
+  ]);
+
+  expectTooltipsMatch(await tooltipsOfVisibleRows(page), 1);
+});
+
+test.describe('with scripts disabled', () => {
+  test.use({ javaScriptEnabled: false });
+
+  test('every row still shows its type, linked id, version, size and '
+    + 'summary', async ({ page }) => {
+    await openBrowseIndexWithoutSearch(page);
+
+    const rows = await page.locator('#resource-table tbody tr').evaluateAll(
+      (trs) => trs.map((tr) => {
+        const cells = [...(tr as HTMLTableRowElement).cells];
+        const link = cells[1]?.querySelector('a');
+        return {
+          texts: cells.map((cell) => cell.textContent ?? ''),
+          id: link?.textContent ?? '',
+          href: link?.getAttribute('href') ?? '',
+        };
+      }),
+    );
+
+    expect(rows).toHaveLength(BROWSE_RESOURCE_COUNT);
+    for (const row of rows) {
+      expect(row.texts).toHaveLength(5);
+      for (const text of row.texts) {
+        expect(text).not.toBe('');
+      }
+      expect(row.href).toBe(`${row.id}/index.html`);
+    }
+  });
+});
+
 /* ---- The browse view lives in the URL hash (#578) ---- */
 
 /** The fragment the page is currently addressed by, `''` when bare. */

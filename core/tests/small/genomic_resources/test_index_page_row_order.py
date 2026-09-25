@@ -25,7 +25,11 @@ from gain.genomic_resources.testing.info_page_fixtures import (
     a_browse_repo,
 )
 
-_ROW_ID = re.compile(r'<tr id="([^"]+)">')
+_TBODY = re.compile(r"<tbody>(.*)</tbody>", re.DOTALL)
+# A row's id, read off its link's target -- the one link a row carries.
+# Only the target is matched, so that what else the row's markup says is
+# the business of the tests about that markup, not of this one.
+_ROW_ID = re.compile(r'href="([^"]+)/index\.html"')
 
 
 def _published_row_ids(tmp_path: pathlib.Path) -> list[str]:
@@ -33,7 +37,9 @@ def _published_row_ids(tmp_path: pathlib.Path) -> list[str]:
     proto = build_filesystem_test_protocol(tmp_path)
     proto.build_index_info()
     page = (tmp_path / GR_INDEX_FILE_NAME).read_text(encoding="utf8")
-    return _ROW_ID.findall(page)
+    tbody = _TBODY.search(page)
+    assert tbody is not None
+    return _ROW_ID.findall(tbody.group(1))
 
 
 def test_the_published_rows_put_the_capitalised_folder_last(
