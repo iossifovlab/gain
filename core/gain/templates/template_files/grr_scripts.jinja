@@ -57,13 +57,15 @@
 
         const rowData = {}
         tableRows.forEach((row) => {
-            const id = row.getAttribute("id");
             const cells = row.cells;
             const link = cells[1].querySelector("a");
+            // The link's text is the resource's full id -- the key the
+            // search index answers with.
+            const id = link.textContent;
             const sizeStr = cells[3].textContent.trim();
             rowData[id] = {
                 "type": cells[0].textContent.trim(),
-                "id": link.textContent.trim(),
+                "id": id,
                 "version": cells[2].textContent.trim(),
                 "size": sizeStr,
                 "sizeInBytes": parseSizeToBytes(sizeStr),
@@ -177,15 +179,14 @@
                 let rowData = window.rowData[rowId];
                 let cells = row.cells;
                 cells[0].textContent = rowData.type;
-                cells[1].title = rowData.id;
                 const link = cells[1].querySelector("a");
                 link.setAttribute("href", rowData.url);
                 link.textContent = rowData.id;
-                cells[1].querySelector(".copy-icon").dataset.copyId = rowData.id;
                 cells[2].textContent = rowData.version;
                 cells[3].textContent = rowData.size;
                 cells[4].textContent = rowData.summary;
-                cells[4].title = rowData.summary;
+                window.titleRow(
+                    cells, rowData.type, rowData.id, rowData.summary);
                 row.style.display = "";
             }
 

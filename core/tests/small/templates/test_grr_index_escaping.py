@@ -77,10 +77,9 @@ def test_browse_row_renders_resource_markup_as_text(field: str) -> None:
 def test_browse_row_id_cannot_break_out_of_an_attribute() -> None:
     """A double quote in a resource id does not terminate its attribute.
 
-    The id is interpolated into the row's ``<tr id="...">`` and into the
-    id cell's ``title="..."``.  A raw double quote closes either one and
-    lands an event handler on the surrounding tag -- no injected element
-    required at all.
+    The id is interpolated into the row link's ``href="..."``.  A raw
+    double quote closes it and lands an event handler on the link -- no
+    injected element required at all.
     """
     breakout = f'cadd" {PROBE}handler="boom()'
     escaped = f"cadd&#34; {PROBE}handler=&#34;boom()"
@@ -88,5 +87,4 @@ def test_browse_row_id_cannot_break_out_of_an_attribute() -> None:
     page = _render_browse_page(**{**CLEAN_ROW, "res_id": breakout})
 
     assert f'" {PROBE}handler' not in page
-    assert f'<tr id="{escaped}">' in page
-    assert f'title="{escaped}"' in page
+    assert f'<a href="{escaped}/index.html">' in page
