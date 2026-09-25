@@ -178,7 +178,10 @@ Test markers and configuration are defined in
 `grr_http` / `grr_full` need fixture services from
 `docker-compose.yaml` running locally
 (`docker compose up -d`) and are gated behind
-`--enable-s3-testing` / `--enable-http-testing`.
+`--enable-s3-testing` / `--enable-http-testing`. The
+MinIO images come from `registry.seqpipe.org`, which
+needs `docker login registry.seqpipe.org` once (LAN /
+VPN only).
 
 ### Linting and type checking
 
