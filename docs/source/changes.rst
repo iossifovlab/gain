@@ -1,6 +1,248 @@
 Release Notes
 =============
 
+* 2026.9.6
+    * The GRR index page's search module is published as ``index.js``,
+      so a host that serves ``.mjs`` as text/plain no longer hangs at
+      "Loading search" (:issue:`1709`).
+    * The GRR index page carries each row's values once, so a large
+      GRR's page is a fraction of its former size (:issue:`1711`).
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-09-24T14%3A52%3A39
+      Z..2026-09-25T10%3A16%3A40Z>`__.
+
+* 2026.9.5
+    * The SpliceAI annotator honours ``mask``: with ``mask: 1`` a gain
+      away from the nearest exon boundary and a loss at it score zero,
+      as Illumina's ``-M 1`` does (:issue:`322`).
+    * gainweb builds every GRR pipeline when the ASGI application loads
+      instead of on its first request; ``PREWARM_GRR_PIPELINES`` (env
+      ``GPFWA_PREWARM_GRR_PIPELINES``) controls it (:issue:`657`).
+    * The anonymous endpoints answer 400 instead of 500 to a wrongly
+      shaped body, a bad ``page``, a non-object annotatable, a multipart
+      body without its file or a numeric pipeline id, and
+      ``total_pages`` no longer reports an extra empty page
+      (:issue:`791`, :issue:`1649`, :issue:`1650`, :issue:`1660`,
+      :issue:`1661`, :issue:`1666`).
+    * ``region_size`` means the same for every resource kind: ``0`` does
+      not split, a negative value is refused (:issue:`1656`).
+    * ``DaskExecutor`` hands dependants a dependency's Future rather
+      than its gathered value, so ``repo-repair`` no longer submits a
+      multi-megabyte graph (:issue:`1633`).
+    * A ``gene_score`` without ``scores:``, or a score entry without
+      ``id``, is refused by the schema instead of after the table is
+      read (:issue:`1613`, :issue:`1614`, :issue:`1628`).
+    * A histogram file survives no rebuild in which its score stopped
+      producing one, and a histogram annulled by its definition shows
+      the configured reason on the info page (:issue:`1309`,
+      :issue:`1604`).
+    * ``environment.yml`` and ``dev-environment.yml`` are generated from
+      the pyprojects, and each conda recipe's run list is held equal to
+      its pyproject dependencies (:issue:`1639`, :issue:`1640`,
+      :issue:`1641`).
+    * ``infer_gene_model_parser`` is removed;
+      ``infer_gene_models_format`` is the one entry point
+      (:issue:`871`).
+    * ``LRUPipelineCache.clean_old_tasks`` is removed; a started
+      pipeline build is never timed out (:issue:`1662`).
+    * The resource-file state is read with fewer stats and opens,
+      decoded as UTF-8, and an s3 timestamp is read with a HEAD
+      (:issue:`1082`, :issue:`1083`, :issue:`1084`, :issue:`1631`,
+      :issue:`1664`).
+    * The reference-genome page's nucleotide shares use the shared
+      percentage rule (:issue:`1086`).
+    * ``GenomicScore.close()`` clears ``table_loaded`` before releasing
+      the table (:issue:`363`).
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-09-23T10%3A18%3A13
+      Z..2026-09-24T14%3A52%3A39Z>`__.
+
+* 2026.9.4
+    * Genomic scores store their chromosome lengths at repair as
+      ``statistics/chrom_lengths.json``, one block per source, under a
+      freshness key of their own; a resource repaired before this has no
+      file until its next repair, and a DVC checkout without payloads
+      skips it with a warning (:issue:`1574`, :issue:`1576`,
+      :issue:`1580`).
+    * ``GenomicScore`` gains ``get_chrom_length``,
+      ``get_all_chrom_lengths``, ``get_chrom_length_source`` and
+      ``chrom_length_sources``, answered from the stored file when
+      current and live through the table otherwise; coverage fractions
+      read the stored lengths first (:issue:`1577`, :issue:`1578`).
+    * A labelled score whose contigs are only partly listed by its
+      genome is repaired with a warning; one with no contig in common
+      fails the resource (:issue:`1575`).
+    * Position and fragment scores store segment and fragment lengths
+      exactly (``coverage.json`` and ``fragments.json`` format version
+      2) and their info pages show a min/max/mean/median table; a score
+      built before this reads "not computed" there until rebuilt with
+      ``repo-stats --force`` (:issue:`1541`, :issue:`1542`,
+      :issue:`1543`, :issue:`1544`, :issue:`1565`).
+    * ``repo-repair`` and ``--dry-run`` report statistics files that
+      predate the current schema without rebuilding them
+      (:issue:`1586`).
+    * ``NumberHistogram`` accumulates count, mean and standard
+      deviation, shown in a Summary column on the score info pages
+      (:issue:`1589`, :issue:`1617`).
+    * A nullified histogram is persisted with its reason, no page
+      addresses its image, and an image from an earlier build is removed
+      (:issue:`1025`, :issue:`1533`, :issue:`1555`, :issue:`1556`).
+    * ``values_from_records`` drops its window parameters (:issue:`828`,
+      :issue:`829`).
+    * The ``liftover_chain``, ``gene_models``, score-table and
+      ``gene_score`` schemas require ``filename``; liftover chains and
+      gene-set collections validate their config; a
+      ``liftover_annotator`` with an empty resource id is refused
+      (:issue:`1075`, :issue:`1532`, :issue:`1534`, :issue:`1567`,
+      :issue:`1592`).
+    * The genome ``chrom_prefix`` key is retired: the prefix is derived
+      from the FASTA index, and a config that sets it warns
+      (:issue:`1090`).
+    * ``LiftoverChain`` strips ``del_prefix`` as a prefix, not a
+      character set (:issue:`1530`).
+    * A mapping-form pipeline config parses without a ``preamble`` key
+      (:issue:`1535`).
+    * A VCF row carrying more values than its ``Number`` admits reads as
+      null and is reported once per table; a ``scores:`` entry naming an
+      INFO field the header does not declare, or a tabular column not in
+      the header, is a configuration error naming the resource and score
+      (:issue:`1257`, :issue:`1258`, :issue:`1489`, :issue:`1498`,
+      :issue:`1500`, :issue:`1521`).
+    * A ``gene_score`` with ``type: str`` and a number histogram is
+      refused at construction (:issue:`1308`).
+    * An ``input_gene_list`` must name an attribute marked
+      ``attribute_type: gene_list`` (:issue:`1490`).
+    * ``PositionScore`` refuses an inverted span and the overlap it can
+      hide, on both validation paths (:issue:`668`, :issue:`1526`).
+    * The gene-models serializers refuse a model that was never loaded;
+      ``join_gene_models`` returns a loaded model and
+      ``GeneModels.from_transcript_models`` builds one from transcripts
+      (:issue:`1097`, :issue:`1527`).
+    * ``-v`` raises the root logger's level even when it already has a
+      handler (:issue:`1583`, :issue:`1607`).
+    * The gain-core conda recipe depends on ``dask-core``, so an install
+      pulls no bokeh, and gain's ``TRACE`` level survives bokeh being
+      loaded (:issue:`1569`).
+    * GRR pages render language-tagged fenced code consistently, and the
+      resource description no longer lives in a shadow root
+      (:issue:`1289`, :issue:`1321`).
+    * The editor's suggested liftover config narrows the
+      ``source_genome`` / ``target_genome`` label values
+      (:issue:`1079`).
+    * New GAIn Development docs chapter on annotators and the plugin
+      entry-point mechanism (:issue:`1144`).
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-09-15T08%3A05%3A52
+      Z..2026-09-23T10%3A18%3A13Z>`__.
+
+* 2026.9.3
+    * A score's chromosome lengths resolve on
+      ``GenomicScoreImplementation.get_chrom_lengths``, and the
+      statistics region split reads them there (:issue:`1413`,
+      :issue:`1414`, :issue:`1418`, :issue:`1419`, :issue:`1448`).
+    * A presigned s3 url lives seven days, so a pysam handle on an s3
+      GRR no longer dies 100 s after open (:issue:`1398`,
+      :issue:`1434`).
+    * The GRR index page ships sqlite-wasm, Roboto and the Material
+      Symbols subset inside the GRR's ``.static/`` and uses no jQuery,
+      so it renders offline; it gains a clear-search button, code blocks
+      render monospace, and the initial table order matches its sorter
+      (:issue:`1335`, :issue:`1351`, :issue:`1399`, :issue:`1400`,
+      :issue:`1452`, :issue:`1454`).
+    * The resource info page links each breadcrumb segment into the
+      hierarchical view, offers a copy button for the resource id, and
+      lists labels by key (:issue:`1477`, :issue:`1482`).
+    * A scan skips a malformed resource id with a warning instead of
+      failing the enumeration, and a ``.`` segment is refused
+      (:issue:`1385`, :issue:`1386`).
+    * A closed position table releases its header and fetch windows, and
+      ``TabixGenomicPositionTable.open()`` no longer leaks its handle on
+      failure (:issue:`360`, :issue:`361`, :issue:`627`).
+    * A non-scalar cell nullifies one score's statistics instead of
+      aborting the build (:issue:`1337`, :issue:`1358`).
+    * Opening a bigWig on an uncached remote GRR with a pyBigWig build
+      that lacks remote support refuses with a message naming both
+      (:issue:`1425`).
+    * Error messages redact a presigned url's signature as well as its
+      userinfo (:issue:`1363`, :issue:`1370`).
+    * An absent preamble ``input_reference_genome`` parses to ``None``
+      (:issue:`1346`).
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-09-11T07%3A55%3A33
+      Z..2026-09-15T08%3A05%3A52Z>`__.
+
+* 2026.9.2
+    * ``fetch_region_segments`` is renamed
+      ``fetch_region_segments_scores`` and takes a ``score_filter``; the
+      deprecated ``fetch_region_segment_scores``,
+      ``fetch_region_values`` and ``fetch_position_scores`` are removed,
+      and ``get_scores_at_position`` is the only point read
+      (:issue:`844`, :issue:`1268`, :issue:`1272`, :issue:`1383`,
+      :issue:`1397`).
+    * ``validate_records`` and ``validate_record_arrays`` move to
+      ``statistics.record_validation`` (:issue:`1269`).
+    * ``get_genomic_resource_id_version`` is folded into ``get_full_id``
+      (:issue:`1382`).
+    * A substitution on a contig the score never mentions yields no
+      value instead of raising, and an absent contig is one uncovered
+      run for the aggregating reads (:issue:`1211`, :issue:`1253`).
+    * A false ``bool`` renders as ``no`` in annotation output, distinct
+      from a missing value (:issue:`1222`).
+    * A VCF score reads its values as the header declares them: a
+      ``Flag`` reads as bool, a multi-valued field reads its joined text
+      as ``str``, and a stated ``type:`` the header contradicts, or a
+      number histogram over a non-numeric score, is a configuration
+      error (:issue:`1221`, :issue:`1233`, :issue:`1259`, :issue:`1284`,
+      :issue:`1285`, :issue:`1307`, :issue:`1336`, :issue:`1338`).
+    * A refused value nullifies one score's min/max instead of aborting
+      the statistics build (:issue:`1312`, :issue:`1313`).
+    * ``search_resources`` answers a ``resource_type`` without the
+      full-text index, so ``grr_manage list -t`` works on a GRR with no
+      index (:issue:`1212`).
+    * Task-graph cache reconciliation resolves missing inputs through a
+      producer index and invalidates descendants in one walk
+      (:issue:`1213`, :issue:`1236`).
+    * Tabix contig lists are memoised, contig membership is a set test,
+      and a plane read resolves its request once (:issue:`1173`,
+      :issue:`1282`, :issue:`1303`, :issue:`1304`).
+    * The SpliceAI TensorFlow backend sizes ``predict()`` chunks from a
+      position budget, about 2x faster per window (:issue:`427`).
+    * ``binning_tool``: ``--task-budget`` bundles consecutive regions
+      into one task per track (default 50 Mb), and ``0`` now means one
+      task per track rather than one per region; an explicit
+      ``--work-dir`` is created with its parents; ``--help`` no longer
+      lists the annotation provider's options (:issue:`1214`,
+      :issue:`1215`, :issue:`1230`, :issue:`1234`, :issue:`1240`,
+      :issue:`1301`).
+    * The GRR index page keeps the browse view, folder, search term and
+      type filter in the URL hash, and in the hierarchical view the
+      search prunes the tree under the current folder and follows the
+      breadcrumb (:issue:`578`, :issue:`579`, :issue:`581`,
+      :issue:`582`, :issue:`583`, :issue:`1331`).
+    * A GRR ``about.md`` renders Markdown tables and fenced code, and
+      description tables are styled (:issue:`1278`, :issue:`1279`).
+    * Ids from a remote ``.CONTENTS`` are URL-encoded and escaped on the
+      index page (:issue:`1352`).
+    * The credential-bearing fetch url is redacted on every failed open,
+      including libBigWig's and pysam's stderr and a presigned url's
+      signature (:issue:`1106`, :issue:`1314`, :issue:`1318`,
+      :issue:`1333`, :issue:`1339`).
+    * ``score_annotator`` is split into one module per score kind
+      (:issue:`1153`, :issue:`1154`).
+    * New GAIn Development docs chapter "Working with resources in
+      Python" and a ``binning_tool`` user page; the docs build fails on
+      any warning and renders Google/numpy docstring sections
+      (:issue:`1143`, :issue:`1202`, :issue:`1219`, :issue:`1220`,
+      :issue:`1243`, :issue:`1254`).
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-09-08T07%3A49%3A32
+      Z..2026-09-11T07%3A55%3A33Z>`__.
+
 * 2026.9.1
     * New ``binning_tool`` command bins position scores into a fixed
       genome grid and writes one HDF5 column per track; the run
