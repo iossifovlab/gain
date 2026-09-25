@@ -796,6 +796,11 @@ class AlleleScore(GenomicScore):
         ``reference`` and ``alternative`` arrays, as
         :class:`~.records.AlleleRecordArrays`.
 
+        ``batch_size`` is capped exactly as there, by
+        ``VALUE_ARRAYS_CELL_BUDGET`` -- and the ``reference`` and
+        ``alternative`` columns count toward the budget like any score, so a
+        batch holds at most ``budget // (len(scores) + 2)`` rows.
+
         **The nucleotides are RAW; the scores beside them are parsed.**  That
         asymmetry is deliberate and is the whole contract.  A score column
         goes through its definition's column parse, so an NA sentinel arrives
