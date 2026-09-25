@@ -157,6 +157,12 @@ pipeline {
 
         IMAGE_TAG = "gain-conda-integration-ci:${env.BUILD_NUMBER}"
 
+        // gain#1706: the minio fixtures are pulled from
+        // registry.seqpipe.org, which needs a login even to pull. Same
+        // secret-text pair the root pipeline's push stage binds.
+        REGISTRY_USER = credentials('user.registry.seqpipe.org')
+        REGISTRY_PASS = credentials('passwd.registry.seqpipe.org')
+
         // The http/s3 fixture stack (apache + minio from the repo's
         // docker-compose.yaml) is namespaced per build, like the root
         // pipeline's `gain-ci-<tag>`: the job name keeps it apart from the
@@ -506,6 +512,18 @@ pipeline {
                         // mount that needs it is what stops the two
                         // drifting apart again.
                         sh '''
+                            # gain#1706: log in to registry.seqpipe.org for the
+                            # minio pulls, under a build-local DOCKER_CONFIG as
+                            # the root pipeline's push stage does (gain#10): the
+                            # agent's shared ~/.docker/config.json is never
+                            # touched, and the trap logs out and removes the
+                            # directory on any exit. Scoped to this sh: nothing
+                            # after it pulls from the registry.
+                            export DOCKER_CONFIG="$WORKSPACE/.docker-cfg-fixtures-$COMPOSE_PROJECT"
+                            mkdir -p "$DOCKER_CONFIG"
+                            trap 'docker logout registry.seqpipe.org >/dev/null 2>&1 || true; rm -rf "$DOCKER_CONFIG"' EXIT
+                            printf '%s' "$REGISTRY_PASS" | docker login \
+                                -u "$REGISTRY_USER" --password-stdin registry.seqpipe.org
                             mkdir -p core/tests/.test_grr
                             docker compose -f docker-compose.yaml \
                                 -p "$COMPOSE_PROJECT" \

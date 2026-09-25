@@ -219,6 +219,15 @@ pipeline {
 
                 stages {
                     stage('pytest') {
+                        environment {
+                            // #1706: the core cell pulls the minio fixtures
+                            // from registry.seqpipe.org, which needs a login
+                            // even to pull. Same secret-text pair the root
+                            // pipeline's push stage binds; unused by the
+                            // other cells.
+                            REGISTRY_USER = credentials('user.registry.seqpipe.org')
+                            REGISTRY_PASS = credentials('passwd.registry.seqpipe.org')
+                        }
                         steps {
                             script {
                                 // Per-cell compose project name keeps
@@ -242,7 +251,24 @@ pipeline {
                                             // / 3.14) running in parallel
                                             // would race on host port 28080
                                             // / 9000 / 9001.
+                                            // #1706: log in to
+                                            // registry.seqpipe.org for the
+                                            // minio pulls, under a
+                                            // build-local DOCKER_CONFIG as
+                                            // the root pipeline's push stage
+                                            // does (#10): the agent's shared
+                                            // ~/.docker/config.json is never
+                                            // touched, and the trap logs out
+                                            // and removes the directory on
+                                            // any exit. The secrets are read
+                                            // by the shell (\$), never
+                                            // interpolated into the GString.
                                             sh """
+                                                export DOCKER_CONFIG="\$WORKSPACE/.docker-cfg-fixtures-${composeProject}"
+                                                mkdir -p "\$DOCKER_CONFIG"
+                                                trap 'docker logout registry.seqpipe.org >/dev/null 2>&1 || true; rm -rf "\$DOCKER_CONFIG"' EXIT
+                                                printf '%s' "\$REGISTRY_PASS" | docker login \\
+                                                    -u "\$REGISTRY_USER" --password-stdin registry.seqpipe.org
                                                 mkdir -p core/tests/.test_grr
                                                 docker compose -f docker-compose.yaml \\
                                                     -p "${composeProject}" \\
