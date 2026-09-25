@@ -310,7 +310,7 @@ def test_publishing_carries_the_encoding_to_the_staged_open(
     text = [call for call in staged if "t" in call.args[1]]
     binary = [call for call in staged if "b" in call.args[1]]
     assert len(text) == 2, "about.html and the index page both stage"
-    assert len(binary) == 4, "index.mjs, sqlite3.wasm and both fonts stage"
+    assert len(binary) == 4, "index.js, sqlite3.wasm and both fonts stage"
     for call in text:
         assert call.kwargs.get("encoding") == "utf8"
     for call in binary:

@@ -297,7 +297,9 @@ The repository index page's search runs on SQLite compiled to
 WebAssembly, and the pages set their text in Roboto and draw their
 icons from a Material Symbols subset. Whichever command publishes the
 pages publishes all three beside them, under ``.static/`` at the
-repository root (``sqlite-wasm-<version>/`` and ``fonts/``) — so a
+repository root (``sqlite-wasm-<version>/index.js`` plus its ``.wasm``,
+and ``fonts/``; every file under a suffix any web server's MIME table
+already types, so no host needs configuring to serve them) — so a
 published repository carries everything its pages need and loads
 nothing from a CDN or a font host at view time; on an intranet or
 behind an air gap the pages render as they do on the web. The files

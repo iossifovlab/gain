@@ -68,10 +68,11 @@ comes from imports only ``re``, so there is no start-up cost to defer,
 and ``gain.utils`` is where it deliberately lives so that the template
 layer can reach it without importing ``genomic_resources``.
 
-The third global, ``sqlite_wasm_path``, is the repository-relative
-directory the index page imports its search engine from -- the same
-directory ``build_index_info`` publishes the vendored sqlite-wasm files
-to (``gain.templates.static_assets``, gain#1335).  A global rather than
+The third global, ``sqlite_wasm_module``, is the repository-relative
+path the index page imports its search engine from -- the module
+``build_index_info`` publishes the vendored sqlite-wasm to, under the
+name it publishes it as (``gain.templates.static_assets``, gain#1335;
+``.js`` rather than npm's ``.mjs``, gain#1709).  A global rather than
 a render kwarg for the same reason as ``markdown``: the page has more
 than one render site, the tests among them, and none of them should be
 able to render an import that points somewhere the publisher did not.
@@ -94,7 +95,7 @@ from jinja2 import (
 from gain.templates.static_assets import (
     MATERIAL_SYMBOLS_FONT_PATH,
     ROBOTO_FONT_PATH,
-    SQLITE_WASM_PATH,
+    SQLITE_WASM_MODULE_PATH,
 )
 from gain.utils.chromosome_order import natural_chromosome_key
 
@@ -181,7 +182,7 @@ def get_jinja_env() -> Environment:
         )
         env.globals["markdown"] = render_markdown
         env.globals["natural_chromosome_key"] = natural_chromosome_key
-        env.globals["sqlite_wasm_path"] = SQLITE_WASM_PATH
+        env.globals["sqlite_wasm_module"] = SQLITE_WASM_MODULE_PATH
         env.globals["roboto_font_path"] = ROBOTO_FONT_PATH
         env.globals["material_symbols_font_path"] = MATERIAL_SYMBOLS_FONT_PATH
         # Published last, so no caller can reach a half-configured

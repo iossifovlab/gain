@@ -45,7 +45,19 @@ _SQLITE_WASM_DIR = files("gain.templates") / "static" / "sqlite-wasm"
 
 #: The two files the browser needs, and the only two: the module, and
 #: the wasm it locates beside itself through ``import.meta.url``.
-_SQLITE_WASM_FILES = ("index.mjs", "sqlite3.wasm")
+#: Vendored name -> published name.
+#:
+#: The module is vendored as npm ships it, ``index.mjs``, and published
+#: as ``index.js``.  A browser refuses a module script whose response
+#: is not typed as JavaScript, and the type is whatever the serving
+#: host's MIME table says for the suffix: ``.js`` is in every table,
+#: ``.mjs`` is not (the Apache on iossifovweb answers it with
+#: ``text/plain``, and every GRR it served hung at "Loading search"
+#: from the day #1335 moved the import into the repository -- gain#1709).
+#: A published suffix is thus part of the contract with hosts gain will
+#: never configure; ``tests/small/genomic_resources/
+#: test_repository_static_assets.py`` pins the set of them.
+_SQLITE_WASM_FILES = {"index.mjs": "index.js", "sqlite3.wasm": "sqlite3.wasm"}
 
 #: The ``@sqlite.org/sqlite-wasm`` npm version the vendored files came
 #: from.  Read once at import; the file is one line.
@@ -57,6 +69,12 @@ SQLITE_WASM_VERSION: str = (_SQLITE_WASM_DIR / "version.txt").read_text(
 #: page as much as a repository path for the publisher, and both join
 #: it themselves.
 SQLITE_WASM_PATH: str = f".static/sqlite-wasm-{SQLITE_WASM_VERSION}"
+
+#: The module the index page imports, relative to the repository root:
+#: the one name both the publisher and the page's ``import`` derive from.
+SQLITE_WASM_MODULE_PATH: str = (
+    f"{SQLITE_WASM_PATH}/{_SQLITE_WASM_FILES['index.mjs']}"
+)
 
 #: Where the vendored fonts live in the package (gain#1400).
 _FONTS_DIR = files("gain.templates") / "static" / "fonts"
@@ -117,10 +135,10 @@ def repository_static_files() -> Iterator[tuple[str, bytes]]:
     runs once per ``repo-info``, and 1.2 MB held for the life of every
     process that imports the templates is the wrong trade.
     """
-    for name in _SQLITE_WASM_FILES:
+    for vendored, published in _SQLITE_WASM_FILES.items():
         yield (
-            f"{SQLITE_WASM_PATH}/{name}",
-            (_SQLITE_WASM_DIR / name).read_bytes(),
+            f"{SQLITE_WASM_PATH}/{published}",
+            (_SQLITE_WASM_DIR / vendored).read_bytes(),
         )
     for name, published in (
         (_ROBOTO, ROBOTO_FONT_PATH),

@@ -18,12 +18,13 @@ import pytest
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.testing import build_filesystem_test_protocol
 from gain.templates.static_assets import (
+    SQLITE_WASM_MODULE_PATH,
     SQLITE_WASM_PATH,
     repository_static_files,
 )
 
 from tests.small.templates.page_css import font_faces_in
-from tests.small.templates.page_origins import external_origins
+from tests.small.templates.page_origins import MODULE_IMPORT, external_origins
 from tests.small.templates.vendored_fonts import ICON_FONT, TEXT_FONT
 
 from .conftest import read_published_contents
@@ -158,7 +159,7 @@ def test_the_page_imports_the_module_the_same_run_published(
     cli_manage(["repo-index", "-R", str(bare_repo)])
 
     page = (bare_repo / "index.html").read_text(encoding="utf8")
-    specifier = f"./{SQLITE_WASM_PATH}/index.mjs"
+    specifier = f"./{SQLITE_WASM_MODULE_PATH}"
     assert f'from "{specifier}"' in page
     assert (bare_repo / specifier).is_file()
 
@@ -196,12 +197,12 @@ def test_a_published_file_that_differs_is_replaced(
     test and leave a truncated or stale module in place for good.
     """
     cli_manage(["repo-index", "-R", str(bare_repo)])
-    module = bare_repo / SQLITE_WASM_PATH / "index.mjs"
+    module = bare_repo / SQLITE_WASM_MODULE_PATH
     module.write_bytes(b"not the module")
 
     cli_manage(["repo-index", "-R", str(bare_repo)])
 
-    assert module.read_bytes() == vendored_files()["index.mjs"]
+    assert module.read_bytes() == vendored_files()[module.name]
 
 
 def test_the_static_directory_is_not_a_resource(
@@ -222,3 +223,44 @@ def test_the_static_directory_is_not_a_resource(
     resource_ids = {res.resource_id for res in proto.get_all_resources()}
     assert resource_ids == {"sub/one", "sub/two"}
     assert ".static" not in read_published_contents(settled_repo)
+
+
+def test_the_search_module_is_published_as_a_js_file(
+    bare_repo: pathlib.Path,
+) -> None:
+    """The page imports its search engine from a ``.js`` file, never ``.mjs``.
+
+    A browser refuses a module script whose response is not typed as
+    JavaScript, and what a static file's response is typed as is the
+    serving host's MIME table's business, not gain's.  ``.js`` is in
+    every table; ``.mjs`` is not -- the Apache 2.4.62 on iossifovweb
+    answers it with ``text/plain``, so every GRR it serves came up with
+    "Loading search" for good once #1335 moved the import into the
+    repository (gain#1709).  Pinned on the published page, where the
+    import and the file it names are on the same disk.
+    """
+    cli_manage(["repo-index", "-R", str(bare_repo)])
+
+    page = (bare_repo / "index.html").read_text(encoding="utf8")
+    [specifier] = MODULE_IMPORT.findall(page)
+    assert pathlib.PurePosixPath(specifier).suffix == ".js"
+    assert (bare_repo / specifier).is_file()
+
+
+def test_gain_publishes_nothing_under_a_suffix_a_stock_server_leaves_untyped(
+) -> None:
+    """Every published static file has a suffix the stock MIME tables map.
+
+    The registry-level twin of the page pin above: the next vendored
+    file is added to ``repository_static_files`` and nowhere else, so
+    this is where a ``.mjs`` -- or any other suffix Apache, nginx and
+    Python's ``http.server`` do not all type usefully -- is caught
+    before a repository is published with it (gain#1709).  ``.wasm``
+    is here on the strength of sqlite-wasm's own fallback: served
+    untyped it logs and instantiates from an ArrayBuffer.
+    """
+    suffixes = {
+        pathlib.PurePosixPath(path).suffix
+        for path, _ in repository_static_files()
+    }
+    assert suffixes <= {".js", ".wasm", ".woff2"}, suffixes
