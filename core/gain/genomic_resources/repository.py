@@ -309,8 +309,9 @@ def uncontained_resource_file_name_reason(filename: str) -> str | None:
     A ``..`` that would stay inside the resource (``sub/../other.txt``) is
     rejected as well, because the three backends GAIn speaks to disagree
     about what it means: `yarl`/aiohttp normalises it away client-side
-    before the request is even sent, minio rejects the key outright
-    (``XMinioInvalidResourceName``), and a local filesystem resolves it.
+    before the request is even sent, an s3 server rejects the key outright
+    (RustFS answers ``InvalidArgument``, MinIO
+    ``XMinioInvalidResourceName``), and a local filesystem resolves it.
     One name, three outcomes -- so it is refused everywhere rather than left
     to mean whatever the protocol of the day decides.
 

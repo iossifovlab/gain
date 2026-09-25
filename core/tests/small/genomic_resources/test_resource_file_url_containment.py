@@ -148,7 +148,8 @@ def test_inward_dotdot_name_is_rejected(
     but the joined url is handed to fsspec unnormalised and the three
     backends then disagree about what it means -- measured, not assumed:
     `yarl`/aiohttp normalises it away client-side before the request is
-    sent, minio rejects the key (``XMinioInvalidResourceName``), and local
+    sent, an s3 server rejects the key (RustFS: ``InvalidArgument``,
+    MinIO: ``XMinioInvalidResourceName``), and local
     `file` resolves it. One name, three outcomes, so it is refused on every
     protocol rather than left to mean whatever the backend decides.
     """

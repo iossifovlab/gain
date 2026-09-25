@@ -126,8 +126,8 @@ cd "$TESTBED"
 #
 # --enable-http-testing / --enable-s3-testing make the conftest generate
 # the http/s3 scheme parametrizations the root's run has (#1571); the
-# job brings up the apache + minio fixtures and hands their addresses in
-# as HTTP_HOST / MINIO_HOST. The http fixture of an INSTALLED gain would
+# job brings up the apache + s3 fixtures and hands their addresses in
+# as HTTP_HOST / S3_HOST. The http fixture of an INSTALLED gain would
 # populate <site-packages>/tests/.test_grr -- a directory apache never
 # sees -- so the job also sets HTTP_GRR_DIR to the bound directory apache
 # serves; see build_http_test_protocol in gain.genomic_resources.testing.

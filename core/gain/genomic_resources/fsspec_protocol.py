@@ -2250,9 +2250,10 @@ class FsspecReadWriteProtocol(
     def _get_filepath_timestamp(self, filepath: str) -> float:
         """The modification time of a path, read the same way every time.
 
-        On s3 it is always a HEAD, never the listing cache. MinIO reports
-        ``LastModified`` to the whole second on a HEAD and to the
-        millisecond in a listing, and ``modified()`` answers out of
+        On s3 it is always a HEAD, never the listing cache. S3 servers
+        such as MinIO and RustFS report ``LastModified`` to the whole
+        second on a HEAD and to the millisecond in a listing, and
+        ``modified()`` answers out of
         whichever last filled the cache -- so without this the time a
         state records depends on whether something listed the directory
         first (gain#1664). The HEAD is the coarser of the two, which is

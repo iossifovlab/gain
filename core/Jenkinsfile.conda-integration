@@ -18,7 +18,7 @@
 // makes the build red. See core/conda-integration/.
 //
 // The small tier runs with the http/s3 scheme parametrizations enabled,
-// against the same `apache` + `minio` fixtures from docker-compose.yaml
+// against the same `apache` + `s3` fixtures from docker-compose.yaml
 // the root pipeline's `core` stage brings up (#1571), so it collects the
 // same items as the root's run of the same commit -- the protocol
 // plumbing (fsspec http, s3fs, htslib over http) is exactly where a
@@ -157,13 +157,7 @@ pipeline {
 
         IMAGE_TAG = "gain-conda-integration-ci:${env.BUILD_NUMBER}"
 
-        // gain#1706: the minio fixtures are pulled from
-        // registry.seqpipe.org, which needs a login even to pull. Same
-        // secret-text pair the root pipeline's push stage binds.
-        REGISTRY_USER = credentials('user.registry.seqpipe.org')
-        REGISTRY_PASS = credentials('passwd.registry.seqpipe.org')
-
-        // The http/s3 fixture stack (apache + minio from the repo's
+        // The http/s3 fixture stack (apache + s3 from the repo's
         // docker-compose.yaml) is namespaced per build, like the root
         // pipeline's `gain-ci-<tag>`: the job name keeps it apart from the
         // root's projects on a shared agent, the build number from the
@@ -490,8 +484,8 @@ pipeline {
                     try {
                         // The http/s3 fixtures the small tier's scheme
                         // parametrizations need (#1571): apache serves
-                        // core/tests/.test_grr, minio is the S3 endpoint,
-                        // and minio-client is the one-shot bucket setup --
+                        // core/tests/.test_grr, s3 is the S3 endpoint,
+                        // and s3-setup is the one-shot bucket setup --
                         // run inline rather than via `up --wait`, which
                         // races with short-lived services. Same recipe as
                         // the root pipeline's `core` stage, including
@@ -512,25 +506,13 @@ pipeline {
                         // mount that needs it is what stops the two
                         // drifting apart again.
                         sh '''
-                            # gain#1706: log in to registry.seqpipe.org for the
-                            # minio pulls, under a build-local DOCKER_CONFIG as
-                            # the root pipeline's push stage does (gain#10): the
-                            # agent's shared ~/.docker/config.json is never
-                            # touched, and the trap logs out and removes the
-                            # directory on any exit. Scoped to this sh: nothing
-                            # after it pulls from the registry.
-                            export DOCKER_CONFIG="$WORKSPACE/.docker-cfg-fixtures-$COMPOSE_PROJECT"
-                            mkdir -p "$DOCKER_CONFIG"
-                            trap 'docker logout registry.seqpipe.org >/dev/null 2>&1 || true; rm -rf "$DOCKER_CONFIG"' EXIT
-                            printf '%s' "$REGISTRY_PASS" | docker login \
-                                -u "$REGISTRY_USER" --password-stdin registry.seqpipe.org
                             mkdir -p core/tests/.test_grr
                             docker compose -f docker-compose.yaml \
                                 -p "$COMPOSE_PROJECT" \
-                                up -d --wait apache minio
+                                up -d --wait apache s3
                             docker compose -f docker-compose.yaml \
                                 -p "$COMPOSE_PROJECT" \
-                                run --rm minio-client
+                                run --rm s3-setup
                         '''
                         sh '''
                             mkdir -p reports/conda-integration
@@ -567,7 +549,7 @@ pipeline {
                             # and the explicit env lockfile into /reports.
                             #
                             # The container joins the fixture stack's
-                            # network and reaches apache and minio by
+                            # network and reaches apache and s3 by
                             # service name. The http fixture in the
                             # INSTALLED gain derives its serving directory
                             # from its own location -- site-packages here,
@@ -583,7 +565,7 @@ pipeline {
                                 -e MAMBA_ROOT_PREFIX=/tmp/mamba \
                                 -e PYTHON_VERSION="${PYTHON_VERSION}" \
                                 -e HTTP_HOST=apache:80 \
-                                -e MINIO_HOST=minio:9000 \
+                                -e S3_HOST=s3:9000 \
                                 -e HTTP_GRR_DIR=/testbed/core/tests/.test_grr \
                                 -v "$PWD/dist/conda:/dist/conda:ro" \
                                 -v "${GRR_ROOT}/grr_seqpipe:/grr/grr_seqpipe:ro" \
