@@ -484,6 +484,12 @@ pipeline {
                             environment {
                                 COMPOSE_PROJECT = "gain-ci-${env.CI_TAG}"
                                 COMPOSE_NETWORK = "gain-ci-${env.CI_TAG}_default"
+                                // #1706: the minio fixtures are pulled from
+                                // registry.seqpipe.org, which needs a login
+                                // even to pull. Same secret-text pair the
+                                // push stage binds.
+                                REGISTRY_USER = credentials('user.registry.seqpipe.org')
+                                REGISTRY_PASS = credentials('passwd.registry.seqpipe.org')
                             }
                             steps {
                                 script {
@@ -501,6 +507,20 @@ pipeline {
                                         // on the same agent collide on host
                                         // ports 28080 / 9000 / 9001.
                                         sh '''
+                                            # #1706: log in to registry.seqpipe.org
+                                            # for the minio pulls, under a
+                                            # build-local DOCKER_CONFIG as the push
+                                            # stage does (#10): the agent's shared
+                                            # ~/.docker/config.json is never
+                                            # touched, and the trap logs out and
+                                            # removes the directory on any exit.
+                                            # Scoped to this sh: nothing after it
+                                            # pulls from the registry.
+                                            export DOCKER_CONFIG="$WORKSPACE/.docker-cfg-fixtures-$COMPOSE_PROJECT"
+                                            mkdir -p "$DOCKER_CONFIG"
+                                            trap 'docker logout registry.seqpipe.org >/dev/null 2>&1 || true; rm -rf "$DOCKER_CONFIG"' EXIT
+                                            printf '%s' "$REGISTRY_PASS" | docker login \
+                                                -u "$REGISTRY_USER" --password-stdin registry.seqpipe.org
                                             mkdir -p core/tests/.test_grr
                                             docker compose -f docker-compose.yaml \
                                                 -p "$COMPOSE_PROJECT" \
@@ -509,7 +529,7 @@ pipeline {
                                                 -p "$COMPOSE_PROJECT" \
                                                 run --rm minio-client
                                         '''
-        
+
                                         runProject(
                                             name: 'core',
                                             pkg: 'gain',
