@@ -4,16 +4,16 @@
 # Remove this pragma together with the command.
 # pylint: disable=too-many-lines
 import argparse
-import copy
 import dataclasses
 import fnmatch
+import functools
 import gzip
 import json
 import operator
 import os
 import pathlib
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, NamedTuple, cast
 from urllib.parse import urlparse
 
@@ -273,8 +273,7 @@ def _configure_repo_init_subparser(
     VerbosityConfiguration.set_arguments(parser)
 
 
-def _run_repo_init_command(**kwargs: str) -> None:
-    repository: str | None = kwargs.get("repository")
+def _run_repo_init_command(*, repository: str | None) -> None:
     if repository is None:
         repo_url = find_directory_with_a_file(GR_CONTENTS_FILE_NAME)
         if repo_url is None:
@@ -398,6 +397,7 @@ def _configure_repo_info_subparser(
     _add_repository_resource_parameters_group(parser)
     _add_dry_run_and_force_parameters_group(parser)
     _add_dvc_parameters_group(parser)
+    _add_hist_parameters_group(parser)
     VerbosityConfiguration.set_arguments(parser)
 
     TaskGraphCli.add_arguments(
@@ -413,6 +413,7 @@ def _configure_resource_info_subparser(
     _add_repository_resource_parameters_group(parser)
     _add_dry_run_and_force_parameters_group(parser)
     _add_dvc_parameters_group(parser)
+    _add_hist_parameters_group(parser)
     VerbosityConfiguration.set_arguments(parser)
 
     TaskGraphCli.add_arguments(
@@ -521,12 +522,8 @@ class ManifestOutcome(NamedTuple):
 
 def _run_repo_manifest_command_internal(
         proto: ReadWriteRepositoryProtocol,
-        resources: Sequence[GenomicResource],
-        **kwargs: bool | int | str) -> ManifestOutcome:
-    dry_run = cast(bool, kwargs.get("dry_run", False))
-    force = cast(bool, kwargs.get("force", False))
-    use_dvc = cast(bool, kwargs.get("use_dvc", True))
-
+        resources: Sequence[GenomicResource], *,
+        dry_run: bool, force: bool, use_dvc: bool) -> ManifestOutcome:
     updates_needed = {}
     failed: set[str] = set()
     wrote = False
@@ -762,22 +759,20 @@ def _run_repo_index_command(
 
 def _run_manifest_core(
     proto: ReadWriteRepositoryProtocol,
-    resources: Sequence[GenomicResource],
-    **kwargs: bool | int | str,
+    resources: Sequence[GenomicResource], *,
+    dry_run: bool, force: bool, use_dvc: bool,
 ) -> CommandResult:
     """Create/update the selected resources' manifests.
 
     Writes only inside the selected resources' directories; publishing
     the repository-global artifacts is its callers' decision.
     """
-    dry_run = cast(bool, kwargs.get("dry_run", False))
-    force = cast(bool, kwargs.get("force", False))
     if dry_run and force:
         # A usage error, not a count of anything.
         logger.warning("please choose one of 'dry_run' and 'force' options")
         return CommandResult(repo_failed=True)
     outcome = _run_repo_manifest_command_internal(
-        proto, resources, **kwargs)
+        proto, resources, dry_run=dry_run, force=force, use_dvc=use_dvc)
     if dry_run:
         # `updates_needed` is keyed by EVERY resource and valued by whether
         # that resource's manifest is stale, so its LENGTH is the size of
@@ -795,11 +790,12 @@ def _run_manifest_core(
 
 def _run_repo_manifest_command(
     proto: ReadWriteRepositoryProtocol,
-    resources: Sequence[GenomicResource],
-    **kwargs: bool | int | str,
+    resources: Sequence[GenomicResource], *,
+    dry_run: bool, force: bool, use_dvc: bool,
 ) -> CommandResult:
-    result = _run_manifest_core(proto, resources, **kwargs)
-    if cast(bool, kwargs.get("dry_run", False)):
+    result = _run_manifest_core(
+        proto, resources, dry_run=dry_run, force=force, use_dvc=use_dvc)
+    if dry_run:
         return result
     assert isinstance(proto, FsspecReadWriteProtocol)
     _build_content_file(proto, result.failed)
@@ -825,24 +821,24 @@ def _note_stale_repository_index(
 
 def _run_resource_manifest_command(
     proto: ReadWriteRepositoryProtocol,
-    resources: Sequence[GenomicResource],
-    **kwargs: bool | int | str,
+    resources: Sequence[GenomicResource], *,
+    dry_run: bool, force: bool, use_dvc: bool,
 ) -> CommandResult:
     return _note_stale_repository_index(
-        proto, _run_manifest_core(proto, resources, **kwargs))
+        proto, _run_manifest_core(
+            proto, resources,
+            dry_run=dry_run, force=force, use_dvc=use_dvc))
 
 
 def _find_resources(
     proto: ReadOnlyRepositoryProtocol,
-    repo_url: str,
-    **kwargs: str | bool | int,
+    repo_url: str, *,
+    resource: str | None = None,
 ) -> Sequence[GenomicResource]:
-    resource_pattern = cast(str, kwargs.get("resource"))
-
-    if resource_pattern is not None:
+    if resource is not None:
         return [
             res for res in proto.get_all_resources()
-            if fnmatch.fnmatch(res.resource_id, resource_pattern)
+            if fnmatch.fnmatch(res.resource_id, resource)
         ]
 
     if urlparse(repo_url).scheme not in {"file", ""}:
@@ -1058,7 +1054,7 @@ def _statistics_not_built(
 
 def _run_stats_graph(
     graph: TaskGraph, proto: ReadWriteRepositoryProtocol,
-    **kwargs: bool | int | str,
+    task_graph_args: Mapping[str, Any],
 ) -> bool:
     """Run the statistics tasks; whether the run failed as a whole.
 
@@ -1070,15 +1066,17 @@ def _run_stats_graph(
     """
     if len(graph.tasks) == 0:
         return False
-    modified_kwargs = copy.copy(kwargs)
-    modified_kwargs["command"] = "run"
-    modified_kwargs["keep_going"] = True
-    if modified_kwargs.get("task_log_dir") is None:
+    graph_args = dict(task_graph_args)
+    graph_args["command"] = "run"
+    graph_args["keep_going"] = True
+    # Task-graph plumbing, not a grr_manage option: an in-process caller
+    # may name no task-log directory at all.
+    if graph_args.get("task_log_dir") is None:
         repo_url = proto.get_url()
-        modified_kwargs["task_log_dir"] = \
+        graph_args["task_log_dir"] = \
             fs_utils.join(repo_url, ".task-log")
     if not TaskGraphCli.process_graph(
-            graph, task_progress_mode=False, **modified_kwargs):
+            graph, task_progress_mode=False, **graph_args):
         logger.error("building the statistics of GRR <%s> failed",
                      proto.get_url())
         return True
@@ -1088,24 +1086,21 @@ def _run_stats_graph(
 def _run_stats_core(
         repo: GenomicResourceRepo,
         proto: ReadWriteRepositoryProtocol,
-        resources: Sequence[GenomicResource],
-        **kwargs: bool | int | str) -> CommandResult:
+        resources: Sequence[GenomicResource], *,
+        dry_run: bool, force: bool, use_dvc: bool, region_size: int,
+        task_graph_args: Mapping[str, Any]) -> CommandResult:
     """Build the selected resources' statistics and refresh their manifests.
 
     Writes inside the selected resources' directories (and task logs
     under the repository's ``.task-log``); publishing the
     repository-global artifacts is its callers' decision.
     """
-    dry_run = cast(bool, kwargs.get("dry_run", False))
-    force = cast(bool, kwargs.get("force", False))
-    region_size = cast(int, kwargs.get("region_size", 3_000_000))
-
     if dry_run and force:
         logger.warning("please choose one of 'dry_run' and 'force' options")
         return CommandResult(repo_failed=True)
 
     outcome = _run_repo_manifest_command_internal(
-        proto, resources, **kwargs)
+        proto, resources, dry_run=dry_run, force=force, use_dvc=use_dvc)
     updates_needed = outcome.updates_needed
 
     graph = TaskGraph()
@@ -1191,7 +1186,7 @@ def _run_stats_core(
         return CommandResult(
             needs_update=needs_update, failed=frozenset(failed))
 
-    repo_failed = _run_stats_graph(graph, proto, **kwargs)
+    repo_failed = _run_stats_graph(graph, proto, task_graph_args)
 
     if stats_resources:
         # Run unconditionally, not only when the graph reported failure: a
@@ -1252,10 +1247,14 @@ def _publish_repository_contents(
 def _run_repo_stats_command(
         repo: GenomicResourceRepo,
         proto: ReadWriteRepositoryProtocol,
-        resources: Sequence[GenomicResource],
-        **kwargs: bool | int | str) -> CommandResult:
-    result = _run_stats_core(repo, proto, resources, **kwargs)
-    if cast(bool, kwargs.get("dry_run", False)):
+        resources: Sequence[GenomicResource], *,
+        dry_run: bool, force: bool, use_dvc: bool, region_size: int,
+        task_graph_args: Mapping[str, Any]) -> CommandResult:
+    result = _run_stats_core(
+        repo, proto, resources,
+        dry_run=dry_run, force=force, use_dvc=use_dvc,
+        region_size=region_size, task_graph_args=task_graph_args)
+    if dry_run:
         return result
     return _publish_repository_contents(proto, result)
 
@@ -1263,10 +1262,14 @@ def _run_repo_stats_command(
 def _run_resource_stats_command(
         repo: GenomicResourceRepo,
         proto: ReadWriteRepositoryProtocol,
-        resources: Sequence[GenomicResource],
-        **kwargs: bool | int | str) -> CommandResult:
+        resources: Sequence[GenomicResource], *,
+        dry_run: bool, force: bool, use_dvc: bool, region_size: int,
+        task_graph_args: Mapping[str, Any]) -> CommandResult:
     return _note_stale_repository_index(
-        proto, _run_stats_core(repo, proto, resources, **kwargs))
+        proto, _run_stats_core(
+            repo, proto, resources,
+            dry_run=dry_run, force=force, use_dvc=use_dvc,
+            region_size=region_size, task_graph_args=task_graph_args))
 
 
 def _regenerate_resource_pages(
@@ -1300,11 +1303,15 @@ def _regenerate_resource_pages(
 def _run_repo_info_command(
         repo: GenomicResourceRepo,
         proto: ReadWriteRepositoryProtocol,
-        resources: Sequence[GenomicResource],
-        **kwargs: str | bool | int) -> CommandResult:
-    result = _run_repo_stats_command(repo, proto, resources, **kwargs)
+        resources: Sequence[GenomicResource], *,
+        dry_run: bool, force: bool, use_dvc: bool, region_size: int,
+        task_graph_args: Mapping[str, Any]) -> CommandResult:
+    result = _run_repo_stats_command(
+        repo, proto, resources,
+        dry_run=dry_run, force=force, use_dvc=use_dvc,
+        region_size=region_size, task_graph_args=task_graph_args)
 
-    if cast(bool, kwargs.get("dry_run", False)):
+    if dry_run:
         return result
 
     assert isinstance(proto, FsspecReadWriteProtocol)
@@ -1315,11 +1322,15 @@ def _run_repo_info_command(
 def _run_resource_info_command(
         repo: GenomicResourceRepo,
         proto: ReadWriteRepositoryProtocol,
-        resources: Sequence[GenomicResource],
-        **kwargs: str | bool | int) -> CommandResult:
-    result = _run_stats_core(repo, proto, resources, **kwargs)
+        resources: Sequence[GenomicResource], *,
+        dry_run: bool, force: bool, use_dvc: bool, region_size: int,
+        task_graph_args: Mapping[str, Any]) -> CommandResult:
+    result = _run_stats_core(
+        repo, proto, resources,
+        dry_run=dry_run, force=force, use_dvc=use_dvc,
+        region_size=region_size, task_graph_args=task_graph_args)
 
-    if cast(bool, kwargs.get("dry_run", False)):
+    if dry_run:
         return result
 
     return _note_stale_repository_index(
@@ -1515,6 +1526,22 @@ _RESOURCE_COMMANDS = frozenset({
     "resource-info", "resource-repair"})
 
 
+@functools.cache
+def _task_graph_options() -> frozenset[str]:
+    """The namespace keys forwarded to the task graph.
+
+    Exactly what ``TaskGraphCli`` registers on the statistics subparsers,
+    plus ``verbose``, which the whole stack shares.  An allowlist: the
+    grr_manage options share the namespace, and a new one must not reach
+    every task's parameters by default -- ``extra_args`` can carry a remote
+    repository's credentials.
+    """
+    parser = argparse.ArgumentParser()
+    TaskGraphCli.add_arguments(
+        parser, use_commands=False, task_progress_mode=False)
+    return frozenset(vars(parser.parse_args([]))) | {"verbose"}
+
+
 def cli_manage(cli_args: list[str] | None = None) -> None:
     """Provide CLI for repository management."""
     # pylint: disable=too-many-branches,too-many-statements
@@ -1556,7 +1583,7 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
         sys.exit(1)
 
     if command == "repo-init":
-        _run_repo_init_command(**vars(args))
+        _run_repo_init_command(repository=args.repository)
         return
 
     repo_url = _get_repo_url(args)
@@ -1582,7 +1609,7 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
             # (gain#782).
             logger.info("repository <%s> has no resources", repo_url)
     elif command in _RESOURCE_COMMANDS:
-        resources = _find_resources(proto, repo_url, **vars(args))
+        resources = _find_resources(proto, repo_url, resource=args.resource)
         if not resources:
             logger.error("resource not found...")
             sys.exit(1)
@@ -1606,12 +1633,32 @@ def _run_management_command(
 ) -> CommandResult:
     """Run one repository-management command over ``resources``.
 
-    The command name is read out of ``kwargs`` rather than taken as a
-    parameter: the whole parsed argument namespace is forwarded to the
-    command functions (the task-graph options live in it), ``command``
-    included.
+    ``kwargs`` is the whole parsed argument namespace, and this is the one
+    place it is unpacked: each command function takes the ``grr_manage``
+    options it uses as required keyword-only parameters -- a missing or
+    renamed option is a ``TypeError`` or ``KeyError``, never a substituted
+    default (gain#1657) -- and the statistics commands get what remains,
+    the task-graph options, as ``task_graph_args``.
     """
     command = cast(str, kwargs["command"])
+
+    def manifest_options() -> dict[str, bool]:
+        return {
+            "dry_run": kwargs["dry_run"],
+            "force": kwargs["force"],
+            "use_dvc": kwargs["use_dvc"],
+        }
+
+    def stats_options() -> dict[str, Any]:
+        return {
+            **manifest_options(),
+            "region_size": kwargs["region_size"],
+            "task_graph_args": {
+                key: value for key, value in kwargs.items()
+                if key in _task_graph_options()
+            },
+        }
+
     try:
         if command == "repo-index":
             # Ahead of the dvc-directory refusal: that guard protects
@@ -1630,23 +1677,25 @@ def _run_management_command(
         # repository-global artifacts are republished at the end, so a
         # suffix match would silently hand one scope the other's contract.
         if command == "repo-manifest":
-            return _run_repo_manifest_command(proto, resources, **kwargs)
+            return _run_repo_manifest_command(
+                proto, resources, **manifest_options())
         if command == "resource-manifest":
-            return _run_resource_manifest_command(proto, resources, **kwargs)
+            return _run_resource_manifest_command(
+                proto, resources, **manifest_options())
         if command == "repo-stats":
             return _run_repo_stats_command(
-                repo, proto, resources, **kwargs)
+                repo, proto, resources, **stats_options())
         if command == "resource-stats":
             return _run_resource_stats_command(
-                repo, proto, resources, **kwargs)
+                repo, proto, resources, **stats_options())
         # Repair is info plus nothing: the info commands already rebuild
         # manifests and statistics on the way to the pages.
         if command in ("repo-info", "repo-repair"):
             return _run_repo_info_command(
-                repo, proto, resources, **kwargs)
+                repo, proto, resources, **stats_options())
         if command in ("resource-info", "resource-repair"):
             return _run_resource_info_command(
-                repo, proto, resources, **kwargs)
+                repo, proto, resources, **stats_options())
         if command == "repo-fix-histograms":
             return _run_repo_fix_histograms_command(proto, resources)
         # Never fall through: repair is destructive, and a command name
