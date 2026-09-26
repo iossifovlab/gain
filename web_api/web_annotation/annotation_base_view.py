@@ -113,6 +113,11 @@ def get_grr_genomes(grr: GenomicResourceRepo) -> list[str]:
 
 GRR_GENOMES = get_grr_genomes(GRR)
 
+# What a user model's pipeline lookup raises for an id it cannot resolve:
+# ``ValueError`` for a missing, unowned or non-integer id, and
+# ``NotImplementedError`` from the anonymous user, who has no saved pipelines.
+PIPELINE_LOOKUP_ERRORS = (ValueError, NotImplementedError)
+
 
 class AnnotationMixin:
     """Shared annotation state + helpers for the sync and async base views.
@@ -532,7 +537,7 @@ class AnnotationMixin:
         """
         try:
             self.put_pipeline(pipeline_id, user)
-        except (ValueError, NotImplementedError) as lookup_error:
+        except PIPELINE_LOOKUP_ERRORS as lookup_error:
             raise self._missing_pipeline_to_drf(
                 pipeline_id) from lookup_error
 
