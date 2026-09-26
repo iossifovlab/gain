@@ -127,18 +127,19 @@ class GeneScore(ScoreResource[GeneScoreDef]):
         refuse_unfoldable_histograms(
             self.score_definitions, self.resource.resource_id)
 
-        for score_def in self.score_definitions.values():
-            hist_conf = score_def.hist_conf
-            if isinstance(hist_conf, NumberHistogramConfig) and \
-                    not hist_conf.has_view_range():
-                min_value = self.get_min(score_def.column_name)
-                max_value = self.get_max(score_def.column_name)
-                hist_conf.view_range = (min_value, max_value)
-
         self.df = self.df.rename(columns={
             score_def.column_name: score_def.score_id
             for score_def in self.score_definitions.values()
         })
+
+        for score_def in self.score_definitions.values():
+            hist_conf = score_def.hist_conf
+            if isinstance(hist_conf, NumberHistogramConfig) and \
+                    not hist_conf.has_view_range():
+                min_value = self.get_min(score_def.score_id)
+                max_value = self.get_max(score_def.score_id)
+                hist_conf.view_range = (min_value, max_value)
+
         records = self.df.to_dict(orient="records")
 
         self.gene_values: dict[str, dict[str, float]] = {}
@@ -152,10 +153,12 @@ class GeneScore(ScoreResource[GeneScoreDef]):
 
     def get_min(self, score_id: str) -> float:
         """Return minimal score value."""
+        self._guard_score_id(score_id)
         return float(self.df[score_id].min())
 
     def get_max(self, score_id: str) -> float:
         """Return maximal score value."""
+        self._guard_score_id(score_id)
         return float(self.df[score_id].max())
 
     def get_values(self, score_id: str) -> list[Any]:
@@ -164,6 +167,7 @@ class GeneScore(ScoreResource[GeneScoreDef]):
         A numeric score yields floats; a categorical string score yields the
         raw string categories, so the element type is not narrowed to float.
         """
+        self._guard_score_id(score_id)
         return list(self.df[score_id].values)
 
     def _get_number_hist_conf(
@@ -278,6 +282,7 @@ class GeneScore(ScoreResource[GeneScoreDef]):
         return outbuf.getvalue().splitlines(keepends=True)
 
     def get_score_df(self, score_id: str) -> pd.DataFrame:
+        self._guard_score_id(score_id)
         return self.df[["gene", score_id]].dropna()
 
     @property
