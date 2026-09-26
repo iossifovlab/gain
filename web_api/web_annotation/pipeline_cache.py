@@ -1,6 +1,5 @@
 """Module for thread-safe annotation utilities."""
 import asyncio
-import contextlib
 import os
 import threading
 import time
@@ -337,7 +336,9 @@ class LRUPipelineCache:
 
     A pipeline build that has started is never timed out: its loader thread
     runs until the build finishes. Its cache entry is removed only by
-    capacity eviction of an unpinned entry or by a force/config reload.
+    capacity eviction of an unpinned entry, by a force/config reload, by
+    an unload, or by a reader finding the build cancelled by the loader
+    pool (see ``_unload_cancelled_build``).
     ``load_timeout`` is passed to the loader pool as its ``job_timeout``;
     see ``ThreadedTaskExecutor`` for what that does and does not cancel.
     """
@@ -496,12 +497,13 @@ class LRUPipelineCache:
         with self._cache_lock:
             if pipeline_id in self._cache:
                 details = self._cache[pipeline_id]
-                existing_failed = False
-                if details.future.done():
-                    with contextlib.suppress(CancelledError):
-                        existing_failed = (
-                            details.future.exception() is not None
-                        )
+                # A build the loader pool cancelled on its own (its
+                # job_timeout sweep) will never produce a pipeline: rebuild
+                # it like a failed one.
+                existing_failed = details.future.cancelled() or (
+                    details.future.done()
+                    and details.future.exception() is not None
+                )
                 if (
                     details.config_hash == pipeline_config_hash
                     and not force
@@ -686,6 +688,24 @@ class LRUPipelineCache:
             else:
                 self._in_use[pipeline_id] = count - 1
 
+    def _unload_cancelled_build(self, entry: LoadingDetails) -> bool:
+        """Unload ``entry`` if its cancelled build is still the cached one.
+
+        A reader whose awaited build was cancelled calls this. An entry that
+        has left the cache (``dropped``) was replaced or unloaded: nothing
+        is unloaded and the reader re-resolves the id. An entry still cached
+        holds a build the loader pool's ``job_timeout`` sweep cancelled
+        while it was queued, which will never produce a pipeline: it is
+        unloaded and ``True`` returned, so the reader reports a miss for
+        the view's reload-on-miss to rebuild.
+        """
+        with self._cache_lock:
+            if entry.dropped.is_set():
+                return False
+            detached = self._detach_pipeline_locked(entry.pipeline_id)
+        self._close_detached(*detached)
+        return True
+
     def get_pipeline(self, pipeline_id: str) -> ThreadSafePipeline:
         """Get a pipeline by its ID."""
         started = time.time()
@@ -709,6 +729,10 @@ class LRUPipelineCache:
                 try:
                     pipeline = entry.future.result()
                 except CancelledError:
+                    if self._unload_cancelled_build(entry):
+                        raise PipelineNotCached(
+                            f"Pipeline {pipeline_id} build was cancelled",
+                        ) from None
                     logger.debug("Retrying to get %s", pipeline_id)
                     continue
                 if entry.dropped.is_set():
@@ -735,7 +759,9 @@ class LRUPipelineCache:
         path's ``CancelledError``): a force-reload cancel of the shared
         build loops to re-resolve the (possibly replaced) entry rather than
         surfacing a spurious failure. A build that was dropped while awaited
-        is re-resolved the same way, since its pipeline gets closed. A genuine
+        is re-resolved the same way, since its pipeline gets closed. A build
+        the loader pool cancelled becomes a ``PipelineNotCached``
+        (``_unload_cancelled_build``). A genuine
         ``PipelineNotCached`` is left to propagate so the view's reload-on-miss
         retry can recover it.
         """
@@ -750,6 +776,10 @@ class LRUPipelineCache:
                 try:
                     pipeline = await await_build(entry.future)
                 except BuildCancelled:
+                    if self._unload_cancelled_build(entry):
+                        raise PipelineNotCached(
+                            f"Pipeline {pipeline_id} build was cancelled",
+                        ) from None
                     logger.debug("Retrying to get %s", pipeline_id)
                     continue
                 if entry.dropped.is_set():
