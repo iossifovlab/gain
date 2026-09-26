@@ -302,12 +302,31 @@ class ThreadSafePipeline(AnnotationPipeline):
         return exc_type is None
 
 
+def _unless_dropped[**P](
+    dropped: threading.Event,
+    callback: Callable[P, None] | None,
+) -> Callable[P, None] | None:
+    """Wrap a build callback so it does nothing once ``dropped`` is set."""
+    if callback is None:
+        return None
+
+    def guarded(*args: P.args, **kwargs: P.kwargs) -> None:
+        if not dropped.is_set():
+            callback(*args, **kwargs)
+    return guarded
+
+
 @dataclass
 class LoadingDetails:
-    """Utility for identifying which pipeline is being loaded."""
+    """Utility for identifying which pipeline is being loaded.
+
+    ``dropped`` is set once the entry leaves the cache. Its build may still
+    be running; from then on it reports nothing.
+    """
     config_hash: int
     pipeline_id: str
     future: Future[ThreadSafePipeline]
+    dropped: threading.Event
 
     def __hash__(self) -> int:
         return hash(self.pipeline_id)
@@ -473,10 +492,7 @@ class LRUPipelineCache:
             "thread %s calling put_pipeline for %s", thread, pipeline_id)
         same_config = False
         same_config_future: Future[ThreadSafePipeline] | None = None
-        detached: list[tuple[
-            str, Future[ThreadSafePipeline] | None,
-            LoadingDetails | None, Callable | None,
-        ]] = []
+        detached: list[tuple[LoadingDetails, Callable | None]] = []
         with self._cache_lock:
             if pipeline_id in self._cache:
                 details = self._cache[pipeline_id]
@@ -494,11 +510,7 @@ class LRUPipelineCache:
                     same_config = True
                     same_config_future = details.future
                 else:
-                    old_future, old_details, old_delete_cb = (
-                        self._detach_pipeline_locked(pipeline_id)
-                    )
-                    detached.append(
-                        (pipeline_id, old_future, old_details, old_delete_cb))
+                    detached.append(self._detach_pipeline_locked(pipeline_id))
 
             if not same_config:
                 while len(self._cache) >= self.capacity:
@@ -511,25 +523,26 @@ class LRUPipelineCache:
                             len(self._cache), pipeline_id,
                         )
                         break
-                    old_future, old_details, old_delete_cb = (
-                        self._detach_pipeline_locked(evict_id, do_cancel=False)
-                    )
                     detached.append(
-                        (evict_id, old_future, old_details, old_delete_cb))
+                        self._detach_pipeline_locked(evict_id, do_cancel=False))
 
+                dropped = threading.Event()
                 pipeline_future = self._load_executor.execute(
                     self._load_pipeline_raw,
                     raw=pipeline_config,
                     grr=self._grr,
                     pipeline_id=pipeline_id,
-                    callback_success=finish_load_callback,
-                    callback_failure=fail_load_callback,
+                    callback_success=_unless_dropped(
+                        dropped, finish_load_callback),
+                    callback_failure=_unless_dropped(
+                        dropped, fail_load_callback),
                 )
 
                 loading_details = LoadingDetails(
                     pipeline_id=pipeline_id,
                     config_hash=pipeline_config_hash,
                     future=pipeline_future,
+                    dropped=dropped,
                 )
 
                 self._pipeline_callbacks[pipeline_id] = delete_callback
@@ -555,8 +568,8 @@ class LRUPipelineCache:
                     finish_load_callback()
             return
 
-        for pid, old_future, old_details, old_delete_cb in detached:
-            self._close_detached(pid, old_future, old_details, old_delete_cb)
+        for old_details, old_delete_cb in detached:
+            self._close_detached(old_details, old_delete_cb)
 
         if begin_load_callback is not None:
             begin_load_callback()
@@ -569,6 +582,10 @@ class LRUPipelineCache:
         self, pipeline_id: str,
     ) -> Future[ThreadSafePipeline]:
         """Get a pipeline future by its ID."""
+        return self._resolve_entry(pipeline_id).future
+
+    def _resolve_entry(self, pipeline_id: str) -> LoadingDetails:
+        """Return the cache entry of the id, marking it most recently used."""
         started = time.time()
         logger.debug(
             "thread %s calling get_pipeline_future for %s",
@@ -582,62 +599,65 @@ class LRUPipelineCache:
             elapsed = time.time() - started
             logger.debug(
                 "get_pipeline_future %s in %.2f seconds", pipeline_id, elapsed)
-            return self._cache[pipeline_id].future
+            return self._cache[pipeline_id]
 
     def _detach_pipeline_locked(
         self, pipeline_id: str, *, do_cancel: bool = True,
-    ) -> tuple[
-        Future[ThreadSafePipeline] | None,
-        LoadingDetails | None,
-        Callable | None,
-    ]:
+    ) -> tuple[LoadingDetails, Callable | None]:
         """Remove a pipeline entry from the cache dict.
 
-        Must be called while holding ``_cache_lock``. Returns
-        ``(future, details, delete_cb)`` so the caller can close the
-        pipeline *outside* the lock. With ``do_cancel=True`` (the
-        default) an unfinished future is cancelled and ``None`` is
-        returned in its place so the caller skips the ``close`` call.
+        Must be called while holding ``_cache_lock``, for an id that is
+        cached. Returns ``(details, delete_cb)`` so the caller can close
+        the pipeline *outside* the lock. With ``do_cancel=True`` (the
+        default) an unfinished future is also cancelled, which stops a
+        build still queued for a loader thread; a build that is already
+        running cannot be cancelled and runs to completion.
         """
-        if pipeline_id not in self._cache:
-            return None, None, None
-        details = self._cache[pipeline_id]
-        future: Future[ThreadSafePipeline] | None = details.future
-        delete_cb = self._pipeline_callbacks.get(pipeline_id)
-        del self._cache[pipeline_id]
-        del self._pipeline_callbacks[pipeline_id]
+        details = self._cache.pop(pipeline_id)
+        delete_cb = self._pipeline_callbacks.pop(pipeline_id)
+        details.dropped.set()
         self._order.remove(pipeline_id)
         self._in_use.pop(pipeline_id, None)
-        if future is not None and not future.done() and do_cancel:
-            future.cancel()
-            future = None
-        return future, details, delete_cb
+        if do_cancel and not details.future.done():
+            details.future.cancel()
+        return details, delete_cb
 
     @staticmethod
     def _close_detached(
-        pipeline_id: str,
-        future: Future[ThreadSafePipeline] | None,
-        details: LoadingDetails | None,
+        details: LoadingDetails,
         delete_cb: Callable | None,
     ) -> None:
         """Close a detached pipeline and call its delete callback.
 
+        The delete callback runs now, whether or not the build has
+        finished. The pipeline is closed once its build finishes: now, if
+        it has already finished, otherwise on the loader thread when it
+        does. A build that failed or was cancelled has nothing to close.
+
         Must be called *outside* ``_cache_lock`` — ``pipeline.close()``
         can block while holding the pipeline's own lock.
         """
-        if future is not None and future.done():
+        pipeline_id = details.pipeline_id
+
+        def close_built_pipeline(
+            built: Future[ThreadSafePipeline],
+        ) -> None:
+            if built.cancelled() or built.exception() is not None:
+                return
             try:
-                future.result().close()
+                built.result().close()
             except Exception:  # pylint: disable=broad-except
                 logger.exception(
                     "Error during pipeline close for %s", pipeline_id)
-            if delete_cb and details is not None:
-                try:
-                    delete_cb(details)
-                except Exception:  # pylint: disable=broad-except
-                    logger.exception(
-                        "Error during pipeline deletion"
-                        "callback for %s", pipeline_id)
+
+        details.future.add_done_callback(close_built_pipeline)
+        if delete_cb:
+            try:
+                delete_cb(details)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "Error during pipeline deletion"
+                    "callback for %s", pipeline_id)
 
     def _pin_pipeline(self, pipeline_id: str) -> bool:
         """Mark a cached pipeline as in-use so it is skipped by eviction.
@@ -668,33 +688,41 @@ class LRUPipelineCache:
 
     def get_pipeline(self, pipeline_id: str) -> ThreadSafePipeline:
         """Get a pipeline by its ID."""
-        pipeline = None
         started = time.time()
         logger.debug(
             "thread %s calling get_pipeline for %s",
             threading.current_thread().name, pipeline_id)
         # Pin the entry before resolving its future so a concurrent
         # capacity-pressure put_pipeline cannot evict it out from under us
-        # (#140). The pin only prevents capacity-driven eviction; if the entry
-        # is removed by another path (force/config reload, or it was
-        # never cached because of the view's check-then-act window) the
-        # awaiting result()/get_pipeline_future raises -- and the caller
+        # (#140). The pin only prevents capacity-driven eviction; the entry
+        # can still be removed by another path (force/config reload, unload,
+        # or it was never cached because of the view's check-then-act
+        # window). A build dropped while we waited on it is never returned
+        # -- its pipeline gets closed -- so the entry is resolved again, and
+        # once the id is no longer cached resolving it raises
+        # PipelineNotCached, which the caller
         # (AnnotationBaseView.get_pipeline) recovers via reload-on-miss.
         pinned = self._pin_pipeline(pipeline_id)
         try:
-            while pipeline is None:
-                pipeline_future = self.get_pipeline_future(pipeline_id)
+            while True:
+                entry = self._resolve_entry(pipeline_id)
                 try:
-                    pipeline = pipeline_future.result()
+                    pipeline = entry.future.result()
                 except CancelledError:
                     logger.debug("Retrying to get %s", pipeline_id)
+                    continue
+                if entry.dropped.is_set():
+                    logger.debug(
+                        "Retrying to get %s: its build was dropped",
+                        pipeline_id)
+                    continue
+                elapsed = time.time() - started
+                logger.debug(
+                    "got pipeline %s in %.2f seconds", pipeline_id, elapsed)
+                return pipeline
         finally:
             if pinned:
                 self._unpin_pipeline(pipeline_id)
-        elapsed = time.time() - started
-        logger.debug(
-            "got pipeline %s in %.2f seconds", pipeline_id, elapsed)
-        return pipeline
 
     async def aget_pipeline(self, pipeline_id: str) -> ThreadSafePipeline:
         """Async mirror of ``get_pipeline``: await the build off the loop.
@@ -706,8 +734,10 @@ class LRUPipelineCache:
         through ``BuildCancelled`` (the decoupled-waiter analogue of the sync
         path's ``CancelledError``): a force-reload cancel of the shared
         build loops to re-resolve the (possibly replaced) entry rather than
-        surfacing a spurious failure. A genuine ``PipelineNotCached`` is left to
-        propagate so the view's reload-on-miss retry can recover it.
+        surfacing a spurious failure. A build that was dropped while awaited
+        is re-resolved the same way, since its pipeline gets closed. A genuine
+        ``PipelineNotCached`` is left to propagate so the view's reload-on-miss
+        retry can recover it.
         """
         started = time.time()
         logger.debug(
@@ -716,11 +746,16 @@ class LRUPipelineCache:
         pinned = self._pin_pipeline(pipeline_id)
         try:
             while True:
-                pipeline_future = self.get_pipeline_future(pipeline_id)
+                entry = self._resolve_entry(pipeline_id)
                 try:
-                    pipeline = await await_build(pipeline_future)
+                    pipeline = await await_build(entry.future)
                 except BuildCancelled:
                     logger.debug("Retrying to get %s", pipeline_id)
+                    continue
+                if entry.dropped.is_set():
+                    logger.debug(
+                        "Retrying to get %s: its build was dropped",
+                        pipeline_id)
                     continue
                 elapsed = time.time() - started
                 logger.debug(
@@ -740,8 +775,8 @@ class LRUPipelineCache:
             "thread %s calling unload_pipeline for %s",
             threading.current_thread().name, pipeline_id)
         with self._cache_lock:
-            old_future, old_details, old_delete_cb = (
-                self._detach_pipeline_locked(pipeline_id, do_cancel=do_cancel)
-            )
-        self._close_detached(
-            pipeline_id, old_future, old_details, old_delete_cb)
+            if pipeline_id not in self._cache:
+                return
+            old_details, old_delete_cb = self._detach_pipeline_locked(
+                pipeline_id, do_cancel=do_cancel)
+        self._close_detached(old_details, old_delete_cb)

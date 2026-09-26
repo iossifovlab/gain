@@ -315,7 +315,7 @@ def test_in_flight_pipeline_not_evicted_under_capacity_pressure(
     getter_parked = threading.Event()
     eviction_done = threading.Event()
 
-    original_get_future = lru_cache.get_pipeline_future
+    original_get_future = lru_cache._resolve_entry
 
     def gated_get_future(pipeline_id: str):  # type: ignore[no-untyped-def]
         # Park the getter for pipelineA right at the start of resolution,
@@ -325,7 +325,7 @@ def test_in_flight_pipeline_not_evicted_under_capacity_pressure(
             assert eviction_done.wait(timeout=30)
         return original_get_future(pipeline_id)
 
-    lru_cache.get_pipeline_future = gated_get_future  # type: ignore[method-assign]
+    lru_cache._resolve_entry = gated_get_future  # type: ignore[method-assign]
 
     errors: list[BaseException] = []
     result: list[object] = []
