@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import abc
 import argparse
+from collections.abc import Mapping
+from typing import cast
 
 from gain import logging
 from gain.annotation.annotatable import (
@@ -18,15 +20,67 @@ from gain.utils.dae_utils import cshl2vcf_variant, dae2vcf_variant
 logger = logging.getLogger(__name__)
 
 
+class MalformedRecordError(ValueError):
+    """A record the builders cannot turn into an annotatable."""
+
+
+def _text(record: Mapping[str, object], column: str) -> str:
+    value = record[column]
+    if not isinstance(value, str):
+        raise MalformedRecordError(
+            f"{column} must be a string, got {value!r}")
+    return value
+
+
+def _position(record: Mapping[str, object], column: str) -> int:
+    value = record[column]
+    # An exact type test: a bool is an int subclass, and not a position.
+    if type(value) not in (str, int):
+        raise MalformedRecordError(
+            f"{column} must be an integer, got {value!r}")
+    try:
+        position = int(cast("str | int", value))
+    except ValueError:
+        raise MalformedRecordError(
+            f"{column} must be an integer, got {value!r}") from None
+    if position < 1:
+        raise MalformedRecordError(
+            f"{column} is {position}; positions are 1-based")
+    return position
+
+
 class RecordToAnnotable(abc.ABC):
     """Base class for record to annotable transformation."""
     def __init__(self, columns: tuple, ref_genome: ReferenceGenome | None):
         self.columns = columns
         self.ref_genome = ref_genome
 
+    def build(self, record: Mapping[str, object]) -> Annotatable:
+        """Construct an annotatable from a record.
+
+        Raises :class:`MalformedRecordError` when the record cannot be one:
+        a field of the wrong type or format, a position below 1, or an end
+        before the beginning.
+        """
+        try:
+            annotatable = self._build(record)
+        except MalformedRecordError:
+            raise
+        except ValueError as ex:
+            raise MalformedRecordError(str(ex)) from ex
+        if annotatable.pos < 1:
+            raise MalformedRecordError(
+                f"{annotatable} has position {annotatable.pos}; "
+                f"positions are 1-based")
+        if annotatable.pos_end < annotatable.pos:
+            raise MalformedRecordError(
+                f"{annotatable} ends at {annotatable.pos_end}, "
+                f"before its beginning {annotatable.pos}")
+        return annotatable
+
     @abc.abstractmethod
-    def build(self, record: dict[str, str]) -> Annotatable:
-        """Constructs an annotatable from a record."""
+    def _build(self, record: Mapping[str, object]) -> Annotatable:
+        """Construct an annotatable from a record of well-typed fields."""
 
 
 class RecordToPosition(RecordToAnnotable):
@@ -34,9 +88,9 @@ class RecordToPosition(RecordToAnnotable):
         super().__init__(columns, ref_genome)
         self.chrom_column, self.pos_column = columns
 
-    def build(self, record: dict[str, str]) -> Annotatable:
-        return Position(record[self.chrom_column],
-                        int(record[self.pos_column]))
+    def _build(self, record: Mapping[str, object]) -> Annotatable:
+        return Position(_text(record, self.chrom_column),
+                        _position(record, self.pos_column))
 
 
 class RecordToRegion(RecordToAnnotable):
@@ -44,10 +98,10 @@ class RecordToRegion(RecordToAnnotable):
         super().__init__(columns, ref_genome)
         self.chrom_col, self.pos_beg_col, self.pos_end_col = columns
 
-    def build(self, record: dict[str, str]) -> Annotatable:
-        return Region(record[self.chrom_col],
-                      int(record[self.pos_beg_col]),
-                      int(record[self.pos_end_col]))
+    def _build(self, record: Mapping[str, object]) -> Annotatable:
+        return Region(_text(record, self.chrom_col),
+                      _position(record, self.pos_beg_col),
+                      _position(record, self.pos_end_col))
 
 
 class RecordToVcfAllele(RecordToAnnotable):
@@ -55,11 +109,11 @@ class RecordToVcfAllele(RecordToAnnotable):
         super().__init__(columns, ref_genome)
         self.chrom_col, self.pos_col, self.ref_col, self.alt_col = columns
 
-    def build(self, record: dict[str, str]) -> Annotatable:
-        return VCFAllele(record[self.chrom_col],
-                         int(record[self.pos_col]),
-                         record[self.ref_col],
-                         record[self.alt_col])
+    def _build(self, record: Mapping[str, object]) -> Annotatable:
+        return VCFAllele(_text(record, self.chrom_col),
+                         _position(record, self.pos_col),
+                         _text(record, self.ref_col),
+                         _text(record, self.alt_col))
 
 
 class VcfLikeRecordToVcfAllele(RecordToAnnotable):
@@ -69,8 +123,8 @@ class VcfLikeRecordToVcfAllele(RecordToAnnotable):
         super().__init__(columns, ref_genome)
         self.vcf_like_col, = columns
 
-    def build(self, record: dict[str, str]) -> Annotatable:
-        chrom, pos, ref, alt = record[self.vcf_like_col].split(":")
+    def _build(self, record: Mapping[str, object]) -> Annotatable:
+        chrom, pos, ref, alt = _text(record, self.vcf_like_col).split(":")
         return VCFAllele(chrom, int(pos), ref, alt)
 
 
@@ -82,15 +136,16 @@ class RecordToCNVAllele(RecordToAnnotable):
         self.chrom_col, self.pos_beg_col, self.pos_end_col, self.cnv_type_col \
             = columns
 
-    def build(self, record: dict[str, str]) -> Annotatable:
-        cnv_type = cnv_variant_type(record[self.cnv_type_col])
+    def _build(self, record: Mapping[str, object]) -> Annotatable:
+        variant = _text(record, self.cnv_type_col)
+        cnv_type = cnv_variant_type(variant)
         if cnv_type is None:
-            raise ValueError(
-                f"unexpected CNV variant type: {record[self.cnv_type_col]}")
+            raise MalformedRecordError(
+                f"unexpected CNV variant type: {variant}")
         return CNVAllele(
-            record[self.chrom_col],
-            int(record[self.pos_beg_col]),
-            int(record[self.pos_end_col]),
+            _text(record, self.chrom_col),
+            _position(record, self.pos_beg_col),
+            _position(record, self.pos_end_col),
             CNVAllele.Type.from_string(cnv_type))
 
 
@@ -101,13 +156,13 @@ class CSHLAlleleRecordToAnnotatable(RecordToAnnotable):
         super().__init__(columns, ref_genome)
         self.location_col, self.variant_col = columns
 
-    def build(self, record: dict[str, str]) -> Annotatable:
-        variant = record[self.variant_col]
+    def _build(self, record: Mapping[str, object]) -> Annotatable:
+        location = _text(record, self.location_col)
+        variant = _text(record, self.variant_col)
         cnv_type = cnv_variant_type(variant)
         if cnv_type is not None:
             chrom, pos_begin, pos_end, cnv_type = cshl2cnv_variant(
-                record[self.location_col],
-                record[self.variant_col])
+                location, variant)
 
             assert cnv_type is not None
             return CNVAllele(
@@ -115,9 +170,7 @@ class CSHLAlleleRecordToAnnotatable(RecordToAnnotable):
                 CNVAllele.Type.from_string(cnv_type))
 
         return VCFAllele(*cshl2vcf_variant(
-            record[self.location_col],
-            record[self.variant_col],
-            self.ref_genome))
+            location, variant, self.ref_genome))
 
 
 class DaeAlleleRecordToAnnotatable(RecordToAnnotable):
@@ -127,12 +180,12 @@ class DaeAlleleRecordToAnnotatable(RecordToAnnotable):
         super().__init__(columns, ref_genome)
         self.chrom_column, self.pos_column, self.variant_column = columns
 
-    def build(self, record: dict[str, str]) -> Annotatable:
-        variant = record[self.variant_column]
-        chrom = record[self.chrom_column]
+    def _build(self, record: Mapping[str, object]) -> Annotatable:
+        variant = _text(record, self.variant_column)
+        chrom = _text(record, self.chrom_column)
         return VCFAllele(chrom, *dae2vcf_variant(
             chrom,
-            int(record[self.pos_column]),
+            _position(record, self.pos_column),
             variant,
             self.ref_genome))
 
@@ -206,14 +259,18 @@ def build_record_to_annotatable(
             return record_to_annotatable_class(
                 tuple(columns), ref_genome,
             )
-    raise ValueError("no record to annotatable could be found.")
+    raise MalformedRecordError("no record to annotatable could be found.")
 
 
 def build_annotatable_from_dict(
-    obj: dict[str, str],
+    obj: Mapping[str, object],
     ref_genome: ReferenceGenome | None = None,
 ) -> Annotatable:
-    """Build an annotatable from a dictionary of string values."""
+    """Build an annotatable from a record held in a dictionary.
+
+    Raises :class:`MalformedRecordError` when no converter matches the
+    record's keys or the matching converter refuses the record.
+    """
     record_to_annotatable = build_record_to_annotatable(
         {}, set(obj.keys()), ref_genome)
 
